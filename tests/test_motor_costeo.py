@@ -1,6 +1,9 @@
 import pytest
 
 from core.motor_costeo import (
+    COSTO_ENVASE_CHICO,
+    COSTO_ENVASE_GRANDE,
+    SIN_ENVASE,
     calcular_costo_por_presentacion,
     calcular_costo_ponderado_por_cubeta,
     calcular_costo_ponderado_por_cubeta_arandano,
@@ -12,6 +15,10 @@ from core.motor_costeo import (
     calcular_kilo_promedio_ponderado_cajon,
     calcular_promedio_ponderado,
     calcular_utilidad_combinada_ponderada_cherry,
+    costo_por_kilo,
+    costo_por_kilo_base,
+    precio_sugerido,
+    utilidad_real,
 )
 
 
@@ -205,3 +212,64 @@ def test_costo_ponderado_por_cubeta_generica_longitudes_distintas():
             costo_por_caja=[100],
             cubetas_por_caja=12,
         )
+
+
+def test_costo_por_kilo_base_sin_envase():
+    # (770 + 0) / 10 = 77
+    resultado = costo_por_kilo_base(costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    assert resultado == 77
+
+
+def test_costo_por_kilo_base_con_envase_chico():
+    # (1000 + 650*1) / 10 = 165
+    resultado = costo_por_kilo_base(costo_bulto=1000, kg_bulto=10, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=1)
+    assert resultado == 165
+
+
+def test_costo_por_kilo_base_kg_bulto_cero():
+    with pytest.raises(ValueError):
+        costo_por_kilo_base(costo_bulto=100, kg_bulto=0, costo_envase=SIN_ENVASE, cantidad_envases=0)
+
+
+def test_costo_por_kilo_sin_envase():
+    # base = 77 => 77 / (1 - 0.23) = 100
+    resultado = costo_por_kilo(costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    assert resultado == 100
+
+
+def test_costo_por_kilo_con_envase_grande():
+    # base = (5000 + 1600*1) / 20 = 330 => 330 / 0.77
+    resultado = costo_por_kilo(
+        costo_bulto=5000, kg_bulto=20, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1
+    )
+    assert resultado == pytest.approx(330 / 0.77)
+
+
+def test_precio_sugerido_sin_envase():
+    # base = 77 => 77*1.2 / 0.77 = 120
+    resultado = precio_sugerido(costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    assert resultado == pytest.approx(120)
+
+
+def test_precio_sugerido_con_envase_chico():
+    # base = 165 => 165*1.2 / 0.77
+    resultado = precio_sugerido(costo_bulto=1000, kg_bulto=10, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=1)
+    assert resultado == pytest.approx(165 * 1.2 / 0.77)
+
+
+def test_utilidad_real_vendiendo_al_costo_por_kilo_da_cero():
+    # Si vendo justo al costo_por_kilo, la utilidad real tiene que dar 0
+    resultado = utilidad_real(precio_dia=100, kg_bulto=10, costo_bulto=770, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    assert resultado == 0
+
+
+def test_precio_sugerido_da_la_utilidad_real_pedida():
+    # Si vendo al precio_sugerido (utilidad 20%), la utilidad_real tiene que dar 20%
+    precio = precio_sugerido(costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    resultado = utilidad_real(precio_dia=precio, kg_bulto=10, costo_bulto=770, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    assert resultado == pytest.approx(0.20)
+
+
+def test_utilidad_real_costo_total_cero():
+    with pytest.raises(ValueError):
+        utilidad_real(precio_dia=100, kg_bulto=10, costo_bulto=0, costo_envase=SIN_ENVASE, cantidad_envases=0)

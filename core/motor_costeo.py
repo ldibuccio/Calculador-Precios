@@ -117,3 +117,61 @@ def calcular_costo_ponderado_por_cubeta_arandano(
 ) -> float:
     """Arándano: costo ponderado por cubeta (8 cubetas por caja, salvo aviso de cambio)."""
     return calcular_costo_ponderado_por_cubeta(cantidad_cajas, costo_por_caja, cubetas_por_caja)
+
+
+DESCUENTO_ESTANDAR = 0.23
+UTILIDAD_ESTANDAR = 0.20
+COSTO_ENVASE_CHICO = 650
+COSTO_ENVASE_GRANDE = 1600
+SIN_ENVASE = 0
+
+
+def costo_por_kilo_base(
+    costo_bulto: float, kg_bulto: float, costo_envase: float, cantidad_envases: float
+) -> float:
+    """Costo por kilo antes de aplicar descuento: (costo_bulto + costo_envase*cantidad_envases) / kg_bulto."""
+    if kg_bulto == 0:
+        raise ValueError("kg_bulto no puede ser cero")
+    return (costo_bulto + costo_envase * cantidad_envases) / kg_bulto
+
+
+def costo_por_kilo(
+    costo_bulto: float,
+    kg_bulto: float,
+    costo_envase: float,
+    cantidad_envases: float,
+    descuento: float = DESCUENTO_ESTANDAR,
+) -> float:
+    if descuento == 1:
+        raise ValueError("descuento no puede ser 1 (dividiría por cero)")
+    base = costo_por_kilo_base(costo_bulto, kg_bulto, costo_envase, cantidad_envases)
+    return base / (1 - descuento)
+
+
+def precio_sugerido(
+    costo_bulto: float,
+    kg_bulto: float,
+    costo_envase: float,
+    cantidad_envases: float,
+    descuento: float = DESCUENTO_ESTANDAR,
+    utilidad: float = UTILIDAD_ESTANDAR,
+) -> float:
+    if descuento == 1:
+        raise ValueError("descuento no puede ser 1 (dividiría por cero)")
+    base = costo_por_kilo_base(costo_bulto, kg_bulto, costo_envase, cantidad_envases)
+    return base * (1 + utilidad) / (1 - descuento)
+
+
+def utilidad_real(
+    precio_dia: float,
+    kg_bulto: float,
+    costo_bulto: float,
+    costo_envase: float,
+    cantidad_envases: float,
+    descuento: float = DESCUENTO_ESTANDAR,
+) -> float:
+    costo_total = costo_bulto + costo_envase * cantidad_envases
+    if costo_total == 0:
+        raise ValueError("el costo total no puede ser cero")
+    ingreso_neto = precio_dia * (1 - descuento) * kg_bulto
+    return (ingreso_neto - costo_total) / costo_total
