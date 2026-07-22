@@ -156,10 +156,14 @@ def precio_sugerido(
     descuento: float = DESCUENTO_ESTANDAR,
     utilidad: float = UTILIDAD_ESTANDAR,
 ) -> float:
+    """La utilidad se aplica solo al costo del producto; el envase se suma sin utilidad."""
+    if kg_bulto == 0:
+        raise ValueError("kg_bulto no puede ser cero")
     if descuento == 1:
         raise ValueError("descuento no puede ser 1 (dividiría por cero)")
-    base = costo_por_kilo_base(costo_bulto, kg_bulto, costo_envase, cantidad_envases)
-    return base * (1 + utilidad) / (1 - descuento)
+    costo_producto_por_kg = costo_bulto / kg_bulto
+    costo_envase_por_kg = costo_envase * cantidad_envases / kg_bulto
+    return (costo_producto_por_kg * (1 + utilidad) + costo_envase_por_kg) / (1 - descuento)
 
 
 def utilidad_real(
