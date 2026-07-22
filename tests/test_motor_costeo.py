@@ -2,6 +2,9 @@ import pytest
 
 from core.motor_costeo import (
     calcular_costo_por_presentacion,
+    calcular_costo_ponderado_por_cubeta,
+    calcular_costo_ponderado_por_cubeta_arandano,
+    calcular_costo_ponderado_por_cubeta_frutilla,
     calcular_costo_ponderado_por_kg_cherry,
     calcular_costo_ponderado_por_kg_mango_cc,
     calcular_costo_ponderado_por_unidad_mango_descartable,
@@ -160,4 +163,45 @@ def test_costo_ponderado_por_kg_mango_cc_longitudes_distintas():
         calcular_costo_ponderado_por_kg_mango_cc(
             cantidad_cajas=[1, 2],
             costo_por_caja=[400],
+        )
+
+
+def test_costo_ponderado_por_cubeta_frutilla_valor_por_defecto():
+    # Compra 1: 3 cajas de 12 cubetas a $360 => costo/cubeta = 30, cubetas totales = 36
+    # Compra 2: 2 cajas de 12 cubetas a $300 => costo/cubeta = 25, cubetas totales = 24
+    # (30*36 + 25*24) / (36+24) = (1080 + 600) / 60 = 28
+    resultado = calcular_costo_ponderado_por_cubeta_frutilla(
+        cantidad_cajas=[3, 2],
+        costo_por_caja=[360, 300],
+    )
+    assert resultado == 28
+
+
+def test_costo_ponderado_por_cubeta_frutilla_con_aviso_de_cambio():
+    # Si avisan que ahora la caja trae 10 cubetas, se puede pasar el valor explícito
+    resultado = calcular_costo_ponderado_por_cubeta_frutilla(
+        cantidad_cajas=[1],
+        costo_por_caja=[100],
+        cubetas_por_caja=10,
+    )
+    assert resultado == 10
+
+
+def test_costo_ponderado_por_cubeta_arandano_valor_por_defecto():
+    # Compra 1: 4 cajas de 8 cubetas a $160 => costo/cubeta = 20, cubetas totales = 32
+    # Compra 2: 1 caja de 8 cubetas a $240 => costo/cubeta = 30, cubetas totales = 8
+    # (20*32 + 30*8) / (32+8) = (640 + 240) / 40 = 22
+    resultado = calcular_costo_ponderado_por_cubeta_arandano(
+        cantidad_cajas=[4, 1],
+        costo_por_caja=[160, 240],
+    )
+    assert resultado == 22
+
+
+def test_costo_ponderado_por_cubeta_generica_longitudes_distintas():
+    with pytest.raises(ValueError):
+        calcular_costo_ponderado_por_cubeta(
+            cantidad_cajas=[1, 2],
+            costo_por_caja=[100],
+            cubetas_por_caja=12,
         )

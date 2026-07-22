@@ -87,3 +87,33 @@ def calcular_costo_ponderado_por_kg_mango_cc(cantidad_cajas: list[float], costo_
     costos_por_kg = [costo / MANGO_CC_KG_POR_CAJA for costo in costo_por_caja]
     kilos_totales = [cajas * MANGO_CC_KG_POR_CAJA for cajas in cantidad_cajas]
     return calcular_promedio_ponderado(costos_por_kg, kilos_totales)
+
+
+def calcular_costo_ponderado_por_cubeta(
+    cantidad_cajas: list[float], costo_por_caja: list[float], cubetas_por_caja: float
+) -> float:
+    """Costo ponderado por cubeta, con cantidad fija de cubetas por caja (parámetro).
+
+    Cada compra aporta su costo_por_cubeta (costo_de_la_caja / cubetas_por_caja),
+    ponderado por el total de cubetas compradas en esa compra.
+    """
+    if len(cantidad_cajas) != len(costo_por_caja):
+        raise ValueError("cantidad_cajas y costo_por_caja deben tener la misma longitud")
+
+    costos_por_cubeta = [costo / cubetas_por_caja for costo in costo_por_caja]
+    cubetas_totales = [cajas * cubetas_por_caja for cajas in cantidad_cajas]
+    return calcular_promedio_ponderado(costos_por_cubeta, cubetas_totales)
+
+
+def calcular_costo_ponderado_por_cubeta_frutilla(
+    cantidad_cajas: list[float], costo_por_caja: list[float], cubetas_por_caja: float = 12
+) -> float:
+    """Frutilla: costo ponderado por cubeta (12 cubetas por caja, salvo aviso de cambio)."""
+    return calcular_costo_ponderado_por_cubeta(cantidad_cajas, costo_por_caja, cubetas_por_caja)
+
+
+def calcular_costo_ponderado_por_cubeta_arandano(
+    cantidad_cajas: list[float], costo_por_caja: list[float], cubetas_por_caja: float = 8
+) -> float:
+    """Arándano: costo ponderado por cubeta (8 cubetas por caja, salvo aviso de cambio)."""
+    return calcular_costo_ponderado_por_cubeta(cantidad_cajas, costo_por_caja, cubetas_por_caja)
