@@ -54,3 +54,36 @@ def calcular_utilidad_combinada_ponderada_cherry(
 ) -> float:
     """Regla 5: utilidad combinada del cherry, ponderada por los kilos comprados de cada presentación."""
     return calcular_promedio_ponderado(utilidades_por_presentacion, kg_por_presentacion)
+
+
+def calcular_costo_ponderado_por_unidad_mango_descartable(
+    cantidad_cajas: list[float], unidades_por_caja: list[float], costo_por_caja: list[float]
+) -> float:
+    """Mango Env. Descartable: costo ponderado por unidad, con cantidad variable de unidades por caja.
+
+    Cada compra aporta su costo_por_unidad (costo_de_la_caja / unidades_de_esa_caja),
+    ponderado por el total de unidades compradas en esa compra.
+    """
+    if not (len(cantidad_cajas) == len(unidades_por_caja) == len(costo_por_caja)):
+        raise ValueError("cantidad_cajas, unidades_por_caja y costo_por_caja deben tener la misma longitud")
+
+    costos_por_unidad = [costo / unidades for costo, unidades in zip(costo_por_caja, unidades_por_caja)]
+    unidades_totales = [cajas * unidades for cajas, unidades in zip(cantidad_cajas, unidades_por_caja)]
+    return calcular_promedio_ponderado(costos_por_unidad, unidades_totales)
+
+
+MANGO_CC_KG_POR_CAJA = 40
+
+
+def calcular_costo_ponderado_por_kg_mango_cc(cantidad_cajas: list[float], costo_por_caja: list[float]) -> float:
+    """Mango CC: costo ponderado por kg, con cajas de peso fijo (40 kg).
+
+    Cada compra aporta su costo_por_kg (costo_de_la_caja / 40), ponderado
+    por los kilos totales comprados en esa compra.
+    """
+    if len(cantidad_cajas) != len(costo_por_caja):
+        raise ValueError("cantidad_cajas y costo_por_caja deben tener la misma longitud")
+
+    costos_por_kg = [costo / MANGO_CC_KG_POR_CAJA for costo in costo_por_caja]
+    kilos_totales = [cajas * MANGO_CC_KG_POR_CAJA for cajas in cantidad_cajas]
+    return calcular_promedio_ponderado(costos_por_kg, kilos_totales)

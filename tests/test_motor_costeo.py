@@ -3,6 +3,8 @@ import pytest
 from core.motor_costeo import (
     calcular_costo_por_presentacion,
     calcular_costo_ponderado_por_kg_cherry,
+    calcular_costo_ponderado_por_kg_mango_cc,
+    calcular_costo_ponderado_por_unidad_mango_descartable,
     calcular_costo_promedio_ponderado,
     calcular_kilo_promedio_ponderado_cajon,
     calcular_promedio_ponderado,
@@ -101,3 +103,61 @@ def test_utilidad_combinada_ponderada_cherry():
     # (1000*15 + 1200*35) / (15+35) = (15000 + 42000) / 50 = 1140
     resultado = calcular_utilidad_combinada_ponderada_cherry([1000, 1200], [15, 35])
     assert resultado == 1140
+
+
+def test_costo_ponderado_por_unidad_mango_descartable_cajas_de_distinto_tamano():
+    # Compra 1: 2 cajas de 9 unidades a $36 => costo/unidad = 4, unidades totales = 18
+    # Compra 2: 3 cajas de 10 unidades a $150 => costo/unidad = 15, unidades totales = 30
+    # Compra 3: 1 caja de 12 unidades a $72 => costo/unidad = 6, unidades totales = 12
+    # (4*18 + 15*30 + 6*12) / (18+30+12) = (72 + 450 + 72) / 60 = 9.9
+    resultado = calcular_costo_ponderado_por_unidad_mango_descartable(
+        cantidad_cajas=[2, 3, 1],
+        unidades_por_caja=[9, 10, 12],
+        costo_por_caja=[36, 150, 72],
+    )
+    assert resultado == pytest.approx(9.9)
+
+
+def test_costo_ponderado_por_unidad_mango_descartable_una_sola_compra():
+    resultado = calcular_costo_ponderado_por_unidad_mango_descartable(
+        cantidad_cajas=[5],
+        unidades_por_caja=[10],
+        costo_por_caja=[100],
+    )
+    assert resultado == 10
+
+
+def test_costo_ponderado_por_unidad_mango_descartable_longitudes_distintas():
+    with pytest.raises(ValueError):
+        calcular_costo_ponderado_por_unidad_mango_descartable(
+            cantidad_cajas=[1, 2],
+            unidades_por_caja=[9],
+            costo_por_caja=[36, 40],
+        )
+
+
+def test_costo_ponderado_por_kg_mango_cc_varias_compras():
+    # Compra 1: 2 cajas de 40 kg a $400 => costo/kg = 10, kilos totales = 80
+    # Compra 2: 3 cajas de 40 kg a $360 => costo/kg = 9, kilos totales = 120
+    # (10*80 + 9*120) / (80+120) = (800 + 1080) / 200 = 9.4
+    resultado = calcular_costo_ponderado_por_kg_mango_cc(
+        cantidad_cajas=[2, 3],
+        costo_por_caja=[400, 360],
+    )
+    assert resultado == 9.4
+
+
+def test_costo_ponderado_por_kg_mango_cc_una_sola_compra():
+    resultado = calcular_costo_ponderado_por_kg_mango_cc(
+        cantidad_cajas=[1],
+        costo_por_caja=[400],
+    )
+    assert resultado == 10
+
+
+def test_costo_ponderado_por_kg_mango_cc_longitudes_distintas():
+    with pytest.raises(ValueError):
+        calcular_costo_ponderado_por_kg_mango_cc(
+            cantidad_cajas=[1, 2],
+            costo_por_caja=[400],
+        )
