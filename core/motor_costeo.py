@@ -16,3 +16,13 @@ def calcular_promedio_ponderado(valores: list[float], cantidades: list[float]) -
 
     suma_ponderada = sum(valor * cantidad for valor, cantidad in zip(valores, cantidades))
     return suma_ponderada / total_cantidad
+
+
+def calcular_costo_promedio_ponderado(cantidades_compradas: list[float], precios: list[float]) -> float:
+    """REGLA 1: costo promedio ponderado por cantidad comprada a cada proveedor."""
+    return calcular_promedio_ponderado(precios, cantidades_compradas)
+
+
+def calcular_kilo_promedio_ponderado_cajon(cantidad_cajones: list[float], kg_por_cajon: list[float]) -> float:
+    """REGLA 2: kilo promedio de un cajón, ponderado por la cantidad de cajones de cada peso."""
+    return calcular_promedio_ponderado(kg_por_cajon, cantidad_cajones)
