@@ -3,9 +3,18 @@ from unittest.mock import patch
 
 import pytest
 
-from core.lector_comandas import PROMPT_EXTRACCION, extraer_comanda
+from core.lector_comandas import (
+    ANTHROPIC_API_KEY_ENV_VAR,
+    PROMPT_EXTRACCION,
+    _detectar_media_type,
+    _limpiar_respuesta_json,
+    _llamar_api_claude,
+    extraer_comanda,
+)
 
 IMAGEN_DE_PRUEBA = b"contenido falso de una imagen"
+IMAGEN_PNG_DE_PRUEBA = b"\x89PNG\r\n\x1a\n" + b"resto de bytes falsos"
+IMAGEN_JPEG_DE_PRUEBA = b"\xff\xd8\xff" + b"resto de bytes falsos"
 
 COMANDA_VALIDA = {
     "proveedor": {"nombre": "Frutas del Sol", "nave": "3", "puesto": "12"},
@@ -80,8 +89,44 @@ def test_prompt_incluye_las_reglas_clave_de_extraccion():
     assert "Granny" in PROMPT_EXTRACCION
 
 
-def test_llamar_api_claude_sin_conectar_lanza_not_implemented():
-    from core.lector_comandas import _llamar_api_claude
+def test_detectar_media_type_png():
+    assert _detectar_media_type(IMAGEN_PNG_DE_PRUEBA) == "image/png"
 
-    with pytest.raises(NotImplementedError):
-        _llamar_api_claude(IMAGEN_DE_PRUEBA)
+
+def test_detectar_media_type_jpeg():
+    assert _detectar_media_type(IMAGEN_JPEG_DE_PRUEBA) == "image/jpeg"
+
+
+def test_detectar_media_type_formato_desconocido_lanza_error():
+    with pytest.raises(ValueError):
+        _detectar_media_type(b"esto no es ni jpeg ni png")
+
+
+def test_limpiar_respuesta_json_sin_backticks_no_cambia():
+    texto = '{"a": 1}'
+    assert _limpiar_respuesta_json(texto) == '{"a": 1}'
+
+
+def test_limpiar_respuesta_json_con_backticks_y_json():
+    texto = '```json\n{"a": 1}\n```'
+    assert _limpiar_respuesta_json(texto) == '{"a": 1}'
+
+
+def test_limpiar_respuesta_json_con_backticks_simples():
+    texto = '```\n{"a": 1}\n```'
+    assert _limpiar_respuesta_json(texto) == '{"a": 1}'
+
+
+def test_extraer_comanda_limpia_backticks_antes_de_parsear():
+    respuesta_con_backticks = '```json\n' + json.dumps(COMANDA_VALIDA) + '\n```'
+    with patch("core.lector_comandas._llamar_api_claude", return_value=respuesta_con_backticks):
+        resultado = extraer_comanda(IMAGEN_DE_PRUEBA)
+
+    assert resultado == COMANDA_VALIDA
+
+
+def test_llamar_api_claude_sin_api_key_lanza_error_claro(monkeypatch):
+    monkeypatch.delenv(ANTHROPIC_API_KEY_ENV_VAR, raising=False)
+
+    with pytest.raises(RuntimeError, match=ANTHROPIC_API_KEY_ENV_VAR):
+        _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)

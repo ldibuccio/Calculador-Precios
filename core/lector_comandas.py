@@ -4,7 +4,18 @@ Este módulo NO hace cálculos de costeo. Solo extrae y valida el JSON crudo
 que devuelve la API; los cálculos siguen viviendo en motor_costeo.py.
 """
 
+import base64
 import json
+import os
+import re
+
+import anthropic
+
+MODELO_LECTOR_COMANDAS = "claude-sonnet-5"
+ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
+
+FIRMA_PNG = b"\x89PNG\r\n\x1a\n"
+FIRMA_JPEG = b"\xff\xd8\xff"
 
 PROMPT_EXTRACCION = """
 Estás leyendo la foto de una comanda de compra de un distribuidor mayorista
@@ -41,30 +52,85 @@ REGLAS DE EXTRACCIÓN:
 - Abreviaciones: "M rojo"/"M.Rojo" = Morrón Rojo, "M verde" = Morrón Verde,
   "Red" = Manzana Red, "Granny" = Manzana Granny, "Pg" = Manzana PG.
 
-No agregues texto antes ni después del JSON.
+Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
+comillas invertidas (backticks) ni bloques de código markdown.
 """
 
 
-def _llamar_api_claude(imagen: bytes) -> str:
-    """Punto de integración con la API de Claude (sin conectar todavía).
+def _detectar_media_type(imagen: bytes) -> str:
+    """Detecta el media_type de una imagen (JPEG o PNG) a partir de su firma de bytes."""
+    if imagen.startswith(FIRMA_PNG):
+        return "image/png"
+    if imagen.startswith(FIRMA_JPEG):
+        return "image/jpeg"
+    raise ValueError("No se pudo detectar el formato de la imagen: debe ser JPEG o PNG")
 
-    Reemplazar esta función por la llamada real (envío de `imagen` junto con
-    PROMPT_EXTRACCION a la API) cuando se conecte la API de verdad. Debe
-    devolver el texto de la respuesta.
-    """
-    raise NotImplementedError("Todavía no está conectada la llamada real a la API de Claude")
+
+def _obtener_api_key() -> str:
+    api_key = os.environ.get(ANTHROPIC_API_KEY_ENV_VAR)
+    if not api_key:
+        raise RuntimeError(
+            f"Falta configurar la variable de entorno {ANTHROPIC_API_KEY_ENV_VAR} con la API key de Anthropic"
+        )
+    return api_key
 
 
-def extraer_comanda(imagen: bytes) -> dict:
+def _limpiar_respuesta_json(texto: str) -> str:
+    """Saca comillas invertidas o bloques de código markdown, por si la API los agrega igual."""
+    texto = texto.strip()
+    texto = re.sub(r"^```(?:json)?\s*", "", texto)
+    texto = re.sub(r"\s*```$", "", texto)
+    return texto.strip()
+
+
+def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
+    """Envía la imagen y el prompt de extracción a la API de Claude y devuelve el texto de la respuesta."""
+    media_type = media_type or _detectar_media_type(imagen)
+    api_key = _obtener_api_key()
+    imagen_base64 = base64.standard_b64encode(imagen).decode("utf-8")
+
+    cliente = anthropic.Anthropic(api_key=api_key)
+
+    try:
+        respuesta = cliente.messages.create(
+            model=MODELO_LECTOR_COMANDAS,
+            max_tokens=2048,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": imagen_base64,
+                            },
+                        },
+                        {"type": "text", "text": PROMPT_EXTRACCION},
+                    ],
+                }
+            ],
+        )
+    except anthropic.APIConnectionError as error:
+        raise RuntimeError(f"No se pudo conectar con la API de Claude: {error}") from error
+    except anthropic.APIStatusError as error:
+        raise RuntimeError(f"La API de Claude devolvió un error ({error.status_code}): {error.message}") from error
+
+    return respuesta.content[0].text
+
+
+def extraer_comanda(imagen: bytes, media_type: str | None = None) -> dict:
     """Extrae los datos crudos de una comanda a partir de una foto.
 
     Devuelve el JSON estructurado ya parseado (dict). Lanza ValueError si la
     respuesta de la API no es un JSON válido o no tiene forma de objeto.
     """
-    respuesta_texto = _llamar_api_claude(imagen)
+    respuesta_texto = _llamar_api_claude(imagen, media_type)
+    respuesta_limpia = _limpiar_respuesta_json(respuesta_texto)
 
     try:
-        datos = json.loads(respuesta_texto)
+        datos = json.loads(respuesta_limpia)
     except json.JSONDecodeError as error:
         raise ValueError(f"La respuesta de la API no es un JSON válido: {error}") from error
 
