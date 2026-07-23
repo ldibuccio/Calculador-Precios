@@ -195,12 +195,12 @@ def test_costo_ponderado_por_cubeta_frutilla_con_aviso_de_cambio():
 
 
 def test_costo_ponderado_por_cubeta_arandano_valor_por_defecto():
-    # Compra 1: 4 cajas de 8 cubetas a $160 => costo/cubeta = 20, cubetas totales = 32
-    # Compra 2: 1 caja de 8 cubetas a $240 => costo/cubeta = 30, cubetas totales = 8
-    # (20*32 + 30*8) / (32+8) = (640 + 240) / 40 = 22
+    # Compra 1: 4 cajas de 12 cubetas a $240 => costo/cubeta = 20, cubetas totales = 48
+    # Compra 2: 1 caja de 12 cubetas a $360 => costo/cubeta = 30, cubetas totales = 12
+    # (20*48 + 30*12) / (48+12) = (960 + 360) / 60 = 22
     resultado = calcular_costo_ponderado_por_cubeta_arandano(
         cantidad_cajas=[4, 1],
-        costo_por_caja=[160, 240],
+        costo_por_caja=[240, 360],
     )
     assert resultado == 22
 

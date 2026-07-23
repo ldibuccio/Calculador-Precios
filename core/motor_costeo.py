@@ -113,9 +113,9 @@ def calcular_costo_ponderado_por_cubeta_frutilla(
 
 
 def calcular_costo_ponderado_por_cubeta_arandano(
-    cantidad_cajas: list[float], costo_por_caja: list[float], cubetas_por_caja: float = 8
+    cantidad_cajas: list[float], costo_por_caja: list[float], cubetas_por_caja: float = 12
 ) -> float:
-    """Arándano: costo ponderado por cubeta (8 cubetas por caja, salvo aviso de cambio)."""
+    """Arándano: costo ponderado por cubeta (12 cubetas por caja, salvo aviso de cambio)."""
     return calcular_costo_ponderado_por_cubeta(cantidad_cajas, costo_por_caja, cubetas_por_caja)
 
 
