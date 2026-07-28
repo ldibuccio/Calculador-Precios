@@ -1,2 +1,6 @@
 pytest
 anthropic
+fastapi
+uvicorn
+psycopg2-binary
+httpx
