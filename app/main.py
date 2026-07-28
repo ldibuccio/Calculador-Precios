@@ -27,3 +27,12 @@ def salud_db() -> dict:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error}") from error
 
     return {"articulos": cantidad_articulos}
+
+
+if __name__ == "__main__":
+    import os
+
+    import uvicorn
+
+    puerto = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=puerto)
