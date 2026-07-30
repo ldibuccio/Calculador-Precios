@@ -36,3 +36,30 @@ def contar_articulos() -> int:
         return cantidad
     finally:
         conexion.close()
+
+
+def listar_articulos() -> list[dict]:
+    """Devuelve todos los artículos (nombre, código interno, merma), ordenados por nombre."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT nombre, codigo_interno, merma_porcentaje FROM articulos ORDER BY nombre")
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def crear_articulo(nombre: str, codigo_interno: str | None, merma_porcentaje: float) -> None:
+    """Inserta un artículo nuevo en la tabla articulos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO articulos (nombre, codigo_interno, merma_porcentaje) VALUES (%s, %s, %s)",
+                (nombre, codigo_interno, merma_porcentaje),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
