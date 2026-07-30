@@ -119,10 +119,6 @@ def calcular_costo_ponderado_por_cubeta_arandano(
     return calcular_costo_ponderado_por_cubeta(cantidad_cajas, costo_por_caja, cubetas_por_caja)
 
 
-DESCUENTO_ESTANDAR = 0.23
-UTILIDAD_ESTANDAR = 0.20
-COSTO_ENVASE_CHICO = 650
-COSTO_ENVASE_GRANDE = 1600
 SIN_ENVASE = 0
 
 
@@ -140,7 +136,7 @@ def costo_por_kilo(
     kg_bulto: float,
     costo_envase: float,
     cantidad_envases: float,
-    descuento: float = DESCUENTO_ESTANDAR,
+    descuento: float,
 ) -> float:
     if descuento == 1:
         raise ValueError("descuento no puede ser 1 (dividiría por cero)")
@@ -153,8 +149,8 @@ def precio_sugerido(
     kg_bulto: float,
     costo_envase: float,
     cantidad_envases: float,
-    descuento: float = DESCUENTO_ESTANDAR,
-    utilidad: float = UTILIDAD_ESTANDAR,
+    descuento: float,
+    utilidad: float,
 ) -> float:
     """La utilidad se aplica solo al costo del producto; el envase se suma sin utilidad."""
     if kg_bulto == 0:
@@ -172,7 +168,7 @@ def utilidad_real(
     costo_bulto: float,
     costo_envase: float,
     cantidad_envases: float,
-    descuento: float = DESCUENTO_ESTANDAR,
+    descuento: float,
 ) -> float:
     costo_total = costo_bulto + costo_envase * cantidad_envases
     if costo_total == 0:

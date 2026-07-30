@@ -1,62 +1,47 @@
 import pytest
 
 from core.fichas import (
-    TIPO_ENVASE_CAJA_CHICA,
-    TIPO_ENVASE_CAJA_GRANDE,
-    TIPO_ENVASE_PERDIDO,
     UNIDAD_VENTA_CUBETA,
     UNIDAD_VENTA_KILO,
     UNIDAD_VENTA_UNIDAD,
     buscar_ficha,
+    buscar_ficha_logistica,
     calcular_cantidad_cajas,
     calcular_palets,
 )
-from core.motor_costeo import COSTO_ENVASE_CHICO, COSTO_ENVASE_GRANDE, SIN_ENVASE
 
 
-def test_buscar_ficha_envase_perdido_por_kilo():
+def test_buscar_ficha_por_kilo():
     ficha = buscar_ficha("Sandía")
-    assert ficha["tipo_envase"] == TIPO_ENVASE_PERDIDO
     assert ficha["unidad_venta"] == UNIDAD_VENTA_KILO
-    assert ficha["costo_envase"] == SIN_ENVASE
     assert "contenido_caja" not in ficha
+    assert "tipo_envase" not in ficha
 
 
-def test_buscar_ficha_envase_perdido_por_cubeta():
+def test_buscar_ficha_por_cubeta():
     for nombre in ("Frutilla", "Arándano"):
         ficha = buscar_ficha(nombre)
-        assert ficha["tipo_envase"] == TIPO_ENVASE_PERDIDO
         assert ficha["unidad_venta"] == UNIDAD_VENTA_CUBETA
         assert ficha["cubetas_por_caja"] == 12
 
 
-def test_buscar_ficha_caja_chica():
+def test_buscar_ficha_zapallito_no_tiene_datos_de_envase():
+    # tipo_envase / contenido_caja ya no viven acá: viven en FICHAS_LOGISTICA
     ficha = buscar_ficha("Zapallito")
-    assert ficha["tipo_envase"] == TIPO_ENVASE_CAJA_CHICA
     assert ficha["unidad_venta"] == UNIDAD_VENTA_KILO
-    assert ficha["costo_envase"] == COSTO_ENVASE_CHICO
-    assert ficha["contenido_caja"] == 6
-
-
-def test_buscar_ficha_caja_grande():
-    ficha = buscar_ficha("Morrón Rojo")
-    assert ficha["tipo_envase"] == TIPO_ENVASE_CAJA_GRANDE
-    assert ficha["unidad_venta"] == UNIDAD_VENTA_KILO
-    assert ficha["costo_envase"] == COSTO_ENVASE_GRANDE
-    assert ficha["contenido_caja"] == 8
+    assert "contenido_caja" not in ficha
+    assert "tipo_envase" not in ficha
 
 
 def test_buscar_ficha_mango_incluye_datos_de_palet():
     ficha = buscar_ficha("Mango")
     assert ficha["unidad_venta"] == UNIDAD_VENTA_UNIDAD
-    assert ficha["contenido_caja"] == 10
     assert ficha["datos_palet"] == {"unidades_por_cajon": 40, "kg_por_cajon": 16}
 
 
 def test_buscar_ficha_palta_incluye_datos_de_palet():
     ficha = buscar_ficha("Palta")
     assert ficha["unidad_venta"] == UNIDAD_VENTA_UNIDAD
-    assert ficha["contenido_caja"] == 50
     assert ficha["datos_palet"] == {"unidades_por_cajon": 80, "kg_por_cajon": 10}
 
 
@@ -65,14 +50,44 @@ def test_buscar_ficha_articulo_inexistente_lanza_error():
         buscar_ficha("Articulo que no existe")
 
 
+def test_buscar_ficha_logistica_caja_chica():
+    ficha = buscar_ficha_logistica("Zapallito", "Día")
+    assert ficha["envase"] == "Caja Chica Día"
+    assert ficha["contenido_caja"] == 6
+
+
+def test_buscar_ficha_logistica_caja_grande():
+    ficha = buscar_ficha_logistica("Morrón Rojo", "Día")
+    assert ficha["envase"] == "Caja Grande Día"
+    assert ficha["contenido_caja"] == 8
+
+
+def test_buscar_ficha_logistica_sin_envase_compartido():
+    ficha = buscar_ficha_logistica("Sandía", "Día")
+    assert ficha["envase"] is None
+    assert ficha["contenido_caja"] is None
+
+
+def test_buscar_ficha_logistica_mango_y_palta():
+    assert buscar_ficha_logistica("Mango", "Día") == {"envase": "Caja Chica Día", "contenido_caja": 10}
+    assert buscar_ficha_logistica("Palta", "Día") == {"envase": "Caja Chica Día", "contenido_caja": 50}
+
+
+def test_buscar_ficha_logistica_combinacion_inexistente_lanza_error():
+    with pytest.raises(ValueError):
+        buscar_ficha_logistica("Zapallito", "Cliente que no existe")
+
+
 def test_calcular_cantidad_cajas_ejemplo_zapallito():
     # 20 kg de zapallito / 6 = 3.33..., sin redondear
-    resultado = calcular_cantidad_cajas(20, buscar_ficha("Zapallito")["contenido_caja"])
+    contenido_caja = buscar_ficha_logistica("Zapallito", "Día")["contenido_caja"]
+    resultado = calcular_cantidad_cajas(20, contenido_caja)
     assert resultado == pytest.approx(20 / 6)
 
 
 def test_calcular_cantidad_cajas_division_exacta():
-    resultado = calcular_cantidad_cajas(18, buscar_ficha("Morrón Verde")["contenido_caja"])
+    contenido_caja = buscar_ficha_logistica("Morrón Verde", "Día")["contenido_caja"]
+    resultado = calcular_cantidad_cajas(18, contenido_caja)
     assert resultado == 4.5
 
 

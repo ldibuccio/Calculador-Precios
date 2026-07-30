@@ -1,8 +1,7 @@
 import pytest
 
+from core.clientes import buscar_cliente, buscar_envase
 from core.motor_costeo import (
-    COSTO_ENVASE_CHICO,
-    COSTO_ENVASE_GRANDE,
     SIN_ENVASE,
     calcular_costo_por_presentacion,
     calcular_costo_ponderado_por_cubeta,
@@ -20,6 +19,12 @@ from core.motor_costeo import (
     precio_sugerido,
     utilidad_real,
 )
+
+CLIENTE_DIA = buscar_cliente("Día")
+DESCUENTO_DIA = CLIENTE_DIA["descuento"]
+UTILIDAD_DIA = CLIENTE_DIA["utilidad_objetivo"]
+COSTO_ENVASE_CHICO = buscar_envase("Caja Chica Día")["costo"]
+COSTO_ENVASE_GRANDE = buscar_envase("Caja Grande Día")["costo"]
 
 
 def test_promedio_ponderado_pesos_iguales():
@@ -233,46 +238,90 @@ def test_costo_por_kilo_base_kg_bulto_cero():
 
 def test_costo_por_kilo_sin_envase():
     # base = 77 => 77 / (1 - 0.23) = 100
-    resultado = costo_por_kilo(costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    resultado = costo_por_kilo(
+        costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0, descuento=DESCUENTO_DIA
+    )
     assert resultado == 100
 
 
 def test_costo_por_kilo_con_envase_grande():
     # base = (5000 + 1600*1) / 20 = 330 => 330 / 0.77
     resultado = costo_por_kilo(
-        costo_bulto=5000, kg_bulto=20, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1
+        costo_bulto=5000, kg_bulto=20, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1, descuento=DESCUENTO_DIA
     )
     assert resultado == pytest.approx(330 / 0.77)
 
 
 def test_precio_sugerido_sin_envase():
     # base = 77 => 77*1.2 / 0.77 = 120
-    resultado = precio_sugerido(costo_bulto=770, kg_bulto=10, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    resultado = precio_sugerido(
+        costo_bulto=770,
+        kg_bulto=10,
+        costo_envase=SIN_ENVASE,
+        cantidad_envases=0,
+        descuento=DESCUENTO_DIA,
+        utilidad=UTILIDAD_DIA,
+    )
     assert resultado == pytest.approx(120)
 
 
 def test_precio_sugerido_con_envase_chico():
     # el envase no lleva utilidad: (100*1.2 + 65) / 0.77 = 185 / 0.77
-    resultado = precio_sugerido(costo_bulto=1000, kg_bulto=10, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=1)
+    resultado = precio_sugerido(
+        costo_bulto=1000,
+        kg_bulto=10,
+        costo_envase=COSTO_ENVASE_CHICO,
+        cantidad_envases=1,
+        descuento=DESCUENTO_DIA,
+        utilidad=UTILIDAD_DIA,
+    )
     assert resultado == pytest.approx(185 / 0.77)
 
 
 def test_utilidad_real_vendiendo_al_costo_por_kilo_da_cero():
     # Si vendo justo al costo_por_kilo, la utilidad real tiene que dar 0
-    resultado = utilidad_real(precio_dia=100, kg_bulto=10, costo_bulto=770, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    resultado = utilidad_real(
+        precio_dia=100,
+        kg_bulto=10,
+        costo_bulto=770,
+        costo_envase=SIN_ENVASE,
+        cantidad_envases=0,
+        descuento=DESCUENTO_DIA,
+    )
     assert resultado == 0
 
 
 def test_utilidad_real_costo_total_cero():
     with pytest.raises(ValueError):
-        utilidad_real(precio_dia=100, kg_bulto=10, costo_bulto=0, costo_envase=SIN_ENVASE, cantidad_envases=0)
+        utilidad_real(
+            precio_dia=100,
+            kg_bulto=10,
+            costo_bulto=0,
+            costo_envase=SIN_ENVASE,
+            cantidad_envases=0,
+            descuento=DESCUENTO_DIA,
+        )
 
 
 def test_tomate_redondo_envase_chico():
-    resultado_costo = costo_por_kilo(costo_bulto=28000, kg_bulto=16, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=3)
-    resultado_precio = precio_sugerido(costo_bulto=28000, kg_bulto=16, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=3)
+    resultado_costo = costo_por_kilo(
+        costo_bulto=28000, kg_bulto=16, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=3, descuento=DESCUENTO_DIA
+    )
+    resultado_precio = precio_sugerido(
+        costo_bulto=28000,
+        kg_bulto=16,
+        costo_envase=COSTO_ENVASE_CHICO,
+        cantidad_envases=3,
+        descuento=DESCUENTO_DIA,
+        utilidad=UTILIDAD_DIA,
+    )
     resultado_utilidad = utilidad_real(
-        precio_dia=4200, kg_bulto=16, costo_bulto=28000, costo_envase=COSTO_ENVASE_CHICO, cantidad_envases=3
+        precio_dia=4200,
+        kg_bulto=16,
+        costo_bulto=28000,
+        costo_envase=COSTO_ENVASE_CHICO,
+        cantidad_envases=3,
+        descuento=DESCUENTO_DIA,
     )
     assert resultado_costo == pytest.approx(2431.01, abs=0.01)
     assert resultado_precio == pytest.approx(2885.55, abs=0.01)
@@ -280,10 +329,24 @@ def test_tomate_redondo_envase_chico():
 
 
 def test_mandarina_envase_grande():
-    resultado_costo = costo_por_kilo(costo_bulto=7000, kg_bulto=17, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1)
-    resultado_precio = precio_sugerido(costo_bulto=7000, kg_bulto=17, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1)
+    resultado_costo = costo_por_kilo(
+        costo_bulto=7000, kg_bulto=17, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1, descuento=DESCUENTO_DIA
+    )
+    resultado_precio = precio_sugerido(
+        costo_bulto=7000,
+        kg_bulto=17,
+        costo_envase=COSTO_ENVASE_GRANDE,
+        cantidad_envases=1,
+        descuento=DESCUENTO_DIA,
+        utilidad=UTILIDAD_DIA,
+    )
     resultado_utilidad = utilidad_real(
-        precio_dia=900, kg_bulto=17, costo_bulto=7000, costo_envase=COSTO_ENVASE_GRANDE, cantidad_envases=1
+        precio_dia=900,
+        kg_bulto=17,
+        costo_bulto=7000,
+        costo_envase=COSTO_ENVASE_GRANDE,
+        cantidad_envases=1,
+        descuento=DESCUENTO_DIA,
     )
     assert resultado_costo == pytest.approx(656.99, abs=0.01)
     assert resultado_precio == pytest.approx(763.94, abs=0.01)
@@ -291,10 +354,24 @@ def test_mandarina_envase_grande():
 
 
 def test_manzana_granny_sin_envase():
-    resultado_costo = costo_por_kilo(costo_bulto=60000, kg_bulto=18, costo_envase=SIN_ENVASE, cantidad_envases=0)
-    resultado_precio = precio_sugerido(costo_bulto=60000, kg_bulto=18, costo_envase=SIN_ENVASE, cantidad_envases=0)
+    resultado_costo = costo_por_kilo(
+        costo_bulto=60000, kg_bulto=18, costo_envase=SIN_ENVASE, cantidad_envases=0, descuento=DESCUENTO_DIA
+    )
+    resultado_precio = precio_sugerido(
+        costo_bulto=60000,
+        kg_bulto=18,
+        costo_envase=SIN_ENVASE,
+        cantidad_envases=0,
+        descuento=DESCUENTO_DIA,
+        utilidad=UTILIDAD_DIA,
+    )
     resultado_utilidad = utilidad_real(
-        precio_dia=5500, kg_bulto=18, costo_bulto=60000, costo_envase=SIN_ENVASE, cantidad_envases=0
+        precio_dia=5500,
+        kg_bulto=18,
+        costo_bulto=60000,
+        costo_envase=SIN_ENVASE,
+        cantidad_envases=0,
+        descuento=DESCUENTO_DIA,
     )
     assert resultado_costo == pytest.approx(4329.00, abs=0.01)
     assert resultado_precio == pytest.approx(5194.81, abs=0.01)

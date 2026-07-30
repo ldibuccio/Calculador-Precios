@@ -28,18 +28,17 @@ editables desde la app en vez de fijas en el código.
 | id | identificador interno |
 | nombre | único, editable (ej. "Tomate Redondo") |
 | código_interno | código propio del artículo, para no confundirlo con otro aunque cambie el nombre |
-| tipo_envase | perdido / caja_chica / caja_grande |
-| unidad_venta | kilo / unidad / cubeta |
-| contenido_caja | cuánto trae la caja para este artículo (vacío si es envase perdido) |
-| cubetas_por_caja | solo si se vende por cubeta |
-| unidades_por_cajón / kg_por_cajón | solo para artículos que se venden por unidad pero se pesan por palet (Mango, Palta) |
+| unidad_venta | kilo / unidad / cubeta — intrínseco del producto, no depende del cliente |
+| cubetas_por_caja | solo si se vende por cubeta; cómo llega el cajón del productor |
+| unidades_por_cajón / kg_por_cajón | solo para artículos que se venden por unidad pero se pesan por palet (Mango, Palta); dato de recepción, no de reparto a un cliente |
 | merma_porcentaje | porcentaje de merma esperado del artículo (0 = sin merma) |
 | activo | para dar de baja un artículo sin borrar su historial |
 
-> **Nota (varios clientes):** tipo_envase y contenido_caja acá funcionan como
-> una configuración "por defecto". Cuando el envase o el contenido de la caja
-> cambia según el cliente, se usa la tabla **Fichas de logística por cliente**
-> (punto 12) en vez de estos campos.
+> **Nota:** `tipo_envase` y `contenido_caja` NO viven acá — un mismo
+> artículo puede repartirse en un envase distinto según el cliente, así que
+> esos dos campos viven en **Fichas de logística por cliente** (punto 12).
+> Acá solo queda lo que es intrínseco al producto en sí, sin importar a qué
+> cliente se le venda.
 
 ## 2. Proveedores
 
@@ -155,13 +154,18 @@ están en el prompt de `lector_comandas.py` (como "M rojo = Morrón Rojo").
 
 ## 8. Parámetros del negocio
 
-Reemplazan a las constantes fijas del código (`DESCUENTO_ESTANDAR`,
-`UTILIDAD_ESTANDAR`, `COSTO_ENVASE_CHICO`, `COSTO_ENVASE_GRANDE`,
-`KG_POR_PALET_ESTANDAR`), con historial de cambios.
+Guarda lo que sigue siendo **genuinamente global** (no depende del
+cliente), con historial de cambios. Por ahora, el único parámetro acá es
+`kg_por_palet`.
+
+`descuento_estandar`, `utilidad_estandar`, `costo_envase_chico` y
+`costo_envase_grande` **ya no viven acá**: el descuento y la utilidad
+ahora son por cliente (ver punto 10), y el costo de envase vive en cada
+Envase (ver punto 11).
 
 | Campo | Descripción |
 |---|---|
-| nombre_parámetro | ej. "descuento_estandar" |
+| nombre_parámetro | ej. "kg_por_palet" |
 | valor | — |
 | vigente_desde | fecha a partir de la cual rige este valor |
 
@@ -232,18 +236,18 @@ historial.
 
 ## 12. Fichas de logística por cliente
 
-Qué envase usa cada artículo para cada cliente, y cuánto contenido trae la
-caja en ese caso puntual. No reemplaza a tipo_envase/contenido_caja de
-Artículos (que quedan como configuración por defecto): esta tabla permite
-que ese dato varíe según el cliente cuando haga falta.
+**Única fuente de verdad** de qué envase usa cada artículo para cada
+cliente, y cuánto contenido trae la caja en ese caso puntual. Reemplaza a
+los campos `tipo_envase`/`contenido_caja` que antes vivían (únicos, sin
+distinción de cliente) en Artículos.
 
 | Campo | Descripción |
 |---|---|
 | id | — |
 | artículo | — |
 | cliente | — |
-| envase | vacío si es envase perdido (no usa caja compartida) |
-| contenido_caja | cuánto trae la caja para este artículo + cliente (vacío si es envase perdido) |
+| envase | vacío si no usa un envase compartido (se entrega en su propio cajón) |
+| contenido_caja | cuánto trae la caja para este artículo + cliente (vacío si no usa envase compartido) |
 
 ---
 
@@ -293,13 +297,16 @@ Cliente y el Envase que usa.
 3. **Precios del día sin distinción de sucursal**: un precio por artículo
    por día, válido para los tres depósitos.
 
-## Pendiente a revisar
-
-Con la llegada de Clientes, los parámetros globales `descuento_estandar`,
-`utilidad_estandar`, `costo_envase_chico` y `costo_envase_grande` que están
-en `parametros_historial` quedaron parcialmente reemplazados por el
-descuento/utilidad de cada cliente y el costo de sus propios envases. No
-los borré ni los dejé de usar en el código todavía porque no se pidió
-explícitamente — falta decidir si se retiran, o si quedan como un
-"cliente por defecto" para casos sin cliente asignado. `kg_por_palet` sigue
-siendo genuinamente global (no depende del cliente).
+4. **Modelo final de logística por cliente**: `tipo_envase` y
+   `contenido_caja` se sacaron de Artículos y viven solo en Fichas de
+   logística por cliente (punto 12). `unidad_venta`, `cubetas_por_caja` y
+   los datos de palet (`unidades_por_cajón`/`kg_por_cajón`) se quedaron en
+   Artículos porque son intrínsecos del producto — describen cómo llega el
+   cajón del productor, antes de repartir nada a ningún cliente — y no
+   varían según a quién se le venda.
+5. **Parámetros globales viejos retirados**: `descuento_estandar`,
+   `utilidad_estandar`, `costo_envase_chico` y `costo_envase_grande` se
+   borraron de `parametros_historial` — ahora el descuento y la utilidad
+   son por cliente (punto 10), y el costo de envase vive en cada Envase
+   (punto 11). Solo `kg_por_palet` sigue en Parámetros por ser
+   genuinamente global.
