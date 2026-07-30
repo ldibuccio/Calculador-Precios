@@ -144,9 +144,9 @@ alter table pedidos_supermercado add constraint pedidos_supermercado_fecha_clien
 insert into clientes (nombre) values ('Día');
 
 insert into clientes_parametros_historial (cliente_id, nombre_parametro, valor, vigente_desde)
-select id, 'descuento', 0.23, '2020-01-01' from clientes where nombre = 'Día'
+select id, 'descuento', 0.23, '2020-01-01'::date from clientes where nombre = 'Día'
 union all
-select id, 'utilidad_objetivo', 0.20, '2020-01-01' from clientes where nombre = 'Día';
+select id, 'utilidad_objetivo', 0.20, '2020-01-01'::date from clientes where nombre = 'Día';
 
 insert into envases (cliente_id, nombre)
 select id, 'Caja Chica Día' from clientes where nombre = 'Día'
@@ -154,9 +154,9 @@ union all
 select id, 'Caja Grande Día' from clientes where nombre = 'Día';
 
 insert into envases_costo_historial (envase_id, costo, vigente_desde)
-select id, 650, '2020-01-01' from envases where nombre = 'Caja Chica Día'
+select id, 650, '2020-01-01'::date from envases where nombre = 'Caja Chica Día'
 union all
-select id, 1600, '2020-01-01' from envases where nombre = 'Caja Grande Día';
+select id, 1600, '2020-01-01'::date from envases where nombre = 'Caja Grande Día';
 
 -- Ficha de logistica de los 29 articulos para el cliente "Dia", con la
 -- misma unidad de venta / envase / contenido de caja que ya tenian.
