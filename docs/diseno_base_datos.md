@@ -33,7 +33,13 @@ editables desde la app en vez de fijas en el código.
 | contenido_caja | cuánto trae la caja para este artículo (vacío si es envase perdido) |
 | cubetas_por_caja | solo si se vende por cubeta |
 | unidades_por_cajón / kg_por_cajón | solo para artículos que se venden por unidad pero se pesan por palet (Mango, Palta) |
+| merma_porcentaje | porcentaje de merma esperado del artículo (0 = sin merma) |
 | activo | para dar de baja un artículo sin borrar su historial |
+
+> **Nota (varios clientes):** tipo_envase y contenido_caja acá funcionan como
+> una configuración "por defecto". Cuando el envase o el contenido de la caja
+> cambia según el cliente, se usa la tabla **Fichas de logística por cliente**
+> (punto 12) en vez de estos campos.
 
 ## 2. Proveedores
 
@@ -68,6 +74,10 @@ Cada renglón que carga el comprador.
 Varias compras del mismo día/artículo/proveedor son las que el motor de
 costeo promedia ponderando por cantidad.
 
+> **Nota (varios clientes):** el costo de compra queda único, sin distinción
+> de cliente. No tiene cliente_id: se compra igual sin importar a qué
+> cliente se le vaya a vender después.
+
 ## 4. Recepción
 
 Lo que realmente entra al depósito; puede no coincidir con lo comprado.
@@ -92,6 +102,7 @@ Llega por mail al mediodía, dividido en tres depósitos.
 |---|---|
 | id | — |
 | fecha_operación | — |
+| cliente | a qué cliente corresponde el pedido |
 | sucursal | VL / BZ / GR |
 | artículo | — |
 | cantidad | ya sumada dentro de esa sucursal si el mail repite el artículo |
@@ -111,12 +122,14 @@ Los precios negociados con el supermercado.
 |---|---|
 | id | — |
 | fecha_operación | — |
+| cliente | a qué cliente corresponde el precio negociado |
 | artículo | — |
 | precio | — |
 
-Un precio por artículo por día, sin distinción de sucursal (el mismo precio
-aplica a los tres depósitos). Puede cambiar de un día a otro sin riesgo de
-confusión porque cada artículo tiene su código propio y estable.
+Un precio por artículo, por día y por cliente, sin distinción de sucursal
+(el mismo precio aplica a los tres depósitos de un mismo cliente). Puede
+cambiar de un día a otro sin riesgo de confusión porque cada artículo tiene
+su código propio y estable.
 
 ## 7. Aprendizaje (memoria de abreviaturas)
 
@@ -174,6 +187,64 @@ corrige un precio o un pedido, este registro se vuelve a calcular.
 | cantidad_cajas / palets | — |
 | recalculado_el | última vez que se recalculó |
 
+## 10. Clientes
+
+Antes el sistema asumía un solo cliente implícito (el supermercado "Día"),
+con un descuento y una utilidad únicos y globales. Ahora cada cliente tiene
+los suyos propios, con historial de vigencia (mismo criterio que
+Parámetros del negocio: un cambio de hoy no mueve los días pasados).
+
+| Campo | Descripción |
+|---|---|
+| id | — |
+| nombre | único (ej. "Día") |
+| activo | para dar de baja un cliente sin borrar su historial |
+
+**Historial de descuento y utilidad por cliente:**
+
+| Campo | Descripción |
+|---|---|
+| cliente | — |
+| nombre_parámetro | 'descuento' o 'utilidad_objetivo' |
+| valor | — |
+| vigente_desde | fecha a partir de la cual rige este valor |
+
+## 11. Envases
+
+Antes el costo de envase (chico/grande) era único y global. Ahora cada
+cliente tiene sus propios envases, cada uno con su propio costo con
+historial.
+
+| Campo | Descripción |
+|---|---|
+| id | — |
+| cliente | dueño de este envase |
+| nombre | ej. "Caja Chica Día" |
+| activo | — |
+
+**Historial de costo del envase:**
+
+| Campo | Descripción |
+|---|---|
+| envase | — |
+| costo | — |
+| vigente_desde | fecha a partir de la cual rige este costo |
+
+## 12. Fichas de logística por cliente
+
+Qué envase usa cada artículo para cada cliente, y cuánto contenido trae la
+caja en ese caso puntual. No reemplaza a tipo_envase/contenido_caja de
+Artículos (que quedan como configuración por defecto): esta tabla permite
+que ese dato varíe según el cliente cuando haga falta.
+
+| Campo | Descripción |
+|---|---|
+| id | — |
+| artículo | — |
+| cliente | — |
+| envase | vacío si es envase perdido (no usa caja compartida) |
+| contenido_caja | cuánto trae la caja para este artículo + cliente (vacío si es envase perdido) |
+
 ---
 
 ## Relaciones
@@ -186,19 +257,30 @@ erDiagram
     ARTICULOS ||--o{ RECEPCION : ""
     PROVEEDORES ||--o{ RECEPCION : ""
     ARTICULOS ||--o{ PEDIDO_SUPERMERCADO : ""
+    CLIENTES ||--o{ PEDIDO_SUPERMERCADO : ""
     ARTICULOS ||--o{ PRECIOS_DIA : ""
+    CLIENTES ||--o{ PRECIOS_DIA : ""
     PROVEEDORES ||--o{ APRENDIZAJE_ARTICULOS : ""
     ARTICULOS ||--o{ APRENDIZAJE_ARTICULOS : ""
     PROVEEDORES ||--o{ APRENDIZAJE_PROVEEDORES : ""
     ARTICULOS ||--o{ RESULTADOS : ""
+    CLIENTES ||--o{ CLIENTES_PARAMETROS_HISTORIAL : ""
+    CLIENTES ||--o{ ENVASES : ""
+    ENVASES ||--o{ ENVASES_COSTO_HISTORIAL : ""
+    ARTICULOS ||--o{ FICHAS_LOGISTICA : ""
+    CLIENTES ||--o{ FICHAS_LOGISTICA : ""
+    ENVASES ||--o{ FICHAS_LOGISTICA : ""
 ```
 
-Artículos y Proveedores son los catálogos de donde cuelga todo lo demás.
-Compras, Recepción, Pedido del supermercado y Precios del día apuntan a un
-artículo (y las que corresponde, a un proveedor), agrupados por
-fecha_operación. Aprendizaje conecta texto crudo con artículos/proveedores.
-Parámetros y Resultados no dependen de nada: Parámetros alimenta el
-cálculo, y Resultados es la salida.
+Artículos, Proveedores y Clientes son los catálogos de donde cuelga todo lo
+demás. Compras, Recepción, Pedido del supermercado y Precios del día
+apuntan a un artículo (y las que corresponde, a un proveedor y/o cliente),
+agrupados por fecha_operación. Aprendizaje conecta texto crudo con
+artículos/proveedores. Parámetros y Resultados no dependen de nada:
+Parámetros alimenta el cálculo, y Resultados es la salida. Clientes tiene
+su propio historial de descuento/utilidad y sus propios Envases (con su
+propio historial de costo); Fichas de logística conecta un Artículo con un
+Cliente y el Envase que usa.
 
 ## Decisiones confirmadas
 
@@ -210,3 +292,14 @@ cálculo, y Resultados es la salida.
    estadísticas futuras (por ejemplo, rechazos por depósito).
 3. **Precios del día sin distinción de sucursal**: un precio por artículo
    por día, válido para los tres depósitos.
+
+## Pendiente a revisar
+
+Con la llegada de Clientes, los parámetros globales `descuento_estandar`,
+`utilidad_estandar`, `costo_envase_chico` y `costo_envase_grande` que están
+en `parametros_historial` quedaron parcialmente reemplazados por el
+descuento/utilidad de cada cliente y el costo de sus propios envases. No
+los borré ni los dejé de usar en el código todavía porque no se pidió
+explícitamente — falta decidir si se retiran, o si quedan como un
+"cliente por defecto" para casos sin cliente asignado. `kg_por_palet` sigue
+siendo genuinamente global (no depende del cliente).
