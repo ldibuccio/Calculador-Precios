@@ -1,49 +1,39 @@
--- ============================================================================
--- Calculador de Precios — Migración final: clientes, envases y logística
+-- Calculador de Precios: migracion final de clientes, envases y logistica
 --
 -- Deja la base en su estado final correcto para el modelo de "varios
--- clientes". Es seguro correrlo tanto si NUNCA corriste
+-- clientes". Es seguro correrlo tanto si nunca corriste
 -- db/agregar_clientes_envases.sql, como si ya lo corriste antes: todo lo
--- que crea, primero lo borra si existía (DROP ... IF EXISTS), así no
--- importa desde qué estado partís.
+-- que crea, primero lo borra si existia (drop ... if exists), asi no
+-- importa desde que estado partis.
 --
--- La base solo tiene datos de prueba, así que se borra y recrea lo que
--- haga falta sin problema. Todo corre en una sola transacción: si algo
+-- La base solo tiene datos de prueba, asi que se borra y recrea lo que
+-- haga falta sin problema. Todo corre en una sola transaccion: si algo
 -- falla a mitad de camino, no queda nada a medio migrar.
 --
--- Correr DESPUÉS de db/schema.sql y db/seed_datos_iniciales.sql, a mano en
--- el editor SQL de Supabase. NO se ejecuta acá.
--- ============================================================================
+-- Correr DESPUES de db/schema.sql y db/seed_datos_iniciales.sql, a mano en
+-- el editor SQL de Supabase. NO se ejecuta aca.
 
 begin;
 
--- ----------------------------------------------------------------------------
--- 1. Limpiar columnas de logística "por defecto" en articulos
+-- 1. Limpiar columnas de logistica "por defecto" en articulos
 -- tipo_envase, contenido_caja y unidad_venta pasan a fichas_logistica (por
--- artículo + cliente): el mismo artículo puede venderse por kilo para un
+-- articulo + cliente): el mismo articulo puede venderse por kilo para un
 -- cliente y por unidad para otro. cubetas_por_caja, unidades_por_cajon y
--- kg_por_cajon SE QUEDAN en articulos: describen cómo llega el cajón del
--- productor al depósito, antes de repartir nada a ningún cliente.
--- ----------------------------------------------------------------------------
+-- kg_por_cajon se quedan en articulos: describen como llega el cajon del
+-- productor al deposito, antes de repartir nada a ningun cliente.
 alter table articulos drop column if exists tipo_envase;
 alter table articulos drop column if exists contenido_caja;
 alter table articulos drop column if exists unidad_venta;
 
-
--- ----------------------------------------------------------------------------
--- 2. Borrar los parámetros globales que ya no se usan
+-- 2. Borrar los parametros globales que ya no se usan
 -- Ahora el descuento y la utilidad son por cliente, y los costos de envase
--- están en la tabla envases. kg_por_palet sigue siendo global (no depende
+-- estan en la tabla envases. kg_por_palet sigue siendo global (no depende
 -- del cliente) y no se toca.
--- ----------------------------------------------------------------------------
 delete from parametros_historial
 where nombre_parametro in ('descuento_estandar', 'utilidad_estandar', 'costo_envase_chico', 'costo_envase_grande');
 
-
--- ----------------------------------------------------------------------------
 -- 3. Recrear de cero clientes / envases / fichas_logistica
--- (por si ya existían de una corrida anterior de agregar_clientes_envases.sql)
--- ----------------------------------------------------------------------------
+-- (por si ya existian de una corrida anterior de agregar_clientes_envases.sql)
 drop table if exists fichas_logistica cascade;
 drop table if exists envases_costo_historial cascade;
 drop table if exists envases cascade;
@@ -58,19 +48,16 @@ alter table pedidos_supermercado drop constraint if exists pedidos_supermercado_
 alter table pedidos_supermercado drop constraint if exists pedidos_supermercado_fecha_operacion_sucursal_articulo_id_key;
 alter table pedidos_supermercado drop column if exists cliente_id;
 
-
--- ----------------------------------------------------------------------------
 -- 3b. Compras: reemplazar cantidad/unidad por los dos datos crudos
--- Para costear el mismo artículo de varias formas (por kilo o por la
--- fracción que corresponda, según el cliente), se cargan los DOS datos
--- crudos de la misma compra: cuántos kilos y cuánta "fracción" (unidad o
--- cubeta, nunca ambas para el mismo artículo) se compró (ej. mango: 10
--- unidades, 4 kg). Sin factores de conversión: el sistema deriva costo por
--- kilo (importe / cantidad_kilos) y costo por fracción
--- (importe / cantidad_fraccion) directamente de estos dos números. Qué
--- significa "fracción" para cada artículo (unidad o cubeta) lo determina
+-- Para costear el mismo articulo de varias formas (por kilo o por la
+-- fraccion que corresponda, segun el cliente), se cargan los dos datos
+-- crudos de la misma compra: cuantos kilos y cuanta "fraccion" (unidad o
+-- cubeta, nunca ambas para el mismo articulo) se compro (ej. mango: 10
+-- unidades, 4 kg). Sin factores de conversion: el sistema deriva costo por
+-- kilo (importe / cantidad_kilos) y costo por fraccion
+-- (importe / cantidad_fraccion) directamente de estos dos numeros. Que
+-- significa "fraccion" para cada articulo (unidad o cubeta) lo determina
 -- su unidad_venta en fichas_logistica.
--- ----------------------------------------------------------------------------
 alter table compras drop column if exists cantidad;
 alter table compras drop column if exists unidad;
 
@@ -79,10 +66,7 @@ alter table compras add column cantidad_fraccion numeric;
 alter table compras add constraint compras_cantidad_cargada_check
     check (cantidad_kilos is not null or cantidad_fraccion is not null);
 
-
--- ----------------------------------------------------------------------------
--- 4. CLIENTES
--- ----------------------------------------------------------------------------
+-- 4. Clientes
 create table clientes (
     id              bigint generated always as identity primary key,
     nombre          text not null unique,
@@ -91,7 +75,7 @@ create table clientes (
     actualizado_en  timestamptz not null default now()
 );
 
-comment on table clientes is 'Clientes a los que se les vende (ej. supermercado Día). Cada uno con su propio descuento y utilidad objetivo.';
+comment on table clientes is 'Clientes a los que se les vende (ej. supermercado Dia). Cada uno con su propio descuento y utilidad objetivo.';
 
 create table clientes_parametros_historial (
     id                bigint generated always as identity primary key,
@@ -105,21 +89,18 @@ create table clientes_parametros_historial (
 
 comment on table clientes_parametros_historial is 'Descuento y utilidad objetivo de cada cliente, con historial por fecha de vigencia.';
 
-
--- ----------------------------------------------------------------------------
--- 5. ENVASES
--- ----------------------------------------------------------------------------
+-- 5. Envases
 create table envases (
     id              bigint generated always as identity primary key,
     cliente_id      bigint not null references clientes (id),
-    nombre          text not null, -- ej. 'Caja Chica Día'
+    nombre          text not null, -- ej. 'Caja Chica Dia'
     activo          boolean not null default true,
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now(),
     unique (cliente_id, nombre)
 );
 
-comment on table envases is 'Envases que usa cada cliente (ej. Caja Chica Día, Caja Grande Día), con su costo.';
+comment on table envases is 'Envases que usa cada cliente (ej. Caja Chica Dia, Caja Grande Dia), con su costo.';
 
 create table envases_costo_historial (
     id              bigint generated always as identity primary key,
@@ -132,42 +113,33 @@ create table envases_costo_historial (
 
 comment on table envases_costo_historial is 'Costo de cada envase, con historial por fecha de vigencia.';
 
-
--- ----------------------------------------------------------------------------
--- 6. FICHAS_LOGISTICA
--- Única fuente de verdad de en qué unidad se vende cada artículo para cada
--- cliente, qué envase usa, y cuánto contenido trae la caja en ese caso
--- puntual. El mismo artículo puede tener unidad_venta distinta según el
+-- 6. Fichas_logistica
+-- Unica fuente de verdad de en que unidad se vende cada articulo para cada
+-- cliente, que envase usa, y cuanto contenido trae la caja en ese caso
+-- puntual. El mismo articulo puede tener unidad_venta distinta segun el
 -- cliente (ej. Mango: un cliente lo compra por unidad, otro por kilo).
--- ----------------------------------------------------------------------------
 create table fichas_logistica (
     id              bigint generated always as identity primary key,
     articulo_id     bigint not null references articulos (id),
     cliente_id      bigint not null references clientes (id),
     unidad_venta    text not null check (unidad_venta in ('kilo', 'unidad', 'cubeta')),
-    envase_id       bigint references envases (id), -- vacío si no usa un envase compartido
-    contenido_caja  numeric, -- cuánto trae la caja para este artículo + cliente (vacío si no usa envase compartido)
+    envase_id       bigint references envases (id), -- vacio si no usa un envase compartido
+    contenido_caja  numeric, -- cuanto trae la caja para este articulo + cliente (vacio si no usa envase compartido)
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now(),
     unique (articulo_id, cliente_id)
 );
 
-comment on table fichas_logistica is 'Ficha de logística por artículo y cliente: unidad de venta, qué envase usa y contenido de la caja.';
+comment on table fichas_logistica is 'Ficha de logistica por articulo y cliente: unidad de venta, que envase usa y contenido de la caja.';
 
-
--- ----------------------------------------------------------------------------
 -- 7. cliente_id en precios_dia y pedidos_supermercado
--- ----------------------------------------------------------------------------
 alter table precios_dia add column cliente_id bigint references clientes (id);
 alter table precios_dia add constraint precios_dia_fecha_cliente_articulo_key unique (fecha_operacion, cliente_id, articulo_id);
 
 alter table pedidos_supermercado add column cliente_id bigint references clientes (id);
 alter table pedidos_supermercado add constraint pedidos_supermercado_fecha_cliente_sucursal_articulo_key unique (fecha_operacion, cliente_id, sucursal, articulo_id);
 
-
--- ============================================================================
--- SEED: cliente "Día", sus envases, y la logística de los 29 artículos
--- ============================================================================
+-- Seed: cliente "Dia", sus envases, y la logistica de los 29 articulos
 
 insert into clientes (nombre) values ('Día');
 
@@ -186,8 +158,8 @@ select id, 650, '2020-01-01' from envases where nombre = 'Caja Chica Día'
 union all
 select id, 1600, '2020-01-01' from envases where nombre = 'Caja Grande Día';
 
--- Ficha de logística de los 29 artículos para el cliente "Día", con la
--- misma unidad de venta / envase / contenido de caja que ya tenían.
+-- Ficha de logistica de los 29 articulos para el cliente "Dia", con la
+-- misma unidad de venta / envase / contenido de caja que ya tenian.
 insert into fichas_logistica (articulo_id, cliente_id, unidad_venta, envase_id, contenido_caja)
 select a.id, cl.id, v.unidad_venta, e.id, v.contenido_caja
 from (values
@@ -206,7 +178,7 @@ from (values
     -- Sin envase compartido (envase perdido), por cubeta
     ('Frutilla',        'cubeta', null::text,       null::numeric),
     ('Arándano',        'cubeta', null::text,       null::numeric),
-    -- Caja Chica Día, por kilo
+    -- Caja Chica Dia, por kilo
     ('Lima',            'kilo',   'Caja Chica Día',  5::numeric),
     ('Tomate Redondo',  'kilo',   'Caja Chica Día',  6::numeric),
     ('Tomate Perita',   'kilo',   'Caja Chica Día',  6::numeric),
@@ -215,10 +187,10 @@ from (values
     ('Zapallito',       'kilo',   'Caja Chica Día',  6::numeric),
     ('Morrón Verde',    'kilo',   'Caja Chica Día',  4::numeric),
     ('Tomate Cherry',   'kilo',   'Caja Chica Día',  5::numeric),
-    -- Caja Chica Día, por unidad
+    -- Caja Chica Dia, por unidad
     ('Mango',           'unidad', 'Caja Chica Día', 10::numeric),
     ('Palta',           'unidad', 'Caja Chica Día', 50::numeric),
-    -- Caja Grande Día, por kilo
+    -- Caja Grande Dia, por kilo
     ('Mandarina',       'kilo',   'Caja Grande Día', 16::numeric),
     ('Limón',           'kilo',   'Caja Grande Día', 16::numeric),
     ('Jugo',            'kilo',   'Caja Grande Día', 16::numeric),
