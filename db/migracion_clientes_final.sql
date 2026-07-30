@@ -25,6 +25,11 @@ alter table articulos drop column if exists tipo_envase;
 alter table articulos drop column if exists contenido_caja;
 alter table articulos drop column if exists unidad_venta;
 
+-- 1b. Agregar merma_porcentaje a articulos (si todavia no existe)
+alter table articulos add column if not exists merma_porcentaje numeric not null default 0;
+
+comment on column articulos.merma_porcentaje is 'Porcentaje de merma esperado del articulo (0 = sin merma).';
+
 -- 2. Borrar los parametros globales que ya no se usan
 -- Ahora el descuento y la utilidad son por cliente, y los costos de envase
 -- estan en la tabla envases. kg_por_palet sigue siendo global (no depende
