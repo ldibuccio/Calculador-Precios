@@ -34,8 +34,8 @@ def test_calcular_costo_por_unidad_medida_por_kilo():
     assert resultado == 1000
 
 
-def test_calcular_costo_por_unidad_medida_por_unidad():
-    # Misma compra de mango, cantidad_unidades = 10 => $400/unidad
+def test_calcular_costo_por_unidad_medida_por_fraccion():
+    # Misma compra de mango, cantidad_fraccion = 10 unidades => $400/unidad
     resultado = calcular_costo_por_unidad_medida(importe=4000, cantidad=10)
     assert resultado == 400
 

@@ -61,20 +61,23 @@ alter table pedidos_supermercado drop column if exists cliente_id;
 
 -- ----------------------------------------------------------------------------
 -- 3b. Compras: reemplazar cantidad/unidad por los dos datos crudos
--- Para costear el mismo artículo de varias formas (por kilo o por unidad,
--- según el cliente), se cargan los DOS datos crudos de la misma compra:
--- cuántos kilos y cuántas unidades se compraron (ej. mango: 10 unidades,
--- 4 kg). Sin factores de conversión: el sistema deriva costo por kilo
--- (importe / cantidad_kilos) y costo por unidad (importe / cantidad_unidades)
--- directamente de estos dos números.
+-- Para costear el mismo artículo de varias formas (por kilo o por la
+-- fracción que corresponda, según el cliente), se cargan los DOS datos
+-- crudos de la misma compra: cuántos kilos y cuánta "fracción" (unidad o
+-- cubeta, nunca ambas para el mismo artículo) se compró (ej. mango: 10
+-- unidades, 4 kg). Sin factores de conversión: el sistema deriva costo por
+-- kilo (importe / cantidad_kilos) y costo por fracción
+-- (importe / cantidad_fraccion) directamente de estos dos números. Qué
+-- significa "fracción" para cada artículo (unidad o cubeta) lo determina
+-- su unidad_venta en fichas_logistica.
 -- ----------------------------------------------------------------------------
 alter table compras drop column if exists cantidad;
 alter table compras drop column if exists unidad;
 
 alter table compras add column cantidad_kilos numeric;
-alter table compras add column cantidad_unidades numeric;
+alter table compras add column cantidad_fraccion numeric;
 alter table compras add constraint compras_cantidad_cargada_check
-    check (cantidad_kilos is not null or cantidad_unidades is not null);
+    check (cantidad_kilos is not null or cantidad_fraccion is not null);
 
 
 -- ----------------------------------------------------------------------------

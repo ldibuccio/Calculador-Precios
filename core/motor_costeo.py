@@ -5,13 +5,13 @@ Ejemplo inicial: promedio ponderado por cantidad.
 
 
 def calcular_costo_por_unidad_medida(importe: float, cantidad: float) -> float:
-    """Costo por unidad de medida (kilo, unidad o cubeta) de una compra: importe / cantidad.
+    """Costo por unidad de medida (kilo o fracción) de una compra: importe / cantidad.
 
     A partir de los datos crudos que carga el comprador (cantidad_kilos y/o
-    cantidad_unidades de la compra), esta misma función sirve para sacar el
-    costo por kilo (pasándole cantidad_kilos) o el costo por unidad
-    (pasándole cantidad_unidades) — sin usar ningún factor de conversión
-    entre kilos y unidades.
+    cantidad_fraccion de la compra), esta misma función sirve para sacar el
+    costo por kilo (pasándole cantidad_kilos) o el costo por fracción
+    (pasándole cantidad_fraccion) — sin usar ningún factor de conversión.
+    "Fracción" es unidad o cubeta según el artículo (nunca ambas a la vez).
     """
     if cantidad == 0:
         raise ValueError("cantidad no puede ser cero")

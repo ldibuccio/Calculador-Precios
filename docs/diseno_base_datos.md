@@ -63,8 +63,8 @@ Cada renglón que carga el comprador.
 | fecha_operación | día al que pertenece la compra |
 | artículo | referencia a Artículos |
 | proveedor | referencia a Proveedores |
-| cantidad_kilos | dato crudo: cuántos kilos se compraron (opcional si se cargó en unidades) |
-| cantidad_unidades | dato crudo: cuántas unidades se compraron (opcional si se cargó en kilos) |
+| cantidad_kilos | dato crudo: cuántos kilos se compraron (opcional si se cargó en fracción) |
+| cantidad_fraccion | dato crudo: cuánta "fracción" (unidad o cubeta, según el artículo) se compró (opcional si se cargó en kilos) |
 | importe | — |
 | seña | opcional, por artículo (no por toda la compra) |
 | tipo_retiro | Clark / Granel |
@@ -73,11 +73,16 @@ Cada renglón que carga el comprador.
 
 Se cargan los **dos datos crudos** de la misma compra cuando aplica (ej.
 Mango: 10 unidades, 4 kg) — no un factor de conversión entre kilos y
-unidades. De ahí el motor de costeo deriva costo por kilo
-(`importe / cantidad_kilos`) y costo por unidad
-(`importe / cantidad_unidades`); qué versión usar la decide la
-`unidad_venta` de la ficha de logística del cliente correspondiente. Al
-menos uno de los dos campos tiene que estar cargado.
+fracción. `cantidad_fraccion` es un nombre genérico a propósito: significa
+"unidad" o "cubeta" según el artículo, pero nunca las dos cosas a la vez
+(un artículo que se vende por cubeta jamás se vende por unidad, y
+viceversa), así que una sola columna alcanza. De ahí el motor de costeo
+deriva costo por kilo (`importe / cantidad_kilos`) y costo por fracción
+(`importe / cantidad_fraccion`); qué versión usar la decide la
+`unidad_venta` de la ficha de logística del cliente correspondiente (si es
+"kilo" usa `cantidad_kilos`; si es "unidad" o "cubeta" usa
+`cantidad_fraccion`). Al menos uno de los dos campos tiene que estar
+cargado.
 
 Varias compras del mismo día/artículo/proveedor son las que el motor de
 costeo promedia ponderando por cantidad.
@@ -325,7 +330,9 @@ Cliente y el Envase que usa.
    genuinamente global.
 6. **Compras con dos datos crudos**: en vez de un solo par
    cantidad/unidad, Compras (punto 3) guarda `cantidad_kilos` y
-   `cantidad_unidades` por separado, sin ningún factor de conversión entre
-   ambos. El motor de costeo deriva costo por kilo y costo por unidad
+   `cantidad_fraccion` por separado, sin ningún factor de conversión entre
+   ambos. `cantidad_fraccion` es genérica: representa "unidad" o "cubeta"
+   según el artículo, porque un mismo artículo nunca se vende por las dos
+   a la vez. El motor de costeo deriva costo por kilo y costo por fracción
    directamente de estos dos números, y la ficha de logística del cliente
    decide cuál usar.
