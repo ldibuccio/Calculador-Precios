@@ -46,8 +46,8 @@ def test_obtener_conexion_sin_database_url_lanza_error_claro(monkeypatch):
 
 
 ARTICULOS_DE_PRUEBA = [
-    {"nombre": "Frutilla", "codigo_interno": "FRU-01", "merma_porcentaje": 5},
-    {"nombre": "Mango", "codigo_interno": None, "merma_porcentaje": 0},
+    {"id": 1, "nombre": "Frutilla", "merma_porcentaje": 5},
+    {"id": 2, "nombre": "Mango", "merma_porcentaje": 0},
 ]
 
 
@@ -67,14 +67,17 @@ def test_ver_articulos_error_de_base_muestra_pagina_de_error_clara():
     assert "No se pudo leer el catálogo" in respuesta.text
 
 
-def test_ver_articulos_muestra_nombre_codigo_y_merma():
+def test_ver_articulos_muestra_nombre_y_merma():
     with patch("app.main.listar_articulos", return_value=ARTICULOS_DE_PRUEBA):
         respuesta = cliente.get("/articulos")
 
     assert respuesta.status_code == 200
     assert "Frutilla" in respuesta.text
-    assert "FRU-01" in respuesta.text
     assert "Mango" in respuesta.text
+    assert "/articulos/1/editar" in respuesta.text
+    assert "/articulos/1/eliminar" in respuesta.text
+    # codigo_interno es del cliente Día, no del artículo: no debe pedirse ni mostrarse acá
+    assert "codigo_interno" not in respuesta.text
     # unidad_venta y envase ya no viven en articulos: no deben aparecer en la página
     assert "unidad_venta" not in respuesta.text
     assert "envase" not in respuesta.text.lower()
@@ -84,16 +87,16 @@ def test_agregar_articulo_exitoso_redirige_a_articulos():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
             "/articulos/nuevo",
-            data={"nombre": "Kiwi", "codigo_interno": "KIW-01", "merma_porcentaje": "2.5"},
+            data={"nombre": "Kiwi", "merma_porcentaje": "2.5"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/articulos"
-    mock_crear.assert_called_once_with("Kiwi", "KIW-01", 2.5)
+    mock_crear.assert_called_once_with("Kiwi", 2.5)
 
 
-def test_agregar_articulo_codigo_interno_opcional():
+def test_agregar_articulo_merma_opcional_usa_cero():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
             "/articulos/nuevo",
@@ -102,7 +105,7 @@ def test_agregar_articulo_codigo_interno_opcional():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Kiwi", None, 0.0)
+    mock_crear.assert_called_once_with("Kiwi", 0.0)
 
 
 def test_agregar_articulo_nombre_vacio_muestra_error():
@@ -153,3 +156,102 @@ def test_agregar_articulo_error_de_base_muestra_mensaje_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar" in respuesta.text
+
+
+ARTICULO_DE_PRUEBA = {"id": 1, "nombre": "Frutilla", "merma_porcentaje": 5}
+
+
+def test_ver_editar_articulo_muestra_datos_precargados():
+    with patch("app.main.obtener_articulo", return_value=ARTICULO_DE_PRUEBA):
+        respuesta = cliente.get("/articulos/1/editar")
+
+    assert respuesta.status_code == 200
+    assert "Frutilla" in respuesta.text
+    assert 'action="/articulos/1/editar"' in respuesta.text
+
+
+def test_ver_editar_articulo_inexistente_da_404():
+    with patch("app.main.obtener_articulo", return_value=None):
+        respuesta = cliente.get("/articulos/999/editar")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_editar_articulo_error_de_base_da_500():
+    with patch("app.main.obtener_articulo", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/articulos/1/editar")
+
+    assert respuesta.status_code == 500
+
+
+def test_editar_articulo_exitoso_redirige_a_articulos():
+    with patch("app.main.actualizar_articulo") as mock_actualizar:
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "Frutilla Premium", "merma_porcentaje": "8"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/articulos"
+    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", 8.0)
+
+
+def test_editar_articulo_nombre_vacio_muestra_error():
+    with patch("app.main.actualizar_articulo") as mock_actualizar:
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "   ", "merma_porcentaje": "0"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede estar vacío" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_editar_articulo_merma_fuera_de_rango_muestra_error():
+    with patch("app.main.actualizar_articulo") as mock_actualizar:
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "Frutilla", "merma_porcentaje": "150"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "entre 0 y 100" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_editar_articulo_error_de_base_muestra_mensaje_claro():
+    with patch("app.main.actualizar_articulo", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "Frutilla", "merma_porcentaje": "5"},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar" in respuesta.text
+
+
+def test_eliminar_articulo_exitoso_redirige_a_articulos():
+    with patch("app.main.desactivar_articulo") as mock_desactivar:
+        respuesta = cliente.post("/articulos/1/eliminar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/articulos"
+    mock_desactivar.assert_called_once_with(1)
+
+
+def test_eliminar_articulo_no_borra_la_fila_solo_marca_inactivo():
+    # desactivar_articulo (borrado lógico) hace UPDATE activo=false, no DELETE.
+    # Este test confirma que la ruta llama a esa función y no a otra.
+    with patch("app.main.desactivar_articulo") as mock_desactivar:
+        cliente.post("/articulos/1/eliminar", follow_redirects=False)
+
+    mock_desactivar.assert_called_once()
+
+
+def test_eliminar_articulo_error_de_base_da_500():
+    with patch("app.main.desactivar_articulo", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post("/articulos/1/eliminar")
+
+    assert respuesta.status_code == 500

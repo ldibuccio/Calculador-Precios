@@ -9,10 +9,36 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.db import contar_articulos, crear_articulo, listar_articulos
+from app.db import (
+    actualizar_articulo,
+    contar_articulos,
+    crear_articulo,
+    desactivar_articulo,
+    listar_articulos,
+    obtener_articulo,
+)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+
+def _validar_nombre_y_merma(nombre: str, merma_porcentaje: str) -> tuple[str | None, str, float | None]:
+    """Valida nombre no vacío y merma entre 0 y 100. Devuelve (error, nombre_limpio, merma)."""
+    nombre = nombre.strip()
+    merma_porcentaje = merma_porcentaje.strip()
+
+    if not nombre:
+        return "El nombre no puede estar vacío.", nombre, None
+
+    try:
+        merma = float(merma_porcentaje) if merma_porcentaje else 0.0
+    except ValueError:
+        return "La merma tiene que ser un número.", nombre, None
+
+    if not (0 <= merma <= 100):
+        return "La merma tiene que estar entre 0 y 100.", nombre, None
+
+    return None, nombre, merma
 
 
 @app.get("/")
@@ -53,26 +79,9 @@ def ver_articulos(request: Request, error: str | None = None):
 def agregar_articulo(
     request: Request,
     nombre: str = Form(...),
-    codigo_interno: str = Form(""),
     merma_porcentaje: str = Form("0"),
 ):
-    nombre = nombre.strip()
-    codigo_interno = codigo_interno.strip() or None
-    merma_porcentaje = merma_porcentaje.strip()
-
-    error = None
-    merma = None
-
-    if not nombre:
-        error = "El nombre no puede estar vacío."
-    else:
-        try:
-            merma = float(merma_porcentaje) if merma_porcentaje else 0.0
-        except ValueError:
-            error = "La merma tiene que ser un número."
-        else:
-            if not (0 <= merma <= 100):
-                error = "La merma tiene que estar entre 0 y 100."
+    error, nombre, merma = _validar_nombre_y_merma(nombre, merma_porcentaje)
 
     if error:
         articulos = listar_articulos()
@@ -84,7 +93,7 @@ def agregar_articulo(
         )
 
     try:
-        crear_articulo(nombre, codigo_interno, merma)
+        crear_articulo(nombre, merma)
     except Exception as error:
         articulos = listar_articulos()
         return templates.TemplateResponse(
@@ -93,6 +102,64 @@ def agregar_articulo(
             {"articulos": articulos, "error": f"No se pudo guardar el artículo: {error}"},
             status_code=500,
         )
+
+    return RedirectResponse(url="/articulos", status_code=303)
+
+
+@app.get("/articulos/{articulo_id}/editar")
+def ver_editar_articulo(request: Request, articulo_id: int, error: str | None = None):
+    try:
+        articulo = obtener_articulo(articulo_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if articulo is None:
+        raise HTTPException(status_code=404, detail="Artículo no encontrado")
+
+    return templates.TemplateResponse(
+        request, "articulo_editar.html", {"articulo": articulo, "error": error}
+    )
+
+
+@app.post("/articulos/{articulo_id}/editar")
+def editar_articulo(
+    request: Request,
+    articulo_id: int,
+    nombre: str = Form(...),
+    merma_porcentaje: str = Form("0"),
+):
+    error, nombre, merma = _validar_nombre_y_merma(nombre, merma_porcentaje)
+
+    if error:
+        return templates.TemplateResponse(
+            request,
+            "articulo_editar.html",
+            {"articulo": {"id": articulo_id, "nombre": nombre, "merma_porcentaje": merma_porcentaje}, "error": error},
+            status_code=400,
+        )
+
+    try:
+        actualizar_articulo(articulo_id, nombre, merma)
+    except Exception as error:
+        return templates.TemplateResponse(
+            request,
+            "articulo_editar.html",
+            {
+                "articulo": {"id": articulo_id, "nombre": nombre, "merma_porcentaje": merma},
+                "error": f"No se pudo guardar el artículo: {error}",
+            },
+            status_code=500,
+        )
+
+    return RedirectResponse(url="/articulos", status_code=303)
+
+
+@app.post("/articulos/{articulo_id}/eliminar")
+def eliminar_articulo(articulo_id: int):
+    try:
+        desactivar_articulo(articulo_id)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar el artículo: {error}") from error
 
     return RedirectResponse(url="/articulos", status_code=303)
 
