@@ -28,17 +28,18 @@ editables desde la app en vez de fijas en el código.
 | id | identificador interno |
 | nombre | único, editable (ej. "Tomate Redondo") |
 | código_interno | código propio del artículo, para no confundirlo con otro aunque cambie el nombre |
-| unidad_venta | kilo / unidad / cubeta — intrínseco del producto, no depende del cliente |
-| cubetas_por_caja | solo si se vende por cubeta; cómo llega el cajón del productor |
-| unidades_por_cajón / kg_por_cajón | solo para artículos que se venden por unidad pero se pesan por palet (Mango, Palta); dato de recepción, no de reparto a un cliente |
+| cubetas_por_caja | solo si el cajón del productor viene subdividido en cubetas; dato de recepción |
+| unidades_por_cajón / kg_por_cajón | solo para artículos que se pesan por palet (Mango, Palta); dato de recepción, no de reparto a un cliente |
 | merma_porcentaje | porcentaje de merma esperado del artículo (0 = sin merma) |
 | activo | para dar de baja un artículo sin borrar su historial |
 
-> **Nota:** `tipo_envase` y `contenido_caja` NO viven acá — un mismo
-> artículo puede repartirse en un envase distinto según el cliente, así que
-> esos dos campos viven en **Fichas de logística por cliente** (punto 12).
-> Acá solo queda lo que es intrínseco al producto en sí, sin importar a qué
-> cliente se le venda.
+> **Nota:** ni `tipo_envase`/`contenido_caja` NI `unidad_venta` viven acá.
+> El mismo artículo puede repartirse en un envase distinto y venderse en
+> una unidad distinta según el cliente (ej. Mango: un cliente lo compra
+> por unidad, otro por kilo) — los tres campos viven en **Fichas de
+> logística por cliente** (punto 12). Acá solo queda lo que es intrínseco
+> al producto en sí: cómo llega el cajón del productor al depósito, sin
+> importar a qué cliente se le venda ni en qué unidad se le facture.
 
 ## 2. Proveedores
 
@@ -62,13 +63,21 @@ Cada renglón que carga el comprador.
 | fecha_operación | día al que pertenece la compra |
 | artículo | referencia a Artículos |
 | proveedor | referencia a Proveedores |
-| cantidad | — |
-| unidad | kilo / unidad, tal como se cargó esa vez |
+| cantidad_kilos | dato crudo: cuántos kilos se compraron (opcional si se cargó en unidades) |
+| cantidad_unidades | dato crudo: cuántas unidades se compraron (opcional si se cargó en kilos) |
 | importe | — |
 | seña | opcional, por artículo (no por toda la compra) |
 | tipo_retiro | Clark / Granel |
 | palets | — |
 | cargado_el | fecha y hora de carga, para auditoría |
+
+Se cargan los **dos datos crudos** de la misma compra cuando aplica (ej.
+Mango: 10 unidades, 4 kg) — no un factor de conversión entre kilos y
+unidades. De ahí el motor de costeo deriva costo por kilo
+(`importe / cantidad_kilos`) y costo por unidad
+(`importe / cantidad_unidades`); qué versión usar la decide la
+`unidad_venta` de la ficha de logística del cliente correspondiente. Al
+menos uno de los dos campos tiene que estar cargado.
 
 Varias compras del mismo día/artículo/proveedor son las que el motor de
 costeo promedia ponderando por cantidad.
@@ -236,16 +245,19 @@ historial.
 
 ## 12. Fichas de logística por cliente
 
-**Única fuente de verdad** de qué envase usa cada artículo para cada
-cliente, y cuánto contenido trae la caja en ese caso puntual. Reemplaza a
-los campos `tipo_envase`/`contenido_caja` que antes vivían (únicos, sin
-distinción de cliente) en Artículos.
+**Única fuente de verdad** de en qué unidad se vende cada artículo para
+cada cliente, qué envase usa, y cuánto contenido trae la caja en ese caso
+puntual. Reemplaza a los campos `tipo_envase`/`contenido_caja`/
+`unidad_venta` que antes vivían (únicos, sin distinción de cliente) en
+Artículos. El mismo artículo puede tener `unidad_venta` distinta según el
+cliente (ej. Mango: un cliente lo compra por unidad, otro por kilo).
 
 | Campo | Descripción |
 |---|---|
 | id | — |
 | artículo | — |
 | cliente | — |
+| unidad_venta | kilo / unidad / cubeta, para este artículo + cliente |
 | envase | vacío si no usa un envase compartido (se entrega en su propio cajón) |
 | contenido_caja | cuánto trae la caja para este artículo + cliente (vacío si no usa envase compartido) |
 
@@ -297,16 +309,23 @@ Cliente y el Envase que usa.
 3. **Precios del día sin distinción de sucursal**: un precio por artículo
    por día, válido para los tres depósitos.
 
-4. **Modelo final de logística por cliente**: `tipo_envase` y
-   `contenido_caja` se sacaron de Artículos y viven solo en Fichas de
-   logística por cliente (punto 12). `unidad_venta`, `cubetas_por_caja` y
-   los datos de palet (`unidades_por_cajón`/`kg_por_cajón`) se quedaron en
-   Artículos porque son intrínsecos del producto — describen cómo llega el
-   cajón del productor, antes de repartir nada a ningún cliente — y no
-   varían según a quién se le venda.
+4. **Modelo final de logística por cliente**: `tipo_envase`,
+   `contenido_caja` y **`unidad_venta`** se sacaron de Artículos y viven
+   solo en Fichas de logística por cliente (punto 12) — el mismo artículo
+   puede venderse por kilo para un cliente y por unidad para otro (ej.
+   Mango). `cubetas_por_caja` y los datos de palet
+   (`unidades_por_cajón`/`kg_por_cajón`) se quedaron en Artículos porque
+   describen cómo llega el cajón del productor al depósito, antes de
+   repartir nada a ningún cliente, y no varían según a quién se le venda.
 5. **Parámetros globales viejos retirados**: `descuento_estandar`,
    `utilidad_estandar`, `costo_envase_chico` y `costo_envase_grande` se
    borraron de `parametros_historial` — ahora el descuento y la utilidad
    son por cliente (punto 10), y el costo de envase vive en cada Envase
    (punto 11). Solo `kg_por_palet` sigue en Parámetros por ser
    genuinamente global.
+6. **Compras con dos datos crudos**: en vez de un solo par
+   cantidad/unidad, Compras (punto 3) guarda `cantidad_kilos` y
+   `cantidad_unidades` por separado, sin ningún factor de conversión entre
+   ambos. El motor de costeo deriva costo por kilo y costo por unidad
+   directamente de estos dos números, y la ficha de logística del cliente
+   decide cuál usar.

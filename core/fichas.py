@@ -2,14 +2,14 @@
 
 Este módulo NO hace cálculos de costeo (eso sigue en motor_costeo.py).
 
-El envase y el contenido de la caja de un artículo pueden variar según el
-cliente (un mismo artículo puede repartirse distinto para cada uno), así
-que esos datos ya NO viven en la ficha del artículo: viven en
-FICHAS_LOGISTICA, indexada por (artículo, cliente).
+El envase, el contenido de la caja y la unidad de venta de un artículo
+pueden variar según el cliente (el mismo Mango un cliente lo compra por
+unidad y otro por kilo), así que esos tres datos NO viven en la ficha del
+artículo: viven en FICHAS_LOGISTICA, indexada por (artículo, cliente).
 
 La ficha del artículo (FICHAS) solo guarda lo que es intrínseco al
-producto en sí, sin importar a qué cliente se le venda: la unidad en la
-que se vende, y los datos físicos de cómo llega el cajón del productor al
+producto en sí, sin importar a qué cliente se le venda ni en qué unidad se
+lo facture: los datos físicos de cómo llega el cajón del productor al
 depósito (cubetas por caja, unidades/kg por cajón para calcular palets de
 flete) — esto se define en la recepción, antes de repartir nada a ningún
 cliente.
@@ -24,55 +24,38 @@ UNIDAD_VENTA_KILO = "kilo"
 UNIDAD_VENTA_CUBETA = "cubeta"
 UNIDAD_VENTA_UNIDAD = "unidad"
 
-
-def _ficha_por_kilo() -> dict:
-    return {"unidad_venta": UNIDAD_VENTA_KILO}
-
-
-def _ficha_por_cubeta() -> dict:
-    return {"unidad_venta": UNIDAD_VENTA_CUBETA, "cubetas_por_caja": CUBETAS_POR_CAJA_ESTANDAR}
-
-
-def _ficha_por_unidad(unidades_por_cajon: float, kg_por_cajon: float) -> dict:
-    return {
-        "unidad_venta": UNIDAD_VENTA_UNIDAD,
-        "datos_palet": {"unidades_por_cajon": unidades_por_cajon, "kg_por_cajon": kg_por_cajon},
-    }
-
-
 FICHAS = {
-    # Por kilo
-    "Mzn Granny": _ficha_por_kilo(),
-    "Mzn Red": _ficha_por_kilo(),
-    "Pera": _ficha_por_kilo(),
-    "Man Gob": _ficha_por_kilo(),
-    "Uva": _ficha_por_kilo(),
-    "Durazno": _ficha_por_kilo(),
-    "Ciruela": _ficha_por_kilo(),
-    "Pelón": _ficha_por_kilo(),
-    "Melón": _ficha_por_kilo(),
-    "Cereza": _ficha_por_kilo(),
-    "Sandía": _ficha_por_kilo(),
-    "Lima": _ficha_por_kilo(),
-    "Tomate Redondo": _ficha_por_kilo(),
-    "Tomate Perita": _ficha_por_kilo(),
-    "Berenjena": _ficha_por_kilo(),
-    "Pepino": _ficha_por_kilo(),
-    "Zapallito": _ficha_por_kilo(),
-    "Morrón Verde": _ficha_por_kilo(),
-    "Tomate Cherry": _ficha_por_kilo(),
-    "Mandarina": _ficha_por_kilo(),
-    "Limón": _ficha_por_kilo(),
-    "Jugo": _ficha_por_kilo(),
-    "Ombligo": _ficha_por_kilo(),
-    "Pomelo": _ficha_por_kilo(),
-    "Morrón Rojo": _ficha_por_kilo(),
-    # Por cubeta (12 cubetas por caja, propia del artículo)
-    "Frutilla": _ficha_por_cubeta(),
-    "Arándano": _ficha_por_cubeta(),
-    # Por unidad, con datos de palet (propios del artículo)
-    "Mango": _ficha_por_unidad(unidades_por_cajon=40, kg_por_cajon=16),
-    "Palta": _ficha_por_unidad(unidades_por_cajon=80, kg_por_cajon=10),
+    "Mzn Granny": {},
+    "Mzn Red": {},
+    "Pera": {},
+    "Man Gob": {},
+    "Uva": {},
+    "Durazno": {},
+    "Ciruela": {},
+    "Pelón": {},
+    "Melón": {},
+    "Cereza": {},
+    "Sandía": {},
+    "Lima": {},
+    "Tomate Redondo": {},
+    "Tomate Perita": {},
+    "Berenjena": {},
+    "Pepino": {},
+    "Zapallito": {},
+    "Morrón Verde": {},
+    "Tomate Cherry": {},
+    "Mandarina": {},
+    "Limón": {},
+    "Jugo": {},
+    "Ombligo": {},
+    "Pomelo": {},
+    "Morrón Rojo": {},
+    # Cubetas por caja: cómo llega el cajón del productor (intrínseco)
+    "Frutilla": {"cubetas_por_caja": CUBETAS_POR_CAJA_ESTANDAR},
+    "Arándano": {"cubetas_por_caja": CUBETAS_POR_CAJA_ESTANDAR},
+    # Datos de palet: cómo llega el cajón del productor (intrínseco)
+    "Mango": {"datos_palet": {"unidades_por_cajon": 40, "kg_por_cajon": 16}},
+    "Palta": {"datos_palet": {"unidades_por_cajon": 80, "kg_por_cajon": 10}},
 }
 
 
@@ -84,50 +67,48 @@ def buscar_ficha(nombre: str) -> dict:
 
 
 # ----------------------------------------------------------------------------
-# Ficha de logística por artículo + cliente: qué envase usa y contenido de la
-# caja para ESE cliente puntual. Cargado acá para el cliente "Día".
+# Ficha de logística por artículo + cliente: unidad de venta, qué envase usa
+# y contenido de la caja para ESE cliente puntual. Cargado acá para "Día".
 # ----------------------------------------------------------------------------
 
-_SIN_ENVASE_COMPARTIDO = {"envase": None, "contenido_caja": None}
-
 FICHAS_LOGISTICA = {
-    # Envase perdido (cajón propio, sin fraccionar en ningún envase compartido)
-    ("Mzn Granny", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Mzn Red", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Pera", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Man Gob", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Uva", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Durazno", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Ciruela", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Pelón", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Melón", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Cereza", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Sandía", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Frutilla", "Día"): _SIN_ENVASE_COMPARTIDO,
-    ("Arándano", "Día"): _SIN_ENVASE_COMPARTIDO,
+    # Sin envase compartido (se entrega en su propio cajón)
+    ("Mzn Granny", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Mzn Red", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Pera", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Man Gob", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Uva", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Durazno", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Ciruela", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Pelón", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Melón", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Cereza", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Sandía", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": None, "contenido_caja": None},
+    ("Frutilla", "Día"): {"unidad_venta": UNIDAD_VENTA_CUBETA, "envase": None, "contenido_caja": None},
+    ("Arándano", "Día"): {"unidad_venta": UNIDAD_VENTA_CUBETA, "envase": None, "contenido_caja": None},
     # Caja Chica Día
-    ("Lima", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 5},
-    ("Tomate Redondo", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 6},
-    ("Tomate Perita", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 6},
-    ("Berenjena", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 6},
-    ("Pepino", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 6},
-    ("Zapallito", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 6},
-    ("Morrón Verde", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 4},
-    ("Tomate Cherry", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 5},
-    ("Mango", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 10},
-    ("Palta", "Día"): {"envase": "Caja Chica Día", "contenido_caja": 50},
+    ("Lima", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 5},
+    ("Tomate Redondo", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 6},
+    ("Tomate Perita", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 6},
+    ("Berenjena", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 6},
+    ("Pepino", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 6},
+    ("Zapallito", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 6},
+    ("Morrón Verde", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 4},
+    ("Tomate Cherry", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Chica Día", "contenido_caja": 5},
+    ("Mango", "Día"): {"unidad_venta": UNIDAD_VENTA_UNIDAD, "envase": "Caja Chica Día", "contenido_caja": 10},
+    ("Palta", "Día"): {"unidad_venta": UNIDAD_VENTA_UNIDAD, "envase": "Caja Chica Día", "contenido_caja": 50},
     # Caja Grande Día
-    ("Mandarina", "Día"): {"envase": "Caja Grande Día", "contenido_caja": 16},
-    ("Limón", "Día"): {"envase": "Caja Grande Día", "contenido_caja": 16},
-    ("Jugo", "Día"): {"envase": "Caja Grande Día", "contenido_caja": 16},
-    ("Ombligo", "Día"): {"envase": "Caja Grande Día", "contenido_caja": 16},
-    ("Pomelo", "Día"): {"envase": "Caja Grande Día", "contenido_caja": 16},
-    ("Morrón Rojo", "Día"): {"envase": "Caja Grande Día", "contenido_caja": 8},
+    ("Mandarina", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Grande Día", "contenido_caja": 16},
+    ("Limón", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Grande Día", "contenido_caja": 16},
+    ("Jugo", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Grande Día", "contenido_caja": 16},
+    ("Ombligo", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Grande Día", "contenido_caja": 16},
+    ("Pomelo", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Grande Día", "contenido_caja": 16},
+    ("Morrón Rojo", "Día"): {"unidad_venta": UNIDAD_VENTA_KILO, "envase": "Caja Grande Día", "contenido_caja": 8},
 }
 
 
 def buscar_ficha_logistica(articulo: str, cliente: str) -> dict:
-    """Devuelve qué envase usa un artículo para un cliente puntual, y el contenido de la caja."""
+    """Devuelve la unidad de venta, el envase y el contenido de caja de un artículo para un cliente puntual."""
     clave = (articulo, cliente)
     if clave not in FICHAS_LOGISTICA:
         raise ValueError(f"No hay ficha de logística para '{articulo}' del cliente '{cliente}'")

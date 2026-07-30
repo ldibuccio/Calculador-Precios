@@ -4,6 +4,7 @@ from core.clientes import buscar_cliente, buscar_envase
 from core.motor_costeo import (
     SIN_ENVASE,
     calcular_costo_por_presentacion,
+    calcular_costo_por_unidad_medida,
     calcular_costo_ponderado_por_cubeta,
     calcular_costo_ponderado_por_cubeta_arandano,
     calcular_costo_ponderado_por_cubeta_frutilla,
@@ -25,6 +26,23 @@ DESCUENTO_DIA = CLIENTE_DIA["descuento"]
 UTILIDAD_DIA = CLIENTE_DIA["utilidad_objetivo"]
 COSTO_ENVASE_CHICO = buscar_envase("Caja Chica Día")["costo"]
 COSTO_ENVASE_GRANDE = buscar_envase("Caja Grande Día")["costo"]
+
+
+def test_calcular_costo_por_unidad_medida_por_kilo():
+    # Compra de mango: importe $4000, cantidad_kilos = 4 => $1000/kg
+    resultado = calcular_costo_por_unidad_medida(importe=4000, cantidad=4)
+    assert resultado == 1000
+
+
+def test_calcular_costo_por_unidad_medida_por_unidad():
+    # Misma compra de mango, cantidad_unidades = 10 => $400/unidad
+    resultado = calcular_costo_por_unidad_medida(importe=4000, cantidad=10)
+    assert resultado == 400
+
+
+def test_calcular_costo_por_unidad_medida_cantidad_cero_lanza_error():
+    with pytest.raises(ValueError):
+        calcular_costo_por_unidad_medida(importe=4000, cantidad=0)
 
 
 def test_promedio_ponderado_pesos_iguales():

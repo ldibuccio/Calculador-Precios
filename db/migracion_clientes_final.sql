@@ -19,14 +19,15 @@ begin;
 
 -- ----------------------------------------------------------------------------
 -- 1. Limpiar columnas de logística "por defecto" en articulos
--- tipo_envase y contenido_caja pasan a fichas_logistica (por artículo +
--- cliente). unidad_venta, cubetas_por_caja, unidades_por_cajon y
--- kg_por_cajon SE QUEDAN en articulos: son intrínsecos del producto (cómo
--- llega el cajón del productor y en qué unidad se vende), no dependen de a
--- qué cliente se le venda.
+-- tipo_envase, contenido_caja y unidad_venta pasan a fichas_logistica (por
+-- artículo + cliente): el mismo artículo puede venderse por kilo para un
+-- cliente y por unidad para otro. cubetas_por_caja, unidades_por_cajon y
+-- kg_por_cajon SE QUEDAN en articulos: describen cómo llega el cajón del
+-- productor al depósito, antes de repartir nada a ningún cliente.
 -- ----------------------------------------------------------------------------
 alter table articulos drop column if exists tipo_envase;
 alter table articulos drop column if exists contenido_caja;
+alter table articulos drop column if exists unidad_venta;
 
 
 -- ----------------------------------------------------------------------------
@@ -56,6 +57,24 @@ alter table precios_dia drop column if exists cliente_id;
 alter table pedidos_supermercado drop constraint if exists pedidos_supermercado_fecha_cliente_sucursal_articulo_key;
 alter table pedidos_supermercado drop constraint if exists pedidos_supermercado_fecha_operacion_sucursal_articulo_id_key;
 alter table pedidos_supermercado drop column if exists cliente_id;
+
+
+-- ----------------------------------------------------------------------------
+-- 3b. Compras: reemplazar cantidad/unidad por los dos datos crudos
+-- Para costear el mismo artículo de varias formas (por kilo o por unidad,
+-- según el cliente), se cargan los DOS datos crudos de la misma compra:
+-- cuántos kilos y cuántas unidades se compraron (ej. mango: 10 unidades,
+-- 4 kg). Sin factores de conversión: el sistema deriva costo por kilo
+-- (importe / cantidad_kilos) y costo por unidad (importe / cantidad_unidades)
+-- directamente de estos dos números.
+-- ----------------------------------------------------------------------------
+alter table compras drop column if exists cantidad;
+alter table compras drop column if exists unidad;
+
+alter table compras add column cantidad_kilos numeric;
+alter table compras add column cantidad_unidades numeric;
+alter table compras add constraint compras_cantidad_cargada_check
+    check (cantidad_kilos is not null or cantidad_unidades is not null);
 
 
 -- ----------------------------------------------------------------------------
@@ -113,13 +132,16 @@ comment on table envases_costo_historial is 'Costo de cada envase, con historial
 
 -- ----------------------------------------------------------------------------
 -- 6. FICHAS_LOGISTICA
--- Única fuente de verdad de qué envase usa cada artículo para cada cliente,
--- y cuánto contenido trae la caja en ese caso puntual.
+-- Única fuente de verdad de en qué unidad se vende cada artículo para cada
+-- cliente, qué envase usa, y cuánto contenido trae la caja en ese caso
+-- puntual. El mismo artículo puede tener unidad_venta distinta según el
+-- cliente (ej. Mango: un cliente lo compra por unidad, otro por kilo).
 -- ----------------------------------------------------------------------------
 create table fichas_logistica (
     id              bigint generated always as identity primary key,
     articulo_id     bigint not null references articulos (id),
     cliente_id      bigint not null references clientes (id),
+    unidad_venta    text not null check (unidad_venta in ('kilo', 'unidad', 'cubeta')),
     envase_id       bigint references envases (id), -- vacío si no usa un envase compartido
     contenido_caja  numeric, -- cuánto trae la caja para este artículo + cliente (vacío si no usa envase compartido)
     creado_en       timestamptz not null default now(),
@@ -127,7 +149,7 @@ create table fichas_logistica (
     unique (articulo_id, cliente_id)
 );
 
-comment on table fichas_logistica is 'Ficha de logística por artículo y cliente: qué envase usa y contenido de la caja.';
+comment on table fichas_logistica is 'Ficha de logística por artículo y cliente: unidad de venta, qué envase usa y contenido de la caja.';
 
 
 -- ----------------------------------------------------------------------------
@@ -161,44 +183,46 @@ select id, 650, '2020-01-01' from envases where nombre = 'Caja Chica Día'
 union all
 select id, 1600, '2020-01-01' from envases where nombre = 'Caja Grande Día';
 
--- Ficha de logística de los 29 artículos para el cliente "Día", con el
--- mismo envase/contenido de caja que ya tenían.
-insert into fichas_logistica (articulo_id, cliente_id, envase_id, contenido_caja)
-select a.id, cl.id, e.id, v.contenido_caja
+-- Ficha de logística de los 29 artículos para el cliente "Día", con la
+-- misma unidad de venta / envase / contenido de caja que ya tenían.
+insert into fichas_logistica (articulo_id, cliente_id, unidad_venta, envase_id, contenido_caja)
+select a.id, cl.id, v.unidad_venta, e.id, v.contenido_caja
 from (values
-    -- Sin envase compartido (envase perdido)
-    ('Cereza',          null::text, null::numeric),
-    ('Ciruela',         null::text, null::numeric),
-    ('Durazno',         null::text, null::numeric),
-    ('Man Gob',         null::text, null::numeric),
-    ('Melón',           null::text, null::numeric),
-    ('Mzn Granny',      null::text, null::numeric),
-    ('Mzn Red',         null::text, null::numeric),
-    ('Pelón',           null::text, null::numeric),
-    ('Pera',            null::text, null::numeric),
-    ('Sandía',          null::text, null::numeric),
-    ('Uva',             null::text, null::numeric),
-    ('Frutilla',        null::text, null::numeric),
-    ('Arándano',        null::text, null::numeric),
-    -- Caja Chica Día
-    ('Lima',            'Caja Chica Día',  5::numeric),
-    ('Tomate Redondo',  'Caja Chica Día',  6::numeric),
-    ('Tomate Perita',   'Caja Chica Día',  6::numeric),
-    ('Berenjena',       'Caja Chica Día',  6::numeric),
-    ('Pepino',          'Caja Chica Día',  6::numeric),
-    ('Zapallito',       'Caja Chica Día',  6::numeric),
-    ('Morrón Verde',    'Caja Chica Día',  4::numeric),
-    ('Tomate Cherry',   'Caja Chica Día',  5::numeric),
-    ('Mango',           'Caja Chica Día', 10::numeric),
-    ('Palta',           'Caja Chica Día', 50::numeric),
-    -- Caja Grande Día
-    ('Mandarina',       'Caja Grande Día', 16::numeric),
-    ('Limón',           'Caja Grande Día', 16::numeric),
-    ('Jugo',            'Caja Grande Día', 16::numeric),
-    ('Ombligo',         'Caja Grande Día', 16::numeric),
-    ('Pomelo',          'Caja Grande Día', 16::numeric),
-    ('Morrón Rojo',     'Caja Grande Día',  8::numeric)
-) as v(articulo_nombre, envase_nombre, contenido_caja)
+    -- Sin envase compartido (envase perdido), por kilo
+    ('Cereza',          'kilo',   null::text,       null::numeric),
+    ('Ciruela',         'kilo',   null::text,       null::numeric),
+    ('Durazno',         'kilo',   null::text,       null::numeric),
+    ('Man Gob',         'kilo',   null::text,       null::numeric),
+    ('Melón',           'kilo',   null::text,       null::numeric),
+    ('Mzn Granny',      'kilo',   null::text,       null::numeric),
+    ('Mzn Red',         'kilo',   null::text,       null::numeric),
+    ('Pelón',           'kilo',   null::text,       null::numeric),
+    ('Pera',            'kilo',   null::text,       null::numeric),
+    ('Sandía',          'kilo',   null::text,       null::numeric),
+    ('Uva',             'kilo',   null::text,       null::numeric),
+    -- Sin envase compartido (envase perdido), por cubeta
+    ('Frutilla',        'cubeta', null::text,       null::numeric),
+    ('Arándano',        'cubeta', null::text,       null::numeric),
+    -- Caja Chica Día, por kilo
+    ('Lima',            'kilo',   'Caja Chica Día',  5::numeric),
+    ('Tomate Redondo',  'kilo',   'Caja Chica Día',  6::numeric),
+    ('Tomate Perita',   'kilo',   'Caja Chica Día',  6::numeric),
+    ('Berenjena',       'kilo',   'Caja Chica Día',  6::numeric),
+    ('Pepino',          'kilo',   'Caja Chica Día',  6::numeric),
+    ('Zapallito',       'kilo',   'Caja Chica Día',  6::numeric),
+    ('Morrón Verde',    'kilo',   'Caja Chica Día',  4::numeric),
+    ('Tomate Cherry',   'kilo',   'Caja Chica Día',  5::numeric),
+    -- Caja Chica Día, por unidad
+    ('Mango',           'unidad', 'Caja Chica Día', 10::numeric),
+    ('Palta',           'unidad', 'Caja Chica Día', 50::numeric),
+    -- Caja Grande Día, por kilo
+    ('Mandarina',       'kilo',   'Caja Grande Día', 16::numeric),
+    ('Limón',           'kilo',   'Caja Grande Día', 16::numeric),
+    ('Jugo',            'kilo',   'Caja Grande Día', 16::numeric),
+    ('Ombligo',         'kilo',   'Caja Grande Día', 16::numeric),
+    ('Pomelo',          'kilo',   'Caja Grande Día', 16::numeric),
+    ('Morrón Rojo',     'kilo',   'Caja Grande Día',  8::numeric)
+) as v(articulo_nombre, unidad_venta, envase_nombre, contenido_caja)
 join articulos a on a.nombre = v.articulo_nombre
 cross join (select id from clientes where nombre = 'Día') cl
 left join envases e on e.nombre = v.envase_nombre and e.cliente_id = cl.id;
