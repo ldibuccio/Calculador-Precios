@@ -234,7 +234,7 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
             cursor.execute(
                 """
                 SELECT fl.id, a.nombre AS articulo_nombre, e.nombre AS envase_nombre,
-                       fl.contenido_caja, fl.unidad_venta
+                       fl.contenido_caja, fl.unidad_venta, fl.envase_variable
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
                 LEFT JOIN envases e ON e.id = fl.envase_id
@@ -258,7 +258,7 @@ def obtener_ficha(ficha_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT fl.id, fl.cliente_id, fl.articulo_id, a.nombre AS articulo_nombre,
-                       fl.envase_id, fl.contenido_caja, fl.unidad_venta
+                       fl.envase_id, fl.contenido_caja, fl.unidad_venta, fl.envase_variable
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
                 WHERE fl.id = %s
@@ -316,7 +316,12 @@ def listar_envases_por_cliente(cliente_id: int) -> list[dict]:
 
 
 def crear_ficha(
-    articulo_id: int, cliente_id: int, envase_id: int | None, contenido_caja: float | None, unidad_venta: str
+    articulo_id: int,
+    cliente_id: int,
+    envase_id: int | None,
+    contenido_caja: float,
+    unidad_venta: str,
+    envase_variable: bool,
 ) -> None:
     """Crea la ficha de logística de un artículo para un cliente."""
     conexion = obtener_conexion()
@@ -324,28 +329,32 @@ def crear_ficha(
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO fichas_logistica (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO fichas_logistica
+                    (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
-                (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta),
+                (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable),
             )
         conexion.commit()
     finally:
         conexion.close()
 
 
-def actualizar_ficha(ficha_id: int, envase_id: int | None, contenido_caja: float | None, unidad_venta: str) -> None:
-    """Actualiza envase, contenido de caja y unidad de venta de una ficha existente."""
+def actualizar_ficha(
+    ficha_id: int, envase_id: int | None, contenido_caja: float, unidad_venta: str, envase_variable: bool
+) -> None:
+    """Actualiza envase, contenido solicitado, unidad de venta y envase_variable de una ficha existente."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE fichas_logistica
-                SET envase_id = %s, contenido_caja = %s, unidad_venta = %s, actualizado_en = now()
+                SET envase_id = %s, contenido_caja = %s, unidad_venta = %s, envase_variable = %s,
+                    actualizado_en = now()
                 WHERE id = %s
                 """,
-                (envase_id, contenido_caja, unidad_venta, ficha_id),
+                (envase_id, contenido_caja, unidad_venta, envase_variable, ficha_id),
             )
         conexion.commit()
     finally:

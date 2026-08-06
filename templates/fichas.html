@@ -124,6 +124,7 @@
             <th>Envase</th>
             <th>Contenido caja</th>
             <th>Unidad</th>
+            <th>Envase variable</th>
             <th>Acciones</th>
           </tr>
         </thead>
@@ -134,6 +135,7 @@
             <td>{{ f.envase_nombre or "Sin envase" }}</td>
             <td>{{ f.contenido_caja if f.contenido_caja is not none else "-" }}</td>
             <td>{{ f.unidad_venta }}</td>
+            <td>{{ "Variable" if f.envase_variable else "Fijo" }}</td>
             <td>
               <div class="acciones">
                 <a class="boton boton-editar" href="/fichas/{{ f.id }}/editar">Editar</a>

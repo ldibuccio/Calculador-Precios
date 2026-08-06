@@ -45,6 +45,24 @@
     box-sizing: border-box;
     background: #fff;
   }
+  form .campo-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+  }
+  form .campo-checkbox input {
+    width: auto;
+    margin-top: 0;
+  }
+  form .campo-checkbox label {
+    margin-top: 0;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
   .campo-fijo {
     margin-top: 0.25rem;
     padding: 0.65rem;
@@ -110,8 +128,8 @@
         {% endfor %}
       </select>
 
-      <label for="contenido_caja">Contenido de caja (si elegiste envase)</label>
-      <input type="number" id="contenido_caja" name="contenido_caja" min="0" step="0.01"
+      <label for="contenido_caja">Contenido solicitado (kg / unidades / cubetas por caja) *</label>
+      <input type="number" id="contenido_caja" name="contenido_caja" min="0" step="0.01" required
              value="{% if modo == 'editar' and ficha.contenido_caja is not none %}{{ ficha.contenido_caja }}{% endif %}">
 
       <label for="unidad_venta">Unidad de venta *</label>
@@ -120,6 +138,13 @@
         <option value="unidad" {% if modo == "editar" and ficha.unidad_venta == "unidad" %}selected{% endif %}>Unidad</option>
         <option value="cubeta" {% if modo == "editar" and ficha.unidad_venta == "cubeta" %}selected{% endif %}>Cubeta</option>
       </select>
+
+      <div class="campo-checkbox">
+        <input type="checkbox" id="envase_variable" name="envase_variable" value="si"
+               {% if modo == "editar" and ficha.envase_variable %}checked{% endif %}>
+        <label for="envase_variable">Envase variable</label>
+      </div>
+      <p class="ayuda">Tildado: el envase de arriba es solo referencia, se decide al cargar cada compra. Sin tildar: el envase de arriba se usa siempre.</p>
 
       <button type="submit">Guardar</button>
     </form>

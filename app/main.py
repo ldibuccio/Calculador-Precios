@@ -71,37 +71,40 @@ def _validar_unidad_venta(valor: str) -> str | None:
     return None
 
 
-def _validar_envase_y_contenido(
-    envase_id_texto: str, contenido_caja_texto: str
-) -> tuple[str | None, int | None, float | None]:
-    """Valida envase (opcional) y contenido de caja (obligatorio si hay envase).
-
-    Devuelve (error, envase_id, contenido_caja). Si no se eligió envase,
-    contenido_caja se ignora y queda en None (artículo sin envase compartido).
-    """
+def _validar_envase(envase_id_texto: str) -> tuple[str | None, int | None]:
+    """Valida el envase elegido (opcional: "sin envase" es válido). Devuelve (error, envase_id)."""
     envase_id_texto = envase_id_texto.strip()
-    contenido_caja_texto = contenido_caja_texto.strip()
 
     if not envase_id_texto:
-        return None, None, None
+        return None, None
 
     try:
-        envase_id = int(envase_id_texto)
+        return None, int(envase_id_texto)
     except ValueError:
-        return "El envase elegido no es válido.", None, None
+        return "El envase elegido no es válido.", None
+
+
+def _validar_contenido_caja(contenido_caja_texto: str) -> tuple[str | None, float | None]:
+    """Valida el contenido solicitado: siempre obligatorio, número positivo, sin importar el envase."""
+    contenido_caja_texto = contenido_caja_texto.strip()
 
     if not contenido_caja_texto:
-        return "El contenido de caja es obligatorio cuando elegís un envase.", None, None
+        return "El contenido solicitado es obligatorio.", None
 
     try:
         contenido_caja = float(contenido_caja_texto)
     except ValueError:
-        return "El contenido de caja tiene que ser un número.", None, None
+        return "El contenido solicitado tiene que ser un número.", None
 
     if contenido_caja <= 0:
-        return "El contenido de caja tiene que ser mayor a cero.", None, None
+        return "El contenido solicitado tiene que ser mayor a cero.", None
 
-    return None, envase_id, contenido_caja
+    return None, contenido_caja
+
+
+def _envase_variable_desde_form(valor: str) -> bool:
+    """Un checkbox HTML solo manda un valor cuando está tildado; si no llega nada, es False."""
+    return bool(valor.strip())
 
 
 @app.get("/")
@@ -405,6 +408,7 @@ def agregar_ficha(
     envase_id: str = Form(""),
     contenido_caja: str = Form(""),
     unidad_venta: str = Form(""),
+    envase_variable: str = Form(""),
 ):
     error = None
     articulo_id_valor = None
@@ -421,9 +425,12 @@ def agregar_ficha(
         error = _validar_unidad_venta(unidad_venta)
 
     envase_id_valor = None
+    if not error:
+        error, envase_id_valor = _validar_envase(envase_id)
+
     contenido_caja_valor = None
     if not error:
-        error, envase_id_valor, contenido_caja_valor = _validar_envase_y_contenido(envase_id, contenido_caja)
+        error, contenido_caja_valor = _validar_contenido_caja(contenido_caja)
 
     if error:
         articulos = listar_articulos_sin_ficha(cliente_id)
@@ -443,7 +450,14 @@ def agregar_ficha(
         )
 
     try:
-        crear_ficha(articulo_id_valor, cliente_id, envase_id_valor, contenido_caja_valor, unidad_venta)
+        crear_ficha(
+            articulo_id_valor,
+            cliente_id,
+            envase_id_valor,
+            contenido_caja_valor,
+            unidad_venta,
+            _envase_variable_desde_form(envase_variable),
+        )
     except Exception as error_db:
         articulos = listar_articulos_sin_ficha(cliente_id)
         envases = listar_envases_por_cliente(cliente_id)
@@ -502,13 +516,19 @@ def editar_ficha(
     envase_id: str = Form(""),
     contenido_caja: str = Form(""),
     unidad_venta: str = Form(""),
+    envase_variable: str = Form(""),
 ):
     error = _validar_unidad_venta(unidad_venta)
 
     envase_id_valor = None
+    if not error:
+        error, envase_id_valor = _validar_envase(envase_id)
+
     contenido_caja_valor = None
     if not error:
-        error, envase_id_valor, contenido_caja_valor = _validar_envase_y_contenido(envase_id, contenido_caja)
+        error, contenido_caja_valor = _validar_contenido_caja(contenido_caja)
+
+    envase_variable_valor = _envase_variable_desde_form(envase_variable)
 
     if error:
         envases = listar_envases_por_cliente(cliente_id)
@@ -519,6 +539,7 @@ def editar_ficha(
             "envase_id": envase_id,
             "contenido_caja": contenido_caja,
             "unidad_venta": unidad_venta,
+            "envase_variable": envase_variable_valor,
         }
         return templates.TemplateResponse(
             request,
@@ -528,7 +549,7 @@ def editar_ficha(
         )
 
     try:
-        actualizar_ficha(ficha_id, envase_id_valor, contenido_caja_valor, unidad_venta)
+        actualizar_ficha(ficha_id, envase_id_valor, contenido_caja_valor, unidad_venta, envase_variable_valor)
     except Exception as error_db:
         envases = listar_envases_por_cliente(cliente_id)
         ficha = {
@@ -538,6 +559,7 @@ def editar_ficha(
             "envase_id": envase_id_valor,
             "contenido_caja": contenido_caja_valor,
             "unidad_venta": unidad_venta,
+            "envase_variable": envase_variable_valor,
         }
         return templates.TemplateResponse(
             request,

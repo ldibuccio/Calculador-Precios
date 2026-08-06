@@ -387,8 +387,22 @@ def test_eliminar_cliente_error_de_base_da_500():
 CLIENTES_PARA_SELECTOR = [{"id": 1, "nombre": "Día"}, {"id": 2, "nombre": "Vea"}]
 
 FICHAS_DE_PRUEBA = [
-    {"id": 10, "articulo_nombre": "Mango", "envase_nombre": "Caja Chica Día", "contenido_caja": 10, "unidad_venta": "unidad"},
-    {"id": 11, "articulo_nombre": "Sandía", "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo"},
+    {
+        "id": 10,
+        "articulo_nombre": "Mango",
+        "envase_nombre": "Caja Chica Día",
+        "contenido_caja": 10,
+        "unidad_venta": "unidad",
+        "envase_variable": True,
+    },
+    {
+        "id": 11,
+        "articulo_nombre": "Sandía",
+        "envase_nombre": None,
+        "contenido_caja": 18,
+        "unidad_venta": "kilo",
+        "envase_variable": False,
+    },
 ]
 
 
@@ -423,6 +437,8 @@ def test_ver_fichas_con_cliente_muestra_la_lista():
     assert "Sin envase" in respuesta.text
     assert "/fichas/10/editar" in respuesta.text
     assert "/fichas/nueva?cliente_id=1" in respuesta.text
+    assert "Variable" in respuesta.text
+    assert "Fijo" in respuesta.text
 
 
 def test_ver_fichas_error_al_leer_fichas_muestra_error_claro():
@@ -485,25 +501,42 @@ def test_agregar_ficha_exitosa_redirige_a_fichas_del_cliente():
                 "envase_id": "100",
                 "contenido_caja": "10",
                 "unidad_venta": "unidad",
+                "envase_variable": "si",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/fichas?cliente_id=1"
-    mock_crear.assert_called_once_with(5, 1, 100, 10.0, "unidad")
+    mock_crear.assert_called_once_with(5, 1, 100, 10.0, "unidad", True)
 
 
-def test_agregar_ficha_sin_envase_ignora_contenido_caja():
+def test_agregar_ficha_sin_envase_con_contenido_caja_exitosa():
     with patch("app.main.crear_ficha") as mock_crear:
         respuesta = cliente.post(
             "/fichas/nueva",
-            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "999", "unidad_venta": "kilo"},
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "12", "unidad_venta": "cubeta"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(5, 1, None, None, "kilo")
+    mock_crear.assert_called_once_with(5, 1, None, 12.0, "cubeta", False)
+
+
+def test_agregar_ficha_sin_envase_sin_contenido_caja_muestra_error():
+    with (
+        patch("app.main.crear_ficha") as mock_crear,
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "", "unidad_venta": "kilo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "obligatorio" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def test_agregar_ficha_sin_articulo_muestra_error():
@@ -594,7 +627,7 @@ def test_agregar_ficha_error_de_base_muestra_mensaje_claro():
     ):
         respuesta = cliente.post(
             "/fichas/nueva",
-            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "", "unidad_venta": "kilo"},
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "10", "unidad_venta": "kilo"},
         )
 
     assert respuesta.status_code == 500
@@ -609,6 +642,7 @@ FICHA_DE_PRUEBA = {
     "envase_id": 100,
     "contenido_caja": 10,
     "unidad_venta": "unidad",
+    "envase_variable": True,
 }
 
 
@@ -622,6 +656,7 @@ def test_ver_editar_ficha_muestra_datos_precargados():
     assert respuesta.status_code == 200
     assert "Mango" in respuesta.text
     assert 'action="/fichas/10/editar"' in respuesta.text
+    assert "checked" in respuesta.text  # envase_variable=True precargado
 
 
 def test_ver_editar_ficha_inexistente_da_404():
@@ -648,13 +683,53 @@ def test_editar_ficha_exitosa_redirige_a_fichas_del_cliente():
                 "envase_id": "100",
                 "contenido_caja": "12",
                 "unidad_venta": "unidad",
+                "envase_variable": "si",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/fichas?cliente_id=1"
-    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad")
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", True)
+
+
+def test_editar_ficha_sin_tildar_envase_variable_guarda_false():
+    with patch("app.main.actualizar_ficha") as mock_actualizar:
+        respuesta = cliente.post(
+            "/fichas/10/editar",
+            data={
+                "cliente_id": "1",
+                "articulo_nombre": "Mango",
+                "envase_id": "100",
+                "contenido_caja": "12",
+                "unidad_venta": "unidad",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", False)
+
+
+def test_editar_ficha_sin_contenido_caja_muestra_error():
+    with (
+        patch("app.main.actualizar_ficha") as mock_actualizar,
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/10/editar",
+            data={
+                "cliente_id": "1",
+                "articulo_nombre": "Mango",
+                "envase_id": "100",
+                "contenido_caja": "",
+                "unidad_venta": "unidad",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "obligatorio" in respuesta.text
+    mock_actualizar.assert_not_called()
 
 
 def test_editar_ficha_unidad_venta_invalida_muestra_error():

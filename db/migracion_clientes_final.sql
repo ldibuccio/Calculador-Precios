@@ -124,18 +124,19 @@ comment on table envases_costo_historial is 'Costo de cada envase, con historial
 -- puntual. El mismo articulo puede tener unidad_venta distinta segun el
 -- cliente (ej. Mango: un cliente lo compra por unidad, otro por kilo).
 create table fichas_logistica (
-    id              bigint generated always as identity primary key,
-    articulo_id     bigint not null references articulos (id),
-    cliente_id      bigint not null references clientes (id),
-    unidad_venta    text not null check (unidad_venta in ('kilo', 'unidad', 'cubeta')),
-    envase_id       bigint references envases (id), -- vacio si no usa un envase compartido
-    contenido_caja  numeric, -- cuanto trae la caja para este articulo + cliente (vacio si no usa envase compartido)
-    creado_en       timestamptz not null default now(),
-    actualizado_en  timestamptz not null default now(),
+    id                bigint generated always as identity primary key,
+    articulo_id       bigint not null references articulos (id),
+    cliente_id        bigint not null references clientes (id),
+    unidad_venta      text not null check (unidad_venta in ('kilo', 'unidad', 'cubeta')),
+    envase_id         bigint references envases (id), -- vacio si no usa un envase compartido
+    contenido_caja    numeric, -- kg/unidades/cubetas solicitados por caja (obligatorio en el formulario, sin importar el envase)
+    envase_variable   boolean not null default false, -- true = el envase de esta ficha es solo referencia; se decide por compra
+    creado_en         timestamptz not null default now(),
+    actualizado_en    timestamptz not null default now(),
     unique (articulo_id, cliente_id)
 );
 
-comment on table fichas_logistica is 'Ficha de logistica por articulo y cliente: unidad de venta, que envase usa y contenido de la caja.';
+comment on table fichas_logistica is 'Ficha de logistica por articulo y cliente: unidad de venta, que envase usa (fijo o variable) y contenido solicitado.';
 
 -- 7. cliente_id en precios_dia y pedidos_supermercado
 alter table precios_dia add column cliente_id bigint references clientes (id);
@@ -181,8 +182,8 @@ from (values
     ('Sandía',          'kilo',   null::text,       null::numeric),
     ('Uva',             'kilo',   null::text,       null::numeric),
     -- Sin envase compartido (envase perdido), por cubeta
-    ('Frutilla',        'cubeta', null::text,       null::numeric),
-    ('Arándano',        'cubeta', null::text,       null::numeric),
+    ('Frutilla',        'cubeta', null::text,       12::numeric),
+    ('Arándano',        'cubeta', null::text,       12::numeric),
     -- Caja Chica Dia, por kilo
     ('Lima',            'kilo',   'Caja Chica Día',  5::numeric),
     ('Tomate Redondo',  'kilo',   'Caja Chica Día',  6::numeric),
