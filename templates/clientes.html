@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clientes</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.3rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  th {
+    color: #666;
+    font-weight: 600;
+  }
+  .vacio { color: #888; font-style: italic; }
+  .tabla-scroll { overflow-x: auto; }
+  .acciones { display: flex; gap: 0.4rem; }
+  .acciones .boton, .acciones button {
+    margin-top: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+    width: auto;
+  }
+  .boton-editar { background: #2563eb; }
+  .boton-eliminar { background: #dc2626; }
+  .form-eliminar { display: inline; }
+</style>
+</head>
+<body>
+  <h1>Clientes</h1>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Agregar cliente</h2>
+    <form method="post" action="/clientes/nuevo">
+      <label for="nombre">Nombre *</label>
+      <input type="text" id="nombre" name="nombre" required>
+
+      <label for="descuento">Descuento % *</label>
+      <input type="number" id="descuento" name="descuento" min="0" max="100" step="0.01" required>
+
+      <label for="utilidad_objetivo">Utilidad objetivo % *</label>
+      <input type="number" id="utilidad_objetivo" name="utilidad_objetivo" min="0" max="100" step="0.01" required>
+
+      <button type="submit">Guardar</button>
+    </form>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Clientes ({{ clientes|length }})</h2>
+    {% if clientes %}
+    <div class="tabla-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Descuento</th>
+            <th>Utilidad</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cliente in clientes %}
+          <tr>
+            <td>{{ cliente.nombre }}</td>
+            <td>{{ cliente.descuento if cliente.descuento is not none else "-" }}%</td>
+            <td>{{ cliente.utilidad_objetivo if cliente.utilidad_objetivo is not none else "-" }}%</td>
+            <td>
+              <div class="acciones">
+                <a class="boton boton-editar" href="/clientes/{{ cliente.id }}/editar">Editar</a>
+                <form class="form-eliminar" method="post" action="/clientes/{{ cliente.id }}/eliminar"
+                      onsubmit="return confirm('¿Eliminar {{ cliente.nombre }}?');">
+                  <button type="submit" class="boton-eliminar">Eliminar</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="vacio">No hay clientes cargados todavía.</p>
+    {% endif %}
+  </div>
+</body>
+</html>

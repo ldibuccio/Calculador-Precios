@@ -198,3 +198,176 @@ def test_eliminar_articulo_error_de_base_da_500():
         respuesta = cliente.post("/articulos/1/eliminar")
 
     assert respuesta.status_code == 500
+
+
+CLIENTES_DE_PRUEBA = [
+    {"id": 1, "nombre": "Día", "descuento": 23.0, "utilidad_objetivo": 20.0},
+    {"id": 2, "nombre": "Otro cliente", "descuento": 15.0, "utilidad_objetivo": 10.0},
+]
+
+
+def test_ver_clientes_lista_vacia():
+    with patch("app.main.listar_clientes", return_value=[]):
+        respuesta = cliente.get("/clientes")
+
+    assert respuesta.status_code == 200
+    assert "No hay clientes cargados todavía." in respuesta.text
+
+
+def test_ver_clientes_error_de_base_muestra_pagina_de_error_clara():
+    with patch("app.main.listar_clientes", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/clientes")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo leer los clientes" in respuesta.text
+
+
+def test_ver_clientes_muestra_nombre_descuento_y_utilidad_como_porcentaje():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/clientes")
+
+    assert respuesta.status_code == 200
+    assert "Día" in respuesta.text
+    assert "23.0%" in respuesta.text
+    assert "20.0%" in respuesta.text
+    assert "/clientes/1/editar" in respuesta.text
+    assert "/clientes/1/eliminar" in respuesta.text
+
+
+def test_agregar_cliente_exitoso_redirige_a_clientes():
+    with patch("app.main.crear_cliente") as mock_crear:
+        respuesta = cliente.post(
+            "/clientes/nuevo",
+            data={"nombre": "Vea", "descuento": "18", "utilidad_objetivo": "12"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/clientes"
+    mock_crear.assert_called_once_with("Vea", 18.0, 12.0)
+
+
+def test_agregar_cliente_nombre_vacio_muestra_error():
+    with patch("app.main.crear_cliente") as mock_crear, patch("app.main.listar_clientes", return_value=[]):
+        respuesta = cliente.post(
+            "/clientes/nuevo", data={"nombre": "   ", "descuento": "18", "utilidad_objetivo": "12"}
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede estar vacío" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_cliente_descuento_fuera_de_rango_muestra_error():
+    with patch("app.main.crear_cliente") as mock_crear, patch("app.main.listar_clientes", return_value=[]):
+        respuesta = cliente.post(
+            "/clientes/nuevo", data={"nombre": "Vea", "descuento": "150", "utilidad_objetivo": "12"}
+        )
+
+    assert respuesta.status_code == 400
+    assert "entre 0 y 100" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_cliente_utilidad_no_numerica_muestra_error():
+    with patch("app.main.crear_cliente") as mock_crear, patch("app.main.listar_clientes", return_value=[]):
+        respuesta = cliente.post(
+            "/clientes/nuevo", data={"nombre": "Vea", "descuento": "18", "utilidad_objetivo": "abc"}
+        )
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser un número" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_cliente_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.crear_cliente", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_clientes", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/clientes/nuevo", data={"nombre": "Vea", "descuento": "18", "utilidad_objetivo": "12"}
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar" in respuesta.text
+
+
+CLIENTE_DE_PRUEBA = {"id": 1, "nombre": "Día", "descuento": 23.0, "utilidad_objetivo": 20.0}
+
+
+def test_ver_editar_cliente_muestra_datos_precargados():
+    with patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA):
+        respuesta = cliente.get("/clientes/1/editar")
+
+    assert respuesta.status_code == 200
+    assert "Día" in respuesta.text
+    assert 'action="/clientes/1/editar"' in respuesta.text
+
+
+def test_ver_editar_cliente_inexistente_da_404():
+    with patch("app.main.obtener_cliente", return_value=None):
+        respuesta = cliente.get("/clientes/999/editar")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_editar_cliente_error_de_base_da_500():
+    with patch("app.main.obtener_cliente", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/clientes/1/editar")
+
+    assert respuesta.status_code == 500
+
+
+def test_editar_cliente_exitoso_redirige_a_clientes():
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post(
+            "/clientes/1/editar",
+            data={"nombre": "Día", "descuento": "25", "utilidad_objetivo": "22"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/clientes"
+    # La ruta solo delega en actualizar_cliente; la lógica de historial
+    # (agregar un registro nuevo con vigente_desde = hoy en vez de pisar el
+    # anterior) vive en el SQL de app/db.py, que necesita una base real
+    # para probarse — no se puede mockear sin perder la cobertura de esa lógica.
+    mock_actualizar.assert_called_once_with(1, "Día", 25.0, 22.0)
+
+
+def test_editar_cliente_nombre_vacio_muestra_error():
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post(
+            "/clientes/1/editar", data={"nombre": "   ", "descuento": "25", "utilidad_objetivo": "22"}
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede estar vacío" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_editar_cliente_error_de_base_muestra_mensaje_claro():
+    with patch("app.main.actualizar_cliente", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post(
+            "/clientes/1/editar", data={"nombre": "Día", "descuento": "25", "utilidad_objetivo": "22"}
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar" in respuesta.text
+
+
+def test_eliminar_cliente_exitoso_redirige_a_clientes():
+    with patch("app.main.desactivar_cliente") as mock_desactivar:
+        respuesta = cliente.post("/clientes/1/eliminar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/clientes"
+    mock_desactivar.assert_called_once_with(1)
+
+
+def test_eliminar_cliente_error_de_base_da_500():
+    with patch("app.main.desactivar_cliente", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post("/clientes/1/eliminar")
+
+    assert respuesta.status_code == 500
