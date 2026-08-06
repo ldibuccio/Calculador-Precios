@@ -34,7 +34,7 @@
     font-size: 0.9rem;
     color: #444;
   }
-  form input {
+  form input, form select {
     width: 100%;
     padding: 0.65rem;
     margin-top: 0.25rem;
@@ -42,6 +42,7 @@
     border-radius: 8px;
     font-size: 1rem;
     box-sizing: border-box;
+    background: #fff;
   }
   button {
     margin-top: 1.1rem;
@@ -75,6 +76,18 @@
     <form method="post" action="/articulos/{{ articulo.id }}/editar">
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" value="{{ articulo.nombre }}" required>
+
+      <label for="unidad_compra">Unidad de compra *</label>
+      <select id="unidad_compra" name="unidad_compra" required>
+        <option value="" {% if not articulo.unidad_compra %}selected disabled{% endif %}>Elegí...</option>
+        <option value="kilo" {% if articulo.unidad_compra == "kilo" %}selected{% endif %}>Kilo</option>
+        <option value="unidad" {% if articulo.unidad_compra == "unidad" %}selected{% endif %}>Unidad</option>
+        <option value="cubeta" {% if articulo.unidad_compra == "cubeta" %}selected{% endif %}>Cubeta</option>
+      </select>
+
+      <label for="contenido_referencia">Contenido de referencia del cajón (opcional)</label>
+      <input type="number" id="contenido_referencia" name="contenido_referencia" min="0" step="0.01"
+             value="{% if articulo.contenido_referencia is not none %}{{ articulo.contenido_referencia }}{% endif %}">
 
       <button type="submit">Guardar cambios</button>
     </form>

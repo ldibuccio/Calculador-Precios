@@ -39,17 +39,19 @@ def contar_articulos() -> int:
 
 
 def listar_articulos() -> list[dict]:
-    """Devuelve los artículos activos (id, nombre, merma), ordenados por nombre.
+    """Devuelve los artículos activos, ordenados por nombre.
 
     codigo_interno no se lee acá: es un dato del cliente Día (para su email
-    de pedido), no del artículo en sí, y se va a manejar en una tabla de
-    conversión por cliente aparte.
+    de pedido), no del artículo en sí, y se maneja en conversion_articulos_cliente.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT id, nombre, merma_porcentaje FROM articulos WHERE activo = true ORDER BY nombre"
+                """
+                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia
+                FROM articulos WHERE activo = true ORDER BY nombre
+                """
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -63,7 +65,13 @@ def obtener_articulo(articulo_id: int) -> dict | None:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT id, nombre, merma_porcentaje FROM articulos WHERE id = %s", (articulo_id,))
+            cursor.execute(
+                """
+                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia
+                FROM articulos WHERE id = %s
+                """,
+                (articulo_id,),
+            )
             fila = cursor.fetchone()
             if fila is None:
                 return None
@@ -73,25 +81,32 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         conexion.close()
 
 
-def crear_articulo(nombre: str) -> None:
+def crear_articulo(nombre: str, unidad_compra: str, contenido_referencia: float | None) -> None:
     """Inserta un artículo nuevo en la tabla articulos."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("INSERT INTO articulos (nombre) VALUES (%s)", (nombre,))
+            cursor.execute(
+                "INSERT INTO articulos (nombre, unidad_compra, contenido_referencia) VALUES (%s, %s, %s)",
+                (nombre, unidad_compra, contenido_referencia),
+            )
         conexion.commit()
     finally:
         conexion.close()
 
 
-def actualizar_articulo(articulo_id: int, nombre: str) -> None:
-    """Actualiza el nombre de un artículo existente."""
+def actualizar_articulo(articulo_id: int, nombre: str, unidad_compra: str, contenido_referencia: float | None) -> None:
+    """Actualiza nombre, unidad de compra y contenido de referencia de un artículo existente."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE articulos SET nombre = %s, actualizado_en = now() WHERE id = %s",
-                (nombre, articulo_id),
+                """
+                UPDATE articulos
+                SET nombre = %s, unidad_compra = %s, contenido_referencia = %s, actualizado_en = now()
+                WHERE id = %s
+                """,
+                (nombre, unidad_compra, contenido_referencia, articulo_id),
             )
         conexion.commit()
     finally:

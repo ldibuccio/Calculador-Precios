@@ -30,6 +30,16 @@ alter table articulos add column if not exists merma_porcentaje numeric not null
 
 comment on column articulos.merma_porcentaje is 'Porcentaje de merma esperado del articulo (0 = sin merma).';
 
+-- 1c. Agregar unidad y contenido de referencia de compra a articulos
+-- (nullable: se completan a mano desde /articulos). Sin unidad_compra
+-- configurada, /compras/nueva no deja cargar una compra de ese articulo.
+alter table articulos add column if not exists unidad_compra text
+    check (unidad_compra in ('kilo', 'unidad', 'cubeta'));
+alter table articulos add column if not exists contenido_referencia numeric;
+
+comment on column articulos.unidad_compra is 'Unidad en la que se compra el articulo al proveedor (kilo, unidad o cubeta).';
+comment on column articulos.contenido_referencia is 'Cuanto trae habitualmente el cajon/caja que se compra. Solo referencia: editable por compra.';
+
 -- 2. Borrar los parametros globales que ya no se usan
 -- Ahora el descuento y la utilidad son por cliente, y los costos de envase
 -- estan en la tabla envases. kg_por_palet sigue siendo global (no depende

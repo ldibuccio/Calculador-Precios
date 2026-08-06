@@ -49,6 +49,12 @@
     font-size: 0.85rem;
     margin: 0.25rem 0 0;
   }
+  .ayuda.unidad-compra {
+    display: none;
+  }
+  .ayuda.unidad-compra.visible {
+    display: block;
+  }
   button {
     margin-top: 1.1rem;
     width: 100%;
@@ -80,17 +86,34 @@
   <div class="tarjeta">
     <form method="post" action="{% if modo == 'nueva' %}/compras/nueva{% else %}/compras/{{ compra.id }}/editar{% endif %}">
       <label for="articulo_id">Artículo *</label>
-      <select id="articulo_id" name="articulo_id" required>
+      <select id="articulo_id" name="articulo_id" required
+              {% if modo == "nueva" %}onchange="actualizarContenidoPorCajon(this)"{% endif %}>
         <option value="" {% if not compra %}selected disabled{% endif %}>Elegí un artículo...</option>
         {% for a in articulos %}
-        <option value="{{ a.id }}" {% if compra and compra.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        <option value="{{ a.id }}"
+                {% if modo == "nueva" %}data-unidad-compra="{{ a.unidad_compra or '' }}"
+                data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"{% endif %}
+                {% if compra and compra.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
       </select>
+      {% if modo == "nueva" %}
+      <p id="ayuda-unidad-compra" class="ayuda unidad-compra"></p>
+      {% endif %}
 
       <label for="proveedor">Proveedor (nombre / puesto) *</label>
       <input type="text" id="proveedor" name="proveedor" required
              value="{% if compra %}{{ compra.proveedor_nombre }}{% endif %}">
 
+      {% if modo == "nueva" %}
+      <label for="cantidad_cajones">Cantidad de cajones/cajas *</label>
+      <input type="number" id="cantidad_cajones" name="cantidad_cajones" min="0" step="0.01" required
+             value="{% if compra and compra.cantidad_cajones is not none %}{{ compra.cantidad_cajones }}{% endif %}">
+
+      <label for="contenido_por_cajon">Contenido por cajón *</label>
+      <input type="number" id="contenido_por_cajon" name="contenido_por_cajon" min="0" step="0.01" required
+             value="{% if compra and compra.contenido_por_cajon is not none %}{{ compra.contenido_por_cajon }}{% endif %}">
+      <p class="ayuda">Se pre-carga con el contenido de referencia del artículo, pero podés corregirlo si ese día vino distinto.</p>
+      {% else %}
       <label for="cantidad_kilos">Cantidad en kilos</label>
       <input type="number" id="cantidad_kilos" name="cantidad_kilos" min="0" step="0.01"
              value="{% if compra and compra.cantidad_kilos is not none %}{{ compra.cantidad_kilos }}{% endif %}">
@@ -99,6 +122,7 @@
       <input type="number" id="cantidad_fraccion" name="cantidad_fraccion" min="0" step="0.01"
              value="{% if compra and compra.cantidad_fraccion is not none %}{{ compra.cantidad_fraccion }}{% endif %}">
       <p class="ayuda">Cargá al menos una de las dos cantidades.</p>
+      {% endif %}
 
       <label for="importe">Importe *</label>
       <input type="number" id="importe" name="importe" min="0" step="0.01" required
@@ -119,5 +143,32 @@
     </form>
     <a class="volver" href="/compras">Volver a compras</a>
   </div>
+
+  {% if modo == "nueva" %}
+  <script>
+    const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
+
+    function actualizarContenidoPorCajon(select) {
+      const opcion = select.selectedOptions[0];
+      const ayuda = document.getElementById("ayuda-unidad-compra");
+      const contenidoInput = document.getElementById("contenido_por_cajon");
+      const unidadCompra = opcion ? opcion.dataset.unidadCompra : "";
+
+      if (!opcion || !unidadCompra) {
+        ayuda.classList.remove("visible");
+        ayuda.textContent = "";
+        return;
+      }
+
+      ayuda.textContent = "Este artículo se compra por: " + NOMBRES_UNIDAD_COMPRA[unidadCompra];
+      ayuda.classList.add("visible");
+
+      const contenidoReferencia = opcion.dataset.contenidoReferencia;
+      if (contenidoReferencia) {
+        contenidoInput.value = contenidoReferencia;
+      }
+    }
+  </script>
+  {% endif %}
 </body>
 </html>
