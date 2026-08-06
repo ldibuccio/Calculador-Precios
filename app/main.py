@@ -22,23 +22,14 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 
-def _validar_nombre_y_merma(nombre: str, merma_porcentaje: str) -> tuple[str | None, str, float | None]:
-    """Valida nombre no vacío y merma entre 0 y 100. Devuelve (error, nombre_limpio, merma)."""
+def _validar_nombre(nombre: str) -> tuple[str | None, str]:
+    """Valida nombre no vacío. Devuelve (error, nombre_limpio)."""
     nombre = nombre.strip()
-    merma_porcentaje = merma_porcentaje.strip()
 
     if not nombre:
-        return "El nombre no puede estar vacío.", nombre, None
+        return "El nombre no puede estar vacío.", nombre
 
-    try:
-        merma = float(merma_porcentaje) if merma_porcentaje else 0.0
-    except ValueError:
-        return "La merma tiene que ser un número.", nombre, None
-
-    if not (0 <= merma <= 100):
-        return "La merma tiene que estar entre 0 y 100.", nombre, None
-
-    return None, nombre, merma
+    return None, nombre
 
 
 @app.get("/")
@@ -76,12 +67,8 @@ def ver_articulos(request: Request, error: str | None = None):
 
 
 @app.post("/articulos/nuevo")
-def agregar_articulo(
-    request: Request,
-    nombre: str = Form(...),
-    merma_porcentaje: str = Form("0"),
-):
-    error, nombre, merma = _validar_nombre_y_merma(nombre, merma_porcentaje)
+def agregar_articulo(request: Request, nombre: str = Form(...)):
+    error, nombre = _validar_nombre(nombre)
 
     if error:
         articulos = listar_articulos()
@@ -93,7 +80,7 @@ def agregar_articulo(
         )
 
     try:
-        crear_articulo(nombre, merma)
+        crear_articulo(nombre)
     except Exception as error:
         articulos = listar_articulos()
         return templates.TemplateResponse(
@@ -122,30 +109,25 @@ def ver_editar_articulo(request: Request, articulo_id: int, error: str | None = 
 
 
 @app.post("/articulos/{articulo_id}/editar")
-def editar_articulo(
-    request: Request,
-    articulo_id: int,
-    nombre: str = Form(...),
-    merma_porcentaje: str = Form("0"),
-):
-    error, nombre, merma = _validar_nombre_y_merma(nombre, merma_porcentaje)
+def editar_articulo(request: Request, articulo_id: int, nombre: str = Form(...)):
+    error, nombre = _validar_nombre(nombre)
 
     if error:
         return templates.TemplateResponse(
             request,
             "articulo_editar.html",
-            {"articulo": {"id": articulo_id, "nombre": nombre, "merma_porcentaje": merma_porcentaje}, "error": error},
+            {"articulo": {"id": articulo_id, "nombre": nombre}, "error": error},
             status_code=400,
         )
 
     try:
-        actualizar_articulo(articulo_id, nombre, merma)
+        actualizar_articulo(articulo_id, nombre)
     except Exception as error:
         return templates.TemplateResponse(
             request,
             "articulo_editar.html",
             {
-                "articulo": {"id": articulo_id, "nombre": nombre, "merma_porcentaje": merma},
+                "articulo": {"id": articulo_id, "nombre": nombre},
                 "error": f"No se pudo guardar el artículo: {error}",
             },
             status_code=500,

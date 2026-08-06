@@ -73,28 +73,25 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         conexion.close()
 
 
-def crear_articulo(nombre: str, merma_porcentaje: float) -> None:
+def crear_articulo(nombre: str) -> None:
     """Inserta un artículo nuevo en la tabla articulos."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO articulos (nombre, merma_porcentaje) VALUES (%s, %s)",
-                (nombre, merma_porcentaje),
-            )
+            cursor.execute("INSERT INTO articulos (nombre) VALUES (%s)", (nombre,))
         conexion.commit()
     finally:
         conexion.close()
 
 
-def actualizar_articulo(articulo_id: int, nombre: str, merma_porcentaje: float) -> None:
-    """Actualiza nombre y merma de un artículo existente."""
+def actualizar_articulo(articulo_id: int, nombre: str) -> None:
+    """Actualiza el nombre de un artículo existente."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE articulos SET nombre = %s, merma_porcentaje = %s, actualizado_en = now() WHERE id = %s",
-                (nombre, merma_porcentaje, articulo_id),
+                "UPDATE articulos SET nombre = %s, actualizado_en = now() WHERE id = %s",
+                (nombre, articulo_id),
             )
         conexion.commit()
     finally:
