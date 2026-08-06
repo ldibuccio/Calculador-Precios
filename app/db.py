@@ -370,3 +370,97 @@ def eliminar_ficha(ficha_id: int) -> None:
         conexion.commit()
     finally:
         conexion.close()
+
+
+def listar_conversiones_por_cliente(cliente_id: int) -> list[dict]:
+    """Conversiones de un cliente (cómo llama a cada artículo), ordenadas por nombre de artículo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, a.nombre AS articulo_nombre, c.nombre_cliente, c.codigo_cliente
+                FROM conversion_articulos_cliente c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.cliente_id = %s
+                ORDER BY a.nombre
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def obtener_conversion(conversion_id: int) -> dict | None:
+    """Devuelve una conversión por id (para precargar el formulario de edición), o None si no existe."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.cliente_id, c.articulo_id, a.nombre AS articulo_nombre,
+                       c.nombre_cliente, c.codigo_cliente
+                FROM conversion_articulos_cliente c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.id = %s
+                """,
+                (conversion_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def crear_conversion(articulo_id: int, cliente_id: int, nombre_cliente: str, codigo_cliente: str | None) -> None:
+    """Crea una conversión (cómo llama el cliente a un artículo)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO conversion_articulos_cliente (articulo_id, cliente_id, nombre_cliente, codigo_cliente)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (articulo_id, cliente_id, nombre_cliente, codigo_cliente),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def actualizar_conversion(
+    conversion_id: int, articulo_id: int, nombre_cliente: str, codigo_cliente: str | None
+) -> None:
+    """Actualiza el artículo, nombre y código de una conversión existente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE conversion_articulos_cliente
+                SET articulo_id = %s, nombre_cliente = %s, codigo_cliente = %s, actualizado_en = now()
+                WHERE id = %s
+                """,
+                (articulo_id, nombre_cliente, codigo_cliente, conversion_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def eliminar_conversion(conversion_id: int) -> None:
+    """Borra una conversión (borrado real: nada más referencia su id)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM conversion_articulos_cliente WHERE id = %s", (conversion_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
