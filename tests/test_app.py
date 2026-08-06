@@ -1061,8 +1061,11 @@ COMPRAS_DE_PRUEBA = [
     {
         "id": 30,
         "articulo_nombre": "Mzn Red",
-        "proveedor_nombre": "Puesto 15",
-        "cantidad_kilos": 100,
+        "proveedor_nombre": "Saturno",
+        "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 18,
+        "cantidad_kilos": 180,
         "cantidad_fraccion": None,
         "importe": 50000,
         "sena": None,
@@ -1071,9 +1074,12 @@ COMPRAS_DE_PRUEBA = [
     {
         "id": 31,
         "articulo_nombre": "Mango",
-        "proveedor_nombre": "Puesto 20",
+        "proveedor_nombre": "Frutamax",
+        "proveedor_codigo_puesto": "L03P38",
+        "cantidad_cajones": 5,
+        "contenido_por_cajon": 10,
         "cantidad_kilos": None,
-        "cantidad_fraccion": 30,
+        "cantidad_fraccion": 50,
         "importe": 15000,
         "sena": 2000,
         "tipo_retiro": "Granel",
@@ -1090,9 +1096,13 @@ def test_ver_compras_muestra_las_de_hoy():
 
     assert respuesta.status_code == 200
     assert "Mzn Red" in respuesta.text
-    assert "Puesto 15" in respuesta.text
+    assert "Saturno" in respuesta.text
+    assert "N07P41" in respuesta.text
     assert "Mango" in respuesta.text
-    assert "Operaciones cargadas: 2" in respuesta.text
+    assert "Cajones" in respuesta.text
+    assert "Contenido" in respuesta.text
+    # sin totales calculados: no debe mostrarse la columna de fracción/kilos ya procesada
+    assert "Fracción" not in respuesta.text
     mock_listar.assert_called_once_with(HOY_DE_PRUEBA)
 
 
@@ -1118,6 +1128,13 @@ def test_ver_compras_error_de_base_muestra_error_claro():
     assert "No se pudieron leer las compras" in respuesta.text
 
 
+PROVEEDORES_DE_PRUEBA = [
+    {"id": 200, "codigo_puesto": "N07P41", "nombre": "Saturno"},
+    {"id": 201, "codigo_puesto": "L03P38", "nombre": "Frutamax"},
+]
+
+PROVEEDOR_DE_PRUEBA = {"id": 200, "codigo_puesto": "N07P41", "nombre": "Saturno"}
+
 ARTICULOS_CON_UNIDAD_COMPRA = [
     {"id": 5, "nombre": "Kiwi", "unidad_compra": "kilo", "contenido_referencia": 18},
 ]
@@ -1127,35 +1144,121 @@ ARTICULO_UNIDAD_DE_PRUEBA = {"id": 6, "nombre": "Mango", "unidad_compra": "unida
 ARTICULO_SIN_UNIDAD_COMPRA = {"id": 7, "nombre": "Kiwi", "unidad_compra": None, "contenido_referencia": None}
 
 
-def test_ver_nueva_compra_muestra_formulario():
-    with patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA):
+def test_ver_nueva_compra_sin_proveedor_muestra_formulario_de_proveedor():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
         respuesta = cliente.get("/compras/nueva")
 
     assert respuesta.status_code == 200
-    assert "Kiwi" in respuesta.text
-    assert "Cantidad de cajones" in respuesta.text
-    assert "Contenido por cajón" in respuesta.text
+    assert "Código de puesto" in respuesta.text
+    assert "N07P41" in respuesta.text
 
 
-def test_ver_nueva_compra_error_de_base_da_500():
-    with patch("app.main.listar_articulos", side_effect=Exception("no se pudo conectar")):
+def test_ver_nueva_compra_sin_proveedor_error_de_base_da_500():
+    with patch("app.main.listar_proveedores", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/compras/nueva")
 
     assert respuesta.status_code == 500
 
 
-def test_agregar_compra_exitosa_redirige_a_compras_calcula_kilos():
+def test_elegir_proveedor_compra_exitoso_redirige_con_proveedor_id():
+    with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor:
+        respuesta = cliente.post(
+            "/compras/nueva/proveedor",
+            data={"codigo_puesto": "n07p41", "nombre": "Saturno"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
+    mock_proveedor.assert_called_once_with("N07P41", "Saturno")
+
+
+def test_elegir_proveedor_compra_codigo_invalido_muestra_error():
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.listar_proveedores", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/proveedor",
+            data={"codigo_puesto": "puesto15", "nombre": "Saturno"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "formato NNNPNN" in respuesta.text
+    mock_proveedor.assert_not_called()
+
+
+def test_elegir_proveedor_compra_sin_nombre_muestra_error():
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.listar_proveedores", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/proveedor",
+            data={"codigo_puesto": "N07P41", "nombre": ""},
+        )
+
+    assert respuesta.status_code == 400
+    assert "El nombre no puede estar vacío" in respuesta.text
+    mock_proveedor.assert_not_called()
+
+
+def test_elegir_proveedor_compra_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_proveedores", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/proveedor",
+            data={"codigo_puesto": "N07P41", "nombre": "Saturno"},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar el proveedor" in respuesta.text
+
+
+def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    assert "N07P41" in respuesta.text
+    assert "Kiwi" in respuesta.text
+    assert "Cantidad de cajones" in respuesta.text
+    assert "Contenido por cajón" in respuesta.text
+
+
+def test_ver_nueva_compra_con_proveedor_inexistente_da_404():
+    with patch("app.main.obtener_proveedor", return_value=None):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_nueva_compra_con_proveedor_error_de_base_da_500():
+    with patch("app.main.obtener_proveedor", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 500
+
+
+def test_agregar_compra_exitosa_redirige_al_mismo_proveedor_calcula_kilos():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor", return_value=200) as mock_proveedor,
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
                 "importe": "50000",
@@ -1166,24 +1269,23 @@ def test_agregar_compra_exitosa_redirige_a_compras_calcula_kilos():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
-    mock_proveedor.assert_called_once_with("Puesto 15")
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     # 10 cajones × 18 kg = 180 kg (unidad_compra del artículo = kilo)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 180.0, None, 50000.0, None, "Clark")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark")
 
 
 def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_UNIDAD_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor", return_value=201),
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "6",
-                "proveedor": "Puesto 20",
                 "cantidad_cajones": "5",
                 "contenido_por_cajon": "10",
                 "importe": "30000",
@@ -1195,19 +1297,39 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
 
     assert respuesta.status_code == 303
     # 5 cajones × 10 unidades = 50 unidades (unidad_compra del artículo = unidad)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 201, None, 50.0, 30000.0, None, "Granel")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Granel")
+
+
+def test_agregar_compra_proveedor_inexistente_da_404():
+    with patch("app.main.obtener_proveedor", return_value=None):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "999",
+                "articulo_id": "5",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 404
 
 
 def test_agregar_compra_sin_articulo_muestra_error():
     with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
                 "importe": "50000",
@@ -1223,14 +1345,16 @@ def test_agregar_compra_sin_articulo_muestra_error():
 
 def test_agregar_compra_sin_cantidad_cajones_muestra_error():
     with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "",
                 "contenido_por_cajon": "18",
                 "importe": "50000",
@@ -1246,14 +1370,16 @@ def test_agregar_compra_sin_cantidad_cajones_muestra_error():
 
 def test_agregar_compra_sin_contenido_por_cajon_muestra_error():
     with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "",
                 "importe": "50000",
@@ -1269,14 +1395,16 @@ def test_agregar_compra_sin_contenido_por_cajon_muestra_error():
 
 def test_agregar_compra_sin_importe_muestra_error():
     with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
                 "importe": "",
@@ -1292,14 +1420,16 @@ def test_agregar_compra_sin_importe_muestra_error():
 
 def test_agregar_compra_tipo_retiro_invalido_muestra_error():
     with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
                 "importe": "50000",
@@ -1313,40 +1443,19 @@ def test_agregar_compra_tipo_retiro_invalido_muestra_error():
     mock_crear.assert_not_called()
 
 
-def test_agregar_compra_sin_proveedor_muestra_error():
-    with (
-        patch("app.main.crear_compra") as mock_crear,
-        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-    ):
-        respuesta = cliente.post(
-            "/compras/nueva",
-            data={
-                "articulo_id": "5",
-                "proveedor": "",
-                "cantidad_cajones": "10",
-                "contenido_por_cajon": "18",
-                "importe": "50000",
-                "sena": "",
-                "tipo_retiro": "Clark",
-            },
-        )
-
-    assert respuesta.status_code == 400
-    assert "El nombre no puede estar vacío" in respuesta.text
-    mock_crear.assert_not_called()
-
-
 def test_agregar_compra_articulo_sin_unidad_compra_configurada_muestra_error():
     with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_SIN_UNIDAD_COMPRA),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "7",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
                 "importe": "50000",
@@ -1363,15 +1472,17 @@ def test_agregar_compra_articulo_sin_unidad_compra_configurada_muestra_error():
 def test_agregar_compra_error_de_base_muestra_mensaje_claro():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.crear_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva",
             data={
+                "proveedor_id": "200",
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
                 "importe": "50000",
@@ -1390,8 +1501,11 @@ COMPRA_DE_PRUEBA = {
     "articulo_id": 5,
     "articulo_nombre": "Mzn Red",
     "proveedor_id": 200,
-    "proveedor_nombre": "Puesto 15",
-    "cantidad_kilos": 100,
+    "proveedor_nombre": "Saturno",
+    "proveedor_codigo_puesto": "N07P41",
+    "cantidad_cajones": 10,
+    "contenido_por_cajon": 18,
+    "cantidad_kilos": 180,
     "cantidad_fraccion": None,
     "importe": 50000,
     "sena": None,
@@ -1407,7 +1521,8 @@ def test_ver_editar_compra_muestra_datos_precargados():
         respuesta = cliente.get("/compras/30/editar")
 
     assert respuesta.status_code == 200
-    assert "Puesto 15" in respuesta.text
+    assert "Saturno" in respuesta.text
+    assert "N07P41" in respuesta.text
     assert 'action="/compras/30/editar"' in respuesta.text
 
 
@@ -1427,14 +1542,13 @@ def test_ver_editar_compra_error_de_base_da_500():
 
 def test_editar_compra_exitosa_redirige_a_compras():
     with (
-        patch("app.main.obtener_o_crear_proveedor", return_value=200) as mock_proveedor,
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.actualizar_compra") as mock_actualizar,
     ):
         respuesta = cliente.post(
             "/compras/30/editar",
             data={
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_kilos": "120",
                 "cantidad_fraccion": "",
                 "importe": "55000",
@@ -1446,12 +1560,29 @@ def test_editar_compra_exitosa_redirige_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras"
-    mock_proveedor.assert_called_once_with("Puesto 15")
-    mock_actualizar.assert_called_once_with(30, 5, 200, 120.0, None, 55000.0, 1000.0, "Granel")
+    mock_actualizar.assert_called_once_with(30, 5, 120.0, None, 55000.0, 1000.0, "Granel")
+
+
+def test_editar_compra_inexistente_da_404():
+    with patch("app.main.obtener_compra", return_value=None):
+        respuesta = cliente.post(
+            "/compras/999/editar",
+            data={
+                "articulo_id": "5",
+                "cantidad_kilos": "120",
+                "cantidad_fraccion": "",
+                "importe": "55000",
+                "sena": "",
+                "tipo_retiro": "Granel",
+            },
+        )
+
+    assert respuesta.status_code == 404
 
 
 def test_editar_compra_sin_ninguna_cantidad_muestra_error():
     with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.actualizar_compra") as mock_actualizar,
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
@@ -1459,7 +1590,6 @@ def test_editar_compra_sin_ninguna_cantidad_muestra_error():
             "/compras/30/editar",
             data={
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_kilos": "",
                 "cantidad_fraccion": "",
                 "importe": "50000",
@@ -1475,7 +1605,7 @@ def test_editar_compra_sin_ninguna_cantidad_muestra_error():
 
 def test_editar_compra_error_de_base_muestra_mensaje_claro():
     with (
-        patch("app.main.obtener_o_crear_proveedor", return_value=200),
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.actualizar_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
@@ -1483,7 +1613,6 @@ def test_editar_compra_error_de_base_muestra_mensaje_claro():
             "/compras/30/editar",
             data={
                 "articulo_id": "5",
-                "proveedor": "Puesto 15",
                 "cantidad_kilos": "100",
                 "cantidad_fraccion": "",
                 "importe": "50000",

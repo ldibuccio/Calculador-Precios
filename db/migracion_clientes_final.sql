@@ -81,6 +81,23 @@ alter table compras add column cantidad_fraccion numeric;
 alter table compras add constraint compras_cantidad_cargada_check
     check (cantidad_kilos is not null or cantidad_fraccion is not null);
 
+-- 3c. Compras: ademas del total ya calculado, guardar tambien lo que
+-- tipeo el comprador (cajones x contenido por cajon), para que la lista
+-- se vea como la comanda real y no como un dato ya procesado.
+alter table compras add column cantidad_cajones numeric not null;
+alter table compras add column contenido_por_cajon numeric not null;
+
+-- 3d. Proveedores: nave+puesto (nunca se usaron con datos reales) se
+-- reemplazan por un unico codigo_puesto, con el formato validado tambien
+-- en la base (letra N o L + 2 digitos + P + 2 digitos, ej. N07P41).
+alter table proveedores drop constraint if exists proveedores_nave_puesto_key;
+alter table proveedores drop column if exists nave;
+alter table proveedores drop column if exists puesto;
+alter table proveedores add column codigo_puesto text unique not null
+    check (codigo_puesto ~ '^[NL][0-9]{2}P[0-9]{2}$');
+
+comment on table proveedores is 'Proveedores del mercado. La identidad estable es codigo_puesto (ej. N07P41); el nombre es editable, la ultima correccion manda.';
+
 -- 4. Clientes
 create table clientes (
     id              bigint generated always as identity primary key,

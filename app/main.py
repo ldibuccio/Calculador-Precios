@@ -5,6 +5,7 @@ esqueleto de la API y la prueba de conexión a Supabase. El motor de costeo
 y las fichas en core/ no se tocan.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -32,20 +33,24 @@ from app.db import (
     listar_articulos_sin_ficha,
     listar_clientes,
     listar_compras_por_fecha,
+    listar_compras_por_fecha_y_proveedor,
     listar_conversiones_por_cliente,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
+    listar_proveedores,
     obtener_articulo,
     obtener_cliente,
     obtener_compra,
     obtener_conversion,
     obtener_ficha,
-    obtener_o_crear_proveedor,
+    obtener_o_crear_proveedor_por_codigo,
+    obtener_proveedor,
 )
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel"}
 ARGENTINA = timezone(timedelta(hours=-3))
+REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 
 
 def _hoy_argentina():
@@ -229,6 +234,19 @@ def _validar_contenido_por_cajon(texto: str) -> tuple[str | None, float | None]:
         return "El contenido por cajón tiene que ser mayor a cero.", None
 
     return None, valor
+
+
+def _validar_codigo_puesto(texto: str) -> tuple[str | None, str | None]:
+    """Valida el código de puesto: obligatorio, formato letra N/L + 2 dígitos + P + 2 dígitos."""
+    codigo = texto.strip().upper()
+
+    if not codigo:
+        return "El código de puesto es obligatorio.", None
+
+    if not REGEX_CODIGO_PUESTO.match(codigo):
+        return "El código de puesto tiene que tener el formato NNNPNN, por ejemplo N07P41 o L03P38.", None
+
+    return None, codigo
 
 
 @app.get("/")
@@ -1090,37 +1108,106 @@ def ver_compras(request: Request, error: str | None = None):
 
 
 @app.get("/compras/nueva")
-def ver_nueva_compra(request: Request, error: str | None = None):
+def ver_nueva_compra(request: Request, proveedor_id: int | None = None, error: str | None = None):
+    if proveedor_id is None:
+        try:
+            proveedores = listar_proveedores()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+        return templates.TemplateResponse(
+            request,
+            "compra_proveedor_form.html",
+            {"proveedores": proveedores, "error": error},
+        )
+
+    try:
+        proveedor = obtener_proveedor(proveedor_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if proveedor is None:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+
     try:
         articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
         "compra_form.html",
-        {"articulos": articulos, "modo": "nueva", "compra": None, "error": error},
+        {
+            "articulos": articulos,
+            "modo": "nueva",
+            "compra": None,
+            "proveedor": proveedor,
+            "renglones_hoy": renglones_hoy,
+            "error": error,
+        },
     )
+
+
+@app.post("/compras/nueva/proveedor")
+def elegir_proveedor_compra(request: Request, codigo_puesto: str = Form(""), nombre: str = Form("")):
+    error, codigo_valor = _validar_codigo_puesto(codigo_puesto)
+
+    nombre_valor = nombre
+    if not error:
+        error, nombre_valor = _validar_nombre(nombre)
+
+    if error:
+        try:
+            proveedores = listar_proveedores()
+        except Exception:
+            proveedores = []
+        return templates.TemplateResponse(
+            request,
+            "compra_proveedor_form.html",
+            {"proveedores": proveedores, "error": error},
+            status_code=400,
+        )
+
+    try:
+        proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+    except Exception as error_db:
+        try:
+            proveedores = listar_proveedores()
+        except Exception:
+            proveedores = []
+        return templates.TemplateResponse(
+            request,
+            "compra_proveedor_form.html",
+            {"proveedores": proveedores, "error": f"No se pudo guardar el proveedor: {error_db}"},
+            status_code=500,
+        )
+
+    return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
 
 @app.post("/compras/nueva")
 def agregar_compra(
     request: Request,
+    proveedor_id: int = Form(...),
     articulo_id: str = Form(""),
-    proveedor: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
 ):
+    try:
+        proveedor = obtener_proveedor(proveedor_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if proveedor is None:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+
     error, valores = _validar_compra_nueva_form(
         articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
     )
-
-    proveedor_valor = proveedor
-    if not error:
-        error, proveedor_valor = _validar_nombre(proveedor)
 
     articulo = None
     if not error:
@@ -1128,10 +1215,10 @@ def agregar_compra(
             articulo = obtener_articulo(valores["articulo_id"])
         except Exception as error_db:
             articulos = listar_articulos()
+            renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
             compra = {
                 "id": None,
                 "articulo_id": valores["articulo_id"],
-                "proveedor_nombre": proveedor,
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
                 "importe": importe,
@@ -1145,6 +1232,8 @@ def agregar_compra(
                     "articulos": articulos,
                     "modo": "nueva",
                     "compra": compra,
+                    "proveedor": proveedor,
+                    "renglones_hoy": renglones_hoy,
                     "error": f"No se pudo leer el artículo: {error_db}",
                 },
                 status_code=500,
@@ -1157,47 +1246,10 @@ def agregar_compra(
 
     if error:
         articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
         compra = {
             "id": None,
             "articulo_id": valores["articulo_id"],
-            "proveedor_nombre": proveedor,
-            "cantidad_cajones": cantidad_cajones,
-            "contenido_por_cajon": contenido_por_cajon,
-            "importe": importe,
-            "sena": sena,
-            "tipo_retiro": tipo_retiro,
-        }
-        return templates.TemplateResponse(
-            request,
-            "compra_form.html",
-            {"articulos": articulos, "modo": "nueva", "compra": compra, "error": error},
-            status_code=400,
-        )
-
-    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-    if articulo["unidad_compra"] == "kilo":
-        cantidad_kilos, cantidad_fraccion = total, None
-    else:
-        cantidad_kilos, cantidad_fraccion = None, total
-
-    try:
-        proveedor_id = obtener_o_crear_proveedor(proveedor_valor)
-        crear_compra(
-            _hoy_argentina(),
-            valores["articulo_id"],
-            proveedor_id,
-            cantidad_kilos,
-            cantidad_fraccion,
-            valores["importe"],
-            valores["sena"],
-            valores["tipo_retiro"],
-        )
-    except Exception as error_db:
-        articulos = listar_articulos()
-        compra = {
-            "id": None,
-            "articulo_id": valores["articulo_id"],
-            "proveedor_nombre": proveedor_valor,
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
             "importe": importe,
@@ -1211,12 +1263,59 @@ def agregar_compra(
                 "articulos": articulos,
                 "modo": "nueva",
                 "compra": compra,
+                "proveedor": proveedor,
+                "renglones_hoy": renglones_hoy,
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
+    if articulo["unidad_compra"] == "kilo":
+        cantidad_kilos, cantidad_fraccion = total, None
+    else:
+        cantidad_kilos, cantidad_fraccion = None, total
+
+    try:
+        crear_compra(
+            _hoy_argentina(),
+            valores["articulo_id"],
+            proveedor_id,
+            valores["cantidad_cajones"],
+            valores["contenido_por_cajon"],
+            cantidad_kilos,
+            cantidad_fraccion,
+            valores["importe"],
+            valores["sena"],
+            valores["tipo_retiro"],
+        )
+    except Exception as error_db:
+        articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+        compra = {
+            "id": None,
+            "articulo_id": valores["articulo_id"],
+            "cantidad_cajones": cantidad_cajones,
+            "contenido_por_cajon": contenido_por_cajon,
+            "importe": importe,
+            "sena": sena,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {
+                "articulos": articulos,
+                "modo": "nueva",
+                "compra": compra,
+                "proveedor": proveedor,
+                "renglones_hoy": renglones_hoy,
                 "error": f"No se pudo guardar la compra: {error_db}",
             },
             status_code=500,
         )
 
-    return RedirectResponse(url="/compras", status_code=303)
+    return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
 
 @app.get("/compras/{compra_id}/editar")
@@ -1246,25 +1345,29 @@ def editar_compra(
     request: Request,
     compra_id: int,
     articulo_id: str = Form(""),
-    proveedor: str = Form(""),
     cantidad_kilos: str = Form(""),
     cantidad_fraccion: str = Form(""),
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
 ):
-    error, valores = _validar_compra_form(articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
+    try:
+        compra_actual = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    proveedor_valor = proveedor
-    if not error:
-        error, proveedor_valor = _validar_nombre(proveedor)
+    if compra_actual is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    error, valores = _validar_compra_form(articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
 
     if error:
         articulos = listar_articulos()
         compra = {
             "id": compra_id,
             "articulo_id": valores["articulo_id"],
-            "proveedor_nombre": proveedor,
+            "proveedor_nombre": compra_actual["proveedor_nombre"],
+            "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
             "cantidad_kilos": cantidad_kilos,
             "cantidad_fraccion": cantidad_fraccion,
             "importe": importe,
@@ -1279,11 +1382,9 @@ def editar_compra(
         )
 
     try:
-        proveedor_id = obtener_o_crear_proveedor(proveedor_valor)
         actualizar_compra(
             compra_id,
             valores["articulo_id"],
-            proveedor_id,
             valores["cantidad_kilos"],
             valores["cantidad_fraccion"],
             valores["importe"],
@@ -1295,7 +1396,8 @@ def editar_compra(
         compra = {
             "id": compra_id,
             "articulo_id": valores["articulo_id"],
-            "proveedor_nombre": proveedor_valor,
+            "proveedor_nombre": compra_actual["proveedor_nombre"],
+            "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
             "cantidad_kilos": cantidad_kilos,
             "cantidad_fraccion": cantidad_fraccion,
             "importe": importe,

@@ -90,22 +90,24 @@
       <table>
         <thead>
           <tr>
-            <th>Artículo</th>
             <th>Proveedor</th>
-            <th>Kilos</th>
-            <th>Fracción</th>
+            <th>Artículo</th>
+            <th>Cajones</th>
+            <th>Contenido</th>
             <th>Importe</th>
+            <th>Seña</th>
             <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {% for c in compras %}
           <tr>
+            <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
-            <td>{{ c.proveedor_nombre }}</td>
-            <td>{{ c.cantidad_kilos if c.cantidad_kilos is not none else "-" }}</td>
-            <td>{{ c.cantidad_fraccion if c.cantidad_fraccion is not none else "-" }}</td>
+            <td>{{ c.cantidad_cajones }}</td>
+            <td>{{ c.contenido_por_cajon }}</td>
             <td>{{ c.importe }}</td>
+            <td>{{ c.sena if c.sena is not none else "-" }}</td>
             <td>
               <div class="acciones">
                 <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>

@@ -481,49 +481,107 @@ def eliminar_conversion(conversion_id: int) -> None:
         conexion.close()
 
 
-def obtener_o_crear_proveedor(nombre_texto: str) -> int:
-    """Busca un proveedor por el texto libre cargado (placeholder de nave='', puesto=texto) o lo crea.
+def obtener_o_crear_proveedor_por_codigo(codigo_puesto: str, nombre: str) -> int:
+    """Busca un proveedor por codigo_puesto (la identidad) o lo crea; el nombre siempre se actualiza.
 
-    Provisorio hasta el aprendizaje de proveedores real (nave + puesto leídos de la comanda).
+    "La última corrección manda": si el código ya existe pero con otro nombre guardado, se
+    pisa con el nombre recién cargado.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT id FROM proveedores WHERE nave = '' AND puesto = %s",
-                (nombre_texto,),
-            )
+            cursor.execute("SELECT id FROM proveedores WHERE codigo_puesto = %s", (codigo_puesto,))
             fila = cursor.fetchone()
             if fila is not None:
-                return fila[0]
-
-            cursor.execute(
-                "INSERT INTO proveedores (nave, puesto, nombre) VALUES ('', %s, %s) RETURNING id",
-                (nombre_texto, nombre_texto),
-            )
-            proveedor_id = cursor.fetchone()[0]
+                proveedor_id = fila[0]
+                cursor.execute(
+                    "UPDATE proveedores SET nombre = %s, actualizado_en = now() WHERE id = %s",
+                    (nombre, proveedor_id),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO proveedores (codigo_puesto, nombre) VALUES (%s, %s) RETURNING id",
+                    (codigo_puesto, nombre),
+                )
+                proveedor_id = cursor.fetchone()[0]
         conexion.commit()
         return proveedor_id
     finally:
         conexion.close()
 
 
+def listar_proveedores() -> list[dict]:
+    """Devuelve todos los proveedores (id, codigo_puesto, nombre), para el autocompletar del alta."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, codigo_puesto, nombre FROM proveedores ORDER BY codigo_puesto")
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def obtener_proveedor(proveedor_id: int) -> dict | None:
+    """Devuelve un proveedor por id, o None si no existe."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, codigo_puesto, nombre FROM proveedores WHERE id = %s",
+                (proveedor_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
 def listar_compras_por_fecha(fecha_operacion) -> list[dict]:
-    """Devuelve las compras cargadas para una fecha de operación, ordenadas por carga."""
+    """Devuelve las compras cargadas para una fecha de operación, agrupadas por proveedor (estilo comanda)."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT c.id, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
+                       p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.fecha_operacion = %s
-                ORDER BY c.cargado_el
+                ORDER BY p.codigo_puesto, c.cargado_el
                 """,
                 (fecha_operacion,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_compras_por_fecha_y_proveedor(fecha_operacion, proveedor_id: int) -> list[dict]:
+    """Devuelve las compras de un proveedor puntual en una fecha, para mostrar lo cargado hasta ahora."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, a.nombre AS articulo_nombre, c.cantidad_cajones, c.contenido_por_cajon,
+                       c.importe, c.sena
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.fecha_operacion = %s AND c.proveedor_id = %s
+                ORDER BY c.cargado_el
+                """,
+                (fecha_operacion, proveedor_id),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -540,7 +598,8 @@ def obtener_compra(compra_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
-                       c.proveedor_id, p.nombre AS proveedor_nombre,
+                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -562,6 +621,8 @@ def crear_compra(
     fecha_operacion,
     articulo_id: int,
     proveedor_id: int,
+    cantidad_cajones: float,
+    contenido_por_cajon: float,
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
     importe: float,
@@ -575,11 +636,22 @@ def crear_compra(
             cursor.execute(
                 """
                 INSERT INTO compras
-                    (fecha_operacion, articulo_id, proveedor_id, cantidad_kilos, cantidad_fraccion,
-                     importe, sena, tipo_retiro)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                     cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (fecha_operacion, articulo_id, proveedor_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro),
+                (
+                    fecha_operacion,
+                    articulo_id,
+                    proveedor_id,
+                    cantidad_cajones,
+                    contenido_por_cajon,
+                    cantidad_kilos,
+                    cantidad_fraccion,
+                    importe,
+                    sena,
+                    tipo_retiro,
+                ),
             )
         conexion.commit()
     finally:
@@ -589,25 +661,24 @@ def crear_compra(
 def actualizar_compra(
     compra_id: int,
     articulo_id: int,
-    proveedor_id: int,
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
     importe: float,
     sena: float | None,
     tipo_retiro: str,
 ) -> None:
-    """Actualiza una compra existente (no cambia su fecha de operación)."""
+    """Actualiza una compra existente (no cambia su proveedor ni su fecha de operación)."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE compras
-                SET articulo_id = %s, proveedor_id = %s, cantidad_kilos = %s, cantidad_fraccion = %s,
+                SET articulo_id = %s, cantidad_kilos = %s, cantidad_fraccion = %s,
                     importe = %s, sena = %s, tipo_retiro = %s
                 WHERE id = %s
                 """,
-                (articulo_id, proveedor_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, compra_id),
+                (articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, compra_id),
             )
         conexion.commit()
     finally:
