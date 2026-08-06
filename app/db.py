@@ -224,3 +224,140 @@ def desactivar_cliente(cliente_id: int) -> None:
         conexion.commit()
     finally:
         conexion.close()
+
+
+def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
+    """Devuelve las fichas de logística de un cliente, ordenadas por nombre de artículo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT fl.id, a.nombre AS articulo_nombre, e.nombre AS envase_nombre,
+                       fl.contenido_caja, fl.unidad_venta
+                FROM fichas_logistica fl
+                JOIN articulos a ON a.id = fl.articulo_id
+                LEFT JOIN envases e ON e.id = fl.envase_id
+                WHERE fl.cliente_id = %s
+                ORDER BY a.nombre
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def obtener_ficha(ficha_id: int) -> dict | None:
+    """Devuelve una ficha por id (con nombre del artículo, para mostrarlo fijo al editar), o None."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT fl.id, fl.cliente_id, fl.articulo_id, a.nombre AS articulo_nombre,
+                       fl.envase_id, fl.contenido_caja, fl.unidad_venta
+                FROM fichas_logistica fl
+                JOIN articulos a ON a.id = fl.articulo_id
+                WHERE fl.id = %s
+                """,
+                (ficha_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def listar_articulos_sin_ficha(cliente_id: int) -> list[dict]:
+    """Artículos activos que todavía no tienen ficha de logística para este cliente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.id, a.nombre
+                FROM articulos a
+                WHERE a.activo = true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM fichas_logistica fl
+                      WHERE fl.articulo_id = a.id AND fl.cliente_id = %s
+                  )
+                ORDER BY a.nombre
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_envases_por_cliente(cliente_id: int) -> list[dict]:
+    """Envases activos de un cliente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, nombre FROM envases WHERE cliente_id = %s AND activo = true ORDER BY nombre",
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def crear_ficha(
+    articulo_id: int, cliente_id: int, envase_id: int | None, contenido_caja: float | None, unidad_venta: str
+) -> None:
+    """Crea la ficha de logística de un artículo para un cliente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO fichas_logistica (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def actualizar_ficha(ficha_id: int, envase_id: int | None, contenido_caja: float | None, unidad_venta: str) -> None:
+    """Actualiza envase, contenido de caja y unidad de venta de una ficha existente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE fichas_logistica
+                SET envase_id = %s, contenido_caja = %s, unidad_venta = %s, actualizado_en = now()
+                WHERE id = %s
+                """,
+                (envase_id, contenido_caja, unidad_venta, ficha_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def eliminar_ficha(ficha_id: int) -> None:
+    """Borra una ficha de logística (borrado real: nada más referencia su id)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM fichas_logistica WHERE id = %s", (ficha_id,))
+        conexion.commit()
+    finally:
+        conexion.close()

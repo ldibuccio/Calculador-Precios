@@ -107,6 +107,17 @@ def test_agregar_articulo_nombre_vacio_muestra_error():
     mock_crear.assert_not_called()
 
 
+def test_agregar_articulo_nombre_string_vacio_muestra_error_prolijo_no_422():
+    # Regresión: un campo de texto Form(...) vacío ("" y no solo espacios) hacía
+    # que FastAPI devolviera un 422 crudo en vez de nuestro error prolijo.
+    with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post("/articulos/nuevo", data={"nombre": ""})
+
+    assert respuesta.status_code == 400
+    assert "no puede estar vacío" in respuesta.text
+    mock_crear.assert_not_called()
+
+
 def test_agregar_articulo_error_de_base_muestra_mensaje_claro():
     with (
         patch("app.main.crear_articulo", side_effect=Exception("no se pudo conectar")),
@@ -369,5 +380,336 @@ def test_eliminar_cliente_exitoso_redirige_a_clientes():
 def test_eliminar_cliente_error_de_base_da_500():
     with patch("app.main.desactivar_cliente", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.post("/clientes/1/eliminar")
+
+    assert respuesta.status_code == 500
+
+
+CLIENTES_PARA_SELECTOR = [{"id": 1, "nombre": "Día"}, {"id": 2, "nombre": "Vea"}]
+
+FICHAS_DE_PRUEBA = [
+    {"id": 10, "articulo_nombre": "Mango", "envase_nombre": "Caja Chica Día", "contenido_caja": 10, "unidad_venta": "unidad"},
+    {"id": 11, "articulo_nombre": "Sandía", "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo"},
+]
+
+
+def test_ver_fichas_sin_cliente_elegido_pide_elegir_uno():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR):
+        respuesta = cliente.get("/fichas")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente" in respuesta.text
+    assert "Día" in respuesta.text  # aparece como opción del selector
+
+
+def test_ver_fichas_error_al_leer_clientes_muestra_error_claro():
+    with patch("app.main.listar_clientes", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/fichas")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo leer los clientes" in respuesta.text
+
+
+def test_ver_fichas_con_cliente_muestra_la_lista():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/fichas?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Mango" in respuesta.text
+    assert "Caja Chica Día" in respuesta.text
+    assert "Sandía" in respuesta.text
+    assert "Sin envase" in respuesta.text
+    assert "/fichas/10/editar" in respuesta.text
+    assert "/fichas/nueva?cliente_id=1" in respuesta.text
+
+
+def test_ver_fichas_error_al_leer_fichas_muestra_error_claro():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.get("/fichas?cliente_id=1")
+
+    assert respuesta.status_code == 500
+    assert "No se pudieron leer las fichas" in respuesta.text
+
+
+ARTICULOS_SIN_FICHA = [{"id": 5, "nombre": "Kiwi"}]
+ENVASES_DEL_CLIENTE = [{"id": 100, "nombre": "Caja Chica Día"}]
+
+
+def test_ver_nueva_ficha_muestra_formulario():
+    with (
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.get("/fichas/nueva?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Kiwi" in respuesta.text
+    assert "Caja Chica Día" in respuesta.text
+
+
+def test_ver_nueva_ficha_sin_cliente_id_da_422():
+    respuesta = cliente.get("/fichas/nueva")
+    assert respuesta.status_code == 422
+
+
+def test_ver_nueva_ficha_sin_articulos_disponibles_muestra_mensaje():
+    with (
+        patch("app.main.listar_articulos_sin_ficha", return_value=[]),
+        patch("app.main.listar_envases_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/fichas/nueva?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "ya tienen ficha para este cliente" in respuesta.text
+
+
+def test_ver_nueva_ficha_error_de_base_da_500():
+    with patch("app.main.listar_articulos_sin_ficha", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/fichas/nueva?cliente_id=1")
+
+    assert respuesta.status_code == 500
+
+
+def test_agregar_ficha_exitosa_redirige_a_fichas_del_cliente():
+    with patch("app.main.crear_ficha") as mock_crear:
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={
+                "cliente_id": "1",
+                "articulo_id": "5",
+                "envase_id": "100",
+                "contenido_caja": "10",
+                "unidad_venta": "unidad",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/fichas?cliente_id=1"
+    mock_crear.assert_called_once_with(5, 1, 100, 10.0, "unidad")
+
+
+def test_agregar_ficha_sin_envase_ignora_contenido_caja():
+    with patch("app.main.crear_ficha") as mock_crear:
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "999", "unidad_venta": "kilo"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(5, 1, None, None, "kilo")
+
+
+def test_agregar_ficha_sin_articulo_muestra_error():
+    with (
+        patch("app.main.crear_ficha") as mock_crear,
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "", "envase_id": "", "contenido_caja": "", "unidad_venta": "kilo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí un artículo" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_ficha_con_envase_sin_contenido_caja_muestra_error():
+    with (
+        patch("app.main.crear_ficha") as mock_crear,
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "100", "contenido_caja": "", "unidad_venta": "kilo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "obligatorio" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_ficha_contenido_caja_no_numerico_muestra_error():
+    with (
+        patch("app.main.crear_ficha") as mock_crear,
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "100", "contenido_caja": "abc", "unidad_venta": "kilo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser un número" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_ficha_contenido_caja_cero_muestra_error():
+    with (
+        patch("app.main.crear_ficha") as mock_crear,
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "100", "contenido_caja": "0", "unidad_venta": "kilo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "mayor a cero" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_ficha_unidad_venta_invalida_muestra_error():
+    with (
+        patch("app.main.crear_ficha") as mock_crear,
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "", "unidad_venta": "litro"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "unidad de venta válida" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_ficha_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.crear_ficha", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/nueva",
+            data={"cliente_id": "1", "articulo_id": "5", "envase_id": "", "contenido_caja": "", "unidad_venta": "kilo"},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar la ficha" in respuesta.text
+
+
+FICHA_DE_PRUEBA = {
+    "id": 10,
+    "cliente_id": 1,
+    "articulo_id": 5,
+    "articulo_nombre": "Mango",
+    "envase_id": 100,
+    "contenido_caja": 10,
+    "unidad_venta": "unidad",
+}
+
+
+def test_ver_editar_ficha_muestra_datos_precargados():
+    with (
+        patch("app.main.obtener_ficha", return_value=FICHA_DE_PRUEBA),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.get("/fichas/10/editar")
+
+    assert respuesta.status_code == 200
+    assert "Mango" in respuesta.text
+    assert 'action="/fichas/10/editar"' in respuesta.text
+
+
+def test_ver_editar_ficha_inexistente_da_404():
+    with patch("app.main.obtener_ficha", return_value=None):
+        respuesta = cliente.get("/fichas/999/editar")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_editar_ficha_error_de_base_da_500():
+    with patch("app.main.obtener_ficha", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/fichas/10/editar")
+
+    assert respuesta.status_code == 500
+
+
+def test_editar_ficha_exitosa_redirige_a_fichas_del_cliente():
+    with patch("app.main.actualizar_ficha") as mock_actualizar:
+        respuesta = cliente.post(
+            "/fichas/10/editar",
+            data={
+                "cliente_id": "1",
+                "articulo_nombre": "Mango",
+                "envase_id": "100",
+                "contenido_caja": "12",
+                "unidad_venta": "unidad",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/fichas?cliente_id=1"
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad")
+
+
+def test_editar_ficha_unidad_venta_invalida_muestra_error():
+    with (
+        patch("app.main.actualizar_ficha") as mock_actualizar,
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/10/editar",
+            data={
+                "cliente_id": "1",
+                "articulo_nombre": "Mango",
+                "envase_id": "100",
+                "contenido_caja": "12",
+                "unidad_venta": "litro",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "unidad de venta válida" in respuesta.text
+    assert "Mango" in respuesta.text  # no se pierde el artículo al re-mostrar el error
+    mock_actualizar.assert_not_called()
+
+
+def test_editar_ficha_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.actualizar_ficha", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_envases_por_cliente", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.post(
+            "/fichas/10/editar",
+            data={
+                "cliente_id": "1",
+                "articulo_nombre": "Mango",
+                "envase_id": "100",
+                "contenido_caja": "12",
+                "unidad_venta": "unidad",
+            },
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar la ficha" in respuesta.text
+
+
+def test_eliminar_ficha_exitosa_redirige_a_fichas_del_cliente():
+    with patch("app.main.eliminar_ficha") as mock_eliminar:
+        respuesta = cliente.post("/fichas/10/eliminar", data={"cliente_id": "1"}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/fichas?cliente_id=1"
+    mock_eliminar.assert_called_once_with(10)
+
+
+def test_eliminar_ficha_error_de_base_da_500():
+    with patch("app.main.eliminar_ficha", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post("/fichas/10/eliminar", data={"cliente_id": "1"})
 
     assert respuesta.status_code == 500
