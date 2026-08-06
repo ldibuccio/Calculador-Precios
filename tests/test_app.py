@@ -1,3 +1,4 @@
+from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -1020,5 +1021,375 @@ def test_eliminar_conversion_exitosa_redirige_a_conversion_del_cliente():
 def test_eliminar_conversion_error_de_base_da_500():
     with patch("app.main.eliminar_conversion", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.post("/conversion/20/eliminar", data={"cliente_id": "1"})
+
+    assert respuesta.status_code == 500
+
+
+HOY_DE_PRUEBA = date(2026, 8, 6)
+
+COMPRAS_DE_PRUEBA = [
+    {
+        "id": 30,
+        "articulo_nombre": "Mzn Red",
+        "proveedor_nombre": "Puesto 15",
+        "cantidad_kilos": 100,
+        "cantidad_fraccion": None,
+        "importe": 50000,
+        "sena": None,
+        "tipo_retiro": "Clark",
+    },
+    {
+        "id": 31,
+        "articulo_nombre": "Mango",
+        "proveedor_nombre": "Puesto 20",
+        "cantidad_kilos": None,
+        "cantidad_fraccion": 30,
+        "importe": 15000,
+        "sena": 2000,
+        "tipo_retiro": "Granel",
+    },
+]
+
+
+def test_ver_compras_muestra_las_de_hoy():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_fecha", return_value=COMPRAS_DE_PRUEBA) as mock_listar,
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "Mzn Red" in respuesta.text
+    assert "Puesto 15" in respuesta.text
+    assert "Mango" in respuesta.text
+    assert "Operaciones cargadas: 2" in respuesta.text
+    mock_listar.assert_called_once_with(HOY_DE_PRUEBA)
+
+
+def test_ver_compras_sin_compras_muestra_mensaje():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_fecha", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "Todavía no cargaste ninguna compra hoy" in respuesta.text
+
+
+def test_ver_compras_error_de_base_muestra_error_claro():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_fecha", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 500
+    assert "No se pudieron leer las compras" in respuesta.text
+
+
+def test_ver_nueva_compra_muestra_formulario():
+    with patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA):
+        respuesta = cliente.get("/compras/nueva")
+
+    assert respuesta.status_code == 200
+    assert "Kiwi" in respuesta.text
+
+
+def test_ver_nueva_compra_error_de_base_da_500():
+    with patch("app.main.listar_articulos", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/nueva")
+
+    assert respuesta.status_code == 500
+
+
+def test_agregar_compra_exitosa_redirige_a_compras():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor", return_value=200) as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_proveedor.assert_called_once_with("Puesto 15")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 100.0, None, 50000.0, None, "Clark")
+
+
+def test_agregar_compra_sin_articulo_muestra_error():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí un artículo" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_sin_ninguna_cantidad_muestra_error():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Cargá al menos la cantidad en kilos o la cantidad de fracción" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_sin_importe_muestra_error():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "El importe es obligatorio" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_tipo_retiro_invalido_muestra_error():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Camion",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "tipo de retiro válido" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_sin_proveedor_muestra_error():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "5",
+                "proveedor": "",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "El nombre no puede estar vacío" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar la compra" in respuesta.text
+
+
+COMPRA_DE_PRUEBA = {
+    "id": 30,
+    "fecha_operacion": HOY_DE_PRUEBA,
+    "articulo_id": 5,
+    "articulo_nombre": "Mzn Red",
+    "proveedor_id": 200,
+    "proveedor_nombre": "Puesto 15",
+    "cantidad_kilos": 100,
+    "cantidad_fraccion": None,
+    "importe": 50000,
+    "sena": None,
+    "tipo_retiro": "Clark",
+}
+
+
+def test_ver_editar_compra_muestra_datos_precargados():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert "Puesto 15" in respuesta.text
+    assert 'action="/compras/30/editar"' in respuesta.text
+
+
+def test_ver_editar_compra_inexistente_da_404():
+    with patch("app.main.obtener_compra", return_value=None):
+        respuesta = cliente.get("/compras/999/editar")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_editar_compra_error_de_base_da_500():
+    with patch("app.main.obtener_compra", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 500
+
+
+def test_editar_compra_exitosa_redirige_a_compras():
+    with (
+        patch("app.main.obtener_o_crear_proveedor", return_value=200) as mock_proveedor,
+        patch("app.main.actualizar_compra") as mock_actualizar,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "120",
+                "cantidad_fraccion": "",
+                "importe": "55000",
+                "sena": "1000",
+                "tipo_retiro": "Granel",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_proveedor.assert_called_once_with("Puesto 15")
+    mock_actualizar.assert_called_once_with(30, 5, 200, 120.0, None, 55000.0, 1000.0, "Granel")
+
+
+def test_editar_compra_sin_ninguna_cantidad_muestra_error():
+    with (
+        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Cargá al menos la cantidad en kilos o la cantidad de fracción" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_editar_compra_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.obtener_o_crear_proveedor", return_value=200),
+        patch("app.main.actualizar_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "proveedor": "Puesto 15",
+                "cantidad_kilos": "100",
+                "cantidad_fraccion": "",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar la compra" in respuesta.text
+
+
+def test_eliminar_compra_exitosa_redirige_a_compras():
+    with patch("app.main.eliminar_compra") as mock_eliminar:
+        respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_eliminar.assert_called_once_with(30)
+
+
+def test_eliminar_compra_error_de_base_da_500():
+    with patch("app.main.eliminar_compra", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post("/compras/30/eliminar")
 
     assert respuesta.status_code == 500

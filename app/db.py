@@ -464,3 +464,147 @@ def eliminar_conversion(conversion_id: int) -> None:
         conexion.commit()
     finally:
         conexion.close()
+
+
+def obtener_o_crear_proveedor(nombre_texto: str) -> int:
+    """Busca un proveedor por el texto libre cargado (placeholder de nave='', puesto=texto) o lo crea.
+
+    Provisorio hasta el aprendizaje de proveedores real (nave + puesto leídos de la comanda).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM proveedores WHERE nave = '' AND puesto = %s",
+                (nombre_texto,),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                return fila[0]
+
+            cursor.execute(
+                "INSERT INTO proveedores (nave, puesto, nombre) VALUES ('', %s, %s) RETURNING id",
+                (nombre_texto, nombre_texto),
+            )
+            proveedor_id = cursor.fetchone()[0]
+        conexion.commit()
+        return proveedor_id
+    finally:
+        conexion.close()
+
+
+def listar_compras_por_fecha(fecha_operacion) -> list[dict]:
+    """Devuelve las compras cargadas para una fecha de operación, ordenadas por carga."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.fecha_operacion = %s
+                ORDER BY c.cargado_el
+                """,
+                (fecha_operacion,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def obtener_compra(compra_id: int) -> dict | None:
+    """Devuelve una compra por id (para precargar el formulario de edición), o None si no existe."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
+                       c.proveedor_id, p.nombre AS proveedor_nombre,
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def crear_compra(
+    fecha_operacion,
+    articulo_id: int,
+    proveedor_id: int,
+    cantidad_kilos: float | None,
+    cantidad_fraccion: float | None,
+    importe: float,
+    sena: float | None,
+    tipo_retiro: str,
+) -> None:
+    """Inserta una compra cargada por el comprador."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO compras
+                    (fecha_operacion, articulo_id, proveedor_id, cantidad_kilos, cantidad_fraccion,
+                     importe, sena, tipo_retiro)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (fecha_operacion, articulo_id, proveedor_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def actualizar_compra(
+    compra_id: int,
+    articulo_id: int,
+    proveedor_id: int,
+    cantidad_kilos: float | None,
+    cantidad_fraccion: float | None,
+    importe: float,
+    sena: float | None,
+    tipo_retiro: str,
+) -> None:
+    """Actualiza una compra existente (no cambia su fecha de operación)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE compras
+                SET articulo_id = %s, proveedor_id = %s, cantidad_kilos = %s, cantidad_fraccion = %s,
+                    importe = %s, sena = %s, tipo_retiro = %s
+                WHERE id = %s
+                """,
+                (articulo_id, proveedor_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, compra_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def eliminar_compra(compra_id: int) -> None:
+    """Borra una compra (borrado real; Postgres rechaza el borrado si alguna recepción ya la referencia)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+        conexion.commit()
+    finally:
+        conexion.close()

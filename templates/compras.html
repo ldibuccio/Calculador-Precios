@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compras de hoy</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.3rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  th {
+    color: #666;
+    font-weight: 600;
+  }
+  .vacio { color: #888; font-style: italic; }
+  .tabla-scroll { overflow-x: auto; }
+  .acciones { display: flex; gap: 0.4rem; }
+  .acciones .boton, .acciones button {
+    margin-top: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+    width: auto;
+  }
+  .boton-editar { background: #2563eb; }
+  .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; }
+  .form-eliminar { display: inline; }
+</style>
+</head>
+<body>
+  <h1>Compras de hoy</h1>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <a class="boton" href="/compras/nueva">Agregar compra</a>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Operaciones cargadas: {{ compras|length }}</h2>
+    {% if compras %}
+    <div class="tabla-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Artículo</th>
+            <th>Proveedor</th>
+            <th>Kilos</th>
+            <th>Fracción</th>
+            <th>Importe</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in compras %}
+          <tr>
+            <td>{{ c.articulo_nombre }}</td>
+            <td>{{ c.proveedor_nombre }}</td>
+            <td>{{ c.cantidad_kilos if c.cantidad_kilos is not none else "-" }}</td>
+            <td>{{ c.cantidad_fraccion if c.cantidad_fraccion is not none else "-" }}</td>
+            <td>{{ c.importe }}</td>
+            <td>
+              <div class="acciones">
+                <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>
+                <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
+                      onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
+                  <button type="submit" class="boton-eliminar">Eliminar</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no cargaste ninguna compra hoy.</p>
+    {% endif %}
+  </div>
+</body>
+</html>

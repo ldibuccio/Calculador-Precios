@@ -5,6 +5,8 @@ esqueleto de la API y la prueba de conexión a Supabase. El motor de costeo
 y las fichas en core/ no se tocan.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -12,30 +14,43 @@ from fastapi.templating import Jinja2Templates
 from app.db import (
     actualizar_articulo,
     actualizar_cliente,
+    actualizar_compra,
     actualizar_conversion,
     actualizar_ficha,
     contar_articulos,
     crear_articulo,
     crear_cliente,
+    crear_compra,
     crear_conversion,
     crear_ficha,
     desactivar_articulo,
     desactivar_cliente,
+    eliminar_compra,
     eliminar_conversion,
     eliminar_ficha,
     listar_articulos,
     listar_articulos_sin_ficha,
     listar_clientes,
+    listar_compras_por_fecha,
     listar_conversiones_por_cliente,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     obtener_articulo,
     obtener_cliente,
+    obtener_compra,
     obtener_conversion,
     obtener_ficha,
+    obtener_o_crear_proveedor,
 )
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
+TIPOS_RETIRO_VALIDOS = {"Clark", "Granel"}
+ARGENTINA = timezone(timedelta(hours=-3))
+
+
+def _hoy_argentina():
+    """Fecha de hoy en Argentina (UTC-3 fijo, sin horario de verano), sin depender de la hora del servidor."""
+    return datetime.now(ARGENTINA).date()
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -110,6 +125,67 @@ def _validar_contenido_caja(contenido_caja_texto: str) -> tuple[str | None, floa
 def _envase_variable_desde_form(valor: str) -> bool:
     """Un checkbox HTML solo manda un valor cuando está tildado; si no llega nada, es False."""
     return bool(valor.strip())
+
+
+def _validar_cantidad_opcional(texto: str, etiqueta: str) -> tuple[str | None, float | None]:
+    """Valida una cantidad opcional (kilos o fracción): vacía es válida, si viene tiene que ser positiva."""
+    texto = texto.strip()
+
+    if not texto:
+        return None, None
+
+    try:
+        valor = float(texto)
+    except ValueError:
+        return f"{etiqueta} tiene que ser un número.", None
+
+    if valor <= 0:
+        return f"{etiqueta} tiene que ser mayor a cero.", None
+
+    return None, valor
+
+
+def _validar_importe(texto: str) -> tuple[str | None, float | None]:
+    """Valida el importe: obligatorio, número positivo."""
+    texto = texto.strip()
+
+    if not texto:
+        return "El importe es obligatorio.", None
+
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "El importe tiene que ser un número.", None
+
+    if valor <= 0:
+        return "El importe tiene que ser mayor a cero.", None
+
+    return None, valor
+
+
+def _validar_sena(texto: str) -> tuple[str | None, float | None]:
+    """Valida la seña: opcional, número mayor o igual a cero si viene cargada."""
+    texto = texto.strip()
+
+    if not texto:
+        return None, None
+
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "La seña tiene que ser un número.", None
+
+    if valor < 0:
+        return "La seña no puede ser negativa.", None
+
+    return None, valor
+
+
+def _validar_tipo_retiro(valor: str) -> str | None:
+    """Valida que el tipo de retiro sea Clark o Granel."""
+    if valor not in TIPOS_RETIRO_VALIDOS:
+        return "Elegí un tipo de retiro válido (Clark o Granel)."
+    return None
 
 
 @app.get("/")
@@ -820,6 +896,266 @@ def eliminar_conversion_ruta(conversion_id: int, cliente_id: int = Form(...)):
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la conversión: {error}") from error
 
     return RedirectResponse(url=f"/conversion?cliente_id={cliente_id}", status_code=303)
+
+
+def _validar_compra_form(
+    articulo_id: str, cantidad_kilos: str, cantidad_fraccion: str, importe: str, sena: str, tipo_retiro: str
+) -> tuple[str | None, dict]:
+    """Valida los campos comunes al alta y edición de una compra.
+
+    Devuelve (error, valores) donde valores trae articulo_id, cantidad_kilos, cantidad_fraccion,
+    importe, sena y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo).
+    """
+    error = None
+    valores = {
+        "articulo_id": None,
+        "cantidad_kilos": None,
+        "cantidad_fraccion": None,
+        "importe": None,
+        "sena": None,
+        "tipo_retiro": tipo_retiro,
+    }
+
+    articulo_id = articulo_id.strip()
+    if not articulo_id:
+        error = "Elegí un artículo."
+    else:
+        try:
+            valores["articulo_id"] = int(articulo_id)
+        except ValueError:
+            error = "El artículo elegido no es válido."
+
+    if not error:
+        error, valores["cantidad_kilos"] = _validar_cantidad_opcional(cantidad_kilos, "La cantidad en kilos")
+
+    if not error:
+        error, valores["cantidad_fraccion"] = _validar_cantidad_opcional(cantidad_fraccion, "La cantidad de fracción")
+
+    if not error and valores["cantidad_kilos"] is None and valores["cantidad_fraccion"] is None:
+        error = "Cargá al menos la cantidad en kilos o la cantidad de fracción."
+
+    if not error:
+        error, valores["importe"] = _validar_importe(importe)
+
+    if not error:
+        error, valores["sena"] = _validar_sena(sena)
+
+    if not error:
+        error = _validar_tipo_retiro(tipo_retiro)
+
+    return error, valores
+
+
+@app.get("/compras")
+def ver_compras(request: Request, error: str | None = None):
+    try:
+        compras = listar_compras_por_fecha(_hoy_argentina())
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "compras.html",
+            {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
+            status_code=500,
+        )
+
+    return templates.TemplateResponse(request, "compras.html", {"compras": compras, "error": error})
+
+
+@app.get("/compras/nueva")
+def ver_nueva_compra(request: Request, error: str | None = None):
+    try:
+        articulos = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compra_form.html",
+        {"articulos": articulos, "modo": "nueva", "compra": None, "error": error},
+    )
+
+
+@app.post("/compras/nueva")
+def agregar_compra(
+    request: Request,
+    articulo_id: str = Form(""),
+    proveedor: str = Form(""),
+    cantidad_kilos: str = Form(""),
+    cantidad_fraccion: str = Form(""),
+    importe: str = Form(""),
+    sena: str = Form(""),
+    tipo_retiro: str = Form(""),
+):
+    error, valores = _validar_compra_form(articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
+
+    proveedor_valor = proveedor
+    if not error:
+        error, proveedor_valor = _validar_nombre(proveedor)
+
+    if error:
+        articulos = listar_articulos()
+        compra = {
+            "id": None,
+            "articulo_id": valores["articulo_id"],
+            "proveedor_nombre": proveedor,
+            "cantidad_kilos": cantidad_kilos,
+            "cantidad_fraccion": cantidad_fraccion,
+            "importe": importe,
+            "sena": sena,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {"articulos": articulos, "modo": "nueva", "compra": compra, "error": error},
+            status_code=400,
+        )
+
+    try:
+        proveedor_id = obtener_o_crear_proveedor(proveedor_valor)
+        crear_compra(
+            _hoy_argentina(),
+            valores["articulo_id"],
+            proveedor_id,
+            valores["cantidad_kilos"],
+            valores["cantidad_fraccion"],
+            valores["importe"],
+            valores["sena"],
+            valores["tipo_retiro"],
+        )
+    except Exception as error_db:
+        articulos = listar_articulos()
+        compra = {
+            "id": None,
+            "articulo_id": valores["articulo_id"],
+            "proveedor_nombre": proveedor_valor,
+            "cantidad_kilos": cantidad_kilos,
+            "cantidad_fraccion": cantidad_fraccion,
+            "importe": importe,
+            "sena": sena,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {
+                "articulos": articulos,
+                "modo": "nueva",
+                "compra": compra,
+                "error": f"No se pudo guardar la compra: {error_db}",
+            },
+            status_code=500,
+        )
+
+    return RedirectResponse(url="/compras", status_code=303)
+
+
+@app.get("/compras/{compra_id}/editar")
+def ver_editar_compra(request: Request, compra_id: int, error: str | None = None):
+    try:
+        compra = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    try:
+        articulos = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compra_form.html",
+        {"articulos": articulos, "modo": "editar", "compra": compra, "error": error},
+    )
+
+
+@app.post("/compras/{compra_id}/editar")
+def editar_compra(
+    request: Request,
+    compra_id: int,
+    articulo_id: str = Form(""),
+    proveedor: str = Form(""),
+    cantidad_kilos: str = Form(""),
+    cantidad_fraccion: str = Form(""),
+    importe: str = Form(""),
+    sena: str = Form(""),
+    tipo_retiro: str = Form(""),
+):
+    error, valores = _validar_compra_form(articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
+
+    proveedor_valor = proveedor
+    if not error:
+        error, proveedor_valor = _validar_nombre(proveedor)
+
+    if error:
+        articulos = listar_articulos()
+        compra = {
+            "id": compra_id,
+            "articulo_id": valores["articulo_id"],
+            "proveedor_nombre": proveedor,
+            "cantidad_kilos": cantidad_kilos,
+            "cantidad_fraccion": cantidad_fraccion,
+            "importe": importe,
+            "sena": sena,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {"articulos": articulos, "modo": "editar", "compra": compra, "error": error},
+            status_code=400,
+        )
+
+    try:
+        proveedor_id = obtener_o_crear_proveedor(proveedor_valor)
+        actualizar_compra(
+            compra_id,
+            valores["articulo_id"],
+            proveedor_id,
+            valores["cantidad_kilos"],
+            valores["cantidad_fraccion"],
+            valores["importe"],
+            valores["sena"],
+            valores["tipo_retiro"],
+        )
+    except Exception as error_db:
+        articulos = listar_articulos()
+        compra = {
+            "id": compra_id,
+            "articulo_id": valores["articulo_id"],
+            "proveedor_nombre": proveedor_valor,
+            "cantidad_kilos": cantidad_kilos,
+            "cantidad_fraccion": cantidad_fraccion,
+            "importe": importe,
+            "sena": sena,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {
+                "articulos": articulos,
+                "modo": "editar",
+                "compra": compra,
+                "error": f"No se pudo guardar la compra: {error_db}",
+            },
+            status_code=500,
+        )
+
+    return RedirectResponse(url="/compras", status_code=303)
+
+
+@app.post("/compras/{compra_id}/eliminar")
+def eliminar_compra_ruta(compra_id: int):
+    try:
+        eliminar_compra(compra_id)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
+
+    return RedirectResponse(url="/compras", status_code=303)
 
 
 if __name__ == "__main__":
