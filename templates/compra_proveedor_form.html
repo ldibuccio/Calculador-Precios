@@ -92,10 +92,10 @@
   {% endif %}
 
   <div class="tarjeta">
-    <p class="ayuda">Sacale una foto a la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.</p>
+    <p class="ayuda">Sacá una foto nueva o elegí una ya guardada de la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.</p>
     <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data">
       <label for="foto">Foto de la comanda</label>
-      <input type="file" id="foto" name="foto" accept="image/jpeg,image/png" capture="environment" required>
+      <input type="file" id="foto" name="foto" accept="image/*" required>
       <button type="submit">Leer comanda</button>
     </form>
   </div>
