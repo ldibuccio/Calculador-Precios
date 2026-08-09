@@ -18,6 +18,7 @@ from app.db import (
     actualizar_compra,
     actualizar_conversion,
     actualizar_ficha,
+    actualizar_importe_compra,
     contar_articulos,
     crear_articulo,
     crear_cliente,
@@ -34,6 +35,7 @@ from app.db import (
     listar_clientes,
     listar_compras_por_fecha,
     listar_compras_por_fecha_y_proveedor,
+    listar_compras_sin_precio,
     listar_conversiones_por_cliente,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
@@ -158,7 +160,25 @@ def _validar_cantidad_opcional(texto: str, etiqueta: str) -> tuple[str | None, f
 
 
 def _validar_importe(texto: str) -> tuple[str | None, float | None]:
-    """Valida el importe: obligatorio, número positivo."""
+    """Valida el importe: opcional (compra sin precio, se arregla después), si viene tiene que ser positivo."""
+    texto = texto.strip()
+
+    if not texto:
+        return None, None
+
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "El importe tiene que ser un número.", None
+
+    if valor <= 0:
+        return "El importe tiene que ser mayor a cero.", None
+
+    return None, valor
+
+
+def _validar_importe_pendiente(texto: str) -> tuple[str | None, float | None]:
+    """Valida el importe al completar una compra pendiente: acá sí es obligatorio."""
     texto = texto.strip()
 
     if not texto:
@@ -1427,6 +1447,54 @@ def eliminar_compra_ruta(compra_id: int):
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
     return RedirectResponse(url="/compras", status_code=303)
+
+
+@app.get("/compras/pendientes")
+def ver_compras_pendientes(request: Request, error: str | None = None):
+    try:
+        compras = listar_compras_sin_precio()
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "compras_pendientes.html",
+            {"compras": [], "error": f"No se pudieron leer las compras pendientes: {error_db}"},
+            status_code=500,
+        )
+
+    return templates.TemplateResponse(request, "compras_pendientes.html", {"compras": compras, "error": error})
+
+
+@app.post("/compras/pendientes/{compra_id}/importe")
+def completar_importe_compra(request: Request, compra_id: int, importe: str = Form("")):
+    error, importe_valor = _validar_importe_pendiente(importe)
+
+    if error:
+        try:
+            compras = listar_compras_sin_precio()
+        except Exception:
+            compras = []
+        return templates.TemplateResponse(
+            request,
+            "compras_pendientes.html",
+            {"compras": compras, "error": error},
+            status_code=400,
+        )
+
+    try:
+        actualizar_importe_compra(compra_id, importe_valor)
+    except Exception as error_db:
+        try:
+            compras = listar_compras_sin_precio()
+        except Exception:
+            compras = []
+        return templates.TemplateResponse(
+            request,
+            "compras_pendientes.html",
+            {"compras": compras, "error": f"No se pudo guardar el importe: {error_db}"},
+            status_code=500,
+        )
+
+    return RedirectResponse(url="/compras/pendientes", status_code=303)
 
 
 if __name__ == "__main__":

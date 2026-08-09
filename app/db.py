@@ -625,7 +625,7 @@ def crear_compra(
     contenido_por_cajon: float,
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
-    importe: float,
+    importe: float | None,
     sena: float | None,
     tipo_retiro: str,
 ) -> None:
@@ -663,7 +663,7 @@ def actualizar_compra(
     articulo_id: int,
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
-    importe: float,
+    importe: float | None,
     sena: float | None,
     tipo_retiro: str,
 ) -> None:
@@ -680,6 +680,45 @@ def actualizar_compra(
                 """,
                 (articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, compra_id),
             )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_compras_sin_precio() -> list[dict]:
+    """Compras (de cualquier fecha) con importe todavía vacío, para completarlo desde /compras/pendientes.
+
+    NOTA para cuando el motor de costeo empiece a leer compras de la base
+    (hoy no lo hace): las consultas de costeo tienen que excluir las filas
+    con importe IS NULL, son compras sin precio todavía.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
+                       p.codigo_puesto AS proveedor_codigo_puesto, c.cantidad_cajones, c.contenido_por_cajon
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.importe IS NULL
+                ORDER BY c.fecha_operacion, p.codigo_puesto, c.cargado_el
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def actualizar_importe_compra(compra_id: int, importe: float) -> None:
+    """Completa el importe de una compra que había quedado sin precio."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE compras SET importe = %s WHERE id = %s", (importe, compra_id))
         conexion.commit()
     finally:
         conexion.close()

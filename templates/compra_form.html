@@ -171,9 +171,10 @@
       <p class="ayuda">Cargá al menos una de las dos cantidades.</p>
       {% endif %}
 
-      <label for="importe">Importe *</label>
-      <input type="number" id="importe" name="importe" min="0" step="0.01" required
+      <label for="importe">Importe</label>
+      <input type="number" id="importe" name="importe" min="0" step="0.01"
              value="{% if compra and compra.importe is not none %}{{ compra.importe }}{% endif %}">
+      <p class="ayuda">Dejalo vacío si todavía no tenés precio (se completa después desde "Compras pendientes").</p>
 
       <label for="sena">Seña</label>
       <input type="number" id="sena" name="sena" min="0" step="0.01"

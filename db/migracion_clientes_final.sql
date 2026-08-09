@@ -98,6 +98,12 @@ alter table proveedores add column codigo_puesto text unique not null
 
 comment on table proveedores is 'Proveedores del mercado. La identidad estable es codigo_puesto (ej. N07P41); el nombre es editable, la ultima correccion manda.';
 
+-- 3e. Compras: el importe pasa a ser opcional (compra sin precio, comun de
+-- noche, se completa despues desde /compras/pendientes).
+alter table compras alter column importe drop not null;
+
+comment on column compras.importe is 'Importe de la compra. Nulo = compra sin precio todavia (se completa despues desde /compras/pendientes). El costeo debe excluir las filas con importe nulo.';
+
 -- 4. Clientes
 create table clientes (
     id              bigint generated always as identity primary key,

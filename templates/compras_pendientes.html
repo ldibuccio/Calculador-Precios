@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compras de hoy</title>
+<title>Compras sin precio</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -60,64 +60,65 @@
   }
   .vacio { color: #888; font-style: italic; }
   .tabla-scroll { overflow-x: auto; }
-  .acciones { display: flex; gap: 0.4rem; }
-  .acciones .boton, .acciones button {
-    margin-top: 0;
+  .form-importe {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .form-importe input {
+    width: 6rem;
+    padding: 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+  }
+  .form-importe button {
     padding: 0.4rem 0.6rem;
     font-size: 0.85rem;
-    width: auto;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
   }
-  .boton-editar { background: #2563eb; }
-  .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; }
-  .form-eliminar { display: inline; }
-  .sin-precio { color: #dc2626; font-weight: 600; }
 </style>
 </head>
 <body>
-  <h1>Compras de hoy</h1>
+  <h1>Compras sin precio</h1>
 
   {% if error %}
   <div class="error">{{ error }}</div>
   {% endif %}
 
   <div class="tarjeta">
-    <a class="boton" href="/compras/nueva">Agregar compra</a>
-    <a class="boton" href="/compras/pendientes">Compras sin precio</a>
-  </div>
-
-  <div class="tarjeta">
-    <h2>Operaciones cargadas: {{ compras|length }}</h2>
+    <h2>Pendientes ({{ compras|length }})</h2>
     {% if compras %}
     <div class="tabla-scroll">
       <table>
         <thead>
           <tr>
+            <th>Fecha</th>
             <th>Proveedor</th>
             <th>Artículo</th>
             <th>Cajones</th>
             <th>Contenido</th>
-            <th>Importe</th>
-            <th>Seña</th>
-            <th>Acciones</th>
+            <th>Cargar importe</th>
           </tr>
         </thead>
         <tbody>
           {% for c in compras %}
           <tr>
+            <td>{{ c.fecha_operacion }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones }}</td>
             <td>{{ c.contenido_por_cajon }}</td>
-            <td>{% if c.importe is not none %}{{ c.importe }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
-            <td>{{ c.sena if c.sena is not none else "-" }}</td>
             <td>
-              <div class="acciones">
-                <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>
-                <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
-                      onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
-                  <button type="submit" class="boton-eliminar">Eliminar</button>
-                </form>
-              </div>
+              <form class="form-importe" method="post" action="/compras/pendientes/{{ c.id }}/importe">
+                <input type="number" name="importe" min="0" step="0.01" required placeholder="Importe">
+                <button type="submit">Guardar</button>
+              </form>
             </td>
           </tr>
           {% endfor %}
@@ -125,8 +126,12 @@
       </table>
     </div>
     {% else %}
-    <p class="vacio">Todavía no cargaste ninguna compra hoy.</p>
+    <p class="vacio">No hay compras pendientes de precio.</p>
     {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <a class="boton" href="/compras">Volver a compras</a>
   </div>
 </body>
 </html>

@@ -1393,7 +1393,32 @@ def test_agregar_compra_sin_contenido_por_cajon_muestra_error():
     mock_crear.assert_not_called()
 
 
-def test_agregar_compra_sin_importe_muestra_error():
+def test_agregar_compra_sin_importe_queda_pendiente():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "articulo_id": "5",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark")
+
+
+def test_agregar_compra_importe_negativo_muestra_error():
     with (
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.crear_compra") as mock_crear,
@@ -1407,14 +1432,14 @@ def test_agregar_compra_sin_importe_muestra_error():
                 "articulo_id": "5",
                 "cantidad_cajones": "10",
                 "contenido_por_cajon": "18",
-                "importe": "",
+                "importe": "-5",
                 "sena": "",
                 "tipo_retiro": "Clark",
             },
         )
 
     assert respuesta.status_code == 400
-    assert "El importe es obligatorio" in respuesta.text
+    assert "El importe tiene que ser mayor a cero" in respuesta.text
     mock_crear.assert_not_called()
 
 
@@ -1639,3 +1664,78 @@ def test_eliminar_compra_error_de_base_da_500():
         respuesta = cliente.post("/compras/30/eliminar")
 
     assert respuesta.status_code == 500
+
+
+COMPRAS_PENDIENTES_DE_PRUEBA = [
+    {
+        "id": 40,
+        "fecha_operacion": HOY_DE_PRUEBA,
+        "articulo_nombre": "Mzn Red",
+        "proveedor_nombre": "Saturno",
+        "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 18,
+    },
+]
+
+
+def test_ver_compras_pendientes_muestra_la_lista():
+    with patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_DE_PRUEBA) as mock_listar:
+        respuesta = cliente.get("/compras/pendientes")
+
+    assert respuesta.status_code == 200
+    assert "Mzn Red" in respuesta.text
+    assert "Saturno" in respuesta.text
+    mock_listar.assert_called_once_with()
+
+
+def test_ver_compras_pendientes_sin_pendientes_muestra_mensaje():
+    with patch("app.main.listar_compras_sin_precio", return_value=[]):
+        respuesta = cliente.get("/compras/pendientes")
+
+    assert respuesta.status_code == 200
+    assert "No hay compras pendientes de precio" in respuesta.text
+
+
+def test_ver_compras_pendientes_error_de_base_da_500():
+    with patch("app.main.listar_compras_sin_precio", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/pendientes")
+
+    assert respuesta.status_code == 500
+    assert "No se pudieron leer las compras pendientes" in respuesta.text
+
+
+def test_completar_importe_compra_exitoso_redirige_a_pendientes():
+    with patch("app.main.actualizar_importe_compra") as mock_actualizar:
+        respuesta = cliente.post(
+            "/compras/pendientes/40/importe",
+            data={"importe": "50000"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/pendientes"
+    mock_actualizar.assert_called_once_with(40, 50000.0)
+
+
+def test_completar_importe_compra_vacio_muestra_error():
+    with (
+        patch("app.main.actualizar_importe_compra") as mock_actualizar,
+        patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.post("/compras/pendientes/40/importe", data={"importe": ""})
+
+    assert respuesta.status_code == 400
+    assert "El importe es obligatorio" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_completar_importe_compra_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.actualizar_importe_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.post("/compras/pendientes/40/importe", data={"importe": "50000"})
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar el importe" in respuesta.text
