@@ -123,7 +123,22 @@ def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
     except anthropic.APIStatusError as error:
         raise RuntimeError(f"La API de Claude devolvió un error ({error.status_code}): {error.message}") from error
 
-    return respuesta.content[0].text
+    return _extraer_texto_de_la_respuesta(respuesta.content)
+
+
+def _extraer_texto_de_la_respuesta(bloques) -> str:
+    """Concatena solo los bloques de texto de la respuesta, ignorando los de "thinking" u otro tipo.
+
+    Cuando el thinking está activado, la API devuelve varios bloques de
+    contenido (ThinkingBlock, TextBlock, ...) y no siempre en el mismo orden;
+    solo los de texto tienen atributo .text.
+    """
+    textos = [bloque.text for bloque in bloques if getattr(bloque, "type", None) == "text"]
+
+    if not textos:
+        raise ValueError("La respuesta de la API no tiene ningún bloque de texto (¿solo vino texto de razonamiento?)")
+
+    return "".join(textos)
 
 
 def extraer_comanda(imagen: bytes, media_type: str | None = None) -> dict:

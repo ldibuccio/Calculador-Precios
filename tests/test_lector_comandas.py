@@ -1,5 +1,6 @@
 import json
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -7,6 +8,7 @@ from core.lector_comandas import (
     ANTHROPIC_API_KEY_ENV_VAR,
     PROMPT_EXTRACCION,
     _detectar_media_type,
+    _extraer_texto_de_la_respuesta,
     _limpiar_respuesta_json,
     _llamar_api_claude,
     extraer_comanda,
@@ -132,3 +134,48 @@ def test_llamar_api_claude_sin_api_key_lanza_error_claro(monkeypatch):
 
     with pytest.raises(RuntimeError, match=ANTHROPIC_API_KEY_ENV_VAR):
         _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
+
+
+def _respuesta_falsa(bloques):
+    return SimpleNamespace(content=bloques)
+
+
+def test_extraer_texto_de_la_respuesta_ignora_bloques_de_thinking():
+    # ThinkingBlock real: tiene "type" == "thinking" y ".thinking", pero NO ".text".
+    bloque_thinking = SimpleNamespace(type="thinking", thinking="razonando sobre la comanda...")
+    bloque_texto = SimpleNamespace(type="text", text="hola")
+
+    resultado = _extraer_texto_de_la_respuesta([bloque_thinking, bloque_texto])
+
+    assert resultado == "hola"
+
+
+def test_extraer_texto_de_la_respuesta_concatena_varios_bloques_de_texto():
+    bloques = [SimpleNamespace(type="text", text='{"a": '), SimpleNamespace(type="text", text="1}")]
+
+    resultado = _extraer_texto_de_la_respuesta(bloques)
+
+    assert resultado == '{"a": 1}'
+
+
+def test_extraer_texto_de_la_respuesta_sin_bloques_de_texto_lanza_error():
+    bloques = [SimpleNamespace(type="thinking", thinking="solo pensó, no contestó")]
+
+    with pytest.raises(ValueError):
+        _extraer_texto_de_la_respuesta(bloques)
+
+
+def test_llamar_api_claude_con_thinking_activado_usa_solo_el_bloque_de_texto(monkeypatch):
+    # Regresión: con el thinking activado, la respuesta trae un ThinkingBlock
+    # (sin .text) antes del bloque de texto real; no hay que asumir que
+    # content[0] es siempre el texto.
+    monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
+    bloque_thinking = SimpleNamespace(type="thinking", thinking="pensando en la comanda...")
+    bloque_texto = SimpleNamespace(type="text", text=json.dumps(COMANDA_VALIDA))
+    cliente_falso = Mock()
+    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_thinking, bloque_texto])
+
+    with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
+        resultado = _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
+
+    assert resultado == json.dumps(COMANDA_VALIDA)
