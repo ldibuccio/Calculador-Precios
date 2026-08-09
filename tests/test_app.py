@@ -1318,6 +1318,85 @@ def test_agregar_compra_proveedor_inexistente_da_404():
     assert respuesta.status_code == 404
 
 
+def test_agregar_compra_terminar_con_renglon_vacio_va_a_compras_sin_guardar():
+    with (
+        patch("app.main.obtener_proveedor") as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "accion": "terminar",
+                "articulo_id": "",
+                "cantidad_cajones": "",
+                "contenido_por_cajon": "",
+                "importe": "",
+                "sena": "",
+                "tipo_retiro": "",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_proveedor.assert_not_called()
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "accion": "terminar",
+                "articulo_id": "5",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark")
+
+
+def test_agregar_compra_terminar_con_renglon_invalido_muestra_error_y_no_pierde_datos():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "accion": "terminar",
+                "articulo_id": "",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí un artículo" in respuesta.text
+    mock_crear.assert_not_called()
+
+
 def test_agregar_compra_sin_articulo_muestra_error():
     with (
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),

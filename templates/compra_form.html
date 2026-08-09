@@ -78,6 +78,11 @@
     display: block;
     box-sizing: border-box;
   }
+  .boton-secundario {
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -187,9 +192,16 @@
         <option value="Granel" {% if compra and compra.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
       </select>
 
-      <button type="submit">{% if modo == "nueva" %}Agregar artículo{% else %}Guardar{% endif %}</button>
+      {% if modo == "nueva" %}
+      <button type="submit" name="accion" value="agregar">Agregar artículo</button>
+      <button type="submit" name="accion" value="terminar" class="boton-secundario">Terminar carga</button>
+      {% else %}
+      <button type="submit">Guardar</button>
+      {% endif %}
     </form>
+    {% if modo == "editar" %}
     <a class="volver" href="/compras">Volver a compras</a>
+    {% endif %}
   </div>
 
   {% if modo == "nueva" %}
@@ -223,10 +235,6 @@
     {% else %}
     <p class="vacio">Todavía no cargaste ningún artículo de este proveedor.</p>
     {% endif %}
-  </div>
-
-  <div class="tarjeta">
-    <a class="boton" href="/compras">Terminar carga</a>
   </div>
   {% endif %}
 

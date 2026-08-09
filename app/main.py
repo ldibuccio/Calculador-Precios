@@ -1210,6 +1210,7 @@ def elegir_proveedor_compra(request: Request, codigo_puesto: str = Form(""), nom
 def agregar_compra(
     request: Request,
     proveedor_id: int = Form(...),
+    accion: str = Form("agregar"),
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
@@ -1217,6 +1218,12 @@ def agregar_compra(
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
 ):
+    renglon_vacio = not any(
+        campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro)
+    )
+    if accion == "terminar" and renglon_vacio:
+        return RedirectResponse(url="/compras", status_code=303)
+
     try:
         proveedor = obtener_proveedor(proveedor_id)
     except Exception as error_db:
@@ -1334,6 +1341,9 @@ def agregar_compra(
             },
             status_code=500,
         )
+
+    if accion == "terminar":
+        return RedirectResponse(url="/compras", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
