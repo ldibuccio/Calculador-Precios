@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -1060,6 +1060,7 @@ HOY_DE_PRUEBA = date(2026, 8, 6)
 COMPRAS_DE_PRUEBA = [
     {
         "id": 30,
+        "fecha_operacion": HOY_DE_PRUEBA,
         "articulo_nombre": "Mzn Red",
         "proveedor_nombre": "Saturno",
         "proveedor_codigo_puesto": "N07P41",
@@ -1073,6 +1074,7 @@ COMPRAS_DE_PRUEBA = [
     },
     {
         "id": 31,
+        "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=1),
         "articulo_nombre": "Mango",
         "proveedor_nombre": "Frutamax",
         "proveedor_codigo_puesto": "L03P38",
@@ -1087,40 +1089,42 @@ COMPRAS_DE_PRUEBA = [
 ]
 
 
-def test_ver_compras_muestra_las_de_hoy():
+def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_fecha", return_value=COMPRAS_DE_PRUEBA) as mock_listar,
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA) as mock_listar,
     ):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
+    assert "Últimas compras" in respuesta.text
     assert "Mzn Red" in respuesta.text
     assert "Saturno" in respuesta.text
     assert "N07P41" in respuesta.text
     assert "Mango" in respuesta.text
+    assert "Fecha" in respuesta.text
     assert "Cajones" in respuesta.text
     assert "Contenido" in respuesta.text
     # sin totales calculados: no debe mostrarse la columna de fracción/kilos ya procesada
     assert "Fracción" not in respuesta.text
-    mock_listar.assert_called_once_with(HOY_DE_PRUEBA)
+    mock_listar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA)
 
 
 def test_ver_compras_sin_compras_muestra_mensaje():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_fecha", return_value=[]),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=[]),
     ):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert "Todavía no cargaste ninguna compra hoy" in respuesta.text
+    assert "No hay compras cargadas en los últimos 2 días" in respuesta.text
 
 
 def test_ver_compras_error_de_base_muestra_error_claro():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_fecha", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_por_rango_fechas", side_effect=Exception("no se pudo conectar")),
     ):
         respuesta = cliente.get("/compras")
 
@@ -1818,3 +1822,179 @@ def test_completar_importe_compra_error_de_base_muestra_mensaje_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar el importe" in respuesta.text
+
+
+COMANDA_LEIDA_DE_PRUEBA = {
+    "proveedor": {"nombre": "Saturno", "tipo_pabellon": "nave", "numero_pabellon": "7", "puesto": "41"},
+    "fecha": "2026-08-06",
+    "items": [
+        {
+            "articulo": "Kiwi",
+            "cantidad": 10,
+            "importe": 5000,
+            "sena": None,
+            "nota_margen": "84",
+            "confianza": "alta",
+        },
+        {
+            "articulo": "completar artículo",
+            "cantidad": 5,
+            "importe": "completar importe",
+            "sena": None,
+            "nota_margen": "",
+            "confianza": "baja",
+        },
+    ],
+}
+
+
+def test_subir_foto_compra_adivina_proveedor_y_articulo():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]) as mock_aprendizaje,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    assert "N07P41" in respuesta.text
+    assert "Kiwi" in respuesta.text
+    assert "84" in respuesta.text  # nota al margen
+    assert "⚠ revisar" in respuesta.text  # el segundo ítem, sin articulo ni importe
+    mock_aprendizaje.assert_called_once_with(200)
+
+
+def test_subir_foto_compra_sin_proveedor_adivinable_deja_codigo_vacio():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert 'id="codigo_puesto"' in respuesta.text
+    assert 'value=""' in respuesta.text  # nada adivinado para el código de puesto
+
+
+def test_subir_foto_compra_error_del_lector_muestra_mensaje_claro():
+    with (
+        patch("app.main.extraer_comanda", side_effect=Exception("no se pudo conectar con la API")),
+        patch("app.main.listar_proveedores", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo leer la foto" in respuesta.text
+
+
+def _datos_confirmar_foto(descartar_item_1=True, codigo_puesto="N07P41", nombre="Saturno"):
+    datos = {
+        "codigo_puesto": codigo_puesto,
+        "nombre": nombre,
+        "cantidad_renglones": "2",
+        "item_0_texto_leido": "Kiwi",
+        "item_0_articulo_id": "5",
+        "item_0_cantidad_cajones": "10",
+        "item_0_contenido_por_cajon": "18",
+        "item_0_importe": "5000",
+        "item_0_sena": "",
+        "item_0_tipo_retiro": "Clark",
+        "item_1_texto_leido": "completar artículo",
+        "item_1_articulo_id": "",
+        "item_1_cantidad_cajones": "5",
+        "item_1_contenido_por_cajon": "",
+        "item_1_importe": "",
+        "item_1_sena": "",
+        "item_1_tipo_retiro": "",
+    }
+    if descartar_item_1:
+        datos["item_1_descartar"] = "on"
+    return datos
+
+
+def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo") as mock_aprender,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=_datos_confirmar_foto(),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
+    mock_proveedor.assert_called_once_with("N07P41", "Saturno")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark")
+    mock_aprender.assert_called_once_with(200, "kiwi", 5)
+
+
+def test_confirmar_compra_foto_codigo_puesto_invalido_muestra_error():
+    with (
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=_datos_confirmar_foto(codigo_puesto="puesto15"),
+        )
+
+    assert respuesta.status_code == 400
+    assert "formato NNNPNN" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_confirmar_compra_foto_renglon_invalido_muestra_error_con_numero():
+    datos = _datos_confirmar_foto(descartar_item_1=False)
+    with (
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
+
+    assert respuesta.status_code == 400
+    assert "Renglón 2" in respuesta.text
+    assert "Elegí un artículo" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_confirmar_compra_foto_todo_descartado_muestra_error():
+    datos = _datos_confirmar_foto()
+    datos["item_0_descartar"] = "on"
+    with (
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
+
+    assert respuesta.status_code == 400
+    assert "No hay ningún renglón para guardar" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_confirmar_compra_foto_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=_datos_confirmar_foto())
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar la compra" in respuesta.text

@@ -541,24 +541,30 @@ def obtener_proveedor(proveedor_id: int) -> dict | None:
         conexion.close()
 
 
-def listar_compras_por_fecha(fecha_operacion) -> list[dict]:
-    """Devuelve las compras cargadas para una fecha de operación, agrupadas por proveedor (estilo comanda)."""
+def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
+    """Devuelve las compras entre dos fechas (inclusive), agrupadas por día y por proveedor (estilo comanda).
+
+    Hoy la pantalla /compras siempre llama a esto con los últimos 2 días fijos
+    (hoy y ayer). TODO: a futuro agregar un filtro de fecha/rango a demanda en
+    la pantalla, reusando esta misma función con las fechas que elija el
+    usuario en vez de un rango fijo.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
-                WHERE c.fecha_operacion = %s
-                ORDER BY p.codigo_puesto, c.cargado_el
+                WHERE c.fecha_operacion BETWEEN %s AND %s
+                ORDER BY c.fecha_operacion DESC, p.codigo_puesto, c.cargado_el
                 """,
-                (fecha_operacion,),
+                (fecha_desde, fecha_hasta),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -730,6 +736,40 @@ def eliminar_compra(compra_id: int) -> None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_aprendizaje_articulos_por_proveedor(proveedor_id: int) -> list[dict]:
+    """Devuelve lo aprendido (texto_leido -> articulo_id) para un proveedor puntual."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT texto_leido, articulo_id FROM aprendizaje_articulos WHERE proveedor_id = %s",
+                (proveedor_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def aprender_articulo(proveedor_id: int, texto_leido: str, articulo_id: int) -> None:
+    """Guarda (o corrige) que este proveedor usa este texto para este artículo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO aprendizaje_articulos (proveedor_id, texto_leido, articulo_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (proveedor_id, texto_leido) DO UPDATE SET articulo_id = EXCLUDED.articulo_id
+                """,
+                (proveedor_id, texto_leido, articulo_id),
+            )
         conexion.commit()
     finally:
         conexion.close()

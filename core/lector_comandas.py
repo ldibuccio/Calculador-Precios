@@ -25,7 +25,7 @@ escritos, sin hacer ninguna cuenta ni interpretación de costos.
 Devolvé ÚNICAMENTE un JSON con este formato exacto:
 
 {
-  "proveedor": {"nombre": "...", "nave": "...", "puesto": "..."},
+  "proveedor": {"nombre": "...", "tipo_pabellon": "nave|libre|null", "numero_pabellon": "...", "puesto": "..."},
   "fecha": "...",
   "items": [
     {"articulo": "...", "cantidad": ..., "importe": ..., "sena": null, "nota_margen": "...", "confianza": "alta|baja"}
@@ -40,7 +40,13 @@ REGLAS DE EXTRACCIÓN:
 - El campo "Señor:" de la comanda es el COMPRADOR, no el proveedor.
   Ignorarlo siempre.
 - El proveedor sale del membrete o encabezado. Si no hay nombre, igual
-  capturar nave y número de puesto.
+  capturar el pabellón y el número de puesto.
+- Pabellón: "Nave", "Pabellón", "Pabellon" o "Pab" + número = "tipo_pabellon":
+  "nave". "Libre" + número = "tipo_pabellon": "libre". Si no se lee ninguno
+  de los dos, "tipo_pabellon": null. "numero_pabellon" es solo el número
+  (sin la palabra "Nave"/"Pabellón"/"Libre"), y "puesto" es solo el número
+  de puesto. No agregar ceros ni armar ningún código: solo separar estos
+  tres datos tal cual están escritos.
 - Seña: por defecto null. Solo cargar si está escrita. La seña es por
   artículo, no por comanda.
 - Ignorar la seña escrita al pie tipo "20 x 1000".

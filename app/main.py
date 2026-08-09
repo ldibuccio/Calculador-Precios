@@ -1,14 +1,13 @@
-"""Aplicación FastAPI: esqueleto y prueba de conexión a la base de datos.
+"""Aplicación FastAPI: pantallas de la app y prueba de conexión a la base de datos.
 
-Todavía NO conecta el lector de comandas ni pantallas HTML — solo el
-esqueleto de la API y la prueba de conexión a Supabase. El motor de costeo
-y las fichas en core/ no se tocan.
+El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
+(core/lector_comandas.py) ahora sí se conecta, en la carga de compras por foto.
 """
 
 import re
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -19,6 +18,7 @@ from app.db import (
     actualizar_conversion,
     actualizar_ficha,
     actualizar_importe_compra,
+    aprender_articulo,
     contar_articulos,
     crear_articulo,
     crear_cliente,
@@ -30,11 +30,12 @@ from app.db import (
     eliminar_compra,
     eliminar_conversion,
     eliminar_ficha,
+    listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_sin_ficha,
     listar_clientes,
-    listar_compras_por_fecha,
     listar_compras_por_fecha_y_proveedor,
+    listar_compras_por_rango_fechas,
     listar_compras_sin_precio,
     listar_conversiones_por_cliente,
     listar_envases_por_cliente,
@@ -48,6 +49,8 @@ from app.db import (
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
 )
+from core.lector_comandas import extraer_comanda
+from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, normalizar_texto
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel"}
@@ -1114,8 +1117,12 @@ def _validar_compra_nueva_form(
 
 @app.get("/compras")
 def ver_compras(request: Request, error: str | None = None):
+    # TODO: a futuro agregar acá un filtro de fecha/rango a demanda (elegido
+    # por el usuario). Por ahora siempre son los últimos 2 días fijos (hoy y
+    # ayer), usando listar_compras_por_rango_fechas que ya soporta un rango.
+    hoy = _hoy_argentina()
     try:
-        compras = listar_compras_por_fecha(_hoy_argentina())
+        compras = listar_compras_por_rango_fechas(hoy - timedelta(days=1), hoy)
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
@@ -1344,6 +1351,220 @@ def agregar_compra(
 
     if accion == "terminar":
         return RedirectResponse(url="/compras", status_code=303)
+
+    return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
+
+
+def _numero_o_none(valor) -> float | None:
+    """El lector devuelve un número o un texto tipo "completar importe" cuando no pudo leerlo."""
+    if isinstance(valor, bool):
+        return None
+    if isinstance(valor, (int, float)):
+        return valor
+    return None
+
+
+def _contenido_referencia_de(articulo_id: int | None, articulos_existentes: list[dict]) -> float | None:
+    if articulo_id is None:
+        return None
+    for articulo in articulos_existentes:
+        if articulo["id"] == articulo_id:
+            return articulo.get("contenido_referencia")
+    return None
+
+
+@app.post("/compras/nueva/foto")
+async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
+    try:
+        imagen = await foto.read()
+        datos = extraer_comanda(imagen)
+    except Exception as error_lector:
+        try:
+            proveedores = listar_proveedores()
+        except Exception:
+            proveedores = []
+        return templates.TemplateResponse(
+            request,
+            "compra_proveedor_form.html",
+            {"proveedores": proveedores, "error": f"No se pudo leer la foto: {error_lector}"},
+            status_code=500,
+        )
+
+    try:
+        proveedores_existentes = listar_proveedores()
+        articulos_existentes = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    proveedor_leido = datos.get("proveedor") or {}
+    proveedor_sugerido = adivinar_proveedor(proveedor_leido, proveedores_existentes)
+
+    aprendizaje = {}
+    if proveedor_sugerido is not None:
+        try:
+            filas = listar_aprendizaje_articulos_por_proveedor(proveedor_sugerido["id"])
+            aprendizaje = {normalizar_texto(fila["texto_leido"]): fila["articulo_id"] for fila in filas}
+        except Exception:
+            aprendizaje = {}
+
+    renglones = []
+    for item in datos.get("items") or []:
+        texto_leido = item.get("articulo") or ""
+        articulo_id_sugerido = adivinar_articulo(texto_leido, aprendizaje, articulos_existentes)
+        renglones.append(
+            {
+                "texto_leido": texto_leido,
+                "articulo_id": articulo_id_sugerido,
+                "cantidad_cajones": _numero_o_none(item.get("cantidad")),
+                "contenido_por_cajon": _contenido_referencia_de(articulo_id_sugerido, articulos_existentes),
+                "importe": _numero_o_none(item.get("importe")),
+                "sena": _numero_o_none(item.get("sena")),
+                "nota_margen": item.get("nota_margen") or "",
+                "advertencia": item.get("confianza") == "baja" or articulo_id_sugerido is None,
+                "descartado": False,
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "compra_revision_foto.html",
+        {
+            "articulos": articulos_existentes,
+            "codigo_puesto_sugerido": proveedor_sugerido["codigo_puesto"] if proveedor_sugerido else "",
+            "nombre_sugerido": proveedor_sugerido["nombre"] if proveedor_sugerido else (proveedor_leido.get("nombre") or ""),
+            "renglones": renglones,
+            "error": None,
+        },
+    )
+
+
+@app.post("/compras/nueva/foto/confirmar")
+async def confirmar_compra_foto(request: Request):
+    form = await request.form()
+
+    codigo_puesto_texto = str(form.get("codigo_puesto", ""))
+    nombre_texto = str(form.get("nombre", ""))
+    try:
+        cantidad_renglones = int(form.get("cantidad_renglones", "0") or "0")
+    except ValueError:
+        cantidad_renglones = 0
+
+    try:
+        articulos_existentes = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    articulos_por_id = {articulo["id"]: articulo for articulo in articulos_existentes}
+
+    error, codigo_valor = _validar_codigo_puesto(codigo_puesto_texto)
+    nombre_valor = nombre_texto
+    if not error:
+        error, nombre_valor = _validar_nombre(nombre_texto)
+
+    renglones_para_mostrar = []
+    renglones_a_guardar = []
+    for indice in range(cantidad_renglones):
+        prefijo = f"item_{indice}_"
+        descartado = form.get(prefijo + "descartar") == "on"
+        texto_leido = str(form.get(prefijo + "texto_leido", ""))
+        articulo_id_texto = str(form.get(prefijo + "articulo_id", "")).strip()
+        cantidad_cajones_texto = str(form.get(prefijo + "cantidad_cajones", ""))
+        contenido_por_cajon_texto = str(form.get(prefijo + "contenido_por_cajon", ""))
+        importe_texto = str(form.get(prefijo + "importe", ""))
+        sena_texto = str(form.get(prefijo + "sena", ""))
+        tipo_retiro_texto = str(form.get(prefijo + "tipo_retiro", ""))
+
+        renglones_para_mostrar.append(
+            {
+                "texto_leido": texto_leido,
+                "articulo_id": int(articulo_id_texto) if articulo_id_texto.isdigit() else None,
+                "cantidad_cajones": cantidad_cajones_texto,
+                "contenido_por_cajon": contenido_por_cajon_texto,
+                "importe": importe_texto,
+                "sena": sena_texto,
+                "nota_margen": "",
+                "advertencia": False,
+                "descartado": descartado,
+            }
+        )
+
+        if descartado:
+            continue
+
+        if error:
+            continue
+
+        error_renglon, valores_renglon = _validar_compra_nueva_form(
+            articulo_id_texto, cantidad_cajones_texto, contenido_por_cajon_texto, importe_texto, sena_texto, tipo_retiro_texto
+        )
+
+        articulo = None
+        if not error_renglon:
+            articulo = articulos_por_id.get(valores_renglon["articulo_id"])
+            if articulo is None:
+                error_renglon = "El artículo elegido no es válido."
+            elif not articulo["unidad_compra"]:
+                error_renglon = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
+
+        if error_renglon:
+            error = f"Renglón {indice + 1}: {error_renglon}"
+        else:
+            renglones_a_guardar.append((texto_leido, valores_renglon, articulo))
+
+    if not error and not renglones_a_guardar:
+        error = "No hay ningún renglón para guardar (revisá si descartaste todos)."
+
+    if error:
+        return templates.TemplateResponse(
+            request,
+            "compra_revision_foto.html",
+            {
+                "articulos": articulos_existentes,
+                "codigo_puesto_sugerido": codigo_puesto_texto,
+                "nombre_sugerido": nombre_texto,
+                "renglones": renglones_para_mostrar,
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    try:
+        proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+        hoy = _hoy_argentina()
+        for texto_leido, valores, articulo in renglones_a_guardar:
+            total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
+            if articulo["unidad_compra"] == "kilo":
+                cantidad_kilos, cantidad_fraccion = total, None
+            else:
+                cantidad_kilos, cantidad_fraccion = None, total
+
+            crear_compra(
+                hoy,
+                valores["articulo_id"],
+                proveedor_id,
+                valores["cantidad_cajones"],
+                valores["contenido_por_cajon"],
+                cantidad_kilos,
+                cantidad_fraccion,
+                valores["importe"],
+                valores["sena"],
+                valores["tipo_retiro"],
+            )
+            if texto_leido.strip():
+                aprender_articulo(proveedor_id, normalizar_texto(texto_leido), valores["articulo_id"])
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "compra_revision_foto.html",
+            {
+                "articulos": articulos_existentes,
+                "codigo_puesto_sugerido": codigo_puesto_texto,
+                "nombre_sugerido": nombre_texto,
+                "renglones": renglones_para_mostrar,
+                "error": f"No se pudo guardar la compra: {error_db}",
+            },
+            status_code=500,
+        )
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 

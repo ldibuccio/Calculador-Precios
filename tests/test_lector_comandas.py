@@ -17,7 +17,7 @@ IMAGEN_PNG_DE_PRUEBA = b"\x89PNG\r\n\x1a\n" + b"resto de bytes falsos"
 IMAGEN_JPEG_DE_PRUEBA = b"\xff\xd8\xff" + b"resto de bytes falsos"
 
 COMANDA_VALIDA = {
-    "proveedor": {"nombre": "Frutas del Sol", "nave": "3", "puesto": "12"},
+    "proveedor": {"nombre": "Frutas del Sol", "tipo_pabellon": "nave", "numero_pabellon": "3", "puesto": "12"},
     "fecha": "2026-07-23",
     "items": [
         {
@@ -59,7 +59,7 @@ def test_extraer_comanda_respuesta_vacia_lanza_error():
 
 def test_extraer_comanda_con_dato_no_leido_marca_confianza_baja():
     comanda_con_dato_dudoso = {
-        "proveedor": {"nombre": "", "nave": "5", "puesto": "8"},
+        "proveedor": {"nombre": "", "tipo_pabellon": "nave", "numero_pabellon": "5", "puesto": "8"},
         "fecha": "2026-07-23",
         "items": [
             {
@@ -87,6 +87,8 @@ def test_prompt_incluye_las_reglas_clave_de_extraccion():
     assert "nota_margen" in PROMPT_EXTRACCION
     assert "Morrón Rojo" in PROMPT_EXTRACCION
     assert "Granny" in PROMPT_EXTRACCION
+    assert "tipo_pabellon" in PROMPT_EXTRACCION
+    assert "Libre" in PROMPT_EXTRACCION
 
 
 def test_detectar_media_type_png():

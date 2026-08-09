@@ -72,6 +72,16 @@
     font-size: 0.9rem;
     text-decoration: none;
   }
+  .separador {
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    margin: 1rem 0;
+  }
+  input[type="file"] {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
 </style>
 </head>
 <body>
@@ -82,7 +92,18 @@
   {% endif %}
 
   <div class="tarjeta">
-    <p class="ayuda">Primero elegí o cargá el proveedor. Después vas a poder sumarle varios artículos sin repetirlo.</p>
+    <p class="ayuda">Sacale una foto a la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.</p>
+    <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data">
+      <label for="foto">Foto de la comanda</label>
+      <input type="file" id="foto" name="foto" accept="image/jpeg,image/png" capture="environment" required>
+      <button type="submit">Leer comanda</button>
+    </form>
+  </div>
+
+  <p class="separador">— o cargá el proveedor a mano —</p>
+
+  <div class="tarjeta">
+    <p class="ayuda">Elegí o cargá el proveedor. Después vas a poder sumarle varios artículos sin repetirlo.</p>
     <form method="post" action="/compras/nueva/proveedor" onsubmit="normalizarCodigoPuesto()">
       <label for="codigo_puesto">Código de puesto *</label>
       <input type="text" id="codigo_puesto" name="codigo_puesto" list="lista_proveedores" required

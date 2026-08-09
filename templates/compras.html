@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compras de hoy</title>
+<title>Últimas compras</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -74,7 +74,7 @@
 </style>
 </head>
 <body>
-  <h1>Compras de hoy</h1>
+  <h1>Últimas compras</h1>
 
   {% if error %}
   <div class="error">{{ error }}</div>
@@ -92,6 +92,7 @@
       <table>
         <thead>
           <tr>
+            <th>Fecha</th>
             <th>Proveedor</th>
             <th>Artículo</th>
             <th>Cajones</th>
@@ -104,6 +105,7 @@
         <tbody>
           {% for c in compras %}
           <tr>
+            <td>{{ c.fecha_operacion }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones }}</td>
@@ -125,7 +127,7 @@
       </table>
     </div>
     {% else %}
-    <p class="vacio">Todavía no cargaste ninguna compra hoy.</p>
+    <p class="vacio">No hay compras cargadas en los últimos 2 días.</p>
     {% endif %}
   </div>
 </body>
