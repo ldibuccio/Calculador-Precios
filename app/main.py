@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
+from app.costeo import VENTANA_COSTEO_HORAS, calcular_costos_ponderados_recientes
 from app.db import (
     actualizar_articulo,
     actualizar_cliente,
@@ -1878,6 +1879,34 @@ async def completar_importes_pendientes(request: Request):
         )
 
     return RedirectResponse(url="/compras/pendientes", status_code=303)
+
+
+@app.get("/costeo-prueba")
+def ver_costeo_prueba(request: Request):
+    """Pantalla TEMPORAL para probar calcular_costos_ponderados_recientes desde el navegador.
+
+    No es la pantalla final de Ventas: sirve para verificar a ojo, con datos
+    reales, que la lectura de compras y la ponderación andan bien, sin tener
+    que usar la terminal. Se reemplaza más adelante por la pantalla real.
+    """
+    momento_referencia = datetime.now(ARGENTINA)
+    fecha_desde = (momento_referencia - timedelta(hours=VENTANA_COSTEO_HORAS)).date()
+    fecha_hasta = momento_referencia.date()
+
+    try:
+        filas = calcular_costos_ponderados_recientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "costeo_prueba.html",
+        {
+            "filas": filas,
+            "fecha_desde": fecha_desde.strftime("%d/%m/%Y"),
+            "fecha_hasta": fecha_hasta.strftime("%d/%m/%Y"),
+        },
+    )
 
 
 if __name__ == "__main__":

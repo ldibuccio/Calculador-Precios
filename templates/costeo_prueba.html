@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Costeo (prueba)</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+  .ayuda {
+    color: #888;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .tabla-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.6rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  th {
+    background: #eee;
+    font-weight: 600;
+  }
+  .vacio {
+    color: #888;
+    font-style: italic;
+    background: #fff;
+    padding: 1rem;
+    border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+  <h1>Costeo ponderado (prueba)</h1>
+  <p class="ayuda">
+    Pantalla temporal para probar app/costeo.py — no es la pantalla final de Ventas.<br>
+    Compras entre <strong>{{ fecha_desde }}</strong> y <strong>{{ fecha_hasta }}</strong>.
+  </p>
+
+  {% if filas %}
+  <div class="tabla-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Artículo</th>
+          <th>Cantidad de cajones</th>
+          <th>Costo ponderado</th>
+          <th>Compras sin precio excluidas</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in filas %}
+        <tr>
+          <td>{{ f.articulo_nombre }}</td>
+          <td>{{ f.cantidad_cajones_total|kilos }}</td>
+          <td>{{ f.costo_ponderado|moneda }}</td>
+          <td>{{ f.compras_sin_precio_excluidas }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vacio">No hay compras con precio en las últimas 48 hs.</p>
+  {% endif %}
+</body>
+</html>

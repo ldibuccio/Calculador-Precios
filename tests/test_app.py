@@ -2410,3 +2410,41 @@ def test_confirmar_compra_foto_conserva_la_foto_al_reintentar_por_error():
 
     assert respuesta.status_code == 400
     assert "data:image/jpeg;base64,ABC123" in respuesta.text
+
+
+def test_ver_costeo_prueba_muestra_tabla_con_formato():
+    filas = [
+        {
+            "articulo_id": 5,
+            "articulo_nombre": "Mzn Red",
+            "cantidad_cajones_total": 15.0,
+            "costo_ponderado": 533.333,
+            "compras_sin_precio_excluidas": 1,
+        },
+    ]
+    with patch("app.main.calcular_costos_ponderados_recientes", return_value=filas):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    assert "Mzn Red" in respuesta.text
+    assert "<td>15</td>" in respuesta.text
+    assert "$533" in respuesta.text
+    assert "<td>1</td>" in respuesta.text
+    # Muestra el rango de fechas usado.
+    assert "Compras entre" in respuesta.text
+
+
+def test_ver_costeo_prueba_sin_filas_muestra_mensaje():
+    with patch("app.main.calcular_costos_ponderados_recientes", return_value=[]):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    assert "No hay compras con precio en las últimas 48 hs" in respuesta.text
+
+
+def test_ver_costeo_prueba_error_de_base_da_500():
+    with patch("app.main.calcular_costos_ponderados_recientes", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 500
+    assert "Error al calcular el costeo" in respuesta.text
