@@ -1488,6 +1488,7 @@ async def confirmar_compra_foto(request: Request):
     codigo_puesto_texto = str(form.get("codigo_puesto", ""))
     nombre_texto = str(form.get("nombre", ""))
     foto_preview_texto = str(form.get("foto_preview", ""))
+    accion = str(form.get("accion", "agregar_articulos"))
     try:
         cantidad_renglones = int(form.get("cantidad_renglones", "0") or "0")
     except ValueError:
@@ -1612,6 +1613,9 @@ async def confirmar_compra_foto(request: Request):
             },
             status_code=500,
         )
+
+    if accion == "guardar":
+        return RedirectResponse(url="/compras", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 

@@ -96,14 +96,8 @@
     display: block;
     box-sizing: border-box;
   }
-  .volver {
-    display: block;
-    margin-top: 0.75rem;
-    text-align: center;
-    color: #2563eb;
-    font-size: 0.9rem;
-    text-decoration: none;
-  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
   .boton-ver-foto {
     margin-top: 0.75rem;
     width: auto;
@@ -248,9 +242,11 @@
     </div>
     {% endfor %}
 
-    <button type="submit" id="boton-guardar-compra">Guardar compra</button>
+    <button type="submit" name="accion" value="agregar_articulos" id="boton-agregar-articulos">Agregar Artículos</button>
+    <a href="/compras" class="boton boton-peligro" id="boton-cancelar"
+       onclick="return confirm('¿Seguro? Se pierde lo que cargaste de esta compra');">Cancelar</a>
+    <button type="submit" name="accion" value="guardar" class="boton-exito" id="boton-guardar">Guardar</button>
   </form>
-  <a class="volver" href="/compras/nueva">Cancelar (no guardar nada)</a>
 
   <script>
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
@@ -272,22 +268,35 @@
       }
     }
 
-    // El botón puede tardar varios segundos en guardar; sin este cartel el
-    // comprador no sabe si pasó algo y termina apretando de nuevo, lo que
-    // guarda la compra duplicada. OJO: en Safari/iOS, deshabilitar el botón
-    // DURANTE el evento submit cancela el envío del formulario — por eso el
+    // El guardado puede tardar unos segundos; sin este cartel el comprador
+    // no sabe si pasó algo y termina apretando de nuevo, lo que guarda la
+    // compra duplicada. OJO: en Safari/iOS, deshabilitar el botón DURANTE
+    // el evento submit cancela el envío del formulario — por eso el
     // disabled se aplica en un setTimeout, después de que el navegador ya
     // arrancó el envío.
     const formConfirmar = document.getElementById("form-confirmar-foto");
     if (formConfirmar) {
+      let botonClickeado = null;
+      const botonesDeGuardado = [
+        { elemento: document.getElementById("boton-agregar-articulos"), texto: "Guardando..." },
+        { elemento: document.getElementById("boton-guardar"), texto: "Guardando..." },
+      ].filter(function (b) { return b.elemento; });
+
+      botonesDeGuardado.forEach(function (b) {
+        b.elemento.addEventListener("click", function () {
+          botonClickeado = b;
+        });
+      });
+
       formConfirmar.addEventListener("submit", function () {
-        const boton = document.getElementById("boton-guardar-compra");
-        if (boton) {
-          boton.textContent = "Guardando...";
-          setTimeout(function () {
-            boton.disabled = true;
-          }, 0);
+        if (botonClickeado) {
+          botonClickeado.elemento.textContent = botonClickeado.texto;
         }
+        setTimeout(function () {
+          botonesDeGuardado.forEach(function (b) {
+            b.elemento.disabled = true;
+          });
+        }, 0);
       });
     }
 

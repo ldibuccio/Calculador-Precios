@@ -2099,6 +2099,16 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     assert "⚠ revisar" in respuesta.text  # el segundo ítem, sin articulo ni importe
     mock_aprendizaje.assert_called_once_with(200)
 
+    # Regresión: los 3 botones de abajo de todo, en este orden exacto y con
+    # estos colores. Solo "Cancelar" pide confirmación.
+    orden = ["Agregar Artículos", "Cancelar", "Guardar"]
+    posiciones = [respuesta.text.index(texto) for texto in orden]
+    assert posiciones == sorted(posiciones)
+    assert 'value="agregar_articulos"' in respuesta.text
+    assert 'class="boton-exito" id="boton-guardar"' in respuesta.text
+    assert 'class="boton boton-peligro"' in respuesta.text
+    assert "confirm('¿Seguro? Se pierde lo que cargaste de esta compra')" in respuesta.text
+
 
 def test_subir_foto_compra_proveedor_nuevo_sin_proveedores_existentes_igual_arma_el_codigo():
     # Regresión: antes, si no había NINGÚN proveedor cargado todavía (o
@@ -2233,6 +2243,32 @@ def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
+def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igual():
+    # El botón verde "Guardar" tiene que guardar exactamente lo mismo que
+    # "Agregar Artículos" (misma llamada a crear_compra/aprender_articulo),
+    # la única diferencia es a dónde redirige después.
+    datos = _datos_confirmar_foto()
+    datos["accion"] = "guardar"
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo") as mock_aprender,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_proveedor.assert_called_once_with("N07P41", "Saturno")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark")
+    mock_aprender.assert_called_once_with(200, "kiwi", 5)
+
+
 def test_confirmar_compra_foto_codigo_puesto_invalido_muestra_error():
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
@@ -2356,7 +2392,7 @@ def test_subir_foto_compra_muestra_cartel_de_guardando_para_evitar_duplicados():
     # del evento submit cancela el envío del formulario — tiene que ir
     # diferido en un setTimeout.
     assert "setTimeout" in respuesta.text
-    assert "boton.disabled = true;" in respuesta.text
+    assert "b.elemento.disabled = true;" in respuesta.text
     # Regresión: checkbox para aplicar el retiro del primer artículo a todos
     # los demás, y así no elegirlo renglón por renglón.
     assert 'id="aplicar_retiro_a_todos"' in respuesta.text
