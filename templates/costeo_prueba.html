@@ -13,7 +13,6 @@
     color: #222;
   }
   h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
-  h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; }
   .ayuda {
     color: #888;
     font-size: 0.9rem;
@@ -32,11 +31,15 @@
     padding: 0.55rem 0.6rem;
     border-bottom: 1px solid #eee;
     font-size: 0.9rem;
+    white-space: nowrap;
   }
   th {
     background: #eee;
     font-weight: 600;
   }
+  tr.viejo { color: #888; }
+  .subio { color: #dc2626; font-weight: 600; }
+  .bajo { color: #16a34a; font-weight: 600; }
   .vacio {
     color: #888;
     font-style: italic;
@@ -44,22 +47,14 @@
     padding: 1rem;
     border-radius: 8px;
   }
-  .aviso {
-    background: #fee2e2;
-    color: #991b1b;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    font-size: 0.9rem;
-  }
-  .aviso ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
 </style>
 </head>
 <body>
-  <h1>Costeo por unidad de venta (prueba)</h1>
+  <h1>Listado para negociar precios (prueba)</h1>
   <p class="ayuda">
     Pantalla temporal para probar app/costeo.py — no es la pantalla final de Ventas.<br>
     Cliente: <strong>{{ cliente_nombre }}</strong>.
-    Compras entre <strong>{{ fecha_desde }}</strong> y <strong>{{ fecha_hasta }}</strong>.
+    Fecha de referencia: <strong>{{ fecha_referencia }}</strong>.
   </p>
 
   {% if articulos %}
@@ -69,36 +64,38 @@
         <tr>
           <th>Artículo</th>
           <th>Unidad de venta</th>
-          <th>Cantidad total</th>
-          <th>Costo por unidad de venta</th>
+          <th>Fresco</th>
+          <th>Costo actual</th>
+          <th>Costo anterior</th>
+          <th>Variación</th>
+          <th>Última compra</th>
+          <th>Precio vigente</th>
         </tr>
       </thead>
       <tbody>
         {% for a in articulos %}
-        <tr>
+        <tr{% if not a.fresco %} class="viejo"{% endif %}>
           <td>{{ a.articulo_nombre }}</td>
           <td>{{ a.unidad_venta }}</td>
-          <td>{{ a.cantidad_total|kilos }}</td>
-          <td>{{ a.costo_por_unidad_de_venta|moneda }}</td>
+          <td>{{ "sí" if a.fresco else "no" }}</td>
+          <td>{{ a.costo_actual|moneda if a.costo_actual is not none else "—" }}</td>
+          <td>{{ a.costo_anterior|moneda if a.costo_anterior is not none else "—" }}</td>
+          <td>
+            {% if a.variacion == "subio" %}<span class="subio">subió ↑</span>
+            {% elif a.variacion == "bajo" %}<span class="bajo">bajó ↓</span>
+            {% elif a.variacion == "igual" %}igual
+            {% else %}—
+            {% endif %}
+          </td>
+          <td>{{ a.fecha_ultima_compra|fecha_corta }}</td>
+          <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
-  <p class="vacio">No hay compras con precio en las últimas 48 hs.</p>
-  {% endif %}
-
-  {% if articulos_sin_ficha %}
-  <h2>Sin ficha de logística para {{ cliente_nombre }}</h2>
-  <div class="aviso">
-    Estos artículos tuvieron compras con precio en la ventana, pero no se costearon porque no tienen ficha para este cliente:
-    <ul>
-      {% for a in articulos_sin_ficha %}
-      <li>{{ a.articulo_nombre }}</li>
-      {% endfor %}
-    </ul>
-  </div>
+  <p class="vacio">No hay artículos con compra reciente (últimos 15 días) para este cliente.</p>
   {% endif %}
 </body>
 </html>

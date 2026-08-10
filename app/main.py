@@ -14,7 +14,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
-from app.costeo import VENTANA_COSTEO_HORAS, calcular_costo_por_unidad_venta_reciente
+from app.costeo import calcular_listado_para_negociar_precios
 from app.db import (
     actualizar_articulo,
     actualizar_cliente,
@@ -1886,17 +1886,14 @@ CLIENTE_COSTEO_PRUEBA_NOMBRE = "Día"
 
 @app.get("/costeo-prueba")
 def ver_costeo_prueba(request: Request):
-    """Pantalla TEMPORAL para probar calcular_costo_por_unidad_venta_reciente desde el navegador.
+    """Pantalla TEMPORAL: listado completo para negociar precios (costo actual, anterior y vigente).
 
     No es la pantalla final de Ventas: sirve para verificar a ojo, con datos
-    reales, que el costeo por unidad de venta del cliente anda bien, sin
-    tener que usar la terminal. Por ahora siempre calcula para el cliente
-    "Día" — se reemplaza más adelante por la pantalla real, con selector de
-    cliente.
+    reales, que calcular_listado_para_negociar_precios anda bien, sin tener
+    que usar la terminal. Por ahora siempre calcula para el cliente "Día" —
+    se reemplaza más adelante por la pantalla real, con selector de cliente.
     """
     momento_referencia = datetime.now(ARGENTINA)
-    fecha_desde = (momento_referencia - timedelta(hours=VENTANA_COSTEO_HORAS)).date()
-    fecha_hasta = momento_referencia.date()
 
     try:
         clientes = listar_clientes()
@@ -1908,7 +1905,7 @@ def ver_costeo_prueba(request: Request):
         raise HTTPException(status_code=404, detail=f"No se encontró el cliente '{CLIENTE_COSTEO_PRUEBA_NOMBRE}'")
 
     try:
-        resultado = calcular_costo_por_unidad_venta_reciente(cliente["id"])
+        articulos = calcular_listado_para_negociar_precios(cliente["id"], momento_referencia)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
 
@@ -1917,10 +1914,8 @@ def ver_costeo_prueba(request: Request):
         "costeo_prueba.html",
         {
             "cliente_nombre": cliente["nombre"],
-            "articulos": resultado["articulos"],
-            "articulos_sin_ficha": resultado["articulos_sin_ficha"],
-            "fecha_desde": fecha_desde.strftime("%d/%m/%Y"),
-            "fecha_hasta": fecha_hasta.strftime("%d/%m/%Y"),
+            "articulos": articulos,
+            "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
         },
     )
 

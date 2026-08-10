@@ -599,14 +599,16 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
     No filtra por importe: trae también las compras sin precio (importe
     NULL), para que quien llame decida cómo tratarlas (hoy, el "pegamento"
     en app/costeo.py las excluye del cálculo pero cuenta cuántas quedaron
-    afuera por artículo).
+    afuera por artículo). Incluye fecha_operacion: hace falta para poder
+    agrupar las compras por día y reconstruir ventanas de costeo ancladas en
+    una fecha puntual (ej. costo actual vs. costo anterior).
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.articulo_id, a.nombre AS articulo_nombre,
+                SELECT c.articulo_id, a.nombre AS articulo_nombre, c.fecha_operacion,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.importe
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -614,6 +616,34 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                 ORDER BY a.nombre
                 """,
                 (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
+    """Precio vigente de cada artículo para un cliente, a una fecha dada.
+
+    "Vigente" es la fila de precios_venta_historial con vigente_desde más
+    reciente que ya llegó a fecha_referencia (mismo patrón que el
+    descuento/utilidad vigente de clientes_parametros_historial). Un
+    artículo sin ninguna fila con vigente_desde <= fecha_referencia
+    simplemente no aparece en el resultado — no tiene precio vigente todavía.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (articulo_id) articulo_id, precio
+                FROM precios_venta_historial
+                WHERE cliente_id = %s AND vigente_desde <= %s
+                ORDER BY articulo_id, vigente_desde DESC
+                """,
+                (cliente_id, fecha_referencia),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()

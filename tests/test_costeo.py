@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
-from app.costeo import ARGENTINA, calcular_costo_por_unidad_venta_reciente
+from app.costeo import ARGENTINA, calcular_costo_por_unidad_venta_reciente, calcular_listado_para_negociar_precios
 
 MOMENTO_DE_PRUEBA = datetime(2026, 8, 10, 12, 0, tzinfo=ARGENTINA)
 CLIENTE_ID_DE_PRUEBA = 1
@@ -167,3 +167,194 @@ def test_calcular_costo_por_unidad_venta_usa_ahora_si_no_le_pasan_momento():
     mock_compras.assert_called_once()
     fecha_desde, fecha_hasta = mock_compras.call_args[0]
     assert (fecha_hasta - fecha_desde).days == 2
+
+
+# --- calcular_listado_para_negociar_precios ---
+# "Hoy" = 2026-08-10. limite_aparicion = hoy-15 = 2026-07-26.
+# limite_fresco = hoy-2 = 2026-08-08 (misma ventana de 48hs que ya usa
+# calcular_costo_por_unidad_venta_reciente).
+
+FICHAS_NEGOCIACION = [
+    {"articulo_id": 1, "articulo_nombre": "Articulo A", "unidad_venta": "kilo"},
+    {"articulo_id": 2, "articulo_nombre": "Articulo B", "unidad_venta": "kilo"},
+    {"articulo_id": 3, "articulo_nombre": "Articulo C", "unidad_venta": "kilo"},
+    {"articulo_id": 4, "articulo_nombre": "Articulo D", "unidad_venta": "kilo"},
+    {"articulo_id": 5, "articulo_nombre": "Articulo E", "unidad_venta": "kilo"},
+]
+
+COMPRAS_NEGOCIACION = [
+    # A: compra hoy y otra hace 4 días -> fresco, con costo anterior y variación.
+    {
+        "articulo_id": 1,
+        "articulo_nombre": "Articulo A",
+        "fecha_operacion": date(2026, 8, 10),
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 5,
+        "cantidad_kilos": 50,
+        "importe": 1000,
+    },
+    {
+        "articulo_id": 1,
+        "articulo_nombre": "Articulo A",
+        "fecha_operacion": date(2026, 8, 6),
+        "cantidad_cajones": 8,
+        "contenido_por_cajon": 4,
+        "cantidad_kilos": 32,
+        "importe": 1200,
+    },
+    # B: compra hoy y la anterior hace 25 días -> fresco, sin costo anterior (tope 20 días).
+    {
+        "articulo_id": 2,
+        "articulo_nombre": "Articulo B",
+        "fecha_operacion": date(2026, 8, 10),
+        "cantidad_cajones": 5,
+        "contenido_por_cajon": 10,
+        "cantidad_kilos": 50,
+        "importe": 500,
+    },
+    {
+        "articulo_id": 2,
+        "articulo_nombre": "Articulo B",
+        "fecha_operacion": date(2026, 7, 16),
+        "cantidad_cajones": 5,
+        "contenido_por_cajon": 10,
+        "cantidad_kilos": 50,
+        "importe": 400,
+    },
+    # C: compra hoy y ninguna anterior -> fresco, costo nuevo, variación None.
+    {
+        "articulo_id": 3,
+        "articulo_nombre": "Articulo C",
+        "fecha_operacion": date(2026, 8, 10),
+        "cantidad_cajones": 3,
+        "contenido_por_cajon": 6,
+        "cantidad_kilos": 18,
+        "importe": 900,
+    },
+    # D: última compra hace 6 días (fuera de 48hs, dentro de 15) -> no fresco.
+    # Tiene una compra más vieja (hace 26 días) que NO debería usarse porque,
+    # al no ser fresco, no se busca costo anterior.
+    {
+        "articulo_id": 4,
+        "articulo_nombre": "Articulo D",
+        "fecha_operacion": date(2026, 8, 4),
+        "cantidad_cajones": 4,
+        "contenido_por_cajon": 5,
+        "cantidad_kilos": 20,
+        "importe": 800,
+    },
+    {
+        "articulo_id": 4,
+        "articulo_nombre": "Articulo D",
+        "fecha_operacion": date(2026, 7, 15),
+        "cantidad_cajones": 4,
+        "contenido_por_cajon": 5,
+        "cantidad_kilos": 20,
+        "importe": 600,
+    },
+    # E: última compra hace 20 días -> no debería aparecer en absoluto.
+    {
+        "articulo_id": 5,
+        "articulo_nombre": "Articulo E",
+        "fecha_operacion": date(2026, 7, 21),
+        "cantidad_cajones": 2,
+        "contenido_por_cajon": 3,
+        "cantidad_kilos": 6,
+        "importe": 300,
+    },
+]
+
+PRECIOS_VIGENTES_NEGOCIACION = [
+    {"articulo_id": 1, "precio": 250},
+]
+
+
+def _calcular_negociacion(
+    momento=MOMENTO_DE_PRUEBA,
+    compras=COMPRAS_NEGOCIACION,
+    fichas=FICHAS_NEGOCIACION,
+    precios_vigentes=PRECIOS_VIGENTES_NEGOCIACION,
+):
+    with (
+        patch("app.costeo.listar_compras_para_costeo", return_value=compras) as mock_compras,
+        patch("app.costeo.listar_fichas_por_cliente", return_value=fichas),
+        patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=precios_vigentes) as mock_vigentes,
+    ):
+        resultado = calcular_listado_para_negociar_precios(CLIENTE_ID_DE_PRUEBA, momento)
+    return resultado, mock_compras, mock_vigentes
+
+
+def test_negociacion_articulo_fresco_con_costo_anterior_y_variacion():
+    resultado, _, _ = _calcular_negociacion()
+    por_id = {a["articulo_id"]: a for a in resultado}
+
+    # A: costo_actual = 1000*10/(10*5) = 200; costo_anterior = 1200*8/(8*4) = 300 -> bajó.
+    a = por_id[1]
+    assert a["fresco"] is True
+    assert a["costo_actual"] == 200
+    assert a["costo_anterior"] == 300
+    assert a["variacion"] == "bajo"
+    assert a["fecha_ultima_compra"] == date(2026, 8, 10)
+    assert a["precio_vigente"] == 250
+
+
+def test_negociacion_costo_anterior_se_descarta_a_mas_de_20_dias():
+    resultado, _, _ = _calcular_negociacion()
+    por_id = {a["articulo_id"]: a for a in resultado}
+
+    b = por_id[2]
+    assert b["fresco"] is True
+    assert b["costo_actual"] == 50  # 500*5/(5*10)
+    assert b["costo_anterior"] is None
+    assert b["variacion"] is None
+    assert b["precio_vigente"] is None
+
+
+def test_negociacion_articulo_nuevo_sin_compra_anterior():
+    resultado, _, _ = _calcular_negociacion()
+    por_id = {a["articulo_id"]: a for a in resultado}
+
+    c = por_id[3]
+    assert c["fresco"] is True
+    assert c["costo_actual"] == 150  # 900*3/(3*6)
+    assert c["costo_anterior"] is None
+    assert c["variacion"] is None
+
+
+def test_negociacion_articulo_no_fresco_no_calcula_costo_anterior():
+    resultado, _, _ = _calcular_negociacion()
+    por_id = {a["articulo_id"]: a for a in resultado}
+
+    d = por_id[4]
+    assert d["fresco"] is False
+    assert d["costo_actual"] == 160  # 800*4/(4*5)
+    assert d["costo_anterior"] is None
+    assert d["variacion"] is None
+    assert d["fecha_ultima_compra"] == date(2026, 8, 4)
+
+
+def test_negociacion_articulo_sin_compra_reciente_no_aparece():
+    resultado, _, _ = _calcular_negociacion()
+    ids = {a["articulo_id"] for a in resultado}
+
+    assert 5 not in ids
+
+
+def test_negociacion_ordena_frescos_primero():
+    resultado, _, _ = _calcular_negociacion()
+
+    frescos = [a["fresco"] for a in resultado]
+    # Todos los frescos (True) antes que los viejos (False).
+    assert frescos == sorted(frescos, key=lambda f: not f)
+
+
+def test_negociacion_llama_precios_vigentes_con_fecha_de_hoy():
+    _, _, mock_vigentes = _calcular_negociacion()
+
+    mock_vigentes.assert_called_once_with(CLIENTE_ID_DE_PRUEBA, date(2026, 8, 10))
+
+
+def test_negociacion_sin_fichas_devuelve_lista_vacia():
+    resultado, _, _ = _calcular_negociacion(fichas=[])
+
+    assert resultado == []
