@@ -11,7 +11,14 @@ todo este archivo — se resuelve más adelante en Ventas.
 
 from datetime import date, datetime, timedelta, timezone
 
-from app.db import listar_compras_para_costeo, listar_fichas_por_cliente, listar_precios_vigentes_por_cliente
+from app.db import (
+    listar_compras_para_costeo,
+    listar_costos_envases_vigentes,
+    listar_fichas_por_cliente,
+    listar_precios_vigentes_por_cliente,
+    obtener_cliente,
+)
+from core.motor_costeo import SIN_ENVASE, precio_sugerido as calcular_precio_sugerido
 
 ARGENTINA = timezone(timedelta(hours=-3))
 VENTANA_COSTEO_HORAS = 48
@@ -57,6 +64,52 @@ def _costear_compras(compras: list[dict]) -> tuple[float | None, float, int]:
         return None, 0.0, sin_precio
 
     return plata_total / cantidad_total, cantidad_total, sin_precio
+
+
+def _envases_por_unidad_ponderado(compras: list[dict], contenido_ficha: float | None, envase_variable: bool) -> float:
+    """Cuántos envases hacen falta por unidad de venta, ponderado por la cantidad real de cada compra.
+
+    Mismo peso que _costear_compras (cajones * contenido_por_cajon de cada
+    compra, solo las que tienen precio) para que el envase quede coherente
+    con el costo_actual que ya se calculó sobre esas mismas compras.
+
+    Envase FIJO: siempre 1 envase por cada "contenido_ficha" unidades (ej.
+    ficha = 16 kg por Caja Grande => 1/16 cajas por kilo). Constante para
+    todas las compras del artículo.
+
+    Envase VARIABLE (mango/cherry): por cada compra se decide solo, sin
+    preguntar nada nuevo: si el contenido de ESE cajón (lo que trajo esa
+    compra puntual) es menor o igual al contenido de la ficha, es
+    descartable (0 cajas); si es mayor, es caja chica, a razón de 1 caja
+    cada "contenido_ficha" unidades — el número de corte y el "cada
+    cuánto" salen siempre de la ficha, nunca hardcodeados.
+    """
+    if not contenido_ficha:
+        return 0.0
+
+    total_ponderado = 0.0
+    cantidad_total = 0.0
+
+    for compra in compras:
+        if compra["importe"] is None:
+            continue
+
+        cajones = float(compra["cantidad_cajones"])
+        contenido_compra = float(compra["contenido_por_cajon"])
+        cantidad_real = cajones * contenido_compra
+
+        if envase_variable and contenido_compra <= contenido_ficha:
+            envases_por_unidad = 0.0
+        else:
+            envases_por_unidad = 1.0 / contenido_ficha
+
+        total_ponderado += envases_por_unidad * cantidad_real
+        cantidad_total += cantidad_real
+
+    if cantidad_total == 0:
+        return 0.0
+
+    return total_ponderado / cantidad_total
 
 
 def calcular_costo_por_unidad_venta_reciente(cliente_id: int, momento_referencia: datetime | None = None) -> dict:
@@ -171,10 +224,22 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     listar_precios_vigentes_por_cliente): se muestra aunque sea viejo, es
     justamente lo que hay que corregir si no coincide con el costo.
 
+    precio_sugerido (ver core/motor_costeo.py precio_sugerido) se calcula
+    sobre costo_actual, con descuento/utilidad vigentes del cliente y el
+    costo de envase vigente de la ficha. La utilidad se aplica solo a la
+    mercadería, nunca al envase; todo se divide por (1 - descuento). Para
+    envase fijo, el envase sale directo de la ficha. Para envase variable
+    (mango/cherry), cada compra de la ventana decide sola si fue
+    descartable o caja chica comparando su propio contenido_por_cajon
+    contra el contenido solicitado de la ficha (ver
+    _envases_por_unidad_ponderado) — nunca un número hardcodeado. Sin
+    costo_actual, no hay precio_sugerido (None).
+
     Devuelve una lista de dicts (frescos primero, después por nombre) con:
     articulo_id, articulo_nombre, unidad_venta, fresco, costo_actual,
     costo_anterior (o None), variacion ("subio"/"bajo"/"igual"/None),
-    fecha_ultima_compra, precio_vigente (o None), compras_sin_precio_excluidas.
+    fecha_ultima_compra, precio_vigente (o None), precio_sugerido (o None),
+    compras_sin_precio_excluidas.
     """
     if momento_referencia is None:
         momento_referencia = datetime.now(ARGENTINA)
@@ -186,6 +251,16 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     fichas = listar_fichas_por_cliente(cliente_id)
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
     precio_vigente_por_articulo = {p["articulo_id"]: p["precio"] for p in precios_vigentes}
+
+    costos_envases = listar_costos_envases_vigentes(hoy)
+    costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
+
+    cliente = obtener_cliente(cliente_id)
+    # Sin descuento/utilidad vigentes todavía, no hay con qué sugerir precio
+    # (no se inventa un valor por defecto: mejor mostrar "sin precio
+    # sugerido" que uno mal calculado).
+    descuento = float(cliente["descuento"]) / 100 if cliente and cliente["descuento"] is not None else None
+    utilidad = float(cliente["utilidad_objetivo"]) / 100 if cliente and cliente["utilidad_objetivo"] is not None else None
 
     compras_por_articulo: dict[int, list[dict]] = {}
     for compra in compras:
@@ -232,6 +307,21 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                         else:
                             variacion = "igual"
 
+        precio_sugerido_valor = None
+        if costo_actual is not None and descuento is not None and utilidad is not None:
+            envases_ponderado = _envases_por_unidad_ponderado(
+                compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"]
+            )
+            costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
+            precio_sugerido_valor = calcular_precio_sugerido(
+                costo_bulto=costo_actual,
+                kg_bulto=1,
+                costo_envase=costo_envase,
+                cantidad_envases=envases_ponderado,
+                descuento=descuento,
+                utilidad=utilidad,
+            )
+
         resultado.append(
             {
                 "articulo_id": articulo_id,
@@ -243,6 +333,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                 "variacion": variacion,
                 "fecha_ultima_compra": f1,
                 "precio_vigente": precio_vigente_por_articulo.get(articulo_id),
+                "precio_sugerido": precio_sugerido_valor,
                 "compras_sin_precio_excluidas": sin_precio,
             }
         )

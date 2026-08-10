@@ -2,7 +2,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
-from app.costeo import ARGENTINA, calcular_costo_por_unidad_venta_reciente, calcular_listado_para_negociar_precios
+import pytest
+
+from app.costeo import (
+    ARGENTINA,
+    _envases_por_unidad_ponderado,
+    calcular_costo_por_unidad_venta_reciente,
+    calcular_listado_para_negociar_precios,
+)
 
 MOMENTO_DE_PRUEBA = datetime(2026, 8, 10, 12, 0, tzinfo=ARGENTINA)
 CLIENTE_ID_DE_PRUEBA = 1
@@ -174,13 +181,53 @@ def test_calcular_costo_por_unidad_venta_usa_ahora_si_no_le_pasan_momento():
 # limite_fresco = hoy-2 = 2026-08-08 (misma ventana de 48hs que ya usa
 # calcular_costo_por_unidad_venta_reciente).
 
+# Sin envase compartido (envase_id None): estos artículos no ejercitan el
+# cálculo de precio_sugerido con envase, solo que no rompa (queda en None
+# si falta descuento/utilidad, o se calcula sin costo de envase).
 FICHAS_NEGOCIACION = [
-    {"articulo_id": 1, "articulo_nombre": "Articulo A", "unidad_venta": "kilo"},
-    {"articulo_id": 2, "articulo_nombre": "Articulo B", "unidad_venta": "kilo"},
-    {"articulo_id": 3, "articulo_nombre": "Articulo C", "unidad_venta": "kilo"},
-    {"articulo_id": 4, "articulo_nombre": "Articulo D", "unidad_venta": "kilo"},
-    {"articulo_id": 5, "articulo_nombre": "Articulo E", "unidad_venta": "kilo"},
+    {
+        "articulo_id": 1,
+        "articulo_nombre": "Articulo A",
+        "unidad_venta": "kilo",
+        "envase_id": None,
+        "contenido_caja": None,
+        "envase_variable": False,
+    },
+    {
+        "articulo_id": 2,
+        "articulo_nombre": "Articulo B",
+        "unidad_venta": "kilo",
+        "envase_id": None,
+        "contenido_caja": None,
+        "envase_variable": False,
+    },
+    {
+        "articulo_id": 3,
+        "articulo_nombre": "Articulo C",
+        "unidad_venta": "kilo",
+        "envase_id": None,
+        "contenido_caja": None,
+        "envase_variable": False,
+    },
+    {
+        "articulo_id": 4,
+        "articulo_nombre": "Articulo D",
+        "unidad_venta": "kilo",
+        "envase_id": None,
+        "contenido_caja": None,
+        "envase_variable": False,
+    },
+    {
+        "articulo_id": 5,
+        "articulo_nombre": "Articulo E",
+        "unidad_venta": "kilo",
+        "envase_id": None,
+        "contenido_caja": None,
+        "envase_variable": False,
+    },
 ]
+
+CLIENTE_NEGOCIACION = {"id": CLIENTE_ID_DE_PRUEBA, "nombre": "Día", "descuento": 23.0, "utilidad_objetivo": 20.0}
 
 COMPRAS_NEGOCIACION = [
     # A: compra hoy y otra hace 4 días -> fresco, con costo anterior y variación.
@@ -274,11 +321,15 @@ def _calcular_negociacion(
     compras=COMPRAS_NEGOCIACION,
     fichas=FICHAS_NEGOCIACION,
     precios_vigentes=PRECIOS_VIGENTES_NEGOCIACION,
+    cliente=CLIENTE_NEGOCIACION,
+    costos_envases=(),
 ):
     with (
         patch("app.costeo.listar_compras_para_costeo", return_value=compras) as mock_compras,
         patch("app.costeo.listar_fichas_por_cliente", return_value=fichas),
         patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=precios_vigentes) as mock_vigentes,
+        patch("app.costeo.obtener_cliente", return_value=cliente),
+        patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
     ):
         resultado = calcular_listado_para_negociar_precios(CLIENTE_ID_DE_PRUEBA, momento)
     return resultado, mock_compras, mock_vigentes
@@ -358,3 +409,186 @@ def test_negociacion_sin_fichas_devuelve_lista_vacia():
     resultado, _, _ = _calcular_negociacion(fichas=[])
 
     assert resultado == []
+
+
+# --- _envases_por_unidad_ponderado: decisión descartable vs. caja chica ---
+
+def test_envases_ponderado_envase_fijo_siempre_uno_cada_contenido_de_ficha():
+    compras = [{"importe": 100, "cantidad_cajones": 5, "contenido_por_cajon": 8}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=8, envase_variable=False)
+    assert resultado == pytest.approx(1 / 8)
+
+
+def test_envases_ponderado_cherry_cajon_5kg_ficha_5kg_es_descartable():
+    compras = [{"importe": 100, "cantidad_cajones": 10, "contenido_por_cajon": 5}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=5, envase_variable=True)
+    assert resultado == 0.0
+
+
+def test_envases_ponderado_cherry_cajon_10kg_ficha_5kg_es_caja_chica_dos_cartones():
+    # Cajón de 10kg, ficha 5kg -> 2 cartones por cajón -> 1 cartón cada 5kg.
+    compras = [{"importe": 100, "cantidad_cajones": 4, "contenido_por_cajon": 10}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=5, envase_variable=True)
+    assert resultado == pytest.approx(1 / 5)
+    # 40 kg comprados (4 cajones de 10kg) -> 8 cartones en total.
+    assert resultado * (4 * 10) == pytest.approx(8)
+
+
+def test_envases_ponderado_mango_cajon_10u_ficha_10u_es_descartable():
+    compras = [{"importe": 100, "cantidad_cajones": 3, "contenido_por_cajon": 10}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=10, envase_variable=True)
+    assert resultado == 0.0
+
+
+def test_envases_ponderado_mango_cajon_20u_ficha_10u_es_caja_chica_dos_cartones():
+    compras = [{"importe": 100, "cantidad_cajones": 2, "contenido_por_cajon": 20}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=10, envase_variable=True)
+    assert resultado == pytest.approx(1 / 10)
+    # 40 unidades compradas (2 cajones de 20u) -> 4 cartones en total.
+    assert resultado * (2 * 20) == pytest.approx(4)
+
+
+def test_envases_ponderado_el_corte_sigue_a_la_ficha_no_esta_hardcodeado():
+    # Mismo cajón de 9 unidades: con ficha=10 es descartable (9<=10); con
+    # ficha=8 pasa a ser caja chica (9>8). El corte y el "cada cuánto"
+    # tienen que salir siempre de la ficha, nunca de un número fijo.
+    compras = [{"importe": 100, "cantidad_cajones": 2, "contenido_por_cajon": 9}]
+
+    con_ficha_10 = _envases_por_unidad_ponderado(compras, contenido_ficha=10, envase_variable=True)
+    con_ficha_8 = _envases_por_unidad_ponderado(compras, contenido_ficha=8, envase_variable=True)
+
+    assert con_ficha_10 == 0.0
+    assert con_ficha_8 == pytest.approx(1 / 8)
+
+
+# --- precio_sugerido de punta a punta, vía calcular_listado_para_negociar_precios ---
+
+FICHA_MORRON_ROJO = {
+    "articulo_id": 29,
+    "articulo_nombre": "Morrón Rojo",
+    "unidad_venta": "kilo",
+    "envase_id": 100,
+    "contenido_caja": 8,
+    "envase_variable": False,
+}
+
+COSTOS_ENVASES_MORRON_ROJO = [{"envase_id": 100, "costo": 1600}]
+
+
+def test_precio_sugerido_morron_rojo_envase_fijo_coincide_con_formula_del_excel():
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 27000,
+        },
+    ]
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=[],
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    assert len(resultado) == 1
+    morron = resultado[0]
+    # costo_actual = 27000*10 / (10*8) = 3375.
+    assert morron["costo_actual"] == 3375
+    # Envase: 1/8 caja por kilo, a $1600 la caja => $200/kg de envase, sin
+    # utilidad. Producto: 3375 * 1.20 = 4050. (4050+200) / 0.77 = 5519.48...
+    assert morron["precio_sugerido"] == pytest.approx(5519.4805, abs=0.001)
+
+
+FICHA_CHERRY_VARIABLE = {
+    "articulo_id": 21,
+    "articulo_nombre": "Tomate Cherry",
+    "unidad_venta": "kilo",
+    "envase_id": 200,
+    "contenido_caja": 5,
+    "envase_variable": True,
+}
+
+COSTOS_ENVASES_CHERRY = [{"envase_id": 200, "costo": 650}]
+
+
+def test_precio_sugerido_cherry_envase_variable_caja_chica_de_punta_a_punta():
+    # Cajón de 10kg con ficha de 5kg -> caja chica, 2 cartones cada cajón.
+    compras = [
+        {
+            "articulo_id": 21,
+            "articulo_nombre": "Tomate Cherry",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 4,
+            "contenido_por_cajon": 10,
+            "cantidad_kilos": 40,
+            "importe": 3000,
+        },
+    ]
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_CHERRY_VARIABLE],
+        precios_vigentes=[],
+        costos_envases=COSTOS_ENVASES_CHERRY,
+    )
+
+    assert len(resultado) == 1
+    cherry = resultado[0]
+    # costo_actual = 3000*4 / (4*10) = 300/kg.
+    assert cherry["costo_actual"] == 300
+    # Envase: 1/5 caja por kilo (caja chica), a $650 => $130/kg, sin utilidad.
+    # Producto: 300*1.20 = 360. (360+130)/0.77 = 636.36...
+    assert cherry["precio_sugerido"] == pytest.approx(636.3636, abs=0.001)
+
+
+def test_precio_sugerido_cherry_descartable_no_suma_costo_de_envase():
+    # Mismo Cherry, pero comprado en cajón de 5kg (igual a la ficha) ->
+    # descartable, sin cartón, aunque el envase esté configurado.
+    compras = [
+        {
+            "articulo_id": 21,
+            "articulo_nombre": "Tomate Cherry",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 4,
+            "contenido_por_cajon": 5,
+            "cantidad_kilos": 20,
+            "importe": 1500,
+        },
+    ]
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_CHERRY_VARIABLE],
+        precios_vigentes=[],
+        costos_envases=COSTOS_ENVASES_CHERRY,
+    )
+
+    cherry = resultado[0]
+    # costo_actual = 1500*4/(4*5) = 300/kg. Sin envase: 300*1.20/0.77.
+    assert cherry["costo_actual"] == 300
+    assert cherry["precio_sugerido"] == pytest.approx(300 * 1.20 / 0.77, abs=0.001)
+
+
+def test_precio_sugerido_sin_costo_actual_es_none():
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": None,
+        },
+    ]
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=[],
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    assert resultado[0]["costo_actual"] is None
+    assert resultado[0]["precio_sugerido"] is None

@@ -2424,6 +2424,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
             "variacion": "bajo",
             "fecha_ultima_compra": date(2026, 8, 10),
             "precio_vigente": 700.0,
+            "precio_sugerido": 750.6,
             "compras_sin_precio_excluidas": 1,
         },
         {
@@ -2436,6 +2437,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
             "variacion": None,
             "fecha_ultima_compra": date(2026, 8, 4),
             "precio_vigente": None,
+            "precio_sugerido": None,
             "compras_sin_precio_excluidas": 0,
         },
     ]
@@ -2455,6 +2457,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
     assert "$600" in respuesta.text  # costo anterior
     assert "bajó" in respuesta.text
     assert "$700" in respuesta.text  # precio vigente
+    assert "$751" in respuesta.text  # precio sugerido (750.5 redondeado)
     assert "10/08" in respuesta.text  # fecha última compra de Cherry
     # Mango: sin costo anterior ni vigente -> "—", no "None".
     assert "None" not in respuesta.text

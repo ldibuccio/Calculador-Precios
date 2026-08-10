@@ -248,7 +248,7 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, e.nombre AS envase_nombre,
+                SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, fl.envase_id, e.nombre AS envase_nombre,
                        fl.contenido_caja, fl.unidad_venta, fl.envase_variable
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
@@ -644,6 +644,31 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
                 ORDER BY articulo_id, vigente_desde DESC
                 """,
                 (cliente_id, fecha_referencia),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_costos_envases_vigentes(fecha_referencia) -> list[dict]:
+    """Costo vigente de cada envase, a una fecha dada (mismo patrón "vigente" que el resto).
+
+    No filtra por cliente: envases ya está por cliente (envases.cliente_id),
+    así que envase_id alcanza para saber a quién pertenece.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (envase_id) envase_id, costo
+                FROM envases_costo_historial
+                WHERE vigente_desde <= %s
+                ORDER BY envase_id, vigente_desde DESC
+                """,
+                (fecha_referencia,),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()

@@ -70,6 +70,7 @@
           <th>Variación</th>
           <th>Última compra</th>
           <th>Precio vigente</th>
+          <th>Precio sugerido</th>
         </tr>
       </thead>
       <tbody>
@@ -89,6 +90,7 @@
           </td>
           <td>{{ a.fecha_ultima_compra|fecha_corta }}</td>
           <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
+          <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
         </tr>
         {% endfor %}
       </tbody>
