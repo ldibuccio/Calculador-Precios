@@ -9,7 +9,6 @@ from core.motor_costeo import (
     calcular_costo_ponderado_por_cubeta_arandano,
     calcular_costo_ponderado_por_cubeta_frutilla,
     calcular_costo_ponderado_por_kg_cherry,
-    calcular_costo_ponderado_por_kg_mango_cc,
     calcular_costo_ponderado_por_unidad_mango_descartable,
     calcular_costo_promedio_ponderado,
     calcular_kilo_promedio_ponderado_cajon,
@@ -166,33 +165,6 @@ def test_costo_ponderado_por_unidad_mango_descartable_longitudes_distintas():
             cantidad_cajas=[1, 2],
             unidades_por_caja=[9],
             costo_por_caja=[36, 40],
-        )
-
-
-def test_costo_ponderado_por_kg_mango_cc_varias_compras():
-    # Compra 1: 2 cajas de 40 kg a $400 => costo/kg = 10, kilos totales = 80
-    # Compra 2: 3 cajas de 40 kg a $360 => costo/kg = 9, kilos totales = 120
-    # (10*80 + 9*120) / (80+120) = (800 + 1080) / 200 = 9.4
-    resultado = calcular_costo_ponderado_por_kg_mango_cc(
-        cantidad_cajas=[2, 3],
-        costo_por_caja=[400, 360],
-    )
-    assert resultado == 9.4
-
-
-def test_costo_ponderado_por_kg_mango_cc_una_sola_compra():
-    resultado = calcular_costo_ponderado_por_kg_mango_cc(
-        cantidad_cajas=[1],
-        costo_por_caja=[400],
-    )
-    assert resultado == 10
-
-
-def test_costo_ponderado_por_kg_mango_cc_longitudes_distintas():
-    with pytest.raises(ValueError):
-        calcular_costo_ponderado_por_kg_mango_cc(
-            cantidad_cajas=[1, 2],
-            costo_por_caja=[400],
         )
 
 

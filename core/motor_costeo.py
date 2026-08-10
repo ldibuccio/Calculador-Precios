@@ -86,23 +86,6 @@ def calcular_costo_ponderado_por_unidad_mango_descartable(
     return calcular_promedio_ponderado(costos_por_unidad, unidades_totales)
 
 
-MANGO_CC_KG_POR_CAJA = 40
-
-
-def calcular_costo_ponderado_por_kg_mango_cc(cantidad_cajas: list[float], costo_por_caja: list[float]) -> float:
-    """Mango CC: costo ponderado por kg, con cajas de peso fijo (40 kg).
-
-    Cada compra aporta su costo_por_kg (costo_de_la_caja / 40), ponderado
-    por los kilos totales comprados en esa compra.
-    """
-    if len(cantidad_cajas) != len(costo_por_caja):
-        raise ValueError("cantidad_cajas y costo_por_caja deben tener la misma longitud")
-
-    costos_por_kg = [costo / MANGO_CC_KG_POR_CAJA for costo in costo_por_caja]
-    kilos_totales = [cajas * MANGO_CC_KG_POR_CAJA for cajas in cantidad_cajas]
-    return calcular_promedio_ponderado(costos_por_kg, kilos_totales)
-
-
 def calcular_costo_ponderado_por_cubeta(
     cantidad_cajas: list[float], costo_por_caja: list[float], cubetas_por_caja: float
 ) -> float:
