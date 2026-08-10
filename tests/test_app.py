@@ -1,11 +1,13 @@
+import io
 from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
-from app.main import app
+from app.main import _generar_preview_foto, app
 
 cliente = TestClient(app)
 
@@ -1155,6 +1157,10 @@ def test_ver_nueva_compra_sin_proveedor_muestra_formulario_de_proveedor():
     assert respuesta.status_code == 200
     assert "Código de puesto" in respuesta.text
     assert "N07P41" in respuesta.text
+    # Regresión: sin este cartel, leer la foto con la IA puede tardar varios
+    # segundos sin ningún cambio visible y el comprador aprieta de nuevo.
+    assert 'id="form-leer-comanda"' in respuesta.text
+    assert "Leyendo comanda..." in respuesta.text
 
 
 def test_ver_nueva_compra_sin_proveedor_error_de_base_da_500():
@@ -1239,6 +1245,10 @@ def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
     # cuando el renglón está vacío (los campos "*" son required) y el POST
     # ni siquiera llega al servidor.
     assert 'name="accion" value="terminar" formnovalidate' in respuesta.text
+    # Regresión: sin este cartel de "Guardando...", el comprador no ve
+    # ningún cambio al apretar y termina cargando la compra duplicada.
+    assert 'id="form-compra"' in respuesta.text
+    assert "Guardando..." in respuesta.text
 
 
 def test_ver_nueva_compra_con_proveedor_inexistente_da_404():
@@ -2072,3 +2082,67 @@ def test_confirmar_compra_foto_error_de_base_muestra_mensaje_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar la compra" in respuesta.text
+
+
+def _imagen_de_prueba() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (20, 20), color="red").save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def test_generar_preview_foto_devuelve_data_uri_para_una_imagen_valida():
+    preview = _generar_preview_foto(_imagen_de_prueba())
+    assert preview.startswith("data:image/jpeg;base64,")
+
+
+def test_generar_preview_foto_devuelve_vacio_si_no_es_una_imagen():
+    assert _generar_preview_foto(b"esto no es una imagen") == ""
+
+
+def test_subir_foto_compra_incluye_preview_de_la_foto_para_el_boton_ver_foto():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert "data:image/jpeg;base64," in respuesta.text
+    assert "Ver foto" in respuesta.text
+
+
+def test_subir_foto_compra_muestra_cartel_de_guardando_para_evitar_duplicados():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert 'id="form-confirmar-foto"' in respuesta.text
+    assert "Guardando..." in respuesta.text
+
+
+def test_confirmar_compra_foto_conserva_la_foto_al_reintentar_por_error():
+    datos = _datos_confirmar_foto(descartar_item_1=False)
+    datos["foto_preview"] = "data:image/jpeg;base64,ABC123"
+    with (
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.crear_compra"),
+    ):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
+
+    assert respuesta.status_code == 400
+    assert "data:image/jpeg;base64,ABC123" in respuesta.text

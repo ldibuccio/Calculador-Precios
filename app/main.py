@@ -4,12 +4,15 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 (core/lector_comandas.py) ahora sí se conecta, en la carga de compras por foto.
 """
 
+import base64
+import io
 import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from PIL import Image
 
 from app.db import (
     actualizar_articulo,
@@ -1374,10 +1377,35 @@ def _contenido_referencia_de(articulo_id: int | None, articulos_existentes: list
     return None
 
 
+LADO_MAXIMO_PREVIEW_FOTO = 1100
+CALIDAD_PREVIEW_FOTO = 70
+
+
+def _generar_preview_foto(imagen: bytes) -> str:
+    """Achica y comprime la foto para poder mostrarla incrustada en la pantalla de revisión.
+
+    La foto original de un celular puede pesar varios MB; para "Ver foto" no
+    hace falta esa resolución, solo que se lea. Si algo falla generándola
+    (formato raro, etc.), devuelve "" — no tiene que romper la carga por eso,
+    la extracción ya se hizo con la imagen original aparte.
+    """
+    try:
+        imagen_pil = Image.open(io.BytesIO(imagen))
+        imagen_pil = imagen_pil.convert("RGB")
+        imagen_pil.thumbnail((LADO_MAXIMO_PREVIEW_FOTO, LADO_MAXIMO_PREVIEW_FOTO))
+        buffer = io.BytesIO()
+        imagen_pil.save(buffer, format="JPEG", quality=CALIDAD_PREVIEW_FOTO)
+        preview_base64 = base64.standard_b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{preview_base64}"
+    except Exception:
+        return ""
+
+
 @app.post("/compras/nueva/foto")
 async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
     try:
         imagen = await foto.read()
+        foto_preview = _generar_preview_foto(imagen)
         datos = extraer_comanda(imagen)
     except Exception as error_lector:
         try:
@@ -1435,6 +1463,7 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
             "codigo_puesto_sugerido": proveedor_sugerido["codigo_puesto"] if proveedor_sugerido else "",
             "nombre_sugerido": proveedor_sugerido["nombre"] if proveedor_sugerido else (proveedor_leido.get("nombre") or ""),
             "renglones": renglones,
+            "foto_preview": foto_preview,
             "error": None,
         },
     )
@@ -1446,6 +1475,7 @@ async def confirmar_compra_foto(request: Request):
 
     codigo_puesto_texto = str(form.get("codigo_puesto", ""))
     nombre_texto = str(form.get("nombre", ""))
+    foto_preview_texto = str(form.get("foto_preview", ""))
     try:
         cantidad_renglones = int(form.get("cantidad_renglones", "0") or "0")
     except ValueError:
@@ -1526,6 +1556,7 @@ async def confirmar_compra_foto(request: Request):
                 "codigo_puesto_sugerido": codigo_puesto_texto,
                 "nombre_sugerido": nombre_texto,
                 "renglones": renglones_para_mostrar,
+                "foto_preview": foto_preview_texto,
                 "error": error,
             },
             status_code=400,
@@ -1564,6 +1595,7 @@ async def confirmar_compra_foto(request: Request):
                 "codigo_puesto_sugerido": codigo_puesto_texto,
                 "nombre_sugerido": nombre_texto,
                 "renglones": renglones_para_mostrar,
+                "foto_preview": foto_preview_texto,
                 "error": f"No se pudo guardar la compra: {error_db}",
             },
             status_code=500,

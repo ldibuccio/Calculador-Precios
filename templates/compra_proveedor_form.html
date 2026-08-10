@@ -93,10 +93,11 @@
 
   <div class="tarjeta">
     <p class="ayuda">Sacá una foto nueva o elegí una ya guardada de la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.</p>
-    <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data">
+    <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data" id="form-leer-comanda">
       <label for="foto">Foto de la comanda</label>
       <input type="file" id="foto" name="foto" accept="image/*" required>
-      <button type="submit">Leer comanda</button>
+      <button type="submit" id="boton-leer-comanda">Leer comanda</button>
+      <p id="ayuda-leyendo" class="ayuda" style="display: none;">Leyendo la foto, puede tardar unos segundos...</p>
     </form>
   </div>
 
@@ -104,7 +105,7 @@
 
   <div class="tarjeta">
     <p class="ayuda">Elegí o cargá el proveedor. Después vas a poder sumarle varios artículos sin repetirlo.</p>
-    <form method="post" action="/compras/nueva/proveedor" onsubmit="normalizarCodigoPuesto()">
+    <form method="post" action="/compras/nueva/proveedor" onsubmit="normalizarCodigoPuesto()" id="form-confirmar-proveedor">
       <label for="codigo_puesto">Código de puesto *</label>
       <input type="text" id="codigo_puesto" name="codigo_puesto" list="lista_proveedores" required
              placeholder="ej. N07P41" autocomplete="off" oninput="sugerirNombre()">
@@ -117,7 +118,7 @@
       <label for="nombre">Nombre del proveedor *</label>
       <input type="text" id="nombre" name="nombre" required placeholder="ej. Saturno">
 
-      <button type="submit">Confirmar proveedor</button>
+      <button type="submit" id="boton-confirmar-proveedor">Confirmar proveedor</button>
     </form>
     <a class="volver" href="/compras">Volver a compras</a>
   </div>
@@ -138,6 +139,34 @@
     function normalizarCodigoPuesto() {
       const campo = document.getElementById("codigo_puesto");
       campo.value = campo.value.trim().toUpperCase();
+    }
+
+    // Leer la foto con la IA puede tardar varios segundos; sin este cartel
+    // parece que no pasó nada y el comprador termina apretando de nuevo.
+    const formLeerComanda = document.getElementById("form-leer-comanda");
+    if (formLeerComanda) {
+      formLeerComanda.addEventListener("submit", function () {
+        const boton = document.getElementById("boton-leer-comanda");
+        if (boton) {
+          boton.disabled = true;
+          boton.textContent = "Leyendo comanda...";
+        }
+        const ayuda = document.getElementById("ayuda-leyendo");
+        if (ayuda) {
+          ayuda.style.display = "block";
+        }
+      });
+    }
+
+    const formConfirmarProveedor = document.getElementById("form-confirmar-proveedor");
+    if (formConfirmarProveedor) {
+      formConfirmarProveedor.addEventListener("submit", function () {
+        const boton = document.getElementById("boton-confirmar-proveedor");
+        if (boton) {
+          boton.disabled = true;
+          boton.textContent = "Confirmando...";
+        }
+      });
     }
   </script>
 </body>

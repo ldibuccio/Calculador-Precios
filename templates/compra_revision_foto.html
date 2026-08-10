@@ -104,18 +104,76 @@
     font-size: 0.9rem;
     text-decoration: none;
   }
+  .boton-ver-foto {
+    margin-top: 0.75rem;
+    width: auto;
+    display: inline-block;
+    padding: 0.5rem 0.9rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .modal-foto {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 100;
+    padding: 1rem;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-foto.visible {
+    display: flex;
+  }
+  .modal-foto-contenido {
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .modal-foto img {
+    max-width: 100%;
+    max-height: 85vh;
+    display: block;
+    border-radius: 8px;
+  }
+  .modal-foto-cerrar {
+    margin-top: 0.75rem;
+    width: 100%;
+    padding: 0.65rem;
+    background: #fff;
+    color: #222;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
   <h1>Revisar comanda leída</h1>
   <p class="ayuda">Esto es lo que el sistema pudo leer e interpretar. Revisá y corregí lo que haga falta antes de guardar — todavía no se guardó nada.</p>
 
+  {% if foto_preview %}
+  <div id="modal-foto" class="modal-foto" onclick="cerrarFoto(event)">
+    <div class="modal-foto-contenido">
+      <img src="{{ foto_preview }}" alt="Foto de la comanda">
+      <button type="button" class="modal-foto-cerrar" onclick="cerrarFoto(event)">Cerrar</button>
+    </div>
+  </div>
+  {% endif %}
+
   {% if error %}
   <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="post" action="/compras/nueva/foto/confirmar">
+  <form method="post" action="/compras/nueva/foto/confirmar" id="form-confirmar-foto">
     <input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
+    <input type="hidden" name="foto_preview" value="{{ foto_preview }}">
 
     <div class="tarjeta">
       <h2>Proveedor</h2>
@@ -135,6 +193,9 @@
       {% endif %}
       <p class="texto-leido">Texto leído: "{{ r.texto_leido or "(sin leer)" }}"{% if r.nota_margen %} · nota al margen: "{{ r.nota_margen }}"{% endif %}</p>
       <input type="hidden" name="item_{{ loop.index0 }}_texto_leido" value="{{ r.texto_leido }}">
+      {% if foto_preview %}
+      <button type="button" class="boton-ver-foto" onclick="verFoto(event)">Ver foto</button>
+      {% endif %}
 
       <label for="item_{{ loop.index0 }}_articulo_id">Artículo *</label>
       <select id="item_{{ loop.index0 }}_articulo_id" name="item_{{ loop.index0 }}_articulo_id"
@@ -180,13 +241,43 @@
     </div>
     {% endfor %}
 
-    <button type="submit">Guardar compra</button>
+    <button type="submit" id="boton-guardar-compra">Guardar compra</button>
   </form>
   <a class="volver" href="/compras/nueva">Cancelar (no guardar nada)</a>
 
   <script>
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
     const CANTIDAD_RENGLONES = {{ renglones|length }};
+
+    function verFoto(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.add("visible");
+      }
+    }
+
+    function cerrarFoto(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.remove("visible");
+      }
+    }
+
+    // El botón puede tardar varios segundos en guardar; sin este cartel el
+    // comprador no sabe si pasó algo y termina apretando de nuevo, lo que
+    // guarda la compra duplicada.
+    const formConfirmar = document.getElementById("form-confirmar-foto");
+    if (formConfirmar) {
+      formConfirmar.addEventListener("submit", function () {
+        const boton = document.getElementById("boton-guardar-compra");
+        if (boton) {
+          boton.disabled = true;
+          boton.textContent = "Guardando...";
+        }
+      });
+    }
 
     function actualizarContenidoRenglon(indice, select) {
       const opcion = select.selectedOptions[0];

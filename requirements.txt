@@ -6,3 +6,4 @@ psycopg2-binary
 httpx
 jinja2
 python-multipart
+Pillow

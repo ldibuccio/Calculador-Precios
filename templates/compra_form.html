@@ -136,7 +136,7 @@
     <div class="campo-fijo">{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</div>
     {% endif %}
 
-    <form method="post" action="{% if modo == 'nueva' %}/compras/nueva{% else %}/compras/{{ compra.id }}/editar{% endif %}">
+    <form method="post" action="{% if modo == 'nueva' %}/compras/nueva{% else %}/compras/{{ compra.id }}/editar{% endif %}" id="form-compra">
       {% if modo == "nueva" %}
       <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
       {% endif %}
@@ -193,10 +193,10 @@
       </select>
 
       {% if modo == "nueva" %}
-      <button type="submit" name="accion" value="agregar">Agregar artículo</button>
-      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-secundario">Terminar carga</button>
+      <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
+      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-secundario" id="boton-terminar-carga">Terminar carga</button>
       {% else %}
-      <button type="submit">Guardar</button>
+      <button type="submit" id="boton-guardar-compra">Guardar</button>
       {% endif %}
     </form>
     {% if modo == "editar" %}
@@ -264,5 +264,37 @@
     }
   </script>
   {% endif %}
+
+  <script>
+    // Evita que, al no ver ningún cambio en pantalla mientras guarda, el
+    // comprador apriete varias veces y termine cargando lo mismo repetido.
+    (function () {
+      const form = document.getElementById("form-compra");
+      if (!form) {
+        return;
+      }
+      let botonClickeado = null;
+      const botones = [
+        { elemento: document.getElementById("boton-agregar-articulo"), texto: "Agregando..." },
+        { elemento: document.getElementById("boton-terminar-carga"), texto: "Guardando..." },
+        { elemento: document.getElementById("boton-guardar-compra"), texto: "Guardando..." },
+      ].filter(function (b) { return b.elemento; });
+
+      botones.forEach(function (b) {
+        b.elemento.addEventListener("click", function () {
+          botonClickeado = b;
+        });
+      });
+
+      form.addEventListener("submit", function () {
+        botones.forEach(function (b) {
+          b.elemento.disabled = true;
+        });
+        if (botonClickeado) {
+          botonClickeado.elemento.textContent = botonClickeado.texto;
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
