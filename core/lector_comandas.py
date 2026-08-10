@@ -104,7 +104,10 @@ def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
     try:
         respuesta = cliente.messages.create(
             model=MODELO_LECTOR_COMANDAS,
-            max_tokens=2048,
+            # Generoso a propósito: con el thinking activado y una comanda con
+            # varios artículos, un límite chico corta la respuesta a mitad del
+            # JSON (quedaba un "Unterminated string" al parsearlo).
+            max_tokens=8192,
             messages=[
                 {
                     "role": "user",
@@ -126,6 +129,12 @@ def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
         raise RuntimeError(f"No se pudo conectar con la API de Claude: {error}") from error
     except anthropic.APIStatusError as error:
         raise RuntimeError(f"La API de Claude devolvió un error ({error.status_code}): {error.message}") from error
+
+    if respuesta.stop_reason == "max_tokens":
+        raise RuntimeError(
+            "La respuesta de la API se cortó por quedarse sin espacio (la comanda debe tener muchos artículos). "
+            "Probá sacar la foto en partes, o avisale a Lionel para subir el límite."
+        )
 
     return _extraer_texto_de_la_respuesta(respuesta.content)
 

@@ -137,8 +137,8 @@ def test_llamar_api_claude_sin_api_key_lanza_error_claro(monkeypatch):
         _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
 
 
-def _respuesta_falsa(bloques):
-    return SimpleNamespace(content=bloques)
+def _respuesta_falsa(bloques, stop_reason="end_turn"):
+    return SimpleNamespace(content=bloques, stop_reason=stop_reason)
 
 
 def test_extraer_texto_de_la_respuesta_ignora_bloques_de_thinking():
@@ -180,3 +180,17 @@ def test_llamar_api_claude_con_thinking_activado_usa_solo_el_bloque_de_texto(mon
         resultado = _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
 
     assert resultado == json.dumps(COMANDA_VALIDA)
+
+
+def test_llamar_api_claude_cortada_por_max_tokens_da_error_claro(monkeypatch):
+    # Regresión real: con una comanda con muchos artículos, la respuesta se
+    # cortaba a mitad del JSON ("Unterminated string...") en vez de avisar
+    # claramente que se quedó sin espacio.
+    monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
+    bloque_texto_cortado = SimpleNamespace(type="text", text='{"proveedor": {"nombre": "Sat')
+    cliente_falso = Mock()
+    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_texto_cortado], stop_reason="max_tokens")
+
+    with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
+        with pytest.raises(RuntimeError, match="se cortó"):
+            _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
