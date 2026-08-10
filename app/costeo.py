@@ -14,7 +14,7 @@ sugerido.
 from datetime import datetime, timedelta, timezone
 
 from app.db import listar_compras_para_costeo
-from core.motor_costeo import calcular_costo_por_unidad_medida, calcular_costo_promedio_ponderado
+from core.motor_costeo import calcular_costo_promedio_ponderado
 
 ARGENTINA = timezone(timedelta(hours=-3))
 VENTANA_COSTEO_HORAS = 48
@@ -34,9 +34,11 @@ def calcular_costos_ponderados_recientes(momento_referencia: datetime | None = N
     incluir un poco más de 48 hs exactas (por ejemplo, todo el día de "ayer"
     aunque momento_referencia sea temprano a la mañana) — nunca menos.
 
-    Para cada compra con importe cargado, se calcula su costo por cajón
-    (importe / cantidad_cajones) y se pondera por la cantidad de cajones de
-    esa compra (calcular_costo_promedio_ponderado, REGLA 1 genérica). Las
+    compras.importe YA es el precio de un solo cajón (no el total de la
+    compra) — no se divide por cantidad_cajones. Para cada compra con
+    importe cargado, ese importe se pondera por la cantidad de cajones de
+    esa compra (calcular_costo_promedio_ponderado, REGLA 1 genérica), para
+    cuando hay varias compras del mismo artículo a distinto precio. Las
     compras sin importe (compra sin precio todavía) se excluyen del cálculo,
     pero se cuentan por artículo para poder avisar cuántas quedaron afuera.
 
@@ -68,10 +70,9 @@ def calcular_costos_ponderados_recientes(momento_referencia: datetime | None = N
             continue
 
         cajones = compra["cantidad_cajones"]
-        precio_por_cajon = calcular_costo_por_unidad_medida(compra["importe"], cajones)
 
         cajones_por_articulo.setdefault(articulo_id, []).append(cajones)
-        precios_por_cajon_por_articulo.setdefault(articulo_id, []).append(precio_por_cajon)
+        precios_por_cajon_por_articulo.setdefault(articulo_id, []).append(compra["importe"])
 
     resultado = [
         {
