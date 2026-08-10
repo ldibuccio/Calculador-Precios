@@ -70,6 +70,28 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 
+def _formatear_numero(valor) -> str:
+    """Muestra un número sin decimales de sobra (16 en vez de 16.0), para pantallas de celular.
+
+    Si tiene parte decimal la conserva (16.5 sigue siendo "16.5"), solo saca
+    los ceros que no aportan nada.
+    """
+    if valor is None:
+        return ""
+    return f"{float(valor):.2f}".rstrip("0").rstrip(".")
+
+
+def _formatear_fecha_corta(fecha) -> str:
+    """Fecha en formato dd/mm (sin año), para que la tabla de compras entre en la pantalla del celular."""
+    if fecha is None:
+        return ""
+    return fecha.strftime("%d/%m")
+
+
+templates.env.filters["numero"] = _formatear_numero
+templates.env.filters["fecha_corta"] = _formatear_fecha_corta
+
+
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
     """Valida nombre no vacío. Devuelve (error, nombre_limpio)."""
     nombre = nombre.strip()

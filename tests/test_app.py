@@ -7,9 +7,22 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
-from app.main import _generar_preview_foto, app
+from app.main import _formatear_fecha_corta, _formatear_numero, _generar_preview_foto, app
 
 cliente = TestClient(app)
+
+
+def test_formatear_numero_saca_decimales_de_sobra():
+    assert _formatear_numero(16.0) == "16"
+    assert _formatear_numero(16) == "16"
+    assert _formatear_numero(16.5) == "16.5"
+    assert _formatear_numero(16.25) == "16.25"
+    assert _formatear_numero(None) == ""
+
+
+def test_formatear_fecha_corta_muestra_dd_mm():
+    assert _formatear_fecha_corta(date(2026, 8, 6)) == "06/08"
+    assert _formatear_fecha_corta(None) == ""
 
 
 def test_raiz_devuelve_estado_ok():
@@ -1110,6 +1123,15 @@ def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
     # sin totales calculados: no debe mostrarse la columna de fracción/kilos ya procesada
     assert "Fracción" not in respuesta.text
     mock_listar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA)
+    # Regresión: pantalla compacta para celular — fecha dd/mm (sin año) y
+    # números sin decimales de sobra (10 en vez de 10.0).
+    assert "06/08" in respuesta.text
+    assert "05/08" in respuesta.text
+    assert "2026" not in respuesta.text
+    assert "<td>10</td>" in respuesta.text
+    assert "<td>18</td>" in respuesta.text
+    assert "10.0" not in respuesta.text
+    assert "18.0" not in respuesta.text
 
 
 def test_ver_compras_sin_compras_muestra_mensaje():
@@ -1798,6 +1820,12 @@ def test_ver_compras_pendientes_muestra_la_lista():
     assert "Mzn Red" in respuesta.text
     assert "Saturno" in respuesta.text
     mock_listar.assert_called_once_with()
+    # Regresión: misma pantalla compacta que /compras — fecha dd/mm y
+    # números sin decimales de sobra.
+    assert "06/08" in respuesta.text
+    assert "2026" not in respuesta.text
+    assert "<td>10</td>" in respuesta.text
+    assert "<td>18</td>" in respuesta.text
 
 
 def test_ver_compras_pendientes_sin_pendientes_muestra_mensaje():
