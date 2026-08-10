@@ -138,7 +138,7 @@
 
       <label for="item_{{ loop.index0 }}_articulo_id">Artículo *</label>
       <select id="item_{{ loop.index0 }}_articulo_id" name="item_{{ loop.index0 }}_articulo_id"
-              onchange="actualizarContenidoRenglon({{ loop.index0 }}, this)">
+              onchange="actualizarContenidoRenglon({{ loop.index0 }}, this)" required>
         <option value="" {% if not r.articulo_id %}selected{% endif %}>Elegí un artículo...</option>
         {% for a in articulos %}
         <option value="{{ a.id }}"
@@ -150,11 +150,11 @@
 
       <label for="item_{{ loop.index0 }}_cantidad_cajones">Cantidad de cajones/cajas *</label>
       <input type="number" id="item_{{ loop.index0 }}_cantidad_cajones" name="item_{{ loop.index0 }}_cantidad_cajones"
-             min="0" step="0.01" value="{% if r.cantidad_cajones is not none %}{{ r.cantidad_cajones }}{% endif %}">
+             min="0" step="0.01" required value="{% if r.cantidad_cajones is not none %}{{ r.cantidad_cajones }}{% endif %}">
 
       <label for="item_{{ loop.index0 }}_contenido_por_cajon">Contenido por cajón *</label>
       <input type="number" id="item_{{ loop.index0 }}_contenido_por_cajon" name="item_{{ loop.index0 }}_contenido_por_cajon"
-             min="0" step="0.01" value="{% if r.contenido_por_cajon is not none %}{{ r.contenido_por_cajon }}{% endif %}">
+             min="0" step="0.01" required value="{% if r.contenido_por_cajon is not none %}{{ r.contenido_por_cajon }}{% endif %}">
 
       <label for="item_{{ loop.index0 }}_importe">Importe</label>
       <input type="number" id="item_{{ loop.index0 }}_importe" name="item_{{ loop.index0 }}_importe"
@@ -166,15 +166,15 @@
              min="0" step="0.01" value="{% if r.sena is not none %}{{ r.sena }}{% endif %}">
 
       <label for="item_{{ loop.index0 }}_tipo_retiro">Retiro *</label>
-      <select id="item_{{ loop.index0 }}_tipo_retiro" name="item_{{ loop.index0 }}_tipo_retiro">
-        <option value="" selected>Elegí...</option>
-        <option value="Clark">Clark</option>
-        <option value="Granel">Granel</option>
+      <select id="item_{{ loop.index0 }}_tipo_retiro" name="item_{{ loop.index0 }}_tipo_retiro" required>
+        <option value="" {% if not r.tipo_retiro %}selected{% endif %}>Elegí...</option>
+        <option value="Clark" {% if r.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
+        <option value="Granel" {% if r.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
       </select>
 
       <div class="campo-descartar">
         <input type="checkbox" id="item_{{ loop.index0 }}_descartar" name="item_{{ loop.index0 }}_descartar"
-               {% if r.descartado %}checked{% endif %}>
+               onchange="alternarDescarte({{ loop.index0 }}, this)" {% if r.descartado %}checked{% endif %}>
         <label for="item_{{ loop.index0 }}_descartar">No cargar este renglón</label>
       </div>
     </div>
@@ -186,6 +186,7 @@
 
   <script>
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
+    const CANTIDAD_RENGLONES = {{ renglones|length }};
 
     function actualizarContenidoRenglon(indice, select) {
       const opcion = select.selectedOptions[0];
@@ -196,6 +197,30 @@
       const contenidoReferencia = opcion.dataset.contenidoReferencia;
       if (contenidoReferencia) {
         contenidoInput.value = contenidoReferencia;
+      }
+    }
+
+    // Un renglón descartado no tiene por qué estar completo: si no, el
+    // navegador bloquea todo el envío por los campos obligatorios vacíos de
+    // ESE renglón, aunque no se vaya a guardar.
+    function alternarDescarte(indice, checkbox) {
+      const campos = [
+        document.getElementById("item_" + indice + "_articulo_id"),
+        document.getElementById("item_" + indice + "_cantidad_cajones"),
+        document.getElementById("item_" + indice + "_contenido_por_cajon"),
+        document.getElementById("item_" + indice + "_tipo_retiro"),
+      ];
+      campos.forEach(function (campo) {
+        if (campo) {
+          campo.required = !checkbox.checked;
+        }
+      });
+    }
+
+    for (let indice = 0; indice < CANTIDAD_RENGLONES; indice++) {
+      const checkbox = document.getElementById("item_" + indice + "_descartar");
+      if (checkbox) {
+        alternarDescarte(indice, checkbox);
       }
     }
   </script>

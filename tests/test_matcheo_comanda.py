@@ -110,36 +110,84 @@ ARTICULOS_DE_PRUEBA = [
     {"id": 5, "nombre": "Tomate Redondo"},
     {"id": 6, "nombre": "Tomate Perita"},
     {"id": 7, "nombre": "Morrón Rojo"},
+    {"id": 8, "nombre": "Mzn Granny"},
+    {"id": 9, "nombre": "Man Gob"},
+    {"id": 11, "nombre": "Pera"},
+]
+
+CONVERSIONES_DE_PRUEBA = [
+    {"articulo_id": 8, "nombre_cliente": "MANZANA VDE"},
+    {"articulo_id": 9, "nombre_cliente": "MANZANA PG"},
 ]
 
 
 def test_adivinar_articulo_por_nombre_exacto_normalizado():
-    resultado = adivinar_articulo("tomate redondo", {}, ARTICULOS_DE_PRUEBA)
+    resultado = adivinar_articulo("tomate redondo", {}, ARTICULOS_DE_PRUEBA, [])
     assert resultado == 5
 
 
 def test_adivinar_articulo_por_nombre_exacto_con_acentos_distintos():
-    resultado = adivinar_articulo("Morron Rojo", {}, ARTICULOS_DE_PRUEBA)
+    resultado = adivinar_articulo("Morron Rojo", {}, ARTICULOS_DE_PRUEBA, [])
     assert resultado == 7
 
 
-def test_adivinar_articulo_no_matchea_por_parecido():
-    # "Tomate" solo no es exactamente "Tomate Redondo" ni "Tomate Perita": no adivina.
-    resultado = adivinar_articulo("Tomate", {}, ARTICULOS_DE_PRUEBA)
+def test_adivinar_articulo_texto_ambiguo_no_matchea_por_debajo_del_umbral():
+    # "Tomate" solo es demasiado parecido a "Tomate Redondo" Y "Tomate Perita"
+    # a la vez (por debajo del umbral de todos modos): no adivina.
+    resultado = adivinar_articulo("Tomate", {}, ARTICULOS_DE_PRUEBA, [])
     assert resultado is None
 
 
 def test_adivinar_articulo_usa_aprendizaje_del_proveedor():
     aprendizaje = {"tom.red": 5}
-    resultado = adivinar_articulo("Tom.Red", aprendizaje, ARTICULOS_DE_PRUEBA)
+    resultado = adivinar_articulo("Tom.Red", aprendizaje, ARTICULOS_DE_PRUEBA, [])
     assert resultado == 5
 
 
 def test_adivinar_articulo_texto_vacio_da_none():
-    resultado = adivinar_articulo("", {}, ARTICULOS_DE_PRUEBA)
+    resultado = adivinar_articulo("", {}, ARTICULOS_DE_PRUEBA, [])
     assert resultado is None
 
 
 def test_adivinar_articulo_completar_articulo_no_matchea_nada():
-    resultado = adivinar_articulo("completar artículo", {}, ARTICULOS_DE_PRUEBA)
+    resultado = adivinar_articulo("completar artículo", {}, ARTICULOS_DE_PRUEBA, [])
     assert resultado is None
+
+
+def test_adivinar_articulo_por_parecido_manzana_granny_vs_mzn_granny():
+    # Caso real que fallaba: "Manzana Granny" leído no coincidía con "Mzn Granny".
+    resultado = adivinar_articulo("Manzana Granny", {}, ARTICULOS_DE_PRUEBA, [])
+    assert resultado == 8
+
+
+def test_adivinar_articulo_por_conversion_pg_es_palabra_completa_de_manzana_pg():
+    # Caso real que fallaba: "PG" leído no coincidía con "Man Gob" (via
+    # conversion_articulos_cliente: "MANZANA PG" -> Man Gob).
+    resultado = adivinar_articulo("PG", {}, ARTICULOS_DE_PRUEBA, CONVERSIONES_DE_PRUEBA)
+    assert resultado == 9
+
+
+def test_adivinar_articulo_por_conversion_exacta():
+    resultado = adivinar_articulo("MANZANA VDE", {}, ARTICULOS_DE_PRUEBA, CONVERSIONES_DE_PRUEBA)
+    assert resultado == 8
+
+
+def test_adivinar_articulo_conversion_tiene_prioridad_sobre_nombre_de_articulo():
+    # Si "pg" no matcheara por conversion, por nombre de articulo tampoco
+    # matchearía nada (no hay ningún articulo llamado "pg" o parecido) — así
+    # que este caso además confirma que el camino de conversion se usa.
+    resultado = adivinar_articulo("pg", {}, ARTICULOS_DE_PRUEBA, CONVERSIONES_DE_PRUEBA)
+    assert resultado == 9
+
+
+def test_adivinar_articulo_no_confunde_productos_distintos_con_letras_parecidas():
+    # "Cereza" y "Pera" comparten bastantes letras (ratio ~0.6) pero son
+    # productos totalmente distintos: no puede adivinar mal esto.
+    resultado = adivinar_articulo("Cereza", {}, ARTICULOS_DE_PRUEBA, [])
+    assert resultado is None
+
+
+def test_adivinar_articulo_aprendizaje_tiene_prioridad_sobre_conversion():
+    aprendizaje = {"manzana vde": 999}
+    resultado = adivinar_articulo("MANZANA VDE", aprendizaje, ARTICULOS_DE_PRUEBA, CONVERSIONES_DE_PRUEBA)
+    assert resultado == 999

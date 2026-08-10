@@ -1853,6 +1853,7 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
         patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
         patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]) as mock_aprendizaje,
     ):
         respuesta = cliente.post(
@@ -1874,6 +1875,7 @@ def test_subir_foto_compra_sin_proveedor_adivinable_deja_codigo_vacio():
         patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
         patch("app.main.listar_proveedores", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
     ):
         respuesta = cliente.post(
             "/compras/nueva/foto",
@@ -1883,6 +1885,32 @@ def test_subir_foto_compra_sin_proveedor_adivinable_deja_codigo_vacio():
     assert respuesta.status_code == 200
     assert 'id="codigo_puesto"' in respuesta.text
     assert 'value=""' in respuesta.text  # nada adivinado para el código de puesto
+
+
+def test_subir_foto_compra_adivina_articulo_por_conversion():
+    comanda = {
+        "proveedor": {"nombre": "Saturno", "tipo_pabellon": "nave", "numero_pabellon": "7", "puesto": "41"},
+        "fecha": "2026-08-06",
+        "items": [
+            {"articulo": "PG", "cantidad": 10, "importe": 5000, "sena": None, "nota_margen": "", "confianza": "alta"},
+        ],
+    }
+    conversiones = [{"articulo_id": 5, "nombre_cliente": "MANZANA PG"}]
+    with (
+        patch("app.main.extraer_comanda", return_value=comanda),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=conversiones),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    # El artículo 5 (Kiwi, en ARTICULOS_CON_UNIDAD_COMPRA) queda seleccionado en el combo.
+    assert "selected>Kiwi" in respuesta.text
 
 
 def test_subir_foto_compra_error_del_lector_muestra_mensaje_claro():
@@ -1972,6 +2000,21 @@ def test_confirmar_compra_foto_renglon_invalido_muestra_error_con_numero():
     assert "Renglón 2" in respuesta.text
     assert "Elegí un artículo" in respuesta.text
     mock_crear.assert_not_called()
+
+
+def test_confirmar_compra_foto_conserva_el_retiro_ya_elegido_al_reintentar():
+    # Regresión: si un renglón fallaba, el "Retiro" de los DEMÁS renglones se
+    # perdía al re-mostrar el formulario (siempre volvía a "Elegí..."),
+    # obligando a re-elegirlo en todos de nuevo en cada intento.
+    datos = _datos_confirmar_foto(descartar_item_1=False)
+    with (
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.crear_compra"),
+    ):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
+
+    assert respuesta.status_code == 400
+    assert "selected>Clark" in respuesta.text
 
 
 def test_confirmar_compra_foto_todo_descartado_muestra_error():

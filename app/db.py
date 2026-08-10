@@ -409,6 +409,25 @@ def listar_conversiones_por_cliente(cliente_id: int) -> list[dict]:
         conexion.close()
 
 
+def listar_todas_las_conversiones() -> list[dict]:
+    """Todas las conversiones nombre_cliente -> articulo_id, de cualquier cliente.
+
+    Se usa para adivinar artículos en comandas leídas por foto: los alias que
+    ya se cargaron para pedidos de clientes (ej. "MANZANA PG" -> Man Gob)
+    también sirven para reconocer abreviaturas de proveedores en el mercado,
+    no son exclusivos de un cliente puntual.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT articulo_id, nombre_cliente FROM conversion_articulos_cliente")
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
 def obtener_conversion(conversion_id: int) -> dict | None:
     """Devuelve una conversión por id (para precargar el formulario de edición), o None si no existe."""
     conexion = obtener_conexion()

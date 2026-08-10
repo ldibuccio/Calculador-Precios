@@ -37,6 +37,10 @@ REGLAS DE EXTRACCIÓN:
 - NUNCA adivinar. Si un dato no se lee con seguridad, poner el texto
   "completar artículo", "completar cantidad" o "completar importe" según
   corresponda, y marcar "confianza": "baja" en ese ítem.
+- El campo "articulo" tiene que ser el texto COMPLETO tal como está escrito,
+  nunca una parte cortada de la palabra. Si el nombre está abreviado en la
+  comanda (fuera de las abreviaciones de la lista de abajo), transcribir la
+  abreviatura completa tal cual, no acortarla más ni inventar el resto.
 - El campo "Señor:" de la comanda es el COMPRADOR, no el proveedor.
   Ignorarlo siempre.
 - El proveedor sale del membrete o encabezado. Si no hay nombre, igual

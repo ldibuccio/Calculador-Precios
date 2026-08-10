@@ -41,6 +41,7 @@ from app.db import (
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_proveedores,
+    listar_todas_las_conversiones,
     obtener_articulo,
     obtener_cliente,
     obtener_compra,
@@ -1393,6 +1394,7 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
     try:
         proveedores_existentes = listar_proveedores()
         articulos_existentes = listar_articulos()
+        conversiones_existentes = listar_todas_las_conversiones()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -1410,7 +1412,7 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
     renglones = []
     for item in datos.get("items") or []:
         texto_leido = item.get("articulo") or ""
-        articulo_id_sugerido = adivinar_articulo(texto_leido, aprendizaje, articulos_existentes)
+        articulo_id_sugerido = adivinar_articulo(texto_leido, aprendizaje, articulos_existentes, conversiones_existentes)
         renglones.append(
             {
                 "texto_leido": texto_leido,
@@ -1482,6 +1484,7 @@ async def confirmar_compra_foto(request: Request):
                 "contenido_por_cajon": contenido_por_cajon_texto,
                 "importe": importe_texto,
                 "sena": sena_texto,
+                "tipo_retiro": tipo_retiro_texto,
                 "nota_margen": "",
                 "advertencia": False,
                 "descartado": descartado,

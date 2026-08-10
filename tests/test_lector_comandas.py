@@ -91,6 +91,7 @@ def test_prompt_incluye_las_reglas_clave_de_extraccion():
     assert "Granny" in PROMPT_EXTRACCION
     assert "tipo_pabellon" in PROMPT_EXTRACCION
     assert "Libre" in PROMPT_EXTRACCION
+    assert "COMPLETO" in PROMPT_EXTRACCION
 
 
 def test_detectar_media_type_png():

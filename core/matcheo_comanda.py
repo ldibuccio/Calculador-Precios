@@ -12,6 +12,7 @@ import unicodedata
 from difflib import SequenceMatcher
 
 UMBRAL_SIMILITUD_PROVEEDOR = 0.75
+UMBRAL_SIMILITUD_ARTICULO = 0.7
 
 
 def normalizar_texto(texto: str | None) -> str:
@@ -86,14 +87,56 @@ def adivinar_proveedor(proveedor_leido: dict, proveedores_existentes: list[dict]
     return None
 
 
-def adivinar_articulo(texto_leido: str, aprendizaje: dict[str, int], articulos_existentes: list[dict]) -> int | None:
+def _mejor_candidato(texto_normalizado: str, candidatos: list[tuple[str, int]], umbral: float) -> int | None:
+    """Busca el mejor candidato en (texto_candidato_normalizado, valor): exacto, por palabra completa, o por parecido.
+
+    "Por palabra completa" cubre casos como "PG" adentro de "manzana pg": el
+    texto leído es exactamente una de las palabras del candidato — pero solo
+    si es una palabra que aparece en un único artículo (si "tomate" es
+    palabra de "tomate redondo" Y de "tomate perita", es ambiguo y no
+    adivina). El parecido (difflib) cubre abreviaturas parciales como
+    "Manzana Granny" vs "Mzn Granny". Nunca devuelve nada por debajo del
+    umbral: mejor dejarlo para que lo elija el comprador que sugerir un
+    artículo equivocado.
+    """
+    for texto_candidato, valor in candidatos:
+        if texto_candidato == texto_normalizado:
+            return valor
+
+    coincidencias_por_palabra = {
+        valor for texto_candidato, valor in candidatos if texto_normalizado in texto_candidato.split()
+    }
+    if len(coincidencias_por_palabra) == 1:
+        return next(iter(coincidencias_por_palabra))
+
+    mejor_valor = None
+    mejor_similitud = 0.0
+    for texto_candidato, valor in candidatos:
+        similitud = SequenceMatcher(None, texto_normalizado, texto_candidato).ratio()
+        if similitud > mejor_similitud:
+            mejor_similitud = similitud
+            mejor_valor = valor
+
+    if mejor_valor is not None and mejor_similitud >= umbral:
+        return mejor_valor
+
+    return None
+
+
+def adivinar_articulo(
+    texto_leido: str,
+    aprendizaje: dict[str, int],
+    articulos_existentes: list[dict],
+    conversiones: list[dict],
+) -> int | None:
     """Sugiere el articulo_id para un texto leído, o None si no hay candidato.
 
-    Primero busca en lo aprendido para este proveedor (aprendizaje: texto
-    normalizado → articulo_id). Si no está, busca un nombre EXACTO (normalizado,
-    sin acentos/mayúsculas) contra el catálogo — nada de parecido: un artículo
-    mal sugerido puede terminar costeando mal, así que ante la duda queda vacío
-    para que lo elija el comprador.
+    Orden de prioridad:
+    1. Lo aprendido para este proveedor puntual (match exacto: ya fue
+       confirmado a mano una vez para este texto y este proveedor).
+    2. Los alias ya cargados en conversion_articulos_cliente (ej. "MANZANA PG"
+       para Man Gob) — de cualquier cliente, exacto o parecido.
+    3. El nombre real del artículo en el catálogo — exacto o parecido.
     """
     texto_normalizado = normalizar_texto(texto_leido)
     if not texto_normalizado:
@@ -102,8 +145,12 @@ def adivinar_articulo(texto_leido: str, aprendizaje: dict[str, int], articulos_e
     if texto_normalizado in aprendizaje:
         return aprendizaje[texto_normalizado]
 
-    for articulo in articulos_existentes:
-        if normalizar_texto(articulo["nombre"]) == texto_normalizado:
-            return articulo["id"]
+    candidatos_conversion = [
+        (normalizar_texto(conversion["nombre_cliente"]), conversion["articulo_id"]) for conversion in conversiones
+    ]
+    resultado = _mejor_candidato(texto_normalizado, candidatos_conversion, UMBRAL_SIMILITUD_ARTICULO)
+    if resultado is not None:
+        return resultado
 
-    return None
+    candidatos_articulos = [(normalizar_texto(articulo["nombre"]), articulo["id"]) for articulo in articulos_existentes]
+    return _mejor_candidato(texto_normalizado, candidatos_articulos, UMBRAL_SIMILITUD_ARTICULO)
