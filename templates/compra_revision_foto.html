@@ -227,11 +227,18 @@
              min="0" step="0.01" value="{% if r.sena is not none %}{{ r.sena }}{% endif %}">
 
       <label for="item_{{ loop.index0 }}_tipo_retiro">Retiro *</label>
-      <select id="item_{{ loop.index0 }}_tipo_retiro" name="item_{{ loop.index0 }}_tipo_retiro" required>
+      <select id="item_{{ loop.index0 }}_tipo_retiro" name="item_{{ loop.index0 }}_tipo_retiro" required
+              {% if loop.first %}onchange="aplicarRetiroATodosSiCorresponde()"{% endif %}>
         <option value="" {% if not r.tipo_retiro %}selected{% endif %}>Elegí...</option>
         <option value="Clark" {% if r.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
         <option value="Granel" {% if r.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
       </select>
+      {% if loop.first and renglones|length > 1 %}
+      <div class="campo-descartar">
+        <input type="checkbox" id="aplicar_retiro_a_todos" onchange="aplicarRetiroATodosSiCorresponde()">
+        <label for="aplicar_retiro_a_todos">Usar este retiro para todos los artículos de esta comanda</label>
+      </div>
+      {% endif %}
 
       <div class="campo-descartar">
         <input type="checkbox" id="item_{{ loop.index0 }}_descartar" name="item_{{ loop.index0 }}_descartar"
@@ -267,16 +274,37 @@
 
     // El botón puede tardar varios segundos en guardar; sin este cartel el
     // comprador no sabe si pasó algo y termina apretando de nuevo, lo que
-    // guarda la compra duplicada.
+    // guarda la compra duplicada. OJO: en Safari/iOS, deshabilitar el botón
+    // DURANTE el evento submit cancela el envío del formulario — por eso el
+    // disabled se aplica en un setTimeout, después de que el navegador ya
+    // arrancó el envío.
     const formConfirmar = document.getElementById("form-confirmar-foto");
     if (formConfirmar) {
       formConfirmar.addEventListener("submit", function () {
         const boton = document.getElementById("boton-guardar-compra");
         if (boton) {
-          boton.disabled = true;
           boton.textContent = "Guardando...";
+          setTimeout(function () {
+            boton.disabled = true;
+          }, 0);
         }
       });
+    }
+
+    // Una comanda suele venir toda por Clark o toda a granel: tildando esto
+    // en el primer artículo se evita elegir el retiro renglón por renglón.
+    function aplicarRetiroATodosSiCorresponde() {
+      const checkbox = document.getElementById("aplicar_retiro_a_todos");
+      if (!checkbox || !checkbox.checked) {
+        return;
+      }
+      const valorRetiro = document.getElementById("item_0_tipo_retiro").value;
+      for (let indice = 1; indice < CANTIDAD_RENGLONES; indice++) {
+        const select = document.getElementById("item_" + indice + "_tipo_retiro");
+        if (select) {
+          select.value = valorRetiro;
+        }
+      }
     }
 
     function actualizarContenidoRenglon(indice, select) {

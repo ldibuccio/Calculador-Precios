@@ -1161,6 +1161,9 @@ def test_ver_nueva_compra_sin_proveedor_muestra_formulario_de_proveedor():
     # segundos sin ningún cambio visible y el comprador aprieta de nuevo.
     assert 'id="form-leer-comanda"' in respuesta.text
     assert "Leyendo comanda..." in respuesta.text
+    # Regresión: en Safari/iOS, deshabilitar el botón sincrónicamente dentro
+    # del evento submit cancela el envío del formulario.
+    assert "setTimeout" in respuesta.text
 
 
 def test_ver_nueva_compra_sin_proveedor_error_de_base_da_500():
@@ -1249,6 +1252,9 @@ def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
     # ningún cambio al apretar y termina cargando la compra duplicada.
     assert 'id="form-compra"' in respuesta.text
     assert "Guardando..." in respuesta.text
+    # Regresión: en Safari/iOS, deshabilitar el botón sincrónicamente dentro
+    # del evento submit cancela el envío del formulario.
+    assert "setTimeout" in respuesta.text
 
 
 def test_ver_nueva_compra_con_proveedor_inexistente_da_404():
@@ -1934,6 +1940,9 @@ def test_subir_foto_compra_sin_ningun_dato_de_proveedor_deja_codigo_vacio():
 
     assert respuesta.status_code == 200
     assert 'value="" style="text-transform: uppercase;"' in respuesta.text
+    # Con un solo renglón (o ninguno) no tiene sentido ofrecer "aplicar a
+    # todos los demás".
+    assert 'id="aplicar_retiro_a_todos"' not in respuesta.text
 
 
 def test_subir_foto_compra_adivina_articulo_por_conversion():
@@ -2141,6 +2150,15 @@ def test_subir_foto_compra_muestra_cartel_de_guardando_para_evitar_duplicados():
     assert respuesta.status_code == 200
     assert 'id="form-confirmar-foto"' in respuesta.text
     assert "Guardando..." in respuesta.text
+    # Regresión: en Safari/iOS, deshabilitar el botón sincrónicamente dentro
+    # del evento submit cancela el envío del formulario — tiene que ir
+    # diferido en un setTimeout.
+    assert "setTimeout" in respuesta.text
+    assert "boton.disabled = true;" in respuesta.text
+    # Regresión: checkbox para aplicar el retiro del primer artículo a todos
+    # los demás, y así no elegirlo renglón por renglón.
+    assert 'id="aplicar_retiro_a_todos"' in respuesta.text
+    assert "Usar este retiro para todos los artículos" in respuesta.text
 
 
 def test_confirmar_compra_foto_conserva_la_foto_al_reintentar_por_error():

@@ -143,13 +143,18 @@
 
     // Leer la foto con la IA puede tardar varios segundos; sin este cartel
     // parece que no pasó nada y el comprador termina apretando de nuevo.
+    // OJO: en Safari/iOS, deshabilitar el botón DURANTE el evento submit
+    // cancela el envío del formulario — por eso el disabled se aplica en un
+    // setTimeout, después de que el navegador ya arrancó el envío.
     const formLeerComanda = document.getElementById("form-leer-comanda");
     if (formLeerComanda) {
       formLeerComanda.addEventListener("submit", function () {
         const boton = document.getElementById("boton-leer-comanda");
         if (boton) {
-          boton.disabled = true;
           boton.textContent = "Leyendo comanda...";
+          setTimeout(function () {
+            boton.disabled = true;
+          }, 0);
         }
         const ayuda = document.getElementById("ayuda-leyendo");
         if (ayuda) {
@@ -163,8 +168,10 @@
       formConfirmarProveedor.addEventListener("submit", function () {
         const boton = document.getElementById("boton-confirmar-proveedor");
         if (boton) {
-          boton.disabled = true;
           boton.textContent = "Confirmando...";
+          setTimeout(function () {
+            boton.disabled = true;
+          }, 0);
         }
       });
     }
