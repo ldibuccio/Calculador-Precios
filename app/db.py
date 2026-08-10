@@ -593,6 +593,35 @@ def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
         conexion.close()
 
 
+def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
+    """Compras entre dos fechas (inclusive) con los datos crudos que necesita el motor de costeo.
+
+    No filtra por importe: trae también las compras sin precio (importe
+    NULL), para que quien llame decida cómo tratarlas (hoy, el "pegamento"
+    en app/costeo.py las excluye del cálculo pero cuenta cuántas quedaron
+    afuera por artículo).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.articulo_id, a.nombre AS articulo_nombre,
+                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.importe
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.fecha_operacion BETWEEN %s AND %s
+                ORDER BY a.nombre
+                """,
+                (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
 def listar_compras_por_fecha_y_proveedor(fecha_operacion, proveedor_id: int) -> list[dict]:
     """Devuelve las compras de un proveedor puntual en una fecha, para mostrar lo cargado hasta ahora."""
     conexion = obtener_conexion()
