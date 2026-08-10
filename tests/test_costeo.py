@@ -461,6 +461,21 @@ def test_envases_ponderado_el_corte_sigue_a_la_ficha_no_esta_hardcodeado():
     assert con_ficha_8 == pytest.approx(1 / 8)
 
 
+def test_envases_ponderado_funciona_con_decimal_como_devuelve_psycopg2():
+    # Regresión: contenido_caja (fichas_logistica, numeric) viene de la base
+    # como Decimal, no float — sin castear, "1.0 / contenido_ficha" rompía
+    # con "unsupported operand type(s) for /: 'float' and 'decimal.Decimal'".
+    compras = [
+        {
+            "importe": Decimal("100"),
+            "cantidad_cajones": Decimal("5"),
+            "contenido_por_cajon": Decimal("8"),
+        }
+    ]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=Decimal("8"), envase_variable=False)
+    assert resultado == pytest.approx(1 / 8)
+
+
 # --- precio_sugerido de punta a punta, vía calcular_listado_para_negociar_precios ---
 
 FICHA_MORRON_ROJO = {

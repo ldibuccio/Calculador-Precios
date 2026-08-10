@@ -87,6 +87,11 @@ def _envases_por_unidad_ponderado(compras: list[dict], contenido_ficha: float | 
     if not contenido_ficha:
         return 0.0
 
+    # float(...): psycopg2 devuelve contenido_caja (numeric) como Decimal,
+    # no float — sin este cast, dividir 1.0 / contenido_ficha rompe con
+    # "unsupported operand type(s) for /: 'float' and 'decimal.Decimal'".
+    contenido_ficha = float(contenido_ficha)
+
     total_ponderado = 0.0
     cantidad_total = 0.0
 
