@@ -2520,14 +2520,14 @@ def test_ver_costeo_prueba_desglose_none_sin_error_muestra_explicacion():
 
     assert respuesta.status_code == 200
     assert "No hay desglose disponible" in respuesta.text
-    assert "Morrón Rojo" in respuesta.text
+    assert "Morrón Verde" in respuesta.text
     assert "Error al calcular el desglose" not in respuesta.text
 
 
 def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
     desglose = {
         "articulo_id": 29,
-        "articulo_nombre": "Morrón Rojo",
+        "articulo_nombre": "Morrón Verde",
         "unidad_venta": "kilo",
         "fecha_ultima_compra": date(2026, 8, 10),
         "cantidad_total": 80.0,
@@ -2553,7 +2553,7 @@ def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
     assert respuesta.status_code == 200
     mock_desglose.assert_called_once()
     assert mock_desglose.call_args[0][0] == 1
-    assert mock_desglose.call_args[0][1] == "Morrón Rojo"
+    assert mock_desglose.call_args[0][1] == "Morrón Verde"
     assert "Desglose de depuración" in respuesta.text
     assert "3375.0000" in respuesta.text  # costo actual, sin redondear
     assert "0.2000" in respuesta.text  # utilidad

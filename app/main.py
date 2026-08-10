@@ -1885,7 +1885,7 @@ async def completar_importes_pendientes(request: Request):
 
 
 CLIENTE_COSTEO_PRUEBA_NOMBRE = "Día"
-ARTICULO_DESGLOSE_PRUEBA_NOMBRE = "Morrón Rojo"
+ARTICULO_DESGLOSE_PRUEBA_NOMBRE = "Morrón Verde"
 
 
 @app.get("/costeo-prueba")
