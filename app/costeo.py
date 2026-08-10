@@ -9,6 +9,7 @@ de envase (mango/cherry descartable vs. cartón) queda afuera a propósito en
 todo este archivo — se resuelve más adelante en Ventas.
 """
 
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 
 from app.db import (
@@ -347,6 +348,12 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     return resultado
 
 
+def _normalizar_nombre(nombre: str) -> str:
+    """Minúsculas y sin acentos, para comparar nombres de artículo sin depender de cómo se hayan tipeado."""
+    sin_acentos = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode("ascii")
+    return sin_acentos.strip().lower()
+
+
 def calcular_precio_sugerido_desglosado(
     cliente_id: int, articulo_nombre: str, momento_referencia: datetime | None = None
 ) -> dict | None:
@@ -371,7 +378,8 @@ def calcular_precio_sugerido_desglosado(
     fecha_desde_historial = hoy - timedelta(days=RANGO_HISTORIAL_DIAS)
 
     fichas = listar_fichas_por_cliente(cliente_id)
-    ficha = next((f for f in fichas if f["articulo_nombre"] == articulo_nombre), None)
+    nombre_buscado = _normalizar_nombre(articulo_nombre)
+    ficha = next((f for f in fichas if _normalizar_nombre(f["articulo_nombre"]) == nombre_buscado), None)
     if ficha is None:
         return None
 

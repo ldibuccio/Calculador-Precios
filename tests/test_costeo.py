@@ -702,3 +702,20 @@ def test_desglose_sin_descuento_o_utilidad_del_cliente_devuelve_none():
     resultado = _calcular_desglose(cliente=cliente_sin_parametros)
 
     assert resultado is None
+
+
+def test_desglose_encuentra_la_ficha_aunque_el_nombre_en_la_base_no_tenga_tilde():
+    # Regresión real: en producción el nombre del artículo está cargado como
+    # "Morron Rojo" (sin tilde), y la búsqueda comparaba con == exacto contra
+    # "Morrón Rojo" (con tilde) — no encontraba la ficha y devolvía None en
+    # silencio, aunque el artículo sí tenía ficha, compra con precio y
+    # descuento/utilidad vigentes (confirmado porque el listado principal sí
+    # lo mostraba con precio sugerido calculado).
+    ficha_sin_tilde = dict(FICHA_MORRON_ROJO_CON_NOMBRE, articulo_nombre="Morron Rojo")
+    compras = [dict(c, articulo_nombre="Morron Rojo") for c in COMPRAS_MORRON_ROJO_DESGLOSE]
+
+    resultado = _calcular_desglose(articulo_nombre="Morrón Rojo", compras=compras, fichas=(ficha_sin_tilde,))
+
+    assert resultado is not None
+    assert resultado["articulo_nombre"] == "Morron Rojo"
+    assert resultado["costo_actual"] == 3375
