@@ -1828,6 +1828,10 @@ def test_ver_compras_pendientes_muestra_la_lista():
     assert "2026" not in respuesta.text
     assert "<td>10</td>" in respuesta.text
     assert "<td>18</td>" in respuesta.text
+    # Regresión: mismos encabezados compactos que /compras.
+    assert "<th>Cant</th>" in respuesta.text
+    assert "<th>K/U</th>" in respuesta.text
+    assert "<th>$</th>" in respuesta.text
 
 
 def test_ver_compras_pendientes_sin_pendientes_muestra_mensaje():
