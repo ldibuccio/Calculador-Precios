@@ -2495,7 +2495,7 @@ def test_ver_costeo_prueba_sin_cliente_dia_da_404():
     assert respuesta.status_code == 404
 
 
-def test_ver_costeo_prueba_desglose_falla_no_rompe_el_resto_de_la_pantalla():
+def test_ver_costeo_prueba_desglose_falla_no_rompe_el_resto_de_la_pantalla_y_muestra_el_error():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
@@ -2505,6 +2505,23 @@ def test_ver_costeo_prueba_desglose_falla_no_rompe_el_resto_de_la_pantalla():
 
     assert respuesta.status_code == 200
     assert "No hay artículos con compra reciente" in respuesta.text
+    # El error ya no se traga en silencio: se muestra en pantalla.
+    assert "Error al calcular el desglose" in respuesta.text
+    assert "Exception: sin base" in respuesta.text
+
+
+def test_ver_costeo_prueba_desglose_none_sin_error_muestra_explicacion():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
+    ):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    assert "No hay desglose disponible" in respuesta.text
+    assert "Morrón Rojo" in respuesta.text
+    assert "Error al calcular el desglose" not in respuesta.text
 
 
 def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():

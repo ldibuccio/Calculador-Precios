@@ -6,6 +6,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 
 import base64
 import io
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -66,6 +67,8 @@ REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 def _hoy_argentina():
     """Fecha de hoy en Argentina (UTC-3 fijo, sin horario de verano), sin depender de la hora del servidor."""
     return datetime.now(ARGENTINA).date()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -1912,13 +1915,21 @@ def ver_costeo_prueba(request: Request):
 
     # Desglose de depuración de UN artículo, para poder cruzar a mano el
     # cálculo de precio_sugerido. Temporal — si falla, no tira abajo el
-    # resto de la pantalla, solo no se muestra el desglose.
+    # resto de la pantalla, pero el error se loguea completo y se muestra
+    # en la pantalla (no se traga en silencio).
+    desglose_error = None
     try:
         desglose = calcular_precio_sugerido_desglosado(
             cliente["id"], ARTICULO_DESGLOSE_PRUEBA_NOMBRE, momento_referencia
         )
-    except Exception:
+    except Exception as error_desglose:
+        logger.exception(
+            "Error al calcular el desglose de precio sugerido para '%s' (cliente %s)",
+            ARTICULO_DESGLOSE_PRUEBA_NOMBRE,
+            cliente["nombre"],
+        )
         desglose = None
+        desglose_error = f"{type(error_desglose).__name__}: {error_desglose}"
 
     return templates.TemplateResponse(
         request,
@@ -1928,6 +1939,8 @@ def ver_costeo_prueba(request: Request):
             "articulos": articulos,
             "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
             "desglose": desglose,
+            "desglose_error": desglose_error,
+            "articulo_desglose_nombre": ARTICULO_DESGLOSE_PRUEBA_NOMBRE,
         },
     )
 
