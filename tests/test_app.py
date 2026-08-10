@@ -1870,9 +1870,37 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     mock_aprendizaje.assert_called_once_with(200)
 
 
-def test_subir_foto_compra_sin_proveedor_adivinable_deja_codigo_vacio():
+def test_subir_foto_compra_proveedor_nuevo_sin_proveedores_existentes_igual_arma_el_codigo():
+    # Regresión: antes, si no había NINGÚN proveedor cargado todavía (o
+    # ninguno matcheaba), se perdía el código ya interpretado de la foto y
+    # el campo quedaba vacío para un proveedor nuevo. Ahora se sugiere igual.
     with (
         patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor") as mock_aprendizaje,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert 'value="N07P41"' in respuesta.text
+    # El proveedor propuesto no existe todavía (id None): no tiene sentido
+    # buscarle aprendizaje.
+    mock_aprendizaje.assert_not_called()
+
+
+def test_subir_foto_compra_sin_ningun_dato_de_proveedor_deja_codigo_vacio():
+    comanda_sin_pabellon = {
+        "proveedor": {"nombre": "", "tipo_pabellon": None, "numero_pabellon": "", "puesto": ""},
+        "fecha": "2026-08-06",
+        "items": [],
+    }
+    with (
+        patch("app.main.extraer_comanda", return_value=comanda_sin_pabellon),
         patch("app.main.listar_proveedores", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_todas_las_conversiones", return_value=[]),
@@ -1883,8 +1911,7 @@ def test_subir_foto_compra_sin_proveedor_adivinable_deja_codigo_vacio():
         )
 
     assert respuesta.status_code == 200
-    assert 'id="codigo_puesto"' in respuesta.text
-    assert 'value=""' in respuesta.text  # nada adivinado para el código de puesto
+    assert 'value="" style="text-transform: uppercase;"' in respuesta.text
 
 
 def test_subir_foto_compra_adivina_articulo_por_conversion():

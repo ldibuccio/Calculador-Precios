@@ -30,18 +30,23 @@ def normalizar_texto(texto: str | None) -> str:
 def construir_codigo_puesto(tipo_pabellon: str | None, numero_pabellon, puesto) -> str | None:
     """Arma el código NNPNN (ej. N07P41) a partir de lo leído en la comanda.
 
-    tipo_pabellon tiene que ser "nave" o "libre" (ya normalizado por el lector). Se
-    quedan solo los dígitos de numero_pabellon y puesto (ignora "Pab.", espacios,
-    etc.). Si falta algún dato, no entran en 2 dígitos, o el tipo no es válido,
+    tipo_pabellon tiene que ser "nave" o "libre" (ya normalizado por el lector).
+    Se queda con el PRIMER número de numero_pabellon y de puesto (ignora "Pab.",
+    espacios, etc.) — si el membrete dice "Puestos 4 y 6" (varios puestos para
+    el mismo proveedor), toma solo el primero en vez de mezclar los dígitos.
+    Si falta algún dato, no entran en 2 dígitos, o el tipo no es válido,
     devuelve None: no hay candidato de código para este caso.
     """
     if tipo_pabellon not in ("nave", "libre"):
         return None
 
-    digitos_pabellon = re.sub(r"\D", "", str(numero_pabellon or ""))
-    digitos_puesto = re.sub(r"\D", "", str(puesto or ""))
-    if not digitos_pabellon or not digitos_puesto:
+    match_pabellon = re.search(r"\d+", str(numero_pabellon or ""))
+    match_puesto = re.search(r"\d+", str(puesto or ""))
+    if not match_pabellon or not match_puesto:
         return None
+
+    digitos_pabellon = match_pabellon.group()
+    digitos_puesto = match_puesto.group()
 
     numero_pabellon_int = int(digitos_pabellon)
     puesto_int = int(digitos_puesto)
@@ -53,11 +58,18 @@ def construir_codigo_puesto(tipo_pabellon: str | None, numero_pabellon, puesto) 
 
 
 def adivinar_proveedor(proveedor_leido: dict, proveedores_existentes: list[dict]) -> dict | None:
-    """Sugiere un proveedor existente a partir de lo leído en la comanda, o None si no hay candidato.
+    """Sugiere un proveedor a partir de lo leído en la comanda, o None si no hay ningún candidato.
 
-    Primero intenta por código de puesto (nave/pabellón + puesto → NNPNN, match
-    exacto). Si no arma un código o no encuentra ese código, intenta por
-    parecido de nombre contra los proveedores existentes.
+    Orden de prioridad:
+    1. Un proveedor YA EXISTENTE cuyo código de puesto matchea exacto con el
+       que se arma a partir de nave/pabellón + puesto leídos.
+    2. Un proveedor YA EXISTENTE con nombre parecido (por si el puesto no se
+       leyó o cambió).
+    3. Si nada de lo anterior encontró un proveedor existente, pero SÍ se
+       pudo armar un código de puesto válido a partir de lo leído (proveedor
+       nuevo, primera vez que se le compra), se sugiere ese código recién
+       armado igual — "id": None marca que todavía no existe en la base,
+       queda como propuesta editable, no una confirmación.
     """
     codigo_candidato = construir_codigo_puesto(
         proveedor_leido.get("tipo_pabellon"),
@@ -69,20 +81,21 @@ def adivinar_proveedor(proveedor_leido: dict, proveedores_existentes: list[dict]
             if proveedor["codigo_puesto"] == codigo_candidato:
                 return proveedor
 
-    nombre_leido = normalizar_texto(proveedor_leido.get("nombre"))
-    if not nombre_leido:
-        return None
+    nombre_leido_normalizado = normalizar_texto(proveedor_leido.get("nombre"))
+    if nombre_leido_normalizado:
+        mejor_proveedor = None
+        mejor_similitud = 0.0
+        for proveedor in proveedores_existentes:
+            similitud = SequenceMatcher(None, nombre_leido_normalizado, normalizar_texto(proveedor["nombre"])).ratio()
+            if similitud > mejor_similitud:
+                mejor_similitud = similitud
+                mejor_proveedor = proveedor
 
-    mejor_proveedor = None
-    mejor_similitud = 0.0
-    for proveedor in proveedores_existentes:
-        similitud = SequenceMatcher(None, nombre_leido, normalizar_texto(proveedor["nombre"])).ratio()
-        if similitud > mejor_similitud:
-            mejor_similitud = similitud
-            mejor_proveedor = proveedor
+        if mejor_proveedor is not None and mejor_similitud >= UMBRAL_SIMILITUD_PROVEEDOR:
+            return mejor_proveedor
 
-    if mejor_proveedor is not None and mejor_similitud >= UMBRAL_SIMILITUD_PROVEEDOR:
-        return mejor_proveedor
+    if codigo_candidato:
+        return {"id": None, "codigo_puesto": codigo_candidato, "nombre": proveedor_leido.get("nombre") or ""}
 
     return None
 

@@ -51,6 +51,13 @@ def test_construir_codigo_puesto_numero_de_tres_digitos_da_none():
     assert construir_codigo_puesto("nave", "7", "123") is None
 
 
+def test_construir_codigo_puesto_con_varios_puestos_toma_solo_el_primero():
+    # Caso real: membrete "Libre 2 - Puestos 4 y 6" (dos puestos para el
+    # mismo proveedor). Antes esto mezclaba mal los dígitos ("4" y "6" -> 46).
+    assert construir_codigo_puesto("libre", "2", "4 y 6") == "L02P04"
+    assert construir_codigo_puesto("nave", "7", "4 y 6") == "N07P04"
+
+
 PROVEEDORES_DE_PRUEBA = [
     {"id": 200, "codigo_puesto": "N07P41", "nombre": "Saturno"},
     {"id": 201, "codigo_puesto": "L03P38", "nombre": "Frutamax"},
@@ -99,11 +106,32 @@ def test_adivinar_proveedor_sin_nada_leido_da_none():
     assert resultado is None
 
 
-def test_adivinar_proveedor_sin_proveedores_existentes_da_none():
-    proveedor_leido = {"nombre": "Saturno", "tipo_pabellon": "nave", "numero_pabellon": "7", "puesto": "41"}
+def test_adivinar_proveedor_nuevo_sin_ningun_proveedor_existente_igual_arma_el_codigo():
+    # Caso real: primera vez que se le compra a este puesto, no hay ningún
+    # proveedor cargado todavía. Antes esto perdía el código ya interpretado
+    # de la foto y dejaba todo en blanco; ahora lo propone igual (sin id,
+    # porque todavía no existe en la base), editable como siempre.
+    proveedor_leido = {"nombre": "Rio Uruguay & Goloso", "tipo_pabellon": "libre", "numero_pabellon": "2", "puesto": "4 y 6"}
+    resultado = adivinar_proveedor(proveedor_leido, [])
+
+    assert resultado == {"id": None, "codigo_puesto": "L02P04", "nombre": "Rio Uruguay & Goloso"}
+
+
+def test_adivinar_proveedor_nuevo_sin_ningun_dato_de_codigo_da_none():
+    # Si ni siquiera se pudo armar un código (no se leyó pabellón/puesto) y
+    # tampoco hay parecido de nombre, no hay nada para proponer.
+    proveedor_leido = {"nombre": "", "tipo_pabellon": None, "numero_pabellon": "", "puesto": ""}
     resultado = adivinar_proveedor(proveedor_leido, [])
 
     assert resultado is None
+
+
+def test_adivinar_proveedor_codigo_existente_tiene_prioridad_sobre_proponer_uno_nuevo():
+    proveedor_leido = {"nombre": "", "tipo_pabellon": "nave", "numero_pabellon": "7", "puesto": "41"}
+    resultado = adivinar_proveedor(proveedor_leido, PROVEEDORES_DE_PRUEBA)
+
+    assert resultado == PROVEEDORES_DE_PRUEBA[0]
+    assert resultado["id"] == 200
 
 
 ARTICULOS_DE_PRUEBA = [

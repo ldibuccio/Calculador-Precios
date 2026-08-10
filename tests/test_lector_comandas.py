@@ -92,6 +92,7 @@ def test_prompt_incluye_las_reglas_clave_de_extraccion():
     assert "tipo_pabellon" in PROMPT_EXTRACCION
     assert "Libre" in PROMPT_EXTRACCION
     assert "COMPLETO" in PROMPT_EXTRACCION
+    assert "y P" in PROMPT_EXTRACCION
 
 
 def test_detectar_media_type_png():

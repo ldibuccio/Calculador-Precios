@@ -1402,7 +1402,7 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
     proveedor_sugerido = adivinar_proveedor(proveedor_leido, proveedores_existentes)
 
     aprendizaje = {}
-    if proveedor_sugerido is not None:
+    if proveedor_sugerido is not None and proveedor_sugerido.get("id") is not None:
         try:
             filas = listar_aprendizaje_articulos_por_proveedor(proveedor_sugerido["id"])
             aprendizaje = {normalizar_texto(fila["texto_leido"]): fila["articulo_id"] for fila in filas}
