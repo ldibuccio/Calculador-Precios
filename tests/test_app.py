@@ -1118,8 +1118,10 @@ def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
     assert "N07P41" in respuesta.text
     assert "Mango" in respuesta.text
     assert "Fecha" in respuesta.text
-    assert "Cajones" in respuesta.text
-    assert "Contenido" in respuesta.text
+    # Regresión: encabezados compactos para pantalla de celular.
+    assert "<th>Cant</th>" in respuesta.text
+    assert "<th>K/U</th>" in respuesta.text
+    assert "<th>$</th>" in respuesta.text
     # sin totales calculados: no debe mostrarse la columna de fracción/kilos ya procesada
     assert "Fracción" not in respuesta.text
     mock_listar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA)
