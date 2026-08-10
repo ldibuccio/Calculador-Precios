@@ -47,6 +47,21 @@
     padding: 1rem;
     border-radius: 8px;
   }
+  .desglose {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+  }
+  .desglose h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+  .desglose p { margin: 0.3rem 0; }
+  .desglose .formula {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eee;
+    line-height: 1.6;
+  }
 </style>
 </head>
 <body>
@@ -98,6 +113,27 @@
   </div>
   {% else %}
   <p class="vacio">No hay artículos con compra reciente (últimos 15 días) para este cliente.</p>
+  {% endif %}
+
+  {% if desglose %}
+  <div class="desglose">
+    <h2>Desglose de depuración: {{ desglose.articulo_nombre }} ({{ cliente_nombre }})</h2>
+    <p>Unidad de venta: <strong>{{ desglose.unidad_venta }}</strong></p>
+    <p>Última compra: <strong>{{ desglose.fecha_ultima_compra|fecha_corta }}</strong> · compras sin precio excluidas: <strong>{{ desglose.compras_sin_precio_excluidas }}</strong></p>
+    <p>Costo actual por unidad de venta: <strong>{{ "%.4f"|format(desglose.costo_actual) }}</strong></p>
+    <p>Utilidad del cliente aplicada: <strong>{{ "%.4f"|format(desglose.utilidad) }}</strong> ({{ (desglose.utilidad * 100)|round(2) }}%)</p>
+    <p>Descuento del cliente aplicado: <strong>{{ "%.4f"|format(desglose.descuento) }}</strong> ({{ (desglose.descuento * 100)|round(2) }}%)</p>
+    <p>Envase usado: <strong>{{ desglose.envase_nombre or "sin envase" }}</strong> ({{ "variable" if desglose.envase_variable else "fijo" }})</p>
+    <p>Contenido solicitado de la ficha (kg por caja): <strong>{{ desglose.contenido_ficha if desglose.contenido_ficha is not none else "—" }}</strong></p>
+    <p>Costo del envase: <strong>{{ "%.4f"|format(desglose.costo_envase_unitario) }}</strong></p>
+    <p>Envases por unidad de venta: <strong>{{ "%.6f"|format(desglose.envases_por_unidad) }}</strong></p>
+    <p>Costo de envase por unidad de venta (costo envase × envases por unidad): <strong>{{ "%.4f"|format(desglose.costo_envase_por_unidad) }}</strong></p>
+    <p class="formula">
+      precio_sugerido = (costo_actual × (1 + utilidad) + envase_por_unidad) / (1 − descuento)<br>
+      = ({{ "%.4f"|format(desglose.costo_actual) }} × {{ "%.4f"|format(1 + desglose.utilidad) }} + {{ "%.4f"|format(desglose.costo_envase_por_unidad) }}) / {{ "%.4f"|format(1 - desglose.descuento) }}<br>
+      = <strong>{{ "%.4f"|format(desglose.precio_sugerido) }}</strong> ({{ desglose.precio_sugerido|moneda }})
+    </p>
+  </div>
   {% endif %}
 </body>
 </html>

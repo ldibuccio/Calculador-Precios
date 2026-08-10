@@ -14,7 +14,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
-from app.costeo import calcular_listado_para_negociar_precios
+from app.costeo import calcular_listado_para_negociar_precios, calcular_precio_sugerido_desglosado
 from app.db import (
     actualizar_articulo,
     actualizar_cliente,
@@ -1882,6 +1882,7 @@ async def completar_importes_pendientes(request: Request):
 
 
 CLIENTE_COSTEO_PRUEBA_NOMBRE = "Día"
+ARTICULO_DESGLOSE_PRUEBA_NOMBRE = "Morrón Rojo"
 
 
 @app.get("/costeo-prueba")
@@ -1909,6 +1910,16 @@ def ver_costeo_prueba(request: Request):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
 
+    # Desglose de depuración de UN artículo, para poder cruzar a mano el
+    # cálculo de precio_sugerido. Temporal — si falla, no tira abajo el
+    # resto de la pantalla, solo no se muestra el desglose.
+    try:
+        desglose = calcular_precio_sugerido_desglosado(
+            cliente["id"], ARTICULO_DESGLOSE_PRUEBA_NOMBRE, momento_referencia
+        )
+    except Exception:
+        desglose = None
+
     return templates.TemplateResponse(
         request,
         "costeo_prueba.html",
@@ -1916,6 +1927,7 @@ def ver_costeo_prueba(request: Request):
             "cliente_nombre": cliente["nombre"],
             "articulos": articulos,
             "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
+            "desglose": desglose,
         },
     )
 

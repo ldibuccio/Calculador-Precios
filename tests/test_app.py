@@ -2444,6 +2444,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos) as mock_calcular,
+        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
     ):
         respuesta = cliente.get("/costeo-prueba")
 
@@ -2468,6 +2469,7 @@ def test_ver_costeo_prueba_sin_articulos_muestra_mensaje():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
     ):
         respuesta = cliente.get("/costeo-prueba")
 
@@ -2491,3 +2493,56 @@ def test_ver_costeo_prueba_sin_cliente_dia_da_404():
         respuesta = cliente.get("/costeo-prueba")
 
     assert respuesta.status_code == 404
+
+
+def test_ver_costeo_prueba_desglose_falla_no_rompe_el_resto_de_la_pantalla():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.calcular_precio_sugerido_desglosado", side_effect=Exception("sin base")),
+    ):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    assert "No hay artículos con compra reciente" in respuesta.text
+
+
+def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
+    desglose = {
+        "articulo_id": 29,
+        "articulo_nombre": "Morrón Rojo",
+        "unidad_venta": "kilo",
+        "fecha_ultima_compra": date(2026, 8, 10),
+        "cantidad_total": 80.0,
+        "compras_sin_precio_excluidas": 0,
+        "costo_actual": 3375.0,
+        "utilidad": 0.20,
+        "descuento": 0.23,
+        "envase_nombre": "Caja Grande",
+        "envase_variable": False,
+        "contenido_ficha": 8.0,
+        "costo_envase_unitario": 1600.0,
+        "envases_por_unidad": 0.125,
+        "costo_envase_por_unidad": 200.0,
+        "precio_sugerido": 5519.4805,
+    }
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.calcular_precio_sugerido_desglosado", return_value=desglose) as mock_desglose,
+    ):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    mock_desglose.assert_called_once()
+    assert mock_desglose.call_args[0][0] == 1
+    assert mock_desglose.call_args[0][1] == "Morrón Rojo"
+    assert "Desglose de depuración" in respuesta.text
+    assert "3375.0000" in respuesta.text  # costo actual, sin redondear
+    assert "0.2000" in respuesta.text  # utilidad
+    assert "0.2300" in respuesta.text  # descuento
+    assert "Caja Grande" in respuesta.text
+    assert "1600.0000" in respuesta.text  # costo del envase
+    assert "0.125000" in respuesta.text  # envases por unidad
+    assert "200.0000" in respuesta.text  # costo de envase por unidad
+    assert "5519.4805" in respuesta.text  # precio sugerido paso a paso

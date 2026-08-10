@@ -9,6 +9,7 @@ from app.costeo import (
     _envases_por_unidad_ponderado,
     calcular_costo_por_unidad_venta_reciente,
     calcular_listado_para_negociar_precios,
+    calcular_precio_sugerido_desglosado,
 )
 
 MOMENTO_DE_PRUEBA = datetime(2026, 8, 10, 12, 0, tzinfo=ARGENTINA)
@@ -607,3 +608,97 @@ def test_precio_sugerido_sin_costo_actual_es_none():
 
     assert resultado[0]["costo_actual"] is None
     assert resultado[0]["precio_sugerido"] is None
+
+
+# --- calcular_precio_sugerido_desglosado ---
+
+FICHA_MORRON_ROJO_CON_NOMBRE = {
+    "articulo_id": 29,
+    "articulo_nombre": "Morrón Rojo",
+    "unidad_venta": "kilo",
+    "envase_id": 100,
+    "envase_nombre": "Caja Grande",
+    "contenido_caja": 8,
+    "envase_variable": False,
+}
+
+COMPRAS_MORRON_ROJO_DESGLOSE = [
+    {
+        "articulo_id": 29,
+        "articulo_nombre": "Morrón Rojo",
+        "fecha_operacion": date(2026, 8, 10),
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 8,
+        "cantidad_kilos": 80,
+        "importe": 27000,
+    },
+]
+
+
+def _calcular_desglose(
+    momento=MOMENTO_DE_PRUEBA,
+    articulo_nombre="Morrón Rojo",
+    compras=COMPRAS_MORRON_ROJO_DESGLOSE,
+    fichas=(FICHA_MORRON_ROJO_CON_NOMBRE,),
+    cliente=CLIENTE_NEGOCIACION,
+    costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+):
+    with (
+        patch("app.costeo.listar_compras_para_costeo", return_value=compras),
+        patch("app.costeo.listar_fichas_por_cliente", return_value=list(fichas)),
+        patch("app.costeo.obtener_cliente", return_value=cliente),
+        patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
+    ):
+        return calcular_precio_sugerido_desglosado(CLIENTE_ID_DE_PRUEBA, articulo_nombre, momento)
+
+
+def test_desglose_morron_rojo_expone_los_valores_intermedios():
+    resultado = _calcular_desglose()
+
+    assert resultado is not None
+    # costo_actual = 27000*10 / (10*8) = 3375 (mismo valor que el listado completo).
+    assert resultado["costo_actual"] == 3375
+    assert resultado["utilidad"] == pytest.approx(0.20)
+    assert resultado["descuento"] == pytest.approx(0.23)
+    assert resultado["envase_nombre"] == "Caja Grande"
+    assert resultado["envase_variable"] is False
+    assert resultado["contenido_ficha"] == 8
+    assert resultado["costo_envase_unitario"] == 1600
+    # Envase fijo: 1/8 caja por kilo.
+    assert resultado["envases_por_unidad"] == pytest.approx(1 / 8)
+    # 1600 * 1/8 = 200/kg de envase.
+    assert resultado["costo_envase_por_unidad"] == pytest.approx(200)
+    # Mismo resultado que calcular_listado_para_negociar_precios para este artículo.
+    assert resultado["precio_sugerido"] == pytest.approx(5519.4805, abs=0.001)
+    assert resultado["fecha_ultima_compra"] == date(2026, 8, 10)
+    assert resultado["compras_sin_precio_excluidas"] == 0
+
+
+def test_desglose_articulo_sin_ficha_devuelve_none():
+    resultado = _calcular_desglose(articulo_nombre="Artículo Inexistente")
+
+    assert resultado is None
+
+
+def test_desglose_sin_compras_con_precio_devuelve_none():
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": None,
+        },
+    ]
+    resultado = _calcular_desglose(compras=compras)
+
+    assert resultado is None
+
+
+def test_desglose_sin_descuento_o_utilidad_del_cliente_devuelve_none():
+    cliente_sin_parametros = {"id": CLIENTE_ID_DE_PRUEBA, "nombre": "Día", "descuento": None, "utilidad_objetivo": None}
+    resultado = _calcular_desglose(cliente=cliente_sin_parametros)
+
+    assert resultado is None

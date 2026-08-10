@@ -345,3 +345,86 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
 
     resultado.sort(key=lambda fila: (not fila["fresco"], fila["articulo_nombre"]))
     return resultado
+
+
+def calcular_precio_sugerido_desglosado(
+    cliente_id: int, articulo_nombre: str, momento_referencia: datetime | None = None
+) -> dict | None:
+    """Desglose paso a paso de precio_sugerido para UN artículo, solo para verificar a mano.
+
+    Temporal, para depuración: reutiliza exactamente las mismas piezas que
+    calcular_listado_para_negociar_precios (_costear_compras,
+    _envases_por_unidad_ponderado, precio_sugerido de core/motor_costeo.py)
+    — no reimplementa ninguna cuenta ni cambia el cálculo real, solo expone
+    los valores intermedios que ya se calculan ahí adentro y normalmente se
+    descartan.
+
+    Devuelve None si el artículo no tiene ficha para este cliente, no tuvo
+    ninguna compra con precio en la ventana, o al cliente le faltan
+    descuento/utilidad vigentes — en cualquiera de esos casos no hay nada
+    que desglosar.
+    """
+    if momento_referencia is None:
+        momento_referencia = datetime.now(ARGENTINA)
+
+    hoy = momento_referencia.date()
+    fecha_desde_historial = hoy - timedelta(days=RANGO_HISTORIAL_DIAS)
+
+    fichas = listar_fichas_por_cliente(cliente_id)
+    ficha = next((f for f in fichas if f["articulo_nombre"] == articulo_nombre), None)
+    if ficha is None:
+        return None
+
+    compras = listar_compras_para_costeo(fecha_desde_historial, hoy)
+    compras_articulo = [c for c in compras if c["articulo_id"] == ficha["articulo_id"]]
+    if not compras_articulo:
+        return None
+
+    f1 = max(c["fecha_operacion"] for c in compras_articulo)
+    ventana1_desde = f1 - timedelta(days=1)
+    compras_ventana1 = [c for c in compras_articulo if ventana1_desde <= c["fecha_operacion"] <= f1]
+
+    costo_actual, cantidad_total, sin_precio = _costear_compras(compras_ventana1)
+    if costo_actual is None:
+        return None
+
+    cliente = obtener_cliente(cliente_id)
+    descuento = float(cliente["descuento"]) / 100 if cliente and cliente["descuento"] is not None else None
+    utilidad = float(cliente["utilidad_objetivo"]) / 100 if cliente and cliente["utilidad_objetivo"] is not None else None
+    if descuento is None or utilidad is None:
+        return None
+
+    costos_envases = listar_costos_envases_vigentes(hoy)
+    costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
+
+    envases_ponderado = _envases_por_unidad_ponderado(compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"])
+    costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
+    costo_envase_por_unidad = costo_envase * envases_ponderado
+
+    precio = calcular_precio_sugerido(
+        costo_bulto=costo_actual,
+        kg_bulto=1,
+        costo_envase=costo_envase,
+        cantidad_envases=envases_ponderado,
+        descuento=descuento,
+        utilidad=utilidad,
+    )
+
+    return {
+        "articulo_id": ficha["articulo_id"],
+        "articulo_nombre": ficha["articulo_nombre"],
+        "unidad_venta": ficha["unidad_venta"],
+        "fecha_ultima_compra": f1,
+        "cantidad_total": cantidad_total,
+        "compras_sin_precio_excluidas": sin_precio,
+        "costo_actual": costo_actual,
+        "utilidad": utilidad,
+        "descuento": descuento,
+        "envase_nombre": ficha["envase_nombre"],
+        "envase_variable": ficha["envase_variable"],
+        "contenido_ficha": float(ficha["contenido_caja"]) if ficha["contenido_caja"] is not None else None,
+        "costo_envase_unitario": costo_envase,
+        "envases_por_unidad": envases_ponderado,
+        "costo_envase_por_unidad": costo_envase_por_unidad,
+        "precio_sugerido": precio,
+    }
