@@ -1235,6 +1235,10 @@ def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
     assert "Kiwi" in respuesta.text
     assert "Cantidad de cajones" in respuesta.text
     assert "Contenido por cajón" in respuesta.text
+    # Regresión: sin formnovalidate, el navegador bloquea "Terminar carga"
+    # cuando el renglón está vacío (los campos "*" son required) y el POST
+    # ni siquiera llega al servidor.
+    assert 'name="accion" value="terminar" formnovalidate' in respuesta.text
 
 
 def test_ver_nueva_compra_con_proveedor_inexistente_da_404():
