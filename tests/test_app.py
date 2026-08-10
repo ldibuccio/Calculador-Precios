@@ -7,7 +7,14 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
-from app.main import _formatear_fecha_corta, _formatear_numero, _generar_preview_foto, app
+from app.main import (
+    _formatear_fecha_corta,
+    _formatear_moneda,
+    _formatear_numero,
+    _generar_preview_foto,
+    _sufijo_unidad,
+    app,
+)
 
 cliente = TestClient(app)
 
@@ -23,6 +30,23 @@ def test_formatear_numero_saca_decimales_de_sobra():
 def test_formatear_fecha_corta_muestra_dd_mm():
     assert _formatear_fecha_corta(date(2026, 8, 6)) == "06/08"
     assert _formatear_fecha_corta(None) == ""
+
+
+def test_formatear_moneda_usa_signo_pesos_y_puntos_para_miles():
+    assert _formatear_moneda(20000) == "$20.000"
+    assert _formatear_moneda(50000) == "$50.000"
+    assert _formatear_moneda(1500000) == "$1.500.000"
+    assert _formatear_moneda(500) == "$500"
+    assert _formatear_moneda(16.5) == "$16,5"
+    assert _formatear_moneda(None) == ""
+
+
+def test_sufijo_unidad_devuelve_la_letra_corta():
+    assert _sufijo_unidad("kilo") == "k"
+    assert _sufijo_unidad("unidad") == "u"
+    assert _sufijo_unidad("cubeta") == "c"
+    assert _sufijo_unidad(None) == ""
+    assert _sufijo_unidad("otracosa") == ""
 
 
 def test_raiz_devuelve_estado_ok():
@@ -1081,6 +1105,7 @@ COMPRAS_DE_PRUEBA = [
         "proveedor_codigo_puesto": "N07P41",
         "cantidad_cajones": 10,
         "contenido_por_cajon": 18,
+        "unidad_compra": "kilo",
         "cantidad_kilos": 180,
         "cantidad_fraccion": None,
         "importe": 50000,
@@ -1095,6 +1120,7 @@ COMPRAS_DE_PRUEBA = [
         "proveedor_codigo_puesto": "L03P38",
         "cantidad_cajones": 5,
         "contenido_por_cajon": 10,
+        "unidad_compra": "unidad",
         "cantidad_kilos": None,
         "cantidad_fraccion": 50,
         "importe": 15000,
@@ -1131,9 +1157,15 @@ def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
     assert "05/08" in respuesta.text
     assert "2026" not in respuesta.text
     assert "<td>10</td>" in respuesta.text
-    assert "<td>18</td>" in respuesta.text
     assert "10.0" not in respuesta.text
     assert "18.0" not in respuesta.text
+    # Regresión: letra de unidad pegada al contenido por cajón (18k, 10u).
+    assert "<td>18k</td>" in respuesta.text
+    assert "<td>10u</td>" in respuesta.text
+    # Regresión: importe y seña con signo $ y "." cada tres cifras.
+    assert "$50.000" in respuesta.text
+    assert "$15.000" in respuesta.text
+    assert "$2.000" in respuesta.text
 
 
 def test_ver_compras_sin_compras_muestra_mensaje():
@@ -1810,6 +1842,7 @@ COMPRAS_PENDIENTES_DE_PRUEBA = [
         "proveedor_codigo_puesto": "N07P41",
         "cantidad_cajones": 10,
         "contenido_por_cajon": 18,
+        "unidad_compra": "kilo",
     },
 ]
 
@@ -1827,7 +1860,8 @@ def test_ver_compras_pendientes_muestra_la_lista():
     assert "06/08" in respuesta.text
     assert "2026" not in respuesta.text
     assert "<td>10</td>" in respuesta.text
-    assert "<td>18</td>" in respuesta.text
+    # Regresión: letra de unidad pegada al contenido por cajón.
+    assert "<td>18k</td>" in respuesta.text
     # Regresión: mismos encabezados compactos que /compras.
     assert "<th>Cant</th>" in respuesta.text
     assert "<th>K/U</th>" in respuesta.text

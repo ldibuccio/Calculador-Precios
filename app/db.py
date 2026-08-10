@@ -573,7 +573,8 @@ def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
@@ -735,7 +736,8 @@ def listar_compras_sin_precio() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, p.nombre AS proveedor_nombre,
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto, c.cantidad_cajones, c.contenido_por_cajon
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id

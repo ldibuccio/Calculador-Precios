@@ -109,9 +109,9 @@
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones|numero }}</td>
-            <td>{{ c.contenido_por_cajon|numero }}</td>
-            <td>{% if c.importe is not none %}{{ c.importe|numero }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
-            <td>{{ c.sena|numero if c.sena is not none else "-" }}</td>
+            <td>{{ c.contenido_por_cajon|numero }}{{ c.unidad_compra|sufijo_unidad }}</td>
+            <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
+            <td>{{ c.sena|moneda if c.sena is not none else "-" }}</td>
             <td>
               <div class="acciones">
                 <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>

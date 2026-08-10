@@ -88,8 +88,42 @@ def _formatear_fecha_corta(fecha) -> str:
     return fecha.strftime("%d/%m")
 
 
+def _formatear_moneda(valor) -> str:
+    """Formatea un importe como "$20.000": símbolo $ y "." cada tres cifras (si hay decimales, van con ",")."""
+    if valor is None:
+        return ""
+
+    texto_numero = _formatear_numero(valor)
+    negativo = texto_numero.startswith("-")
+    if negativo:
+        texto_numero = texto_numero[1:]
+
+    parte_entera, separador, parte_decimal = texto_numero.partition(".")
+
+    grupos = []
+    while len(parte_entera) > 3:
+        grupos.insert(0, parte_entera[-3:])
+        parte_entera = parte_entera[:-3]
+    grupos.insert(0, parte_entera)
+
+    texto = f"${'-' if negativo else ''}{'.'.join(grupos)}"
+    if separador:
+        texto += f",{parte_decimal}"
+    return texto
+
+
+SUFIJOS_UNIDAD_COMPRA = {"kilo": "k", "unidad": "u", "cubeta": "c"}
+
+
+def _sufijo_unidad(unidad_compra) -> str:
+    """Letra corta para pegar junto al contenido por cajón (16k, 10u, 5c), para no tener que agregar otra columna."""
+    return SUFIJOS_UNIDAD_COMPRA.get(unidad_compra, "")
+
+
 templates.env.filters["numero"] = _formatear_numero
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
+templates.env.filters["moneda"] = _formatear_moneda
+templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
