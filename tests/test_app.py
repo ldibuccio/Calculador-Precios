@@ -1880,6 +1880,100 @@ def test_completar_importe_compra_error_de_base_muestra_mensaje_claro():
     assert "No se pudo guardar el importe" in respuesta.text
 
 
+COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA = [
+    {
+        "id": 40,
+        "fecha_operacion": HOY_DE_PRUEBA,
+        "articulo_nombre": "Mzn Red",
+        "proveedor_nombre": "Saturno",
+        "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 18,
+    },
+    {
+        "id": 41,
+        "fecha_operacion": HOY_DE_PRUEBA,
+        "articulo_nombre": "Kiwi",
+        "proveedor_nombre": "Frutamax",
+        "proveedor_codigo_puesto": "L03P38",
+        "cantidad_cajones": 5,
+        "contenido_por_cajon": 16,
+    },
+]
+
+
+def test_ver_compras_pendientes_muestra_boton_de_guardar_todos():
+    with patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/pendientes")
+
+    assert respuesta.status_code == 200
+    assert 'id="boton-guardar-todos"' in respuesta.text
+    assert "Guardar todos" in respuesta.text
+    assert 'data-compra-id="40"' in respuesta.text
+    assert 'data-compra-id="41"' in respuesta.text
+
+
+def test_completar_importes_pendientes_guarda_solo_los_que_tienen_valor():
+    with (
+        patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA),
+        patch("app.main.actualizar_importe_compra") as mock_actualizar,
+    ):
+        respuesta = cliente.post(
+            "/compras/pendientes/guardar-todos",
+            data={"importe_40": "50000", "importe_41": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/pendientes"
+    mock_actualizar.assert_called_once_with(40, 50000.0)
+
+
+def test_completar_importes_pendientes_ninguno_cargado_muestra_error():
+    with (
+        patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA),
+        patch("app.main.actualizar_importe_compra") as mock_actualizar,
+    ):
+        respuesta = cliente.post(
+            "/compras/pendientes/guardar-todos",
+            data={"importe_40": "", "importe_41": ""},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Cargá al menos un importe para guardar" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_completar_importes_pendientes_importe_invalido_muestra_error_con_el_articulo():
+    with (
+        patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA),
+        patch("app.main.actualizar_importe_compra") as mock_actualizar,
+    ):
+        respuesta = cliente.post(
+            "/compras/pendientes/guardar-todos",
+            data={"importe_40": "50000", "importe_41": "no-es-un-numero"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Kiwi" in respuesta.text
+    assert "El importe tiene que ser un número" in respuesta.text
+    mock_actualizar.assert_not_called()
+
+
+def test_completar_importes_pendientes_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.listar_compras_sin_precio", return_value=COMPRAS_PENDIENTES_MULTIPLES_DE_PRUEBA),
+        patch("app.main.actualizar_importe_compra", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.post(
+            "/compras/pendientes/guardar-todos",
+            data={"importe_40": "50000"},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar el importe" in respuesta.text
+
+
 COMANDA_LEIDA_DE_PRUEBA = {
     "proveedor": {"nombre": "Saturno", "tipo_pabellon": "nave", "numero_pabellon": "7", "puesto": "41"},
     "fecha": "2026-08-06",

@@ -1781,6 +1781,63 @@ def completar_importe_compra(request: Request, compra_id: int, importe: str = Fo
     return RedirectResponse(url="/compras/pendientes", status_code=303)
 
 
+@app.post("/compras/pendientes/guardar-todos")
+async def completar_importes_pendientes(request: Request):
+    form = await request.form()
+
+    try:
+        compras = listar_compras_sin_precio()
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "compras_pendientes.html",
+            {"compras": [], "error": f"No se pudieron leer las compras pendientes: {error_db}"},
+            status_code=500,
+        )
+
+    actualizaciones = []
+    error = None
+    for compra in compras:
+        texto = str(form.get(f"importe_{compra['id']}", "")).strip()
+        if not texto:
+            continue
+
+        error_campo, importe_valor = _validar_importe_pendiente(texto)
+        if error_campo:
+            error = f"{compra['articulo_nombre']} ({compra['proveedor_nombre']}): {error_campo}"
+            break
+
+        actualizaciones.append((compra["id"], importe_valor))
+
+    if not error and not actualizaciones:
+        error = "Cargá al menos un importe para guardar."
+
+    if error:
+        return templates.TemplateResponse(
+            request,
+            "compras_pendientes.html",
+            {"compras": compras, "error": error},
+            status_code=400,
+        )
+
+    try:
+        for compra_id, importe_valor in actualizaciones:
+            actualizar_importe_compra(compra_id, importe_valor)
+    except Exception as error_db:
+        try:
+            compras = listar_compras_sin_precio()
+        except Exception:
+            compras = []
+        return templates.TemplateResponse(
+            request,
+            "compras_pendientes.html",
+            {"compras": compras, "error": f"No se pudo guardar el importe: {error_db}"},
+            status_code=500,
+        )
+
+    return RedirectResponse(url="/compras/pendientes", status_code=303)
+
+
 if __name__ == "__main__":
     import os
 

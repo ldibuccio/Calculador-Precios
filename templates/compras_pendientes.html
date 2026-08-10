@@ -94,6 +94,7 @@
   <div class="tarjeta">
     <h2>Pendientes ({{ compras|length }})</h2>
     {% if compras %}
+    <button type="button" class="boton" id="boton-guardar-todos" onclick="guardarTodosLosImportes(event)">Guardar todos</button>
     <div class="tabla-scroll">
       <table>
         <thead>
@@ -116,7 +117,7 @@
             <td>{{ c.contenido_por_cajon|numero }}</td>
             <td>
               <form class="form-importe" method="post" action="/compras/pendientes/{{ c.id }}/importe">
-                <input type="number" name="importe" min="0" step="0.01" required placeholder="Importe">
+                <input type="number" name="importe" data-compra-id="{{ c.id }}" min="0" step="0.01" required placeholder="Importe">
                 <button type="submit">Guardar</button>
               </form>
             </td>
@@ -133,5 +134,44 @@
   <div class="tarjeta">
     <a class="boton" href="/compras">Volver a compras</a>
   </div>
+
+  <script>
+    // Junta los importes que se hayan cargado en cualquier fila y los manda
+    // todos juntos, para no tener que apretar "Guardar" fila por fila.
+    function guardarTodosLosImportes(evento) {
+      evento.preventDefault();
+
+      const formOculto = document.createElement("form");
+      formOculto.method = "post";
+      formOculto.action = "/compras/pendientes/guardar-todos";
+
+      let hayAlMenosUno = false;
+      document.querySelectorAll("input[data-compra-id]").forEach(function (input) {
+        const valor = input.value.trim();
+        if (valor) {
+          hayAlMenosUno = true;
+        }
+        const campoOculto = document.createElement("input");
+        campoOculto.type = "hidden";
+        campoOculto.name = "importe_" + input.dataset.compraId;
+        campoOculto.value = valor;
+        formOculto.appendChild(campoOculto);
+      });
+
+      if (!hayAlMenosUno) {
+        alert("Cargá al menos un importe para guardar.");
+        return;
+      }
+
+      const boton = document.getElementById("boton-guardar-todos");
+      if (boton) {
+        boton.disabled = true;
+        boton.textContent = "Guardando...";
+      }
+
+      document.body.appendChild(formOculto);
+      formOculto.submit();
+    }
+  </script>
 </body>
 </html>
