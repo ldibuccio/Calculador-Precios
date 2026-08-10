@@ -2413,38 +2413,79 @@ def test_confirmar_compra_foto_conserva_la_foto_al_reintentar_por_error():
 
 
 def test_ver_costeo_prueba_muestra_tabla_con_formato():
-    filas = [
-        {
-            "articulo_id": 5,
-            "articulo_nombre": "Mzn Red",
-            "cantidad_cajones_total": 15.0,
-            "costo_ponderado": 533.333,
-            "compras_sin_precio_excluidas": 1,
-        },
-    ]
-    with patch("app.main.calcular_costos_ponderados_recientes", return_value=filas):
+    resultado = {
+        "articulos": [
+            {
+                "articulo_id": 21,
+                "articulo_nombre": "Tomate Cherry",
+                "unidad_venta": "kilo",
+                "cantidad_total": 82.0,
+                "costo_por_unidad_de_venta": 560.98,
+                "compras_sin_precio_excluidas": 1,
+            },
+        ],
+        "articulos_sin_ficha": [],
+    }
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_costo_por_unidad_venta_reciente", return_value=resultado) as mock_calcular,
+    ):
         respuesta = cliente.get("/costeo-prueba")
 
     assert respuesta.status_code == 200
-    assert "Mzn Red" in respuesta.text
-    assert "<td>15</td>" in respuesta.text
-    assert "$533" in respuesta.text
-    assert "<td>1</td>" in respuesta.text
+    mock_calcular.assert_called_once_with(1)
+    assert "Día" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "<td>kilo</td>" in respuesta.text
+    assert "<td>82</td>" in respuesta.text
+    assert "$561" in respuesta.text  # 560.98 redondeado al peso entero
     # Muestra el rango de fechas usado.
     assert "Compras entre" in respuesta.text
 
 
-def test_ver_costeo_prueba_sin_filas_muestra_mensaje():
-    with patch("app.main.calcular_costos_ponderados_recientes", return_value=[]):
+def test_ver_costeo_prueba_muestra_articulos_sin_ficha():
+    resultado = {
+        "articulos": [],
+        "articulos_sin_ficha": [{"articulo_id": 29, "articulo_nombre": "Morrón Rojo"}],
+    }
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_costo_por_unidad_venta_reciente", return_value=resultado),
+    ):
         respuesta = cliente.get("/costeo-prueba")
 
     assert respuesta.status_code == 200
     assert "No hay compras con precio en las últimas 48 hs" in respuesta.text
+    assert "Sin ficha de logística" in respuesta.text
+    assert "Morrón Rojo" in respuesta.text
+
+
+def test_ver_costeo_prueba_sin_nada_muestra_mensaje():
+    resultado = {"articulos": [], "articulos_sin_ficha": []}
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_costo_por_unidad_venta_reciente", return_value=resultado),
+    ):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    assert "No hay compras con precio en las últimas 48 hs" in respuesta.text
+    assert "Sin ficha de logística" not in respuesta.text
 
 
 def test_ver_costeo_prueba_error_de_base_da_500():
-    with patch("app.main.calcular_costos_ponderados_recientes", side_effect=Exception("no se pudo conectar")):
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_costo_por_unidad_venta_reciente", side_effect=Exception("no se pudo conectar")),
+    ):
         respuesta = cliente.get("/costeo-prueba")
 
     assert respuesta.status_code == 500
     assert "Error al calcular el costeo" in respuesta.text
+
+
+def test_ver_costeo_prueba_sin_cliente_dia_da_404():
+    with patch("app.main.listar_clientes", return_value=[{"id": 2, "nombre": "Otro cliente"}]):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 404

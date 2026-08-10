@@ -1,46 +1,64 @@
 from datetime import datetime
 from unittest.mock import patch
 
-from app.costeo import ARGENTINA, calcular_costos_ponderados_recientes
+from app.costeo import ARGENTINA, calcular_costo_por_unidad_venta_reciente
 
 MOMENTO_DE_PRUEBA = datetime(2026, 8, 10, 12, 0, tzinfo=ARGENTINA)
+CLIENTE_ID_DE_PRUEBA = 1
+
+# Cherry (articulo_id 21) y Mango (22) tienen ficha para este cliente.
+# Morrón Rojo (29) NO tiene ficha — a propósito, para probar "sin ficha".
+FICHAS_DE_PRUEBA = [
+    {"articulo_id": 21, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
+    {"articulo_id": 22, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
+]
 
 COMPRAS_DE_PRUEBA = [
-    # Mzn Red: 2 compras con precio (importe = precio por cajón: $500 y $600) + 1 sin precio.
+    # Cherry: 2 compras con distinto contenido_por_cajon (5kg y 8kg) y
+    # distinto precio por cajón, más 1 sin precio.
     {
-        "articulo_id": 5,
-        "articulo_nombre": "Mzn Red",
+        "articulo_id": 21,
+        "articulo_nombre": "Tomate Cherry",
         "cantidad_cajones": 10,
-        "contenido_por_cajon": 18,
-        "cantidad_kilos": 180,
-        "importe": 500,
+        "contenido_por_cajon": 5,
+        "cantidad_kilos": 50,
+        "importe": 3000,
     },
     {
-        "articulo_id": 5,
-        "articulo_nombre": "Mzn Red",
-        "cantidad_cajones": 5,
-        "contenido_por_cajon": 18,
-        "cantidad_kilos": 90,
-        "importe": 600,
+        "articulo_id": 21,
+        "articulo_nombre": "Tomate Cherry",
+        "cantidad_cajones": 4,
+        "contenido_por_cajon": 8,
+        "cantidad_kilos": 32,
+        "importe": 4000,
     },
     {
-        "articulo_id": 5,
-        "articulo_nombre": "Mzn Red",
-        "cantidad_cajones": 3,
-        "contenido_por_cajon": 18,
-        "cantidad_kilos": 54,
+        "articulo_id": 21,
+        "articulo_nombre": "Tomate Cherry",
+        "cantidad_cajones": 2,
+        "contenido_por_cajon": 6,
+        "cantidad_kilos": 12,
         "importe": None,
     },
-    # Kiwi: una sola compra con precio.
+    # Mango: una sola compra por unidad.
     {
-        "articulo_id": 35,
-        "articulo_nombre": "Kiwi",
-        "cantidad_cajones": 4,
+        "articulo_id": 22,
+        "articulo_nombre": "Mango",
+        "cantidad_cajones": 3,
         "contenido_por_cajon": 10,
-        "cantidad_kilos": 40,
-        "importe": 500,
+        "cantidad_kilos": None,
+        "importe": 4000,
     },
-    # Palta: todas sus compras están sin precio, no debería aparecer en el resultado.
+    # Morrón Rojo: tiene compra con precio, pero SIN ficha para este cliente.
+    {
+        "articulo_id": 29,
+        "articulo_nombre": "Morrón Rojo",
+        "cantidad_cajones": 40,
+        "contenido_por_cajon": 8,
+        "cantidad_kilos": 320,
+        "importe": 27000,
+    },
+    # Palta: todas sus compras están sin precio, no debería aparecer en ningún lado.
     {
         "articulo_id": 23,
         "articulo_nombre": "Palta",
@@ -52,74 +70,76 @@ COMPRAS_DE_PRUEBA = [
 ]
 
 
-def test_calcular_costos_ponderados_recientes_pondera_por_cajones():
+def _calcular(momento=MOMENTO_DE_PRUEBA, compras=COMPRAS_DE_PRUEBA, fichas=FICHAS_DE_PRUEBA):
     with (
-        patch("app.costeo.listar_compras_para_costeo", return_value=COMPRAS_DE_PRUEBA) as mock_listar,
+        patch("app.costeo.listar_compras_para_costeo", return_value=compras) as mock_compras,
+        patch("app.costeo.listar_fichas_por_cliente", return_value=fichas) as mock_fichas,
     ):
-        resultado = calcular_costos_ponderados_recientes(MOMENTO_DE_PRUEBA)
-
-    mock_listar.assert_called_once_with(datetime(2026, 8, 8).date(), datetime(2026, 8, 10).date())
-
-    resultado_por_articulo = {fila["articulo_id"]: fila for fila in resultado}
-
-    # Mzn Red: (500*10 + 600*5) / (10+5) = 8000/15 = 533.33...
-    mzn_red = resultado_por_articulo[5]
-    assert mzn_red["articulo_nombre"] == "Mzn Red"
-    assert mzn_red["cantidad_cajones_total"] == 15
-    assert round(mzn_red["costo_ponderado"], 2) == 533.33
-    assert mzn_red["compras_sin_precio_excluidas"] == 1
-
-    # Kiwi: una sola compra de 4 cajones a $500 el cajón => costo ponderado = 500
-    # (NO 500/4 = 125: importe ya es el precio de un cajón, no el total).
-    kiwi = resultado_por_articulo[35]
-    assert kiwi["cantidad_cajones_total"] == 4
-    assert kiwi["costo_ponderado"] == 500
-    assert kiwi["compras_sin_precio_excluidas"] == 0
+        resultado = calcular_costo_por_unidad_venta_reciente(CLIENTE_ID_DE_PRUEBA, momento)
+    return resultado, mock_compras, mock_fichas
 
 
-def test_calcular_costos_ponderados_recientes_importe_es_precio_por_cajon_no_total():
-    # Regresión: caso real que detectó el bug. Morrón Rojo, una compra de 40
-    # cajones a $27.000 el cajón. compras.importe YA es el precio de UN
-    # cajón (no el total de la compra) — el costo ponderado tiene que dar
-    # 27000, no 27000/40 = 675.
-    compras = [
-        {
-            "articulo_id": 29,
-            "articulo_nombre": "Morrón Rojo",
-            "cantidad_cajones": 40,
-            "contenido_por_cajon": 8,
-            "cantidad_kilos": 320,
-            "importe": 27000,
-        },
-    ]
-    with patch("app.costeo.listar_compras_para_costeo", return_value=compras):
-        resultado = calcular_costos_ponderados_recientes(MOMENTO_DE_PRUEBA)
+def test_calcular_costo_por_unidad_venta_pondera_por_cantidad_real_no_por_cajones():
+    resultado, mock_compras, mock_fichas = _calcular()
 
-    assert len(resultado) == 1
-    assert resultado[0]["articulo_nombre"] == "Morrón Rojo"
-    assert resultado[0]["cantidad_cajones_total"] == 40
-    assert resultado[0]["costo_ponderado"] == 27000
+    mock_compras.assert_called_once_with(datetime(2026, 8, 8).date(), datetime(2026, 8, 10).date())
+    mock_fichas.assert_called_once_with(CLIENTE_ID_DE_PRUEBA)
 
+    articulos_por_id = {a["articulo_id"]: a for a in resultado["articulos"]}
 
-def test_calcular_costos_ponderados_recientes_excluye_articulo_sin_ninguna_compra_con_precio():
-    with patch("app.costeo.listar_compras_para_costeo", return_value=COMPRAS_DE_PRUEBA):
-        resultado = calcular_costos_ponderados_recientes(MOMENTO_DE_PRUEBA)
+    # Cherry: plata_total = 3000*10 + 4000*4 = 46000
+    #         cantidad_total = 10*5 + 4*8 = 82 kg
+    #         costo_por_kilo = 46000 / 82 = 560.9756...
+    # (Si el cálculo ponderara por cantidad de CAJONES en vez de por kilos
+    # reales, daría (3000*10+4000*4)/(10+4) = 3285.71, bien distinto — esto
+    # confirma que se está ponderando por la cantidad real.)
+    cherry = articulos_por_id[21]
+    assert cherry["articulo_nombre"] == "Tomate Cherry"
+    assert cherry["unidad_venta"] == "kilo"
+    assert cherry["cantidad_total"] == 82
+    assert round(cherry["costo_por_unidad_de_venta"], 2) == 560.98
+    assert cherry["compras_sin_precio_excluidas"] == 1
 
-    ids_en_resultado = {fila["articulo_id"] for fila in resultado}
-    assert 23 not in ids_en_resultado
+    # Mango: una sola compra, 3 cajones de 10 unidades a $4000 el cajón.
+    # cantidad_total = 3*10 = 30 unidades; plata_total = 4000*3 = 12000
+    # costo_por_unidad = 12000/30 = 400.
+    mango = articulos_por_id[22]
+    assert mango["unidad_venta"] == "unidad"
+    assert mango["cantidad_total"] == 30
+    assert mango["costo_por_unidad_de_venta"] == 400
+    assert mango["compras_sin_precio_excluidas"] == 0
 
-
-def test_calcular_costos_ponderados_recientes_sin_compras_devuelve_lista_vacia():
-    with patch("app.costeo.listar_compras_para_costeo", return_value=[]):
-        resultado = calcular_costos_ponderados_recientes(MOMENTO_DE_PRUEBA)
-
-    assert resultado == []
+    # Palta: sin ninguna compra con precio, no aparece en ningún lado.
+    ids_costeados = {a["articulo_id"] for a in resultado["articulos"]}
+    ids_sin_ficha = {a["articulo_id"] for a in resultado["articulos_sin_ficha"]}
+    assert 23 not in ids_costeados
+    assert 23 not in ids_sin_ficha
 
 
-def test_calcular_costos_ponderados_recientes_usa_ahora_si_no_le_pasan_momento():
-    with patch("app.costeo.listar_compras_para_costeo", return_value=[]) as mock_listar:
-        calcular_costos_ponderados_recientes()
+def test_calcular_costo_por_unidad_venta_articulo_sin_ficha_no_se_costea():
+    resultado, _, _ = _calcular()
 
-    mock_listar.assert_called_once()
-    fecha_desde, fecha_hasta = mock_listar.call_args[0]
+    ids_costeados = {a["articulo_id"] for a in resultado["articulos"]}
+    assert 29 not in ids_costeados
+
+    sin_ficha = {a["articulo_id"]: a for a in resultado["articulos_sin_ficha"]}
+    assert 29 in sin_ficha
+    assert sin_ficha[29]["articulo_nombre"] == "Morrón Rojo"
+
+
+def test_calcular_costo_por_unidad_venta_sin_compras_devuelve_listas_vacias():
+    resultado, _, _ = _calcular(compras=[])
+
+    assert resultado == {"articulos": [], "articulos_sin_ficha": []}
+
+
+def test_calcular_costo_por_unidad_venta_usa_ahora_si_no_le_pasan_momento():
+    with (
+        patch("app.costeo.listar_compras_para_costeo", return_value=[]) as mock_compras,
+        patch("app.costeo.listar_fichas_por_cliente", return_value=[]),
+    ):
+        calcular_costo_por_unidad_venta_reciente(CLIENTE_ID_DE_PRUEBA)
+
+    mock_compras.assert_called_once()
+    fecha_desde, fecha_hasta = mock_compras.call_args[0]
     assert (fecha_hasta - fecha_desde).days == 2

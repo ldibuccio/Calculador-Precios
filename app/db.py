@@ -248,7 +248,7 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT fl.id, a.nombre AS articulo_nombre, e.nombre AS envase_nombre,
+                SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, e.nombre AS envase_nombre,
                        fl.contenido_caja, fl.unidad_venta, fl.envase_variable
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
