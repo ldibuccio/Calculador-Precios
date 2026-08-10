@@ -81,10 +81,15 @@ def calcular_costo_por_unidad_venta_reciente(cliente_id: int, momento_referencia
             sin_precio_por_articulo[articulo_id] = sin_precio_por_articulo.get(articulo_id, 0) + 1
             continue
 
-        cajones = compra["cantidad_cajones"]
-        contenido = compra["contenido_por_cajon"]
+        # float(...): psycopg2 devuelve las columnas numeric como Decimal, no
+        # float — sin este cast, sumar Decimal con el acumulador (float)
+        # rompe con "unsupported operand type(s) for +: 'float' and
+        # 'decimal.Decimal'".
+        cajones = float(compra["cantidad_cajones"])
+        contenido = float(compra["contenido_por_cajon"])
+        importe = float(compra["importe"])
 
-        plata_por_articulo[articulo_id] = plata_por_articulo.get(articulo_id, 0.0) + compra["importe"] * cajones
+        plata_por_articulo[articulo_id] = plata_por_articulo.get(articulo_id, 0.0) + importe * cajones
         cantidad_por_articulo[articulo_id] = cantidad_por_articulo.get(articulo_id, 0.0) + cajones * contenido
 
     articulos = []

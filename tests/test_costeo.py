@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from unittest.mock import patch
 
 from app.costeo import ARGENTINA, calcular_costo_por_unidad_venta_reciente
@@ -131,6 +132,29 @@ def test_calcular_costo_por_unidad_venta_sin_compras_devuelve_listas_vacias():
     resultado, _, _ = _calcular(compras=[])
 
     assert resultado == {"articulos": [], "articulos_sin_ficha": []}
+
+
+def test_calcular_costo_por_unidad_venta_funciona_con_decimal_como_devuelve_psycopg2():
+    # Regresión: psycopg2 devuelve las columnas numeric como Decimal, no
+    # float — con datos de prueba armados a mano con int/float esto no se
+    # detectaba, pero en producción rompía con "unsupported operand
+    # type(s) for +: 'float' and 'decimal.Decimal'".
+    compras = [
+        {
+            "articulo_id": 21,
+            "articulo_nombre": "Tomate Cherry",
+            "cantidad_cajones": Decimal("10"),
+            "contenido_por_cajon": Decimal("5"),
+            "cantidad_kilos": Decimal("50"),
+            "importe": Decimal("3000"),
+        },
+    ]
+    resultado, _, _ = _calcular(compras=compras)
+
+    # plata_total = 3000*10 = 30000; cantidad_total = 10*5 = 50; costo = 600.
+    assert len(resultado["articulos"]) == 1
+    assert resultado["articulos"][0]["cantidad_total"] == 50
+    assert resultado["articulos"][0]["costo_por_unidad_de_venta"] == 600
 
 
 def test_calcular_costo_por_unidad_venta_usa_ahora_si_no_le_pasan_momento():
