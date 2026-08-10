@@ -115,7 +115,7 @@
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones|numero }}</td>
-            <td>{{ c.contenido_por_cajon|numero }}{{ c.unidad_compra|sufijo_unidad }}</td>
+            <td>{{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</td>
             <td>
               <form class="form-importe" method="post" action="/compras/pendientes/{{ c.id }}/importe">
                 <input type="number" name="importe" data-compra-id="{{ c.id }}" min="0" step="0.01" required placeholder="Importe">

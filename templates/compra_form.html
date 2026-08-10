@@ -209,10 +209,10 @@
           {% for r in renglones_hoy %}
           <tr>
             <td>{{ r.articulo_nombre }}</td>
-            <td>{{ r.cantidad_cajones }}</td>
-            <td>{{ r.contenido_por_cajon }}</td>
-            <td>{{ r.importe }}</td>
-            <td>{{ r.sena if r.sena is not none else "-" }}</td>
+            <td>{{ r.cantidad_cajones|numero }}</td>
+            <td>{{ r.contenido_por_cajon|kilos }}</td>
+            <td>{{ r.importe|moneda }}</td>
+            <td>{{ r.sena|moneda if r.sena is not none else "-" }}</td>
           </tr>
           {% endfor %}
         </tbody>

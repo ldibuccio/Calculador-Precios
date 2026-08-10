@@ -134,7 +134,7 @@
           <tr>
             <td>{{ articulo.nombre }}</td>
             <td>{{ articulo.unidad_compra or "-" }}</td>
-            <td>{{ articulo.contenido_referencia if articulo.contenido_referencia is not none else "-" }}</td>
+            <td>{{ articulo.contenido_referencia|kilos if articulo.contenido_referencia is not none else "-" }}</td>
             <td>
               <div class="acciones">
                 <a class="boton boton-editar" href="/articulos/{{ articulo.id }}/editar">Editar</a>

@@ -9,6 +9,7 @@ from PIL import Image
 from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
 from app.main import (
     _formatear_fecha_corta,
+    _formatear_kilos,
     _formatear_moneda,
     _formatear_numero,
     _generar_preview_foto,
@@ -37,8 +38,20 @@ def test_formatear_moneda_usa_signo_pesos_y_puntos_para_miles():
     assert _formatear_moneda(50000) == "$50.000"
     assert _formatear_moneda(1500000) == "$1.500.000"
     assert _formatear_moneda(500) == "$500"
-    assert _formatear_moneda(16.5) == "$16,5"
     assert _formatear_moneda(None) == ""
+
+
+def test_formatear_moneda_redondea_al_peso_entero():
+    assert _formatear_moneda(45000.4) == "$45.000"
+    assert _formatear_moneda(45000.6) == "$45.001"
+
+
+def test_formatear_kilos_muestra_entero_sin_decimales_ni_separador():
+    assert _formatear_kilos(1500.5) == "1500"
+    assert _formatear_kilos(16.0) == "16"
+    assert _formatear_kilos(16) == "16"
+    assert _formatear_kilos(1500) == "1500"
+    assert _formatear_kilos(None) == ""
 
 
 def test_sufijo_unidad_devuelve_la_letra_corta():
@@ -86,8 +99,8 @@ def test_obtener_conexion_sin_database_url_lanza_error_claro(monkeypatch):
 
 
 ARTICULOS_DE_PRUEBA = [
-    {"id": 1, "nombre": "Frutilla"},
-    {"id": 2, "nombre": "Mango"},
+    {"id": 1, "nombre": "Frutilla", "unidad_compra": None, "contenido_referencia": None},
+    {"id": 2, "nombre": "Mango", "unidad_compra": None, "contenido_referencia": None},
 ]
 
 
@@ -1311,6 +1324,33 @@ def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
     # Regresión: en Safari/iOS, deshabilitar el botón sincrónicamente dentro
     # del evento submit cancela el envío del formulario.
     assert "setTimeout" in respuesta.text
+
+
+def test_ver_nueva_compra_con_proveedor_muestra_cargado_hoy_con_formato_compacto():
+    renglones_hoy = [
+        {
+            "id": 99,
+            "articulo_nombre": "Kiwi",
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 18.6,
+            "importe": 45000,
+            "sena": None,
+        },
+    ]
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=renglones_hoy),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    # Regresión: la tabla de "Cargado hoy" no tenía NINGÚN filtro aplicado
+    # (mostraba los números pelados, e importe/seña en None literal texto
+    # "None" cuando la compra no tenía precio todavía).
+    assert "<td>19</td>" in respuesta.text  # contenido_por_cajon redondeado (18.6 -> 19)
+    assert "$45.000" in respuesta.text
+    assert "None" not in respuesta.text
 
 
 def test_ver_nueva_compra_con_proveedor_inexistente_da_404():

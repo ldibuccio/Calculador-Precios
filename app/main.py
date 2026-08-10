@@ -88,28 +88,31 @@ def _formatear_fecha_corta(fecha) -> str:
     return fecha.strftime("%d/%m")
 
 
+def _agrupar_miles(digitos: str) -> str:
+    """Inserta "." cada tres cifras, de derecha a izquierda (1234567 -> "1.234.567")."""
+    grupos = []
+    while len(digitos) > 3:
+        grupos.insert(0, digitos[-3:])
+        digitos = digitos[:-3]
+    grupos.insert(0, digitos)
+    return ".".join(grupos)
+
+
 def _formatear_moneda(valor) -> str:
-    """Formatea un importe como "$20.000": símbolo $ y "." cada tres cifras (si hay decimales, van con ",")."""
+    """Formatea un importe como "$45.000": símbolo $, "." cada tres cifras, redondeado al peso entero (sin decimales)."""
     if valor is None:
         return ""
 
-    texto_numero = _formatear_numero(valor)
-    negativo = texto_numero.startswith("-")
-    if negativo:
-        texto_numero = texto_numero[1:]
+    entero = round(float(valor))
+    negativo = entero < 0
+    return f"${'-' if negativo else ''}{_agrupar_miles(str(abs(entero)))}"
 
-    parte_entera, separador, parte_decimal = texto_numero.partition(".")
 
-    grupos = []
-    while len(parte_entera) > 3:
-        grupos.insert(0, parte_entera[-3:])
-        parte_entera = parte_entera[:-3]
-    grupos.insert(0, parte_entera)
-
-    texto = f"${'-' if negativo else ''}{'.'.join(grupos)}"
-    if separador:
-        texto += f",{parte_decimal}"
-    return texto
+def _formatear_kilos(valor) -> str:
+    """Formatea un peso en kilos como número entero, sin decimales ni coma (1500.5 -> "1500")."""
+    if valor is None:
+        return ""
+    return str(round(float(valor)))
 
 
 SUFIJOS_UNIDAD_COMPRA = {"kilo": "k", "unidad": "u", "cubeta": "c"}
@@ -123,6 +126,7 @@ def _sufijo_unidad(unidad_compra) -> str:
 templates.env.filters["numero"] = _formatear_numero
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
+templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 
 
