@@ -44,6 +44,8 @@
     display: block;
     box-sizing: border-box;
   }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -94,7 +96,6 @@
   <div class="tarjeta">
     <h2>Pendientes ({{ compras|length }})</h2>
     {% if compras %}
-    <button type="button" class="boton" id="boton-guardar-todos" onclick="guardarTodosLosImportes(event)">Guardar todos</button>
     <div class="tabla-scroll">
       <table>
         <thead>
@@ -126,13 +127,14 @@
         </tbody>
       </table>
     </div>
+    <button type="button" class="boton boton-exito" id="boton-guardar-todos" onclick="guardarTodosLosImportes(event)">Guardar todos</button>
     {% else %}
     <p class="vacio">No hay compras pendientes de precio.</p>
     {% endif %}
   </div>
 
   <div class="tarjeta">
-    <a class="boton" href="/compras">Volver a compras</a>
+    <a class="boton boton-peligro" href="/compras">Volver a compras</a>
   </div>
 
   <script>
