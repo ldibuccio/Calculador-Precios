@@ -1024,54 +1024,6 @@ def eliminar_conversion_ruta(conversion_id: int, cliente_id: int = Form(...)):
     return RedirectResponse(url=f"/conversion?cliente_id={cliente_id}", status_code=303)
 
 
-def _validar_compra_form(
-    articulo_id: str, cantidad_kilos: str, cantidad_fraccion: str, importe: str, sena: str, tipo_retiro: str
-) -> tuple[str | None, dict]:
-    """Valida los campos de edición de una compra (cantidad_kilos/cantidad_fraccion directos).
-
-    Devuelve (error, valores) donde valores trae articulo_id, cantidad_kilos, cantidad_fraccion,
-    importe, sena y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo).
-    """
-    error = None
-    valores = {
-        "articulo_id": None,
-        "cantidad_kilos": None,
-        "cantidad_fraccion": None,
-        "importe": None,
-        "sena": None,
-        "tipo_retiro": tipo_retiro,
-    }
-
-    articulo_id = articulo_id.strip()
-    if not articulo_id:
-        error = "Elegí un artículo."
-    else:
-        try:
-            valores["articulo_id"] = int(articulo_id)
-        except ValueError:
-            error = "El artículo elegido no es válido."
-
-    if not error:
-        error, valores["cantidad_kilos"] = _validar_cantidad_opcional(cantidad_kilos, "La cantidad en kilos")
-
-    if not error:
-        error, valores["cantidad_fraccion"] = _validar_cantidad_opcional(cantidad_fraccion, "La cantidad de fracción")
-
-    if not error and valores["cantidad_kilos"] is None and valores["cantidad_fraccion"] is None:
-        error = "Cargá al menos la cantidad en kilos o la cantidad de fracción."
-
-    if not error:
-        error, valores["importe"] = _validar_importe(importe)
-
-    if not error:
-        error, valores["sena"] = _validar_sena(sena)
-
-    if not error:
-        error = _validar_tipo_retiro(tipo_retiro)
-
-    return error, valores
-
-
 def _validar_compra_nueva_form(
     articulo_id: str, cantidad_cajones: str, contenido_por_cajon: str, importe: str, sena: str, tipo_retiro: str
 ) -> tuple[str | None, dict]:
@@ -1631,8 +1583,8 @@ def editar_compra(
     request: Request,
     compra_id: int,
     articulo_id: str = Form(""),
-    cantidad_kilos: str = Form(""),
-    cantidad_fraccion: str = Form(""),
+    cantidad_cajones: str = Form(""),
+    contenido_por_cajon: str = Form(""),
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
@@ -1645,7 +1597,43 @@ def editar_compra(
     if compra_actual is None:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
 
-    error, valores = _validar_compra_form(articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
+    error, valores = _validar_compra_nueva_form(
+        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+    )
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(valores["articulo_id"])
+        except Exception as error_db:
+            articulos = listar_articulos()
+            compra = {
+                "id": compra_id,
+                "articulo_id": valores["articulo_id"],
+                "proveedor_nombre": compra_actual["proveedor_nombre"],
+                "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
+                "cantidad_cajones": cantidad_cajones,
+                "contenido_por_cajon": contenido_por_cajon,
+                "importe": importe,
+                "sena": sena,
+                "tipo_retiro": tipo_retiro,
+            }
+            return templates.TemplateResponse(
+                request,
+                "compra_form.html",
+                {
+                    "articulos": articulos,
+                    "modo": "editar",
+                    "compra": compra,
+                    "error": f"No se pudo leer el artículo: {error_db}",
+                },
+                status_code=500,
+            )
+
+        if articulo is None:
+            error = "El artículo elegido no es válido."
+        elif not articulo["unidad_compra"]:
+            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
 
     if error:
         articulos = listar_articulos()
@@ -1654,8 +1642,8 @@ def editar_compra(
             "articulo_id": valores["articulo_id"],
             "proveedor_nombre": compra_actual["proveedor_nombre"],
             "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
-            "cantidad_kilos": cantidad_kilos,
-            "cantidad_fraccion": cantidad_fraccion,
+            "cantidad_cajones": cantidad_cajones,
+            "contenido_por_cajon": contenido_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
@@ -1667,12 +1655,20 @@ def editar_compra(
             status_code=400,
         )
 
+    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
+    if articulo["unidad_compra"] == "kilo":
+        cantidad_kilos, cantidad_fraccion = total, None
+    else:
+        cantidad_kilos, cantidad_fraccion = None, total
+
     try:
         actualizar_compra(
             compra_id,
             valores["articulo_id"],
-            valores["cantidad_kilos"],
-            valores["cantidad_fraccion"],
+            valores["cantidad_cajones"],
+            valores["contenido_por_cajon"],
+            cantidad_kilos,
+            cantidad_fraccion,
             valores["importe"],
             valores["sena"],
             valores["tipo_retiro"],
@@ -1684,8 +1680,8 @@ def editar_compra(
             "articulo_id": valores["articulo_id"],
             "proveedor_nombre": compra_actual["proveedor_nombre"],
             "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
-            "cantidad_kilos": cantidad_kilos,
-            "cantidad_fraccion": cantidad_fraccion,
+            "cantidad_cajones": cantidad_cajones,
+            "contenido_por_cajon": contenido_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,

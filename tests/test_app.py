@@ -1646,6 +1646,12 @@ def test_ver_editar_compra_muestra_datos_precargados():
     assert "Saturno" in respuesta.text
     assert "N07P41" in respuesta.text
     assert 'action="/compras/30/editar"' in respuesta.text
+    # Regresión: mostrar cajones y contenido por cajón por separado (no el
+    # kilaje total), para poder corregir uno solo de los dos sin recalcular.
+    assert 'id="cantidad_cajones" name="cantidad_cajones"' in respuesta.text
+    assert 'value="10"' in respuesta.text
+    assert 'id="contenido_por_cajon" name="contenido_por_cajon"' in respuesta.text
+    assert 'value="18"' in respuesta.text
 
 
 def test_ver_editar_compra_inexistente_da_404():
@@ -1665,14 +1671,15 @@ def test_ver_editar_compra_error_de_base_da_500():
 def test_editar_compra_exitosa_redirige_a_compras():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.actualizar_compra") as mock_actualizar,
     ):
         respuesta = cliente.post(
             "/compras/30/editar",
             data={
                 "articulo_id": "5",
-                "cantidad_kilos": "120",
-                "cantidad_fraccion": "",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "15",
                 "importe": "55000",
                 "sena": "1000",
                 "tipo_retiro": "Granel",
@@ -1682,7 +1689,7 @@ def test_editar_compra_exitosa_redirige_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras"
-    mock_actualizar.assert_called_once_with(30, 5, 120.0, None, 55000.0, 1000.0, "Granel")
+    mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Granel")
 
 
 def test_editar_compra_inexistente_da_404():
@@ -1691,8 +1698,8 @@ def test_editar_compra_inexistente_da_404():
             "/compras/999/editar",
             data={
                 "articulo_id": "5",
-                "cantidad_kilos": "120",
-                "cantidad_fraccion": "",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "15",
                 "importe": "55000",
                 "sena": "",
                 "tipo_retiro": "Granel",
@@ -1702,7 +1709,7 @@ def test_editar_compra_inexistente_da_404():
     assert respuesta.status_code == 404
 
 
-def test_editar_compra_sin_ninguna_cantidad_muestra_error():
+def test_editar_compra_sin_cantidad_de_cajones_muestra_error():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.actualizar_compra") as mock_actualizar,
@@ -1712,8 +1719,8 @@ def test_editar_compra_sin_ninguna_cantidad_muestra_error():
             "/compras/30/editar",
             data={
                 "articulo_id": "5",
-                "cantidad_kilos": "",
-                "cantidad_fraccion": "",
+                "cantidad_cajones": "",
+                "contenido_por_cajon": "18",
                 "importe": "50000",
                 "sena": "",
                 "tipo_retiro": "Clark",
@@ -1721,13 +1728,14 @@ def test_editar_compra_sin_ninguna_cantidad_muestra_error():
         )
 
     assert respuesta.status_code == 400
-    assert "Cargá al menos la cantidad en kilos o la cantidad de fracción" in respuesta.text
+    assert "La cantidad de cajones es obligatoria" in respuesta.text
     mock_actualizar.assert_not_called()
 
 
 def test_editar_compra_error_de_base_muestra_mensaje_claro():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.actualizar_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
@@ -1735,8 +1743,8 @@ def test_editar_compra_error_de_base_muestra_mensaje_claro():
             "/compras/30/editar",
             data={
                 "articulo_id": "5",
-                "cantidad_kilos": "100",
-                "cantidad_fraccion": "",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "12.5",
                 "importe": "50000",
                 "sena": "",
                 "tipo_retiro": "Clark",

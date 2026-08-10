@@ -686,6 +686,8 @@ def crear_compra(
 def actualizar_compra(
     compra_id: int,
     articulo_id: int,
+    cantidad_cajones: float,
+    contenido_por_cajon: float,
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
     importe: float | None,
@@ -699,11 +701,22 @@ def actualizar_compra(
             cursor.execute(
                 """
                 UPDATE compras
-                SET articulo_id = %s, cantidad_kilos = %s, cantidad_fraccion = %s,
+                SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
+                    cantidad_kilos = %s, cantidad_fraccion = %s,
                     importe = %s, sena = %s, tipo_retiro = %s
                 WHERE id = %s
                 """,
-                (articulo_id, cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, compra_id),
+                (
+                    articulo_id,
+                    cantidad_cajones,
+                    contenido_por_cajon,
+                    cantidad_kilos,
+                    cantidad_fraccion,
+                    importe,
+                    sena,
+                    tipo_retiro,
+                    compra_id,
+                ),
             )
         conexion.commit()
     finally:

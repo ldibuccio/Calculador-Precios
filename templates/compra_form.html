@@ -142,21 +142,17 @@
       {% endif %}
 
       <label for="articulo_id">Artículo *</label>
-      <select id="articulo_id" name="articulo_id" required
-              {% if modo == "nueva" %}onchange="actualizarContenidoPorCajon(this)"{% endif %}>
+      <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)">
         <option value="" {% if not compra %}selected disabled{% endif %}>Elegí un artículo...</option>
         {% for a in articulos %}
         <option value="{{ a.id }}"
-                {% if modo == "nueva" %}data-unidad-compra="{{ a.unidad_compra or '' }}"
-                data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"{% endif %}
+                data-unidad-compra="{{ a.unidad_compra or '' }}"
+                data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"
                 {% if compra and compra.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
       </select>
-      {% if modo == "nueva" %}
       <p id="ayuda-unidad-compra" class="ayuda unidad-compra"></p>
-      {% endif %}
 
-      {% if modo == "nueva" %}
       <label for="cantidad_cajones">Cantidad de cajones/cajas *</label>
       <input type="number" id="cantidad_cajones" name="cantidad_cajones" min="0" step="0.01" required
              value="{% if compra and compra.cantidad_cajones is not none %}{{ compra.cantidad_cajones }}{% endif %}">
@@ -165,16 +161,6 @@
       <input type="number" id="contenido_por_cajon" name="contenido_por_cajon" min="0" step="0.01" required
              value="{% if compra and compra.contenido_por_cajon is not none %}{{ compra.contenido_por_cajon }}{% endif %}">
       <p class="ayuda">Se pre-carga con el contenido de referencia del artículo, pero podés corregirlo si ese día vino distinto.</p>
-      {% else %}
-      <label for="cantidad_kilos">Cantidad en kilos</label>
-      <input type="number" id="cantidad_kilos" name="cantidad_kilos" min="0" step="0.01"
-             value="{% if compra and compra.cantidad_kilos is not none %}{{ compra.cantidad_kilos }}{% endif %}">
-
-      <label for="cantidad_fraccion">Cantidad de fracción (unidades o cubetas)</label>
-      <input type="number" id="cantidad_fraccion" name="cantidad_fraccion" min="0" step="0.01"
-             value="{% if compra and compra.cantidad_fraccion is not none %}{{ compra.cantidad_fraccion }}{% endif %}">
-      <p class="ayuda">Cargá al menos una de las dos cantidades.</p>
-      {% endif %}
 
       <label for="importe">Importe</label>
       <input type="number" id="importe" name="importe" min="0" step="0.01"
@@ -238,7 +224,6 @@
   </div>
   {% endif %}
 
-  {% if modo == "nueva" %}
   <script>
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
 
@@ -263,7 +248,6 @@
       }
     }
   </script>
-  {% endif %}
 
   <script>
     // Evita que, al no ver ningún cambio en pantalla mientras guarda, el
