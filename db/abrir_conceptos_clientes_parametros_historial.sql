@@ -14,9 +14,11 @@
 -- parámetros de Día que ya existen se reclasifican (descuento -> resta,
 -- utilidad_objetivo -> utilidad) para que ninguna fila quede sin tipo.
 --
--- Seguro de correr más de una vez: agregar la columna es "if not exists", el
+-- Pensado para correr una sola vez: agregar la columna es "if not exists", el
 -- backfill solo toca filas con tipo todavía nulo, y el SET NOT NULL es un
--- no-op si ya está en not null.
+-- no-op si ya está en not null — pero el DROP CONSTRAINT del paso 2 usa el
+-- nombre exacto sin IF EXISTS, así que una segunda corrida se corta ahí
+-- (constraint que ya no existe) en vez de ser un no-op silencioso.
 --
 -- Correr a mano en el editor SQL de Supabase, DESPUÉS de
 -- db/migracion_clientes_final.sql. NO se ejecuta acá.
@@ -36,24 +38,14 @@ comment on column clientes_parametros_historial.tipo is
     'Qué hace el concepto con el precio: suma (se suma, plata del cliente, ej. IVA/premio), resta (se descuenta, ej. logística/flete) o utilidad (margen objetivo).';
 
 -- 2. Sacar el CHECK viejo que limitaba nombre_parametro a
--- 'descuento'/'utilidad_objetivo'. Se busca por definición en vez de por
--- nombre fijo, porque el nombre que le puso Postgres al crear la tabla
--- (algo como clientes_parametros_historial_nombre_parametro_check) no está
--- confirmado contra la base real — así funciona sin importar cómo se llame.
-do $$
-declare
-    r record;
-begin
-    for r in
-        select conname
-        from pg_constraint
-        where conrelid = 'clientes_parametros_historial'::regclass
-          and contype = 'c'
-          and pg_get_constraintdef(oid) ilike '%nombre_parametro%'
-    loop
-        execute format('alter table clientes_parametros_historial drop constraint %I', r.conname);
-    end loop;
-end $$;
+-- 'descuento'/'utilidad_objetivo'. Nombre confirmado contra la base real:
+-- clientes_parametros_historial_nombre_parametro_check.
+-- OJO con la idempotencia: a diferencia del resto del archivo, esta línea
+-- puntual SÍ falla si se corre una segunda vez (el constraint ya no existe
+-- para volver a borrarlo) — no lleva IF EXISTS porque se pidió el nombre
+-- exacto y directo, sin la búsqueda dinámica que había antes.
+alter table clientes_parametros_historial
+    drop constraint clientes_parametros_historial_nombre_parametro_check;
 
 -- nombre_parametro sigue not null (sigue siendo obligatorio poner una
 -- etiqueta), pero ya no está atado a una lista fija de valores permitidos.
