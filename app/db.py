@@ -175,6 +175,68 @@ def obtener_cliente(cliente_id: int) -> dict | None:
         conexion.close()
 
 
+def listar_conceptos_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> dict:
+    """Todos los conceptos vigentes de un cliente (clientes_parametros_historial), agrupados por tipo.
+
+    A diferencia de _CLIENTE_CON_DESCUENTO_Y_UTILIDAD_VIGENTES_SQL (que solo
+    conoce dos nombre_parametro fijos), esto trae CUALQUIER concepto que
+    tenga el cliente cargado — descuento, utilidad, flete, IVA, premios,
+    lo que sea — y los agrupa según su columna "tipo" ('suma', 'resta',
+    'utilidad'), para alimentar directo a
+    core.motor_costeo.precio_sugerido_multi_concepto.
+
+    "Vigente" es, para cada nombre_parametro por separado, la fila con
+    vigente_desde más reciente que ya llegó a fecha_referencia (mismo
+    patrón que el resto de las tablas *_historial).
+
+    Devuelve:
+      - "tasas_suman": lista de fracciones (0.105, no 10.5) de todos los
+        conceptos vigentes con tipo='suma'.
+      - "tasas_restan": lista de fracciones de todos los conceptos vigentes
+        con tipo='resta'.
+      - "utilidad": la fracción del concepto vigente con tipo='utilidad'
+        (uno solo se usa: si hay más de uno, se prioriza
+        nombre_parametro='utilidad_objetivo'; si no está ese nombre, el
+        primero que aparezca). None si el cliente no tiene ningún concepto
+        de tipo 'utilidad' vigente todavía.
+
+    A diferencia de listar_clientes/obtener_cliente (que devuelven
+    descuento/utilidad_objetivo como PORCENTAJE, ×100, por compatibilidad
+    con las pantallas viejas), acá los valores vienen tal cual están
+    guardados: fracción (0.23), no porcentaje.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (nombre_parametro) nombre_parametro, tipo, valor
+                FROM clientes_parametros_historial
+                WHERE cliente_id = %s AND vigente_desde <= %s
+                ORDER BY nombre_parametro, vigente_desde DESC
+                """,
+                (cliente_id, fecha_referencia),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+    tasas_suman = [float(fila["valor"]) for fila in filas if fila["tipo"] == "suma"]
+    tasas_restan = [float(fila["valor"]) for fila in filas if fila["tipo"] == "resta"]
+
+    filas_utilidad = [fila for fila in filas if fila["tipo"] == "utilidad"]
+    utilidad = None
+    if filas_utilidad:
+        fila_utilidad = next(
+            (fila for fila in filas_utilidad if fila["nombre_parametro"] == "utilidad_objetivo"),
+            filas_utilidad[0],
+        )
+        utilidad = float(fila_utilidad["valor"])
+
+    return {"tasas_suman": tasas_suman, "tasas_restan": tasas_restan, "utilidad": utilidad}
+
+
 def crear_cliente(nombre: str, descuento: float, utilidad_objetivo: float) -> None:
     """Crea un cliente y su primer registro de historial (vigente_desde = hoy).
 

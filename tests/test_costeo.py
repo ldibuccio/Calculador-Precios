@@ -228,7 +228,11 @@ FICHAS_NEGOCIACION = [
     },
 ]
 
-CLIENTE_NEGOCIACION = {"id": CLIENTE_ID_DE_PRUEBA, "nombre": "Día", "descuento": 23.0, "utilidad_objetivo": 20.0}
+# Día hoy: un solo concepto que resta (descuento 0.23) y la utilidad (0.20),
+# sin ninguna tasa que sume — mismo caso que antes de abrir la lista de
+# conceptos. listar_conceptos_vigentes_por_cliente ya devuelve fracciones
+# (0.23), no porcentaje (a diferencia de la vieja obtener_cliente).
+CONCEPTOS_NEGOCIACION = {"tasas_suman": [], "tasas_restan": [0.23], "utilidad": 0.20}
 
 COMPRAS_NEGOCIACION = [
     # A: compra hoy y otra hace 4 días -> fresco, con costo anterior y variación.
@@ -322,14 +326,14 @@ def _calcular_negociacion(
     compras=COMPRAS_NEGOCIACION,
     fichas=FICHAS_NEGOCIACION,
     precios_vigentes=PRECIOS_VIGENTES_NEGOCIACION,
-    cliente=CLIENTE_NEGOCIACION,
+    conceptos=CONCEPTOS_NEGOCIACION,
     costos_envases=(),
 ):
     with (
         patch("app.costeo.listar_compras_para_costeo", return_value=compras) as mock_compras,
         patch("app.costeo.listar_fichas_por_cliente", return_value=fichas),
         patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=precios_vigentes) as mock_vigentes,
-        patch("app.costeo.obtener_cliente", return_value=cliente),
+        patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos),
         patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
     ):
         resultado = calcular_listado_para_negociar_precios(CLIENTE_ID_DE_PRUEBA, momento)
@@ -519,6 +523,62 @@ def test_precio_sugerido_morron_rojo_envase_fijo_coincide_con_formula_del_excel(
     assert morron["precio_sugerido"] == pytest.approx(5519.4805, abs=0.001)
 
 
+def test_precio_sugerido_con_descuento_y_flete_dos_tasas_que_restan():
+    # Cliente con dos conceptos que restan (descuento 0.23 + flete 0.03),
+    # sin ninguno que sume: las dos tienen que entrar juntas en tasas_restan.
+    # Producto+envase: 3375*1.20 + 200 = 4250. (1 + 0 - 0.26) = 0.74.
+    # 4250 / 0.74 = 5743.2432...
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 27000,
+        },
+    ]
+    conceptos = {"tasas_suman": [], "tasas_restan": [0.23, 0.03], "utilidad": 0.20}
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=[],
+        conceptos=conceptos,
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    assert resultado[0]["costo_actual"] == 3375
+    assert resultado[0]["precio_sugerido"] == pytest.approx(5743.2432, abs=0.001)
+
+
+def test_precio_sugerido_con_iva_tasa_que_suma():
+    # Cliente con descuento (resta) + IVA (suma) + utilidad.
+    # 4250 / (1 + 0.105 - 0.23) = 4250 / 0.875 = 4857.1428...
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 27000,
+        },
+    ]
+    conceptos = {"tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": 0.20}
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=[],
+        conceptos=conceptos,
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    assert resultado[0]["costo_actual"] == 3375
+    assert resultado[0]["precio_sugerido"] == pytest.approx(4857.1428, abs=0.001)
+
+
 FICHA_CHERRY_VARIABLE = {
     "articulo_id": 21,
     "articulo_nombre": "Tomate Cherry",
@@ -640,13 +700,13 @@ def _calcular_desglose(
     articulo_nombre="Morrón Rojo",
     compras=COMPRAS_MORRON_ROJO_DESGLOSE,
     fichas=(FICHA_MORRON_ROJO_CON_NOMBRE,),
-    cliente=CLIENTE_NEGOCIACION,
+    conceptos=CONCEPTOS_NEGOCIACION,
     costos_envases=COSTOS_ENVASES_MORRON_ROJO,
 ):
     with (
         patch("app.costeo.listar_compras_para_costeo", return_value=compras),
         patch("app.costeo.listar_fichas_por_cliente", return_value=list(fichas)),
-        patch("app.costeo.obtener_cliente", return_value=cliente),
+        patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos),
         patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
     ):
         return calcular_precio_sugerido_desglosado(CLIENTE_ID_DE_PRUEBA, articulo_nombre, momento)
@@ -659,7 +719,8 @@ def test_desglose_morron_rojo_expone_los_valores_intermedios():
     # costo_actual = 27000*10 / (10*8) = 3375 (mismo valor que el listado completo).
     assert resultado["costo_actual"] == 3375
     assert resultado["utilidad"] == pytest.approx(0.20)
-    assert resultado["descuento"] == pytest.approx(0.23)
+    assert resultado["tasas_restan"] == [0.23]
+    assert resultado["tasas_suman"] == []
     assert resultado["envase_nombre"] == "Caja Grande"
     assert resultado["envase_variable"] is False
     assert resultado["contenido_ficha"] == 8
@@ -697,11 +758,23 @@ def test_desglose_sin_compras_con_precio_devuelve_none():
     assert resultado is None
 
 
-def test_desglose_sin_descuento_o_utilidad_del_cliente_devuelve_none():
-    cliente_sin_parametros = {"id": CLIENTE_ID_DE_PRUEBA, "nombre": "Día", "descuento": None, "utilidad_objetivo": None}
-    resultado = _calcular_desglose(cliente=cliente_sin_parametros)
+def test_desglose_sin_utilidad_del_cliente_devuelve_none():
+    conceptos_sin_utilidad = {"tasas_suman": [], "tasas_restan": [0.23], "utilidad": None}
+    resultado = _calcular_desglose(conceptos=conceptos_sin_utilidad)
 
     assert resultado is None
+
+
+def test_desglose_sin_ninguna_tasa_extra_no_es_falta_de_datos():
+    # tasas_suman y tasas_restan vacías NO son "faltan datos": un cliente
+    # puede legítimamente no tener ninguna tasa de esos tipos cargada. Solo
+    # la utilidad ausente corta el cálculo.
+    conceptos_solo_utilidad = {"tasas_suman": [], "tasas_restan": [], "utilidad": 0.20}
+    resultado = _calcular_desglose(conceptos=conceptos_solo_utilidad)
+
+    assert resultado is not None
+    # Sin ninguna tasa: precio = (3375*1.20 + 200) / 1 = 4250.
+    assert resultado["precio_sugerido"] == pytest.approx(4250)
 
 
 def test_desglose_encuentra_la_ficha_aunque_el_nombre_en_la_base_no_tenga_tilde():

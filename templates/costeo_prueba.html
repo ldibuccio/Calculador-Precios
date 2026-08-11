@@ -139,15 +139,28 @@
     <p>Última compra: <strong>{{ desglose.fecha_ultima_compra|fecha_corta }}</strong> · compras sin precio excluidas: <strong>{{ desglose.compras_sin_precio_excluidas }}</strong></p>
     <p>Costo actual por unidad de venta: <strong>{{ "%.4f"|format(desglose.costo_actual) }}</strong></p>
     <p>Utilidad del cliente aplicada: <strong>{{ "%.4f"|format(desglose.utilidad) }}</strong> ({{ (desglose.utilidad * 100)|round(2) }}%)</p>
-    <p>Descuento del cliente aplicado: <strong>{{ "%.4f"|format(desglose.descuento) }}</strong> ({{ (desglose.descuento * 100)|round(2) }}%)</p>
+    <p>Tasas que suman (IVA, premios, etc.):
+      {% if desglose.tasas_suman %}
+        <strong>{{ desglose.tasas_suman|join(", ") }}</strong> (suma: {{ "%.4f"|format(desglose.tasas_suman|sum) }})
+      {% else %}
+        <strong>ninguna</strong>
+      {% endif %}
+    </p>
+    <p>Tasas que restan (logística, flete, etc.):
+      {% if desglose.tasas_restan %}
+        <strong>{{ desglose.tasas_restan|join(", ") }}</strong> (suma: {{ "%.4f"|format(desglose.tasas_restan|sum) }})
+      {% else %}
+        <strong>ninguna</strong>
+      {% endif %}
+    </p>
     <p>Envase usado: <strong>{{ desglose.envase_nombre or "sin envase" }}</strong> ({{ "variable" if desglose.envase_variable else "fijo" }})</p>
     <p>Contenido solicitado de la ficha (kg por caja): <strong>{{ desglose.contenido_ficha if desglose.contenido_ficha is not none else "—" }}</strong></p>
     <p>Costo del envase: <strong>{{ "%.4f"|format(desglose.costo_envase_unitario) }}</strong></p>
     <p>Envases por unidad de venta: <strong>{{ "%.6f"|format(desglose.envases_por_unidad) }}</strong></p>
     <p>Costo de envase por unidad de venta (costo envase × envases por unidad): <strong>{{ "%.4f"|format(desglose.costo_envase_por_unidad) }}</strong></p>
     <p class="formula">
-      precio_sugerido = (costo_actual × (1 + utilidad) + envase_por_unidad) / (1 − descuento)<br>
-      = ({{ "%.4f"|format(desglose.costo_actual) }} × {{ "%.4f"|format(1 + desglose.utilidad) }} + {{ "%.4f"|format(desglose.costo_envase_por_unidad) }}) / {{ "%.4f"|format(1 - desglose.descuento) }}<br>
+      precio_sugerido = (costo_actual × (1 + utilidad) + envase_por_unidad) / (1 + Σtasas_suman − Σtasas_restan)<br>
+      = ({{ "%.4f"|format(desglose.costo_actual) }} × {{ "%.4f"|format(1 + desglose.utilidad) }} + {{ "%.4f"|format(desglose.costo_envase_por_unidad) }}) / (1 + {{ "%.4f"|format(desglose.tasas_suman|sum) }} − {{ "%.4f"|format(desglose.tasas_restan|sum) }})<br>
       = <strong>{{ "%.4f"|format(desglose.precio_sugerido) }}</strong> ({{ desglose.precio_sugerido|moneda }})
     </p>
   </div>
@@ -161,8 +174,8 @@
     <p class="vacio">
       No hay desglose disponible para <strong>{{ articulo_desglose_nombre }}</strong> ({{ cliente_nombre }}):
       calcular_precio_sugerido_desglosado no devolvió nada. Puede ser que el artículo no tenga ficha para
-      este cliente, que no tenga ninguna compra con precio en la ventana, o que al cliente le falten
-      descuento/utilidad vigentes cargados.
+      este cliente, que no tenga ninguna compra con precio en la ventana, o que al cliente le falte la
+      utilidad vigente cargada.
     </p>
   </div>
   {% endif %}

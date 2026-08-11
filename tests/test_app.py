@@ -2534,14 +2534,15 @@ def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
         "compras_sin_precio_excluidas": 0,
         "costo_actual": 3375.0,
         "utilidad": 0.20,
-        "descuento": 0.23,
+        "tasas_suman": [0.105],
+        "tasas_restan": [0.23],
         "envase_nombre": "Caja Grande",
         "envase_variable": False,
         "contenido_ficha": 8.0,
         "costo_envase_unitario": 1600.0,
         "envases_por_unidad": 0.125,
         "costo_envase_por_unidad": 200.0,
-        "precio_sugerido": 5519.4805,
+        "precio_sugerido": 4857.1428,
     }
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -2557,9 +2558,10 @@ def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
     assert "Desglose de depuración" in respuesta.text
     assert "3375.0000" in respuesta.text  # costo actual, sin redondear
     assert "0.2000" in respuesta.text  # utilidad
-    assert "0.2300" in respuesta.text  # descuento
+    assert "0.105" in respuesta.text  # tasa que suma (IVA)
+    assert "0.23" in respuesta.text  # tasa que resta (descuento)
     assert "Caja Grande" in respuesta.text
     assert "1600.0000" in respuesta.text  # costo del envase
     assert "0.125000" in respuesta.text  # envases por unidad
     assert "200.0000" in respuesta.text  # costo de envase por unidad
-    assert "5519.4805" in respuesta.text  # precio sugerido paso a paso
+    assert "4857.1428" in respuesta.text  # precio sugerido paso a paso

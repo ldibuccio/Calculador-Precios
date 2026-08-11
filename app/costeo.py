@@ -14,12 +14,12 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.db import (
     listar_compras_para_costeo,
+    listar_conceptos_vigentes_por_cliente,
     listar_costos_envases_vigentes,
     listar_fichas_por_cliente,
     listar_precios_vigentes_por_cliente,
-    obtener_cliente,
 )
-from core.motor_costeo import SIN_ENVASE, precio_sugerido as calcular_precio_sugerido
+from core.motor_costeo import SIN_ENVASE, precio_sugerido_multi_concepto as calcular_precio_sugerido
 
 ARGENTINA = timezone(timedelta(hours=-3))
 VENTANA_COSTEO_HORAS = 48
@@ -230,16 +230,19 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     listar_precios_vigentes_por_cliente): se muestra aunque sea viejo, es
     justamente lo que hay que corregir si no coincide con el costo.
 
-    precio_sugerido (ver core/motor_costeo.py precio_sugerido) se calcula
-    sobre costo_actual, con descuento/utilidad vigentes del cliente y el
-    costo de envase vigente de la ficha. La utilidad se aplica solo a la
-    mercadería, nunca al envase; todo se divide por (1 - descuento). Para
-    envase fijo, el envase sale directo de la ficha. Para envase variable
-    (mango/cherry), cada compra de la ventana decide sola si fue
-    descartable o caja chica comparando su propio contenido_por_cajon
-    contra el contenido solicitado de la ficha (ver
-    _envases_por_unidad_ponderado) — nunca un número hardcodeado. Sin
-    costo_actual, no hay precio_sugerido (None).
+    precio_sugerido (ver core/motor_costeo.py precio_sugerido_multi_concepto)
+    se calcula sobre costo_actual, con TODOS los conceptos vigentes del
+    cliente (listar_conceptos_vigentes_por_cliente: tasas que suman como
+    IVA/premios, tasas que restan como logística/flete, y la utilidad
+    objetivo) y el costo de envase vigente de la ficha. La utilidad se
+    aplica solo a la mercadería, nunca al envase. Para envase fijo, el
+    envase sale directo de la ficha. Para envase variable (mango/cherry),
+    cada compra de la ventana decide sola si fue descartable o caja chica
+    comparando su propio contenido_por_cajon contra el contenido solicitado
+    de la ficha (ver _envases_por_unidad_ponderado) — nunca un número
+    hardcodeado. Sin costo_actual o sin utilidad vigente, no hay
+    precio_sugerido (None); tasas_suman/tasas_restan vacías son válidas
+    (cliente sin ninguna tasa de ese tipo cargada todavía).
 
     Devuelve una lista de dicts (frescos primero, después por nombre) con:
     articulo_id, articulo_nombre, unidad_venta, fresco, costo_actual,
@@ -261,12 +264,15 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
 
-    cliente = obtener_cliente(cliente_id)
-    # Sin descuento/utilidad vigentes todavía, no hay con qué sugerir precio
-    # (no se inventa un valor por defecto: mejor mostrar "sin precio
-    # sugerido" que uno mal calculado).
-    descuento = float(cliente["descuento"]) / 100 if cliente and cliente["descuento"] is not None else None
-    utilidad = float(cliente["utilidad_objetivo"]) / 100 if cliente and cliente["utilidad_objetivo"] is not None else None
+    conceptos_cliente = listar_conceptos_vigentes_por_cliente(cliente_id, hoy)
+    tasas_suman = conceptos_cliente["tasas_suman"]
+    tasas_restan = conceptos_cliente["tasas_restan"]
+    # Sin utilidad vigente todavía, no hay con qué sugerir precio (no se
+    # inventa un valor por defecto: mejor mostrar "sin precio sugerido" que
+    # uno mal calculado). tasas_suman/tasas_restan sí pueden venir vacías
+    # (un cliente sin ninguna tasa cargada de ese tipo): la fórmula funciona
+    # igual, ver core.motor_costeo.precio_sugerido_multi_concepto.
+    utilidad = conceptos_cliente["utilidad"]
 
     compras_por_articulo: dict[int, list[dict]] = {}
     for compra in compras:
@@ -314,17 +320,16 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                             variacion = "igual"
 
         precio_sugerido_valor = None
-        if costo_actual is not None and descuento is not None and utilidad is not None:
+        if costo_actual is not None and utilidad is not None:
             envases_ponderado = _envases_por_unidad_ponderado(
                 compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"]
             )
             costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
             precio_sugerido_valor = calcular_precio_sugerido(
-                costo_bulto=costo_actual,
-                kg_bulto=1,
-                costo_envase=costo_envase,
-                cantidad_envases=envases_ponderado,
-                descuento=descuento,
+                costo_producto=costo_actual,
+                costo_envase=costo_envase * envases_ponderado,
+                tasas_suman=tasas_suman,
+                tasas_restan=tasas_restan,
                 utilidad=utilidad,
             )
 
@@ -367,9 +372,10 @@ def calcular_precio_sugerido_desglosado(
     descartan.
 
     Devuelve None si el artículo no tiene ficha para este cliente, no tuvo
-    ninguna compra con precio en la ventana, o al cliente le faltan
-    descuento/utilidad vigentes — en cualquiera de esos casos no hay nada
-    que desglosar.
+    ninguna compra con precio en la ventana, o al cliente le falta la
+    utilidad vigente — en cualquiera de esos casos no hay nada que
+    desglosar. tasas_suman/tasas_restan vacías NO cuentan como falta de
+    datos (un cliente puede legítimamente no tener ninguna tasa de un tipo).
     """
     if momento_referencia is None:
         momento_referencia = datetime.now(ARGENTINA)
@@ -396,10 +402,11 @@ def calcular_precio_sugerido_desglosado(
     if costo_actual is None:
         return None
 
-    cliente = obtener_cliente(cliente_id)
-    descuento = float(cliente["descuento"]) / 100 if cliente and cliente["descuento"] is not None else None
-    utilidad = float(cliente["utilidad_objetivo"]) / 100 if cliente and cliente["utilidad_objetivo"] is not None else None
-    if descuento is None or utilidad is None:
+    conceptos_cliente = listar_conceptos_vigentes_por_cliente(cliente_id, hoy)
+    tasas_suman = conceptos_cliente["tasas_suman"]
+    tasas_restan = conceptos_cliente["tasas_restan"]
+    utilidad = conceptos_cliente["utilidad"]
+    if utilidad is None:
         return None
 
     costos_envases = listar_costos_envases_vigentes(hoy)
@@ -410,11 +417,10 @@ def calcular_precio_sugerido_desglosado(
     costo_envase_por_unidad = costo_envase * envases_ponderado
 
     precio = calcular_precio_sugerido(
-        costo_bulto=costo_actual,
-        kg_bulto=1,
-        costo_envase=costo_envase,
-        cantidad_envases=envases_ponderado,
-        descuento=descuento,
+        costo_producto=costo_actual,
+        costo_envase=costo_envase_por_unidad,
+        tasas_suman=tasas_suman,
+        tasas_restan=tasas_restan,
         utilidad=utilidad,
     )
 
@@ -427,7 +433,8 @@ def calcular_precio_sugerido_desglosado(
         "compras_sin_precio_excluidas": sin_precio,
         "costo_actual": costo_actual,
         "utilidad": utilidad,
-        "descuento": descuento,
+        "tasas_suman": tasas_suman,
+        "tasas_restan": tasas_restan,
         "envase_nombre": ficha["envase_nombre"],
         "envase_variable": ficha["envase_variable"],
         "contenido_ficha": float(ficha["contenido_caja"]) if ficha["contenido_caja"] is not None else None,
