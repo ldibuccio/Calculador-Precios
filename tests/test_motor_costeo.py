@@ -405,7 +405,7 @@ def test_multi_concepto_sin_tasas_extra_da_igual_que_precio_sugerido_viejo():
 
 def test_multi_concepto_con_iva_ademas_del_descuento():
     # tasas_restan = [0.23] (logística/descuento), tasas_suman = [0.105] (IVA).
-    # (100*1.20 + 65) / ((1-0.23) * (1+0.105)) = 185 / (0.77 * 1.105) = 185 / 0.85085
+    # (100*1.20 + 65) / (1 + 0.105 - 0.23) = 185 / 0.875
     resultado = precio_sugerido_multi_concepto(
         costo_producto=COSTO_PRODUCTO_DE_PRUEBA,
         costo_envase=COSTO_ENVASE_DE_PRUEBA,
@@ -414,13 +414,13 @@ def test_multi_concepto_con_iva_ademas_del_descuento():
         utilidad=UTILIDAD_DIA,
     )
 
-    assert resultado == pytest.approx(185 / 0.85085)
-    assert resultado == pytest.approx(217.4296, abs=0.0001)
+    assert resultado == pytest.approx(185 / 0.875)
+    assert resultado == pytest.approx(211.4286, abs=0.0001)
 
 
 def test_multi_concepto_con_flete_ademas_de_la_logistica():
     # tasas_restan = [0.23, 0.03] (logística + flete), sin tasas_suman.
-    # (100*1.20 + 65) / ((1 - 0.26) * 1) = 185 / 0.74 = 250 exacto.
+    # (100*1.20 + 65) / (1 + 0 - 0.26) = 185 / 0.74 = 250 exacto.
     resultado = precio_sugerido_multi_concepto(
         costo_producto=COSTO_PRODUCTO_DE_PRUEBA,
         costo_envase=COSTO_ENVASE_DE_PRUEBA,
@@ -434,8 +434,8 @@ def test_multi_concepto_con_flete_ademas_de_la_logistica():
 
 
 def test_multi_concepto_listas_vacias_no_divide_por_nada():
-    # Sin tasas_suman ni tasas_restan: los dos factores del denominador
-    # quedan en 1, no hay ninguna división más allá de aplicar la utilidad.
+    # Sin tasas_suman ni tasas_restan: el denominador queda en 1 + 0 - 0 = 1,
+    # no hay ninguna división más allá de aplicar la utilidad.
     resultado = precio_sugerido_multi_concepto(
         costo_producto=770,
         costo_envase=SIN_ENVASE,

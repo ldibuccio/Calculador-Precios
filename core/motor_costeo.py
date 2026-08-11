@@ -180,36 +180,33 @@ def precio_sugerido_multi_concepto(
     utilidad: el margen objetivo, una sola fracción, aplicado solo sobre
     costo_producto — nunca sobre el envase, igual que en precio_sugerido.
 
-    Despejado desde el punto de vista del cliente: parte del precio
-    sugerido, le suma sus tasas positivas y le resta sus tasas negativas, y
-    a mí (el vendedor) me tiene que quedar cubierto costo_producto (con mi
-    utilidad) más costo_envase (sin utilidad):
+    Todas las tasas (suman y restan) se aplican sobre el mismo precio de
+    lista, en el mismo nivel: al precio de lista se le suma el IVA, se le
+    restan los descuentos (logística, flete), se le resta el costo
+    (mercadería + caja), y lo que queda es la utilidad objetivo. Por eso van
+    sumadas y restadas juntas en un solo denominador, no como dos factores
+    multiplicados:
 
         precio_sugerido = (costo_producto * (1 + utilidad) + costo_envase)
-                           / ((1 - suma(tasas_restan)) * (1 + suma(tasas_suman)))
+                           / (1 + suma(tasas_suman) - suma(tasas_restan))
 
-    Las tasas que suman también dividen (no multiplican en el numerador)
-    porque son plata que pone el cliente sobre el precio que yo le paso, no
-    plata mía: una parte de lo que termino cobrando la aporta esa tasa, así
-    que necesito partir de un precio base más chico.
-
-    Con tasas_suman y tasas_restan vacías, suma([]) = 0, así que los dos
-    factores del denominador quedan en 1 y el resultado es EXACTAMENTE el
-    mismo que con un único descuento/utilidad (equivalente a llamar a
-    precio_sugerido con ese descuento como única tasa_restan).
+    Con tasas_suman y tasas_restan vacías, ambas sumas dan 0, el
+    denominador queda en 1 y el resultado es EXACTAMENTE el mismo que con
+    un único descuento/utilidad (equivalente a llamar a precio_sugerido con
+    ese descuento como única tasa_restan).
     """
     suma_tasas_suman = sum(tasas_suman)
     suma_tasas_restan = sum(tasas_restan)
 
-    factor_restan = 1 - suma_tasas_restan
-    if factor_restan <= 0:
+    denominador = 1 + suma_tasas_suman - suma_tasas_restan
+    if denominador <= 0:
         raise ValueError(
-            f"la suma de tasas que restan ({suma_tasas_restan}) no puede llegar ni pasar 1: "
+            f"1 + suma de tasas que suman ({suma_tasas_suman}) - suma de tasas que restan "
+            f"({suma_tasas_restan}) = {denominador}: no puede ser cero ni negativo, "
             "el precio quedaría negativo o dividiría por cero"
         )
 
-    factor_suman = 1 + suma_tasas_suman
-    return (costo_producto * (1 + utilidad) + costo_envase) / (factor_restan * factor_suman)
+    return (costo_producto * (1 + utilidad) + costo_envase) / denominador
 
 
 def utilidad_real(
