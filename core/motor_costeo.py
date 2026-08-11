@@ -159,6 +159,59 @@ def precio_sugerido(
     return (costo_producto_por_kg * (1 + utilidad) + costo_envase_por_kg) / (1 - descuento)
 
 
+def precio_sugerido_multi_concepto(
+    costo_producto: float,
+    costo_envase: float,
+    tasas_suman: list[float],
+    tasas_restan: list[float],
+    utilidad: float,
+) -> float:
+    """Igual que precio_sugerido, pero con listas abiertas de conceptos en vez de un único descuento.
+
+    costo_producto y costo_envase van ya por unidad de venta (no reciben
+    costo_bulto/kg_bulto/cantidad_envases: eso lo resuelve quien llama,
+    antes de pasarle acá los dos números ya divididos).
+
+    tasas_suman: fracciones que son plata del cliente y se suman al precio
+    (ej. IVA 0.105, premio por desempeño 0.02).
+    tasas_restan: fracciones que se descuentan del precio (ej. logística
+    0.23, flete 0.03) — generaliza el "descuento" de antes, que era una
+    sola de estas tasas.
+    utilidad: el margen objetivo, una sola fracción, aplicado solo sobre
+    costo_producto — nunca sobre el envase, igual que en precio_sugerido.
+
+    Despejado desde el punto de vista del cliente: parte del precio
+    sugerido, le suma sus tasas positivas y le resta sus tasas negativas, y
+    a mí (el vendedor) me tiene que quedar cubierto costo_producto (con mi
+    utilidad) más costo_envase (sin utilidad):
+
+        precio_sugerido = (costo_producto * (1 + utilidad) + costo_envase)
+                           / ((1 - suma(tasas_restan)) * (1 + suma(tasas_suman)))
+
+    Las tasas que suman también dividen (no multiplican en el numerador)
+    porque son plata que pone el cliente sobre el precio que yo le paso, no
+    plata mía: una parte de lo que termino cobrando la aporta esa tasa, así
+    que necesito partir de un precio base más chico.
+
+    Con tasas_suman y tasas_restan vacías, suma([]) = 0, así que los dos
+    factores del denominador quedan en 1 y el resultado es EXACTAMENTE el
+    mismo que con un único descuento/utilidad (equivalente a llamar a
+    precio_sugerido con ese descuento como única tasa_restan).
+    """
+    suma_tasas_suman = sum(tasas_suman)
+    suma_tasas_restan = sum(tasas_restan)
+
+    factor_restan = 1 - suma_tasas_restan
+    if factor_restan <= 0:
+        raise ValueError(
+            f"la suma de tasas que restan ({suma_tasas_restan}) no puede llegar ni pasar 1: "
+            "el precio quedaría negativo o dividiría por cero"
+        )
+
+    factor_suman = 1 + suma_tasas_suman
+    return (costo_producto * (1 + utilidad) + costo_envase) / (factor_restan * factor_suman)
+
+
 def utilidad_real(
     precio_dia: float,
     kg_bulto: float,

@@ -17,6 +17,7 @@ from core.motor_costeo import (
     costo_por_kilo,
     costo_por_kilo_base,
     precio_sugerido,
+    precio_sugerido_multi_concepto,
     utilidad_real,
 )
 
@@ -366,3 +367,103 @@ def test_manzana_granny_sin_envase():
     assert resultado_costo == pytest.approx(4329.00, abs=0.01)
     assert resultado_precio == pytest.approx(5194.81, abs=0.01)
     assert resultado_utilidad == pytest.approx(0.2705, abs=0.0001)
+
+
+# --- precio_sugerido_multi_concepto: listas abiertas de tasas ---
+# Mismos costo_producto/costo_envase que test_precio_sugerido_con_envase_chico
+# (costo_bulto=1000, kg_bulto=10 => costo_producto=100 por kg; costo_envase
+# raw 650 * cantidad_envases 1 / kg_bulto 10 => costo_envase=65 por kg), ya
+# divididos, porque esta función recibe los dos costos por unidad de venta
+# directamente (no costo_bulto/kg_bulto/cantidad_envases).
+COSTO_PRODUCTO_DE_PRUEBA = 100
+COSTO_ENVASE_DE_PRUEBA = 65  # 650 * 1 / 10
+
+
+def test_multi_concepto_sin_tasas_extra_da_igual_que_precio_sugerido_viejo():
+    # Solo un descuento (como tasa_restan) y una utilidad: tiene que dar
+    # IDÉNTICO a precio_sugerido con descuento=DESCUENTO_DIA.
+    esperado = precio_sugerido(
+        costo_bulto=1000,
+        kg_bulto=10,
+        costo_envase=COSTO_ENVASE_CHICO,
+        cantidad_envases=1,
+        descuento=DESCUENTO_DIA,
+        utilidad=UTILIDAD_DIA,
+    )
+
+    resultado = precio_sugerido_multi_concepto(
+        costo_producto=COSTO_PRODUCTO_DE_PRUEBA,
+        costo_envase=COSTO_ENVASE_DE_PRUEBA,
+        tasas_suman=[],
+        tasas_restan=[DESCUENTO_DIA],
+        utilidad=UTILIDAD_DIA,
+    )
+
+    assert resultado == pytest.approx(esperado)
+    assert resultado == pytest.approx(185 / 0.77)
+
+
+def test_multi_concepto_con_iva_ademas_del_descuento():
+    # tasas_restan = [0.23] (logística/descuento), tasas_suman = [0.105] (IVA).
+    # (100*1.20 + 65) / ((1-0.23) * (1+0.105)) = 185 / (0.77 * 1.105) = 185 / 0.85085
+    resultado = precio_sugerido_multi_concepto(
+        costo_producto=COSTO_PRODUCTO_DE_PRUEBA,
+        costo_envase=COSTO_ENVASE_DE_PRUEBA,
+        tasas_suman=[0.105],
+        tasas_restan=[DESCUENTO_DIA],
+        utilidad=UTILIDAD_DIA,
+    )
+
+    assert resultado == pytest.approx(185 / 0.85085)
+    assert resultado == pytest.approx(217.4296, abs=0.0001)
+
+
+def test_multi_concepto_con_flete_ademas_de_la_logistica():
+    # tasas_restan = [0.23, 0.03] (logística + flete), sin tasas_suman.
+    # (100*1.20 + 65) / ((1 - 0.26) * 1) = 185 / 0.74 = 250 exacto.
+    resultado = precio_sugerido_multi_concepto(
+        costo_producto=COSTO_PRODUCTO_DE_PRUEBA,
+        costo_envase=COSTO_ENVASE_DE_PRUEBA,
+        tasas_suman=[],
+        tasas_restan=[DESCUENTO_DIA, 0.03],
+        utilidad=UTILIDAD_DIA,
+    )
+
+    assert resultado == pytest.approx(185 / 0.74)
+    assert resultado == pytest.approx(250.0)
+
+
+def test_multi_concepto_listas_vacias_no_divide_por_nada():
+    # Sin tasas_suman ni tasas_restan: los dos factores del denominador
+    # quedan en 1, no hay ninguna división más allá de aplicar la utilidad.
+    resultado = precio_sugerido_multi_concepto(
+        costo_producto=770,
+        costo_envase=SIN_ENVASE,
+        tasas_suman=[],
+        tasas_restan=[],
+        utilidad=UTILIDAD_DIA,
+    )
+
+    assert resultado == pytest.approx(924.0)  # 770 * 1.20
+
+
+def test_multi_concepto_tasas_restan_suman_uno_da_error():
+    with pytest.raises(ValueError):
+        precio_sugerido_multi_concepto(
+            costo_producto=100,
+            costo_envase=0,
+            tasas_suman=[],
+            tasas_restan=[0.6, 0.4],  # suma exactamente 1
+            utilidad=UTILIDAD_DIA,
+        )
+
+
+def test_multi_concepto_tasas_restan_pasan_de_uno_da_error():
+    with pytest.raises(ValueError):
+        precio_sugerido_multi_concepto(
+            costo_producto=100,
+            costo_envase=0,
+            tasas_suman=[],
+            tasas_restan=[0.7, 0.4],  # suma 1.1, más de uno
+            utilidad=UTILIDAD_DIA,
+        )
