@@ -19,6 +19,7 @@ from core.motor_costeo import (
     precio_sugerido,
     precio_sugerido_multi_concepto,
     utilidad_real,
+    utilidad_real_multi_concepto,
 )
 
 CLIENTE_DIA = buscar_cliente("Día")
@@ -466,4 +467,72 @@ def test_multi_concepto_tasas_restan_pasan_de_uno_da_error():
             tasas_suman=[],
             tasas_restan=[0.7, 0.4],  # suma 1.1, más de uno
             utilidad=UTILIDAD_DIA,
+        )
+
+
+# --- utilidad_real_multi_concepto: utilidad aproximada que deja el precio vigente ---
+# Morrón Rojo, expresado por bulto (8 kg): precio vigente 4400/kg, costo
+# mercadería 2500/kg, caja grande 1600 (un envase por bulto), descuento 0.23,
+# sin tasas que suman.
+#   costo_total = 2500*8 + 1600 = 21600
+#   entra = 4400*8 * (1 - 0.23) = 35200 * 0.77 = 27104
+#   utilidad = (27104 - 21600) / 21600 = 0.254814... ≈ 25,48%
+
+def test_utilidad_real_multi_concepto_morron_rojo():
+    resultado = utilidad_real_multi_concepto(
+        precio_vigente=4400 * 8,
+        costo_producto=2500 * 8,
+        costo_envase=1600,
+        tasas_suman=[],
+        tasas_restan=[0.23],
+    )
+
+    assert resultado == pytest.approx(0.254815, abs=0.000001)
+    assert round(resultado * 100, 2) == 25.48
+
+
+def test_utilidad_real_multi_concepto_precio_vigente_por_debajo_del_costo_da_negativa():
+    # Mismo costo/envase/tasas que Morrón Rojo, pero con un precio vigente
+    # mucho más bajo (quedó desactualizado): tiene que dar utilidad negativa.
+    resultado = utilidad_real_multi_concepto(
+        precio_vigente=15000,  # muy por debajo de lo que cubre el costo
+        costo_producto=2500 * 8,
+        costo_envase=1600,
+        tasas_suman=[],
+        tasas_restan=[0.23],
+    )
+
+    assert resultado < 0
+    assert resultado == pytest.approx(-0.465278, abs=0.000001)
+
+
+def test_utilidad_real_multi_concepto_con_tasa_que_suma():
+    # Con IVA (tasa que suma) además del descuento: "entra" es mayor que sin
+    # ella, así que la utilidad tiene que ser mayor que la del caso base.
+    sin_iva = utilidad_real_multi_concepto(
+        precio_vigente=4400 * 8,
+        costo_producto=2500 * 8,
+        costo_envase=1600,
+        tasas_suman=[],
+        tasas_restan=[0.23],
+    )
+    con_iva = utilidad_real_multi_concepto(
+        precio_vigente=4400 * 8,
+        costo_producto=2500 * 8,
+        costo_envase=1600,
+        tasas_suman=[0.105],
+        tasas_restan=[0.23],
+    )
+
+    assert con_iva > sin_iva
+
+
+def test_utilidad_real_multi_concepto_costo_total_cero_da_error():
+    with pytest.raises(ValueError):
+        utilidad_real_multi_concepto(
+            precio_vigente=100,
+            costo_producto=0,
+            costo_envase=0,
+            tasas_suman=[],
+            tasas_restan=[],
         )

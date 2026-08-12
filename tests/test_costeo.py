@@ -670,6 +670,86 @@ def test_precio_sugerido_sin_costo_actual_es_none():
     assert resultado[0]["precio_sugerido"] is None
 
 
+# --- utilidad_aproximada, vía calcular_listado_para_negociar_precios ---
+
+def test_utilidad_aproximada_morron_rojo():
+    # Caso del enunciado: precio vigente 4400/kg, costo 2500/kg, 8 kg,
+    # caja grande 1600, descuento 0.23, sin tasas que suman -> ~25,48%.
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 20000,  # costo_actual = 20000*10/(10*8) = 2500
+        },
+    ]
+    precios_vigentes = [{"articulo_id": 29, "precio": 4400}]
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=precios_vigentes,
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    morron = resultado[0]
+    assert morron["costo_actual"] == 2500
+    assert morron["precio_vigente"] == 4400
+    assert morron["utilidad_aproximada"] == pytest.approx(0.254815, abs=0.000001)
+    assert round(morron["utilidad_aproximada"] * 100, 2) == 25.48
+
+
+def test_utilidad_aproximada_sin_precio_vigente_es_none():
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 27000,
+        },
+    ]
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=[],  # sin precio vigente para articulo_id 29
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    assert resultado[0]["precio_vigente"] is None
+    assert resultado[0]["utilidad_aproximada"] is None
+
+
+def test_utilidad_aproximada_precio_vigente_por_debajo_del_costo_da_negativa():
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 20000,  # costo_actual = 2500/kg
+        },
+    ]
+    # Precio vigente desactualizado, muy por debajo del costo.
+    precios_vigentes = [{"articulo_id": 29, "precio": 1875}]  # 1875/kg
+    resultado, _, _ = _calcular_negociacion(
+        compras=compras,
+        fichas=[FICHA_MORRON_ROJO],
+        precios_vigentes=precios_vigentes,
+        costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    )
+
+    morron = resultado[0]
+    assert morron["precio_vigente"] == 1875
+    assert morron["utilidad_aproximada"] < 0
+
+
 # --- calcular_precio_sugerido_desglosado ---
 
 FICHA_MORRON_ROJO_CON_NOMBRE = {
@@ -702,12 +782,14 @@ def _calcular_desglose(
     fichas=(FICHA_MORRON_ROJO_CON_NOMBRE,),
     conceptos=CONCEPTOS_NEGOCIACION,
     costos_envases=COSTOS_ENVASES_MORRON_ROJO,
+    precios_vigentes=(),
 ):
     with (
         patch("app.costeo.listar_compras_para_costeo", return_value=compras),
         patch("app.costeo.listar_fichas_por_cliente", return_value=list(fichas)),
         patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos),
         patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
+        patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=list(precios_vigentes)),
     ):
         return calcular_precio_sugerido_desglosado(CLIENTE_ID_DE_PRUEBA, articulo_nombre, momento)
 
@@ -733,6 +815,47 @@ def test_desglose_morron_rojo_expone_los_valores_intermedios():
     assert resultado["precio_sugerido"] == pytest.approx(5519.4805, abs=0.001)
     assert resultado["fecha_ultima_compra"] == date(2026, 8, 10)
     assert resultado["compras_sin_precio_excluidas"] == 0
+    # Sin precio vigente cargado (precios_vigentes=() por defecto): no hay
+    # nada que medir, todo el desglose de utilidad_aproximada queda en None.
+    assert resultado["precio_vigente"] is None
+    assert resultado["utilidad_aproximada"] is None
+    assert resultado["costo_total_bulto"] is None
+
+
+def test_desglose_utilidad_aproximada_morron_rojo():
+    # Caso del enunciado: precio vigente 4400/kg, costo 2500/kg, 8 kg,
+    # caja grande 1600, descuento 0.23, sin tasas que suman -> ~25,48%.
+    # costo_actual = 2500 con importe=20000, cantidad_cajones=10,
+    # contenido_por_cajon=8 -> 20000*10/(10*8) = 2500.
+    compras = [
+        {
+            "articulo_id": 29,
+            "articulo_nombre": "Morrón Rojo",
+            "fecha_operacion": date(2026, 8, 10),
+            "cantidad_cajones": 10,
+            "contenido_por_cajon": 8,
+            "cantidad_kilos": 80,
+            "importe": 20000,
+        },
+    ]
+    precios_vigentes = [{"articulo_id": 29, "precio": 4400}]
+
+    resultado = _calcular_desglose(compras=compras, precios_vigentes=precios_vigentes)
+
+    assert resultado is not None
+    assert resultado["costo_actual"] == 2500
+    assert resultado["precio_vigente"] == 4400
+    # costo_producto_bulto = 2500*8 = 20000; costo_envase_bulto = 200*8 = 1600
+    # (1600 = 1/8 caja/kg * 8kg * 1600/caja); costo_total_bulto = 21600.
+    assert resultado["costo_producto_bulto"] == pytest.approx(20000)
+    assert resultado["costo_envase_bulto"] == pytest.approx(1600)
+    assert resultado["costo_total_bulto"] == pytest.approx(21600)
+    # precio_vigente_bulto = 4400*8 = 35200; entra = 35200*0.77 = 27104.
+    assert resultado["precio_vigente_bulto"] == pytest.approx(35200)
+    assert resultado["entra_bulto"] == pytest.approx(27104)
+    # utilidad = (27104-21600)/21600 ≈ 0,254815 (~25,48%).
+    assert resultado["utilidad_aproximada"] == pytest.approx(0.254815, abs=0.000001)
+    assert round(resultado["utilidad_aproximada"] * 100, 2) == 25.48
 
 
 def test_desglose_articulo_sin_ficha_devuelve_none():

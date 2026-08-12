@@ -222,3 +222,36 @@ def utilidad_real(
         raise ValueError("el costo total no puede ser cero")
     ingreso_neto = precio_dia * (1 - descuento) * kg_bulto
     return (ingreso_neto - costo_total) / costo_total
+
+
+def utilidad_real_multi_concepto(
+    precio_vigente: float,
+    costo_producto: float,
+    costo_envase: float,
+    tasas_suman: list[float],
+    tasas_restan: list[float],
+) -> float:
+    """Utilidad que deja el precio vigente hoy, con listas abiertas de conceptos — la inversa de precio_sugerido_multi_concepto.
+
+    Mismas listas de tasas que precio_sugerido_multi_concepto, aplicadas al
+    revés: en vez de partir del costo para despejar el precio, acá se parte
+    del precio_vigente ya cargado, se le aplican las tasas del cliente, y se
+    compara contra el costo total (mercadería + envase, sin separar la
+    utilidad objetivo — acá la utilidad es lo que se está midiendo, no un
+    dato de entrada):
+
+        costo_total = costo_producto + costo_envase
+        entra = precio_vigente * (1 + suma(tasas_suman) - suma(tasas_restan))
+        utilidad = (entra - costo_total) / costo_total
+
+    costo_producto, costo_envase y precio_vigente tienen que estar
+    expresados en la MISMA unidad entre sí (los tres por kilo, o los tres
+    por bulto/caja completa) — el resultado da igual en cualquiera de los
+    dos casos, porque es un cociente: la unidad se cancela.
+    """
+    costo_total = costo_producto + costo_envase
+    if costo_total == 0:
+        raise ValueError("el costo total no puede ser cero")
+
+    entra = precio_vigente * (1 + sum(tasas_suman) - sum(tasas_restan))
+    return (entra - costo_total) / costo_total

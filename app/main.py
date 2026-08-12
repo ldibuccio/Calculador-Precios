@@ -119,6 +119,13 @@ def _formatear_kilos(valor) -> str:
     return str(round(float(valor)))
 
 
+def _formatear_porcentaje(valor) -> str:
+    """Formatea una fracción (0.2548) como porcentaje con un decimal ("25.5%")."""
+    if valor is None:
+        return ""
+    return f"{float(valor) * 100:.1f}%"
+
+
 SUFIJOS_UNIDAD_COMPRA = {"kilo": "k", "unidad": "u", "cubeta": "c"}
 
 
@@ -130,6 +137,7 @@ def _sufijo_unidad(unidad_compra) -> str:
 templates.env.filters["numero"] = _formatear_numero
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
+templates.env.filters["porcentaje"] = _formatear_porcentaje
 templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 
@@ -1941,6 +1949,9 @@ def ver_costeo_prueba(request: Request):
             "desglose": desglose,
             "desglose_error": desglose_error,
             "articulo_desglose_nombre": ARTICULO_DESGLOSE_PRUEBA_NOMBRE,
+            "utilidad_objetivo_cliente": (
+                cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
+            ),
         },
     )
 

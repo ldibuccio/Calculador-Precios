@@ -19,7 +19,11 @@ from app.db import (
     listar_fichas_por_cliente,
     listar_precios_vigentes_por_cliente,
 )
-from core.motor_costeo import SIN_ENVASE, precio_sugerido_multi_concepto as calcular_precio_sugerido
+from core.motor_costeo import (
+    SIN_ENVASE,
+    precio_sugerido_multi_concepto as calcular_precio_sugerido,
+    utilidad_real_multi_concepto as calcular_utilidad_real,
+)
 
 ARGENTINA = timezone(timedelta(hours=-3))
 VENTANA_COSTEO_HORAS = 48
@@ -244,11 +248,19 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     precio_sugerido (None); tasas_suman/tasas_restan vacías son válidas
     (cliente sin ninguna tasa de ese tipo cargada todavía).
 
+    utilidad_aproximada (ver core/motor_costeo.py utilidad_real_multi_concepto)
+    es la inversa de precio_sugerido: parte del precio_vigente en vez de la
+    utilidad objetivo, le aplica las mismas tasas del cliente, y compara
+    contra el costo total (mercadería + envase) para ver qué utilidad deja
+    HOY el precio ya cargado. Es aproximada porque el costo es el estimado
+    de compra, no el de recepción. Solo se calcula si hay precio_vigente
+    (sin eso, None) — no depende de la utilidad objetivo del cliente.
+
     Devuelve una lista de dicts (frescos primero, después por nombre) con:
     articulo_id, articulo_nombre, unidad_venta, fresco, costo_actual,
     costo_anterior (o None), variacion ("subio"/"bajo"/"igual"/None),
     fecha_ultima_compra, precio_vigente (o None), precio_sugerido (o None),
-    compras_sin_precio_excluidas.
+    utilidad_aproximada (o None), compras_sin_precio_excluidas.
     """
     if momento_referencia is None:
         momento_referencia = datetime.now(ARGENTINA)
@@ -259,7 +271,10 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     compras = listar_compras_para_costeo(fecha_desde_historial, hoy)
     fichas = listar_fichas_por_cliente(cliente_id)
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
-    precio_vigente_por_articulo = {p["articulo_id"]: p["precio"] for p in precios_vigentes}
+    # float(...): precio (numeric) viene de la base como Decimal — hace
+    # falta castear antes de usarlo en la cuenta de utilidad_aproximada más
+    # abajo (antes solo se mostraba, nunca se operaba con él).
+    precio_vigente_por_articulo = {p["articulo_id"]: float(p["precio"]) for p in precios_vigentes}
 
     costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
@@ -319,18 +334,45 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                         else:
                             variacion = "igual"
 
-        precio_sugerido_valor = None
-        if costo_actual is not None and utilidad is not None:
+        # costo_envase_por_unidad hace falta tanto para precio_sugerido como
+        # para utilidad_aproximada, así que se calcula una sola vez acá,
+        # aunque falte la utilidad objetivo del cliente (utilidad_aproximada
+        # no depende de ella, solo de las tasas y del costo).
+        costo_envase_por_unidad = 0.0
+        if costo_actual is not None:
             envases_ponderado = _envases_por_unidad_ponderado(
                 compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"]
             )
             costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
+            costo_envase_por_unidad = costo_envase * envases_ponderado
+
+        precio_sugerido_valor = None
+        if costo_actual is not None and utilidad is not None:
             precio_sugerido_valor = calcular_precio_sugerido(
                 costo_producto=costo_actual,
-                costo_envase=costo_envase * envases_ponderado,
+                costo_envase=costo_envase_por_unidad,
                 tasas_suman=tasas_suman,
                 tasas_restan=tasas_restan,
                 utilidad=utilidad,
+            )
+
+        # utilidad_aproximada: la inversa de precio_sugerido, partiendo del
+        # precio vigente en vez de la utilidad objetivo. Solo si hay precio
+        # vigente cargado — sin eso no hay nada que medir. Es "aproximada"
+        # porque el costo es el estimado de compra (costo_actual), no el de
+        # recepción. Se calcula por bulto (contenido de la ficha), aunque el
+        # resultado da igual por kilo — es un cociente, la unidad se cancela
+        # (ver core.motor_costeo.utilidad_real_multi_concepto).
+        precio_vigente = precio_vigente_por_articulo.get(articulo_id)
+        utilidad_aproximada = None
+        if costo_actual is not None and precio_vigente is not None:
+            contenido_caja = float(ficha["contenido_caja"]) if ficha["contenido_caja"] else 1.0
+            utilidad_aproximada = calcular_utilidad_real(
+                precio_vigente=precio_vigente * contenido_caja,
+                costo_producto=costo_actual * contenido_caja,
+                costo_envase=costo_envase_por_unidad * contenido_caja,
+                tasas_suman=tasas_suman,
+                tasas_restan=tasas_restan,
             )
 
         resultado.append(
@@ -343,8 +385,9 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                 "costo_anterior": costo_anterior,
                 "variacion": variacion,
                 "fecha_ultima_compra": f1,
-                "precio_vigente": precio_vigente_por_articulo.get(articulo_id),
+                "precio_vigente": precio_vigente,
                 "precio_sugerido": precio_sugerido_valor,
+                "utilidad_aproximada": utilidad_aproximada,
                 "compras_sin_precio_excluidas": sin_precio,
             }
         )
@@ -376,6 +419,12 @@ def calcular_precio_sugerido_desglosado(
     utilidad vigente — en cualquiera de esos casos no hay nada que
     desglosar. tasas_suman/tasas_restan vacías NO cuentan como falta de
     datos (un cliente puede legítimamente no tener ninguna tasa de un tipo).
+
+    También expone el desglose de utilidad_aproximada (ver
+    utilidad_real_multi_concepto), por bulto: costo_producto_bulto,
+    costo_envase_bulto, precio_vigente_bulto, costo_total_bulto, entra_bulto
+    y utilidad_aproximada — todos None si el artículo no tiene precio
+    vigente cargado (sin eso no hay nada que medir).
     """
     if momento_referencia is None:
         momento_referencia = datetime.now(ARGENTINA)
@@ -424,6 +473,38 @@ def calcular_precio_sugerido_desglosado(
         utilidad=utilidad,
     )
 
+    # utilidad_aproximada: mismo desglose de core.motor_costeo, pero
+    # mostrando los pasos intermedios expresados "por bulto" (multiplicados
+    # por el contenido de la ficha), tal como se verifica a mano. El
+    # resultado da igual por kilo o por bulto — es un cociente — pero acá se
+    # muestra por bulto porque así es como se cruza.
+    precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
+    precio_vigente = next(
+        (float(p["precio"]) for p in precios_vigentes if p["articulo_id"] == ficha["articulo_id"]), None
+    )
+    contenido_ficha = float(ficha["contenido_caja"]) if ficha["contenido_caja"] is not None else None
+    contenido_caja_para_bulto = contenido_ficha if contenido_ficha else 1.0
+
+    utilidad_aproximada = None
+    costo_producto_bulto = None
+    costo_envase_bulto = None
+    precio_vigente_bulto = None
+    costo_total_bulto = None
+    entra_bulto = None
+    if precio_vigente is not None:
+        costo_producto_bulto = costo_actual * contenido_caja_para_bulto
+        costo_envase_bulto = costo_envase_por_unidad * contenido_caja_para_bulto
+        precio_vigente_bulto = precio_vigente * contenido_caja_para_bulto
+        costo_total_bulto = costo_producto_bulto + costo_envase_bulto
+        entra_bulto = precio_vigente_bulto * (1 + sum(tasas_suman) - sum(tasas_restan))
+        utilidad_aproximada = calcular_utilidad_real(
+            precio_vigente=precio_vigente_bulto,
+            costo_producto=costo_producto_bulto,
+            costo_envase=costo_envase_bulto,
+            tasas_suman=tasas_suman,
+            tasas_restan=tasas_restan,
+        )
+
     return {
         "articulo_id": ficha["articulo_id"],
         "articulo_nombre": ficha["articulo_nombre"],
@@ -437,9 +518,16 @@ def calcular_precio_sugerido_desglosado(
         "tasas_restan": tasas_restan,
         "envase_nombre": ficha["envase_nombre"],
         "envase_variable": ficha["envase_variable"],
-        "contenido_ficha": float(ficha["contenido_caja"]) if ficha["contenido_caja"] is not None else None,
+        "contenido_ficha": contenido_ficha,
         "costo_envase_unitario": costo_envase,
         "envases_por_unidad": envases_ponderado,
         "costo_envase_por_unidad": costo_envase_por_unidad,
         "precio_sugerido": precio,
+        "precio_vigente": precio_vigente,
+        "costo_producto_bulto": costo_producto_bulto,
+        "costo_envase_bulto": costo_envase_bulto,
+        "precio_vigente_bulto": precio_vigente_bulto,
+        "costo_total_bulto": costo_total_bulto,
+        "entra_bulto": entra_bulto,
+        "utilidad_aproximada": utilidad_aproximada,
     }

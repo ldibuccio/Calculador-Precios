@@ -2425,6 +2425,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
             "fecha_ultima_compra": date(2026, 8, 10),
             "precio_vigente": 700.0,
             "precio_sugerido": 750.6,
+            "utilidad_aproximada": 0.155,  # por debajo del objetivo del cliente (20%)
             "compras_sin_precio_excluidas": 1,
         },
         {
@@ -2438,6 +2439,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
             "fecha_ultima_compra": date(2026, 8, 4),
             "precio_vigente": None,
             "precio_sugerido": None,
+            "utilidad_aproximada": None,  # sin precio vigente
             "compras_sin_precio_excluidas": 0,
         },
     ]
@@ -2460,9 +2462,60 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
     assert "$700" in respuesta.text  # precio vigente
     assert "$751" in respuesta.text  # precio sugerido (750.5 redondeado)
     assert "10/08" in respuesta.text  # fecha última compra de Cherry
-    # Mango: sin costo anterior ni vigente -> "—", no "None".
+    # Cherry: utilidad 15.5%, por debajo del objetivo del cliente (20%) -> marcada.
+    assert "15.5%" in respuesta.text
+    assert "utilidad-baja" in respuesta.text
+    # Mango: sin costo anterior, vigente ni utilidad -> "—", no "None".
     assert "None" not in respuesta.text
     assert "Fecha de referencia" in respuesta.text
+
+
+def test_ver_costeo_prueba_utilidad_negativa_y_en_objetivo():
+    articulos = [
+        {
+            "articulo_id": 1,
+            "articulo_nombre": "Palta",
+            "unidad_venta": "unidad",
+            "fresco": True,
+            "costo_actual": 900.0,
+            "costo_anterior": None,
+            "variacion": None,
+            "fecha_ultima_compra": date(2026, 8, 10),
+            "precio_vigente": 800.0,
+            "precio_sugerido": 1200.0,
+            "utilidad_aproximada": -0.10,  # precio vigente por debajo del costo
+            "compras_sin_precio_excluidas": 0,
+        },
+        {
+            "articulo_id": 2,
+            "articulo_nombre": "Pera",
+            "unidad_venta": "kilo",
+            "fresco": True,
+            "costo_actual": 1000.0,
+            "costo_anterior": None,
+            "variacion": None,
+            "fecha_ultima_compra": date(2026, 8, 10),
+            "precio_vigente": 2000.0,
+            "precio_sugerido": 1900.0,
+            "utilidad_aproximada": 0.25,  # por encima del objetivo (20%): normal, sin marcar
+            "compras_sin_precio_excluidas": 0,
+        },
+    ]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos),
+        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
+    ):
+        respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 200
+    assert "utilidad-negativa" in respuesta.text
+    assert "-10.0%" in respuesta.text
+    assert "25.0%" in respuesta.text
+    # Pera está en 25%, por encima del objetivo (20%): no debería quedar
+    # marcada como "baja" (buscamos la clase pegada al valor de Pera, no
+    # simplemente que la clase exista en algún lado de la página).
+    assert 'utilidad-baja">25.0%' not in respuesta.text
 
 
 def test_ver_costeo_prueba_sin_articulos_muestra_mensaje():
@@ -2543,6 +2596,13 @@ def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
         "envases_por_unidad": 0.125,
         "costo_envase_por_unidad": 200.0,
         "precio_sugerido": 4857.1428,
+        "precio_vigente": 4400.0,
+        "costo_producto_bulto": 27000.0,
+        "costo_envase_bulto": 1600.0,
+        "costo_total_bulto": 28600.0,
+        "precio_vigente_bulto": 35200.0,
+        "entra_bulto": 30800.0,
+        "utilidad_aproximada": 0.0769230769,
     }
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -2565,3 +2625,9 @@ def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
     assert "0.125000" in respuesta.text  # envases por unidad
     assert "200.0000" in respuesta.text  # costo de envase por unidad
     assert "4857.1428" in respuesta.text  # precio sugerido paso a paso
+    # Desglose de utilidad aproximada (paso a paso, por bulto).
+    assert "27000.0000" in respuesta.text  # costo_producto_bulto
+    assert "28600.0000" in respuesta.text  # costo_total_bulto
+    assert "35200.0000" in respuesta.text  # precio_vigente_bulto
+    assert "30800.0000" in respuesta.text  # entra_bulto
+    assert "7.7%" in respuesta.text  # utilidad_aproximada

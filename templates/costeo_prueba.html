@@ -40,6 +40,8 @@
   tr.viejo { color: #888; }
   .subio { color: #dc2626; font-weight: 600; }
   .bajo { color: #16a34a; font-weight: 600; }
+  .utilidad-negativa { color: #dc2626; font-weight: 600; }
+  .utilidad-baja { background: #fef9c3; padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600; }
   .vacio {
     color: #888;
     font-style: italic;
@@ -103,6 +105,7 @@
           <th>Última compra</th>
           <th>Precio vigente</th>
           <th>Precio sugerido</th>
+          <th>Utilidad</th>
         </tr>
       </thead>
       <tbody>
@@ -123,6 +126,13 @@
           <td>{{ a.fecha_ultima_compra|fecha_corta }}</td>
           <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
           <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
+          <td>
+            {% if a.utilidad_aproximada is none %}—
+            {% elif a.utilidad_aproximada < 0 %}<span class="utilidad-negativa">{{ a.utilidad_aproximada|porcentaje }}</span>
+            {% elif utilidad_objetivo_cliente is not none and a.utilidad_aproximada < utilidad_objetivo_cliente %}<span class="utilidad-baja">{{ a.utilidad_aproximada|porcentaje }} ⚠</span>
+            {% else %}{{ a.utilidad_aproximada|porcentaje }}
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -163,6 +173,22 @@
       = ({{ "%.4f"|format(desglose.costo_actual) }} × {{ "%.4f"|format(1 + desglose.utilidad) }} + {{ "%.4f"|format(desglose.costo_envase_por_unidad) }}) / (1 + {{ "%.4f"|format(desglose.tasas_suman|sum) }} − {{ "%.4f"|format(desglose.tasas_restan|sum) }})<br>
       = <strong>{{ "%.4f"|format(desglose.precio_sugerido) }}</strong> ({{ desglose.precio_sugerido|moneda }})
     </p>
+
+    {% if desglose.precio_vigente is not none %}
+    <p>Precio vigente por unidad de venta: <strong>{{ "%.4f"|format(desglose.precio_vigente) }}</strong></p>
+    <p class="formula">
+      Utilidad aproximada con el precio vigente actual (por bulto, contenido de ficha = {{ desglose.contenido_ficha if desglose.contenido_ficha is not none else "1 (sin contenido de ficha, se usa 1)" }}):<br>
+      costo_producto_bulto = {{ "%.4f"|format(desglose.costo_actual) }} × contenido = <strong>{{ "%.4f"|format(desglose.costo_producto_bulto) }}</strong><br>
+      costo_envase_bulto = {{ "%.4f"|format(desglose.costo_envase_por_unidad) }} × contenido = <strong>{{ "%.4f"|format(desglose.costo_envase_bulto) }}</strong><br>
+      costo_total_bulto = costo_producto_bulto + costo_envase_bulto = <strong>{{ "%.4f"|format(desglose.costo_total_bulto) }}</strong><br>
+      precio_vigente_bulto = {{ "%.4f"|format(desglose.precio_vigente) }} × contenido = <strong>{{ "%.4f"|format(desglose.precio_vigente_bulto) }}</strong><br>
+      entra = precio_vigente_bulto × (1 + Σtasas_suman − Σtasas_restan) = {{ "%.4f"|format(desglose.precio_vigente_bulto) }} × (1 + {{ "%.4f"|format(desglose.tasas_suman|sum) }} − {{ "%.4f"|format(desglose.tasas_restan|sum) }}) = <strong>{{ "%.4f"|format(desglose.entra_bulto) }}</strong><br>
+      utilidad_aproximada = (entra − costo_total_bulto) / costo_total_bulto = ({{ "%.4f"|format(desglose.entra_bulto) }} − {{ "%.4f"|format(desglose.costo_total_bulto) }}) / {{ "%.4f"|format(desglose.costo_total_bulto) }}<br>
+      = <strong>{{ "%.6f"|format(desglose.utilidad_aproximada) }}</strong> ({{ desglose.utilidad_aproximada|porcentaje }})
+    </p>
+    {% else %}
+    <p class="vacio">Sin precio vigente cargado para {{ desglose.articulo_nombre }}: no hay utilidad aproximada para mostrar.</p>
+    {% endif %}
   </div>
   {% elif desglose_error %}
   <div class="desglose-error">
