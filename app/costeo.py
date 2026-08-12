@@ -396,6 +396,39 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     return resultado
 
 
+def agrupar_para_negociar(articulos: list[dict], utilidad_objetivo: float | None) -> dict:
+    """Agrupa el listado de calcular_listado_para_negociar_precios en las tres secciones del cuadro de negociación.
+
+    NO recalcula nada: solo filtra y ordena los mismos dicts que ya trae
+    calcular_listado_para_negociar_precios (costo, variación, fresco,
+    precio vigente, precio sugerido, utilidad_aproximada).
+
+    - "bajas": artículos FRESCOS con variacion == "bajo".
+    - "subas": artículos FRESCOS con variacion == "subio".
+      (Un artículo sin variación, o no fresco, no entra en ninguna de las
+      dos — no hay nada reciente que negociar por costo.)
+    - "bajo_objetivo": TODOS los artículos (frescos o no) cuya
+      utilidad_aproximada está por debajo de utilidad_objetivo, ordenados
+      de PEOR a MEJOR utilidad (los negativos primero). Un artículo sin
+      utilidad_aproximada (sin precio vigente cargado) no entra — no hay
+      nada que medir. Si utilidad_objetivo es None (cliente sin utilidad
+      vigente), la sección queda vacía.
+    """
+    bajas = [a for a in articulos if a["fresco"] and a["variacion"] == "bajo"]
+    subas = [a for a in articulos if a["fresco"] and a["variacion"] == "subio"]
+
+    bajo_objetivo = []
+    if utilidad_objetivo is not None:
+        bajo_objetivo = [
+            a
+            for a in articulos
+            if a["utilidad_aproximada"] is not None and a["utilidad_aproximada"] < utilidad_objetivo
+        ]
+        bajo_objetivo.sort(key=lambda a: a["utilidad_aproximada"])
+
+    return {"bajas": bajas, "subas": subas, "bajo_objetivo": bajo_objetivo}
+
+
 def _normalizar_nombre(nombre: str) -> str:
     """Minúsculas y sin acentos, para comparar nombres de artículo sin depender de cómo se hayan tipeado."""
     sin_acentos = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode("ascii")

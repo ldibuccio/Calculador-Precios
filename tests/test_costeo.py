@@ -7,6 +7,7 @@ import pytest
 from app.costeo import (
     ARGENTINA,
     _envases_por_unidad_ponderado,
+    agrupar_para_negociar,
     calcular_costo_por_unidad_venta_reciente,
     calcular_listado_para_negociar_precios,
     calcular_precio_sugerido_desglosado,
@@ -915,3 +916,77 @@ def test_desglose_encuentra_la_ficha_aunque_el_nombre_en_la_base_no_tenga_tilde(
     assert resultado is not None
     assert resultado["articulo_nombre"] == "Morron Rojo"
     assert resultado["costo_actual"] == 3375
+
+
+# --- agrupar_para_negociar: cuadro simplificado (Bajas / Subas / bajo objetivo) ---
+# No recalcula nada: son los mismos dicts que devolvería
+# calcular_listado_para_negociar_precios, armados a mano acá para no
+# depender de mocks de base — solo se prueba el filtrado/orden.
+
+UTILIDAD_OBJETIVO_DE_PRUEBA = 0.20
+
+ARTICULOS_PARA_AGRUPAR = [
+    # A: fresco, bajó, utilidad floja (0.10 < 0.20) -> Bajas + bajo_objetivo.
+    {"articulo_nombre": "A", "fresco": True, "variacion": "bajo", "utilidad_aproximada": 0.10},
+    # B: fresco, subió, utilidad por encima del objetivo -> Subas, no bajo_objetivo.
+    {"articulo_nombre": "B", "fresco": True, "variacion": "subio", "utilidad_aproximada": 0.30},
+    # C: NO fresco (variacion None), utilidad muy negativa -> ni Bajas ni
+    # Subas, pero sí en bajo_objetivo (peor de todos, tiene que ir primero).
+    {"articulo_nombre": "C", "fresco": False, "variacion": None, "utilidad_aproximada": -0.05},
+    # D: fresco pero sin variación (artículo nuevo, sin comparación previa),
+    # utilidad floja -> ni Bajas ni Subas, pero sí en bajo_objetivo.
+    {"articulo_nombre": "D", "fresco": True, "variacion": None, "utilidad_aproximada": 0.15},
+    # E: no fresco, sin precio vigente (utilidad_aproximada None) -> no
+    # entra en ningún lado, ni siquiera en bajo_objetivo.
+    {"articulo_nombre": "E", "fresco": False, "variacion": None, "utilidad_aproximada": None},
+    # F: fresco, variación "igual", utilidad por encima del objetivo -> no
+    # entra en ningún lado.
+    {"articulo_nombre": "F", "fresco": True, "variacion": "igual", "utilidad_aproximada": 0.25},
+]
+
+
+def test_agrupar_bajas_incluye_solo_frescos_que_bajaron():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, UTILIDAD_OBJETIVO_DE_PRUEBA)
+
+    nombres_bajas = [a["articulo_nombre"] for a in resultado["bajas"]]
+    assert nombres_bajas == ["A"]
+
+
+def test_agrupar_subas_incluye_solo_frescos_que_subieron():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, UTILIDAD_OBJETIVO_DE_PRUEBA)
+
+    nombres_subas = [a["articulo_nombre"] for a in resultado["subas"]]
+    assert nombres_subas == ["B"]
+
+
+def test_agrupar_no_fresco_no_aparece_en_bajas_ni_subas():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, UTILIDAD_OBJETIVO_DE_PRUEBA)
+
+    nombres_bajas = {a["articulo_nombre"] for a in resultado["bajas"]}
+    nombres_subas = {a["articulo_nombre"] for a in resultado["subas"]}
+    assert "C" not in nombres_bajas
+    assert "C" not in nombres_subas
+
+
+def test_agrupar_bajo_objetivo_ordena_de_peor_a_mejor_y_filtra():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, UTILIDAD_OBJETIVO_DE_PRUEBA)
+
+    nombres_bajo_objetivo = [a["articulo_nombre"] for a in resultado["bajo_objetivo"]]
+    # C (-0.05) peor que A (0.10) peor que D (0.15); B, E y F quedan afuera.
+    assert nombres_bajo_objetivo == ["C", "A", "D"]
+
+
+def test_agrupar_sin_precio_vigente_no_entra_en_bajo_objetivo():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, UTILIDAD_OBJETIVO_DE_PRUEBA)
+
+    nombres_bajo_objetivo = {a["articulo_nombre"] for a in resultado["bajo_objetivo"]}
+    assert "E" not in nombres_bajo_objetivo
+
+
+def test_agrupar_sin_utilidad_objetivo_del_cliente_bajo_objetivo_vacio():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, utilidad_objetivo=None)
+
+    assert resultado["bajo_objetivo"] == []
+    # Bajas/Subas no dependen de la utilidad objetivo del cliente.
+    assert [a["articulo_nombre"] for a in resultado["bajas"]] == ["A"]
+    assert [a["articulo_nombre"] for a in resultado["subas"]] == ["B"]

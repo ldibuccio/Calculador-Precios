@@ -2463,7 +2463,7 @@ def test_ver_costeo_prueba_muestra_tabla_con_formato():
     assert "$751" in respuesta.text  # precio sugerido (750.5 redondeado)
     assert "10/08" in respuesta.text  # fecha última compra de Cherry
     # Cherry: utilidad 15.5%, por debajo del objetivo del cliente (20%) -> marcada.
-    assert "15.5%" in respuesta.text
+    assert "15,5%" in respuesta.text
     assert "utilidad-baja" in respuesta.text
     # Mango: sin costo anterior, vigente ni utilidad -> "—", no "None".
     assert "None" not in respuesta.text
@@ -2510,12 +2510,12 @@ def test_ver_costeo_prueba_utilidad_negativa_y_en_objetivo():
 
     assert respuesta.status_code == 200
     assert "utilidad-negativa" in respuesta.text
-    assert "-10.0%" in respuesta.text
-    assert "25.0%" in respuesta.text
+    assert "-10,0%" in respuesta.text
+    assert "25,0%" in respuesta.text
     # Pera está en 25%, por encima del objetivo (20%): no debería quedar
     # marcada como "baja" (buscamos la clase pegada al valor de Pera, no
     # simplemente que la clase exista en algún lado de la página).
-    assert 'utilidad-baja">25.0%' not in respuesta.text
+    assert 'utilidad-baja">25,0%' not in respuesta.text
 
 
 def test_ver_costeo_prueba_sin_articulos_muestra_mensaje():
@@ -2630,4 +2630,143 @@ def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
     assert "28600.0000" in respuesta.text  # costo_total_bulto
     assert "35200.0000" in respuesta.text  # precio_vigente_bulto
     assert "30800.0000" in respuesta.text  # entra_bulto
-    assert "7.7%" in respuesta.text  # utilidad_aproximada
+    assert "7,7%" in respuesta.text  # utilidad_aproximada
+
+
+# --- /negociar: cuadro simplificado (Bajas / Subas / Resumen bajo objetivo) ---
+
+ARTICULOS_NEGOCIAR_DE_PRUEBA = [
+    {
+        "articulo_nombre": "Tomate Cherry",
+        "fresco": True,
+        "variacion": "bajo",
+        "costo_anterior": 600.0,
+        "costo_actual": 500.0,
+        "precio_sugerido": 900.0,
+        "precio_vigente": 950.0,  # vigente >= sugerido -> ✓
+        "utilidad_aproximada": 0.30,  # por encima del objetivo, no entra al resumen
+    },
+    {
+        "articulo_nombre": "Mango",
+        "fresco": True,
+        "variacion": "subio",
+        "costo_anterior": 300.0,
+        "costo_actual": 400.0,
+        "precio_sugerido": 800.0,
+        "precio_vigente": 700.0,  # vigente < sugerido -> 🔴
+        "utilidad_aproximada": 0.10,  # bajo el objetivo (0.20) -> resumen
+    },
+    {
+        "articulo_nombre": "Palta",
+        "fresco": False,  # no fresco: no entra en Bajas ni Subas
+        "variacion": None,
+        "costo_anterior": None,
+        "costo_actual": 900.0,
+        "precio_sugerido": 1300.0,
+        "precio_vigente": 800.0,
+        "utilidad_aproximada": -0.05,  # peor utilidad -> primero en el resumen
+    },
+]
+
+
+def test_ver_negociar_bajas_incluye_fresco_que_bajo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar")
+
+    assert respuesta.status_code == 200
+    assert "Bajas" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "$950" in respuesta.text
+    assert "✓" in respuesta.text
+
+
+def test_ver_negociar_subas_incluye_fresco_que_subio():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar")
+
+    assert respuesta.status_code == 200
+    assert "Mango" in respuesta.text
+    assert "🔴" in respuesta.text
+
+
+def test_ver_negociar_no_fresco_no_aparece_en_bajas_ni_subas():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar")
+
+    import re
+
+    bloque_bajas = re.search(r"<h2>Bajas.*?</h2>(.*?)<h2>Subas", respuesta.text, re.S).group(1)
+    bloque_subas = re.search(r"<h2>Subas.*?</h2>(.*?)<h2>\s*Resumen", respuesta.text, re.S).group(1)
+    assert "Palta" not in bloque_bajas
+    assert "Palta" not in bloque_subas
+
+
+def test_ver_negociar_resumen_ordena_de_peor_a_mejor_y_filtra_bajo_objetivo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar")
+
+    import re
+
+    bloque_resumen = re.search(r"<h2>\s*Resumen.*", respuesta.text, re.S).group(0)
+    # Palta (-5%, peor) tiene que aparecer antes que Mango (10%).
+    pos_palta = bloque_resumen.index("Palta")
+    pos_mango = bloque_resumen.index("Mango")
+    assert pos_palta < pos_mango
+    # Tomate Cherry (30%, por encima del objetivo) no entra al resumen.
+    assert "Tomate Cherry" not in bloque_resumen
+    assert "utilidad-negativa" in bloque_resumen
+    assert "utilidad-baja" in bloque_resumen
+
+
+def test_ver_negociar_sin_articulos_muestra_mensajes_vacios():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/negociar")
+
+    assert respuesta.status_code == 200
+    assert "Ningún artículo fresco bajó de costo" in respuesta.text
+    assert "Ningún artículo fresco subió de costo" in respuesta.text
+    assert "Ningún artículo con precio vigente está por debajo del objetivo" in respuesta.text
+
+
+def test_ver_negociar_sin_cliente_dia_da_404():
+    with patch("app.main.listar_clientes", return_value=[{"id": 2, "nombre": "Otro cliente"}]):
+        respuesta = cliente.get("/negociar")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_negociar_error_de_base_da_500():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.get("/negociar")
+
+    assert respuesta.status_code == 500
+
+
+def test_ver_negociar_tiene_link_de_ida_y_vuelta_con_costeo_prueba():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta_negociar = cliente.get("/negociar")
+        respuesta_costeo = cliente.get("/costeo-prueba")
+
+    assert 'href="/costeo-prueba"' in respuesta_negociar.text
+    assert 'href="/negociar"' in respuesta_costeo.text

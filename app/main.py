@@ -15,7 +15,11 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
-from app.costeo import calcular_listado_para_negociar_precios, calcular_precio_sugerido_desglosado
+from app.costeo import (
+    agrupar_para_negociar,
+    calcular_listado_para_negociar_precios,
+    calcular_precio_sugerido_desglosado,
+)
 from app.db import (
     actualizar_articulo,
     actualizar_cliente,
@@ -120,10 +124,10 @@ def _formatear_kilos(valor) -> str:
 
 
 def _formatear_porcentaje(valor) -> str:
-    """Formatea una fracción (0.2548) como porcentaje con un decimal ("25.5%")."""
+    """Formatea una fracción (0.2548) como porcentaje con un decimal y coma decimal ("25,5%")."""
     if valor is None:
         return ""
-    return f"{float(valor) * 100:.1f}%"
+    return f"{float(valor) * 100:.1f}%".replace(".", ",")
 
 
 SUFIJOS_UNIDAD_COMPRA = {"kilo": "k", "unidad": "u", "cubeta": "c"}
@@ -1952,6 +1956,50 @@ def ver_costeo_prueba(request: Request):
             "utilidad_objetivo_cliente": (
                 cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
             ),
+        },
+    )
+
+
+@app.get("/negociar")
+def ver_cuadro_negociar_precios(request: Request):
+    """Cuadro simplificado para negociar precios: Bajas, Subas y artículos bajo la utilidad objetivo.
+
+    Usa exactamente los mismos datos que calcular_listado_para_negociar_precios
+    (vía agrupar_para_negociar) — no recalcula nada, solo los agrupa y
+    ordena distinto para negociar rápido. La tabla completa de depuración
+    sigue en /costeo-prueba.
+    """
+    momento_referencia = datetime.now(ARGENTINA)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["nombre"] == CLIENTE_COSTEO_PRUEBA_NOMBRE), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail=f"No se encontró el cliente '{CLIENTE_COSTEO_PRUEBA_NOMBRE}'")
+
+    try:
+        articulos = calcular_listado_para_negociar_precios(cliente["id"], momento_referencia)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
+
+    utilidad_objetivo_cliente = (
+        cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
+    )
+    grupos = agrupar_para_negociar(articulos, utilidad_objetivo_cliente)
+
+    return templates.TemplateResponse(
+        request,
+        "negociar.html",
+        {
+            "cliente_nombre": cliente["nombre"],
+            "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
+            "bajas": grupos["bajas"],
+            "subas": grupos["subas"],
+            "bajo_objetivo": grupos["bajo_objetivo"],
+            "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         },
     )
 

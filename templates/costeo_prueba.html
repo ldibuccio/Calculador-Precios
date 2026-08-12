@@ -18,6 +18,7 @@
     font-size: 0.9rem;
     margin: 0 0 1rem;
   }
+  .ayuda a { color: #2563eb; }
   .tabla-scroll { overflow-x: auto; }
   table {
     width: 100%;
@@ -88,7 +89,8 @@
   <p class="ayuda">
     Pantalla temporal para probar app/costeo.py — no es la pantalla final de Ventas.<br>
     Cliente: <strong>{{ cliente_nombre }}</strong>.
-    Fecha de referencia: <strong>{{ fecha_referencia }}</strong>.
+    Fecha de referencia: <strong>{{ fecha_referencia }}</strong>.<br>
+    Ver el <a href="/negociar">cuadro simplificado para negociar</a>.
   </p>
 
   {% if articulos %}

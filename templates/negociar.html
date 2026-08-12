@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Negociar precios (prueba)</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+  h2 {
+    font-size: 1.05rem;
+    margin: 1.5rem 0 0.5rem;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .ayuda a { color: #2563eb; }
+  .tabla-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  th {
+    background: #eee;
+    font-weight: 600;
+  }
+  .vacio {
+    color: #888;
+    font-style: italic;
+    background: #fff;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    margin: 0;
+  }
+  .ok { color: #16a34a; }
+  .falta { color: #dc2626; font-weight: 600; }
+  .utilidad-negativa { color: #dc2626; font-weight: 600; }
+  .utilidad-baja { background: #fef9c3; padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>Cuadro para negociar (prueba)</h1>
+  <p class="ayuda">
+    Cliente: <strong>{{ cliente_nombre }}</strong>.
+    Fecha de referencia: <strong>{{ fecha_referencia }}</strong>.<br>
+    Mismos datos que <a href="/costeo-prueba">la tabla completa de depuración</a>, agrupados para negociar rápido.
+  </p>
+
+  <h2>Bajas (frescos que bajaron de costo)</h2>
+  {% if bajas %}
+  <div class="tabla-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Costo anterior</th>
+          <th>Costo nuevo</th>
+          <th>Sugerido</th>
+          <th>Vigente</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in bajas %}
+        <tr>
+          <td>{{ a.articulo_nombre }}</td>
+          <td>{{ a.costo_anterior|moneda if a.costo_anterior is not none else "—" }}</td>
+          <td>{{ a.costo_actual|moneda if a.costo_actual is not none else "—" }}</td>
+          <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
+          <td>
+            {% if a.precio_vigente is none %}—
+            {% elif a.precio_sugerido is none %}{{ a.precio_vigente|moneda }}
+            {% elif a.precio_vigente >= a.precio_sugerido %}{{ a.precio_vigente|moneda }} <span class="ok">✓</span>
+            {% else %}{{ a.precio_vigente|moneda }} <span class="falta">🔴</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vacio">Ningún artículo fresco bajó de costo.</p>
+  {% endif %}
+
+  <h2>Subas (frescos que subieron de costo)</h2>
+  {% if subas %}
+  <div class="tabla-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Costo anterior</th>
+          <th>Costo nuevo</th>
+          <th>Sugerido</th>
+          <th>Vigente</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in subas %}
+        <tr>
+          <td>{{ a.articulo_nombre }}</td>
+          <td>{{ a.costo_anterior|moneda if a.costo_anterior is not none else "—" }}</td>
+          <td>{{ a.costo_actual|moneda if a.costo_actual is not none else "—" }}</td>
+          <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
+          <td>
+            {% if a.precio_vigente is none %}—
+            {% elif a.precio_sugerido is none %}{{ a.precio_vigente|moneda }}
+            {% elif a.precio_vigente >= a.precio_sugerido %}{{ a.precio_vigente|moneda }} <span class="ok">✓</span>
+            {% else %}{{ a.precio_vigente|moneda }} <span class="falta">🔴</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vacio">Ningún artículo fresco subió de costo.</p>
+  {% endif %}
+
+  <h2>
+    Resumen — artículos bajo
+    {{ utilidad_objetivo_cliente|porcentaje if utilidad_objetivo_cliente is not none else "el objetivo" }}
+  </h2>
+  {% if bajo_objetivo %}
+  <div class="tabla-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Precio vigente (P. Día)</th>
+          <th>Precio sugerido</th>
+          <th>Utilidad</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in bajo_objetivo %}
+        <tr>
+          <td>{{ a.articulo_nombre }}</td>
+          <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
+          <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
+          <td>
+            {% if a.utilidad_aproximada < 0 %}<span class="utilidad-negativa">{{ a.utilidad_aproximada|porcentaje }}</span>
+            {% else %}<span class="utilidad-baja">{{ a.utilidad_aproximada|porcentaje }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vacio">Ningún artículo con precio vigente está por debajo del objetivo.</p>
+  {% endif %}
+</body>
+</html>
