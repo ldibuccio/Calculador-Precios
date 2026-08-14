@@ -116,7 +116,13 @@
       </datalist>
 
       <label for="nombre">Nombre del proveedor *</label>
-      <input type="text" id="nombre" name="nombre" required placeholder="ej. Saturno">
+      <input type="text" id="nombre" name="nombre" list="lista_nombres_proveedores" required
+             placeholder="ej. Saturno" autocomplete="off" oninput="sugerirCodigo()">
+      <datalist id="lista_nombres_proveedores">
+        {% for nombre in proveedores|map(attribute='nombre')|unique %}
+        <option value="{{ nombre }}"></option>
+        {% endfor %}
+      </datalist>
 
       <button type="submit" id="boton-confirmar-proveedor">Confirmar proveedor</button>
     </form>
@@ -133,6 +139,28 @@
       const nombreConocido = PROVEEDORES_CONOCIDOS[codigo];
       if (nombreConocido) {
         document.getElementById("nombre").value = nombreConocido;
+      }
+    }
+
+    // Mismos datos que PROVEEDORES_CONOCIDOS (código -> nombre), invertidos
+    // acá para poder sugerir en el otro sentido (nombre -> código). Si dos
+    // proveedores comparten el mismo nombre, queda ambiguo a qué puesto
+    // corresponde: no se sugiere nada y se deja para elegir a mano, en vez
+    // de arriesgar a completar con el puesto equivocado.
+    const NOMBRES_A_CODIGOS = {};
+    Object.keys(PROVEEDORES_CONOCIDOS).forEach(function (codigo) {
+      const nombreNormalizado = PROVEEDORES_CONOCIDOS[codigo].trim().toLowerCase();
+      if (!NOMBRES_A_CODIGOS[nombreNormalizado]) {
+        NOMBRES_A_CODIGOS[nombreNormalizado] = [];
+      }
+      NOMBRES_A_CODIGOS[nombreNormalizado].push(codigo);
+    });
+
+    function sugerirCodigo() {
+      const nombreNormalizado = document.getElementById("nombre").value.trim().toLowerCase();
+      const codigos = NOMBRES_A_CODIGOS[nombreNormalizado];
+      if (codigos && codigos.length === 1) {
+        document.getElementById("codigo_puesto").value = codigos[0];
       }
     }
 

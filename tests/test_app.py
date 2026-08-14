@@ -1235,6 +1235,26 @@ def test_ver_nueva_compra_sin_proveedor_muestra_formulario_de_proveedor():
     assert "setTimeout" in respuesta.text
 
 
+def test_ver_nueva_compra_muestra_autocompletado_en_los_dos_sentidos():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva")
+
+    assert respuesta.status_code == 200
+    # Código -> nombre (ya existía): el datalist del código y el objeto JS.
+    assert 'list="lista_proveedores"' in respuesta.text
+    assert "PROVEEDORES_CONOCIDOS" in respuesta.text
+    assert 'oninput="sugerirNombre()"' in respuesta.text
+    # Nombre -> código (nuevo): datalist propio del campo nombre, con los
+    # nombres conocidos, y la función que arma el mapeo inverso.
+    assert 'list="lista_nombres_proveedores"' in respuesta.text
+    assert 'id="lista_nombres_proveedores"' in respuesta.text
+    assert "Saturno" in respuesta.text
+    assert "Frutamax" in respuesta.text
+    assert 'oninput="sugerirCodigo()"' in respuesta.text
+    assert "NOMBRES_A_CODIGOS" in respuesta.text
+    assert "function sugerirCodigo" in respuesta.text
+
+
 def test_ver_nueva_compra_sin_proveedor_error_de_base_da_500():
     with patch("app.main.listar_proveedores", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/compras/nueva")
