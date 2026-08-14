@@ -2101,7 +2101,7 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
 
     # Regresión: los 3 botones de abajo de todo, en este orden exacto y con
     # estos colores. Solo "Cancelar" pide confirmación.
-    orden = ["Agregar Artículos", "Cancelar", "Guardar"]
+    orden = ["Guardar", "Agregar Artículos", "Cancelar"]
     posiciones = [respuesta.text.index(texto) for texto in orden]
     assert posiciones == sorted(posiciones)
     assert 'value="agregar_articulos"' in respuesta.text
