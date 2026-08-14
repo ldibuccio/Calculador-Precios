@@ -173,6 +173,7 @@
         <option value="" {% if not compra %}selected disabled{% endif %}>Elegí...</option>
         <option value="Clark" {% if compra and compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
         <option value="Granel" {% if compra and compra.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
+        <option value="Propia" {% if compra and compra.tipo_retiro == "Propia" %}selected{% endif %}>Propia</option>
       </select>
 
       {% if modo == "nueva" %}

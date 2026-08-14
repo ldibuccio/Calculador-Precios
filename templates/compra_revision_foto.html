@@ -226,6 +226,7 @@
         <option value="" {% if not r.tipo_retiro %}selected{% endif %}>Elegí...</option>
         <option value="Clark" {% if r.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
         <option value="Granel" {% if r.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
+        <option value="Propia" {% if r.tipo_retiro == "Propia" %}selected{% endif %}>Propia</option>
       </select>
       {% if loop.first and renglones|length > 1 %}
       <div class="campo-descartar">

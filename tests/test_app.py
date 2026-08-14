@@ -1710,6 +1710,50 @@ def test_agregar_compra_tipo_retiro_invalido_muestra_error():
     mock_crear.assert_not_called()
 
 
+def test_agregar_compra_tipo_retiro_propia_se_acepta():
+    # "Propia" es el tercer tipo de retiro, agregado además de Clark/Granel.
+    # OJO: hasta que el CHECK de la base también lo permita, esto pasa la
+    # validación de la app pero el INSERT real fallaría — acá se mockea
+    # crear_compra, así que no depende de que la base ya esté migrada.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "accion": "terminar",
+                "articulo_id": "5",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Propia",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Propia")
+
+
+def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert '<option value="Clark"' in respuesta.text
+    assert '<option value="Granel"' in respuesta.text
+    assert '<option value="Propia"' in respuesta.text
+
+
 def test_agregar_compra_articulo_sin_unidad_compra_configurada_muestra_error():
     with (
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
@@ -2187,6 +2231,8 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     assert 'class="boton-exito" id="boton-guardar"' in respuesta.text
     assert 'class="boton boton-peligro"' in respuesta.text
     assert "confirm('¿Seguro? Se pierde lo que cargaste de esta compra')" in respuesta.text
+    # Tercer tipo de retiro (Propia), además de Clark/Granel.
+    assert '<option value="Propia"' in respuesta.text
 
 
 def test_subir_foto_compra_proveedor_nuevo_sin_proveedores_existentes_igual_arma_el_codigo():

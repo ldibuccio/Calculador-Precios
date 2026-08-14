@@ -64,7 +64,7 @@ from core.lector_comandas import extraer_comanda
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, normalizar_texto
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
-TIPOS_RETIRO_VALIDOS = {"Clark", "Granel"}
+TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 
@@ -298,9 +298,9 @@ def _validar_sena(texto: str) -> tuple[str | None, float | None]:
 
 
 def _validar_tipo_retiro(valor: str) -> str | None:
-    """Valida que el tipo de retiro sea Clark o Granel."""
+    """Valida que el tipo de retiro sea uno de TIPOS_RETIRO_VALIDOS (Clark, Granel o Propia)."""
     if valor not in TIPOS_RETIRO_VALIDOS:
-        return "Elegí un tipo de retiro válido (Clark o Granel)."
+        return "Elegí un tipo de retiro válido (Clark, Granel o Propia)."
     return None
 
 
