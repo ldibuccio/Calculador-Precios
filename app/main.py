@@ -37,6 +37,7 @@ from app.db import (
     desactivar_articulo,
     desactivar_cliente,
     eliminar_compra,
+    eliminar_compras_del_dia_por_proveedor,
     eliminar_conversion,
     eliminar_ficha,
     listar_aprendizaje_articulos_por_proveedor,
@@ -1385,6 +1386,36 @@ def agregar_compra(
         return RedirectResponse(url="/compras", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
+
+
+@app.post("/compras/nueva/cancelar")
+def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
+    """Descarta TODA la carga de hoy de este proveedor (incluso lo ya guardado con "Agregar artículo") y vuelve a /compras.
+
+    La confirmación la pide el navegador (confirm() antes de mandar el
+    POST); acá no queda nada más por decidir: si llegó el POST, se borra.
+    """
+    try:
+        eliminar_compras_del_dia_por_proveedor(_hoy_argentina(), proveedor_id)
+    except Exception as error_db:
+        proveedor = obtener_proveedor(proveedor_id)
+        articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {
+                "articulos": articulos,
+                "modo": "nueva",
+                "compra": None,
+                "proveedor": proveedor,
+                "renglones_hoy": renglones_hoy,
+                "error": f"No se pudo cancelar: {error_db}",
+            },
+            status_code=500,
+        )
+
+    return RedirectResponse(url="/compras", status_code=303)
 
 
 def _numero_o_none(valor) -> float | None:

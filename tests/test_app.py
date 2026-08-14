@@ -1346,6 +1346,29 @@ def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
     assert "setTimeout" in respuesta.text
 
 
+def test_ver_nueva_compra_con_proveedor_botones_en_orden_guardar_agregar_cancelar():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    # Regresión: los 3 botones de abajo de todo, en este orden exacto y con
+    # estos colores. Solo "Cancelar" pide confirmación. Se busca por id, no
+    # por el texto visible "Agregar artículo", porque ese mismo texto
+    # también aparece en el <title> de la página (título de la pestaña).
+    orden = ['id="boton-terminar-carga"', 'id="boton-agregar-articulo"', 'id="boton-cancelar-carga"']
+    posiciones = [respuesta.text.index(texto) for texto in orden]
+    assert posiciones == sorted(posiciones)
+    assert 'class="boton-exito" id="boton-terminar-carga"' in respuesta.text
+    assert 'class="boton-peligro" id="boton-cancelar-carga"' in respuesta.text
+    assert 'action="/compras/nueva/cancelar"' in respuesta.text
+    assert "confirm('¿Seguro que querés cancelar? Se va a descartar todo lo cargado de este proveedor')" in respuesta.text
+    assert 'name="proveedor_id" value="200"' in respuesta.text
+
+
 def test_ver_nueva_compra_con_proveedor_muestra_cargado_hoy_con_formato_compacto():
     renglones_hoy = [
         {
@@ -1737,6 +1760,42 @@ def test_agregar_compra_error_de_base_muestra_mensaje_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar la compra" in respuesta.text
+
+
+def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_a_compras():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.eliminar_compras_del_dia_por_proveedor") as mock_eliminar,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/cancelar",
+            data={"proveedor_id": "200"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    # Se borra TODO lo del proveedor en el día, no un renglón puntual: no
+    # hace falta que el comprador haya cargado nada en el formulario para
+    # que se descarte lo que ya estaba guardado de "Agregar artículo".
+    mock_eliminar.assert_called_once_with(HOY_DE_PRUEBA, 200)
+
+
+def test_cancelar_carga_proveedor_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.eliminar_compras_del_dia_por_proveedor", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post("/compras/nueva/cancelar", data={"proveedor_id": "200"})
+
+    assert respuesta.status_code == 500
+    assert "No se pudo cancelar" in respuesta.text
+    # No pierde de vista al proveedor: sigue mostrando su formulario, no una
+    # página de error genérica.
+    assert "Saturno" in respuesta.text
 
 
 COMPRA_DE_PRUEBA = {

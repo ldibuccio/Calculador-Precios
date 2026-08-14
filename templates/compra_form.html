@@ -78,11 +78,8 @@
     display: block;
     box-sizing: border-box;
   }
-  .boton-secundario {
-    background: #fff;
-    color: #2563eb;
-    border: 1px solid #2563eb;
-  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -179,12 +176,19 @@
       </select>
 
       {% if modo == "nueva" %}
+      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
       <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
-      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-secundario" id="boton-terminar-carga">Terminar carga</button>
       {% else %}
       <button type="submit" id="boton-guardar-compra">Guardar</button>
       {% endif %}
     </form>
+    {% if modo == "nueva" %}
+    <form method="post" action="/compras/nueva/cancelar" id="form-cancelar-carga"
+          onsubmit="return confirm('¿Seguro que querés cancelar? Se va a descartar todo lo cargado de este proveedor');">
+      <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
+      <button type="submit" class="boton-peligro" id="boton-cancelar-carga">Cancelar</button>
+    </form>
+    {% endif %}
     {% if modo == "editar" %}
     <a class="volver" href="/compras">Volver a compras</a>
     {% endif %}

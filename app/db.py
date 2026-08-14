@@ -921,6 +921,29 @@ def eliminar_compra(compra_id: int) -> None:
         conexion.close()
 
 
+def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -> None:
+    """Borra TODAS las compras de un proveedor en una fecha (borrado real, mismo criterio que eliminar_compra).
+
+    Usado por "Cancelar" en /compras/nueva: descarta de una toda la carga
+    del día para ese proveedor, incluso los renglones que ya se habían
+    guardado al apretar "Agregar artículo" (esa acción guarda cada renglón
+    al toque, no queda nada pendiente del lado del cliente). Es una sola
+    sentencia DELETE: si Postgres rechaza el borrado de alguna fila (por
+    ejemplo, porque una recepción ya la referencia), no se borra ninguna —
+    ni siquiera hace falta un rollback explícito, no llega a haber commit.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM compras WHERE fecha_operacion = %s AND proveedor_id = %s",
+                (fecha_operacion, proveedor_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def listar_aprendizaje_articulos_por_proveedor(proveedor_id: int) -> list[dict]:
     """Devuelve lo aprendido (texto_leido -> articulo_id) para un proveedor puntual."""
     conexion = obtener_conexion()
