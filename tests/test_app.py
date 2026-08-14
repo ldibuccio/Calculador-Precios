@@ -1235,6 +1235,21 @@ def test_ver_nueva_compra_sin_proveedor_muestra_formulario_de_proveedor():
     assert "setTimeout" in respuesta.text
 
 
+def test_ver_nueva_compra_sin_proveedor_botones_confirmar_verde_y_cancelar_rojo():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva")
+
+    assert respuesta.status_code == 200
+    assert 'class="boton-exito" id="boton-confirmar-proveedor"' in respuesta.text
+    assert 'class="boton boton-peligro" id="boton-cancelar"' in respuesta.text
+    assert 'href="/compras"' in respuesta.text
+    # Todavía no se cargó nada en esta pantalla: Cancelar no pide
+    # confirmación, a diferencia del Cancelar de las pantallas siguientes.
+    assert "confirm(" not in respuesta.text
+    # Orden: Confirmar proveedor (verde) antes que Cancelar (rojo).
+    assert respuesta.text.index('id="boton-confirmar-proveedor"') < respuesta.text.index('id="boton-cancelar"')
+
+
 def test_ver_nueva_compra_muestra_autocompletado_en_los_dos_sentidos():
     with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
         respuesta = cliente.get("/compras/nueva")
