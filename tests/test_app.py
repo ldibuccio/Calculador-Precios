@@ -160,6 +160,14 @@ def test_ver_articulos_muestra_solo_nombre():
     assert "merma" not in respuesta.text.lower()
 
 
+def test_ver_articulos_incluye_link_a_inicio():
+    with patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.get("/articulos")
+
+    assert respuesta.status_code == 200
+    assert 'href="/inicio"' in respuesta.text
+
+
 def test_agregar_articulo_exitoso_redirige_a_articulos():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
@@ -348,6 +356,14 @@ def test_ver_clientes_muestra_nombre_descuento_y_utilidad_como_porcentaje():
     assert "20.0%" in respuesta.text
     assert "/clientes/1/editar" in respuesta.text
     assert "/clientes/1/eliminar" in respuesta.text
+
+
+def test_ver_clientes_incluye_link_a_inicio():
+    with patch("app.main.listar_clientes", return_value=[]):
+        respuesta = cliente.get("/clientes")
+
+    assert respuesta.status_code == 200
+    assert 'href="/inicio"' in respuesta.text
 
 
 def test_agregar_cliente_exitoso_redirige_a_clientes():
@@ -1283,6 +1299,19 @@ def test_ver_compras_no_muestra_nada_de_sistema_ahi():
     assert 'href="/sistema"' in respuesta.text
 
 
+def test_ver_compras_incluye_links_a_catalogo_y_a_inicio():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'href="/articulos"' in respuesta.text
+    assert 'href="/conversion"' in respuesta.text
+    assert 'href="/inicio"' in respuesta.text
+
+
 def test_ver_sistema_muestra_el_indicador_de_espacio_usado():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -1335,6 +1364,13 @@ def test_ver_sistema_muestra_el_boton_de_limpieza_con_la_cantidad_real():
     assert 'action="/sistema/limpiar-fotos-viejas"' in respuesta.text
     assert 'id="boton-limpiar-fotos-viejas"' in respuesta.text
     assert 'data-cantidad="2"' in respuesta.text
+
+
+def test_ver_sistema_incluye_link_a_inicio():
+    respuesta = cliente.get("/sistema")
+
+    assert respuesta.status_code == 200
+    assert 'href="/inicio"' in respuesta.text
 
 
 def test_limpiar_fotos_viejas_borra_las_encontradas_y_limpia_foto_ruta():
@@ -3650,3 +3686,53 @@ def test_ver_negociar_tiene_link_de_ida_y_vuelta_con_costeo_prueba():
 
     assert 'href="/costeo-prueba"' in respuesta_negociar.text
     assert 'href="/negociar"' in respuesta_costeo.text
+
+
+def test_ver_inicio_muestra_las_6_areas():
+    respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    assert "Frutamax" in respuesta.text
+    assert 'href="/compras"' in respuesta.text
+    assert 'href="/comercial"' in respuesta.text
+    assert 'href="/logistica"' in respuesta.text
+    assert 'href="/deposito"' in respuesta.text
+    assert 'href="/gerencia"' in respuesta.text
+    assert 'href="/sistema"' in respuesta.text
+
+
+def test_ver_comercial_muestra_los_tres_accesos():
+    respuesta = cliente.get("/comercial")
+
+    assert respuesta.status_code == 200
+    assert 'href="/clientes"' in respuesta.text
+    assert 'href="/fichas"' in respuesta.text
+    assert 'href="/negociar"' in respuesta.text
+    assert 'href="/inicio"' in respuesta.text
+
+
+def test_ver_logistica_muestra_en_construccion_y_vuelve_a_inicio():
+    respuesta = cliente.get("/logistica")
+
+    assert respuesta.status_code == 200
+    assert "Logística" in respuesta.text
+    assert "En construcción" in respuesta.text
+    assert 'href="/inicio"' in respuesta.text
+
+
+def test_ver_deposito_muestra_en_construccion_y_vuelve_a_inicio():
+    respuesta = cliente.get("/deposito")
+
+    assert respuesta.status_code == 200
+    assert "Depósito" in respuesta.text
+    assert "En construcción" in respuesta.text
+    assert 'href="/inicio"' in respuesta.text
+
+
+def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
+    respuesta = cliente.get("/gerencia")
+
+    assert respuesta.status_code == 200
+    assert "Gerencia" in respuesta.text
+    assert "En construcción" in respuesta.text
+    assert 'href="/inicio"' in respuesta.text

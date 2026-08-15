@@ -382,6 +382,11 @@ def estado() -> dict:
     return {"estado": "ok"}
 
 
+@app.get("/inicio")
+def ver_inicio(request: Request):
+    return templates.TemplateResponse(request, "inicio.html", {})
+
+
 @app.get("/salud/db")
 def salud_db() -> dict:
     try:
@@ -2421,6 +2426,27 @@ def limpiar_fotos_viejas_ruta(request: Request):
     else:
         mensaje = f"Se liberaron {borradas} de {len(fotos_a_borrar)} fotos. Las demás quedaron para otro intento."
     return _renderizar_pantalla_sistema(request, mensaje=mensaje)
+
+
+@app.get("/comercial")
+def ver_comercial(request: Request):
+    """Hub del área Comercial: junta los accesos a Clientes, Fichas y Negociar precios."""
+    return templates.TemplateResponse(request, "comercial.html", {})
+
+
+@app.get("/logistica")
+def ver_logistica(request: Request):
+    return _renderizar_en_construccion(request, "Logística", volver_url="/inicio", volver_texto="Volver a Inicio")
+
+
+@app.get("/deposito")
+def ver_deposito(request: Request):
+    return _renderizar_en_construccion(request, "Depósito", volver_url="/inicio", volver_texto="Volver a Inicio")
+
+
+@app.get("/gerencia")
+def ver_gerencia(request: Request):
+    return _renderizar_en_construccion(request, "Gerencia", volver_url="/inicio", volver_texto="Volver a Inicio")
 
 
 if __name__ == "__main__":

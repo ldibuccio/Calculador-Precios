@@ -86,6 +86,14 @@
   .boton-editar { background: #2563eb; }
   .boton-eliminar { background: #dc2626; }
   .form-eliminar { display: inline; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
 </style>
 </head>
 <body>
@@ -153,5 +161,7 @@
     <p class="vacio">No hay artículos cargados todavía.</p>
     {% endif %}
   </div>
+
+  <a class="volver" href="/inicio">Inicio</a>
 </body>
 </html>
