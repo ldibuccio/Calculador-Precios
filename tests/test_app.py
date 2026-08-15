@@ -2731,6 +2731,12 @@ def test_ver_carga_comandas_multiples_muestra_la_pantalla():
     # reusando la misma lógica que la carga manual.
     assert "sugerirNombreProveedorComanda" in respuesta.text
     assert "sugerirCodigoProveedorComanda" in respuesta.text
+    # Regresión: al agregar un renglón en blanco, si el tilde "usar este
+    # retiro para todos" está tildado, el renglón nuevo se precarga con ese
+    # retiro en vez de quedar en "Elegí...".
+    assert "aplicar_retiro_a_todos" in respuesta.text
+    assert 'checkboxAplicarATodos.checked' in respuesta.text
+    assert "retiroActivo ? document.getElementById" in respuesta.text
 
 
 def test_ver_carga_comandas_multiples_incluye_los_proveedores_conocidos_para_sugerir():
