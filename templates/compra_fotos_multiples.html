@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar varias comandas por foto</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .tarjeta.con-advertencia {
+    border: 2px solid #dc2626;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+  .texto-leido {
+    color: #555;
+    font-size: 0.9rem;
+    margin: 0 0 0.5rem;
+  }
+  .advertencia {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form select, form input[type="text"], form input[type="number"] {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  input[type="file"] {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+  .campo-descartar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+  }
+  .campo-descartar input {
+    width: auto;
+    margin-top: 0;
+  }
+  .campo-descartar label {
+    margin-top: 0;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .boton-ver-foto {
+    margin-top: 0.75rem;
+    width: auto;
+    display: inline-block;
+    padding: 0.5rem 0.9rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .modal-foto {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 100;
+    padding: 1rem;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-foto.visible {
+    display: flex;
+  }
+  .modal-foto-contenido {
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .modal-foto img {
+    max-width: 100%;
+    max-height: 85vh;
+    display: block;
+    border-radius: 8px;
+  }
+  .modal-foto-cerrar {
+    margin-top: 0.75rem;
+    width: 100%;
+    padding: 0.65rem;
+    background: #fff;
+    color: #222;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .barra-progreso {
+    background: #e5e7eb;
+    border-radius: 8px;
+    height: 10px;
+    overflow: hidden;
+    margin-top: 0.75rem;
+  }
+  .barra-progreso-relleno {
+    background: #2563eb;
+    height: 100%;
+    width: 0%;
+    transition: width 0.2s;
+  }
+</style>
+</head>
+<body>
+  <h1>Cargar varias comandas por foto</h1>
+  <p class="ayuda">Elegí todas las fotos de comandas que quieras cargar. Se leen y se revisan de a una: al guardar una, pasa automáticamente a la siguiente.</p>
+
+  <div id="seccion-elegir-fotos" class="tarjeta">
+    <label for="input-fotos">Fotos de las comandas</label>
+    <input type="file" id="input-fotos" accept="image/*" multiple>
+    <button type="button" id="boton-empezar">Empezar</button>
+  </div>
+
+  <div id="seccion-progreso" class="tarjeta" style="display: none;">
+    <p class="ayuda" id="texto-progreso">Leyendo comanda <span id="progreso-actual"></span> de <span id="progreso-total"></span>...</p>
+    <div class="barra-progreso"><div id="barra-progreso-relleno" class="barra-progreso-relleno"></div></div>
+  </div>
+
+  <div id="error-multiple" class="error" style="display: none;"></div>
+
+  <div id="acciones-error" style="display: none;">
+    <button type="button" id="boton-reintentar-foto" class="boton-secundario">Reintentar esta foto</button>
+    <button type="button" id="boton-saltar-foto" class="boton-peligro">Saltar esta foto</button>
+  </div>
+
+  <div id="contenedor-revision" style="display: none;">
+    <form id="form-revision-multiple">
+      <div id="contenido-fragmento"></div>
+
+      <button type="button" id="boton-guardar-siguiente" class="boton-exito">Guardar y siguiente</button>
+      <button type="button" id="boton-agregar-articulos">Agregar Artículos</button>
+      <button type="button" id="boton-cancelar-multiple" class="boton-peligro">Cancelar</button>
+    </form>
+  </div>
+
+  <script>
+    let colaFotos = [];
+    let indiceActual = 0;
+    let CANTIDAD_RENGLONES_ACTUAL = 0;
+
+    function verFoto(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.add("visible");
+      }
+    }
+
+    function cerrarFoto(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.remove("visible");
+      }
+    }
+
+    function aplicarRetiroATodosSiCorresponde() {
+      const checkbox = document.getElementById("aplicar_retiro_a_todos");
+      if (!checkbox || !checkbox.checked) {
+        return;
+      }
+      const valorRetiro = document.getElementById("item_0_tipo_retiro").value;
+      for (let indice = 1; indice < CANTIDAD_RENGLONES_ACTUAL; indice++) {
+        const select = document.getElementById("item_" + indice + "_tipo_retiro");
+        if (select) {
+          select.value = valorRetiro;
+        }
+      }
+    }
+
+    function actualizarContenidoRenglon(indice, select) {
+      const opcion = select.selectedOptions[0];
+      const contenidoInput = document.getElementById("item_" + indice + "_contenido_por_cajon");
+      if (!opcion) {
+        return;
+      }
+      const contenidoReferencia = opcion.dataset.contenidoReferencia;
+      if (contenidoReferencia) {
+        contenidoInput.value = contenidoReferencia;
+      }
+    }
+
+    function alternarDescarte(indice, checkbox) {
+      const campos = [
+        document.getElementById("item_" + indice + "_articulo_id"),
+        document.getElementById("item_" + indice + "_cantidad_cajones"),
+        document.getElementById("item_" + indice + "_contenido_por_cajon"),
+        document.getElementById("item_" + indice + "_tipo_retiro"),
+      ];
+      campos.forEach(function (campo) {
+        if (campo) {
+          campo.required = !checkbox.checked;
+        }
+      });
+    }
+
+    function inicializarDescartes() {
+      const cantidadInput = document.querySelector('input[name="cantidad_renglones"]');
+      CANTIDAD_RENGLONES_ACTUAL = cantidadInput ? parseInt(cantidadInput.value, 10) || 0 : 0;
+      for (let indice = 0; indice < CANTIDAD_RENGLONES_ACTUAL; indice++) {
+        const checkbox = document.getElementById("item_" + indice + "_descartar");
+        if (checkbox) {
+          alternarDescarte(indice, checkbox);
+        }
+      }
+    }
+
+    function actualizarBotonGuardar() {
+      const boton = document.getElementById("boton-guardar-siguiente");
+      if (!boton) {
+        return;
+      }
+      const esUltima = indiceActual === colaFotos.length - 1;
+      boton.textContent = esUltima ? "Guardar y terminar" : "Guardar y siguiente";
+      boton.disabled = false;
+    }
+
+    function actualizarBarraProgreso() {
+      const relleno = document.getElementById("barra-progreso-relleno");
+      if (relleno) {
+        relleno.style.width = Math.round((indiceActual / colaFotos.length) * 100) + "%";
+      }
+    }
+
+    function mostrarRevision(html) {
+      document.getElementById("contenido-fragmento").innerHTML = html;
+      document.getElementById("contenedor-revision").style.display = "block";
+      inicializarDescartes();
+      actualizarBotonGuardar();
+    }
+
+    function mostrarErrorMultiple(mensaje) {
+      const errorDiv = document.getElementById("error-multiple");
+      errorDiv.textContent = mensaje;
+      errorDiv.style.display = "block";
+    }
+
+    function ocultarErrorMultiple() {
+      document.getElementById("error-multiple").style.display = "none";
+    }
+
+    // Si la comanda no se pudo guardar (validación o error de base de
+    // datos), el servidor devuelve la pantalla completa de revisión de
+    // nuevo, con lo que el usuario había tipeado ya cargado en los campos.
+    // Se extrae de ahí el mensaje de error y los renglones para no perder
+    // lo que el usuario ya había corregido.
+    function mostrarErrorDesdeHtml(html) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+
+      const errorDiv = doc.querySelector(".error");
+      mostrarErrorMultiple(errorDiv ? errorDiv.textContent : "No se pudo guardar la comanda.");
+
+      const formOriginal = doc.getElementById("form-confirmar-foto");
+      if (formOriginal) {
+        const codigoNuevo = formOriginal.querySelector("#codigo_puesto");
+        const nombreNuevo = formOriginal.querySelector("#nombre");
+        if (codigoNuevo) {
+          document.getElementById("codigo_puesto").value = codigoNuevo.value;
+        }
+        if (nombreNuevo) {
+          document.getElementById("nombre").value = nombreNuevo.value;
+        }
+
+        const tarjetas = formOriginal.querySelectorAll(".tarjeta");
+        const soloRenglones = Array.from(tarjetas).filter(function (el) {
+          const titulo = el.querySelector("h2");
+          return titulo && titulo.textContent.indexOf("Artículo") === 0;
+        });
+        const contenedorRenglones = document.getElementById("renglones-comanda");
+        if (contenedorRenglones && soloRenglones.length > 0) {
+          contenedorRenglones.innerHTML = "";
+          soloRenglones.forEach(function (el) {
+            contenedorRenglones.appendChild(el);
+          });
+          const cantidadInput = document.querySelector('input[name="cantidad_renglones"]');
+          if (cantidadInput) {
+            cantidadInput.value = soloRenglones.length;
+          }
+        }
+      }
+
+      document.getElementById("contenedor-revision").style.display = "block";
+      inicializarDescartes();
+      actualizarBotonGuardar();
+    }
+
+    function procesarSiguienteFoto() {
+      ocultarErrorMultiple();
+      document.getElementById("acciones-error").style.display = "none";
+      document.getElementById("contenedor-revision").style.display = "none";
+      document.getElementById("seccion-progreso").style.display = "block";
+      document.getElementById("progreso-actual").textContent = indiceActual + 1;
+      document.getElementById("progreso-total").textContent = colaFotos.length;
+      actualizarBarraProgreso();
+
+      const formData = new FormData();
+      formData.append("foto", colaFotos[indiceActual]);
+
+      fetch("/compras/nueva/fotos/leer", { method: "POST", body: formData })
+        .then(function (resp) {
+          return resp.json();
+        })
+        .then(function (data) {
+          document.getElementById("seccion-progreso").style.display = "none";
+          if (!data.ok) {
+            mostrarErrorMultiple(data.error || "No se pudo leer la foto.");
+            document.getElementById("acciones-error").style.display = "block";
+            return;
+          }
+          mostrarRevision(data.html);
+        })
+        .catch(function (error) {
+          document.getElementById("seccion-progreso").style.display = "none";
+          mostrarErrorMultiple("No se pudo conectar con el servidor: " + error);
+          document.getElementById("acciones-error").style.display = "block";
+        });
+    }
+
+    function avanzarSiguienteOFinalizar() {
+      indiceActual += 1;
+      if (indiceActual >= colaFotos.length) {
+        window.location = "/compras";
+        return;
+      }
+      procesarSiguienteFoto();
+    }
+
+    function guardarComandaActual() {
+      const form = document.getElementById("form-revision-multiple");
+      if (!form.reportValidity()) {
+        return;
+      }
+      const boton = document.getElementById("boton-guardar-siguiente");
+      boton.disabled = true;
+      boton.textContent = "Guardando...";
+
+      const formData = new FormData(form);
+      formData.append("accion", "guardar");
+
+      fetch("/compras/nueva/foto/confirmar", { method: "POST", body: formData })
+        .then(function (resp) {
+          if (resp.redirected) {
+            avanzarSiguienteOFinalizar();
+            return null;
+          }
+          return resp.text();
+        })
+        .then(function (texto) {
+          if (texto) {
+            mostrarErrorDesdeHtml(texto);
+          }
+        })
+        .catch(function (error) {
+          boton.disabled = false;
+          boton.textContent = "Guardar y siguiente";
+          mostrarErrorMultiple("No se pudo conectar con el servidor: " + error);
+        });
+    }
+
+    // Clona el bloque del primer renglón (con el <select> de artículos ya
+    // armado) para agregar una fila en blanco sin ir a buscar la lista de
+    // artículos de nuevo ni tocar el servidor.
+    function agregarRenglonEnBlanco() {
+      const contenedor = document.getElementById("renglones-comanda");
+      if (!contenedor) {
+        return;
+      }
+      const bloques = contenedor.querySelectorAll(".tarjeta");
+      if (bloques.length === 0) {
+        return;
+      }
+      const nuevoIndice = bloques.length;
+      const clon = bloques[0].cloneNode(true);
+
+      const campoAplicarATodos = clon.querySelector("#aplicar_retiro_a_todos");
+      if (campoAplicarATodos) {
+        const contenedorCampo = campoAplicarATodos.closest(".campo-descartar");
+        if (contenedorCampo) {
+          contenedorCampo.remove();
+        }
+      }
+
+      const selectRetiro = clon.querySelector('select[id^="item_"][id$="_tipo_retiro"]');
+      if (selectRetiro) {
+        selectRetiro.removeAttribute("onchange");
+      }
+
+      clon.querySelectorAll("[id]").forEach(function (el) {
+        el.id = el.id.replace(/^item_0_/, "item_" + nuevoIndice + "_");
+      });
+      clon.querySelectorAll("[name]").forEach(function (el) {
+        el.name = el.name.replace(/^item_0_/, "item_" + nuevoIndice + "_");
+      });
+      clon.querySelectorAll("[for]").forEach(function (el) {
+        el.setAttribute("for", el.getAttribute("for").replace(/^item_0_/, "item_" + nuevoIndice + "_"));
+      });
+      clon.querySelectorAll("[onchange]").forEach(function (el) {
+        const valor = el.getAttribute("onchange");
+        if (valor.indexOf("(0,") !== -1) {
+          el.setAttribute("onchange", valor.replace("(0,", "(" + nuevoIndice + ","));
+        }
+      });
+
+      clon.classList.remove("con-advertencia");
+      const advertencia = clon.querySelector(".advertencia");
+      if (advertencia) {
+        advertencia.remove();
+      }
+
+      const textoLeido = clon.querySelector(".texto-leido");
+      if (textoLeido) {
+        textoLeido.textContent = 'Texto leído: "(sin leer)"';
+      }
+
+      clon.querySelectorAll('input[type="text"], input[type="hidden"], input[type="number"]').forEach(function (el) {
+        el.value = "";
+      });
+      const selectArticulo = clon.querySelector('select[id$="_articulo_id"]');
+      if (selectArticulo) {
+        selectArticulo.value = "";
+      }
+      if (selectRetiro) {
+        selectRetiro.value = "";
+      }
+      const checkboxDescartar = clon.querySelector('input[type="checkbox"][id$="_descartar"]');
+      if (checkboxDescartar) {
+        checkboxDescartar.checked = false;
+      }
+
+      const titulo = clon.querySelector("h2");
+      if (titulo) {
+        titulo.textContent = "Artículo " + (nuevoIndice + 1);
+      }
+
+      contenedor.appendChild(clon);
+
+      const cantidadInput = document.querySelector('input[name="cantidad_renglones"]');
+      if (cantidadInput) {
+        cantidadInput.value = nuevoIndice + 1;
+      }
+      CANTIDAD_RENGLONES_ACTUAL = nuevoIndice + 1;
+      if (checkboxDescartar) {
+        alternarDescarte(nuevoIndice, checkboxDescartar);
+      }
+    }
+
+    document.getElementById("boton-empezar").addEventListener("click", function () {
+      const input = document.getElementById("input-fotos");
+      if (!input.files || input.files.length === 0) {
+        alert("Elegí al menos una foto.");
+        return;
+      }
+      colaFotos = Array.from(input.files);
+      indiceActual = 0;
+      document.getElementById("seccion-elegir-fotos").style.display = "none";
+      procesarSiguienteFoto();
+    });
+
+    document.getElementById("boton-guardar-siguiente").addEventListener("click", guardarComandaActual);
+    document.getElementById("boton-agregar-articulos").addEventListener("click", agregarRenglonEnBlanco);
+
+    document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
+      if (confirm("¿Seguro? Se pierde la foto que estás cargando ahora (las que ya guardaste quedan guardadas).")) {
+        window.location = "/compras";
+      }
+    });
+
+    document.getElementById("boton-reintentar-foto").addEventListener("click", function () {
+      procesarSiguienteFoto();
+    });
+
+    document.getElementById("boton-saltar-foto").addEventListener("click", function () {
+      if (confirm("¿Seguro? Esta foto no se va a guardar.")) {
+        avanzarSiguienteOFinalizar();
+      }
+    });
+  </script>
+</body>
+</html>

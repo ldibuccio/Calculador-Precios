@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
@@ -1477,31 +1477,26 @@ def _bytes_desde_data_uri(data_uri: str) -> bytes | None:
         return None
 
 
-@app.post("/compras/nueva/foto")
-async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
-    try:
-        imagen = await foto.read()
-        foto_preview = _generar_preview_foto(imagen)
-        datos = extraer_comanda(imagen)
-    except Exception as error_lector:
-        try:
-            proveedores = listar_proveedores()
-        except Exception:
-            proveedores = []
-        return templates.TemplateResponse(
-            request,
-            "compra_proveedor_form.html",
-            {"proveedores": proveedores, "error": f"No se pudo leer la foto: {error_lector}"},
-            status_code=500,
-        )
+def _armar_sugerencias_desde_datos_leidos(
+    datos: dict,
+    proveedores_existentes: list[dict],
+    articulos_existentes: list[dict],
+    conversiones_existentes: list[dict],
+) -> dict:
+    """Arma las sugerencias de proveedor y renglones a partir de lo que ya devolvió extraer_comanda.
 
-    try:
-        proveedores_existentes = listar_proveedores()
-        articulos_existentes = listar_articulos()
-        conversiones_existentes = listar_todas_las_conversiones()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    Es la parte de subir_foto_compra que NO depende de si la lectura salió
+    bien o mal — recibe "datos" ya parseado (o {} si la IA no pudo leer
+    nada, para el modo de fotos múltiples) y hace exactamente lo mismo que
+    hacía antes inline: adivinar_proveedor, traer el aprendizaje de ESE
+    proveedor si matcheó uno existente, y adivinar_articulo renglón por
+    renglón. Compartida entre subir_foto_compra (una foto) y
+    leer_foto_comanda_multiple (varias fotos) para no duplicar esta lógica.
 
+    Devuelve {"codigo_puesto_sugerido", "nombre_sugerido", "renglones"}.
+    Con datos={} (o sin "items"), renglones queda en lista vacía — cada
+    llamador decide qué hacer con eso.
+    """
     proveedor_leido = datos.get("proveedor") or {}
     proveedor_sugerido = adivinar_proveedor(proveedor_leido, proveedores_existentes)
 
@@ -1531,18 +1526,104 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
             }
         )
 
+    return {
+        "codigo_puesto_sugerido": proveedor_sugerido["codigo_puesto"] if proveedor_sugerido else "",
+        "nombre_sugerido": proveedor_sugerido["nombre"] if proveedor_sugerido else (proveedor_leido.get("nombre") or ""),
+        "renglones": renglones,
+    }
+
+
+@app.post("/compras/nueva/foto")
+async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
+    try:
+        imagen = await foto.read()
+        foto_preview = _generar_preview_foto(imagen)
+        datos = extraer_comanda(imagen)
+    except Exception as error_lector:
+        try:
+            proveedores = listar_proveedores()
+        except Exception:
+            proveedores = []
+        return templates.TemplateResponse(
+            request,
+            "compra_proveedor_form.html",
+            {"proveedores": proveedores, "error": f"No se pudo leer la foto: {error_lector}"},
+            status_code=500,
+        )
+
+    try:
+        proveedores_existentes = listar_proveedores()
+        articulos_existentes = listar_articulos()
+        conversiones_existentes = listar_todas_las_conversiones()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    sugerencias = _armar_sugerencias_desde_datos_leidos(
+        datos, proveedores_existentes, articulos_existentes, conversiones_existentes
+    )
+
     return templates.TemplateResponse(
         request,
         "compra_revision_foto.html",
         {
             "articulos": articulos_existentes,
-            "codigo_puesto_sugerido": proveedor_sugerido["codigo_puesto"] if proveedor_sugerido else "",
-            "nombre_sugerido": proveedor_sugerido["nombre"] if proveedor_sugerido else (proveedor_leido.get("nombre") or ""),
-            "renglones": renglones,
+            "codigo_puesto_sugerido": sugerencias["codigo_puesto_sugerido"],
+            "nombre_sugerido": sugerencias["nombre_sugerido"],
+            "renglones": sugerencias["renglones"],
             "foto_preview": foto_preview,
             "error": None,
         },
     )
+
+
+@app.get("/compras/nueva/fotos")
+def ver_carga_comandas_multiples(request: Request):
+    return templates.TemplateResponse(request, "compra_fotos_multiples.html", {})
+
+
+@app.post("/compras/nueva/fotos/leer")
+async def leer_foto_comanda_multiple(foto: UploadFile = File(...)):
+    imagen = await foto.read()
+    foto_preview = _generar_preview_foto(imagen)
+    try:
+        datos = extraer_comanda(imagen)
+    except Exception:
+        datos = {}
+
+    try:
+        proveedores_existentes = listar_proveedores()
+        articulos_existentes = listar_articulos()
+        conversiones_existentes = listar_todas_las_conversiones()
+    except Exception as error_db:
+        return JSONResponse({"ok": False, "error": f"Error al conectar con la base de datos: {error_db}"})
+
+    sugerencias = _armar_sugerencias_desde_datos_leidos(
+        datos, proveedores_existentes, articulos_existentes, conversiones_existentes
+    )
+    renglones = sugerencias["renglones"] or [
+        {
+            "texto_leido": "",
+            "articulo_id": None,
+            "cantidad_cajones": None,
+            "contenido_por_cajon": None,
+            "importe": None,
+            "sena": None,
+            "nota_margen": "",
+            "advertencia": True,
+            "descartado": False,
+        }
+    ]
+
+    html = templates.env.get_template("_fragmento_revision_comanda_multiple.html").render(
+        {
+            "articulos": articulos_existentes,
+            "codigo_puesto_sugerido": sugerencias["codigo_puesto_sugerido"],
+            "nombre_sugerido": sugerencias["nombre_sugerido"],
+            "renglones": renglones,
+            "foto_preview": foto_preview,
+        }
+    )
+    return JSONResponse({"ok": True, "html": html, "cantidad_renglones": len(renglones)})
 
 
 @app.post("/compras/nueva/foto/confirmar")

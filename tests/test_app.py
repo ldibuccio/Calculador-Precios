@@ -2686,6 +2686,109 @@ def test_confirmar_compra_foto_conserva_la_foto_al_reintentar_por_error():
     assert "data:image/jpeg;base64,ABC123" in respuesta.text
 
 
+def test_ver_carga_comandas_multiples_muestra_la_pantalla():
+    respuesta = cliente.get("/compras/nueva/fotos")
+
+    assert respuesta.status_code == 200
+    assert "Cargar varias comandas por foto" in respuesta.text
+    assert 'id="input-fotos"' in respuesta.text
+    assert "multiple" in respuesta.text
+    assert 'id="boton-guardar-siguiente"' in respuesta.text
+
+
+def test_link_multiples_comandas_en_pantalla_de_una_foto():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva")
+
+    assert respuesta.status_code == 200
+    assert 'href="/compras/nueva/fotos"' in respuesta.text
+
+
+def test_leer_foto_comanda_multiple_adivina_proveedor_y_articulo():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/fotos/leer",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is True
+    assert datos["cantidad_renglones"] == 2
+    assert "Saturno" in datos["html"]
+    assert "N07P41" in datos["html"]
+    assert "Kiwi" in datos["html"]
+    assert 'id="renglones-comanda"' in datos["html"]
+
+
+def test_leer_foto_comanda_multiple_si_falla_la_ia_devuelve_renglon_en_blanco_para_completar_a_mano():
+    with (
+        patch("app.main.extraer_comanda", side_effect=Exception("no se pudo leer")),
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/fotos/leer",
+            files={"foto": ("comanda.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is True
+    assert datos["cantidad_renglones"] == 1
+    assert "⚠ revisar" in datos["html"]
+    # No cortó la cola: la foto sigue disponible para el modal "Ver foto".
+    assert "modal-foto" in datos["html"]
+
+
+def test_leer_foto_comanda_multiple_sin_items_leidos_devuelve_renglon_en_blanco():
+    comanda_sin_items = {
+        "proveedor": {"nombre": "Saturno", "tipo_pabellon": "nave", "numero_pabellon": "7", "puesto": "41"},
+        "fecha": "2026-08-06",
+        "items": [],
+    }
+    with (
+        patch("app.main.extraer_comanda", return_value=comanda_sin_items),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/fotos/leer",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is True
+    assert datos["cantidad_renglones"] == 1
+    assert "⚠ revisar" in datos["html"]
+
+
+def test_leer_foto_comanda_multiple_error_de_base_devuelve_ok_false():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", side_effect=Exception("sin conexión")),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/fotos/leer",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "error" in datos
+
+
 def test_ver_costeo_prueba_muestra_tabla_con_formato():
     articulos = [
         {

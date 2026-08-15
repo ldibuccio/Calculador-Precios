@@ -1,0 +1,17 @@
+<input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
+<input type="hidden" name="foto_preview" value="{{ foto_preview }}">
+
+{% if foto_preview %}
+<div id="modal-foto" class="modal-foto" onclick="cerrarFoto(event)">
+  <div class="modal-foto-contenido">
+    <img src="{{ foto_preview }}" alt="Foto de la comanda">
+    <button type="button" class="modal-foto-cerrar" onclick="cerrarFoto(event)">Cerrar</button>
+  </div>
+</div>
+{% endif %}
+
+{% include "_fragmento_proveedor_comanda.html" %}
+
+<div id="renglones-comanda">
+{% include "_fragmento_renglones_comanda.html" %}
+</div>

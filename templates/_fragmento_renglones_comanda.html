@@ -1,0 +1,63 @@
+    {% for r in renglones %}
+    <div class="tarjeta{% if r.advertencia %} con-advertencia{% endif %}">
+      <h2>Artículo {{ loop.index }}</h2>
+      {% if r.advertencia %}
+      <span class="advertencia">⚠ revisar</span>
+      {% endif %}
+      <p class="texto-leido">Texto leído: "{{ r.texto_leido or "(sin leer)" }}"{% if r.nota_margen %} · nota al margen: "{{ r.nota_margen }}"{% endif %}</p>
+      <input type="hidden" name="item_{{ loop.index0 }}_texto_leido" value="{{ r.texto_leido }}">
+      {% if foto_preview %}
+      <button type="button" class="boton-ver-foto" onclick="verFoto(event)">Ver foto</button>
+      {% endif %}
+
+      <label for="item_{{ loop.index0 }}_articulo_id">Artículo *</label>
+      <select id="item_{{ loop.index0 }}_articulo_id" name="item_{{ loop.index0 }}_articulo_id"
+              onchange="actualizarContenidoRenglon({{ loop.index0 }}, this)" required>
+        <option value="" {% if not r.articulo_id %}selected{% endif %}>Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}"
+                data-unidad-compra="{{ a.unidad_compra or '' }}"
+                data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"
+                {% if r.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="item_{{ loop.index0 }}_cantidad_cajones">Cantidad de cajones/cajas *</label>
+      <input type="number" id="item_{{ loop.index0 }}_cantidad_cajones" name="item_{{ loop.index0 }}_cantidad_cajones"
+             min="0" step="0.01" required value="{% if r.cantidad_cajones is not none %}{{ r.cantidad_cajones }}{% endif %}">
+
+      <label for="item_{{ loop.index0 }}_contenido_por_cajon">Contenido por cajón *</label>
+      <input type="number" id="item_{{ loop.index0 }}_contenido_por_cajon" name="item_{{ loop.index0 }}_contenido_por_cajon"
+             min="0" step="0.01" required value="{% if r.contenido_por_cajon is not none %}{{ r.contenido_por_cajon }}{% endif %}">
+
+      <label for="item_{{ loop.index0 }}_importe">Importe</label>
+      <input type="number" id="item_{{ loop.index0 }}_importe" name="item_{{ loop.index0 }}_importe"
+             min="0" step="0.01" value="{% if r.importe is not none %}{{ r.importe }}{% endif %}">
+      <p class="ayuda">Dejalo vacío si todavía no tenés precio.</p>
+
+      <label for="item_{{ loop.index0 }}_sena">Seña</label>
+      <input type="number" id="item_{{ loop.index0 }}_sena" name="item_{{ loop.index0 }}_sena"
+             min="0" step="0.01" value="{% if r.sena is not none %}{{ r.sena }}{% endif %}">
+
+      <label for="item_{{ loop.index0 }}_tipo_retiro">Retiro *</label>
+      <select id="item_{{ loop.index0 }}_tipo_retiro" name="item_{{ loop.index0 }}_tipo_retiro" required
+              {% if loop.first %}onchange="aplicarRetiroATodosSiCorresponde()"{% endif %}>
+        <option value="" {% if not r.tipo_retiro %}selected{% endif %}>Elegí...</option>
+        <option value="Clark" {% if r.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
+        <option value="Granel" {% if r.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
+        <option value="Propia" {% if r.tipo_retiro == "Propia" %}selected{% endif %}>Propia</option>
+      </select>
+      {% if loop.first and renglones|length > 1 %}
+      <div class="campo-descartar">
+        <input type="checkbox" id="aplicar_retiro_a_todos" onchange="aplicarRetiroATodosSiCorresponde()">
+        <label for="aplicar_retiro_a_todos">Usar este retiro para todos los artículos de esta comanda</label>
+      </div>
+      {% endif %}
+
+      <div class="campo-descartar">
+        <input type="checkbox" id="item_{{ loop.index0 }}_descartar" name="item_{{ loop.index0 }}_descartar"
+               onchange="alternarDescarte({{ loop.index0 }}, this)" {% if r.descartado %}checked{% endif %}>
+        <label for="item_{{ loop.index0 }}_descartar">No cargar este renglón</label>
+      </div>
+    </div>
+    {% endfor %}
