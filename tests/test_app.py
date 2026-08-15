@@ -2307,6 +2307,11 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     assert "confirm('¿Seguro? Se pierde lo que cargaste de esta compra')" in respuesta.text
     # Tercer tipo de retiro (Propia), además de Clark/Granel.
     assert '<option value="Propia"' in respuesta.text
+    # Regresión: la sugerencia puesto<->nombre de la carga manual también
+    # está disponible acá (ayuda extra sobre lo que ya adivinó la IA).
+    assert '"N07P41": "Saturno"' in respuesta.text
+    assert 'oninput="sugerirNombreProveedorComanda()"' in respuesta.text
+    assert 'oninput="sugerirCodigoProveedorComanda()"' in respuesta.text
 
 
 def test_subir_foto_compra_proveedor_nuevo_sin_proveedores_existentes_igual_arma_el_codigo():
@@ -2572,6 +2577,22 @@ def test_confirmar_compra_foto_renglon_invalido_muestra_error_con_numero():
     mock_crear.assert_not_called()
 
 
+def test_confirmar_compra_foto_error_incluye_sugerencia_de_proveedor_para_reintentar():
+    # Regresión: al reintentar después de un error, la pantalla de revisión
+    # sigue teniendo disponible la sugerencia puesto<->nombre (no solo en la
+    # primera carga de la foto).
+    datos = _datos_confirmar_foto(descartar_item_1=False)
+    with (
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.crear_compra"),
+    ):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
+
+    assert respuesta.status_code == 400
+    assert '"N07P41": "Saturno"' in respuesta.text
+
+
 def test_confirmar_compra_foto_conserva_el_retiro_ya_elegido_al_reintentar():
     # Regresión: si un renglón fallaba, el "Retiro" de los DEMÁS renglones se
     # perdía al re-mostrar el formulario (siempre volvía a "Elegí..."),
@@ -2703,6 +2724,22 @@ def test_ver_carga_comandas_multiples_muestra_la_pantalla():
     # límite de concurrencia (no una por una al guardar).
     assert "LIMITE_CONCURRENCIA_LECTURA" in respuesta.text
     assert "Leídas" in respuesta.text
+    # Regresión: al mostrar una comanda nueva (guardar/descartar y pasar a
+    # la siguiente) la pantalla vuelve al tope.
+    assert "window.scrollTo(0, 0)" in respuesta.text
+    # Regresión: sugerencia puesto<->nombre también en modo múltiple,
+    # reusando la misma lógica que la carga manual.
+    assert "sugerirNombreProveedorComanda" in respuesta.text
+    assert "sugerirCodigoProveedorComanda" in respuesta.text
+
+
+def test_ver_carga_comandas_multiples_incluye_los_proveedores_conocidos_para_sugerir():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva/fotos")
+
+    assert respuesta.status_code == 200
+    assert '"N07P41": "Saturno"' in respuesta.text
+    assert '"L03P38": "Frutamax"' in respuesta.text
 
 
 def test_link_multiples_comandas_en_pantalla_de_una_foto():

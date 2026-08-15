@@ -183,6 +183,41 @@
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
     const CANTIDAD_RENGLONES = {{ renglones|length }};
 
+    // Misma ayuda de sugerencia puesto<->nombre que ya existe en la carga
+    // manual (compra_proveedor_form.html): esto es un extra sobre lo que ya
+    // adivinó la IA al leer la foto — si el usuario corrige el proveedor
+    // sugerido, entra a jugar esta sugerencia.
+    const PROVEEDORES_CONOCIDOS = {
+      {% for p in proveedores %}"{{ p.codigo_puesto }}": "{{ p.nombre }}",{% endfor %}
+    };
+
+    function sugerirNombreProveedorComanda() {
+      const codigo = document.getElementById("codigo_puesto").value.trim().toUpperCase();
+      const nombreConocido = PROVEEDORES_CONOCIDOS[codigo];
+      if (nombreConocido) {
+        document.getElementById("nombre").value = nombreConocido;
+      }
+    }
+
+    // Igual que en la carga manual: si dos proveedores comparten nombre,
+    // queda ambiguo a qué puesto corresponde y no se sugiere nada.
+    const NOMBRES_A_CODIGOS_COMANDA = {};
+    Object.keys(PROVEEDORES_CONOCIDOS).forEach(function (codigo) {
+      const nombreNormalizado = PROVEEDORES_CONOCIDOS[codigo].trim().toLowerCase();
+      if (!NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado]) {
+        NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado] = [];
+      }
+      NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado].push(codigo);
+    });
+
+    function sugerirCodigoProveedorComanda() {
+      const nombreNormalizado = document.getElementById("nombre").value.trim().toLowerCase();
+      const codigos = NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado];
+      if (codigos && codigos.length === 1) {
+        document.getElementById("codigo_puesto").value = codigos[0];
+      }
+    }
+
     function verFoto(evento) {
       evento.preventDefault();
       const modal = document.getElementById("modal-foto");

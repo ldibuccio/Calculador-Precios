@@ -1566,6 +1566,7 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
         request,
         "compra_revision_foto.html",
         {
+            "proveedores": proveedores_existentes,
             "articulos": articulos_existentes,
             "codigo_puesto_sugerido": sugerencias["codigo_puesto_sugerido"],
             "nombre_sugerido": sugerencias["nombre_sugerido"],
@@ -1578,7 +1579,11 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
 
 @app.get("/compras/nueva/fotos")
 def ver_carga_comandas_multiples(request: Request):
-    return templates.TemplateResponse(request, "compra_fotos_multiples.html", {})
+    try:
+        proveedores = listar_proveedores()
+    except Exception:
+        proveedores = []
+    return templates.TemplateResponse(request, "compra_fotos_multiples.html", {"proveedores": proveedores})
 
 
 @app.post("/compras/nueva/fotos/leer")
@@ -1643,6 +1648,13 @@ async def confirmar_compra_foto(request: Request):
         articulos_existentes = listar_articulos()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # Solo para la sugerencia puesto<->nombre en la pantalla de revisión; si
+    # falla, la pantalla se muestra igual sin esa ayuda.
+    try:
+        proveedores_existentes = listar_proveedores()
+    except Exception:
+        proveedores_existentes = []
 
     articulos_por_id = {articulo["id"]: articulo for articulo in articulos_existentes}
 
@@ -1710,6 +1722,7 @@ async def confirmar_compra_foto(request: Request):
             request,
             "compra_revision_foto.html",
             {
+                "proveedores": proveedores_existentes,
                 "articulos": articulos_existentes,
                 "codigo_puesto_sugerido": codigo_puesto_texto,
                 "nombre_sugerido": nombre_texto,
@@ -1770,6 +1783,7 @@ async def confirmar_compra_foto(request: Request):
             request,
             "compra_revision_foto.html",
             {
+                "proveedores": proveedores_existentes,
                 "articulos": articulos_existentes,
                 "codigo_puesto_sugerido": codigo_puesto_texto,
                 "nombre_sugerido": nombre_texto,

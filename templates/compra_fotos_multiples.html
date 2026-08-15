@@ -226,6 +226,42 @@
     let indiceActual = 0;
     let CANTIDAD_RENGLONES_ACTUAL = 0;
 
+    // Misma ayuda de sugerencia puesto<->nombre que ya existe en la carga
+    // manual (compra_proveedor_form.html). Se define UNA vez acá, a nivel
+    // de página: el fragmento del proveedor se re-inyecta por cada comanda
+    // del lote, pero como los oninput="..." del fragmento son atributos
+    // inline (no listeners agregados por JS), siguen apuntando a estas
+    // mismas funciones globales cada vez que se inyecta una comanda nueva
+    // — no hace falta "reactivarlos" a mano.
+    const PROVEEDORES_CONOCIDOS = {
+      {% for p in proveedores %}"{{ p.codigo_puesto }}": "{{ p.nombre }}",{% endfor %}
+    };
+
+    function sugerirNombreProveedorComanda() {
+      const codigo = document.getElementById("codigo_puesto").value.trim().toUpperCase();
+      const nombreConocido = PROVEEDORES_CONOCIDOS[codigo];
+      if (nombreConocido) {
+        document.getElementById("nombre").value = nombreConocido;
+      }
+    }
+
+    const NOMBRES_A_CODIGOS_COMANDA = {};
+    Object.keys(PROVEEDORES_CONOCIDOS).forEach(function (codigo) {
+      const nombreNormalizado = PROVEEDORES_CONOCIDOS[codigo].trim().toLowerCase();
+      if (!NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado]) {
+        NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado] = [];
+      }
+      NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado].push(codigo);
+    });
+
+    function sugerirCodigoProveedorComanda() {
+      const nombreNormalizado = document.getElementById("nombre").value.trim().toLowerCase();
+      const codigos = NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado];
+      if (codigos && codigos.length === 1) {
+        document.getElementById("codigo_puesto").value = codigos[0];
+      }
+    }
+
     function verFoto(evento) {
       evento.preventDefault();
       const modal = document.getElementById("modal-foto");
@@ -457,6 +493,11 @@
         window.location = "/compras";
         return;
       }
+
+      // Sin esto, después de guardar/descartar la pantalla queda scrolleada
+      // abajo en los botones de la comanda anterior y no queda claro que ya
+      // arrancó una nueva.
+      window.scrollTo(0, 0);
 
       ocultarErrorMultiple();
       document.getElementById("acciones-error").style.display = "none";
