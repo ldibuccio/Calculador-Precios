@@ -5,14 +5,13 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 """
 
 import base64
-import html
 import io
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
@@ -2100,41 +2099,6 @@ def ver_cuadro_negociar_precios(request: Request):
             "bajo_objetivo": grupos["bajo_objetivo"],
             "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         },
-    )
-
-
-@app.get("/storage-prueba")
-def probar_storage_comandas():
-    """Pantalla TEMPORAL: prueba aislada de la conexión a Supabase Storage (bucket "comandas").
-
-    No toca compras ni ninguna pantalla real: genera una imagen chica de
-    prueba, la sube al bucket, pide una URL firmada, y muestra el
-    resultado (ruta guardada + la foto renderizada desde la URL firmada) o
-    el error tal cual lo devolvió core/storage.py. Se borra una vez que el
-    Storage se conecte al flujo real de compras.
-    """
-    imagen_pil = Image.new("RGB", (40, 40), color=(37, 99, 235))
-    buffer = io.BytesIO()
-    imagen_pil.save(buffer, format="JPEG")
-    bytes_prueba = buffer.getvalue()
-
-    try:
-        ruta = subir_foto_comanda(bytes_prueba, "prueba-storage")
-        url_firmada = obtener_url_foto(ruta)
-    except Exception as error:
-        return HTMLResponse(
-            f"<h1>Storage: ERROR</h1><pre>{html.escape(str(error))}</pre>",
-            status_code=500,
-        )
-
-    return HTMLResponse(
-        f"""
-        <h1>Storage: OK</h1>
-        <p>Subida y URL firmada anduvieron. Si el cuadrado azul se ve abajo, el circuito completo funciona.</p>
-        <p>Ruta guardada en el bucket: <code>{html.escape(ruta)}</code></p>
-        <p>URL firmada (válida 1 hora): <a href="{html.escape(url_firmada)}">{html.escape(url_firmada)}</a></p>
-        <img src="{html.escape(url_firmada)}" alt="foto de prueba" style="border: 1px solid #ccc;">
-        """
     )
 
 
