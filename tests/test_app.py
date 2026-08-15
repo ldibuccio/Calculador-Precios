@@ -2910,3 +2910,34 @@ def test_ver_negociar_tiene_link_de_ida_y_vuelta_con_costeo_prueba():
 
     assert 'href="/costeo-prueba"' in respuesta_negociar.text
     assert 'href="/negociar"' in respuesta_costeo.text
+
+
+# --- /storage-prueba: prueba aislada de la conexión a Supabase Storage ---
+
+
+def test_storage_prueba_ok_muestra_ruta_y_url_firmada():
+    with (
+        patch("app.main.subir_foto_comanda", return_value="2026-08-13/prueba-storage-123-abcdef12.jpg") as mock_subir,
+        patch(
+            "app.main.obtener_url_foto",
+            return_value="https://proyecto.supabase.co/storage/v1/object/sign/comandas/x.jpg?token=abc",
+        ) as mock_url,
+    ):
+        respuesta = cliente.get("/storage-prueba")
+
+    assert respuesta.status_code == 200
+    assert "Storage: OK" in respuesta.text
+    assert "2026-08-13/prueba-storage-123-abcdef12.jpg" in respuesta.text
+    assert "https://proyecto.supabase.co/storage/v1/object/sign/comandas/x.jpg?token=abc" in respuesta.text
+
+    mock_subir.assert_called_once()
+    mock_url.assert_called_once_with("2026-08-13/prueba-storage-123-abcdef12.jpg")
+
+
+def test_storage_prueba_error_muestra_el_mensaje_claro():
+    with patch("app.main.subir_foto_comanda", side_effect=RuntimeError("Falta configurar la variable de entorno SUPABASE_URL")):
+        respuesta = cliente.get("/storage-prueba")
+
+    assert respuesta.status_code == 500
+    assert "Storage: ERROR" in respuesta.text
+    assert "Falta configurar la variable de entorno SUPABASE_URL" in respuesta.text
