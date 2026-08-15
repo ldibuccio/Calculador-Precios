@@ -1173,12 +1173,21 @@ def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert "Últimas compras" in respuesta.text
+    assert "<h1>Compras</h1>" in respuesta.text
+    assert "Últimas Compras" in respuesta.text
     assert "Mzn Red" in respuesta.text
     assert "Saturno" in respuesta.text
     assert "N07P41" in respuesta.text
     assert "Mango" in respuesta.text
     assert "Fecha" in respuesta.text
+    # Regresión: orden de la pantalla — título, botoneras, título de
+    # sección, listado (en ese orden, de arriba a abajo).
+    assert (
+        respuesta.text.index("<h1>Compras</h1>")
+        < respuesta.text.index(">Cargar<")
+        < respuesta.text.index(">Operaciones<")
+        < respuesta.text.index("Últimas Compras")
+    )
     # Regresión: encabezados compactos para pantalla de celular.
     assert "<th>Cant</th>" in respuesta.text
     assert "<th>K/U</th>" in respuesta.text
