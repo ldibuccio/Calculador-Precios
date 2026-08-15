@@ -29,6 +29,14 @@
     margin-bottom: 1rem;
     font-size: 0.95rem;
   }
+  .mensaje {
+    background: #e0f2fe;
+    color: #075985;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
   .boton {
     margin-top: 1.1rem;
     width: 100%;
@@ -70,8 +78,14 @@
   .boton-editar { background: #2563eb; }
   .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; }
   .boton-ver-foto { background: #6b7280; }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
   .form-eliminar { display: inline; }
   .sin-precio { color: #dc2626; font-weight: 600; }
+  .espacio-storage {
+    color: #555;
+    font-size: 0.9rem;
+    margin: 0 0 0.75rem;
+  }
 </style>
 </head>
 <body>
@@ -79,6 +93,10 @@
 
   {% if error %}
   <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if mensaje %}
+  <div class="mensaje">{{ mensaje }}</div>
   {% endif %}
 
   <div class="tarjeta">
@@ -150,6 +168,25 @@
     {% endif %}
   </div>
 
+  {% if uso_storage is not none or cantidad_fotos_para_limpiar is not none %}
+  <div class="tarjeta">
+    {% if uso_storage is not none %}
+    <p class="espacio-storage">
+      {{ uso_storage.cantidad }} foto{% if uso_storage.cantidad != 1 %}s{% endif %} guardada{% if uso_storage.cantidad != 1 %}s{% endif %}
+      · {{ uso_storage.bytes_totales|tamano }}
+    </p>
+    {% endif %}
+    {% if cantidad_fotos_para_limpiar is not none %}
+    <form method="post" action="/compras/limpiar-fotos-viejas" id="form-limpiar-fotos-viejas">
+      <button type="submit" class="boton boton-secundario" id="boton-limpiar-fotos-viejas"
+              data-cantidad="{{ cantidad_fotos_para_limpiar }}" style="margin-top: 0;">
+        Limpiar fotos de más de 3 años
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <script>
     const checkTodas = document.getElementById("check-todas");
     const checksFila = Array.from(document.querySelectorAll(".check-fila"));
@@ -186,6 +223,28 @@
       return confirm(
         "¿Seguro que querés borrar las " + cantidad + " compras seleccionadas? No se puede deshacer."
       );
+    }
+
+    const formLimpiarFotosViejas = document.getElementById("form-limpiar-fotos-viejas");
+    if (formLimpiarFotosViejas) {
+      formLimpiarFotosViejas.addEventListener("submit", function (evento) {
+        const boton = document.getElementById("boton-limpiar-fotos-viejas");
+        const cantidad = parseInt(boton.dataset.cantidad, 10) || 0;
+        if (cantidad === 0) {
+          evento.preventDefault();
+          alert("No hay fotos de más de 3 años para borrar.");
+          return;
+        }
+        if (
+          !confirm(
+            "¿Borrar las fotos de compras de más de 3 años? Se van a eliminar " +
+              cantidad +
+              " fotos. Los registros de compra se conservan. No se puede deshacer."
+          )
+        ) {
+          evento.preventDefault();
+        }
+      });
     }
   </script>
 </body>

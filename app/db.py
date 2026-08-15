@@ -973,6 +973,48 @@ def obtener_uso_storage_bucket(bucket_id: str) -> dict:
         conexion.close()
 
 
+def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
+    """Devuelve los foto_ruta candidatos a borrar del Storage: comandas de antes de fecha_corte.
+
+    Una misma foto puede estar compartida por varios renglones/compras. Un
+    foto_ruta solo es candidato si NINGUNA compra que lo usa tiene
+    fecha_operacion dentro del período a conservar (>= fecha_corte) — así
+    nunca se ofrece borrar una foto que todavía necesita un renglón más
+    nuevo. En la práctica todos los renglones de una misma foto comparten
+    la misma fecha_operacion (se cargan juntos y esa fecha no se puede
+    editar después), pero este chequeo se hace igual por las dudas.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT foto_ruta FROM compras c1
+                WHERE c1.foto_ruta IS NOT NULL AND c1.fecha_operacion < %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM compras c2
+                    WHERE c2.foto_ruta = c1.foto_ruta AND c2.fecha_operacion >= %s
+                  )
+                """,
+                (fecha_corte, fecha_corte),
+            )
+            filas = cursor.fetchall()
+        return [fila[0] for fila in filas]
+    finally:
+        conexion.close()
+
+
+def limpiar_foto_ruta_de_compras(foto_ruta: str) -> None:
+    """Pone foto_ruta en NULL en todas las compras que lo tenían. Conserva las filas — se usa después de borrar el archivo del bucket."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE compras SET foto_ruta = NULL WHERE foto_ruta = %s", (foto_ruta,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -> None:
     """Borra TODAS las compras de un proveedor en una fecha (borrado real, mismo criterio que eliminar_compra).
 

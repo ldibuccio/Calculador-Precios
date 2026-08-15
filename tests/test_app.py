@@ -8,6 +8,8 @@ from PIL import Image
 
 from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
 from app.main import (
+    _fecha_de_corte_limpieza_fotos,
+    _formatear_bytes,
     _formatear_fecha_corta,
     _formatear_kilos,
     _formatear_moneda,
@@ -60,6 +62,26 @@ def test_sufijo_unidad_devuelve_la_letra_corta():
     assert _sufijo_unidad("cubeta") == "c"
     assert _sufijo_unidad(None) == ""
     assert _sufijo_unidad("otracosa") == ""
+
+
+def test_formatear_bytes_elige_la_unidad_que_queda_natural():
+    assert _formatear_bytes(0) == "0 bytes"
+    assert _formatear_bytes(500) == "500 bytes"
+    assert _formatear_bytes(907397) == "886 KB"  # caso real confirmado en producción
+    assert _formatear_bytes(356000000) == "339,5 MB"
+    assert _formatear_bytes(1288490188) == "1,2 GB"
+    assert _formatear_bytes(None) == ""
+
+
+def test_fecha_de_corte_limpieza_fotos_es_3_anios_atras():
+    with patch("app.main._hoy_argentina", return_value=date(2026, 8, 15)):
+        assert _fecha_de_corte_limpieza_fotos() == date(2023, 8, 15)
+
+
+def test_fecha_de_corte_limpieza_fotos_29_de_febrero_bisiesto():
+    # Regresión: hace 3 años (2024, bisiesto) no siempre hay un 29/2 — 2021 no lo es.
+    with patch("app.main._hoy_argentina", return_value=date(2024, 2, 29)):
+        assert _fecha_de_corte_limpieza_fotos() == date(2021, 2, 28)
 
 
 def test_raiz_devuelve_estado_ok():
@@ -1218,6 +1240,136 @@ def test_ver_compras_error_de_base_muestra_error_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudieron leer las compras" in respuesta.text
+    # Regresión: la falla en leer las compras no debe reventar la plantilla
+    # por faltar uso_storage/cantidad_fotos_para_limpiar en el contexto.
+    assert 'class="espacio-storage"' not in respuesta.text
+
+
+def test_ver_compras_muestra_el_indicador_de_espacio_usado():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
+        patch("app.main.listar_fotos_para_limpiar", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "12 fotos guardadas" in respuesta.text
+    assert "886 KB" in respuesta.text
+
+
+def test_ver_compras_indicador_en_singular_con_una_sola_foto():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 1, "bytes_totales": 500}),
+        patch("app.main.listar_fotos_para_limpiar", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "1 foto guardada" in respuesta.text
+    assert "fotos guardadas" not in respuesta.text
+
+
+def test_ver_compras_si_falla_el_uso_de_storage_no_muestra_el_indicador_ni_rompe():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.obtener_uso_storage_bucket", side_effect=Exception("permission denied for schema storage")),
+        patch("app.main.listar_fotos_para_limpiar", side_effect=Exception("permission denied for schema storage")),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'class="espacio-storage"' not in respuesta.text
+    assert 'id="boton-limpiar-fotos-viejas"' not in respuesta.text
+
+
+def test_ver_compras_muestra_el_boton_de_limpieza_con_la_cantidad_real():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
+        patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/x.jpg", "2020-02-02/y.jpg"]),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'id="boton-limpiar-fotos-viejas"' in respuesta.text
+    assert 'data-cantidad="2"' in respuesta.text
+
+
+def test_limpiar_fotos_viejas_borra_las_encontradas_y_limpia_foto_ruta():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/a.jpg", "2020-02-02/b.jpg"]),
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+        patch("app.main.limpiar_foto_ruta_de_compras") as mock_limpiar_ruta,
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 10, "bytes_totales": 500}),
+    ):
+        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+
+    assert respuesta.status_code == 200
+    assert "Se liberaron 2 fotos." in respuesta.text
+    assert mock_borrar_foto.call_count == 2
+    mock_borrar_foto.assert_any_call("2020-01-01/a.jpg")
+    mock_borrar_foto.assert_any_call("2020-02-02/b.jpg")
+    assert mock_limpiar_ruta.call_count == 2
+
+
+def test_limpiar_fotos_viejas_sin_ninguna_para_borrar_no_rompe():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.listar_fotos_para_limpiar", return_value=[]),
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+    ):
+        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+
+    assert respuesta.status_code == 200
+    assert "No hay fotos de más de 3 años para borrar." in respuesta.text
+    mock_borrar_foto.assert_not_called()
+
+
+def test_limpiar_fotos_viejas_si_falla_una_sigue_con_las_demas():
+    def borrar_side_effect(foto_ruta):
+        if foto_ruta == "2020-01-01/a.jpg":
+            raise Exception("Supabase Storage rechazó el borrado (404)")
+        return None
+
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch(
+            "app.main.listar_fotos_para_limpiar",
+            return_value=["2020-01-01/a.jpg", "2020-02-02/b.jpg"],
+        ),
+        patch("app.main.borrar_foto_comanda", side_effect=borrar_side_effect) as mock_borrar_foto,
+        patch("app.main.limpiar_foto_ruta_de_compras") as mock_limpiar_ruta,
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 10, "bytes_totales": 500}),
+    ):
+        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+
+    assert respuesta.status_code == 200
+    assert mock_borrar_foto.call_count == 2
+    # Solo la que no falló llega a limpiar foto_ruta en la base.
+    mock_limpiar_ruta.assert_called_once_with("2020-02-02/b.jpg")
+    assert "Se liberaron 1 de 2 fotos" in respuesta.text
+
+
+def test_limpiar_fotos_viejas_error_al_buscar_candidatas_da_500():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.listar_fotos_para_limpiar", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo revisar qué fotos limpiar" in respuesta.text
 
 
 PROVEEDORES_DE_PRUEBA = [
@@ -2138,26 +2290,6 @@ def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
     assert "No se pudieron borrar 2" in respuesta.text
     assert "Mzn Red (Saturno)" in respuesta.text
     assert "Mango (Frutamax)" in respuesta.text
-
-
-def test_prueba_storage_espacio_ok_devuelve_cantidad_y_bytes():
-    # Ruta temporal, solo para confirmar en producción que el rol de
-    # DATABASE_URL puede leer storage.objects. Se borra apenas se confirme.
-    with patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 5, "bytes_totales": 12345}):
-        respuesta = cliente.get("/storage-espacio-prueba")
-
-    assert respuesta.status_code == 200
-    assert respuesta.json() == {"ok": True, "cantidad": 5, "bytes_totales": 12345}
-
-
-def test_prueba_storage_espacio_sin_permiso_devuelve_el_error():
-    with patch("app.main.obtener_uso_storage_bucket", side_effect=Exception("permission denied for schema storage")):
-        respuesta = cliente.get("/storage-espacio-prueba")
-
-    assert respuesta.status_code == 200
-    datos = respuesta.json()
-    assert datos["ok"] is False
-    assert "permission denied" in datos["error"]
 
 
 def test_ver_foto_compra_redirige_a_la_url_firmada():

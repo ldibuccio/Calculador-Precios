@@ -40,6 +40,7 @@ from app.db import (
     eliminar_compras_del_dia_por_proveedor,
     eliminar_conversion,
     eliminar_ficha,
+    limpiar_foto_ruta_de_compras,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_sin_ficha,
@@ -50,6 +51,7 @@ from app.db import (
     listar_conversiones_por_cliente,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
+    listar_fotos_para_limpiar,
     listar_proveedores,
     listar_todas_las_conversiones,
     obtener_articulo,
@@ -141,12 +143,32 @@ def _sufijo_unidad(unidad_compra) -> str:
     return SUFIJOS_UNIDAD_COMPRA.get(unidad_compra, "")
 
 
+def _formatear_bytes(valor) -> str:
+    """Formatea un tamaño en bytes de forma legible, con la unidad que quede natural (886 KB, 339,5 MB, 1,2 GB).
+
+    bytes/KB se muestran sin decimales; MB/GB con uno, para el indicador de
+    espacio usado del bucket de fotos — un dato informativo, no hace falta
+    precisión de más.
+    """
+    if valor is None:
+        return ""
+    numero = float(valor)
+    for unidad in ("bytes", "KB", "MB", "GB"):
+        if numero < 1024 or unidad == "GB":
+            break
+        numero /= 1024
+    if unidad in ("bytes", "KB"):
+        return f"{round(numero)} {unidad}"
+    return f"{numero:.1f} {unidad}".replace(".", ",")
+
+
 templates.env.filters["numero"] = _formatear_numero
 templates.env.filters["fecha_corta"] = _formatear_fecha_corta
 templates.env.filters["moneda"] = _formatear_moneda
 templates.env.filters["porcentaje"] = _formatear_porcentaje
 templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
+templates.env.filters["tamano"] = _formatear_bytes
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -1150,8 +1172,17 @@ def _validar_compra_nueva_form(
     return error, valores
 
 
-@app.get("/compras")
-def ver_compras(request: Request, error: str | None = None):
+def _fecha_de_corte_limpieza_fotos():
+    """3 años atrás de hoy: las fotos de compras más viejas que esto son candidatas a limpiar del Storage."""
+    hoy = _hoy_argentina()
+    try:
+        return hoy.replace(year=hoy.year - 3)
+    except ValueError:
+        # 29 de febrero en un año bisiesto: hace 3 años no lo era.
+        return hoy.replace(month=2, day=28, year=hoy.year - 3)
+
+
+def _renderizar_pantalla_compras(request: Request, *, mensaje: str | None = None, error: str | None = None, status_code: int = 200):
     # TODO: a futuro agregar acá un filtro de fecha/rango a demanda (elegido
     # por el usuario). Por ahora siempre son los últimos 2 días fijos (hoy y
     # ayer), usando listar_compras_por_rango_fechas que ya soporta un rango.
@@ -1162,11 +1193,85 @@ def ver_compras(request: Request, error: str | None = None):
         return templates.TemplateResponse(
             request,
             "compras.html",
-            {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
+            {
+                "compras": [],
+                "error": f"No se pudieron leer las compras: {error_db}",
+                "mensaje": None,
+                "uso_storage": None,
+                "cantidad_fotos_para_limpiar": None,
+            },
             status_code=500,
         )
 
-    return templates.TemplateResponse(request, "compras.html", {"compras": compras, "error": error})
+    # El indicador de espacio y el botón de limpieza son informativos, no
+    # bloqueantes: si fallan, la pantalla de compras se muestra igual, sin
+    # esos datos (uso_storage/cantidad_fotos_para_limpiar quedan en None y
+    # la plantilla no los muestra).
+    try:
+        uso_storage = obtener_uso_storage_bucket(BUCKET_COMANDAS)
+    except Exception:
+        uso_storage = None
+
+    try:
+        cantidad_fotos_para_limpiar = len(listar_fotos_para_limpiar(_fecha_de_corte_limpieza_fotos()))
+    except Exception:
+        cantidad_fotos_para_limpiar = None
+
+    return templates.TemplateResponse(
+        request,
+        "compras.html",
+        {
+            "compras": compras,
+            "error": error,
+            "mensaje": mensaje,
+            "uso_storage": uso_storage,
+            "cantidad_fotos_para_limpiar": cantidad_fotos_para_limpiar,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/compras")
+def ver_compras(request: Request, error: str | None = None):
+    return _renderizar_pantalla_compras(request, error=error)
+
+
+@app.post("/compras/limpiar-fotos-viejas")
+def limpiar_fotos_viejas_ruta(request: Request):
+    fecha_corte = _fecha_de_corte_limpieza_fotos()
+    try:
+        fotos_a_borrar = listar_fotos_para_limpiar(fecha_corte)
+    except Exception as error_db:
+        return _renderizar_pantalla_compras(
+            request, error=f"No se pudo revisar qué fotos limpiar: {error_db}", status_code=500
+        )
+
+    if not fotos_a_borrar:
+        return _renderizar_pantalla_compras(request, mensaje="No hay fotos de más de 3 años para borrar.")
+
+    borradas = 0
+    for foto_ruta in fotos_a_borrar:
+        try:
+            borrar_foto_comanda(foto_ruta)
+        except Exception:
+            logger.exception("No se pudo borrar del Storage la foto vieja %s — se sigue con las demás", foto_ruta)
+            continue
+
+        try:
+            limpiar_foto_ruta_de_compras(foto_ruta)
+        except Exception:
+            logger.exception(
+                "Se borró del Storage la foto vieja %s pero no se pudo limpiar foto_ruta en la base", foto_ruta
+            )
+            continue
+
+        borradas += 1
+
+    if borradas == len(fotos_a_borrar):
+        mensaje = f"Se liberaron {borradas} fotos."
+    else:
+        mensaje = f"Se liberaron {borradas} de {len(fotos_a_borrar)} fotos. Las demás quedaron para otro intento."
+    return _renderizar_pantalla_compras(request, mensaje=mensaje)
 
 
 @app.get("/compras/nueva")
@@ -2005,16 +2110,6 @@ async def eliminar_varias_compras_ruta(request: Request):
     if not etiquetas_fallidas:
         return RedirectResponse(url="/compras", status_code=303)
 
-    try:
-        compras = listar_compras_por_rango_fechas(hoy - timedelta(days=1), hoy)
-    except Exception as error_db:
-        return templates.TemplateResponse(
-            request,
-            "compras.html",
-            {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
-            status_code=500,
-        )
-
     cantidad_borradas = len(ids) - len(etiquetas_fallidas)
     # Mensaje pensado para un usuario no técnico: sin ids ni jerga de base
     # de datos. La causa más probable de un fallo real es la FK de
@@ -2024,7 +2119,7 @@ async def eliminar_varias_compras_ruta(request: Request):
         f"No se pudieron borrar {len(etiquetas_fallidas)} (puede que tengan una recepción asociada): "
         f"{', '.join(etiquetas_fallidas)}."
     )
-    return templates.TemplateResponse(request, "compras.html", {"compras": compras, "error": error})
+    return _renderizar_pantalla_compras(request, error=error)
 
 
 @app.get("/compras/{compra_id}/foto")
@@ -2267,18 +2362,6 @@ def ver_cuadro_negociar_precios(request: Request):
             "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         },
     )
-
-
-# TEMPORAL: ruta de prueba para confirmar, en producción, que el rol de
-# DATABASE_URL puede leer storage.objects (necesario para el indicador de
-# espacio usado del bucket). Se borra apenas se confirme el resultado.
-@app.get("/storage-espacio-prueba")
-def _prueba_storage_espacio():
-    try:
-        resultado = obtener_uso_storage_bucket(BUCKET_COMANDAS)
-    except Exception as error:
-        return {"ok": False, "error": str(error)}
-    return {"ok": True, "cantidad": resultado["cantidad"], "bytes_totales": resultado["bytes_totales"]}
 
 
 if __name__ == "__main__":
