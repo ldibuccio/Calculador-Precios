@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar foto de una comanda</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+  }
+  .boton-peligro { background: #dc2626; }
+  input[type="file"] {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+</style>
+</head>
+<body>
+  <h1>Cargar foto de una comanda</h1>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <p class="ayuda">Sacá una foto nueva o elegí una ya guardada de la comanda: el sistema intenta adivinar el proveedor y los artículos, y te los muestra para que los revises antes de guardar nada.</p>
+    <form method="post" action="/compras/nueva/foto" enctype="multipart/form-data" id="form-leer-comanda">
+      <label for="foto">Foto de la comanda</label>
+      <input type="file" id="foto" name="foto" accept="image/*" required>
+      <button type="submit" id="boton-leer-comanda">Leer una comanda</button>
+      <p id="ayuda-leyendo" class="ayuda" style="display: none;">Leyendo la foto, puede tardar unos segundos...</p>
+    </form>
+    <a href="/compras/nueva/fotos" class="boton" id="boton-multiples-comandas">Múltiples comandas</a>
+  </div>
+
+  <a href="/compras" class="boton boton-peligro" id="boton-cancelar">Cancelar</a>
+
+  <script>
+    // Leer la foto con la IA puede tardar varios segundos; sin este cartel
+    // parece que no pasó nada y el comprador termina apretando de nuevo.
+    // OJO: en Safari/iOS, deshabilitar el botón DURANTE el evento submit
+    // cancela el envío del formulario — por eso el disabled se aplica en un
+    // setTimeout, después de que el navegador ya arrancó el envío.
+    const formLeerComanda = document.getElementById("form-leer-comanda");
+    if (formLeerComanda) {
+      formLeerComanda.addEventListener("submit", function () {
+        const boton = document.getElementById("boton-leer-comanda");
+        if (boton) {
+          boton.textContent = "Leyendo comanda...";
+          setTimeout(function () {
+            boton.disabled = true;
+          }, 0);
+        }
+        const ayuda = document.getElementById("ayuda-leyendo");
+        if (ayuda) {
+          ayuda.style.display = "block";
+        }
+      });
+    }
+  </script>
+</body>
+</html>

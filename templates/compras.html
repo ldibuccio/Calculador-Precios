@@ -72,6 +72,17 @@
   .boton-ver-foto { background: #6b7280; }
   .form-eliminar { display: inline; }
   .sin-precio { color: #dc2626; font-weight: 600; }
+  .grupo-botones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .grupo-botones .boton {
+    flex: 1 1 calc(50% - 0.25rem);
+    margin-top: 0;
+    padding: 0.75rem 0.5rem;
+    font-size: 0.9rem;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -90,8 +101,23 @@
   {% endif %}
 
   <div class="tarjeta">
-    <a class="boton" href="/compras/nueva">Agregar compra</a>
-    <a class="boton" href="/compras/pendientes">Compras sin precio</a>
+    <h2>Cargar</h2>
+    <div class="grupo-botones">
+      <a class="boton" href="/compras/nueva/manual">Cargar Manual</a>
+      <a class="boton" href="/compras/nueva/foto-una">Cargar Foto</a>
+      <a class="boton" href="/compras/nueva/fotos">Cargar Múltiples Fotos</a>
+      <a class="boton" href="/compras/nueva/listado">Cargar Listado de Compras (Próximamente)</a>
+    </div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Operaciones</h2>
+    <div class="grupo-botones">
+      <a class="boton" href="/compras/buscar">Buscar Compras (Próximamente)</a>
+      <a class="boton" href="/compras/enviar-logistica">Enviar a Logística (Próximamente)</a>
+      <a class="boton" href="/compras/armar-listado">Armar Listado de Compras (Próximamente)</a>
+      <a class="boton" href="/compras/pendientes">Compras sin precio</a>
+    </div>
   </div>
 
   <div class="tarjeta">

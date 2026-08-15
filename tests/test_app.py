@@ -1456,6 +1456,114 @@ def test_ver_nueva_compra_sin_proveedor_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
+def test_ver_nueva_compra_manual_muestra_solo_el_formulario_de_proveedor():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva/manual")
+
+    assert respuesta.status_code == 200
+    assert "Código de puesto" in respuesta.text
+    assert "N07P41" in respuesta.text
+    assert 'action="/compras/nueva/proveedor"' in respuesta.text
+    assert "PROVEEDORES_CONOCIDOS" in respuesta.text
+    # No mezcla el flujo de foto: sin formulario de subida ni el link a
+    # múltiples comandas.
+    assert 'id="form-leer-comanda"' not in respuesta.text
+    assert 'href="/compras/nueva/fotos"' not in respuesta.text
+
+
+def test_ver_nueva_compra_manual_error_de_base_da_500():
+    with patch("app.main.listar_proveedores", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/nueva/manual")
+
+    assert respuesta.status_code == 500
+
+
+def test_ver_nueva_compra_foto_muestra_solo_el_formulario_de_una_foto():
+    respuesta = cliente.get("/compras/nueva/foto-una")
+
+    assert respuesta.status_code == 200
+    assert 'id="form-leer-comanda"' in respuesta.text
+    assert "Leer una comanda" in respuesta.text
+    assert 'action="/compras/nueva/foto"' in respuesta.text
+    # Sigue ofreciendo el atajo a múltiples fotos desde acá.
+    assert 'href="/compras/nueva/fotos"' in respuesta.text
+    # No mezcla el flujo manual: sin el formulario de proveedor a mano.
+    assert "Código de puesto" not in respuesta.text
+    assert 'action="/compras/nueva/proveedor"' not in respuesta.text
+
+
+def test_cambiar_proveedor_en_carga_manual_apunta_a_la_pantalla_manual():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert 'href="/compras/nueva/manual"' in respuesta.text
+
+
+def test_cargar_listado_de_compras_muestra_en_construccion():
+    respuesta = cliente.get("/compras/nueva/listado")
+
+    assert respuesta.status_code == 200
+    assert "Cargar listado de compras" in respuesta.text
+    assert "En construcción" in respuesta.text
+    assert 'href="/compras"' in respuesta.text
+
+
+def test_buscar_compras_muestra_en_construccion():
+    respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.status_code == 200
+    assert "Buscar compras" in respuesta.text
+    assert "En construcción" in respuesta.text
+
+
+def test_enviar_a_logistica_muestra_en_construccion():
+    respuesta = cliente.get("/compras/enviar-logistica")
+
+    assert respuesta.status_code == 200
+    assert "Enviar a logística" in respuesta.text
+    assert "En construcción" in respuesta.text
+
+
+def test_armar_listado_de_compras_muestra_en_construccion():
+    respuesta = cliente.get("/compras/armar-listado")
+
+    assert respuesta.status_code == 200
+    assert "Armar listado de compras" in respuesta.text
+    assert "En construcción" in respuesta.text
+
+
+def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    # Grupo Cargar.
+    assert 'href="/compras/nueva/manual"' in respuesta.text
+    assert "Cargar Manual" in respuesta.text
+    assert 'href="/compras/nueva/foto-una"' in respuesta.text
+    assert "Cargar Foto" in respuesta.text
+    assert 'href="/compras/nueva/fotos"' in respuesta.text
+    assert "Cargar Múltiples Fotos" in respuesta.text
+    assert 'href="/compras/nueva/listado"' in respuesta.text
+    # Grupo Operaciones.
+    assert 'href="/compras/buscar"' in respuesta.text
+    assert 'href="/compras/enviar-logistica"' in respuesta.text
+    assert 'href="/compras/armar-listado"' in respuesta.text
+    assert 'href="/compras/pendientes"' in respuesta.text
+    assert "Compras sin precio" in respuesta.text
+    # El botón viejo "Agregar compra" queda retirado (lo cubre Cargar Manual).
+    assert "Agregar compra" not in respuesta.text
+    assert 'href="/compras/nueva"' not in respuesta.text
+
+
 def test_elegir_proveedor_compra_exitoso_redirige_con_proveedor_id():
     with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor:
         respuesta = cliente.post(
@@ -1482,6 +1590,9 @@ def test_elegir_proveedor_compra_codigo_invalido_muestra_error():
     assert respuesta.status_code == 400
     assert "formato NNNPNN" in respuesta.text
     mock_proveedor.assert_not_called()
+    # Regresión: el error vuelve a la pantalla manual sola, no a la
+    # combinada vieja con la carga de foto mezclada.
+    assert 'id="form-leer-comanda"' not in respuesta.text
 
 
 def test_elegir_proveedor_compra_sin_nombre_muestra_error():
@@ -2662,10 +2773,7 @@ def test_subir_foto_compra_adivina_articulo_por_conversion():
 
 
 def test_subir_foto_compra_error_del_lector_muestra_mensaje_claro():
-    with (
-        patch("app.main.extraer_comanda", side_effect=Exception("no se pudo conectar con la API")),
-        patch("app.main.listar_proveedores", return_value=[]),
-    ):
+    with patch("app.main.extraer_comanda", side_effect=Exception("no se pudo conectar con la API")):
         respuesta = cliente.post(
             "/compras/nueva/foto",
             files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
@@ -2673,6 +2781,10 @@ def test_subir_foto_compra_error_del_lector_muestra_mensaje_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudo leer la foto" in respuesta.text
+    # Regresión: la pantalla de error vuelve a "cargar foto" (foco único),
+    # no a la pantalla combinada vieja con el formulario manual mezclado.
+    assert "Código de puesto" not in respuesta.text
+    assert 'id="form-leer-comanda"' in respuesta.text
 
 
 def _datos_confirmar_foto(descartar_item_1=True, codigo_puesto="N07P41", nombre="Saturno", foto_preview=None):

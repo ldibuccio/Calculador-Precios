@@ -1197,6 +1197,54 @@ def ver_compras(request: Request, error: str | None = None):
     return _renderizar_pantalla_compras(request, error=error)
 
 
+def _renderizar_en_construccion(
+    request: Request, titulo: str, volver_url: str = "/compras", volver_texto: str = "Volver a compras"
+):
+    """Pantalla placeholder compartida por todos los botones "Próximamente" (de la botonera de Compras y, más adelante, de la home)."""
+    return templates.TemplateResponse(
+        request, "en_construccion.html", {"titulo": titulo, "volver_url": volver_url, "volver_texto": volver_texto}
+    )
+
+
+@app.get("/compras/nueva/listado")
+def ver_cargar_listado_compras(request: Request):
+    return _renderizar_en_construccion(request, "Cargar listado de compras")
+
+
+@app.get("/compras/buscar")
+def ver_buscar_compras(request: Request):
+    return _renderizar_en_construccion(request, "Buscar compras")
+
+
+@app.get("/compras/enviar-logistica")
+def ver_enviar_logistica(request: Request):
+    return _renderizar_en_construccion(request, "Enviar a logística")
+
+
+@app.get("/compras/armar-listado")
+def ver_armar_listado_compras(request: Request):
+    return _renderizar_en_construccion(request, "Armar listado de compras")
+
+
+@app.get("/compras/nueva/manual")
+def ver_nueva_compra_manual(request: Request, error: str | None = None):
+    try:
+        proveedores = listar_proveedores()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compra_proveedor_manual.html",
+        {"proveedores": proveedores, "error": error},
+    )
+
+
+@app.get("/compras/nueva/foto-una")
+def ver_nueva_compra_foto(request: Request, error: str | None = None):
+    return templates.TemplateResponse(request, "compra_leer_foto.html", {"error": error})
+
+
 @app.get("/compras/nueva")
 def ver_nueva_compra(request: Request, proveedor_id: int | None = None, error: str | None = None):
     if proveedor_id is None:
@@ -1254,7 +1302,7 @@ def elegir_proveedor_compra(request: Request, codigo_puesto: str = Form(""), nom
             proveedores = []
         return templates.TemplateResponse(
             request,
-            "compra_proveedor_form.html",
+            "compra_proveedor_manual.html",
             {"proveedores": proveedores, "error": error},
             status_code=400,
         )
@@ -1268,7 +1316,7 @@ def elegir_proveedor_compra(request: Request, codigo_puesto: str = Form(""), nom
             proveedores = []
         return templates.TemplateResponse(
             request,
-            "compra_proveedor_form.html",
+            "compra_proveedor_manual.html",
             {"proveedores": proveedores, "error": f"No se pudo guardar el proveedor: {error_db}"},
             status_code=500,
         )
@@ -1569,14 +1617,10 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
         foto_preview = _generar_preview_foto(imagen)
         datos = extraer_comanda(imagen)
     except Exception as error_lector:
-        try:
-            proveedores = listar_proveedores()
-        except Exception:
-            proveedores = []
         return templates.TemplateResponse(
             request,
-            "compra_proveedor_form.html",
-            {"proveedores": proveedores, "error": f"No se pudo leer la foto: {error_lector}"},
+            "compra_leer_foto.html",
+            {"error": f"No se pudo leer la foto: {error_lector}"},
             status_code=500,
         )
 
