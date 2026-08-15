@@ -67,9 +67,16 @@
     box-sizing: border-box;
     background: #fff;
   }
-  input[type="file"] {
-    width: 100%;
-    margin-top: 0.5rem;
+  .input-foto-oculto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
   .campo-descartar {
     display: flex;
@@ -207,12 +214,11 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Cargar varias comandas por foto" %}
   {% include "_barra_navegacion.html" %}
-  <p class="ayuda">Elegí todas las fotos de comandas que quieras cargar. Se leen todas de entrada, de a poco en el fondo; revisalas y guardalas de a una, y al guardar una pasa automáticamente a la siguiente.</p>
+  <p class="ayuda">Tocá el botón: se abre la cámara o la galería del celular, elegí ahí todas las fotos de comandas que quieras cargar. En cuanto las elijas arranca a leerlas sola, de a poco en el fondo; revisalas y guardalas de a una, y al guardar una pasa automáticamente a la siguiente.</p>
 
   <div id="seccion-elegir-fotos" class="tarjeta">
-    <label for="input-fotos">Fotos de las comandas</label>
-    <input type="file" id="input-fotos" accept="image/*" multiple>
-    <button type="button" id="boton-empezar">Empezar</button>
+    <input type="file" id="input-fotos" accept="image/*" multiple class="input-foto-oculto">
+    <button type="button" id="boton-empezar">Elegir fotos</button>
   </div>
 
   <div id="seccion-progreso" class="tarjeta" style="display: none;">
@@ -727,13 +733,20 @@
       }
     }
 
+    // Un solo toque: "Elegir fotos" dispara el selector nativo del celular
+    // (cámara/galería, con selección múltiple habilitada) y, apenas se
+    // eligen las fotos, arranca el flujo completo solo — sin un segundo
+    // botón "Empezar" de por medio. Si el usuario cancela el selector sin
+    // elegir nada, "change" no se dispara y la pantalla queda como estaba.
+    const inputFotos = document.getElementById("input-fotos");
     document.getElementById("boton-empezar").addEventListener("click", function () {
-      const input = document.getElementById("input-fotos");
-      if (!input.files || input.files.length === 0) {
-        alert("Elegí al menos una foto.");
+      inputFotos.click();
+    });
+    inputFotos.addEventListener("change", function () {
+      if (!inputFotos.files || inputFotos.files.length === 0) {
         return;
       }
-      colaFotos = Array.from(input.files);
+      colaFotos = Array.from(inputFotos.files);
       indiceActual = 0;
       document.getElementById("seccion-elegir-fotos").style.display = "none";
       document.getElementById("seccion-progreso").style.display = "block";

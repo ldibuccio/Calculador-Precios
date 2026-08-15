@@ -1352,6 +1352,20 @@ def test_ver_nueva_compra_foto_muestra_solo_el_formulario_de_una_foto():
     assert 'action="/compras/nueva/proveedor"' not in respuesta.text
 
 
+def test_ver_nueva_compra_foto_un_solo_toque_dispara_selector_y_lee_directo():
+    # Regresión: el botón grande no es un submit — abre el input file oculto
+    # (que sí tiene el required, por si algo falla) y la lectura arranca
+    # sola al elegir la foto, sin un segundo toque en un botón "Leer".
+    respuesta = cliente.get("/compras/nueva/foto-una")
+
+    assert respuesta.status_code == 200
+    assert 'class="input-foto-oculto"' in respuesta.text
+    assert 'type="button" id="boton-leer-comanda"' in respuesta.text
+    assert 'botonLeerComanda.addEventListener("click", function () {\n        inputFoto.click();' in respuesta.text
+    assert 'inputFoto.addEventListener("change"' in respuesta.text
+    assert "formLeerComanda.requestSubmit()" in respuesta.text
+
+
 def test_cambiar_proveedor_en_carga_manual_apunta_a_la_pantalla_manual():
     with (
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
@@ -3022,6 +3036,13 @@ def test_ver_carga_comandas_multiples_muestra_la_pantalla():
     assert "aplicar_retiro_a_todos" in respuesta.text
     assert 'checkboxAplicarATodos.checked' in respuesta.text
     assert "retiroActivo ? document.getElementById" in respuesta.text
+    # Regresión: un solo toque — "Elegir fotos" no valida ni arranca nada
+    # por sí solo, solo abre el input file oculto; el flujo arranca recién
+    # en el "change" del input, cuando ya hay fotos elegidas.
+    assert 'class="input-foto-oculto"' in respuesta.text
+    assert '>Elegir fotos<' in respuesta.text
+    assert "inputFotos.click();" in respuesta.text
+    assert 'inputFotos.addEventListener("change"' in respuesta.text
 
 
 def test_ver_carga_comandas_multiples_incluye_los_proveedores_conocidos_para_sugerir():
