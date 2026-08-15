@@ -1172,17 +1172,7 @@ def _validar_compra_nueva_form(
     return error, valores
 
 
-def _fecha_de_corte_limpieza_fotos():
-    """3 años atrás de hoy: las fotos de compras más viejas que esto son candidatas a limpiar del Storage."""
-    hoy = _hoy_argentina()
-    try:
-        return hoy.replace(year=hoy.year - 3)
-    except ValueError:
-        # 29 de febrero en un año bisiesto: hace 3 años no lo era.
-        return hoy.replace(month=2, day=28, year=hoy.year - 3)
-
-
-def _renderizar_pantalla_compras(request: Request, *, mensaje: str | None = None, error: str | None = None, status_code: int = 200):
+def _renderizar_pantalla_compras(request: Request, *, error: str | None = None, status_code: int = 200):
     # TODO: a futuro agregar acá un filtro de fecha/rango a demanda (elegido
     # por el usuario). Por ahora siempre son los últimos 2 días fijos (hoy y
     # ayer), usando listar_compras_por_rango_fechas que ya soporta un rango.
@@ -1193,85 +1183,18 @@ def _renderizar_pantalla_compras(request: Request, *, mensaje: str | None = None
         return templates.TemplateResponse(
             request,
             "compras.html",
-            {
-                "compras": [],
-                "error": f"No se pudieron leer las compras: {error_db}",
-                "mensaje": None,
-                "uso_storage": None,
-                "cantidad_fotos_para_limpiar": None,
-            },
+            {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
             status_code=500,
         )
 
-    # El indicador de espacio y el botón de limpieza son informativos, no
-    # bloqueantes: si fallan, la pantalla de compras se muestra igual, sin
-    # esos datos (uso_storage/cantidad_fotos_para_limpiar quedan en None y
-    # la plantilla no los muestra).
-    try:
-        uso_storage = obtener_uso_storage_bucket(BUCKET_COMANDAS)
-    except Exception:
-        uso_storage = None
-
-    try:
-        cantidad_fotos_para_limpiar = len(listar_fotos_para_limpiar(_fecha_de_corte_limpieza_fotos()))
-    except Exception:
-        cantidad_fotos_para_limpiar = None
-
     return templates.TemplateResponse(
-        request,
-        "compras.html",
-        {
-            "compras": compras,
-            "error": error,
-            "mensaje": mensaje,
-            "uso_storage": uso_storage,
-            "cantidad_fotos_para_limpiar": cantidad_fotos_para_limpiar,
-        },
-        status_code=status_code,
+        request, "compras.html", {"compras": compras, "error": error}, status_code=status_code
     )
 
 
 @app.get("/compras")
 def ver_compras(request: Request, error: str | None = None):
     return _renderizar_pantalla_compras(request, error=error)
-
-
-@app.post("/compras/limpiar-fotos-viejas")
-def limpiar_fotos_viejas_ruta(request: Request):
-    fecha_corte = _fecha_de_corte_limpieza_fotos()
-    try:
-        fotos_a_borrar = listar_fotos_para_limpiar(fecha_corte)
-    except Exception as error_db:
-        return _renderizar_pantalla_compras(
-            request, error=f"No se pudo revisar qué fotos limpiar: {error_db}", status_code=500
-        )
-
-    if not fotos_a_borrar:
-        return _renderizar_pantalla_compras(request, mensaje="No hay fotos de más de 3 años para borrar.")
-
-    borradas = 0
-    for foto_ruta in fotos_a_borrar:
-        try:
-            borrar_foto_comanda(foto_ruta)
-        except Exception:
-            logger.exception("No se pudo borrar del Storage la foto vieja %s — se sigue con las demás", foto_ruta)
-            continue
-
-        try:
-            limpiar_foto_ruta_de_compras(foto_ruta)
-        except Exception:
-            logger.exception(
-                "Se borró del Storage la foto vieja %s pero no se pudo limpiar foto_ruta en la base", foto_ruta
-            )
-            continue
-
-        borradas += 1
-
-    if borradas == len(fotos_a_borrar):
-        mensaje = f"Se liberaron {borradas} fotos."
-    else:
-        mensaje = f"Se liberaron {borradas} de {len(fotos_a_borrar)} fotos. Las demás quedaron para otro intento."
-    return _renderizar_pantalla_compras(request, mensaje=mensaje)
 
 
 @app.get("/compras/nueva")
@@ -2362,6 +2285,87 @@ def ver_cuadro_negociar_precios(request: Request):
             "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         },
     )
+
+
+def _fecha_de_corte_limpieza_fotos():
+    """3 años atrás de hoy: las fotos de compras más viejas que esto son candidatas a limpiar del Storage."""
+    hoy = _hoy_argentina()
+    try:
+        return hoy.replace(year=hoy.year - 3)
+    except ValueError:
+        # 29 de febrero en un año bisiesto: hace 3 años no lo era.
+        return hoy.replace(month=2, day=28, year=hoy.year - 3)
+
+
+def _renderizar_pantalla_sistema(request: Request, *, mensaje: str | None = None, error: str | None = None, status_code: int = 200):
+    # El indicador de espacio y el botón de limpieza son informativos, no
+    # bloqueantes: si fallan, la pantalla se muestra igual, sin esos datos
+    # (uso_storage/cantidad_fotos_para_limpiar quedan en None y la
+    # plantilla no los muestra).
+    try:
+        uso_storage = obtener_uso_storage_bucket(BUCKET_COMANDAS)
+    except Exception:
+        uso_storage = None
+
+    try:
+        cantidad_fotos_para_limpiar = len(listar_fotos_para_limpiar(_fecha_de_corte_limpieza_fotos()))
+    except Exception:
+        cantidad_fotos_para_limpiar = None
+
+    return templates.TemplateResponse(
+        request,
+        "sistema.html",
+        {
+            "error": error,
+            "mensaje": mensaje,
+            "uso_storage": uso_storage,
+            "cantidad_fotos_para_limpiar": cantidad_fotos_para_limpiar,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/sistema")
+def ver_sistema(request: Request):
+    return _renderizar_pantalla_sistema(request)
+
+
+@app.post("/sistema/limpiar-fotos-viejas")
+def limpiar_fotos_viejas_ruta(request: Request):
+    fecha_corte = _fecha_de_corte_limpieza_fotos()
+    try:
+        fotos_a_borrar = listar_fotos_para_limpiar(fecha_corte)
+    except Exception as error_db:
+        return _renderizar_pantalla_sistema(
+            request, error=f"No se pudo revisar qué fotos limpiar: {error_db}", status_code=500
+        )
+
+    if not fotos_a_borrar:
+        return _renderizar_pantalla_sistema(request, mensaje="No hay fotos de más de 3 años para borrar.")
+
+    borradas = 0
+    for foto_ruta in fotos_a_borrar:
+        try:
+            borrar_foto_comanda(foto_ruta)
+        except Exception:
+            logger.exception("No se pudo borrar del Storage la foto vieja %s — se sigue con las demás", foto_ruta)
+            continue
+
+        try:
+            limpiar_foto_ruta_de_compras(foto_ruta)
+        except Exception:
+            logger.exception(
+                "Se borró del Storage la foto vieja %s pero no se pudo limpiar foto_ruta en la base", foto_ruta
+            )
+            continue
+
+        borradas += 1
+
+    if borradas == len(fotos_a_borrar):
+        mensaje = f"Se liberaron {borradas} fotos."
+    else:
+        mensaje = f"Se liberaron {borradas} de {len(fotos_a_borrar)} fotos. Las demás quedaron para otro intento."
+    return _renderizar_pantalla_sistema(request, mensaje=mensaje)
 
 
 if __name__ == "__main__":

@@ -1240,63 +1240,76 @@ def test_ver_compras_error_de_base_muestra_error_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudieron leer las compras" in respuesta.text
-    # Regresión: la falla en leer las compras no debe reventar la plantilla
-    # por faltar uso_storage/cantidad_fotos_para_limpiar en el contexto.
-    assert 'class="espacio-storage"' not in respuesta.text
 
 
-def test_ver_compras_muestra_el_indicador_de_espacio_usado():
+def test_ver_compras_no_muestra_nada_de_sistema_ahi():
+    # Regresión: el indicador de espacio y el botón de limpieza de fotos se
+    # movieron a /sistema — /compras es operativa, no tiene que mostrar
+    # nada de eso (ni siquiera si esas funciones responden bien).
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
-        patch("app.main.listar_fotos_para_limpiar", return_value=[]),
+        patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/x.jpg"]),
     ):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
+    assert "fotos guardadas" not in respuesta.text
+    assert 'id="boton-limpiar-fotos-viejas"' not in respuesta.text
+    assert 'href="/sistema"' in respuesta.text
+
+
+def test_ver_sistema_muestra_el_indicador_de_espacio_usado():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
+        patch("app.main.listar_fotos_para_limpiar", return_value=[]),
+    ):
+        respuesta = cliente.get("/sistema")
+
+    assert respuesta.status_code == 200
+    assert "Sistema" in respuesta.text
     assert "12 fotos guardadas" in respuesta.text
     assert "886 KB" in respuesta.text
 
 
-def test_ver_compras_indicador_en_singular_con_una_sola_foto():
+def test_ver_sistema_indicador_en_singular_con_una_sola_foto():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 1, "bytes_totales": 500}),
         patch("app.main.listar_fotos_para_limpiar", return_value=[]),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/sistema")
 
     assert respuesta.status_code == 200
     assert "1 foto guardada" in respuesta.text
     assert "fotos guardadas" not in respuesta.text
 
 
-def test_ver_compras_si_falla_el_uso_de_storage_no_muestra_el_indicador_ni_rompe():
+def test_ver_sistema_si_falla_el_uso_de_storage_no_muestra_el_indicador_ni_rompe():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.obtener_uso_storage_bucket", side_effect=Exception("permission denied for schema storage")),
         patch("app.main.listar_fotos_para_limpiar", side_effect=Exception("permission denied for schema storage")),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/sistema")
 
     assert respuesta.status_code == 200
     assert 'class="espacio-storage"' not in respuesta.text
     assert 'id="boton-limpiar-fotos-viejas"' not in respuesta.text
 
 
-def test_ver_compras_muestra_el_boton_de_limpieza_con_la_cantidad_real():
+def test_ver_sistema_muestra_el_boton_de_limpieza_con_la_cantidad_real():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
         patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/x.jpg", "2020-02-02/y.jpg"]),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/sistema")
 
     assert respuesta.status_code == 200
+    assert 'action="/sistema/limpiar-fotos-viejas"' in respuesta.text
     assert 'id="boton-limpiar-fotos-viejas"' in respuesta.text
     assert 'data-cantidad="2"' in respuesta.text
 
@@ -1304,15 +1317,15 @@ def test_ver_compras_muestra_el_boton_de_limpieza_con_la_cantidad_real():
 def test_limpiar_fotos_viejas_borra_las_encontradas_y_limpia_foto_ruta():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/a.jpg", "2020-02-02/b.jpg"]),
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
         patch("app.main.limpiar_foto_ruta_de_compras") as mock_limpiar_ruta,
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 10, "bytes_totales": 500}),
     ):
-        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+        respuesta = cliente.post("/sistema/limpiar-fotos-viejas")
 
     assert respuesta.status_code == 200
+    assert "Sistema" in respuesta.text
     assert "Se liberaron 2 fotos." in respuesta.text
     assert mock_borrar_foto.call_count == 2
     mock_borrar_foto.assert_any_call("2020-01-01/a.jpg")
@@ -1323,11 +1336,10 @@ def test_limpiar_fotos_viejas_borra_las_encontradas_y_limpia_foto_ruta():
 def test_limpiar_fotos_viejas_sin_ninguna_para_borrar_no_rompe():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.listar_fotos_para_limpiar", return_value=[]),
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
     ):
-        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+        respuesta = cliente.post("/sistema/limpiar-fotos-viejas")
 
     assert respuesta.status_code == 200
     assert "No hay fotos de más de 3 años para borrar." in respuesta.text
@@ -1342,7 +1354,6 @@ def test_limpiar_fotos_viejas_si_falla_una_sigue_con_las_demas():
 
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch(
             "app.main.listar_fotos_para_limpiar",
             return_value=["2020-01-01/a.jpg", "2020-02-02/b.jpg"],
@@ -1351,7 +1362,7 @@ def test_limpiar_fotos_viejas_si_falla_una_sigue_con_las_demas():
         patch("app.main.limpiar_foto_ruta_de_compras") as mock_limpiar_ruta,
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 10, "bytes_totales": 500}),
     ):
-        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+        respuesta = cliente.post("/sistema/limpiar-fotos-viejas")
 
     assert respuesta.status_code == 200
     assert mock_borrar_foto.call_count == 2
@@ -1363,10 +1374,9 @@ def test_limpiar_fotos_viejas_si_falla_una_sigue_con_las_demas():
 def test_limpiar_fotos_viejas_error_al_buscar_candidatas_da_500():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.listar_fotos_para_limpiar", side_effect=Exception("no se pudo conectar")),
     ):
-        respuesta = cliente.post("/compras/limpiar-fotos-viejas")
+        respuesta = cliente.post("/sistema/limpiar-fotos-viejas")
 
     assert respuesta.status_code == 500
     assert "No se pudo revisar qué fotos limpiar" in respuesta.text
