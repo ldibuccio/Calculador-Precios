@@ -13,6 +13,7 @@
     color: #222;
   }
   h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .titulo-sector { font-size: 1.6rem; font-weight: 800; margin: 0 0 1rem; text-align: center; }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
@@ -71,6 +72,8 @@
   {% set barra_sector = "sistema" %}
   {% set barra_titulo = "Sistema" %}
   {% include "_barra_navegacion.html" %}
+
+  <h1 class="titulo-sector">Sistema</h1>
 
   {% if error %}
   <div class="error">{{ error }}</div>

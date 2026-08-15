@@ -3780,3 +3780,38 @@ def test_ver_inicio_no_tiene_barra_de_navegacion():
 
     assert respuesta.status_code == 200
     assert "barra-navegacion" not in respuesta.text
+
+
+def test_titulo_grande_en_las_pantallas_principales_de_cada_sector():
+    casos = [("/compras", "Compras"), ("/comercial", "Comercial"), ("/sistema", "Sistema")]
+    for url, nombre in casos:
+        respuesta = cliente.get(url)
+        assert respuesta.status_code == 200
+        assert f'<h1 class="titulo-sector">{nombre}</h1>' in respuesta.text
+
+
+def test_titulo_grande_en_los_placeholders_que_son_pantalla_principal_de_su_sector():
+    casos = [("/logistica", "Logística"), ("/deposito", "Depósito"), ("/gerencia", "Gerencia")]
+    for url, nombre in casos:
+        respuesta = cliente.get(url)
+        assert respuesta.status_code == 200
+        assert f'<h1 class="titulo-sector">{nombre}</h1>' in respuesta.text
+
+
+def test_titulo_grande_no_aparece_en_sub_pantallas_de_compras():
+    # Regresión: los placeholders "Próximamente" DENTRO de Compras (no son
+    # la pantalla principal del sector) no llevan el título grande, aunque
+    # la regla CSS .titulo-sector siga presente (viene con el template
+    # compartido en_construccion.html).
+    for url in ["/compras/buscar", "/compras/nueva/listado", "/compras/armar-listado", "/compras/disponibles"]:
+        respuesta = cliente.get(url)
+        assert respuesta.status_code == 200
+        assert '<h1 class="titulo-sector">' not in respuesta.text
+
+
+def test_titulo_grande_no_aparece_en_sub_pantallas_normales():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva/manual")
+
+    assert respuesta.status_code == 200
+    assert '<h1 class="titulo-sector">' not in respuesta.text

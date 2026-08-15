@@ -12,6 +12,7 @@
     background: #f5f5f5;
     color: #222;
   }
+  .titulo-sector { font-size: 1.6rem; font-weight: 800; margin: 0 0 1rem; text-align: center; }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
@@ -42,6 +43,10 @@
   {% set barra_sector = sector %}
   {% set barra_titulo = titulo %}
   {% include "_barra_navegacion.html" %}
+
+  {% if es_pantalla_principal %}
+  <h1 class="titulo-sector">{{ titulo }}</h1>
+  {% endif %}
 
   <div class="tarjeta">
     <p>En construcción.</p>

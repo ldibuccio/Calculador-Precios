@@ -1214,12 +1214,24 @@ def _renderizar_en_construccion(
     volver_url: str = "/compras",
     volver_texto: str = "Volver a compras",
     sector: str = "compras",
+    es_pantalla_principal: bool = False,
 ):
-    """Pantalla placeholder compartida por todos los botones "Próximamente" (de la botonera de Compras y de la home)."""
+    """Pantalla placeholder compartida por todos los botones "Próximamente" (de la botonera de Compras y de la home).
+
+    es_pantalla_principal distingue los placeholders que SON la pantalla de
+    entrada de un sector entero (Logística/Depósito/Gerencia, con título
+    grande) de los que son sub-pantallas de Compras (sin título grande).
+    """
     return templates.TemplateResponse(
         request,
         "en_construccion.html",
-        {"titulo": titulo, "volver_url": volver_url, "volver_texto": volver_texto, "sector": sector},
+        {
+            "titulo": titulo,
+            "volver_url": volver_url,
+            "volver_texto": volver_texto,
+            "sector": sector,
+            "es_pantalla_principal": es_pantalla_principal,
+        },
     )
 
 
@@ -2443,21 +2455,36 @@ def ver_comercial(request: Request):
 @app.get("/logistica")
 def ver_logistica(request: Request):
     return _renderizar_en_construccion(
-        request, "Logística", volver_url="/inicio", volver_texto="Volver a Inicio", sector="logistica"
+        request,
+        "Logística",
+        volver_url="/inicio",
+        volver_texto="Volver a Inicio",
+        sector="logistica",
+        es_pantalla_principal=True,
     )
 
 
 @app.get("/deposito")
 def ver_deposito(request: Request):
     return _renderizar_en_construccion(
-        request, "Depósito", volver_url="/inicio", volver_texto="Volver a Inicio", sector="deposito"
+        request,
+        "Depósito",
+        volver_url="/inicio",
+        volver_texto="Volver a Inicio",
+        sector="deposito",
+        es_pantalla_principal=True,
     )
 
 
 @app.get("/gerencia")
 def ver_gerencia(request: Request):
     return _renderizar_en_construccion(
-        request, "Gerencia", volver_url="/inicio", volver_texto="Volver a Inicio", sector="gerencia"
+        request,
+        "Gerencia",
+        volver_url="/inicio",
+        volver_texto="Volver a Inicio",
+        sector="gerencia",
+        es_pantalla_principal=True,
     )
 
 
