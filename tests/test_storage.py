@@ -10,6 +10,7 @@ from core.storage import (
     SUPABASE_URL_ENV_VAR,
     _armar_ruta_unica,
     _sanear_nombre,
+    borrar_foto_comanda,
     obtener_url_foto,
     subir_foto_comanda,
 )
@@ -185,3 +186,46 @@ def test_obtener_url_foto_error_de_conexion_lanza_error_claro(monkeypatch):
     with patch("core.storage.httpx.post", side_effect=httpx.ConnectError("sin conexión")):
         with pytest.raises(RuntimeError, match="No se pudo conectar"):
             obtener_url_foto("x.jpg")
+
+
+# --- borrar_foto_comanda ---
+
+
+def test_borrar_foto_comanda_sin_supabase_url_lanza_error_claro(monkeypatch):
+    monkeypatch.delenv(SUPABASE_URL_ENV_VAR, raising=False)
+    monkeypatch.setenv(SUPABASE_SERVICE_KEY_ENV_VAR, "clave-de-prueba")
+
+    with pytest.raises(RuntimeError, match=SUPABASE_URL_ENV_VAR):
+        borrar_foto_comanda("2026-08-13/comanda-123-abcdef12.jpg")
+
+
+def test_borrar_foto_comanda_exitosa_manda_las_credenciales(monkeypatch):
+    monkeypatch.setenv(SUPABASE_URL_ENV_VAR, "https://proyecto.supabase.co")
+    monkeypatch.setenv(SUPABASE_SERVICE_KEY_ENV_VAR, "clave-secreta")
+
+    ruta = "2026-08-13/comanda-123-abcdef12.jpg"
+    with patch("core.storage.httpx.delete", return_value=_respuesta(200)) as mock_delete:
+        borrar_foto_comanda(ruta)
+
+    url_llamada, kwargs = mock_delete.call_args[0], mock_delete.call_args[1]
+    assert url_llamada[0] == f"https://proyecto.supabase.co/storage/v1/object/{BUCKET_COMANDAS}/{ruta}"
+    assert kwargs["headers"]["Authorization"] == "Bearer clave-secreta"
+    assert kwargs["headers"]["apikey"] == "clave-secreta"
+
+
+def test_borrar_foto_comanda_error_de_supabase_lanza_error_con_detalle(monkeypatch):
+    monkeypatch.setenv(SUPABASE_URL_ENV_VAR, "https://proyecto.supabase.co")
+    monkeypatch.setenv(SUPABASE_SERVICE_KEY_ENV_VAR, "clave-mala")
+
+    with patch("core.storage.httpx.delete", return_value=_respuesta(403, text="Invalid JWT")):
+        with pytest.raises(RuntimeError, match="403"):
+            borrar_foto_comanda("2026-08-13/comanda-123-abcdef12.jpg")
+
+
+def test_borrar_foto_comanda_error_de_conexion_lanza_error_claro(monkeypatch):
+    monkeypatch.setenv(SUPABASE_URL_ENV_VAR, "https://proyecto.supabase.co")
+    monkeypatch.setenv(SUPABASE_SERVICE_KEY_ENV_VAR, "clave-de-prueba")
+
+    with patch("core.storage.httpx.delete", side_effect=httpx.ConnectError("sin conexión")):
+        with pytest.raises(RuntimeError, match="No se pudo conectar"):
+            borrar_foto_comanda("2026-08-13/comanda-123-abcdef12.jpg")

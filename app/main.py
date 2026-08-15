@@ -62,7 +62,7 @@ from app.db import (
 )
 from core.lector_comandas import extraer_comanda
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, normalizar_texto
-from core.storage import obtener_url_foto, subir_foto_comanda
+from core.storage import borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
@@ -1945,14 +1945,85 @@ def editar_compra(
     return RedirectResponse(url="/compras", status_code=303)
 
 
+def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
+    """Borra una compra y, si esta era la última que usaba su foto, también el archivo del Storage.
+
+    Borrar la foto es un extra: si falla (sin conexión, credencial mala,
+    lo que sea), se loguea completo y se sigue igual — la compra ya se
+    borró, una foto huérfana es un mal menor frente a no poder borrar
+    nada. Si falla el borrado de la COMPRA en sí, esta función deja que
+    la excepción se propague: eso sí lo tiene que ver quien llama.
+    """
+    foto_ruta_a_borrar = eliminar_compra(compra_id)
+    if foto_ruta_a_borrar:
+        try:
+            borrar_foto_comanda(foto_ruta_a_borrar)
+        except Exception:
+            logger.exception(
+                "No se pudo borrar de Supabase Storage la foto %s (la compra %s ya se borró igual)",
+                foto_ruta_a_borrar,
+                compra_id,
+            )
+
+
 @app.post("/compras/{compra_id}/eliminar")
 def eliminar_compra_ruta(compra_id: int):
     try:
-        eliminar_compra(compra_id)
+        _eliminar_compra_y_su_foto_si_corresponde(compra_id)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
     return RedirectResponse(url="/compras", status_code=303)
+
+
+@app.post("/compras/eliminar-varias")
+async def eliminar_varias_compras_ruta(request: Request):
+    form = await request.form()
+    ids = [int(valor) for valor in form.getlist("compra_id") if valor.isdigit()]
+
+    if not ids:
+        return RedirectResponse(url="/compras", status_code=303)
+
+    hoy = _hoy_argentina()
+    try:
+        compras_antes = listar_compras_por_rango_fechas(hoy - timedelta(days=1), hoy)
+    except Exception:
+        compras_antes = []
+    etiqueta_por_id = {
+        compra["id"]: f"{compra['articulo_nombre']} ({compra['proveedor_nombre']})" for compra in compras_antes
+    }
+
+    etiquetas_fallidas = []
+    for compra_id in ids:
+        try:
+            _eliminar_compra_y_su_foto_si_corresponde(compra_id)
+        except Exception:
+            logger.exception("No se pudo borrar la compra %s (borrado múltiple)", compra_id)
+            etiquetas_fallidas.append(etiqueta_por_id.get(compra_id, "una compra"))
+
+    if not etiquetas_fallidas:
+        return RedirectResponse(url="/compras", status_code=303)
+
+    try:
+        compras = listar_compras_por_rango_fechas(hoy - timedelta(days=1), hoy)
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "compras.html",
+            {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
+            status_code=500,
+        )
+
+    cantidad_borradas = len(ids) - len(etiquetas_fallidas)
+    # Mensaje pensado para un usuario no técnico: sin ids ni jerga de base
+    # de datos. La causa más probable de un fallo real es la FK de
+    # recepciones (ver relevamiento previo), pero se explica en criollo.
+    error = (
+        f"Se borraron {cantidad_borradas} de {len(ids)} compras. "
+        f"No se pudieron borrar {len(etiquetas_fallidas)} (puede que tengan una recepción asociada): "
+        f"{', '.join(etiquetas_fallidas)}."
+    )
+    return templates.TemplateResponse(request, "compras.html", {"compras": compras, "error": error})
 
 
 @app.get("/compras/{compra_id}/foto")

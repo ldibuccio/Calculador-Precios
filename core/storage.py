@@ -105,6 +105,33 @@ def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str) -> str:
     return ruta
 
 
+def borrar_foto_comanda(ruta: str) -> None:
+    """Borra un archivo del bucket privado "comandas" en Supabase Storage.
+
+    Lanza RuntimeError con un mensaje claro en los mismos casos que
+    subir_foto_comanda (faltan credenciales, sin conexión, Supabase
+    rechaza el borrado). No decide si un fallo acá debe bloquear algo
+    más — eso lo decide quien llama (ver app/main.py: borrar una foto
+    nunca debe tumbar el borrado de la compra que la usaba).
+    """
+    url_base, service_key = _obtener_credenciales()
+
+    try:
+        respuesta = httpx.delete(
+            f"{url_base}/storage/v1/object/{BUCKET_COMANDAS}/{ruta}",
+            headers={
+                "Authorization": f"Bearer {service_key}",
+                "apikey": service_key,
+            },
+            timeout=TIMEOUT_HTTP_SEGUNDOS,
+        )
+    except httpx.HTTPError as error:
+        raise RuntimeError(f"No se pudo conectar con Supabase Storage: {error}") from error
+
+    if respuesta.status_code >= 400:
+        raise RuntimeError(f"Supabase Storage rechazó el borrado ({respuesta.status_code}): {respuesta.text}")
+
+
 def obtener_url_foto(ruta: str, expiracion_segundos: int = EXPIRACION_URL_FIRMADA_SEGUNDOS) -> str:
     """Genera una URL firmada temporal para ver una foto del bucket privado "comandas".
 

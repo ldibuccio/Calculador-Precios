@@ -2013,12 +2013,42 @@ def test_editar_compra_error_de_base_muestra_mensaje_claro():
 
 
 def test_eliminar_compra_exitosa_redirige_a_compras():
-    with patch("app.main.eliminar_compra") as mock_eliminar:
+    with (
+        patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+    ):
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras"
     mock_eliminar.assert_called_once_with(30)
+    # Esta compra no tenía foto (eliminar_compra devolvió None): no hay
+    # nada que borrar del Storage.
+    mock_borrar_foto.assert_not_called()
+
+
+def test_eliminar_compra_con_foto_que_era_la_unica_referencia_la_borra_tambien_del_storage():
+    with (
+        patch("app.main.eliminar_compra", return_value="2026-08-13/n07p41-123-abcdef12.jpg"),
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+    ):
+        respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_borrar_foto.assert_called_once_with("2026-08-13/n07p41-123-abcdef12.jpg")
+
+
+def test_eliminar_compra_si_falla_el_borrado_de_la_foto_igual_redirige_bien():
+    # Regresión: borrar la foto es un extra — si falla, la compra ya se
+    # borró y no debe tumbar la respuesta al usuario.
+    with (
+        patch("app.main.eliminar_compra", return_value="2026-08-13/n07p41-123-abcdef12.jpg"),
+        patch("app.main.borrar_foto_comanda", side_effect=Exception("sin conexión con Storage")),
+    ):
+        respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
 
 
 def test_eliminar_compra_error_de_base_da_500():
@@ -2026,6 +2056,88 @@ def test_eliminar_compra_error_de_base_da_500():
         respuesta = cliente.post("/compras/30/eliminar")
 
     assert respuesta.status_code == 500
+
+
+def test_eliminar_varias_compras_exitosa_redirige_a_compras():
+    with (
+        patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+    ):
+        respuesta = cliente.post(
+            "/compras/eliminar-varias",
+            data={"compra_id": ["30", "31"]},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    assert mock_eliminar.call_count == 2
+    mock_eliminar.assert_any_call(30)
+    mock_eliminar.assert_any_call(31)
+    mock_borrar_foto.assert_not_called()
+
+
+def test_eliminar_varias_compras_sin_ninguna_seleccionada_redirige_sin_hacer_nada():
+    with patch("app.main.eliminar_compra") as mock_eliminar:
+        respuesta = cliente.post("/compras/eliminar-varias", data={}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras"
+    mock_eliminar.assert_not_called()
+
+
+def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicismos():
+    # id 30 (Mzn Red, Saturno) se borra bien; id 31 (Mango, Frutamax) falla
+    # (ej. por la FK de recepciones). El mensaje al usuario no debe mostrar
+    # ids ni el error crudo de Postgres, y sí debe nombrar el renglón que
+    # no se pudo borrar de forma reconocible (artículo + proveedor).
+    def eliminar_side_effect(compra_id):
+        if compra_id == 31:
+            raise Exception('update or delete on table "compras" violates foreign key constraint')
+        return None
+
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.eliminar_compra", side_effect=eliminar_side_effect) as mock_eliminar,
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+    ):
+        respuesta = cliente.post(
+            "/compras/eliminar-varias",
+            data={"compra_id": ["30", "31"]},
+        )
+
+    assert respuesta.status_code == 200
+    assert mock_eliminar.call_count == 2
+    mock_borrar_foto.assert_not_called()
+    assert "Se borraron 1 de 2 compras" in respuesta.text
+    assert "No se pudieron borrar 1" in respuesta.text
+    assert "recepción asociada" in respuesta.text
+    # Identifica el renglón fallido por artículo+proveedor, no por id ni con
+    # el texto crudo de Postgres. (El "31" en la fila de la tabla es el
+    # value del checkbox, no el mensaje de error — no cuenta como fuga.)
+    assert "Mango (Frutamax)" in respuesta.text
+    assert "id 31" not in respuesta.text
+    assert "foreign key" not in respuesta.text
+    assert "violates" not in respuesta.text
+
+
+def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.eliminar_compra", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.post(
+            "/compras/eliminar-varias",
+            data={"compra_id": ["30", "31"]},
+        )
+
+    assert respuesta.status_code == 200
+    assert "Se borraron 0 de 2 compras" in respuesta.text
+    assert "No se pudieron borrar 2" in respuesta.text
+    assert "Mzn Red (Saturno)" in respuesta.text
+    assert "Mango (Frutamax)" in respuesta.text
 
 
 def test_ver_foto_compra_redirige_a_la_url_firmada():

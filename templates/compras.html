@@ -89,10 +89,24 @@
   <div class="tarjeta">
     <h2>Operaciones cargadas: {{ compras|length }}</h2>
     {% if compras %}
+    <!--
+      Un <form> no puede anidar otro <form> adentro (el de "Eliminar" de
+      cada fila, que se deja tal cual estaba). En vez de envolver la tabla
+      en el form del borrado múltiple, este form queda vacío y afuera; los
+      checkboxes se lo asocian con el atributo form="..." (HTML5), sin
+      necesidad de estar físicamente adentro de él.
+    -->
+    <form method="post" action="/compras/eliminar-varias" id="form-borrado-multiple"
+          onsubmit="return confirmarBorradoMultiple();"></form>
+    <button type="submit" form="form-borrado-multiple" class="boton-eliminar" id="boton-borrar-seleccionadas"
+            style="display: none; width: 100%; margin-bottom: 0.75rem;">
+      Borrar seleccionadas (0)
+    </button>
     <div class="tabla-scroll">
       <table>
         <thead>
           <tr>
+            <th><input type="checkbox" id="check-todas"></th>
             <th>Fecha</th>
             <th>Proveedor</th>
             <th>Artículo</th>
@@ -106,6 +120,7 @@
         <tbody>
           {% for c in compras %}
           <tr>
+            <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
             <td>{{ c.fecha_operacion|fecha_corta }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
@@ -134,5 +149,44 @@
     <p class="vacio">No hay compras cargadas en los últimos 2 días.</p>
     {% endif %}
   </div>
+
+  <script>
+    const checkTodas = document.getElementById("check-todas");
+    const checksFila = Array.from(document.querySelectorAll(".check-fila"));
+    const botonBorrarSeleccionadas = document.getElementById("boton-borrar-seleccionadas");
+
+    function actualizarBotonBorrarSeleccionadas() {
+      const seleccionadas = checksFila.filter(function (c) { return c.checked; });
+      if (seleccionadas.length === 0) {
+        botonBorrarSeleccionadas.style.display = "none";
+      } else {
+        botonBorrarSeleccionadas.style.display = "block";
+        botonBorrarSeleccionadas.textContent = "Borrar seleccionadas (" + seleccionadas.length + ")";
+      }
+      if (checkTodas) {
+        checkTodas.checked = seleccionadas.length > 0 && seleccionadas.length === checksFila.length;
+      }
+    }
+
+    if (checkTodas) {
+      checkTodas.addEventListener("change", function () {
+        checksFila.forEach(function (c) {
+          c.checked = checkTodas.checked;
+        });
+        actualizarBotonBorrarSeleccionadas();
+      });
+    }
+
+    checksFila.forEach(function (c) {
+      c.addEventListener("change", actualizarBotonBorrarSeleccionadas);
+    });
+
+    function confirmarBorradoMultiple() {
+      const cantidad = checksFila.filter(function (c) { return c.checked; }).length;
+      return confirm(
+        "¿Seguro que querés borrar las " + cantidad + " compras seleccionadas? No se puede deshacer."
+      );
+    }
+  </script>
 </body>
 </html>

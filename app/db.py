@@ -919,13 +919,33 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
         conexion.close()
 
 
-def eliminar_compra(compra_id: int) -> None:
-    """Borra una compra (borrado real; Postgres rechaza el borrado si alguna recepción ya la referencia)."""
+def eliminar_compra(compra_id: int) -> str | None:
+    """Borra una compra (borrado real; Postgres rechaza el borrado si alguna recepción ya la referencia).
+
+    Una misma foto de comanda (foto_ruta) puede estar compartida por varios
+    renglones/compras. Devuelve el foto_ruta que hay que borrar del Storage
+    SOLO si esta era la última compra que lo usaba (si no tenía foto, o si
+    otro renglón lo sigue usando, devuelve None) — la decisión queda
+    resuelta acá, dentro de la misma transacción, para no tener una
+    condición de carrera entre el DELETE y el conteo posterior.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute("SELECT foto_ruta FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            foto_ruta = fila[0] if fila else None
+
             cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+
+            foto_ruta_a_borrar = None
+            if foto_ruta:
+                cursor.execute("SELECT COUNT(*) FROM compras WHERE foto_ruta = %s", (foto_ruta,))
+                (restantes,) = cursor.fetchone()
+                if restantes == 0:
+                    foto_ruta_a_borrar = foto_ruta
         conexion.commit()
+        return foto_ruta_a_borrar
     finally:
         conexion.close()
 
