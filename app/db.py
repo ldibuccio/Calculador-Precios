@@ -311,7 +311,7 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
             cursor.execute(
                 """
                 SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, fl.envase_id, e.nombre AS envase_nombre,
-                       fl.contenido_caja, fl.unidad_venta, fl.envase_variable
+                       fl.contenido_caja, fl.unidad_venta, fl.envase_variable, fl.nombre_cliente, fl.codigo_cliente
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
                 LEFT JOIN envases e ON e.id = fl.envase_id
@@ -335,7 +335,8 @@ def obtener_ficha(ficha_id: int) -> dict | None:
             cursor.execute(
                 """
                 SELECT fl.id, fl.cliente_id, fl.articulo_id, a.nombre AS articulo_nombre,
-                       fl.envase_id, fl.contenido_caja, fl.unidad_venta, fl.envase_variable
+                       fl.envase_id, fl.contenido_caja, fl.unidad_venta, fl.envase_variable,
+                       fl.nombre_cliente, fl.codigo_cliente
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
                 WHERE fl.id = %s
@@ -399,18 +400,34 @@ def crear_ficha(
     contenido_caja: float,
     unidad_venta: str,
     envase_variable: bool,
+    nombre_cliente: str | None = None,
+    codigo_cliente: str | None = None,
 ) -> None:
-    """Crea la ficha de logística de un artículo para un cliente."""
+    """Crea la ficha de logística de un artículo para un cliente.
+
+    nombre_cliente/codigo_cliente son el alias con el que ese cliente pide el
+    artículo (opcional: puede no conocerse todavía al crear la ficha).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO fichas_logistica
-                    (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable,
+                     nombre_cliente, codigo_cliente)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable),
+                (
+                    articulo_id,
+                    cliente_id,
+                    envase_id,
+                    contenido_caja,
+                    unidad_venta,
+                    envase_variable,
+                    nombre_cliente,
+                    codigo_cliente,
+                ),
             )
         conexion.commit()
     finally:
@@ -418,9 +435,15 @@ def crear_ficha(
 
 
 def actualizar_ficha(
-    ficha_id: int, envase_id: int | None, contenido_caja: float, unidad_venta: str, envase_variable: bool
+    ficha_id: int,
+    envase_id: int | None,
+    contenido_caja: float,
+    unidad_venta: str,
+    envase_variable: bool,
+    nombre_cliente: str | None = None,
+    codigo_cliente: str | None = None,
 ) -> None:
-    """Actualiza envase, contenido solicitado, unidad de venta y envase_variable de una ficha existente."""
+    """Actualiza envase, contenido solicitado, unidad de venta, envase_variable y el alias del cliente."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -428,10 +451,10 @@ def actualizar_ficha(
                 """
                 UPDATE fichas_logistica
                 SET envase_id = %s, contenido_caja = %s, unidad_venta = %s, envase_variable = %s,
-                    actualizado_en = now()
+                    nombre_cliente = %s, codigo_cliente = %s, actualizado_en = now()
                 WHERE id = %s
                 """,
-                (envase_id, contenido_caja, unidad_venta, envase_variable, ficha_id),
+                (envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente, ficha_id),
             )
         conexion.commit()
     finally:
@@ -449,115 +472,23 @@ def eliminar_ficha(ficha_id: int) -> None:
         conexion.close()
 
 
-def listar_conversiones_por_cliente(cliente_id: int) -> list[dict]:
-    """Conversiones de un cliente (cómo llama a cada artículo), ordenadas por nombre de artículo."""
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT c.id, a.nombre AS articulo_nombre, c.nombre_cliente, c.codigo_cliente
-                FROM conversion_articulos_cliente c
-                JOIN articulos a ON a.id = c.articulo_id
-                WHERE c.cliente_id = %s
-                ORDER BY a.nombre
-                """,
-                (cliente_id,),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
-
-
 def listar_todas_las_conversiones() -> list[dict]:
-    """Todas las conversiones nombre_cliente -> articulo_id, de cualquier cliente.
+    """Todos los alias nombre_cliente -> articulo_id, de cualquier cliente.
 
-    Se usa para adivinar artículos en comandas leídas por foto: los alias que
-    ya se cargaron para pedidos de clientes (ej. "MANZANA PG" -> Man Gob)
-    también sirven para reconocer abreviaturas de proveedores en el mercado,
-    no son exclusivos de un cliente puntual.
+    Los alias viven en fichas_logistica (columnas nombre_cliente/codigo_cliente)
+    desde que se fusionó ahí la vieja tabla conversion_articulos_cliente. Se usa
+    para adivinar artículos en comandas leídas por foto: los alias que ya se
+    cargaron para pedidos de clientes (ej. "MANZANA PG" -> Man Gob) también
+    sirven para reconocer abreviaturas de proveedores en el mercado, no son
+    exclusivos de un cliente puntual.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT articulo_id, nombre_cliente FROM conversion_articulos_cliente")
+            cursor.execute("SELECT articulo_id, nombre_cliente FROM fichas_logistica WHERE nombre_cliente IS NOT NULL")
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
-
-
-def obtener_conversion(conversion_id: int) -> dict | None:
-    """Devuelve una conversión por id (para precargar el formulario de edición), o None si no existe."""
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT c.id, c.cliente_id, c.articulo_id, a.nombre AS articulo_nombre,
-                       c.nombre_cliente, c.codigo_cliente
-                FROM conversion_articulos_cliente c
-                JOIN articulos a ON a.id = c.articulo_id
-                WHERE c.id = %s
-                """,
-                (conversion_id,),
-            )
-            fila = cursor.fetchone()
-            if fila is None:
-                return None
-            columnas = [descripcion[0] for descripcion in cursor.description]
-        return dict(zip(columnas, fila))
-    finally:
-        conexion.close()
-
-
-def crear_conversion(articulo_id: int, cliente_id: int, nombre_cliente: str, codigo_cliente: str | None) -> None:
-    """Crea una conversión (cómo llama el cliente a un artículo)."""
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO conversion_articulos_cliente (articulo_id, cliente_id, nombre_cliente, codigo_cliente)
-                VALUES (%s, %s, %s, %s)
-                """,
-                (articulo_id, cliente_id, nombre_cliente, codigo_cliente),
-            )
-        conexion.commit()
-    finally:
-        conexion.close()
-
-
-def actualizar_conversion(
-    conversion_id: int, articulo_id: int, nombre_cliente: str, codigo_cliente: str | None
-) -> None:
-    """Actualiza el artículo, nombre y código de una conversión existente."""
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE conversion_articulos_cliente
-                SET articulo_id = %s, nombre_cliente = %s, codigo_cliente = %s, actualizado_en = now()
-                WHERE id = %s
-                """,
-                (articulo_id, nombre_cliente, codigo_cliente, conversion_id),
-            )
-        conexion.commit()
-    finally:
-        conexion.close()
-
-
-def eliminar_conversion(conversion_id: int) -> None:
-    """Borra una conversión (borrado real: nada más referencia su id)."""
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute("DELETE FROM conversion_articulos_cliente WHERE id = %s", (conversion_id,))
-        conexion.commit()
     finally:
         conexion.close()
 

@@ -121,6 +121,14 @@
       <input type="hidden" name="articulo_nombre" value="{{ ficha.articulo_nombre }}">
       {% endif %}
 
+      <label for="nombre_cliente">Nombre que usa el cliente en su pedido (opcional)</label>
+      <input type="text" id="nombre_cliente" name="nombre_cliente"
+             value="{% if modo == 'editar' and ficha.nombre_cliente %}{{ ficha.nombre_cliente }}{% endif %}">
+
+      <label for="codigo_cliente">Código que usa el cliente (opcional)</label>
+      <input type="text" id="codigo_cliente" name="codigo_cliente"
+             value="{% if modo == 'editar' and ficha.codigo_cliente %}{{ ficha.codigo_cliente }}{% endif %}">
+
       <label for="envase_id">Envase</label>
       <select id="envase_id" name="envase_id">
         <option value="" {% if modo == "editar" and not ficha.envase_id %}selected{% endif %}>Sin envase (perdido)</option>

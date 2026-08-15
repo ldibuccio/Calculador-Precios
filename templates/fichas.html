@@ -122,6 +122,8 @@
         <thead>
           <tr>
             <th>Artículo</th>
+            <th>Nombre del cliente</th>
+            <th>Código del cliente</th>
             <th>Envase</th>
             <th>Contenido caja</th>
             <th>Unidad</th>
@@ -133,6 +135,8 @@
           {% for f in fichas %}
           <tr>
             <td>{{ f.articulo_nombre }}</td>
+            <td>{{ f.nombre_cliente or "-" }}</td>
+            <td>{{ f.codigo_cliente or "-" }}</td>
             <td>{{ f.envase_nombre or "Sin envase" }}</td>
             <td>{{ f.contenido_caja|kilos if f.contenido_caja is not none else "-" }}</td>
             <td>{{ f.unidad_venta }}</td>

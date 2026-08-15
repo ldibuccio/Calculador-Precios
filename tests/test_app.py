@@ -517,6 +517,8 @@ FICHAS_DE_PRUEBA = [
         "contenido_caja": 10,
         "unidad_venta": "unidad",
         "envase_variable": True,
+        "nombre_cliente": "MANGO",
+        "codigo_cliente": "225863",
     },
     {
         "id": 11,
@@ -525,6 +527,8 @@ FICHAS_DE_PRUEBA = [
         "contenido_caja": 18,
         "unidad_venta": "kilo",
         "envase_variable": False,
+        "nombre_cliente": None,
+        "codigo_cliente": None,
     },
 ]
 
@@ -562,6 +566,11 @@ def test_ver_fichas_con_cliente_muestra_la_lista():
     assert "/fichas/nueva?cliente_id=1" in respuesta.text
     assert "Variable" in respuesta.text
     assert "Fijo" in respuesta.text
+    # Alias fusionados desde la vieja /conversion: se muestran en la tabla.
+    assert "<td>MANGO</td>" in respuesta.text
+    assert "<td>225863</td>" in respuesta.text
+    # Sandía no tiene alias cargado: se muestra "-", no vacío ni error.
+    assert respuesta.text.count("<td>-</td>") >= 2
 
 
 def test_ver_fichas_error_al_leer_fichas_muestra_error_claro():
@@ -589,6 +598,8 @@ def test_ver_nueva_ficha_muestra_formulario():
     assert respuesta.status_code == 200
     assert "Kiwi" in respuesta.text
     assert "Caja Chica Día" in respuesta.text
+    assert 'id="nombre_cliente" name="nombre_cliente"' in respuesta.text
+    assert 'id="codigo_cliente" name="codigo_cliente"' in respuesta.text
 
 
 def test_ver_nueva_ficha_sin_cliente_id_da_422():
@@ -625,13 +636,15 @@ def test_agregar_ficha_exitosa_redirige_a_fichas_del_cliente():
                 "contenido_caja": "10",
                 "unidad_venta": "unidad",
                 "envase_variable": "si",
+                "nombre_cliente": "MANZ ROJ ELE",
+                "codigo_cliente": "90039",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/fichas?cliente_id=1"
-    mock_crear.assert_called_once_with(5, 1, 100, 10.0, "unidad", True)
+    mock_crear.assert_called_once_with(5, 1, 100, 10.0, "unidad", True, "MANZ ROJ ELE", "90039")
 
 
 def test_agregar_ficha_sin_envase_con_contenido_caja_exitosa():
@@ -643,7 +656,8 @@ def test_agregar_ficha_sin_envase_con_contenido_caja_exitosa():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(5, 1, None, 12.0, "cubeta", False)
+    # Sin nombre_cliente/codigo_cliente en el form: quedan en None (son opcionales).
+    mock_crear.assert_called_once_with(5, 1, None, 12.0, "cubeta", False, None, None)
 
 
 def test_agregar_ficha_sin_envase_sin_contenido_caja_muestra_error():
@@ -766,6 +780,8 @@ FICHA_DE_PRUEBA = {
     "contenido_caja": 10,
     "unidad_venta": "unidad",
     "envase_variable": True,
+    "nombre_cliente": "MANGO",
+    "codigo_cliente": "225863",
 }
 
 
@@ -780,6 +796,11 @@ def test_ver_editar_ficha_muestra_datos_precargados():
     assert "Mango" in respuesta.text
     assert 'action="/fichas/10/editar"' in respuesta.text
     assert "checked" in respuesta.text  # envase_variable=True precargado
+    # Alias fusionados desde la vieja /conversion: editables en el mismo form.
+    assert 'id="nombre_cliente" name="nombre_cliente"' in respuesta.text
+    assert 'value="MANGO"' in respuesta.text
+    assert 'id="codigo_cliente" name="codigo_cliente"' in respuesta.text
+    assert 'value="225863"' in respuesta.text
 
 
 def test_ver_editar_ficha_inexistente_da_404():
@@ -807,13 +828,15 @@ def test_editar_ficha_exitosa_redirige_a_fichas_del_cliente():
                 "contenido_caja": "12",
                 "unidad_venta": "unidad",
                 "envase_variable": "si",
+                "nombre_cliente": "MANGO",
+                "codigo_cliente": "225863",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/fichas?cliente_id=1"
-    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", True)
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", True, "MANGO", "225863")
 
 
 def test_editar_ficha_sin_tildar_envase_variable_guarda_false():
@@ -831,7 +854,8 @@ def test_editar_ficha_sin_tildar_envase_variable_guarda_false():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", False)
+    # Sin nombre_cliente/codigo_cliente en el form: quedan en None (son opcionales).
+    mock_actualizar.assert_called_once_with(10, 100, 12.0, "unidad", False, None, None)
 
 
 def test_editar_ficha_sin_contenido_caja_muestra_error():
@@ -913,238 +937,11 @@ def test_eliminar_ficha_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
-CONVERSIONES_DE_PRUEBA = [
-    {"id": 20, "articulo_nombre": "Mzn Red", "nombre_cliente": "MANZ ROJ ELE", "codigo_cliente": "90039"},
-    {"id": 21, "articulo_nombre": "Pera", "nombre_cliente": "PERA WILL", "codigo_cliente": None},
-]
-
-
-def test_ver_conversion_sin_cliente_elegido_pide_elegir_uno():
-    with patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR):
-        respuesta = cliente.get("/conversion")
-
-    assert respuesta.status_code == 200
-    assert "Elegí un cliente" in respuesta.text
-    assert "Día" in respuesta.text
-
-
-def test_ver_conversion_error_al_leer_clientes_muestra_error_claro():
-    with patch("app.main.listar_clientes", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/conversion")
-
-    assert respuesta.status_code == 500
-    assert "No se pudo leer los clientes" in respuesta.text
-
-
-def test_ver_conversion_con_cliente_muestra_la_lista():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        patch("app.main.listar_conversiones_por_cliente", return_value=CONVERSIONES_DE_PRUEBA),
-    ):
-        respuesta = cliente.get("/conversion?cliente_id=1")
-
-    assert respuesta.status_code == 200
-    assert "Mzn Red" in respuesta.text
-    assert "MANZ ROJ ELE" in respuesta.text
-    assert "90039" in respuesta.text
-    assert "Pera" in respuesta.text
-    assert "/conversion/20/editar" in respuesta.text
-    assert "/conversion/nueva?cliente_id=1" in respuesta.text
-
-
-def test_ver_conversion_error_al_leer_conversiones_muestra_error_claro():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        patch("app.main.listar_conversiones_por_cliente", side_effect=Exception("no se pudo conectar")),
-    ):
-        respuesta = cliente.get("/conversion?cliente_id=1")
-
-    assert respuesta.status_code == 500
-    assert "No se pudieron leer las conversiones" in respuesta.text
-
-
-def test_ver_nueva_conversion_muestra_formulario():
-    with patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA):
-        respuesta = cliente.get("/conversion/nueva?cliente_id=1")
-
-    assert respuesta.status_code == 200
-    assert "Kiwi" in respuesta.text
-
-
-def test_ver_nueva_conversion_sin_cliente_id_da_422():
-    respuesta = cliente.get("/conversion/nueva")
-    assert respuesta.status_code == 422
-
-
-def test_ver_nueva_conversion_error_de_base_da_500():
-    with patch("app.main.listar_articulos", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/conversion/nueva?cliente_id=1")
-
-    assert respuesta.status_code == 500
-
-
-def test_agregar_conversion_exitosa_redirige_a_conversion_del_cliente():
-    with patch("app.main.crear_conversion") as mock_crear:
-        respuesta = cliente.post(
-            "/conversion/nueva",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "MANZ ROJ ELE", "codigo_cliente": "90039"},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/conversion?cliente_id=1"
-    mock_crear.assert_called_once_with(5, 1, "MANZ ROJ ELE", "90039")
-
-
-def test_agregar_conversion_sin_codigo_guarda_none():
-    with patch("app.main.crear_conversion") as mock_crear:
-        respuesta = cliente.post(
-            "/conversion/nueva",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "PERA WILL", "codigo_cliente": ""},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(5, 1, "PERA WILL", None)
-
-
-def test_agregar_conversion_sin_articulo_muestra_error():
-    with (
-        patch("app.main.crear_conversion") as mock_crear,
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
-    ):
-        respuesta = cliente.post(
-            "/conversion/nueva",
-            data={"cliente_id": "1", "articulo_id": "", "nombre_cliente": "PERA WILL", "codigo_cliente": ""},
-        )
-
-    assert respuesta.status_code == 400
-    assert "Elegí un artículo" in respuesta.text
-    mock_crear.assert_not_called()
-
-
-def test_agregar_conversion_sin_nombre_cliente_muestra_error():
-    with (
-        patch("app.main.crear_conversion") as mock_crear,
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
-    ):
-        respuesta = cliente.post(
-            "/conversion/nueva",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "", "codigo_cliente": ""},
-        )
-
-    assert respuesta.status_code == 400
-    assert "El nombre no puede estar vacío" in respuesta.text
-    mock_crear.assert_not_called()
-
-
-def test_agregar_conversion_error_de_base_muestra_mensaje_claro():
-    with (
-        patch("app.main.crear_conversion", side_effect=Exception("no se pudo conectar")),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
-    ):
-        respuesta = cliente.post(
-            "/conversion/nueva",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "PERA WILL", "codigo_cliente": ""},
-        )
-
-    assert respuesta.status_code == 500
-    assert "No se pudo guardar la conversión" in respuesta.text
-
-
-CONVERSION_DE_PRUEBA = {
-    "id": 20,
-    "cliente_id": 1,
-    "articulo_id": 5,
-    "articulo_nombre": "Mzn Red",
-    "nombre_cliente": "MANZ ROJ ELE",
-    "codigo_cliente": "90039",
-}
-
-
-def test_ver_editar_conversion_muestra_datos_precargados():
-    with (
-        patch("app.main.obtener_conversion", return_value=CONVERSION_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
-    ):
-        respuesta = cliente.get("/conversion/20/editar")
-
-    assert respuesta.status_code == 200
-    assert "MANZ ROJ ELE" in respuesta.text
-    assert "90039" in respuesta.text
-    assert 'action="/conversion/20/editar"' in respuesta.text
-
-
-def test_ver_editar_conversion_inexistente_da_404():
-    with patch("app.main.obtener_conversion", return_value=None):
-        respuesta = cliente.get("/conversion/999/editar")
-
-    assert respuesta.status_code == 404
-
-
-def test_ver_editar_conversion_error_de_base_da_500():
-    with patch("app.main.obtener_conversion", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/conversion/20/editar")
-
-    assert respuesta.status_code == 500
-
-
-def test_editar_conversion_exitosa_redirige_a_conversion_del_cliente():
-    with patch("app.main.actualizar_conversion") as mock_actualizar:
-        respuesta = cliente.post(
-            "/conversion/20/editar",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "MANZ ROJ ELE", "codigo_cliente": "90039"},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/conversion?cliente_id=1"
-    mock_actualizar.assert_called_once_with(20, 5, "MANZ ROJ ELE", "90039")
-
-
-def test_editar_conversion_sin_nombre_cliente_muestra_error():
-    with (
-        patch("app.main.actualizar_conversion") as mock_actualizar,
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
-    ):
-        respuesta = cliente.post(
-            "/conversion/20/editar",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "", "codigo_cliente": "90039"},
-        )
-
-    assert respuesta.status_code == 400
-    assert "El nombre no puede estar vacío" in respuesta.text
-    mock_actualizar.assert_not_called()
-
-
-def test_editar_conversion_error_de_base_muestra_mensaje_claro():
-    with (
-        patch("app.main.actualizar_conversion", side_effect=Exception("no se pudo conectar")),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
-    ):
-        respuesta = cliente.post(
-            "/conversion/20/editar",
-            data={"cliente_id": "1", "articulo_id": "5", "nombre_cliente": "MANZ ROJ ELE", "codigo_cliente": "90039"},
-        )
-
-    assert respuesta.status_code == 500
-    assert "No se pudo guardar la conversión" in respuesta.text
-
-
-def test_eliminar_conversion_exitosa_redirige_a_conversion_del_cliente():
-    with patch("app.main.eliminar_conversion") as mock_eliminar:
-        respuesta = cliente.post("/conversion/20/eliminar", data={"cliente_id": "1"}, follow_redirects=False)
-
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/conversion?cliente_id=1"
-    mock_eliminar.assert_called_once_with(20)
-
-
-def test_eliminar_conversion_error_de_base_da_500():
-    with patch("app.main.eliminar_conversion", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.post("/conversion/20/eliminar", data={"cliente_id": "1"})
-
-    assert respuesta.status_code == 500
+def test_conversion_ya_no_existe_como_pantalla_propia():
+    # Regresión: /conversion se fusionó dentro de las fichas de logística
+    # del cliente (nombre_cliente/codigo_cliente ahora viven en la ficha).
+    assert cliente.get("/conversion").status_code == 404
+    assert cliente.get("/conversion/nueva?cliente_id=1").status_code == 404
 
 
 HOY_DE_PRUEBA = date(2026, 8, 6)
@@ -1310,8 +1107,10 @@ def test_ver_compras_incluye_links_a_catalogo_y_a_inicio():
 
     assert respuesta.status_code == 200
     assert 'href="/articulos"' in respuesta.text
-    assert 'href="/conversion"' in respuesta.text
     assert 'href="/inicio"' in respuesta.text
+    # Regresión: /conversion se fusionó dentro de las fichas de logística
+    # del cliente, ya no existe como pantalla propia.
+    assert 'href="/conversion"' not in respuesta.text
 
 
 def test_ver_sistema_muestra_el_indicador_de_espacio_usado():

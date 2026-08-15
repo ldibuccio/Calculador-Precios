@@ -24,7 +24,6 @@ from app.db import (
     actualizar_articulo,
     actualizar_cliente,
     actualizar_compra,
-    actualizar_conversion,
     actualizar_ficha,
     actualizar_importe_compra,
     aprender_articulo,
@@ -32,13 +31,11 @@ from app.db import (
     crear_articulo,
     crear_cliente,
     crear_compra,
-    crear_conversion,
     crear_ficha,
     desactivar_articulo,
     desactivar_cliente,
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
-    eliminar_conversion,
     eliminar_ficha,
     limpiar_foto_ruta_de_compras,
     listar_aprendizaje_articulos_por_proveedor,
@@ -48,7 +45,6 @@ from app.db import (
     listar_compras_por_fecha_y_proveedor,
     listar_compras_por_rango_fechas,
     listar_compras_sin_precio,
-    listar_conversiones_por_cliente,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
@@ -57,7 +53,6 @@ from app.db import (
     obtener_articulo,
     obtener_cliente,
     obtener_compra,
-    obtener_conversion,
     obtener_ficha,
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
@@ -793,6 +788,8 @@ def agregar_ficha(
     contenido_caja: str = Form(""),
     unidad_venta: str = Form(""),
     envase_variable: str = Form(""),
+    nombre_cliente: str = Form(""),
+    codigo_cliente: str = Form(""),
 ):
     error = None
     articulo_id_valor = None
@@ -815,6 +812,9 @@ def agregar_ficha(
     contenido_caja_valor = None
     if not error:
         error, contenido_caja_valor = _validar_contenido_caja(contenido_caja)
+
+    nombre_cliente_valor = nombre_cliente.strip() or None
+    codigo_cliente_valor = codigo_cliente.strip() or None
 
     if error:
         articulos = listar_articulos_sin_ficha(cliente_id)
@@ -841,6 +841,8 @@ def agregar_ficha(
             contenido_caja_valor,
             unidad_venta,
             _envase_variable_desde_form(envase_variable),
+            nombre_cliente_valor,
+            codigo_cliente_valor,
         )
     except Exception as error_db:
         articulos = listar_articulos_sin_ficha(cliente_id)
@@ -901,6 +903,8 @@ def editar_ficha(
     contenido_caja: str = Form(""),
     unidad_venta: str = Form(""),
     envase_variable: str = Form(""),
+    nombre_cliente: str = Form(""),
+    codigo_cliente: str = Form(""),
 ):
     error = _validar_unidad_venta(unidad_venta)
 
@@ -913,6 +917,8 @@ def editar_ficha(
         error, contenido_caja_valor = _validar_contenido_caja(contenido_caja)
 
     envase_variable_valor = _envase_variable_desde_form(envase_variable)
+    nombre_cliente_valor = nombre_cliente.strip() or None
+    codigo_cliente_valor = codigo_cliente.strip() or None
 
     if error:
         envases = listar_envases_por_cliente(cliente_id)
@@ -924,6 +930,8 @@ def editar_ficha(
             "contenido_caja": contenido_caja,
             "unidad_venta": unidad_venta,
             "envase_variable": envase_variable_valor,
+            "nombre_cliente": nombre_cliente,
+            "codigo_cliente": codigo_cliente,
         }
         return templates.TemplateResponse(
             request,
@@ -933,7 +941,15 @@ def editar_ficha(
         )
 
     try:
-        actualizar_ficha(ficha_id, envase_id_valor, contenido_caja_valor, unidad_venta, envase_variable_valor)
+        actualizar_ficha(
+            ficha_id,
+            envase_id_valor,
+            contenido_caja_valor,
+            unidad_venta,
+            envase_variable_valor,
+            nombre_cliente_valor,
+            codigo_cliente_valor,
+        )
     except Exception as error_db:
         envases = listar_envases_por_cliente(cliente_id)
         ficha = {
@@ -944,6 +960,8 @@ def editar_ficha(
             "contenido_caja": contenido_caja_valor,
             "unidad_venta": unidad_venta,
             "envase_variable": envase_variable_valor,
+            "nombre_cliente": nombre_cliente_valor,
+            "codigo_cliente": codigo_cliente_valor,
         }
         return templates.TemplateResponse(
             request,
@@ -971,234 +989,6 @@ def eliminar_ficha_ruta(ficha_id: int, cliente_id: int = Form(...)):
 
     return RedirectResponse(url=f"/fichas?cliente_id={cliente_id}", status_code=303)
 
-
-@app.get("/conversion")
-def ver_conversiones(request: Request, cliente_id: int | None = None, error: str | None = None):
-    try:
-        clientes = listar_clientes()
-    except Exception as error_db:
-        return templates.TemplateResponse(
-            request,
-            "conversion.html",
-            {"clientes": [], "cliente_id": cliente_id, "conversiones": [], "error": f"No se pudo leer los clientes: {error_db}"},
-            status_code=500,
-        )
-
-    conversiones = []
-    if cliente_id is not None:
-        try:
-            conversiones = listar_conversiones_por_cliente(cliente_id)
-        except Exception as error_db:
-            return templates.TemplateResponse(
-                request,
-                "conversion.html",
-                {
-                    "clientes": clientes,
-                    "cliente_id": cliente_id,
-                    "conversiones": [],
-                    "error": f"No se pudieron leer las conversiones: {error_db}",
-                },
-                status_code=500,
-            )
-
-    return templates.TemplateResponse(
-        request,
-        "conversion.html",
-        {"clientes": clientes, "cliente_id": cliente_id, "conversiones": conversiones, "error": error},
-    )
-
-
-@app.get("/conversion/nueva")
-def ver_nueva_conversion(request: Request, cliente_id: int, error: str | None = None):
-    try:
-        articulos = listar_articulos()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    return templates.TemplateResponse(
-        request,
-        "conversion_form.html",
-        {
-            "cliente_id": cliente_id,
-            "articulos": articulos,
-            "modo": "nueva",
-            "conversion": None,
-            "error": error,
-        },
-    )
-
-
-@app.post("/conversion/nueva")
-def agregar_conversion(
-    request: Request,
-    cliente_id: int = Form(...),
-    articulo_id: str = Form(""),
-    nombre_cliente: str = Form(""),
-    codigo_cliente: str = Form(""),
-):
-    error = None
-    articulo_id_valor = None
-    articulo_id = articulo_id.strip()
-    if not articulo_id:
-        error = "Elegí un artículo."
-    else:
-        try:
-            articulo_id_valor = int(articulo_id)
-        except ValueError:
-            error = "El artículo elegido no es válido."
-
-    nombre_cliente_valor = nombre_cliente
-    if not error:
-        error, nombre_cliente_valor = _validar_nombre(nombre_cliente)
-
-    codigo_cliente_valor = codigo_cliente.strip() or None
-
-    if error:
-        articulos = listar_articulos()
-        return templates.TemplateResponse(
-            request,
-            "conversion_form.html",
-            {
-                "cliente_id": cliente_id,
-                "articulos": articulos,
-                "modo": "nueva",
-                "conversion": None,
-                "error": error,
-            },
-            status_code=400,
-        )
-
-    try:
-        crear_conversion(articulo_id_valor, cliente_id, nombre_cliente_valor, codigo_cliente_valor)
-    except Exception as error_db:
-        articulos = listar_articulos()
-        return templates.TemplateResponse(
-            request,
-            "conversion_form.html",
-            {
-                "cliente_id": cliente_id,
-                "articulos": articulos,
-                "modo": "nueva",
-                "conversion": None,
-                "error": f"No se pudo guardar la conversión: {error_db}",
-            },
-            status_code=500,
-        )
-
-    return RedirectResponse(url=f"/conversion?cliente_id={cliente_id}", status_code=303)
-
-
-@app.get("/conversion/{conversion_id}/editar")
-def ver_editar_conversion(request: Request, conversion_id: int, error: str | None = None):
-    try:
-        conversion = obtener_conversion(conversion_id)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    if conversion is None:
-        raise HTTPException(status_code=404, detail="Conversión no encontrada")
-
-    try:
-        articulos = listar_articulos()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    return templates.TemplateResponse(
-        request,
-        "conversion_form.html",
-        {
-            "cliente_id": conversion["cliente_id"],
-            "articulos": articulos,
-            "modo": "editar",
-            "conversion": conversion,
-            "error": error,
-        },
-    )
-
-
-@app.post("/conversion/{conversion_id}/editar")
-def editar_conversion(
-    request: Request,
-    conversion_id: int,
-    cliente_id: int = Form(...),
-    articulo_id: str = Form(""),
-    nombre_cliente: str = Form(""),
-    codigo_cliente: str = Form(""),
-):
-    error = None
-    articulo_id_valor = None
-    articulo_id = articulo_id.strip()
-    if not articulo_id:
-        error = "Elegí un artículo."
-    else:
-        try:
-            articulo_id_valor = int(articulo_id)
-        except ValueError:
-            error = "El artículo elegido no es válido."
-
-    nombre_cliente_valor = nombre_cliente
-    if not error:
-        error, nombre_cliente_valor = _validar_nombre(nombre_cliente)
-
-    codigo_cliente_valor = codigo_cliente.strip() or None
-
-    if error:
-        articulos = listar_articulos()
-        conversion = {
-            "id": conversion_id,
-            "cliente_id": cliente_id,
-            "articulo_id": articulo_id_valor,
-            "nombre_cliente": nombre_cliente,
-            "codigo_cliente": codigo_cliente,
-        }
-        return templates.TemplateResponse(
-            request,
-            "conversion_form.html",
-            {
-                "cliente_id": cliente_id,
-                "articulos": articulos,
-                "modo": "editar",
-                "conversion": conversion,
-                "error": error,
-            },
-            status_code=400,
-        )
-
-    try:
-        actualizar_conversion(conversion_id, articulo_id_valor, nombre_cliente_valor, codigo_cliente_valor)
-    except Exception as error_db:
-        articulos = listar_articulos()
-        conversion = {
-            "id": conversion_id,
-            "cliente_id": cliente_id,
-            "articulo_id": articulo_id_valor,
-            "nombre_cliente": nombre_cliente_valor,
-            "codigo_cliente": codigo_cliente_valor,
-        }
-        return templates.TemplateResponse(
-            request,
-            "conversion_form.html",
-            {
-                "cliente_id": cliente_id,
-                "articulos": articulos,
-                "modo": "editar",
-                "conversion": conversion,
-                "error": f"No se pudo guardar la conversión: {error_db}",
-            },
-            status_code=500,
-        )
-
-    return RedirectResponse(url=f"/conversion?cliente_id={cliente_id}", status_code=303)
-
-
-@app.post("/conversion/{conversion_id}/eliminar")
-def eliminar_conversion_ruta(conversion_id: int, cliente_id: int = Form(...)):
-    try:
-        eliminar_conversion(conversion_id)
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=f"No se pudo eliminar la conversión: {error}") from error
-
-    return RedirectResponse(url=f"/conversion?cliente_id={cliente_id}", status_code=303)
 
 
 def _validar_compra_nueva_form(
