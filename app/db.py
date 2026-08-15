@@ -950,6 +950,29 @@ def eliminar_compra(compra_id: int) -> str | None:
         conexion.close()
 
 
+def obtener_uso_storage_bucket(bucket_id: str) -> dict:
+    """Cuenta archivos y suma bytes de un bucket de Supabase Storage, por SQL directo.
+
+    Storage guarda los metadatos de cada archivo (incluido el tamaño) en
+    storage.objects, dentro de esta misma base — no hace falta pasar por
+    la API de Storage ni por SUPABASE_SERVICE_KEY para esto, alcanza con
+    la conexión de DATABASE_URL que ya se usa en todos lados. Devuelve
+    {"cantidad": int, "bytes_totales": int}.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*), COALESCE(SUM((metadata->>'size')::bigint), 0) "
+                "FROM storage.objects WHERE bucket_id = %s",
+                (bucket_id,),
+            )
+            cantidad, bytes_totales = cursor.fetchone()
+        return {"cantidad": cantidad, "bytes_totales": bytes_totales}
+    finally:
+        conexion.close()
+
+
 def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -> None:
     """Borra TODAS las compras de un proveedor en una fecha (borrado real, mismo criterio que eliminar_compra).
 

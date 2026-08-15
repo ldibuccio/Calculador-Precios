@@ -59,10 +59,11 @@ from app.db import (
     obtener_ficha,
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
+    obtener_uso_storage_bucket,
 )
 from core.lector_comandas import extraer_comanda
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, normalizar_texto
-from core.storage import borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
+from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
@@ -2266,6 +2267,18 @@ def ver_cuadro_negociar_precios(request: Request):
             "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         },
     )
+
+
+# TEMPORAL: ruta de prueba para confirmar, en producción, que el rol de
+# DATABASE_URL puede leer storage.objects (necesario para el indicador de
+# espacio usado del bucket). Se borra apenas se confirme el resultado.
+@app.get("/storage-espacio-prueba")
+def _prueba_storage_espacio():
+    try:
+        resultado = obtener_uso_storage_bucket(BUCKET_COMANDAS)
+    except Exception as error:
+        return {"ok": False, "error": str(error)}
+    return {"ok": True, "cantidad": resultado["cantidad"], "bytes_totales": resultado["bytes_totales"]}
 
 
 if __name__ == "__main__":

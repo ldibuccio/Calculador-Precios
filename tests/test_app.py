@@ -2140,6 +2140,26 @@ def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
     assert "Mango (Frutamax)" in respuesta.text
 
 
+def test_prueba_storage_espacio_ok_devuelve_cantidad_y_bytes():
+    # Ruta temporal, solo para confirmar en producción que el rol de
+    # DATABASE_URL puede leer storage.objects. Se borra apenas se confirme.
+    with patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 5, "bytes_totales": 12345}):
+        respuesta = cliente.get("/storage-espacio-prueba")
+
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {"ok": True, "cantidad": 5, "bytes_totales": 12345}
+
+
+def test_prueba_storage_espacio_sin_permiso_devuelve_el_error():
+    with patch("app.main.obtener_uso_storage_bucket", side_effect=Exception("permission denied for schema storage")):
+        respuesta = cliente.get("/storage-espacio-prueba")
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "permission denied" in datos["error"]
+
+
 def test_ver_foto_compra_redirige_a_la_url_firmada():
     compra_con_foto = dict(COMPRA_DE_PRUEBA, foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg")
     with (
