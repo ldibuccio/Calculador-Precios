@@ -14,24 +14,12 @@
   }
   h1 { font-size: 1.4rem; margin: 0 0 1rem; text-align: center; }
   h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
-  .titulo-seccion {
-    font-size: 1.1rem;
-    margin: 1.25rem 0 0.75rem;
-  }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
     padding: 1rem;
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-  .error {
-    background: #fee2e2;
-    color: #991b1b;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
   }
   .boton {
     margin-top: 1.1rem;
@@ -48,34 +36,6 @@
     display: block;
     box-sizing: border-box;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  th, td {
-    text-align: left;
-    padding: 0.55rem 0.3rem;
-    border-bottom: 1px solid #eee;
-    font-size: 0.9rem;
-  }
-  th {
-    color: #666;
-    font-weight: 600;
-  }
-  .vacio { color: #888; font-style: italic; }
-  .tabla-scroll { overflow-x: auto; }
-  .acciones { display: flex; gap: 0.4rem; }
-  .acciones .boton, .acciones button {
-    margin-top: 0;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.85rem;
-    width: auto;
-  }
-  .boton-editar { background: #2563eb; }
-  .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; }
-  .boton-ver-foto { background: #6b7280; }
-  .form-eliminar { display: inline; }
-  .sin-precio { color: #dc2626; font-weight: 600; }
   .grupo-botones {
     display: flex;
     flex-wrap: wrap;
@@ -99,10 +59,6 @@
   /* "Próximamente": mismo color del grupo, pero atenuado, para que se
      note a simple vista que todavía no hace nada. */
   .boton-proximamente { opacity: 0.6; }
-  #boton-borrar-seleccionadas {
-    margin-top: 0;
-    margin-bottom: 0.75rem;
-  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -115,10 +71,6 @@
 </head>
 <body>
   <h1>Compras</h1>
-
-  {% if error %}
-  <div class="error">{{ error }}</div>
-  {% endif %}
 
   <div class="tarjeta">
     <h2>Cargar</h2>
@@ -133,117 +85,14 @@
   <div class="tarjeta">
     <h2>Operaciones</h2>
     <div class="grupo-botones">
+      <a class="boton boton-naranja" href="/compras/ultimas">Últimas Compras</a>
       <a class="boton boton-naranja boton-proximamente" href="/compras/buscar">Buscar Compras (Próximamente)</a>
-      <a class="boton boton-naranja boton-proximamente" href="/compras/enviar-logistica">Enviar a Logística (Próximamente)</a>
       <a class="boton boton-naranja boton-proximamente" href="/compras/armar-listado">Armar Listado de Compras (Próximamente)</a>
       <a class="boton boton-naranja" href="/compras/pendientes">Compras sin precio</a>
+      <a class="boton boton-naranja boton-proximamente" href="/compras/disponibles">Disponibles (Próximamente)</a>
     </div>
-  </div>
-
-  <h2 class="titulo-seccion">Últimas Compras ({{ compras|length }})</h2>
-
-  <div class="tarjeta">
-    {% if compras %}
-    <!--
-      Un <form> no puede anidar otro <form> adentro (el de "Eliminar" de
-      cada fila, que se deja tal cual estaba). En vez de envolver la tabla
-      en el form del borrado múltiple, este form queda vacío y afuera; los
-      checkboxes se lo asocian con el atributo form="..." (HTML5), sin
-      necesidad de estar físicamente adentro de él.
-    -->
-    <form method="post" action="/compras/eliminar-varias" id="form-borrado-multiple"
-          onsubmit="return confirmarBorradoMultiple();"></form>
-    <button type="submit" form="form-borrado-multiple" class="boton boton-eliminar" id="boton-borrar-seleccionadas"
-            style="display: none;">
-      Borrar seleccionadas (0)
-    </button>
-    <div class="tabla-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="check-todas"></th>
-            <th>Fecha</th>
-            <th>Proveedor</th>
-            <th>Artículo</th>
-            <th>Cant</th>
-            <th>K/U</th>
-            <th>$</th>
-            <th>Seña</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for c in compras %}
-          <tr>
-            <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
-            <td>{{ c.fecha_operacion|fecha_corta }}</td>
-            <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
-            <td>{{ c.articulo_nombre }}</td>
-            <td>{{ c.cantidad_cajones|numero }}</td>
-            <td>{{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</td>
-            <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
-            <td>{{ c.sena|moneda if c.sena is not none else "-" }}</td>
-            <td>
-              <div class="acciones">
-                <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>
-                {% if c.foto_ruta %}
-                <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver foto</a>
-                {% endif %}
-                <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
-                      onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
-                  <button type="submit" class="boton-eliminar">Eliminar</button>
-                </form>
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="vacio">No hay compras cargadas en los últimos 2 días.</p>
-    {% endif %}
   </div>
 
   <a class="volver" href="/sistema">Sistema</a>
-
-  <script>
-    const checkTodas = document.getElementById("check-todas");
-    const checksFila = Array.from(document.querySelectorAll(".check-fila"));
-    const botonBorrarSeleccionadas = document.getElementById("boton-borrar-seleccionadas");
-
-    function actualizarBotonBorrarSeleccionadas() {
-      const seleccionadas = checksFila.filter(function (c) { return c.checked; });
-      if (seleccionadas.length === 0) {
-        botonBorrarSeleccionadas.style.display = "none";
-      } else {
-        botonBorrarSeleccionadas.style.display = "block";
-        botonBorrarSeleccionadas.textContent = "Borrar seleccionadas (" + seleccionadas.length + ")";
-      }
-      if (checkTodas) {
-        checkTodas.checked = seleccionadas.length > 0 && seleccionadas.length === checksFila.length;
-      }
-    }
-
-    if (checkTodas) {
-      checkTodas.addEventListener("change", function () {
-        checksFila.forEach(function (c) {
-          c.checked = checkTodas.checked;
-        });
-        actualizarBotonBorrarSeleccionadas();
-      });
-    }
-
-    checksFila.forEach(function (c) {
-      c.addEventListener("change", actualizarBotonBorrarSeleccionadas);
-    });
-
-    function confirmarBorradoMultiple() {
-      const cantidad = checksFila.filter(function (c) { return c.checked; }).length;
-      return confirm(
-        "¿Seguro que querés borrar las " + cantidad + " compras seleccionadas? No se puede deshacer."
-      );
-    }
-  </script>
 </body>
 </html>

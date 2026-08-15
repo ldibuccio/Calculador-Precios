@@ -1172,7 +1172,13 @@ def _validar_compra_nueva_form(
     return error, valores
 
 
-def _renderizar_pantalla_compras(request: Request, *, error: str | None = None, status_code: int = 200):
+@app.get("/compras")
+def ver_compras(request: Request):
+    """Botonera de entrada al módulo de compras — sin datos de base, solo los dos grupos de acciones."""
+    return templates.TemplateResponse(request, "compras.html", {})
+
+
+def _renderizar_pantalla_ultimas_compras(request: Request, *, error: str | None = None, status_code: int = 200):
     # TODO: a futuro agregar acá un filtro de fecha/rango a demanda (elegido
     # por el usuario). Por ahora siempre son los últimos 2 días fijos (hoy y
     # ayer), usando listar_compras_por_rango_fechas que ya soporta un rango.
@@ -1182,19 +1188,19 @@ def _renderizar_pantalla_compras(request: Request, *, error: str | None = None, 
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
-            "compras.html",
+            "ultimas_compras.html",
             {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
             status_code=500,
         )
 
     return templates.TemplateResponse(
-        request, "compras.html", {"compras": compras, "error": error}, status_code=status_code
+        request, "ultimas_compras.html", {"compras": compras, "error": error}, status_code=status_code
     )
 
 
-@app.get("/compras")
-def ver_compras(request: Request, error: str | None = None):
-    return _renderizar_pantalla_compras(request, error=error)
+@app.get("/compras/ultimas")
+def ver_ultimas_compras(request: Request, error: str | None = None):
+    return _renderizar_pantalla_ultimas_compras(request, error=error)
 
 
 def _renderizar_en_construccion(
@@ -1218,12 +1224,17 @@ def ver_buscar_compras(request: Request):
 
 @app.get("/compras/enviar-logistica")
 def ver_enviar_logistica(request: Request):
-    return _renderizar_en_construccion(request, "Enviar a logística")
+    return _renderizar_en_construccion(request, "Enviar a logística", volver_url="/compras/ultimas", volver_texto="Volver a últimas compras")
 
 
 @app.get("/compras/armar-listado")
 def ver_armar_listado_compras(request: Request):
     return _renderizar_en_construccion(request, "Armar listado de compras")
+
+
+@app.get("/compras/disponibles")
+def ver_disponibles(request: Request):
+    return _renderizar_en_construccion(request, "Disponibles")
 
 
 @app.get("/compras/nueva/manual")
@@ -1340,7 +1351,7 @@ def agregar_compra(
         campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro)
     )
     if accion == "terminar" and renglon_vacio:
-        return RedirectResponse(url="/compras", status_code=303)
+        return RedirectResponse(url="/compras/ultimas", status_code=303)
 
     try:
         proveedor = obtener_proveedor(proveedor_id)
@@ -1461,7 +1472,7 @@ def agregar_compra(
         )
 
     if accion == "terminar":
-        return RedirectResponse(url="/compras", status_code=303)
+        return RedirectResponse(url="/compras/ultimas", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
@@ -1493,7 +1504,7 @@ def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
             status_code=500,
         )
 
-    return RedirectResponse(url="/compras", status_code=303)
+    return RedirectResponse(url="/compras/ultimas", status_code=303)
 
 
 def _numero_o_none(valor) -> float | None:
@@ -1868,7 +1879,7 @@ async def confirmar_compra_foto(request: Request):
         )
 
     if accion == "guardar":
-        return RedirectResponse(url="/compras", status_code=303)
+        return RedirectResponse(url="/compras/ultimas", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
@@ -2015,7 +2026,7 @@ def editar_compra(
             status_code=500,
         )
 
-    return RedirectResponse(url="/compras", status_code=303)
+    return RedirectResponse(url="/compras/ultimas", status_code=303)
 
 
 def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
@@ -2046,7 +2057,7 @@ def eliminar_compra_ruta(compra_id: int):
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
-    return RedirectResponse(url="/compras", status_code=303)
+    return RedirectResponse(url="/compras/ultimas", status_code=303)
 
 
 @app.post("/compras/eliminar-varias")
@@ -2055,7 +2066,7 @@ async def eliminar_varias_compras_ruta(request: Request):
     ids = [int(valor) for valor in form.getlist("compra_id") if valor.isdigit()]
 
     if not ids:
-        return RedirectResponse(url="/compras", status_code=303)
+        return RedirectResponse(url="/compras/ultimas", status_code=303)
 
     hoy = _hoy_argentina()
     try:
@@ -2075,7 +2086,7 @@ async def eliminar_varias_compras_ruta(request: Request):
             etiquetas_fallidas.append(etiqueta_por_id.get(compra_id, "una compra"))
 
     if not etiquetas_fallidas:
-        return RedirectResponse(url="/compras", status_code=303)
+        return RedirectResponse(url="/compras/ultimas", status_code=303)
 
     cantidad_borradas = len(ids) - len(etiquetas_fallidas)
     # Mensaje pensado para un usuario no técnico: sin ids ni jerga de base
@@ -2086,7 +2097,7 @@ async def eliminar_varias_compras_ruta(request: Request):
         f"No se pudieron borrar {len(etiquetas_fallidas)} (puede que tengan una recepción asociada): "
         f"{', '.join(etiquetas_fallidas)}."
     )
-    return _renderizar_pantalla_compras(request, error=error)
+    return _renderizar_pantalla_ultimas_compras(request, error=error)
 
 
 @app.get("/compras/{compra_id}/foto")

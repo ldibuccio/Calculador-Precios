@@ -1165,29 +1165,43 @@ COMPRAS_DE_PRUEBA = [
 ]
 
 
-def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
+def test_ver_compras_muestra_solo_la_botonera():
+    # /compras pasó a ser solo el título y las dos botoneras — el listado
+    # se mudó a /compras/ultimas.
+    respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "<h1>Compras</h1>" in respuesta.text
+    assert ">Cargar<" in respuesta.text
+    assert ">Operaciones<" in respuesta.text
+    assert respuesta.text.index(">Cargar<") < respuesta.text.index(">Operaciones<")
+    assert "Últimas Compras" in respuesta.text  # el botón, no el listado
+    assert "<table" not in respuesta.text
+    assert 'id="boton-borrar-seleccionadas"' not in respuesta.text
+
+
+def test_ver_ultimas_compras_muestra_las_de_los_ultimos_2_dias():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA) as mock_listar,
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/compras/ultimas")
 
     assert respuesta.status_code == 200
-    assert "<h1>Compras</h1>" in respuesta.text
-    assert "Últimas Compras" in respuesta.text
+    assert "<h1>Últimas Compras</h1>" in respuesta.text
     assert "Mzn Red" in respuesta.text
     assert "Saturno" in respuesta.text
     assert "N07P41" in respuesta.text
     assert "Mango" in respuesta.text
     assert "Fecha" in respuesta.text
-    # Regresión: orden de la pantalla — título, botoneras, título de
-    # sección, listado (en ese orden, de arriba a abajo).
-    assert (
-        respuesta.text.index("<h1>Compras</h1>")
-        < respuesta.text.index(">Cargar<")
-        < respuesta.text.index(">Operaciones<")
-        < respuesta.text.index("Últimas Compras")
-    )
+    # Regresión: encabezado de la tabla con fondo propio, para
+    # diferenciarlo de las filas.
+    assert "thead tr {" in respuesta.text
+    assert "background: #eef2f7" in respuesta.text
+    # Regresión: "Enviar a Logística" vive acá adentro (Próximamente),
+    # no en la botonera principal de /compras.
+    assert 'id="boton-enviar-logistica"' in respuesta.text
+    assert 'href="/compras/enviar-logistica"' in respuesta.text
     # Regresión: encabezados compactos para pantalla de celular.
     assert "<th>Cant</th>" in respuesta.text
     assert "<th>K/U</th>" in respuesta.text
@@ -1212,7 +1226,7 @@ def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
     assert "$2.000" in respuesta.text
 
 
-def test_ver_compras_muestra_ver_foto_solo_en_las_filas_con_foto():
+def test_ver_ultimas_compras_muestra_ver_foto_solo_en_las_filas_con_foto():
     compras = [
         dict(COMPRAS_DE_PRUEBA[0], foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg"),
         dict(COMPRAS_DE_PRUEBA[1], foto_ruta=None),
@@ -1221,7 +1235,7 @@ def test_ver_compras_muestra_ver_foto_solo_en_las_filas_con_foto():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_compras_por_rango_fechas", return_value=compras),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/compras/ultimas")
 
     assert respuesta.status_code == 200
     assert respuesta.text.count("Ver foto") == 1
@@ -1229,23 +1243,23 @@ def test_ver_compras_muestra_ver_foto_solo_en_las_filas_con_foto():
     assert 'href="/compras/31/foto"' not in respuesta.text
 
 
-def test_ver_compras_sin_compras_muestra_mensaje():
+def test_ver_ultimas_compras_sin_compras_muestra_mensaje():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_compras_por_rango_fechas", return_value=[]),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/compras/ultimas")
 
     assert respuesta.status_code == 200
     assert "No hay compras cargadas en los últimos 2 días" in respuesta.text
 
 
-def test_ver_compras_error_de_base_muestra_error_claro():
+def test_ver_ultimas_compras_error_de_base_muestra_error_claro():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_compras_por_rango_fechas", side_effect=Exception("no se pudo conectar")),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/compras/ultimas")
 
     assert respuesta.status_code == 500
     assert "No se pudieron leer las compras" in respuesta.text
@@ -1547,11 +1561,7 @@ def test_armar_listado_de_compras_muestra_en_construccion():
 
 
 def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
-    ):
-        respuesta = cliente.get("/compras")
+    respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     # Grupo Cargar.
@@ -1562,38 +1572,42 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     assert 'href="/compras/nueva/fotos"' in respuesta.text
     assert "Cargar Múltiples Fotos" in respuesta.text
     assert 'href="/compras/nueva/listado"' in respuesta.text
-    # Grupo Operaciones.
+    # Grupo Operaciones: Últimas Compras, Buscar Compras, Armar Listado,
+    # Compras sin precio, Disponibles. "Enviar a Logística" se retiró de
+    # acá (ahora vive dentro de /compras/ultimas).
+    assert 'href="/compras/ultimas"' in respuesta.text
+    assert "Últimas Compras" in respuesta.text
     assert 'href="/compras/buscar"' in respuesta.text
-    assert 'href="/compras/enviar-logistica"' in respuesta.text
     assert 'href="/compras/armar-listado"' in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
     assert "Compras sin precio" in respuesta.text
+    assert 'href="/compras/disponibles"' in respuesta.text
+    assert "Disponibles" in respuesta.text
+    assert 'href="/compras/enviar-logistica"' not in respuesta.text
     # El botón viejo "Agregar compra" queda retirado (lo cubre Cargar Manual).
     assert "Agregar compra" not in respuesta.text
     assert 'href="/compras/nueva"' not in respuesta.text
 
 
 def test_ver_compras_botonera_diferencia_grupos_por_color():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
-    ):
-        respuesta = cliente.get("/compras")
+    respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     # Cargar: azul, el color de acción normal (sin clase extra de color).
     assert 'class="boton" href="/compras/nueva/manual"' in respuesta.text
     # Operaciones: naranja — ni verde (=guardar) ni rojo (=borrar/cancelar).
+    assert 'class="boton boton-naranja" href="/compras/ultimas"' in respuesta.text
     assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
     assert ".boton-naranja { background: #ea580c; }" in respuesta.text
     # "Próximamente": color del grupo pero atenuado (mismo criterio en
     # Cargar y en Operaciones).
     assert 'class="boton boton-proximamente" href="/compras/nueva/listado"' in respuesta.text
     assert 'class="boton boton-naranja boton-proximamente" href="/compras/buscar"' in respuesta.text
+    assert 'class="boton boton-naranja boton-proximamente" href="/compras/disponibles"' in respuesta.text
     assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
 
 
-def test_ver_compras_boton_borrar_seleccionadas_es_tamano_normal():
+def test_ver_ultimas_compras_boton_borrar_seleccionadas_es_tamano_normal():
     # Regresión: el botón no puede depender solo de .boton-eliminar (que no
     # trae padding/ancho propios) — necesita la clase .boton para tener un
     # área de toque cómoda en celular, no quedar chico/finito.
@@ -1601,7 +1615,7 @@ def test_ver_compras_boton_borrar_seleccionadas_es_tamano_normal():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/compras")
+        respuesta = cliente.get("/compras/ultimas")
 
     assert respuesta.status_code == 200
     assert 'class="boton boton-eliminar" id="boton-borrar-seleccionadas"' in respuesta.text
@@ -1850,7 +1864,7 @@ def test_agregar_compra_terminar_con_renglon_vacio_va_a_compras_sin_guardar():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     mock_proveedor.assert_not_called()
     mock_crear.assert_not_called()
 
@@ -1878,7 +1892,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark")
 
 
@@ -2166,7 +2180,7 @@ def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     # Se borra TODO lo del proveedor en el día, no un renglón puntual: no
     # hace falta que el comprador haya cargado nada en el formulario para
     # que se descarte lo que ya estaba guardado de "Agregar artículo".
@@ -2261,7 +2275,7 @@ def test_editar_compra_exitosa_redirige_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Granel")
 
 
@@ -2336,7 +2350,7 @@ def test_eliminar_compra_exitosa_redirige_a_compras():
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     mock_eliminar.assert_called_once_with(30)
     # Esta compra no tenía foto (eliminar_compra devolvió None): no hay
     # nada que borrar del Storage.
@@ -2364,7 +2378,7 @@ def test_eliminar_compra_si_falla_el_borrado_de_la_foto_igual_redirige_bien():
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
 
 
 def test_eliminar_compra_error_de_base_da_500():
@@ -2386,7 +2400,7 @@ def test_eliminar_varias_compras_exitosa_redirige_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     assert mock_eliminar.call_count == 2
     mock_eliminar.assert_any_call(30)
     mock_eliminar.assert_any_call(31)
@@ -2398,7 +2412,7 @@ def test_eliminar_varias_compras_sin_ninguna_seleccionada_redirige_sin_hacer_nad
         respuesta = cliente.post("/compras/eliminar-varias", data={}, follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     mock_eliminar.assert_not_called()
 
 
@@ -2900,7 +2914,7 @@ def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igu
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras"
+    assert respuesta.headers["location"] == "/compras/ultimas"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
     mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
