@@ -1573,6 +1573,40 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     assert 'href="/compras/nueva"' not in respuesta.text
 
 
+def test_ver_compras_botonera_diferencia_grupos_por_color():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    # Cargar: azul, el color de acción normal (sin clase extra de color).
+    assert 'class="boton" href="/compras/nueva/manual"' in respuesta.text
+    # Operaciones: naranja — ni verde (=guardar) ni rojo (=borrar/cancelar).
+    assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
+    assert ".boton-naranja { background: #ea580c; }" in respuesta.text
+    # "Próximamente": color del grupo pero atenuado (mismo criterio en
+    # Cargar y en Operaciones).
+    assert 'class="boton boton-proximamente" href="/compras/nueva/listado"' in respuesta.text
+    assert 'class="boton boton-naranja boton-proximamente" href="/compras/buscar"' in respuesta.text
+    assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
+
+
+def test_ver_compras_boton_borrar_seleccionadas_es_tamano_normal():
+    # Regresión: el botón no puede depender solo de .boton-eliminar (que no
+    # trae padding/ancho propios) — necesita la clase .boton para tener un
+    # área de toque cómoda en celular, no quedar chico/finito.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'class="boton boton-eliminar" id="boton-borrar-seleccionadas"' in respuesta.text
+
+
 def test_elegir_proveedor_compra_exitoso_redirige_con_proveedor_id():
     with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor:
         respuesta = cliente.post(

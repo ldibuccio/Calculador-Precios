@@ -92,6 +92,17 @@
     align-items: center;
     justify-content: center;
   }
+  /* Naranja para "Operaciones": distinto del azul de "Cargar", y evita a
+     propósito el verde (guardar/confirmar) y el rojo (borrar/cancelar),
+     que ya tienen otro significado en el resto del sistema. */
+  .boton-naranja { background: #ea580c; }
+  /* "Próximamente": mismo color del grupo, pero atenuado, para que se
+     note a simple vista que todavía no hace nada. */
+  .boton-proximamente { opacity: 0.6; }
+  #boton-borrar-seleccionadas {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -115,17 +126,17 @@
       <a class="boton" href="/compras/nueva/manual">Cargar Manual</a>
       <a class="boton" href="/compras/nueva/foto-una">Cargar Foto</a>
       <a class="boton" href="/compras/nueva/fotos">Cargar Múltiples Fotos</a>
-      <a class="boton" href="/compras/nueva/listado">Cargar Listado de Compras (Próximamente)</a>
+      <a class="boton boton-proximamente" href="/compras/nueva/listado">Cargar Listado de Compras (Próximamente)</a>
     </div>
   </div>
 
   <div class="tarjeta">
     <h2>Operaciones</h2>
     <div class="grupo-botones">
-      <a class="boton" href="/compras/buscar">Buscar Compras (Próximamente)</a>
-      <a class="boton" href="/compras/enviar-logistica">Enviar a Logística (Próximamente)</a>
-      <a class="boton" href="/compras/armar-listado">Armar Listado de Compras (Próximamente)</a>
-      <a class="boton" href="/compras/pendientes">Compras sin precio</a>
+      <a class="boton boton-naranja boton-proximamente" href="/compras/buscar">Buscar Compras (Próximamente)</a>
+      <a class="boton boton-naranja boton-proximamente" href="/compras/enviar-logistica">Enviar a Logística (Próximamente)</a>
+      <a class="boton boton-naranja boton-proximamente" href="/compras/armar-listado">Armar Listado de Compras (Próximamente)</a>
+      <a class="boton boton-naranja" href="/compras/pendientes">Compras sin precio</a>
     </div>
   </div>
 
@@ -142,8 +153,8 @@
     -->
     <form method="post" action="/compras/eliminar-varias" id="form-borrado-multiple"
           onsubmit="return confirmarBorradoMultiple();"></form>
-    <button type="submit" form="form-borrado-multiple" class="boton-eliminar" id="boton-borrar-seleccionadas"
-            style="display: none; width: 100%; margin-bottom: 0.75rem;">
+    <button type="submit" form="form-borrado-multiple" class="boton boton-eliminar" id="boton-borrar-seleccionadas"
+            style="display: none;">
       Borrar seleccionadas (0)
     </button>
     <div class="tabla-scroll">
