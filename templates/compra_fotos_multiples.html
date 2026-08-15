@@ -104,6 +104,7 @@
   .boton-exito { background: #16a34a; }
   .boton-peligro { background: #dc2626; }
   .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .boton-descartar { background: #d97706; }
   .boton-ver-foto {
     margin-top: 0.75rem;
     width: auto;
@@ -169,7 +170,7 @@
 </head>
 <body>
   <h1>Cargar varias comandas por foto</h1>
-  <p class="ayuda">Elegí todas las fotos de comandas que quieras cargar. Se leen y se revisan de a una: al guardar una, pasa automáticamente a la siguiente.</p>
+  <p class="ayuda">Elegí todas las fotos de comandas que quieras cargar. Se leen todas de entrada, de a poco en el fondo; revisalas y guardalas de a una, y al guardar una pasa automáticamente a la siguiente.</p>
 
   <div id="seccion-elegir-fotos" class="tarjeta">
     <label for="input-fotos">Fotos de las comandas</label>
@@ -178,8 +179,12 @@
   </div>
 
   <div id="seccion-progreso" class="tarjeta" style="display: none;">
-    <p class="ayuda" id="texto-progreso">Leyendo comanda <span id="progreso-actual"></span> de <span id="progreso-total"></span>...</p>
+    <p class="ayuda" id="texto-progreso">Leídas <span id="progreso-actual"></span> de <span id="progreso-total"></span> comandas...</p>
     <div class="barra-progreso"><div id="barra-progreso-relleno" class="barra-progreso-relleno"></div></div>
+  </div>
+
+  <div id="espera-lectura" class="tarjeta" style="display: none;">
+    <p class="ayuda">Todavía se está leyendo esta comanda — las demás se siguen leyendo mientras tanto. Esperá un momento...</p>
   </div>
 
   <div id="error-multiple" class="error" style="display: none;"></div>
@@ -194,13 +199,30 @@
       <div id="contenido-fragmento"></div>
 
       <button type="button" id="boton-guardar-siguiente" class="boton-exito">Guardar y siguiente</button>
+      <button type="button" id="boton-descartar-siguiente" class="boton-descartar">Descartar y siguiente</button>
       <button type="button" id="boton-agregar-articulos">Agregar Artículos</button>
       <button type="button" id="boton-cancelar-multiple" class="boton-peligro">Cancelar</button>
     </form>
   </div>
 
   <script>
+    // Límite de lecturas en paralelo disparadas desde el navegador. El
+    // servidor corre en un solo proceso/worker (Railway, sin workers= en
+    // uvicorn) y extraer_comanda es una llamada sincrónica y bloqueante:
+    // mientras lee una foto, ese único proceso no puede atender ninguna
+    // otra request. O sea que el servidor de todos modos termina leyendo
+    // las fotos de a una, sin importar cuántos fetch concurrentes mande el
+    // navegador. Igualmente no conviene abrir las N conexiones de una:
+    // este límite evita mandar de golpe, por ejemplo, 10 requests pesadas
+    // (fotos en base64) al mismo tiempo, y deja siempre la próxima ya en
+    // camino apenas termina una, para que no haya hueco muerto esperando
+    // que el navegador dispare la siguiente.
+    const LIMITE_CONCURRENCIA_LECTURA = 2;
+
     let colaFotos = [];
+    let resultados = []; // por índice: {estado: "pendiente"|"leyendo"|"listo"|"error", html, error}
+    let cantidadLeidas = 0;
+    let siguienteAEncolar = 0;
     let indiceActual = 0;
     let CANTIDAD_RENGLONES_ACTUAL = 0;
 
@@ -281,10 +303,16 @@
       boton.disabled = false;
     }
 
+    // La barra muestra cuántas fotos ya terminaron de LEERSE (sea que hayan
+    // salido bien o con error), no cuántas se guardaron — la lectura de
+    // todas arranca de entrada y sigue de fondo mientras el usuario revisa
+    // y guarda de a una.
     function actualizarBarraProgreso() {
+      document.getElementById("progreso-actual").textContent = cantidadLeidas;
+      document.getElementById("progreso-total").textContent = colaFotos.length;
       const relleno = document.getElementById("barra-progreso-relleno");
       if (relleno) {
-        relleno.style.width = Math.round((indiceActual / colaFotos.length) * 100) + "%";
+        relleno.style.width = Math.round((cantidadLeidas / colaFotos.length) * 100) + "%";
       }
     }
 
@@ -351,45 +379,108 @@
       actualizarBotonGuardar();
     }
 
-    function procesarSiguienteFoto() {
-      ocultarErrorMultiple();
-      document.getElementById("acciones-error").style.display = "none";
-      document.getElementById("contenedor-revision").style.display = "none";
-      document.getElementById("seccion-progreso").style.display = "block";
-      document.getElementById("progreso-actual").textContent = indiceActual + 1;
-      document.getElementById("progreso-total").textContent = colaFotos.length;
+    // Arranca la lectura de TODAS las fotos de la cola de entrada, con a lo
+    // sumo LIMITE_CONCURRENCIA_LECTURA pedidos en vuelo a la vez. A medida
+    // que uno termina, se dispara el próximo que esté esperando turno.
+    function iniciarLecturaDeTodas() {
+      resultados = colaFotos.map(function () {
+        return { estado: "pendiente" };
+      });
+      cantidadLeidas = 0;
+      siguienteAEncolar = 0;
       actualizarBarraProgreso();
+      const cantidadAArrancar = Math.min(LIMITE_CONCURRENCIA_LECTURA, colaFotos.length);
+      for (let i = 0; i < cantidadAArrancar; i++) {
+        dispararSiguienteLectura();
+      }
+    }
 
+    function dispararSiguienteLectura() {
+      if (siguienteAEncolar >= colaFotos.length) {
+        return;
+      }
+      const indice = siguienteAEncolar;
+      siguienteAEncolar += 1;
+      resultados[indice] = { estado: "leyendo" };
+      if (indice === indiceActual) {
+        mostrarEstadoIndiceActual();
+      }
+
+      leerFoto(indice).finally(function () {
+        cantidadLeidas += 1;
+        actualizarBarraProgreso();
+        if (indice === indiceActual) {
+          mostrarEstadoIndiceActual();
+        }
+        dispararSiguienteLectura();
+      });
+    }
+
+    function leerFoto(indice) {
       const formData = new FormData();
-      formData.append("foto", colaFotos[indiceActual]);
+      formData.append("foto", colaFotos[indice]);
 
-      fetch("/compras/nueva/fotos/leer", { method: "POST", body: formData })
+      return fetch("/compras/nueva/fotos/leer", { method: "POST", body: formData })
         .then(function (resp) {
           return resp.json();
         })
         .then(function (data) {
-          document.getElementById("seccion-progreso").style.display = "none";
-          if (!data.ok) {
-            mostrarErrorMultiple(data.error || "No se pudo leer la foto.");
-            document.getElementById("acciones-error").style.display = "block";
-            return;
+          if (data.ok) {
+            resultados[indice] = { estado: "listo", html: data.html };
+          } else {
+            resultados[indice] = { estado: "error", error: data.error || "No se pudo leer la foto." };
           }
-          mostrarRevision(data.html);
         })
         .catch(function (error) {
-          document.getElementById("seccion-progreso").style.display = "none";
-          mostrarErrorMultiple("No se pudo conectar con el servidor: " + error);
-          document.getElementById("acciones-error").style.display = "block";
+          resultados[indice] = { estado: "error", error: "No se pudo conectar con el servidor: " + error };
         });
     }
 
-    function avanzarSiguienteOFinalizar() {
-      indiceActual += 1;
+    // Reintenta la lectura de UNA foto puntual (no vuelve a tocar la cola
+    // de concurrencia — esa foto ya estaba "consumida" de ahí).
+    function reintentarLecturaIndice(indice) {
+      resultados[indice] = { estado: "leyendo" };
+      mostrarEstadoIndiceActual();
+      leerFoto(indice).finally(function () {
+        if (indice === indiceActual) {
+          mostrarEstadoIndiceActual();
+        }
+      });
+    }
+
+    // Muestra en pantalla lo que corresponda para la comanda actual según
+    // el estado de su lectura: todavía leyendo, lista para revisar, o con
+    // error. Se llama cada vez que cambia indiceActual y cada vez que
+    // termina una lectura relevante para el índice que se está mirando.
+    function mostrarEstadoIndiceActual() {
       if (indiceActual >= colaFotos.length) {
         window.location = "/compras";
         return;
       }
-      procesarSiguienteFoto();
+
+      ocultarErrorMultiple();
+      document.getElementById("acciones-error").style.display = "none";
+      document.getElementById("espera-lectura").style.display = "none";
+      document.getElementById("contenedor-revision").style.display = "none";
+
+      const resultado = resultados[indiceActual];
+      if (!resultado || resultado.estado === "pendiente" || resultado.estado === "leyendo") {
+        document.getElementById("espera-lectura").style.display = "block";
+        return;
+      }
+
+      if (resultado.estado === "error") {
+        mostrarErrorMultiple(resultado.error);
+        document.getElementById("acciones-error").style.display = "block";
+        return;
+      }
+
+      mostrarRevision(resultado.html);
+    }
+
+    function avanzarSiguienteOFinalizar() {
+      indiceActual += 1;
+      mostrarEstadoIndiceActual();
     }
 
     function guardarComandaActual() {
@@ -520,11 +611,17 @@
       colaFotos = Array.from(input.files);
       indiceActual = 0;
       document.getElementById("seccion-elegir-fotos").style.display = "none";
-      procesarSiguienteFoto();
+      document.getElementById("seccion-progreso").style.display = "block";
+      iniciarLecturaDeTodas();
+      mostrarEstadoIndiceActual();
     });
 
     document.getElementById("boton-guardar-siguiente").addEventListener("click", guardarComandaActual);
     document.getElementById("boton-agregar-articulos").addEventListener("click", agregarRenglonEnBlanco);
+
+    document.getElementById("boton-descartar-siguiente").addEventListener("click", function () {
+      avanzarSiguienteOFinalizar();
+    });
 
     document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
       if (confirm("¿Seguro? Se pierde la foto que estás cargando ahora (las que ya guardaste quedan guardadas).")) {
@@ -533,7 +630,7 @@
     });
 
     document.getElementById("boton-reintentar-foto").addEventListener("click", function () {
-      procesarSiguienteFoto();
+      reintentarLecturaIndice(indiceActual);
     });
 
     document.getElementById("boton-saltar-foto").addEventListener("click", function () {

@@ -2694,6 +2694,15 @@ def test_ver_carga_comandas_multiples_muestra_la_pantalla():
     assert 'id="input-fotos"' in respuesta.text
     assert "multiple" in respuesta.text
     assert 'id="boton-guardar-siguiente"' in respuesta.text
+    # Regresión: "Descartar y siguiente" saltea la comanda actual sin
+    # guardarla, distinto de "Guardar y siguiente" y de "Cancelar" (que sale
+    # de todo el lote).
+    assert 'id="boton-descartar-siguiente"' in respuesta.text
+    assert "Descartar y siguiente" in respuesta.text
+    # Regresión: la lectura de todas las fotos arranca de entrada, con un
+    # límite de concurrencia (no una por una al guardar).
+    assert "LIMITE_CONCURRENCIA_LECTURA" in respuesta.text
+    assert "Leídas" in respuesta.text
 
 
 def test_link_multiples_comandas_en_pantalla_de_una_foto():
@@ -2702,6 +2711,9 @@ def test_link_multiples_comandas_en_pantalla_de_una_foto():
 
     assert respuesta.status_code == 200
     assert 'href="/compras/nueva/fotos"' in respuesta.text
+    # Regresión: distinguir claramente "Leer una comanda" (una sola foto) de
+    # "Múltiples comandas" (el flujo nuevo).
+    assert "Leer una comanda" in respuesta.text
 
 
 def test_leer_foto_comanda_multiple_adivina_proveedor_y_articulo():
