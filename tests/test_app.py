@@ -8,6 +8,8 @@ from PIL import Image
 
 from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
 from app.main import (
+    SECTORES,
+    _ICONO_INICIO,
     _fecha_de_corte_limpieza_fotos,
     _formatear_bytes,
     _formatear_fecha_corta,
@@ -3692,13 +3694,24 @@ def test_ver_inicio_muestra_las_6_areas():
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
-    assert "Frutamax" in respuesta.text
+    assert '<h1>Frutamax</h1>' in respuesta.text
     assert 'href="/compras"' in respuesta.text
     assert 'href="/comercial"' in respuesta.text
     assert 'href="/logistica"' in respuesta.text
     assert 'href="/deposito"' in respuesta.text
     assert 'href="/gerencia"' in respuesta.text
     assert 'href="/sistema"' in respuesta.text
+
+
+def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
+    # Regresión: el mismo ícono que representa a cada sector en la barrita
+    # de arriba tiene que estar en su tarjeta de la home, para un lenguaje
+    # visual consistente.
+    respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "sistema"):
+        assert SECTORES[sector]["icono"] in respuesta.text
 
 
 def test_ver_comercial_muestra_los_tres_accesos():
@@ -3743,35 +3756,35 @@ def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():
 
     assert respuesta.status_code == 200
     assert '<header class="barra-navegacion">' in respuesta.text
-    assert 'href="/inicio" aria-label="Ir a Inicio">🏠</a>' in respuesta.text
-    assert 'href="/compras" aria-label="Ir a Compras">🛒</a>' in respuesta.text
+    assert f'href="/inicio" aria-label="Ir a Inicio">{_ICONO_INICIO}</a>' in respuesta.text
+    assert f'href="/compras" aria-label="Ir a Compras">{SECTORES["compras"]["icono"]}</a>' in respuesta.text
     assert '<div class="barra-titulo">Compras</div>' in respuesta.text
 
 
 def test_barra_navegacion_en_comercial_usa_icono_distinto_de_compras():
     # Regresión: Compras y Comercial arrancan las dos con "C" — se
-    # distinguen con íconos (🛒 / 💼), no con la inicial.
+    # distinguen con íconos distintos, no con la inicial.
     with patch("app.main.listar_clientes", return_value=[]):
         respuesta = cliente.get("/clientes")
 
     assert respuesta.status_code == 200
-    assert 'href="/comercial" aria-label="Ir a Comercial">💼</a>' in respuesta.text
-    assert "🛒" not in respuesta.text
+    assert f'href="/comercial" aria-label="Ir a Comercial">{SECTORES["comercial"]["icono"]}</a>' in respuesta.text
+    assert SECTORES["compras"]["icono"] not in respuesta.text
 
 
 def test_barra_navegacion_en_sistema():
     respuesta = cliente.get("/sistema")
 
     assert respuesta.status_code == 200
-    assert 'href="/sistema" aria-label="Ir a Sistema">⚙️</a>' in respuesta.text
+    assert f'href="/sistema" aria-label="Ir a Sistema">{SECTORES["sistema"]["icono"]}</a>' in respuesta.text
 
 
 def test_barra_navegacion_en_placeholders_logistica_deposito_gerencia():
-    casos = [("/logistica", "🚚", "Logística"), ("/deposito", "📦", "Depósito"), ("/gerencia", "📊", "Gerencia")]
-    for url, icono, nombre in casos:
+    casos = [("/logistica", "logistica", "Logística"), ("/deposito", "deposito", "Depósito"), ("/gerencia", "gerencia", "Gerencia")]
+    for url, sector, nombre in casos:
         respuesta = cliente.get(url)
         assert respuesta.status_code == 200
-        assert f'href="{url}" aria-label="Ir a {nombre}">{icono}</a>' in respuesta.text
+        assert f'href="{url}" aria-label="Ir a {nombre}">{SECTORES[sector]["icono"]}</a>' in respuesta.text
 
 
 def test_ver_inicio_no_tiene_barra_de_navegacion():
@@ -3780,6 +3793,18 @@ def test_ver_inicio_no_tiene_barra_de_navegacion():
 
     assert respuesta.status_code == 200
     assert "barra-navegacion" not in respuesta.text
+
+
+def test_emojis_de_colores_reemplazados_por_iconos_svg():
+    # Regresión: los emojis de colores (🏠🛒💼📦🚚📊⚙️) se reemplazaron por
+    # íconos SVG minimalistas de línea (heroicons), consistentes entre sí.
+    emojis_viejos = ["🏠", "🛒", "💼", "📦", "🚚", "📊", "⚙️"]
+    with patch("app.main.listar_clientes", return_value=[]):
+        respuesta_clientes = cliente.get("/clientes")
+    for url, respuesta in [("/inicio", cliente.get("/inicio")), ("/compras", cliente.get("/compras")), ("/clientes", respuesta_clientes)]:
+        assert respuesta.status_code == 200
+        for emoji in emojis_viejos:
+            assert emoji not in respuesta.text, f"{emoji} todavía aparece en {url}"
 
 
 def test_titulo_grande_en_las_pantallas_principales_de_cada_sector():

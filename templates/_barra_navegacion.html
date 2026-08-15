@@ -1,16 +1,8 @@
-{% set _sectores = {
-  "compras":   {"icono": "🛒", "nombre": "Compras",   "url": "/compras"},
-  "comercial": {"icono": "💼", "nombre": "Comercial", "url": "/comercial"},
-  "logistica": {"icono": "🚚", "nombre": "Logística", "url": "/logistica"},
-  "deposito":  {"icono": "📦", "nombre": "Depósito",  "url": "/deposito"},
-  "gerencia":  {"icono": "📊", "nombre": "Gerencia",  "url": "/gerencia"},
-  "sistema":   {"icono": "⚙️", "nombre": "Sistema",   "url": "/sistema"},
-} %}
-{% set _sector = _sectores[barra_sector] %}
+{% set _sector = SECTORES[barra_sector] %}
 <header class="barra-navegacion">
   <div class="barra-grupo-izquierda">
-    <a class="barra-boton" href="/inicio" aria-label="Ir a Inicio">🏠</a>
-    <a class="barra-boton" href="{{ _sector.url }}" aria-label="Ir a {{ _sector.nombre }}">{{ _sector.icono }}</a>
+    <a class="barra-boton" href="/inicio" aria-label="Ir a Inicio">{{ ICONO_INICIO|safe }}</a>
+    <a class="barra-boton" href="{{ _sector.url }}" aria-label="Ir a {{ _sector.nombre }}">{{ _sector.icono|safe }}</a>
   </div>
   <div class="barra-titulo">{{ barra_titulo }}</div>
   <div class="barra-espaciador" aria-hidden="true"></div>
@@ -44,10 +36,14 @@
     height: 2.5rem;
     border-radius: 8px;
     background: #eef2ff;
-    font-size: 1.2rem;
+    color: #1f2937;
     text-decoration: none;
     flex-shrink: 0;
     box-sizing: border-box;
+  }
+  .barra-boton svg {
+    width: 1.35rem;
+    height: 1.35rem;
   }
   .barra-titulo {
     flex: 1;

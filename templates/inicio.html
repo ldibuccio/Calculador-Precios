@@ -12,9 +12,17 @@
     background: #f5f5f5;
     color: #222;
   }
-  h1 { font-size: 1.8rem; margin: 0.5rem 0 1.5rem; text-align: center; }
+  h1 {
+    font-size: 2.6rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 1rem 0 1.75rem;
+    text-align: center;
+  }
   .boton-area {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
     box-sizing: border-box;
     width: 100%;
     padding: 1.2rem 1rem;
@@ -24,11 +32,15 @@
     border-radius: 12px;
     font-size: 1.2rem;
     font-weight: 700;
-    text-align: center;
     text-decoration: none;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
   .boton-area:last-child { margin-bottom: 0; }
+  .boton-area svg {
+    width: 1.6rem;
+    height: 1.6rem;
+    flex-shrink: 0;
+  }
   /* "Próximamente": mismo estilo, atenuado, para que se note a simple
      vista que todavía no hace nada (igual que en la botonera de Compras). */
   .boton-proximamente { opacity: 0.6; }
@@ -37,11 +49,11 @@
 <body>
   <h1>Frutamax</h1>
 
-  <a class="boton-area" href="/compras">Compras</a>
-  <a class="boton-area" href="/comercial">Comercial</a>
-  <a class="boton-area boton-proximamente" href="/logistica">Logística (Próximamente)</a>
-  <a class="boton-area boton-proximamente" href="/deposito">Depósito (Próximamente)</a>
-  <a class="boton-area boton-proximamente" href="/gerencia">Gerencia (Próximamente)</a>
-  <a class="boton-area" href="/sistema">Sistema</a>
+  <a class="boton-area" href="{{ SECTORES.compras.url }}">{{ SECTORES.compras.icono|safe }} Compras</a>
+  <a class="boton-area" href="{{ SECTORES.comercial.url }}">{{ SECTORES.comercial.icono|safe }} Comercial</a>
+  <a class="boton-area boton-proximamente" href="{{ SECTORES.logistica.url }}">{{ SECTORES.logistica.icono|safe }} Logística (Próximamente)</a>
+  <a class="boton-area boton-proximamente" href="{{ SECTORES.deposito.url }}">{{ SECTORES.deposito.icono|safe }} Depósito (Próximamente)</a>
+  <a class="boton-area boton-proximamente" href="{{ SECTORES.gerencia.url }}">{{ SECTORES.gerencia.icono|safe }} Gerencia (Próximamente)</a>
+  <a class="boton-area" href="{{ SECTORES.sistema.url }}">{{ SECTORES.sistema.icono|safe }} Sistema</a>
 </body>
 </html>
