@@ -2720,6 +2720,11 @@ def test_ver_carga_comandas_multiples_muestra_la_pantalla():
     # de todo el lote).
     assert 'id="boton-descartar-siguiente"' in respuesta.text
     assert "Descartar y siguiente" in respuesta.text
+    # Regresión: en la última comanda del lote, "Descartar y siguiente"
+    # pasa a decir "Descartar y terminar", igual que ya hace "Guardar y
+    # siguiente" -> "Guardar y terminar". Misma condición esUltima, en la
+    # misma función (actualizarBotonGuardar) que actualiza los dos botones.
+    assert '"Descartar y terminar" : "Descartar y siguiente"' in respuesta.text
     # Regresión: la lectura de todas las fotos arranca de entrada, con un
     # límite de concurrencia (no una por una al guardar).
     assert "LIMITE_CONCURRENCIA_LECTURA" in respuesta.text

@@ -330,13 +330,18 @@
     }
 
     function actualizarBotonGuardar() {
-      const boton = document.getElementById("boton-guardar-siguiente");
-      if (!boton) {
-        return;
-      }
       const esUltima = indiceActual === colaFotos.length - 1;
-      boton.textContent = esUltima ? "Guardar y terminar" : "Guardar y siguiente";
-      boton.disabled = false;
+
+      const botonGuardar = document.getElementById("boton-guardar-siguiente");
+      if (botonGuardar) {
+        botonGuardar.textContent = esUltima ? "Guardar y terminar" : "Guardar y siguiente";
+        botonGuardar.disabled = false;
+      }
+
+      const botonDescartar = document.getElementById("boton-descartar-siguiente");
+      if (botonDescartar) {
+        botonDescartar.textContent = esUltima ? "Descartar y terminar" : "Descartar y siguiente";
+      }
     }
 
     // La barra muestra cuántas fotos ya terminaron de LEERSE (sea que hayan
