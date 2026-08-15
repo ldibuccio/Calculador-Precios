@@ -1,0 +1,20 @@
+<label for="codigo_puesto">Código de puesto *</label>
+<div class="buscador-proveedor">
+  <input type="text" id="codigo_puesto" name="codigo_puesto" required
+         placeholder="ej. N07P41" value="{{ codigo_puesto_sugerido }}" autocomplete="off"
+         style="text-transform: uppercase;"
+         onfocus="actualizarListaProveedores('codigo_puesto')"
+         oninput="actualizarListaProveedores('codigo_puesto')"
+         onblur="ocultarListaProveedores('codigo_puesto')">
+  <div class="lista-proveedores" id="lista-codigo_puesto"></div>
+</div>
+
+<label for="nombre">Nombre del proveedor *</label>
+<div class="buscador-proveedor">
+  <input type="text" id="nombre" name="nombre" required
+         placeholder="ej. Saturno" value="{{ nombre_sugerido }}" autocomplete="off"
+         onfocus="actualizarListaProveedores('nombre')"
+         oninput="actualizarListaProveedores('nombre')"
+         onblur="ocultarListaProveedores('nombre')">
+  <div class="lista-proveedores" id="lista-nombre"></div>
+</div>

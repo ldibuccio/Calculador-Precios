@@ -70,6 +70,42 @@
   }
   .boton-exito { background: #16a34a; }
   .boton-peligro { background: #dc2626; }
+  .buscador-proveedor {
+    position: relative;
+  }
+  .lista-proveedores {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-proveedores.visible {
+    display: block;
+  }
+  .opcion-proveedor {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-proveedor:last-child {
+    border-bottom: none;
+  }
+  .opcion-proveedor:active {
+    background: #f0f5ff;
+  }
+  .opcion-proveedor span {
+    color: #666;
+    font-size: 0.85rem;
+  }
 </style>
 </head>
 <body>
@@ -82,23 +118,7 @@
   <div class="tarjeta">
     <p class="ayuda">Elegí o cargá el proveedor. Después vas a poder sumarle varios artículos sin repetirlo.</p>
     <form method="post" action="/compras/nueva/proveedor" onsubmit="normalizarCodigoPuesto()" id="form-confirmar-proveedor">
-      <label for="codigo_puesto">Código de puesto *</label>
-      <input type="text" id="codigo_puesto" name="codigo_puesto" list="lista_proveedores" required
-             placeholder="ej. N07P41" autocomplete="off" oninput="sugerirNombre()">
-      <datalist id="lista_proveedores">
-        {% for p in proveedores %}
-        <option value="{{ p.codigo_puesto }}" data-nombre="{{ p.nombre }}">{{ p.nombre }}</option>
-        {% endfor %}
-      </datalist>
-
-      <label for="nombre">Nombre del proveedor *</label>
-      <input type="text" id="nombre" name="nombre" list="lista_nombres_proveedores" required
-             placeholder="ej. Saturno" autocomplete="off" oninput="sugerirCodigo()">
-      <datalist id="lista_nombres_proveedores">
-        {% for nombre in proveedores|map(attribute='nombre')|unique %}
-        <option value="{{ nombre }}"></option>
-        {% endfor %}
-      </datalist>
+      {% include "_buscador_proveedor.html" %}
 
       <button type="submit" class="boton-exito" id="boton-confirmar-proveedor">Confirmar proveedor</button>
     </form>
@@ -106,38 +126,82 @@
   </div>
 
   <script>
-    const PROVEEDORES_CONOCIDOS = {
-      {% for p in proveedores %}"{{ p.codigo_puesto }}": "{{ p.nombre }}",{% endfor %}
-    };
+    // Buscador combinado: al enfocar cualquiera de los dos campos se ve la
+    // lista completa de proveedores conocidos (nombre + código, para
+    // distinguir homónimos); escribir la filtra; elegir un resultado
+    // completa los dos campos juntos. Si lo que se tipea no matchea nada,
+    // se puede usar igual — es la forma de cargar un proveedor nuevo.
+    const PROVEEDORES_LISTA = [
+      {% for p in proveedores %}{ codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+    ];
 
-    function sugerirNombre() {
-      const codigo = document.getElementById("codigo_puesto").value.trim().toUpperCase();
-      const nombreConocido = PROVEEDORES_CONOCIDOS[codigo];
-      if (nombreConocido) {
-        document.getElementById("nombre").value = nombreConocido;
+    function normalizarBusquedaProveedor(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaProveedores(campo) {
+      const input = document.getElementById(campo);
+      const contenedor = document.getElementById("lista-" + campo);
+      if (!input || !contenedor) {
+        return;
+      }
+      const filtro = normalizarBusquedaProveedor(input.value);
+      const coincidencias = PROVEEDORES_LISTA.filter(function (p) {
+        if (!filtro) {
+          return true;
+        }
+        return p.nombre.toLowerCase().indexOf(filtro) !== -1 || p.codigo.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (p) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-proveedor";
+        const nombreEl = document.createElement("strong");
+        nombreEl.textContent = p.nombre;
+        const codigoEl = document.createElement("span");
+        codigoEl.textContent = " (" + p.codigo + ")";
+        opcion.appendChild(nombreEl);
+        opcion.appendChild(codigoEl);
+        // preventDefault en mousedown evita que el input pierda el foco (y
+        // con eso, que la lista se cierre) ANTES de que llegue a
+        // dispararse el click de selección.
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirProveedor(p.codigo, p.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaProveedores(campo) {
+      const contenedor = document.getElementById("lista-" + campo);
+      if (contenedor) {
+        contenedor.classList.remove("visible");
       }
     }
 
-    // Mismos datos que PROVEEDORES_CONOCIDOS (código -> nombre), invertidos
-    // acá para poder sugerir en el otro sentido (nombre -> código). Si dos
-    // proveedores comparten el mismo nombre, queda ambiguo a qué puesto
-    // corresponde: no se sugiere nada y se deja para elegir a mano, en vez
-    // de arriesgar a completar con el puesto equivocado.
-    const NOMBRES_A_CODIGOS = {};
-    Object.keys(PROVEEDORES_CONOCIDOS).forEach(function (codigo) {
-      const nombreNormalizado = PROVEEDORES_CONOCIDOS[codigo].trim().toLowerCase();
-      if (!NOMBRES_A_CODIGOS[nombreNormalizado]) {
-        NOMBRES_A_CODIGOS[nombreNormalizado] = [];
+    // Si el nombre es ambiguo (varios proveedores lo comparten), la lista
+    // filtrada ya muestra todas las coincidencias con su código al lado —
+    // el usuario elige la correcta a simple vista, no hace falta adivinar.
+    function elegirProveedor(codigo, nombre) {
+      const campoCodigo = document.getElementById("codigo_puesto");
+      const campoNombre = document.getElementById("nombre");
+      if (campoCodigo) {
+        campoCodigo.value = codigo;
       }
-      NOMBRES_A_CODIGOS[nombreNormalizado].push(codigo);
-    });
-
-    function sugerirCodigo() {
-      const nombreNormalizado = document.getElementById("nombre").value.trim().toLowerCase();
-      const codigos = NOMBRES_A_CODIGOS[nombreNormalizado];
-      if (codigos && codigos.length === 1) {
-        document.getElementById("codigo_puesto").value = codigos[0];
+      if (campoNombre) {
+        campoNombre.value = nombre;
       }
+      ocultarListaProveedores("codigo_puesto");
+      ocultarListaProveedores("nombre");
     }
 
     function normalizarCodigoPuesto() {

@@ -1487,7 +1487,7 @@ def test_ver_nueva_compra_manual_muestra_solo_el_formulario_de_proveedor():
     assert "Código de puesto" in respuesta.text
     assert "N07P41" in respuesta.text
     assert 'action="/compras/nueva/proveedor"' in respuesta.text
-    assert "PROVEEDORES_CONOCIDOS" in respuesta.text
+    assert "PROVEEDORES_LISTA" in respuesta.text
     # No mezcla el flujo de foto: sin formulario de subida ni el link a
     # múltiples comandas.
     assert 'id="form-leer-comanda"' not in respuesta.text
@@ -2751,9 +2751,9 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     assert '<option value="Propia"' in respuesta.text
     # Regresión: la sugerencia puesto<->nombre de la carga manual también
     # está disponible acá (ayuda extra sobre lo que ya adivinó la IA).
-    assert '"N07P41": "Saturno"' in respuesta.text
-    assert 'oninput="sugerirNombreProveedorComanda()"' in respuesta.text
-    assert 'oninput="sugerirCodigoProveedorComanda()"' in respuesta.text
+    assert '{ codigo: "N07P41", nombre: "Saturno" }' in respuesta.text
+    assert "oninput=\"actualizarListaProveedores('codigo_puesto')\"" in respuesta.text
+    assert "oninput=\"actualizarListaProveedores('nombre')\"" in respuesta.text
 
 
 def test_subir_foto_compra_proveedor_nuevo_sin_proveedores_existentes_igual_arma_el_codigo():
@@ -2797,7 +2797,7 @@ def test_subir_foto_compra_sin_ningun_dato_de_proveedor_deja_codigo_vacio():
         )
 
     assert respuesta.status_code == 200
-    assert 'value="" style="text-transform: uppercase;"' in respuesta.text
+    assert 'value="" autocomplete="off"' in respuesta.text
     # Con un solo renglón (o ninguno) no tiene sentido ofrecer "aplicar a
     # todos los demás".
     assert 'id="aplicar_retiro_a_todos"' not in respuesta.text
@@ -3033,7 +3033,7 @@ def test_confirmar_compra_foto_error_incluye_sugerencia_de_proveedor_para_reinte
         respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
 
     assert respuesta.status_code == 400
-    assert '"N07P41": "Saturno"' in respuesta.text
+    assert '{ codigo: "N07P41", nombre: "Saturno" }' in respuesta.text
 
 
 def test_confirmar_compra_foto_conserva_el_retiro_ya_elegido_al_reintentar():
@@ -3175,10 +3175,10 @@ def test_ver_carga_comandas_multiples_muestra_la_pantalla():
     # Regresión: al mostrar una comanda nueva (guardar/descartar y pasar a
     # la siguiente) la pantalla vuelve al tope.
     assert "window.scrollTo(0, 0)" in respuesta.text
-    # Regresión: sugerencia puesto<->nombre también en modo múltiple,
+    # Regresión: buscador combinado de proveedor también en modo múltiple,
     # reusando la misma lógica que la carga manual.
-    assert "sugerirNombreProveedorComanda" in respuesta.text
-    assert "sugerirCodigoProveedorComanda" in respuesta.text
+    assert "actualizarListaProveedores" in respuesta.text
+    assert "elegirProveedor" in respuesta.text
     # Regresión: al agregar un renglón en blanco, si el tilde "usar este
     # retiro para todos" está tildado, el renglón nuevo se precarga con ese
     # retiro en vez de quedar en "Elegí...".
@@ -3192,8 +3192,8 @@ def test_ver_carga_comandas_multiples_incluye_los_proveedores_conocidos_para_sug
         respuesta = cliente.get("/compras/nueva/fotos")
 
     assert respuesta.status_code == 200
-    assert '"N07P41": "Saturno"' in respuesta.text
-    assert '"L03P38": "Frutamax"' in respuesta.text
+    assert '{ codigo: "N07P41", nombre: "Saturno" }' in respuesta.text
+    assert '{ codigo: "L03P38", nombre: "Frutamax" }' in respuesta.text
 
 
 def test_link_multiples_comandas_en_pantalla_de_una_foto():

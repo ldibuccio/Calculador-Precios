@@ -105,6 +105,42 @@
   .boton-peligro { background: #dc2626; }
   .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
   .boton-descartar { background: #d97706; }
+  .buscador-proveedor {
+    position: relative;
+  }
+  .lista-proveedores {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-proveedores.visible {
+    display: block;
+  }
+  .opcion-proveedor {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-proveedor:last-child {
+    border-bottom: none;
+  }
+  .opcion-proveedor:active {
+    background: #f0f5ff;
+  }
+  .opcion-proveedor span {
+    color: #666;
+    font-size: 0.85rem;
+  }
   .boton-ver-foto {
     margin-top: 0.75rem;
     width: auto;
@@ -226,40 +262,77 @@
     let indiceActual = 0;
     let CANTIDAD_RENGLONES_ACTUAL = 0;
 
-    // Misma ayuda de sugerencia puesto<->nombre que ya existe en la carga
-    // manual (compra_proveedor_form.html). Se define UNA vez acá, a nivel
-    // de página: el fragmento del proveedor se re-inyecta por cada comanda
-    // del lote, pero como los oninput="..." del fragmento son atributos
-    // inline (no listeners agregados por JS), siguen apuntando a estas
-    // mismas funciones globales cada vez que se inyecta una comanda nueva
-    // — no hace falta "reactivarlos" a mano.
-    const PROVEEDORES_CONOCIDOS = {
-      {% for p in proveedores %}"{{ p.codigo_puesto }}": "{{ p.nombre }}",{% endfor %}
-    };
+    // Buscador combinado del proveedor. Se define UNA vez acá, a nivel de
+    // página: el fragmento del proveedor se re-inyecta por cada comanda
+    // del lote, pero como los onfocus/oninput/onblur del fragmento son
+    // atributos inline (no listeners agregados por JS), siguen apuntando a
+    // estas mismas funciones globales cada vez que se inyecta una comanda
+    // nueva — no hace falta "reactivarlos" a mano.
+    const PROVEEDORES_LISTA = [
+      {% for p in proveedores %}{ codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+    ];
 
-    function sugerirNombreProveedorComanda() {
-      const codigo = document.getElementById("codigo_puesto").value.trim().toUpperCase();
-      const nombreConocido = PROVEEDORES_CONOCIDOS[codigo];
-      if (nombreConocido) {
-        document.getElementById("nombre").value = nombreConocido;
+    function normalizarBusquedaProveedor(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaProveedores(campo) {
+      const input = document.getElementById(campo);
+      const contenedor = document.getElementById("lista-" + campo);
+      if (!input || !contenedor) {
+        return;
+      }
+      const filtro = normalizarBusquedaProveedor(input.value);
+      const coincidencias = PROVEEDORES_LISTA.filter(function (p) {
+        if (!filtro) {
+          return true;
+        }
+        return p.nombre.toLowerCase().indexOf(filtro) !== -1 || p.codigo.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (p) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-proveedor";
+        const nombreEl = document.createElement("strong");
+        nombreEl.textContent = p.nombre;
+        const codigoEl = document.createElement("span");
+        codigoEl.textContent = " (" + p.codigo + ")";
+        opcion.appendChild(nombreEl);
+        opcion.appendChild(codigoEl);
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirProveedor(p.codigo, p.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaProveedores(campo) {
+      const contenedor = document.getElementById("lista-" + campo);
+      if (contenedor) {
+        contenedor.classList.remove("visible");
       }
     }
 
-    const NOMBRES_A_CODIGOS_COMANDA = {};
-    Object.keys(PROVEEDORES_CONOCIDOS).forEach(function (codigo) {
-      const nombreNormalizado = PROVEEDORES_CONOCIDOS[codigo].trim().toLowerCase();
-      if (!NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado]) {
-        NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado] = [];
+    function elegirProveedor(codigo, nombre) {
+      const campoCodigo = document.getElementById("codigo_puesto");
+      const campoNombre = document.getElementById("nombre");
+      if (campoCodigo) {
+        campoCodigo.value = codigo;
       }
-      NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado].push(codigo);
-    });
-
-    function sugerirCodigoProveedorComanda() {
-      const nombreNormalizado = document.getElementById("nombre").value.trim().toLowerCase();
-      const codigos = NOMBRES_A_CODIGOS_COMANDA[nombreNormalizado];
-      if (codigos && codigos.length === 1) {
-        document.getElementById("codigo_puesto").value = codigos[0];
+      if (campoNombre) {
+        campoNombre.value = nombre;
       }
+      ocultarListaProveedores("codigo_puesto");
+      ocultarListaProveedores("nombre");
     }
 
     function verFoto(evento) {
@@ -495,7 +568,7 @@
     // termina una lectura relevante para el índice que se está mirando.
     function mostrarEstadoIndiceActual() {
       if (indiceActual >= colaFotos.length) {
-        window.location = "/compras";
+        window.location = "/compras/ultimas";
         return;
       }
 
@@ -676,7 +749,7 @@
 
     document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
       if (confirm("¿Seguro? Se pierde la foto que estás cargando ahora (las que ya guardaste quedan guardadas).")) {
-        window.location = "/compras";
+        window.location = "/compras/ultimas";
       }
     });
 

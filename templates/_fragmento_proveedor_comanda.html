@@ -1,11 +1,4 @@
 <div class="tarjeta">
       <h2>Proveedor</h2>
-      <label for="codigo_puesto">Código de puesto *</label>
-      <input type="text" id="codigo_puesto" name="codigo_puesto" required
-             placeholder="ej. N07P41" value="{{ codigo_puesto_sugerido }}" style="text-transform: uppercase;"
-             oninput="sugerirNombreProveedorComanda()">
-
-      <label for="nombre">Nombre del proveedor *</label>
-      <input type="text" id="nombre" name="nombre" required placeholder="ej. Saturno" value="{{ nombre_sugerido }}"
-             oninput="sugerirCodigoProveedorComanda()">
+      {% include "_buscador_proveedor.html" %}
     </div>
