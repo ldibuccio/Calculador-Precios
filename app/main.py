@@ -1462,6 +1462,22 @@ def _generar_preview_foto(imagen: bytes) -> str:
         return ""
 
 
+def _bytes_desde_data_uri(data_uri: str) -> bytes | None:
+    """Decodifica un data URI "data:image/jpeg;base64,XXXX" (el que arma _generar_preview_foto) a bytes crudos.
+
+    Devuelve None si el texto no tiene esa forma o el base64 está corrupto
+    — nunca lanza, para que quien llame decida qué hacer (acá: no subir
+    nada a Storage y seguir guardando la compra igual).
+    """
+    if not data_uri or not data_uri.startswith("data:") or ";base64," not in data_uri:
+        return None
+    _, base64_texto = data_uri.split(";base64,", 1)
+    try:
+        return base64.standard_b64decode(base64_texto)
+    except Exception:
+        return None
+
+
 @app.post("/compras/nueva/foto")
 async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
     try:
@@ -1626,6 +1642,26 @@ async def confirmar_compra_foto(request: Request):
 
     try:
         proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+
+        # Subir la foto es un extra, nunca puede tirar abajo el guardado de
+        # la compra: si falla (sin conexión, credencial mala, lo que sea),
+        # se loguea completo acá y se sigue con foto_ruta = None para todos
+        # los renglones — mejor una compra guardada sin foto que ninguna
+        # compra guardada. Se sube UNA sola vez (una comanda = una foto =
+        # varios renglones), no una vez por renglón.
+        foto_ruta = None
+        bytes_foto = _bytes_desde_data_uri(foto_preview_texto)
+        if bytes_foto:
+            try:
+                foto_ruta = subir_foto_comanda(bytes_foto, codigo_valor)
+            except Exception:
+                logger.exception(
+                    "No se pudo subir la foto de la comanda a Supabase Storage (proveedor %s) "
+                    "— se guarda la compra igual, sin foto",
+                    codigo_valor,
+                )
+                foto_ruta = None
+
         hoy = _hoy_argentina()
         for texto_leido, valores, articulo in renglones_a_guardar:
             total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
@@ -1645,6 +1681,7 @@ async def confirmar_compra_foto(request: Request):
                 valores["importe"],
                 valores["sena"],
                 valores["tipo_retiro"],
+                foto_ruta,
             )
             if texto_leido.strip():
                 aprender_articulo(proveedor_id, normalizar_texto(texto_leido), valores["articulo_id"])
@@ -1822,6 +1859,35 @@ def eliminar_compra_ruta(compra_id: int):
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
     return RedirectResponse(url="/compras", status_code=303)
+
+
+@app.get("/compras/{compra_id}/foto")
+def ver_foto_compra(compra_id: int):
+    """Genera una URL firmada nueva para la foto de esta compra y redirige ahí. 404 si no tiene foto guardada.
+
+    No se guarda ni cachea la URL firmada en ningún lado: se pide una
+    nueva cada vez que se aprieta "Ver foto", así nunca se puede llegar a
+    un link vencido.
+    """
+    try:
+        compra = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    if not compra.get("foto_ruta"):
+        raise HTTPException(status_code=404, detail="Esta compra no tiene foto guardada")
+
+    try:
+        url_firmada = obtener_url_foto(compra["foto_ruta"])
+    except Exception as error_storage:
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
+        ) from error_storage
+
+    return RedirectResponse(url=url_firmada, status_code=307)
 
 
 @app.get("/compras/pendientes")

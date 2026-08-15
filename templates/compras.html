@@ -69,6 +69,7 @@
   }
   .boton-editar { background: #2563eb; }
   .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; }
+  .boton-ver-foto { background: #6b7280; }
   .form-eliminar { display: inline; }
   .sin-precio { color: #dc2626; font-weight: 600; }
 </style>
@@ -115,6 +116,9 @@
             <td>
               <div class="acciones">
                 <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>
+                {% if c.foto_ruta %}
+                <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver foto</a>
+                {% endif %}
                 <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
                       onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
                   <button type="submit" class="boton-eliminar">Eliminar</button>

@@ -639,7 +639,7 @@ def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon,
-                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -772,7 +772,7 @@ def obtener_compra(compra_id: int) -> dict | None:
                 SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon,
-                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -800,8 +800,16 @@ def crear_compra(
     importe: float | None,
     sena: float | None,
     tipo_retiro: str,
+    foto_ruta: str | None = None,
 ) -> None:
-    """Inserta una compra cargada por el comprador."""
+    """Inserta una compra cargada por el comprador.
+
+    foto_ruta es la ruta (en el bucket "comandas" de Supabase Storage) de
+    la foto de la comanda de la que salió este renglón — None si la
+    compra se cargó a mano, o si la subida de la foto falló (la foto es un
+    extra, nunca bloquea guardar la compra). Cuando varios renglones salen
+    de la misma foto, comparten la misma foto_ruta.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -809,8 +817,8 @@ def crear_compra(
                 """
                 INSERT INTO compras
                     (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                     cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     fecha_operacion,
@@ -823,6 +831,7 @@ def crear_compra(
                     importe,
                     sena,
                     tipo_retiro,
+                    foto_ruta,
                 ),
             )
         conexion.commit()

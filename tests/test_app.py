@@ -1181,6 +1181,23 @@ def test_ver_compras_muestra_las_de_los_ultimos_2_dias():
     assert "$2.000" in respuesta.text
 
 
+def test_ver_compras_muestra_ver_foto_solo_en_las_filas_con_foto():
+    compras = [
+        dict(COMPRAS_DE_PRUEBA[0], foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg"),
+        dict(COMPRAS_DE_PRUEBA[1], foto_ruta=None),
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_por_rango_fechas", return_value=compras),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert respuesta.text.count("Ver foto") == 1
+    assert 'href="/compras/30/foto"' in respuesta.text
+    assert 'href="/compras/31/foto"' not in respuesta.text
+
+
 def test_ver_compras_sin_compras_muestra_mensaje():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -2011,6 +2028,48 @@ def test_eliminar_compra_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
+def test_ver_foto_compra_redirige_a_la_url_firmada():
+    compra_con_foto = dict(COMPRA_DE_PRUEBA, foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_foto),
+        patch(
+            "app.main.obtener_url_foto",
+            return_value="https://proyecto.supabase.co/storage/v1/object/sign/comandas/x.jpg?token=abc",
+        ) as mock_url,
+    ):
+        respuesta = cliente.get("/compras/30/foto", follow_redirects=False)
+
+    assert respuesta.status_code == 307
+    assert respuesta.headers["location"] == "https://proyecto.supabase.co/storage/v1/object/sign/comandas/x.jpg?token=abc"
+    mock_url.assert_called_once_with("2026-08-06/n07p41-123-abcdef12.jpg")
+
+
+def test_ver_foto_compra_sin_foto_ruta_da_404():
+    compra_sin_foto = dict(COMPRA_DE_PRUEBA, foto_ruta=None)
+    with patch("app.main.obtener_compra", return_value=compra_sin_foto):
+        respuesta = cliente.get("/compras/30/foto")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_foto_compra_inexistente_da_404():
+    with patch("app.main.obtener_compra", return_value=None):
+        respuesta = cliente.get("/compras/999/foto")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_foto_compra_error_de_storage_da_500():
+    compra_con_foto = dict(COMPRA_DE_PRUEBA, foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_foto),
+        patch("app.main.obtener_url_foto", side_effect=RuntimeError("Supabase Storage no pudo firmar la URL (404)")),
+    ):
+        respuesta = cliente.get("/compras/30/foto")
+
+    assert respuesta.status_code == 500
+
+
 COMPRAS_PENDIENTES_DE_PRUEBA = [
     {
         "id": 40,
@@ -2337,7 +2396,7 @@ def test_subir_foto_compra_error_del_lector_muestra_mensaje_claro():
     assert "No se pudo leer la foto" in respuesta.text
 
 
-def _datos_confirmar_foto(descartar_item_1=True, codigo_puesto="N07P41", nombre="Saturno"):
+def _datos_confirmar_foto(descartar_item_1=True, codigo_puesto="N07P41", nombre="Saturno", foto_preview=None):
     datos = {
         "codigo_puesto": codigo_puesto,
         "nombre": nombre,
@@ -2359,6 +2418,8 @@ def _datos_confirmar_foto(descartar_item_1=True, codigo_puesto="N07P41", nombre=
     }
     if descartar_item_1:
         datos["item_1_descartar"] = "on"
+    if foto_preview is not None:
+        datos["foto_preview"] = foto_preview
     return datos
 
 
@@ -2379,7 +2440,9 @@ def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark")
+    # Sin foto_preview en el form (estos datos de prueba no la mandan), no
+    # hay nada que subir a Storage: foto_ruta queda en None.
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
@@ -2405,8 +2468,79 @@ def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igu
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
+
+
+FOTO_PREVIEW_DE_PRUEBA = "data:image/jpeg;base64,aGVsbG8="  # decodifica a b"hello"
+
+
+def test_confirmar_compra_foto_sube_la_foto_una_vez_y_guarda_la_ruta_en_todos_los_renglones():
+    # Dos renglones válidos (no uno descartado como en _datos_confirmar_foto
+    # por defecto), para poder confirmar que la MISMA ruta de foto queda en
+    # los dos — una comanda = una foto = varios renglones de compra.
+    datos = {
+        "codigo_puesto": "N07P41",
+        "nombre": "Saturno",
+        "foto_preview": FOTO_PREVIEW_DE_PRUEBA,
+        "cantidad_renglones": "2",
+        "item_0_texto_leido": "Kiwi",
+        "item_0_articulo_id": "5",
+        "item_0_cantidad_cajones": "10",
+        "item_0_contenido_por_cajon": "18",
+        "item_0_importe": "5000",
+        "item_0_sena": "",
+        "item_0_tipo_retiro": "Clark",
+        "item_1_texto_leido": "Kiwi",
+        "item_1_articulo_id": "5",
+        "item_1_cantidad_cajones": "3",
+        "item_1_contenido_por_cajon": "18",
+        "item_1_importe": "1500",
+        "item_1_sena": "",
+        "item_1_tipo_retiro": "Clark",
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-123-abcdef12.jpg") as mock_subir,
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo"),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # Se sube UNA sola vez (no una vez por renglón), con los bytes ya
+    # decodificados del data URI y el código de puesto como base del nombre.
+    mock_subir.assert_called_once_with(b"hello", "N07P41")
+    assert mock_crear.call_count == 2
+    for llamada in mock_crear.call_args_list:
+        assert llamada.args[-1] == "2026-08-06/n07p41-123-abcdef12.jpg"
+
+
+def test_confirmar_compra_foto_si_falla_la_subida_guarda_la_compra_igual_sin_foto():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.subir_foto_comanda", side_effect=RuntimeError("Supabase Storage rechazó la subida (403)")),
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo"),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=_datos_confirmar_foto(foto_preview=FOTO_PREVIEW_DE_PRUEBA),
+            follow_redirects=False,
+        )
+
+    # NO es un error de "no se pudo guardar la compra": la foto es un
+    # extra, la falla de Storage nunca puede bloquear la carga.
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
 
 
 def test_confirmar_compra_foto_codigo_puesto_invalido_muestra_error():
