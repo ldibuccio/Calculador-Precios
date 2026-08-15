@@ -1438,8 +1438,8 @@ def _contenido_referencia_de(articulo_id: int | None, articulos_existentes: list
     return None
 
 
-LADO_MAXIMO_PREVIEW_FOTO = 1100
-CALIDAD_PREVIEW_FOTO = 70
+LADO_MAXIMO_PREVIEW_FOTO = 1000
+CALIDAD_PREVIEW_FOTO = 60
 
 
 def _generar_preview_foto(imagen: bytes) -> str:
