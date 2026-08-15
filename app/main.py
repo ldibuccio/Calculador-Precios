@@ -1209,11 +1209,17 @@ def ver_ultimas_compras(request: Request, error: str | None = None):
 
 
 def _renderizar_en_construccion(
-    request: Request, titulo: str, volver_url: str = "/compras", volver_texto: str = "Volver a compras"
+    request: Request,
+    titulo: str,
+    volver_url: str = "/compras",
+    volver_texto: str = "Volver a compras",
+    sector: str = "compras",
 ):
-    """Pantalla placeholder compartida por todos los botones "Próximamente" (de la botonera de Compras y, más adelante, de la home)."""
+    """Pantalla placeholder compartida por todos los botones "Próximamente" (de la botonera de Compras y de la home)."""
     return templates.TemplateResponse(
-        request, "en_construccion.html", {"titulo": titulo, "volver_url": volver_url, "volver_texto": volver_texto}
+        request,
+        "en_construccion.html",
+        {"titulo": titulo, "volver_url": volver_url, "volver_texto": volver_texto, "sector": sector},
     )
 
 
@@ -2436,17 +2442,23 @@ def ver_comercial(request: Request):
 
 @app.get("/logistica")
 def ver_logistica(request: Request):
-    return _renderizar_en_construccion(request, "Logística", volver_url="/inicio", volver_texto="Volver a Inicio")
+    return _renderizar_en_construccion(
+        request, "Logística", volver_url="/inicio", volver_texto="Volver a Inicio", sector="logistica"
+    )
 
 
 @app.get("/deposito")
 def ver_deposito(request: Request):
-    return _renderizar_en_construccion(request, "Depósito", volver_url="/inicio", volver_texto="Volver a Inicio")
+    return _renderizar_en_construccion(
+        request, "Depósito", volver_url="/inicio", volver_texto="Volver a Inicio", sector="deposito"
+    )
 
 
 @app.get("/gerencia")
 def ver_gerencia(request: Request):
-    return _renderizar_en_construccion(request, "Gerencia", volver_url="/inicio", volver_texto="Volver a Inicio")
+    return _renderizar_en_construccion(
+        request, "Gerencia", volver_url="/inicio", volver_texto="Volver a Inicio", sector="gerencia"
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,66 @@
+{% set _sectores = {
+  "compras":   {"icono": "🛒", "nombre": "Compras",   "url": "/compras"},
+  "comercial": {"icono": "💼", "nombre": "Comercial", "url": "/comercial"},
+  "logistica": {"icono": "🚚", "nombre": "Logística", "url": "/logistica"},
+  "deposito":  {"icono": "📦", "nombre": "Depósito",  "url": "/deposito"},
+  "gerencia":  {"icono": "📊", "nombre": "Gerencia",  "url": "/gerencia"},
+  "sistema":   {"icono": "⚙️", "nombre": "Sistema",   "url": "/sistema"},
+} %}
+{% set _sector = _sectores[barra_sector] %}
+<header class="barra-navegacion">
+  <div class="barra-grupo-izquierda">
+    <a class="barra-boton" href="/inicio" aria-label="Ir a Inicio">🏠</a>
+    <a class="barra-boton" href="{{ _sector.url }}" aria-label="Ir a {{ _sector.nombre }}">{{ _sector.icono }}</a>
+  </div>
+  <div class="barra-titulo">{{ barra_titulo }}</div>
+  <div class="barra-espaciador" aria-hidden="true"></div>
+</header>
+<style>
+  /* Barrita de navegación compartida por todas las pantallas (menos
+     /inicio). Fija arriba (sticky) para no perderla al scrollear listados
+     largos. El margin negativo cancela el padding: 1rem que ya tiene el
+     <body> de todas las pantallas, para que llegue de borde a borde. */
+  .barra-navegacion {
+    position: sticky;
+    top: 0;
+    margin: -1rem -1rem 1rem -1rem;
+    padding: 0.5rem 0.75rem;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    z-index: 100;
+  }
+  .barra-grupo-izquierda {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+  .barra-boton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 8px;
+    background: #eef2ff;
+    font-size: 1.2rem;
+    text-decoration: none;
+    flex-shrink: 0;
+    box-sizing: border-box;
+  }
+  .barra-titulo {
+    flex: 1;
+    text-align: center;
+    font-size: 1.05rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 0.4rem;
+  }
+  .barra-espaciador {
+    width: 5.4rem;
+    flex-shrink: 0;
+  }
+</style>

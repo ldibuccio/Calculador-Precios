@@ -12,7 +12,6 @@
     background: #f5f5f5;
     color: #222;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
   h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   .tarjeta {
     background: #fff;
@@ -89,7 +88,9 @@
 </style>
 </head>
 <body>
-  <h1>Fichas de logística</h1>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Fichas de logística" %}
+  {% include "_barra_navegacion.html" %}
 
   {% if error %}
   <div class="error">{{ error }}</div>

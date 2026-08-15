@@ -12,7 +12,6 @@
     background: #f5f5f5;
     color: #222;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
@@ -92,7 +91,9 @@
 </style>
 </head>
 <body>
-  <h1>{% if modo == "nueva" %}Agregar ficha{% else %}Editar ficha{% endif %}</h1>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Agregar ficha" if modo == "nueva" else "Editar ficha" %}
+  {% include "_barra_navegacion.html" %}
 
   {% if error %}
   <div class="error">{{ error }}</div>

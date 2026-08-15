@@ -12,7 +12,6 @@
     background: #f5f5f5;
     color: #222;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 1rem; text-align: center; }
   h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   .tarjeta {
     background: #fff;
@@ -70,7 +69,9 @@
 </style>
 </head>
 <body>
-  <h1>Compras</h1>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Compras" %}
+  {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
     <h2>Cargar</h2>
@@ -101,7 +102,6 @@
     </div>
   </div>
 
-  <a class="volver" href="/inicio">Inicio</a>
   <a class="volver" href="/sistema">Sistema</a>
 </body>
 </html>

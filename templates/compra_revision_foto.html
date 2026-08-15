@@ -12,7 +12,6 @@
     background: #f5f5f5;
     color: #222;
   }
-  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
   h2 { font-size: 1rem; margin: 0 0 0.5rem; }
   .tarjeta {
     background: #fff;
@@ -185,7 +184,9 @@
 </style>
 </head>
 <body>
-  <h1>Revisar comanda leída</h1>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Revisar comanda leída" %}
+  {% include "_barra_navegacion.html" %}
   <p class="ayuda">Esto es lo que el sistema pudo leer e interpretar. Revisá y corregí lo que haga falta antes de guardar — todavía no se guardó nada.</p>
 
   {% if foto_preview %}

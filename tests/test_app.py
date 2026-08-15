@@ -1187,7 +1187,7 @@ def test_ver_compras_muestra_solo_la_botonera():
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert "<h1>Compras</h1>" in respuesta.text
+    assert '<div class="barra-titulo">Compras</div>' in respuesta.text
     assert ">Cargar<" in respuesta.text
     assert ">Operaciones<" in respuesta.text
     assert respuesta.text.index(">Cargar<") < respuesta.text.index(">Operaciones<")
@@ -1204,7 +1204,7 @@ def test_ver_ultimas_compras_muestra_las_de_los_ultimos_2_dias():
         respuesta = cliente.get("/compras/ultimas")
 
     assert respuesta.status_code == 200
-    assert "<h1>Últimas Compras</h1>" in respuesta.text
+    assert '<div class="barra-titulo">Últimas Compras</div>' in respuesta.text
     assert "Mzn Red" in respuesta.text
     assert "Saturno" in respuesta.text
     assert "N07P41" in respuesta.text
@@ -3736,3 +3736,47 @@ def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
     assert "Gerencia" in respuesta.text
     assert "En construcción" in respuesta.text
     assert 'href="/inicio"' in respuesta.text
+
+
+def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():
+    respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert '<header class="barra-navegacion">' in respuesta.text
+    assert 'href="/inicio" aria-label="Ir a Inicio">🏠</a>' in respuesta.text
+    assert 'href="/compras" aria-label="Ir a Compras">🛒</a>' in respuesta.text
+    assert '<div class="barra-titulo">Compras</div>' in respuesta.text
+
+
+def test_barra_navegacion_en_comercial_usa_icono_distinto_de_compras():
+    # Regresión: Compras y Comercial arrancan las dos con "C" — se
+    # distinguen con íconos (🛒 / 💼), no con la inicial.
+    with patch("app.main.listar_clientes", return_value=[]):
+        respuesta = cliente.get("/clientes")
+
+    assert respuesta.status_code == 200
+    assert 'href="/comercial" aria-label="Ir a Comercial">💼</a>' in respuesta.text
+    assert "🛒" not in respuesta.text
+
+
+def test_barra_navegacion_en_sistema():
+    respuesta = cliente.get("/sistema")
+
+    assert respuesta.status_code == 200
+    assert 'href="/sistema" aria-label="Ir a Sistema">⚙️</a>' in respuesta.text
+
+
+def test_barra_navegacion_en_placeholders_logistica_deposito_gerencia():
+    casos = [("/logistica", "🚚", "Logística"), ("/deposito", "📦", "Depósito"), ("/gerencia", "📊", "Gerencia")]
+    for url, icono, nombre in casos:
+        respuesta = cliente.get(url)
+        assert respuesta.status_code == 200
+        assert f'href="{url}" aria-label="Ir a {nombre}">{icono}</a>' in respuesta.text
+
+
+def test_ver_inicio_no_tiene_barra_de_navegacion():
+    # /inicio ya es el punto de partida de todo: no tiene adónde volver.
+    respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    assert "barra-navegacion" not in respuesta.text
