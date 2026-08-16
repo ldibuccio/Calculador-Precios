@@ -2397,7 +2397,7 @@ async def completar_importes_pendientes(request: Request):
 
 
 def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente: list[dict]) -> dict:
-    """Arma el contexto del cuadro de negociación (Bajas, Subas, bajo objetivo) de un cliente.
+    """Arma el contexto del cuadro de negociación (Bajas, Subas, bajo objetivo, todos) de un cliente.
 
     Usa exactamente los mismos datos que calcular_listado_para_negociar_precios
     (vía agrupar_para_negociar) — no recalcula nada, solo los agrupa y
@@ -2420,6 +2420,7 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         "bajas": grupos["bajas"],
         "subas": grupos["subas"],
         "bajo_objetivo": grupos["bajo_objetivo"],
+        "todos": grupos["todos"],
         "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         # Para explicar por qué no hay nada, en vez de mostrar la
         # pantalla vacía sin avisar (ver templates/_cuadro_negociacion.html):

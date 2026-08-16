@@ -990,3 +990,20 @@ def test_agrupar_sin_utilidad_objetivo_del_cliente_bajo_objetivo_vacio():
     # Bajas/Subas no dependen de la utilidad objetivo del cliente.
     assert [a["articulo_nombre"] for a in resultado["bajas"]] == ["A"]
     assert [a["articulo_nombre"] for a in resultado["subas"]] == ["B"]
+
+
+def test_agrupar_todos_incluye_todos_los_articulos_ordenados_de_mejor_a_peor_utilidad():
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, UTILIDAD_OBJETIVO_DE_PRUEBA)
+
+    nombres_todos = [a["articulo_nombre"] for a in resultado["todos"]]
+    # B (0.30) > F (0.25) > D (0.15) > A (0.10) > C (-0.05); E (sin
+    # utilidad, no comparable) va al final.
+    assert nombres_todos == ["B", "F", "D", "A", "C", "E"]
+
+
+def test_agrupar_todos_no_depende_de_la_utilidad_objetivo_del_cliente():
+    # A diferencia de bajo_objetivo, "todos" siempre trae los 6 aunque el
+    # cliente no tenga utilidad objetivo cargada.
+    resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, utilidad_objetivo=None)
+
+    assert len(resultado["todos"]) == 6

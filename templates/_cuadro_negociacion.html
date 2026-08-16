@@ -126,3 +126,37 @@
 {% else %}
 <p class="vacio">Ningún artículo con precio vigente está por debajo del objetivo.</p>
 {% endif %}
+
+<h2>Todos los artículos</h2>
+{% if todos %}
+<div class="tabla-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Producto</th>
+        <th>Precio vigente</th>
+        <th>Precio sugerido</th>
+        <th>Utilidad</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in todos %}
+      <tr>
+        <td>{{ a.articulo_nombre }}</td>
+        <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
+        <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
+        <td>
+          {% if a.utilidad_aproximada is none %}—
+          {% elif a.utilidad_aproximada < 0 %}<span class="utilidad-negativa">{{ a.utilidad_aproximada|porcentaje }}</span>
+          {% elif utilidad_objetivo_cliente is not none and a.utilidad_aproximada < utilidad_objetivo_cliente %}<span class="utilidad-baja">{{ a.utilidad_aproximada|porcentaje }}</span>
+          {% else %}{{ a.utilidad_aproximada|porcentaje }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="vacio">No hay artículos para mostrar.</p>
+{% endif %}

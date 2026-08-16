@@ -397,7 +397,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
 
 
 def agrupar_para_negociar(articulos: list[dict], utilidad_objetivo: float | None) -> dict:
-    """Agrupa el listado de calcular_listado_para_negociar_precios en las tres secciones del cuadro de negociación.
+    """Agrupa el listado de calcular_listado_para_negociar_precios en las secciones del cuadro de negociación.
 
     NO recalcula nada: solo filtra y ordena los mismos dicts que ya trae
     calcular_listado_para_negociar_precios (costo, variación, fresco,
@@ -413,6 +413,10 @@ def agrupar_para_negociar(articulos: list[dict], utilidad_objetivo: float | None
       utilidad_aproximada (sin precio vigente cargado) no entra — no hay
       nada que medir. Si utilidad_objetivo es None (cliente sin utilidad
       vigente), la sección queda vacía.
+    - "todos": TODOS los artículos (frescos o no, tengan o no utilidad),
+      ordenados de MEJOR a PEOR utilidad — los que no tienen
+      utilidad_aproximada (sin precio vigente cargado) van al final, en el
+      orden en que ya venían, porque no hay con qué compararlos.
     """
     bajas = [a for a in articulos if a["fresco"] and a["variacion"] == "bajo"]
     subas = [a for a in articulos if a["fresco"] and a["variacion"] == "subio"]
@@ -426,7 +430,12 @@ def agrupar_para_negociar(articulos: list[dict], utilidad_objetivo: float | None
         ]
         bajo_objetivo.sort(key=lambda a: a["utilidad_aproximada"])
 
-    return {"bajas": bajas, "subas": subas, "bajo_objetivo": bajo_objetivo}
+    todos = sorted(
+        articulos,
+        key=lambda a: (a["utilidad_aproximada"] is None, -(a["utilidad_aproximada"] or 0)),
+    )
+
+    return {"bajas": bajas, "subas": subas, "bajo_objetivo": bajo_objetivo, "todos": todos}
 
 
 def _normalizar_nombre(nombre: str) -> str:

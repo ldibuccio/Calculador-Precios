@@ -3773,7 +3773,7 @@ def test_ver_negociar_resumen_ordena_de_peor_a_mejor_y_filtra_bajo_objetivo():
 
     import re
 
-    bloque_resumen = re.search(r"<h2>\s*Resumen.*", respuesta.text, re.S).group(0)
+    bloque_resumen = re.search(r"<h2>\s*Resumen.*?(?=<h2>Todos los artículos)", respuesta.text, re.S).group(0)
     # Palta (-5%, peor) tiene que aparecer antes que Mango (10%).
     pos_palta = bloque_resumen.index("Palta")
     pos_mango = bloque_resumen.index("Mango")
@@ -3786,6 +3786,45 @@ def test_ver_negociar_resumen_ordena_de_peor_a_mejor_y_filtra_bajo_objetivo():
     # ahora es genérico (la pantalla puede ser de cualquier cliente).
     assert "P. Día" not in respuesta.text
     assert "<th>Precio vigente</th>" in respuesta.text
+
+
+def test_ver_negociar_todos_los_articulos_lista_todos_ordenados_por_utilidad_descendente():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    import re
+
+    bloque_todos = re.search(r"<h2>Todos los artículos.*", respuesta.text, re.S).group(0)
+    # Tomate Cherry (30%) > Mango (10%) > Palta (-5%) — a diferencia del
+    # resumen bajo objetivo, acá SÍ tienen que aparecer los 3, incluido el
+    # que está bien (Tomate Cherry).
+    pos_tomate = bloque_todos.index("Tomate Cherry")
+    pos_mango = bloque_todos.index("Mango")
+    pos_palta = bloque_todos.index("Palta")
+    assert pos_tomate < pos_mango < pos_palta
+
+
+def test_ver_negociar_todos_los_articulos_utilidad_ok_sin_color_de_alerta():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    import re
+
+    bloque_todos = re.search(r"<h2>Todos los artículos.*", respuesta.text, re.S).group(0)
+    fila_tomate = re.search(r"<tr>\s*<td>Tomate Cherry</td>.*?</tr>", bloque_todos, re.S).group(0)
+    # Tomate Cherry (30%, por encima del objetivo de 20%) no lleva ninguna
+    # de las clases de alerta — solo Mango y Palta, que sí están mal.
+    assert "utilidad-negativa" not in fila_tomate
+    assert "utilidad-baja" not in fila_tomate
+    assert "30,0%" in fila_tomate
 
 
 def test_ver_negociar_sin_fichas_muestra_aviso_y_link_para_cargarlas():
