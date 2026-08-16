@@ -3712,7 +3712,7 @@ def test_ver_negociar_con_cliente_muestra_titulo_y_nombre_del_cliente():
         respuesta = cliente.get("/negociar?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert "Negociación Precios" in respuesta.text
+    assert "Márgenes por Artículo" in respuesta.text
     assert "Cliente: <strong>Día</strong>" in respuesta.text
     assert "(prueba)" not in respuesta.text
 
@@ -3920,18 +3920,34 @@ def test_costeo_prueba_ya_no_existe():
 # --- /precios: botonera de Lista de Precios ---
 
 
-def test_ver_precios_muestra_la_botonera():
+def test_ver_precios_muestra_la_botonera_con_los_seis_accesos_en_orden():
     respuesta = cliente.get("/precios")
 
     assert respuesta.status_code == 200
-    assert 'href="/precios/consultar"' in respuesta.text
     assert 'href="/precios/cargar"' in respuesta.text
     assert 'href="/precios/cargar-foto"' in respuesta.text
+    assert 'href="/precios/consultar"' in respuesta.text
+    assert 'href="/negociar"' in respuesta.text
+    assert 'href="/precios/resultado-negociacion"' in respuesta.text
     assert 'href="/precios/generar-listado"' in respuesta.text
     assert "Carga Manual de Precios" in respuesta.text
-    assert "Cargar Foto Precios" in respuesta.text
+    assert "Carga Foto Precios" in respuesta.text
+    assert "Consultar Precios" in respuesta.text
+    assert "Márgenes por Artículo" in respuesta.text
+    assert "Resultado Negociación" in respuesta.text
     assert "Cargar Precios Nuevos" not in respuesta.text
     assert "Próximamente" in respuesta.text
+
+    orden = [
+        "Carga Manual de Precios",
+        "Carga Foto Precios",
+        "Consultar Precios",
+        "Márgenes por Artículo",
+        "Resultado Negociación",
+        "Generar Listado Actualizado",
+    ]
+    posiciones = [respuesta.text.index(texto) for texto in orden]
+    assert posiciones == sorted(posiciones)
 
 
 def test_ver_precios_guardado_muestra_mensaje_de_confirmacion():
@@ -4743,6 +4759,14 @@ def test_ver_generar_listado_precios_muestra_en_construccion_y_vuelve_a_precios(
     assert 'href="/precios"' in respuesta.text
 
 
+def test_ver_resultado_negociacion_muestra_en_construccion_y_vuelve_a_precios():
+    respuesta = cliente.get("/precios/resultado-negociacion")
+
+    assert respuesta.status_code == 200
+    assert "En construcción" in respuesta.text
+    assert 'href="/precios"' in respuesta.text
+
+
 def test_ver_inicio_muestra_las_6_areas():
     respuesta = cliente.get("/inicio")
 
@@ -4767,15 +4791,19 @@ def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
         assert SECTORES[sector]["icono"] in respuesta.text
 
 
-def test_ver_comercial_muestra_los_cuatro_accesos():
+def test_ver_comercial_muestra_los_tres_accesos():
     respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
+    assert 'href="/precios"' in respuesta.text
     assert 'href="/clientes"' in respuesta.text
     assert 'href="/fichas"' in respuesta.text
-    assert 'href="/negociar"' in respuesta.text
-    assert 'href="/precios"' in respuesta.text
-    assert "Lista de Precios" in respuesta.text
+    assert "Precios" in respuesta.text
+    assert "Clientes" in respuesta.text
+    assert "Fichas logísticas" in respuesta.text
+    # Negociar precios y Lista de Precios ya no están sueltos acá — viven
+    # ordenados adentro de la botonera de Precios.
+    assert 'href="/negociar"' not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lista de Precios</title>
+<title>Precios</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -50,7 +50,7 @@
 </head>
 <body>
   {% set barra_sector = "comercial" %}
-  {% set barra_titulo = "Lista de Precios" %}
+  {% set barra_titulo = "Precios" %}
   {% include "_barra_navegacion.html" %}
 
   {% if mensaje %}
@@ -58,9 +58,11 @@
   {% endif %}
 
   <div class="tarjeta">
-    <a class="boton" href="/precios/consultar">Consultar Lista de Precios</a>
     <a class="boton" href="/precios/cargar">Carga Manual de Precios</a>
-    <a class="boton" href="/precios/cargar-foto">Cargar Foto Precios</a>
+    <a class="boton" href="/precios/cargar-foto">Carga Foto Precios</a>
+    <a class="boton" href="/precios/consultar">Consultar Precios</a>
+    <a class="boton" href="/negociar">Márgenes por Artículo</a>
+    <a class="boton boton-proximamente" href="/precios/resultado-negociacion">Resultado Negociación (Próximamente)</a>
     <a class="boton boton-proximamente" href="/precios/generar-listado">Generar Listado Actualizado (Próximamente)</a>
   </div>
 </body>

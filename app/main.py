@@ -2739,7 +2739,20 @@ async def cargar_precios(request: Request):
 @app.get("/precios/generar-listado")
 def ver_generar_listado_precios(request: Request):
     return _renderizar_en_construccion(
-        request, "Generar Listado Actualizado", volver_url="/precios", volver_texto="Volver a Lista de Precios", sector="comercial"
+        request, "Generar Listado Actualizado", volver_url="/precios", volver_texto="Volver a Precios", sector="comercial"
+    )
+
+
+@app.get("/precios/resultado-negociacion")
+def ver_resultado_negociacion(request: Request):
+    """Rutina B: resultado de la negociación con el costo ESTIMADO de compra.
+
+    Más adelante habrá otra versión de esto en Gerencia con el costo REAL
+    depurado, cuando exista el módulo Depósito con los kilos pesados — esta
+    de acá usa el costo estimado, por eso vive en Precios.
+    """
+    return _renderizar_en_construccion(
+        request, "Resultado Negociación", volver_url="/precios", volver_texto="Volver a Precios", sector="comercial"
     )
 
 
@@ -3120,7 +3133,7 @@ def limpiar_fotos_viejas_ruta(request: Request):
 
 @app.get("/comercial")
 def ver_comercial(request: Request):
-    """Hub del área Comercial: junta los accesos a Clientes, Fichas y Negociar precios."""
+    """Hub del área Comercial: junta los accesos a Precios, Clientes y Fichas Logísticas."""
     return templates.TemplateResponse(request, "comercial.html", {})
 
 
