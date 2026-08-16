@@ -96,19 +96,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <h2>Agregar nuevo cliente</h2>
-    <form method="post" action="/clientes/nuevo">
-      <label for="nombre">Nombre *</label>
-      <input type="text" id="nombre" name="nombre" required>
-
-      <label for="descuento">Descuento % *</label>
-      <input type="number" id="descuento" name="descuento" min="0" max="100" step="0.01" required>
-
-      <label for="utilidad_objetivo">Utilidad objetivo % *</label>
-      <input type="number" id="utilidad_objetivo" name="utilidad_objetivo" min="0" max="100" step="0.01" required>
-
-      <button type="submit">Guardar</button>
-    </form>
+    <a class="boton" href="/clientes/nuevo">Agregar nuevo cliente</a>
   </div>
 
   <div class="tarjeta">

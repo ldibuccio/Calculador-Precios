@@ -368,35 +368,76 @@ def test_ver_clientes_incluye_link_a_inicio():
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_agregar_cliente_exitoso_redirige_a_clientes():
-    with patch("app.main.crear_cliente") as mock_crear:
+def test_ver_agregar_cliente_muestra_formulario_vacio():
+    respuesta = cliente.get("/clientes/nuevo")
+
+    assert respuesta.status_code == 200
+    assert 'action="/clientes/nuevo"' in respuesta.text
+    # Regresión: los títulos y ejemplos de cada grupo de tasas, para que
+    # quede claro qué va en cada uno.
+    assert "Adicionales" in respuesta.text
+    assert "IVA, premios" in respuesta.text
+    assert "Descuentos" in respuesta.text
+    assert "logística, flete" in respuesta.text
+    assert 'id="utilidad_objetivo"' in respuesta.text
+    assert '+ Agregar tasa Adicional' in respuesta.text
+    assert '+ Agregar tasa de Descuento' in respuesta.text
+
+
+def test_agregar_cliente_con_tasas_redirige_a_clientes():
+    with patch("app.main.crear_cliente", return_value=5) as mock_crear:
         respuesta = cliente.post(
             "/clientes/nuevo",
-            data={"nombre": "Vea", "descuento": "18", "utilidad_objetivo": "12"},
+            data={
+                "nombre": "Vea",
+                "utilidad_objetivo": "12",
+                "cantidad_tasa_sumas": "1",
+                "tasa_suma_0_nombre_original": "",
+                "tasa_suma_0_valor_original": "",
+                "tasa_suma_0_nombre": "IVA",
+                "tasa_suma_0_valor": "21",
+                "cantidad_tasa_restas": "1",
+                "tasa_resta_0_nombre_original": "",
+                "tasa_resta_0_valor_original": "",
+                "tasa_resta_0_nombre": "Flete",
+                "tasa_resta_0_valor": "4",
+            },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/clientes"
-    mock_crear.assert_called_once_with("Vea", 18.0, 12.0)
+    mock_crear.assert_called_once_with(
+        "Vea", [{"nombre": "IVA", "valor": 0.21}], [{"nombre": "Flete", "valor": 0.04}], 0.12
+    )
+
+
+def test_agregar_cliente_sin_tasas_redirige_a_clientes():
+    # Las tasas son opcionales: un cliente se puede cargar solo con nombre
+    # y utilidad, sin ninguna tasa todavía.
+    with patch("app.main.crear_cliente", return_value=5) as mock_crear:
+        respuesta = cliente.post(
+            "/clientes/nuevo",
+            data={"nombre": "Vea", "utilidad_objetivo": "12"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("Vea", [], [], 0.12)
 
 
 def test_agregar_cliente_nombre_vacio_muestra_error():
-    with patch("app.main.crear_cliente") as mock_crear, patch("app.main.listar_clientes", return_value=[]):
-        respuesta = cliente.post(
-            "/clientes/nuevo", data={"nombre": "   ", "descuento": "18", "utilidad_objetivo": "12"}
-        )
+    with patch("app.main.crear_cliente") as mock_crear:
+        respuesta = cliente.post("/clientes/nuevo", data={"nombre": "   ", "utilidad_objetivo": "12"})
 
     assert respuesta.status_code == 400
     assert "no puede estar vacío" in respuesta.text
     mock_crear.assert_not_called()
 
 
-def test_agregar_cliente_descuento_fuera_de_rango_muestra_error():
-    with patch("app.main.crear_cliente") as mock_crear, patch("app.main.listar_clientes", return_value=[]):
-        respuesta = cliente.post(
-            "/clientes/nuevo", data={"nombre": "Vea", "descuento": "150", "utilidad_objetivo": "12"}
-        )
+def test_agregar_cliente_utilidad_fuera_de_rango_muestra_error():
+    with patch("app.main.crear_cliente") as mock_crear:
+        respuesta = cliente.post("/clientes/nuevo", data={"nombre": "Vea", "utilidad_objetivo": "150"})
 
     assert respuesta.status_code == 400
     assert "entre 0 y 100" in respuesta.text
@@ -404,39 +445,92 @@ def test_agregar_cliente_descuento_fuera_de_rango_muestra_error():
 
 
 def test_agregar_cliente_utilidad_no_numerica_muestra_error():
-    with patch("app.main.crear_cliente") as mock_crear, patch("app.main.listar_clientes", return_value=[]):
-        respuesta = cliente.post(
-            "/clientes/nuevo", data={"nombre": "Vea", "descuento": "18", "utilidad_objetivo": "abc"}
-        )
+    with patch("app.main.crear_cliente") as mock_crear:
+        respuesta = cliente.post("/clientes/nuevo", data={"nombre": "Vea", "utilidad_objetivo": "abc"})
 
     assert respuesta.status_code == 400
     assert "tiene que ser un número" in respuesta.text
     mock_crear.assert_not_called()
 
 
-def test_agregar_cliente_error_de_base_muestra_mensaje_claro():
-    with (
-        patch("app.main.crear_cliente", side_effect=Exception("no se pudo conectar")),
-        patch("app.main.listar_clientes", return_value=[]),
-    ):
+def test_agregar_cliente_tasa_con_nombre_sin_porcentaje_muestra_error():
+    # Fila a medio completar (nombre sin %, o al revés): no se guarda nada
+    # dudoso, se avisa para que la complete o la saque.
+    with patch("app.main.crear_cliente") as mock_crear:
         respuesta = cliente.post(
-            "/clientes/nuevo", data={"nombre": "Vea", "descuento": "18", "utilidad_objetivo": "12"}
+            "/clientes/nuevo",
+            data={
+                "nombre": "Vea",
+                "utilidad_objetivo": "12",
+                "cantidad_tasa_sumas": "1",
+                "tasa_suma_0_nombre": "IVA",
+                "tasa_suma_0_valor": "",
+            },
         )
+
+    assert respuesta.status_code == 400
+    assert "Completá el nombre y el porcentaje" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_agregar_cliente_fila_de_tasa_completamente_vacia_se_ignora():
+    # El usuario tocó "+ Agregar tasa" pero no llegó a cargar nada — no
+    # tiene que bloquear el guardado.
+    with patch("app.main.crear_cliente", return_value=5) as mock_crear:
+        respuesta = cliente.post(
+            "/clientes/nuevo",
+            data={
+                "nombre": "Vea",
+                "utilidad_objetivo": "12",
+                "cantidad_tasa_sumas": "1",
+                "tasa_suma_0_nombre": "",
+                "tasa_suma_0_valor": "",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("Vea", [], [], 0.12)
+
+
+def test_agregar_cliente_error_de_base_muestra_mensaje_claro():
+    with patch("app.main.crear_cliente", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.post("/clientes/nuevo", data={"nombre": "Vea", "utilidad_objetivo": "12"})
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar" in respuesta.text
 
 
-CLIENTE_DE_PRUEBA = {"id": 1, "nombre": "Día", "descuento": 23.0, "utilidad_objetivo": 20.0}
+CLIENTE_DE_PRUEBA = {"id": 1, "nombre": "Día"}
+
+CONCEPTOS_EDITABLES_DE_PRUEBA = {
+    "tasas_suma": [{"nombre": "IVA", "valor_pct": 21.0}],
+    "tasas_resta": [{"nombre": "Flete", "valor_pct": 4.0}],
+    "utilidad_pct": 20.0,
+}
 
 
 def test_ver_editar_cliente_muestra_datos_precargados():
-    with patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA):
+    with (
+        patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA),
+        patch("app.main.listar_conceptos_editables_por_cliente", return_value=CONCEPTOS_EDITABLES_DE_PRUEBA),
+    ):
         respuesta = cliente.get("/clientes/1/editar")
 
     assert respuesta.status_code == 200
     assert "Día" in respuesta.text
     assert 'action="/clientes/1/editar"' in respuesta.text
+    assert 'value="IVA"' in respuesta.text
+    assert 'value="21.0"' in respuesta.text
+    assert 'value="Flete"' in respuesta.text
+    assert 'value="4.0"' in respuesta.text
+    assert 'value="20.0"' in respuesta.text
+    # Regresión: nombre_original/valor_original viajan ocultos, son el
+    # punto de partida contra el que se compara al guardar.
+    assert 'name="tasa_suma_0_nombre_original" value="IVA"' in respuesta.text
+    assert 'name="tasa_resta_0_nombre_original" value="Flete"' in respuesta.text
+    assert 'name="utilidad_original" value="20.0"' in respuesta.text
+    assert "Dar de baja esta tasa" in respuesta.text
 
 
 def test_ver_editar_cliente_inexistente_da_404():
@@ -453,28 +547,126 @@ def test_ver_editar_cliente_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
-def test_editar_cliente_exitoso_redirige_a_clientes():
+def test_ver_editar_cliente_error_al_leer_conceptos_da_500():
+    with (
+        patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA),
+        patch("app.main.listar_conceptos_editables_por_cliente", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.get("/clientes/1/editar")
+
+    assert respuesta.status_code == 500
+
+
+def _datos_editar_cliente(**overrides):
+    datos = {
+        "nombre": "Día",
+        "utilidad_objetivo": "20",
+        "utilidad_original": "20",
+        "cantidad_tasa_sumas": "1",
+        "tasa_suma_0_nombre_original": "IVA",
+        "tasa_suma_0_valor_original": "21",
+        "tasa_suma_0_nombre": "IVA",
+        "tasa_suma_0_valor": "21",
+        "cantidad_tasa_restas": "1",
+        "tasa_resta_0_nombre_original": "Flete",
+        "tasa_resta_0_valor_original": "4",
+        "tasa_resta_0_nombre": "Flete",
+        "tasa_resta_0_valor": "4",
+    }
+    datos.update(overrides)
+    return datos
+
+
+def test_editar_cliente_sin_ningun_cambio_no_genera_filas_nuevas():
+    # Regresión explícita: si nada se tocó, no hay que agregar filas de
+    # historial de más.
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post("/clientes/1/editar", data=_datos_editar_cliente(), follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(1, "Día", [])
+
+
+def test_editar_cliente_tasa_editada_genera_fila_nueva_sin_pisar_la_vieja():
     with patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post(
             "/clientes/1/editar",
-            data={"nombre": "Día", "descuento": "25", "utilidad_objetivo": "22"},
+            data=_datos_editar_cliente(tasa_resta_0_valor="5"),
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/clientes"
-    # La ruta solo delega en actualizar_cliente; la lógica de historial
-    # (agregar un registro nuevo con vigente_desde = hoy en vez de pisar el
-    # anterior) vive en el SQL de app/db.py, que necesita una base real
-    # para probarse — no se puede mockear sin perder la cobertura de esa lógica.
-    mock_actualizar.assert_called_once_with(1, "Día", 25.0, 22.0)
+    mock_actualizar.assert_called_once_with(1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.05}])
+
+
+def test_editar_cliente_tasa_nueva_se_agrega():
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post(
+            "/clientes/1/editar",
+            data=_datos_editar_cliente(
+                cantidad_tasa_sumas="2",
+                tasa_suma_1_nombre_original="",
+                tasa_suma_1_valor_original="",
+                tasa_suma_1_nombre="Premio",
+                tasa_suma_1_valor="2",
+            ),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(1, "Día", [{"nombre_parametro": "Premio", "tipo": "suma", "valor": 0.02}])
+
+
+def test_editar_cliente_tasa_dada_de_baja_genera_fila_en_cero():
+    # Regla de oro: nunca se borra el historial, se agrega una fila en 0
+    # vigente desde hoy — los cálculos pasados siguen viendo el valor viejo.
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post(
+            "/clientes/1/editar",
+            data=_datos_editar_cliente(tasa_resta_0_baja="on"),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.0}])
+
+
+def test_editar_cliente_tasa_renombrada_da_de_baja_la_vieja_y_alta_la_nueva():
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post(
+            "/clientes/1/editar",
+            data=_datos_editar_cliente(tasa_resta_0_nombre="Flete y logística"),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(
+        1,
+        "Día",
+        [
+            {"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.0},
+            {"nombre_parametro": "Flete y logística", "tipo": "resta", "valor": 0.04},
+        ],
+    )
+
+
+def test_editar_cliente_utilidad_editada_genera_fila_nueva():
+    with patch("app.main.actualizar_cliente") as mock_actualizar:
+        respuesta = cliente.post(
+            "/clientes/1/editar",
+            data=_datos_editar_cliente(utilidad_objetivo="25"),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(
+        1, "Día", [{"nombre_parametro": "utilidad_objetivo", "tipo": "utilidad", "valor": 0.25}]
+    )
 
 
 def test_editar_cliente_nombre_vacio_muestra_error():
     with patch("app.main.actualizar_cliente") as mock_actualizar:
-        respuesta = cliente.post(
-            "/clientes/1/editar", data={"nombre": "   ", "descuento": "25", "utilidad_objetivo": "22"}
-        )
+        respuesta = cliente.post("/clientes/1/editar", data=_datos_editar_cliente(nombre="   "))
 
     assert respuesta.status_code == 400
     assert "no puede estar vacío" in respuesta.text
@@ -483,9 +675,7 @@ def test_editar_cliente_nombre_vacio_muestra_error():
 
 def test_editar_cliente_error_de_base_muestra_mensaje_claro():
     with patch("app.main.actualizar_cliente", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.post(
-            "/clientes/1/editar", data={"nombre": "Día", "descuento": "25", "utilidad_objetivo": "22"}
-        )
+        respuesta = cliente.post("/clientes/1/editar", data=_datos_editar_cliente())
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar" in respuesta.text

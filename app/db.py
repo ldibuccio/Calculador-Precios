@@ -237,37 +237,105 @@ def listar_conceptos_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> 
     return {"tasas_suman": tasas_suman, "tasas_restan": tasas_restan, "utilidad": utilidad}
 
 
-def crear_cliente(nombre: str, descuento: float, utilidad_objetivo: float) -> None:
-    """Crea un cliente y su primer registro de historial (vigente_desde = hoy).
+def listar_conceptos_editables_por_cliente(cliente_id: int) -> dict:
+    """Tasas suma/resta ACTIVAS y la utilidad objetivo vigentes hoy, para precargar el formulario de cliente.
 
-    descuento y utilidad_objetivo llegan como porcentaje (23 = 23%) y se
-    guardan como fracción (0.23) en clientes_parametros_historial.
+    A diferencia de listar_conceptos_vigentes_por_cliente (que agrega todo
+    en listas de números para el motor de costeo), esto devuelve el detalle
+    por concepto (nombre + %) que necesita el formulario editable, y deja
+    afuera las tasas dadas de baja (vigentes con valor 0) para que no
+    reaparezcan como filas activas — ver calcular_cambios_de_tasas en
+    core/conceptos_cliente.py sobre cómo se marca esa baja.
+
+    Devuelve {"tasas_suma": [{"nombre", "valor_pct"}, ...], "tasas_resta":
+    [...], "utilidad_pct": float|None}, con valor_pct ya en porcentaje
+    (21.0, no 0.21) para precargar directo los inputs del formulario.
     """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (nombre_parametro) nombre_parametro, tipo, valor
+                FROM clientes_parametros_historial
+                WHERE cliente_id = %s AND vigente_desde <= CURRENT_DATE
+                ORDER BY nombre_parametro, vigente_desde DESC
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+    tasas_suma = [
+        {"nombre": fila["nombre_parametro"], "valor_pct": float(fila["valor"]) * 100}
+        for fila in filas
+        if fila["tipo"] == "suma" and float(fila["valor"]) != 0
+    ]
+    tasas_resta = [
+        {"nombre": fila["nombre_parametro"], "valor_pct": float(fila["valor"]) * 100}
+        for fila in filas
+        if fila["tipo"] == "resta" and float(fila["valor"]) != 0
+    ]
+    fila_utilidad = next((fila for fila in filas if fila["tipo"] == "utilidad"), None)
+    utilidad_pct = float(fila_utilidad["valor"]) * 100 if fila_utilidad else None
+
+    return {"tasas_suma": tasas_suma, "tasas_resta": tasas_resta, "utilidad_pct": utilidad_pct}
+
+
+def _insertar_conceptos_cliente(cursor, cliente_id: int, conceptos: list[dict]) -> None:
+    """Inserta cada concepto con vigente_desde = hoy, sin pisar historial viejo.
+
+    conceptos: [{"nombre_parametro", "tipo", "valor"}, ...] (valor en
+    fracción). Si ya existe una fila de HOY para ese mismo (cliente_id,
+    nombre_parametro) -- segunda edición el mismo día -- la actualiza en
+    vez de duplicarla; nunca toca una fila de vigente_desde anterior.
+    """
+    for concepto in conceptos:
+        cursor.execute(
+            """
+            INSERT INTO clientes_parametros_historial (cliente_id, nombre_parametro, valor, tipo, vigente_desde)
+            VALUES (%s, %s, %s, %s, CURRENT_DATE)
+            ON CONFLICT (cliente_id, nombre_parametro, vigente_desde)
+            DO UPDATE SET valor = EXCLUDED.valor, tipo = EXCLUDED.tipo
+            """,
+            (cliente_id, concepto["nombre_parametro"], concepto["valor"], concepto["tipo"]),
+        )
+
+
+def crear_cliente(nombre: str, tasas_suma: list[dict], tasas_resta: list[dict], utilidad_objetivo: float) -> int:
+    """Crea un cliente y su primer registro de historial (vigente_desde = hoy). Devuelve el id creado.
+
+    tasas_suma/tasas_resta: [{"nombre", "valor"}, ...] con valor ya en
+    fracción (0.21, no 21). utilidad_objetivo también en fracción.
+    """
+    conceptos = (
+        [{"nombre_parametro": tasa["nombre"], "tipo": "suma", "valor": tasa["valor"]} for tasa in tasas_suma]
+        + [{"nombre_parametro": tasa["nombre"], "tipo": "resta", "valor": tasa["valor"]} for tasa in tasas_resta]
+        + [{"nombre_parametro": "utilidad_objetivo", "tipo": "utilidad", "valor": utilidad_objetivo}]
+    )
+
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute("INSERT INTO clientes (nombre) VALUES (%s) RETURNING id", (nombre,))
             (cliente_id,) = cursor.fetchone()
-            cursor.execute(
-                """
-                INSERT INTO clientes_parametros_historial (cliente_id, nombre_parametro, valor, vigente_desde)
-                VALUES (%s, 'descuento', %s, CURRENT_DATE), (%s, 'utilidad_objetivo', %s, CURRENT_DATE)
-                """,
-                (cliente_id, descuento / 100, cliente_id, utilidad_objetivo / 100),
-            )
+            _insertar_conceptos_cliente(cursor, cliente_id, conceptos)
         conexion.commit()
+        return cliente_id
     finally:
         conexion.close()
 
 
-def actualizar_cliente(cliente_id: int, nombre: str, descuento: float, utilidad_objetivo: float) -> None:
-    """Actualiza el nombre del cliente.
+def actualizar_cliente(cliente_id: int, nombre: str, conceptos_a_guardar: list[dict]) -> None:
+    """Actualiza el nombre del cliente y agrega SOLO las filas de historial que realmente cambiaron.
 
-    El descuento/utilidad NO se pisan: se agrega un registro nuevo en
-    clientes_parametros_historial con vigente_desde = hoy, para que los
-    cálculos de fechas pasadas sigan usando el valor que regía en ese
-    momento. Si ya existe un registro de hoy para ese parámetro (segunda
-    edición el mismo día), se actualiza ese en vez de duplicarlo.
+    conceptos_a_guardar: [{"nombre_parametro", "tipo", "valor"}, ...] — ya
+    calculado por core.conceptos_cliente (calcular_cambios_de_tasas /
+    calcular_cambio_de_utilidad) a partir de lo que cambió en el
+    formulario. El nombre/utilidad/tasas viejos NUNCA se pisan: cada
+    cambio agrega una fila nueva con vigente_desde = hoy.
     """
     conexion = obtener_conexion()
     try:
@@ -275,15 +343,7 @@ def actualizar_cliente(cliente_id: int, nombre: str, descuento: float, utilidad_
             cursor.execute(
                 "UPDATE clientes SET nombre = %s, actualizado_en = now() WHERE id = %s", (nombre, cliente_id)
             )
-            cursor.execute(
-                """
-                INSERT INTO clientes_parametros_historial (cliente_id, nombre_parametro, valor, vigente_desde)
-                VALUES (%s, 'descuento', %s, CURRENT_DATE), (%s, 'utilidad_objetivo', %s, CURRENT_DATE)
-                ON CONFLICT (cliente_id, nombre_parametro, vigente_desde)
-                DO UPDATE SET valor = EXCLUDED.valor
-                """,
-                (cliente_id, descuento / 100, cliente_id, utilidad_objetivo / 100),
-            )
+            _insertar_conceptos_cliente(cursor, cliente_id, conceptos_a_guardar)
         conexion.commit()
     finally:
         conexion.close()

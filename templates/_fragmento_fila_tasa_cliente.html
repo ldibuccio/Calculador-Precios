@@ -1,0 +1,18 @@
+<div class="fila-tasa">
+  <input type="hidden" name="{{ prefijo }}_{{ indice }}_nombre_original" value="{{ tasa.nombre_original }}">
+  <input type="hidden" name="{{ prefijo }}_{{ indice }}_valor_original" value="{{ tasa.valor_original_pct }}">
+  <div class="fila-tasa-campos">
+    <div class="campo-nombre">
+      <label for="{{ prefijo }}_{{ indice }}_nombre">Nombre</label>
+      <input type="text" id="{{ prefijo }}_{{ indice }}_nombre" name="{{ prefijo }}_{{ indice }}_nombre" value="{{ tasa.nombre }}">
+    </div>
+    <div class="campo-valor">
+      <label for="{{ prefijo }}_{{ indice }}_valor">%</label>
+      <input type="number" step="0.01" min="0" max="100" id="{{ prefijo }}_{{ indice }}_valor" name="{{ prefijo }}_{{ indice }}_valor" value="{{ tasa.valor_pct }}">
+    </div>
+  </div>
+  <div class="campo-descartar">
+    <input type="checkbox" id="{{ prefijo }}_{{ indice }}_baja" name="{{ prefijo }}_{{ indice }}_baja">
+    <label for="{{ prefijo }}_{{ indice }}_baja">Dar de baja esta tasa</label>
+  </div>
+</div>

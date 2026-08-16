@@ -45,6 +45,7 @@ from app.db import (
     listar_compras_por_fecha_y_proveedor,
     listar_compras_por_rango_fechas,
     listar_compras_sin_precio,
+    listar_conceptos_editables_por_cliente,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
@@ -58,6 +59,7 @@ from app.db import (
     obtener_proveedor,
     obtener_uso_storage_bucket,
 )
+from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.lector_comandas import extraer_comanda, extraer_listado_consolidado
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
@@ -263,6 +265,132 @@ def _validar_porcentaje(texto: str, etiqueta: str) -> tuple[str | None, float | 
         return f"{etiqueta} tiene que estar entre 0 y 100.", None
 
     return None, valor
+
+
+def _leer_filas_tasas_del_form(form, prefijo: str) -> list[dict]:
+    """Lee del form todas las filas de un grupo de tasas ("tasa_suma" o "tasa_resta"), sin validar todavía.
+
+    Cada fila devuelta: nombre_original, valor_original_pct (texto), nombre,
+    valor_pct (texto), baja (bool) — tal cual vino, para poder tanto
+    validarla como volver a mostrarla en pantalla si hay un error en OTRO
+    campo del formulario. Una fila completamente vacía (sin nombre, sin %,
+    y que tampoco existía antes) se descarta acá: no representa nada, ni
+    para guardar ni para redibujar.
+    """
+    try:
+        cantidad = int(form.get(f"cantidad_{prefijo}s", "0") or "0")
+    except ValueError:
+        cantidad = 0
+
+    filas = []
+    for indice in range(cantidad):
+        nombre_original = str(form.get(f"{prefijo}_{indice}_nombre_original", "")).strip()
+        valor_original_texto = str(form.get(f"{prefijo}_{indice}_valor_original", "")).strip()
+        nombre = str(form.get(f"{prefijo}_{indice}_nombre", "")).strip()
+        valor_texto = str(form.get(f"{prefijo}_{indice}_valor", "")).strip()
+        baja = form.get(f"{prefijo}_{indice}_baja") == "on"
+
+        if not nombre and not valor_texto and not nombre_original:
+            continue
+
+        filas.append(
+            {
+                "nombre_original": nombre_original,
+                "valor_original_texto": valor_original_texto,
+                "nombre": nombre,
+                "valor_texto": valor_texto,
+                "baja": baja,
+            }
+        )
+    return filas
+
+
+def _validar_filas_tasas(filas: list[dict], etiqueta_grupo: str) -> tuple[str | None, list[dict]]:
+    """Valida cada fila (nombre + % completos, salvo que esté dada de baja) y convierte % a fracción.
+
+    Devuelve (error, filas_para_el_diff) — filas_para_el_diff ya tiene la
+    forma que espera core.conceptos_cliente.calcular_cambios_de_tasas.
+    """
+    filas_validas = []
+    for fila in filas:
+        if not fila["baja"] and (bool(fila["nombre"]) != bool(fila["valor_texto"])):
+            return f"Completá el nombre y el porcentaje de cada tasa de {etiqueta_grupo} (o sacá la fila).", []
+
+        valor = None
+        if fila["valor_texto"]:
+            error, valor_pct = _validar_porcentaje(fila["valor_texto"], f"Una tasa de {etiqueta_grupo}")
+            if error:
+                return error, []
+            valor = valor_pct / 100
+
+        valor_original = float(fila["valor_original_texto"]) / 100 if fila["valor_original_texto"] else None
+
+        filas_validas.append(
+            {
+                "nombre_original": fila["nombre_original"],
+                "valor_original": valor_original,
+                "nombre": fila["nombre"],
+                "valor": valor,
+                "baja": fila["baja"],
+            }
+        )
+    return None, filas_validas
+
+
+def _filas_para_mostrar_de_nuevo(filas_crudas: list[dict]) -> list[dict]:
+    """Arma el contexto que necesita el template a partir de las filas crudas leídas del form.
+
+    Se usa para volver a mostrar la pantalla con lo que el usuario tipeó
+    cuando hay un error en OTRO campo del formulario (no se pierde lo ya
+    cargado).
+    """
+    return [
+        {
+            "nombre": fila["nombre"],
+            "valor_pct": fila["valor_texto"],
+            "nombre_original": fila["nombre_original"],
+            "valor_original_pct": fila["valor_original_texto"],
+        }
+        for fila in filas_crudas
+    ]
+
+
+def _filas_desde_conceptos_guardados(tasas: list[dict]) -> list[dict]:
+    """Arma el contexto del template a partir de lo que ya está guardado (GET, recién cargada la pantalla).
+
+    nombre_original/valor_original_pct arrancan iguales a nombre/valor_pct
+    porque todavía no se tocó nada — son el punto de partida contra el que
+    se compara al guardar.
+    """
+    return [
+        {
+            "nombre": tasa["nombre"],
+            "valor_pct": tasa["valor_pct"],
+            "nombre_original": tasa["nombre"],
+            "valor_original_pct": tasa["valor_pct"],
+        }
+        for tasa in tasas
+    ]
+
+
+def _contexto_formulario_cliente(
+    modo: str,
+    nombre_texto: str,
+    filas_suma_crudas: list[dict],
+    filas_resta_crudas: list[dict],
+    utilidad_texto: str,
+    error: str | None,
+    cliente_id: int | None = None,
+) -> dict:
+    """Contexto para volver a mostrar cliente_formulario.html con lo que el usuario tipeó, tras un error."""
+    return {
+        "modo": modo,
+        "cliente": {"id": cliente_id, "nombre": nombre_texto},
+        "tasas_suma": _filas_para_mostrar_de_nuevo(filas_suma_crudas),
+        "tasas_resta": _filas_para_mostrar_de_nuevo(filas_resta_crudas),
+        "utilidad_pct": utilidad_texto,
+        "error": error,
+    }
 
 
 def _validar_unidad_venta(valor: str) -> str | None:
@@ -615,36 +743,55 @@ def ver_clientes(request: Request, error: str | None = None):
     return templates.TemplateResponse(request, "clientes.html", {"clientes": clientes, "error": error})
 
 
+@app.get("/clientes/nuevo")
+def ver_agregar_cliente(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "cliente_formulario.html",
+        _contexto_formulario_cliente("alta", "", [], [], "", None),
+    )
+
+
 @app.post("/clientes/nuevo")
-def agregar_cliente(
-    request: Request,
-    nombre: str = Form(""),
-    descuento: str = Form(""),
-    utilidad_objetivo: str = Form(""),
-):
-    error, nombre = _validar_nombre(nombre)
+async def agregar_cliente(request: Request):
+    form = await request.form()
+    nombre_texto = str(form.get("nombre", ""))
+    utilidad_texto = str(form.get("utilidad_objetivo", ""))
+    filas_suma_crudas = _leer_filas_tasas_del_form(form, "tasa_suma")
+    filas_resta_crudas = _leer_filas_tasas_del_form(form, "tasa_resta")
+
+    error, nombre = _validar_nombre(nombre_texto)
     if not error:
-        error, descuento_valor = _validar_porcentaje(descuento, "El descuento")
+        error, utilidad_valor_pct = _validar_porcentaje(utilidad_texto, "La utilidad objetivo")
     if not error:
-        error, utilidad_valor = _validar_porcentaje(utilidad_objetivo, "La utilidad objetivo")
+        error, filas_suma = _validar_filas_tasas(filas_suma_crudas, "Adicionales")
+    if not error:
+        error, filas_resta = _validar_filas_tasas(filas_resta_crudas, "Descuentos")
 
     if error:
-        clientes = listar_clientes()
         return templates.TemplateResponse(
             request,
-            "clientes.html",
-            {"clientes": clientes, "error": error},
+            "cliente_formulario.html",
+            _contexto_formulario_cliente("alta", nombre_texto, filas_suma_crudas, filas_resta_crudas, utilidad_texto, error),
             status_code=400,
         )
 
+    # En alta no hay nada previo: todas las filas completas se cargan tal
+    # cual, sin pasar por el diff de edición (eso es solo para cuando ya
+    # había algo guardado antes).
+    tasas_suma = [{"nombre": fila["nombre"], "valor": fila["valor"]} for fila in filas_suma if fila["nombre"]]
+    tasas_resta = [{"nombre": fila["nombre"], "valor": fila["valor"]} for fila in filas_resta if fila["nombre"]]
+
     try:
-        crear_cliente(nombre, descuento_valor, utilidad_valor)
-    except Exception as error:
-        clientes = listar_clientes()
+        crear_cliente(nombre, tasas_suma, tasas_resta, utilidad_valor_pct / 100)
+    except Exception as error_db:
         return templates.TemplateResponse(
             request,
-            "clientes.html",
-            {"clientes": clientes, "error": f"No se pudo guardar el cliente: {error}"},
+            "cliente_formulario.html",
+            _contexto_formulario_cliente(
+                "alta", nombre_texto, filas_suma_crudas, filas_resta_crudas, utilidad_texto,
+                f"No se pudo guardar el cliente: {error_db}",
+            ),
             status_code=500,
         )
 
@@ -661,50 +808,68 @@ def ver_editar_cliente(request: Request, cliente_id: int, error: str | None = No
     if cliente is None:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    return templates.TemplateResponse(request, "cliente_editar.html", {"cliente": cliente, "error": error})
+    try:
+        conceptos = listar_conceptos_editables_por_cliente(cliente_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "cliente_formulario.html",
+        {
+            "modo": "edicion",
+            "cliente": cliente,
+            "tasas_suma": _filas_desde_conceptos_guardados(conceptos["tasas_suma"]),
+            "tasas_resta": _filas_desde_conceptos_guardados(conceptos["tasas_resta"]),
+            "utilidad_pct": conceptos["utilidad_pct"],
+            "error": error,
+        },
+    )
 
 
 @app.post("/clientes/{cliente_id}/editar")
-def editar_cliente(
-    request: Request,
-    cliente_id: int,
-    nombre: str = Form(""),
-    descuento: str = Form(""),
-    utilidad_objetivo: str = Form(""),
-):
-    error, nombre = _validar_nombre(nombre)
+async def editar_cliente(request: Request, cliente_id: int):
+    form = await request.form()
+    nombre_texto = str(form.get("nombre", ""))
+    utilidad_texto = str(form.get("utilidad_objetivo", ""))
+    utilidad_original_texto = str(form.get("utilidad_original", "")).strip()
+    filas_suma_crudas = _leer_filas_tasas_del_form(form, "tasa_suma")
+    filas_resta_crudas = _leer_filas_tasas_del_form(form, "tasa_resta")
+
+    error, nombre = _validar_nombre(nombre_texto)
     if not error:
-        error, descuento_valor = _validar_porcentaje(descuento, "El descuento")
+        error, utilidad_valor_pct = _validar_porcentaje(utilidad_texto, "La utilidad objetivo")
     if not error:
-        error, utilidad_valor = _validar_porcentaje(utilidad_objetivo, "La utilidad objetivo")
+        error, filas_suma = _validar_filas_tasas(filas_suma_crudas, "Adicionales")
+    if not error:
+        error, filas_resta = _validar_filas_tasas(filas_resta_crudas, "Descuentos")
 
     if error:
-        cliente_con_lo_ingresado = {
-            "id": cliente_id,
-            "nombre": nombre,
-            "descuento": descuento,
-            "utilidad_objetivo": utilidad_objetivo,
-        }
         return templates.TemplateResponse(
             request,
-            "cliente_editar.html",
-            {"cliente": cliente_con_lo_ingresado, "error": error},
+            "cliente_formulario.html",
+            _contexto_formulario_cliente(
+                "edicion", nombre_texto, filas_suma_crudas, filas_resta_crudas, utilidad_texto, error, cliente_id
+            ),
             status_code=400,
         )
 
+    utilidad_original = float(utilidad_original_texto) / 100 if utilidad_original_texto else None
+    cambios = calcular_cambios_de_tasas("suma", filas_suma) + calcular_cambios_de_tasas("resta", filas_resta)
+    cambio_utilidad = calcular_cambio_de_utilidad(utilidad_original, utilidad_valor_pct / 100)
+    if cambio_utilidad:
+        cambios.append(cambio_utilidad)
+
     try:
-        actualizar_cliente(cliente_id, nombre, descuento_valor, utilidad_valor)
-    except Exception as error:
-        cliente_con_lo_ingresado = {
-            "id": cliente_id,
-            "nombre": nombre,
-            "descuento": descuento_valor,
-            "utilidad_objetivo": utilidad_valor,
-        }
+        actualizar_cliente(cliente_id, nombre, cambios)
+    except Exception as error_db:
         return templates.TemplateResponse(
             request,
-            "cliente_editar.html",
-            {"cliente": cliente_con_lo_ingresado, "error": f"No se pudo guardar el cliente: {error}"},
+            "cliente_formulario.html",
+            _contexto_formulario_cliente(
+                "edicion", nombre_texto, filas_suma_crudas, filas_resta_crudas, utilidad_texto,
+                f"No se pudo guardar el cliente: {error_db}", cliente_id,
+            ),
             status_code=500,
         )
 

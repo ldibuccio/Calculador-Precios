@@ -2,8 +2,11 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 from app.db import (
+    actualizar_cliente,
+    crear_cliente,
     eliminar_compra,
     limpiar_foto_ruta_de_compras,
+    listar_conceptos_editables_por_cliente,
     listar_fotos_para_limpiar,
     obtener_uso_storage_bucket,
 )
@@ -181,3 +184,104 @@ def test_limpiar_foto_ruta_de_compras_actualiza_y_comitea():
     assert parametros == ("2020-01-01/a.jpg",)
     conexion.commit.assert_called_once()
     conexion.close.assert_called_once()
+
+
+def test_listar_conceptos_editables_por_cliente_agrupa_por_tipo_y_excluye_bajas():
+    conexion, cursor = _conexion_falsa(
+        filas_fetchall=[
+            ("IVA", "suma", 0.21),
+            ("Premio viejo", "suma", 0),  # dado de baja, no tiene que aparecer
+            ("Flete", "resta", 0.04),
+            ("utilidad_objetivo", "utilidad", 0.20),
+        ]
+    )
+    cursor.description = [("nombre_parametro",), ("tipo",), ("valor",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_conceptos_editables_por_cliente(1)
+
+    assert resultado == {
+        "tasas_suma": [{"nombre": "IVA", "valor_pct": 21.0}],
+        "tasas_resta": [{"nombre": "Flete", "valor_pct": 4.0}],
+        "utilidad_pct": 20.0,
+    }
+
+
+def test_listar_conceptos_editables_por_cliente_sin_utilidad_cargada_devuelve_none():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[("IVA", "suma", 0.21)])
+    cursor.description = [("nombre_parametro",), ("tipo",), ("valor",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_conceptos_editables_por_cliente(1)
+
+    assert resultado["utilidad_pct"] is None
+
+
+def test_crear_cliente_inserta_el_cliente_y_todos_los_conceptos_con_tipo():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cliente_id = crear_cliente(
+            "Vea",
+            [{"nombre": "IVA", "valor": 0.21}],
+            [{"nombre": "Flete", "valor": 0.04}],
+            0.20,
+        )
+
+    assert cliente_id == 7
+    # 1 INSERT del cliente + 3 conceptos (IVA, Flete, utilidad_objetivo).
+    assert cursor.execute.call_count == 4
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert "INSERT INTO clientes" in consultas[0]
+    for consulta_concepto in consultas[1:]:
+        assert "INSERT INTO clientes_parametros_historial" in consulta_concepto
+        assert "tipo" in consulta_concepto
+        assert "vigente_desde" in consulta_concepto
+        assert "CURRENT_DATE" in consulta_concepto
+
+    parametros_conceptos = [llamada.args[1] for llamada in cursor.execute.call_args_list[1:]]
+    assert (7, "IVA", 0.21, "suma") in parametros_conceptos
+    assert (7, "Flete", 0.04, "resta") in parametros_conceptos
+    assert (7, "utilidad_objetivo", 0.20, "utilidad") in parametros_conceptos
+    conexion.commit.assert_called_once()
+
+
+def test_crear_cliente_sin_tasas_solo_inserta_la_utilidad():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_cliente("Vea", [], [], 0.20)
+
+    # 1 INSERT del cliente + 1 de la utilidad, sin tasas.
+    assert cursor.execute.call_count == 2
+
+
+def test_actualizar_cliente_pisa_el_nombre_y_agrega_solo_los_conceptos_que_cambiaron():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cliente(1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.05}])
+
+    assert cursor.execute.call_count == 2
+    consulta_nombre, parametros_nombre = cursor.execute.call_args_list[0].args
+    assert "UPDATE clientes SET nombre" in consulta_nombre
+    assert parametros_nombre == ("Día", 1)
+
+    consulta_concepto, parametros_concepto = cursor.execute.call_args_list[1].args
+    assert "ON CONFLICT (cliente_id, nombre_parametro, vigente_desde)" in consulta_concepto
+    assert "DO UPDATE" in consulta_concepto
+    assert "CURRENT_DATE" in consulta_concepto
+    assert parametros_concepto == (1, "Flete", 0.05, "resta")
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_cliente_sin_cambios_de_conceptos_solo_pisa_el_nombre():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cliente(1, "Día", [])
+
+    # Ningún concepto cambió: solo el UPDATE del nombre, ninguna fila nueva
+    # de historial de más.
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_called_once()
