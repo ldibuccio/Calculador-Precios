@@ -15,11 +15,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
-from app.costeo import (
-    agrupar_para_negociar,
-    calcular_listado_para_negociar_precios,
-    calcular_precio_sugerido_desglosado,
-)
+from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios
 from app.db import (
     actualizar_articulo,
     actualizar_cliente,
@@ -2397,92 +2393,33 @@ async def completar_importes_pendientes(request: Request):
     return RedirectResponse(url="/compras/pendientes", status_code=303)
 
 
-CLIENTE_COSTEO_PRUEBA_NOMBRE = "Día"
-ARTICULO_DESGLOSE_PRUEBA_NOMBRE = "Morrón Verde"
-
-
-@app.get("/costeo-prueba")
-def ver_costeo_prueba(request: Request):
-    """Pantalla TEMPORAL: listado completo para negociar precios (costo actual, anterior y vigente).
-
-    No es la pantalla final de Ventas: sirve para verificar a ojo, con datos
-    reales, que calcular_listado_para_negociar_precios anda bien, sin tener
-    que usar la terminal. Por ahora siempre calcula para el cliente "Día" —
-    se reemplaza más adelante por la pantalla real, con selector de cliente.
-    """
-    momento_referencia = datetime.now(ARGENTINA)
-
-    try:
-        clientes = listar_clientes()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    cliente = next((c for c in clientes if c["nombre"] == CLIENTE_COSTEO_PRUEBA_NOMBRE), None)
-    if cliente is None:
-        raise HTTPException(status_code=404, detail=f"No se encontró el cliente '{CLIENTE_COSTEO_PRUEBA_NOMBRE}'")
-
-    try:
-        articulos = calcular_listado_para_negociar_precios(cliente["id"], momento_referencia)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
-
-    # Desglose de depuración de UN artículo, para poder cruzar a mano el
-    # cálculo de precio_sugerido. Temporal — si falla, no tira abajo el
-    # resto de la pantalla, pero el error se loguea completo y se muestra
-    # en la pantalla (no se traga en silencio).
-    desglose_error = None
-    try:
-        desglose = calcular_precio_sugerido_desglosado(
-            cliente["id"], ARTICULO_DESGLOSE_PRUEBA_NOMBRE, momento_referencia
-        )
-    except Exception as error_desglose:
-        logger.exception(
-            "Error al calcular el desglose de precio sugerido para '%s' (cliente %s)",
-            ARTICULO_DESGLOSE_PRUEBA_NOMBRE,
-            cliente["nombre"],
-        )
-        desglose = None
-        desglose_error = f"{type(error_desglose).__name__}: {error_desglose}"
-
-    return templates.TemplateResponse(
-        request,
-        "costeo_prueba.html",
-        {
-            "cliente_nombre": cliente["nombre"],
-            "articulos": articulos,
-            "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
-            "desglose": desglose,
-            "desglose_error": desglose_error,
-            "articulo_desglose_nombre": ARTICULO_DESGLOSE_PRUEBA_NOMBRE,
-            "utilidad_objetivo_cliente": (
-                cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
-            ),
-        },
-    )
-
-
 @app.get("/negociar")
-def ver_cuadro_negociar_precios(request: Request):
-    """Cuadro simplificado para negociar precios: Bajas, Subas y artículos bajo la utilidad objetivo.
+def ver_cuadro_negociar_precios(request: Request, cliente_id: int | None = None):
+    """Cuadro para negociar precios (Bajas, Subas y artículos bajo la utilidad objetivo) de UN cliente elegido.
 
     Usa exactamente los mismos datos que calcular_listado_para_negociar_precios
     (vía agrupar_para_negociar) — no recalcula nada, solo los agrupa y
-    ordena distinto para negociar rápido. La tabla completa de depuración
-    sigue en /costeo-prueba.
+    ordena distinto para negociar rápido. Mismo patrón de selector que
+    /fichas: sin cliente_id en la URL, se muestra solo el selector; al
+    elegir uno, se recarga con ?cliente_id=N y ahí se calcula.
     """
-    momento_referencia = datetime.now(ARGENTINA)
-
     try:
         clientes = listar_clientes()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    cliente = next((c for c in clientes if c["nombre"] == CLIENTE_COSTEO_PRUEBA_NOMBRE), None)
+    if cliente_id is None:
+        return templates.TemplateResponse(request, "negociar.html", {"clientes": clientes, "cliente_id": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
     if cliente is None:
-        raise HTTPException(status_code=404, detail=f"No se encontró el cliente '{CLIENTE_COSTEO_PRUEBA_NOMBRE}'")
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    momento_referencia = datetime.now(ARGENTINA)
 
     try:
-        articulos = calcular_listado_para_negociar_precios(cliente["id"], momento_referencia)
+        fichas_cliente = listar_fichas_por_cliente(cliente_id)
+        articulos = calcular_listado_para_negociar_precios(cliente_id, momento_referencia)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
 
@@ -2495,12 +2432,21 @@ def ver_cuadro_negociar_precios(request: Request):
         request,
         "negociar.html",
         {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
             "cliente_nombre": cliente["nombre"],
             "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
             "bajas": grupos["bajas"],
             "subas": grupos["subas"],
             "bajo_objetivo": grupos["bajo_objetivo"],
             "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
+            # Para explicar por qué no hay nada, en vez de mostrar la
+            # pantalla vacía sin avisar (ver templates/negociar.html):
+            # sin ninguna ficha, calcular_listado_para_negociar_precios
+            # nunca puede devolver nada; con fichas pero sin ningún
+            # artículo con compra en los últimos 15 días, tampoco.
+            "sin_fichas": len(fichas_cliente) == 0,
+            "sin_articulos_recientes": len(fichas_cliente) > 0 and len(articulos) == 0,
         },
     )
 

@@ -3645,228 +3645,7 @@ def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
     assert mock_crear.call_args.args[-1] == "2026-08-06/n07p41-123-abcdef12.jpg"
 
 
-def test_ver_costeo_prueba_muestra_tabla_con_formato():
-    articulos = [
-        {
-            "articulo_id": 1,
-            "articulo_nombre": "Tomate Cherry",
-            "unidad_venta": "kilo",
-            "fresco": True,
-            "costo_actual": 560.98,
-            "costo_anterior": 600.0,
-            "variacion": "bajo",
-            "fecha_ultima_compra": date(2026, 8, 10),
-            "precio_vigente": 700.0,
-            "precio_sugerido": 750.6,
-            "utilidad_aproximada": 0.155,  # por debajo del objetivo del cliente (20%)
-            "compras_sin_precio_excluidas": 1,
-        },
-        {
-            "articulo_id": 2,
-            "articulo_nombre": "Mango",
-            "unidad_venta": "unidad",
-            "fresco": False,
-            "costo_actual": 400.0,
-            "costo_anterior": None,
-            "variacion": None,
-            "fecha_ultima_compra": date(2026, 8, 4),
-            "precio_vigente": None,
-            "precio_sugerido": None,
-            "utilidad_aproximada": None,  # sin precio vigente
-            "compras_sin_precio_excluidas": 0,
-        },
-    ]
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos) as mock_calcular,
-        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 200
-    mock_calcular.assert_called_once()
-    assert mock_calcular.call_args[0][0] == 1
-    assert "Día" in respuesta.text
-    assert "Tomate Cherry" in respuesta.text
-    assert "<td>kilo</td>" in respuesta.text
-    assert "$561" in respuesta.text  # 560.98 redondeado al peso entero
-    assert "$600" in respuesta.text  # costo anterior
-    assert "bajó" in respuesta.text
-    assert "$700" in respuesta.text  # precio vigente
-    assert "$751" in respuesta.text  # precio sugerido (750.5 redondeado)
-    assert "10/08" in respuesta.text  # fecha última compra de Cherry
-    # Cherry: utilidad 15.5%, por debajo del objetivo del cliente (20%) -> marcada.
-    assert "15,5%" in respuesta.text
-    assert "utilidad-baja" in respuesta.text
-    # Mango: sin costo anterior, vigente ni utilidad -> "—", no "None".
-    assert "None" not in respuesta.text
-    assert "Fecha de referencia" in respuesta.text
-
-
-def test_ver_costeo_prueba_utilidad_negativa_y_en_objetivo():
-    articulos = [
-        {
-            "articulo_id": 1,
-            "articulo_nombre": "Palta",
-            "unidad_venta": "unidad",
-            "fresco": True,
-            "costo_actual": 900.0,
-            "costo_anterior": None,
-            "variacion": None,
-            "fecha_ultima_compra": date(2026, 8, 10),
-            "precio_vigente": 800.0,
-            "precio_sugerido": 1200.0,
-            "utilidad_aproximada": -0.10,  # precio vigente por debajo del costo
-            "compras_sin_precio_excluidas": 0,
-        },
-        {
-            "articulo_id": 2,
-            "articulo_nombre": "Pera",
-            "unidad_venta": "kilo",
-            "fresco": True,
-            "costo_actual": 1000.0,
-            "costo_anterior": None,
-            "variacion": None,
-            "fecha_ultima_compra": date(2026, 8, 10),
-            "precio_vigente": 2000.0,
-            "precio_sugerido": 1900.0,
-            "utilidad_aproximada": 0.25,  # por encima del objetivo (20%): normal, sin marcar
-            "compras_sin_precio_excluidas": 0,
-        },
-    ]
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos),
-        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 200
-    assert "utilidad-negativa" in respuesta.text
-    assert "-10,0%" in respuesta.text
-    assert "25,0%" in respuesta.text
-    # Pera está en 25%, por encima del objetivo (20%): no debería quedar
-    # marcada como "baja" (buscamos la clase pegada al valor de Pera, no
-    # simplemente que la clase exista en algún lado de la página).
-    assert 'utilidad-baja">25,0%' not in respuesta.text
-
-
-def test_ver_costeo_prueba_sin_articulos_muestra_mensaje():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
-        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 200
-    assert "No hay artículos con compra reciente" in respuesta.text
-
-
-def test_ver_costeo_prueba_error_de_base_da_500():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", side_effect=Exception("no se pudo conectar")),
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 500
-    assert "Error al calcular el costeo" in respuesta.text
-
-
-def test_ver_costeo_prueba_sin_cliente_dia_da_404():
-    with patch("app.main.listar_clientes", return_value=[{"id": 2, "nombre": "Otro cliente"}]):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 404
-
-
-def test_ver_costeo_prueba_desglose_falla_no_rompe_el_resto_de_la_pantalla_y_muestra_el_error():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
-        patch("app.main.calcular_precio_sugerido_desglosado", side_effect=Exception("sin base")),
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 200
-    assert "No hay artículos con compra reciente" in respuesta.text
-    # El error ya no se traga en silencio: se muestra en pantalla.
-    assert "Error al calcular el desglose" in respuesta.text
-    assert "Exception: sin base" in respuesta.text
-
-
-def test_ver_costeo_prueba_desglose_none_sin_error_muestra_explicacion():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
-        patch("app.main.calcular_precio_sugerido_desglosado", return_value=None),
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 200
-    assert "No hay desglose disponible" in respuesta.text
-    assert "Morrón Verde" in respuesta.text
-    assert "Error al calcular el desglose" not in respuesta.text
-
-
-def test_ver_costeo_prueba_muestra_desglose_con_valores_intermedios():
-    desglose = {
-        "articulo_id": 29,
-        "articulo_nombre": "Morrón Verde",
-        "unidad_venta": "kilo",
-        "fecha_ultima_compra": date(2026, 8, 10),
-        "cantidad_total": 80.0,
-        "compras_sin_precio_excluidas": 0,
-        "costo_actual": 3375.0,
-        "utilidad": 0.20,
-        "tasas_suman": [0.105],
-        "tasas_restan": [0.23],
-        "envase_nombre": "Caja Grande",
-        "envase_variable": False,
-        "contenido_ficha": 8.0,
-        "costo_envase_unitario": 1600.0,
-        "envases_por_unidad": 0.125,
-        "costo_envase_por_unidad": 200.0,
-        "precio_sugerido": 4857.1428,
-        "precio_vigente": 4400.0,
-        "costo_producto_bulto": 27000.0,
-        "costo_envase_bulto": 1600.0,
-        "costo_total_bulto": 28600.0,
-        "precio_vigente_bulto": 35200.0,
-        "entra_bulto": 30800.0,
-        "utilidad_aproximada": 0.0769230769,
-    }
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
-        patch("app.main.calcular_precio_sugerido_desglosado", return_value=desglose) as mock_desglose,
-    ):
-        respuesta = cliente.get("/costeo-prueba")
-
-    assert respuesta.status_code == 200
-    mock_desglose.assert_called_once()
-    assert mock_desglose.call_args[0][0] == 1
-    assert mock_desglose.call_args[0][1] == "Morrón Verde"
-    assert "Desglose de depuración" in respuesta.text
-    assert "3375.0000" in respuesta.text  # costo actual, sin redondear
-    assert "0.2000" in respuesta.text  # utilidad
-    assert "0.105" in respuesta.text  # tasa que suma (IVA)
-    assert "0.23" in respuesta.text  # tasa que resta (descuento)
-    assert "Caja Grande" in respuesta.text
-    assert "1600.0000" in respuesta.text  # costo del envase
-    assert "0.125000" in respuesta.text  # envases por unidad
-    assert "200.0000" in respuesta.text  # costo de envase por unidad
-    assert "4857.1428" in respuesta.text  # precio sugerido paso a paso
-    # Desglose de utilidad aproximada (paso a paso, por bulto).
-    assert "27000.0000" in respuesta.text  # costo_producto_bulto
-    assert "28600.0000" in respuesta.text  # costo_total_bulto
-    assert "35200.0000" in respuesta.text  # precio_vigente_bulto
-    assert "30800.0000" in respuesta.text  # entra_bulto
-    assert "7,7%" in respuesta.text  # utilidad_aproximada
-
-
-# --- /negociar: cuadro simplificado (Bajas / Subas / Resumen bajo objetivo) ---
+# --- /negociar: cuadro para negociar precios (Bajas / Subas / Resumen bajo objetivo), por cliente elegido ---
 
 ARTICULOS_NEGOCIAR_DE_PRUEBA = [
     {
@@ -3901,15 +3680,54 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
     },
 ]
 
+FICHAS_NEGOCIAR_DE_PRUEBA = [{"id": 1, "articulo_id": 1, "articulo_nombre": "Tomate Cherry"}]
 
-def test_ver_negociar_bajas_incluye_fresco_que_bajo():
+
+def test_ver_negociar_sin_cliente_muestra_selector():
+    # Mismo patrón que /fichas: sin cliente_id en la URL, solo el
+    # selector — no se calcula nada todavía.
     with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA) as mock_listar,
+        patch("app.main.calcular_listado_para_negociar_precios") as mock_calcular,
     ):
         respuesta = cliente.get("/negociar")
 
     assert respuesta.status_code == 200
+    assert "Elegí un cliente para ver su cuadro de negociación." in respuesta.text
+    assert '<option value="1"' in respuesta.text
+    assert "Día" in respuesta.text
+    assert "Otro cliente" in respuesta.text
+    mock_listar.assert_called_once()
+    mock_calcular.assert_not_called()
+
+
+def test_ver_negociar_con_cliente_muestra_titulo_y_nombre_del_cliente():
+    # La pantalla ya no es "de prueba": título fijo + nombre del cliente
+    # elegido, sin ningún "(prueba)" en ningún lado.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Negociación Precios" in respuesta.text
+    assert "Cliente: <strong>Día</strong>" in respuesta.text
+    assert "(prueba)" not in respuesta.text
+
+
+def test_ver_negociar_bajas_incluye_fresco_que_bajo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA) as mock_calcular,
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # El motor genérico recibe el cliente_id elegido, no uno fijo.
+    assert mock_calcular.call_args[0][0] == 1
     assert "Bajas" in respuesta.text
     assert "Tomate Cherry" in respuesta.text
     assert "$950" in respuesta.text
@@ -3919,9 +3737,10 @@ def test_ver_negociar_bajas_incluye_fresco_que_bajo():
 def test_ver_negociar_subas_incluye_fresco_que_subio():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/negociar")
+        respuesta = cliente.get("/negociar?cliente_id=1")
 
     assert respuesta.status_code == 200
     assert "Mango" in respuesta.text
@@ -3931,9 +3750,10 @@ def test_ver_negociar_subas_incluye_fresco_que_subio():
 def test_ver_negociar_no_fresco_no_aparece_en_bajas_ni_subas():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/negociar")
+        respuesta = cliente.get("/negociar?cliente_id=1")
 
     import re
 
@@ -3946,9 +3766,10 @@ def test_ver_negociar_no_fresco_no_aparece_en_bajas_ni_subas():
 def test_ver_negociar_resumen_ordena_de_peor_a_mejor_y_filtra_bajo_objetivo():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/negociar")
+        respuesta = cliente.get("/negociar?cliente_id=1")
 
     import re
 
@@ -3961,48 +3782,100 @@ def test_ver_negociar_resumen_ordena_de_peor_a_mejor_y_filtra_bajo_objetivo():
     assert "Tomate Cherry" not in bloque_resumen
     assert "utilidad-negativa" in bloque_resumen
     assert "utilidad-baja" in bloque_resumen
+    # Regresión: el encabezado de la columna era un literal fijo "P. Día",
+    # ahora es genérico (la pantalla puede ser de cualquier cliente).
+    assert "P. Día" not in respuesta.text
+    assert "<th>Precio vigente</th>" in respuesta.text
 
 
-def test_ver_negociar_sin_articulos_muestra_mensajes_vacios():
+def test_ver_negociar_sin_fichas_muestra_aviso_y_link_para_cargarlas():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
     ):
-        respuesta = cliente.get("/negociar")
+        respuesta = cliente.get("/negociar?cliente_id=1")
 
     assert respuesta.status_code == 200
+    assert "todavía no tiene fichas de logística cargadas" in respuesta.text
+    assert 'href="/fichas?cliente_id=1"' in respuesta.text
+    # Igual muestra la pantalla completa (secciones vacías, no en blanco).
     assert "Ningún artículo fresco bajó de costo" in respuesta.text
-    assert "Ningún artículo fresco subió de costo" in respuesta.text
-    assert "Ningún artículo con precio vigente está por debajo del objetivo" in respuesta.text
 
 
-def test_ver_negociar_sin_cliente_dia_da_404():
-    with patch("app.main.listar_clientes", return_value=[{"id": 2, "nombre": "Otro cliente"}]):
-        respuesta = cliente.get("/negociar")
+def test_ver_negociar_con_fichas_pero_sin_articulos_recientes_muestra_aviso_distinto():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "ningún artículo tuvo compra en los últimos 15 días" in respuesta.text
+    assert "todavía no tiene fichas de logística cargadas" not in respuesta.text
+
+
+def test_ver_negociar_sin_utilidad_objetivo_muestra_aviso():
+    clientes_sin_utilidad = [{"id": 1, "nombre": "Cliente Nuevo", "descuento": 0.0, "adicionales": 0.0, "utilidad_objetivo": None}]
+    with (
+        patch("app.main.listar_clientes", return_value=clientes_sin_utilidad),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "no tiene utilidad objetivo cargada todavía" in respuesta.text
+    assert 'href="/clientes/1/editar"' in respuesta.text
+
+
+def test_ver_negociar_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/negociar?cliente_id=999")
 
     assert respuesta.status_code == 404
 
 
-def test_ver_negociar_error_de_base_da_500():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", side_effect=Exception("no se pudo conectar")),
-    ):
+def test_ver_negociar_error_al_listar_clientes_da_500():
+    with patch("app.main.listar_clientes", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/negociar")
 
     assert respuesta.status_code == 500
 
 
-def test_ver_negociar_tiene_link_de_ida_y_vuelta_con_costeo_prueba():
+def test_ver_negociar_error_de_base_da_500():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", side_effect=Exception("no se pudo conectar")),
     ):
-        respuesta_negociar = cliente.get("/negociar")
-        respuesta_costeo = cliente.get("/costeo-prueba")
+        respuesta = cliente.get("/negociar?cliente_id=1")
 
-    assert 'href="/costeo-prueba"' in respuesta_negociar.text
-    assert 'href="/negociar"' in respuesta_costeo.text
+    assert respuesta.status_code == 500
+
+
+def test_ver_negociar_otro_cliente_no_muestra_datos_de_dia():
+    # Regresión explícita: elegir un cliente que no es "Día" tiene que
+    # calcular para ESE cliente_id, no para el 1 fijo de antes.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]) as mock_calcular,
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=2")
+
+    assert respuesta.status_code == 200
+    assert mock_calcular.call_args[0][0] == 2
+    assert "Cliente: <strong>Otro cliente</strong>" in respuesta.text
+
+
+def test_costeo_prueba_ya_no_existe():
+    # La pantalla de depuración se retiró: la negociación real ahora se
+    # accede eligiendo cliente en /negociar.
+    respuesta = cliente.get("/costeo-prueba")
+
+    assert respuesta.status_code == 404
 
 
 def test_ver_inicio_muestra_las_6_areas():
