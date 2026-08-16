@@ -6,12 +6,15 @@ import pytest
 
 from core.lector_comandas import (
     ANTHROPIC_API_KEY_ENV_VAR,
+    MAX_TOKENS_LISTADO_CONSOLIDADO,
     PROMPT_EXTRACCION,
+    PROMPT_LISTADO_CONSOLIDADO,
     _detectar_media_type,
     _extraer_texto_de_la_respuesta,
     _limpiar_respuesta_json,
     _llamar_api_claude,
     extraer_comanda,
+    extraer_listado_consolidado,
 )
 
 IMAGEN_DE_PRUEBA = b"contenido falso de una imagen"
@@ -93,6 +96,112 @@ def test_prompt_incluye_las_reglas_clave_de_extraccion():
     assert "Libre" in PROMPT_EXTRACCION
     assert "COMPLETO" in PROMPT_EXTRACCION
     assert "y P" in PROMPT_EXTRACCION
+
+
+LISTADO_VALIDO = {
+    "renglones": [
+        {
+            "es_idem": False,
+            "proveedor_texto": "Saturno",
+            "codigo": "",
+            "articulo": "Kiwi",
+            "cantidad": 10,
+            "kg_x_bulto": 18,
+            "importe": 5000,
+            "nota_margen": "84",
+            "confianza": "alta",
+        },
+        {
+            "es_idem": True,
+            "proveedor_texto": "",
+            "codigo": "",
+            "articulo": "Pera",
+            "cantidad": 5,
+            "kg_x_bulto": None,
+            "importe": None,
+            "nota_margen": "",
+            "confianza": "alta",
+        },
+    ]
+}
+
+
+def test_extraer_listado_consolidado_devuelve_el_json_parseado():
+    with patch("core.lector_comandas._llamar_api_claude", return_value=json.dumps(LISTADO_VALIDO)):
+        resultado = extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+    assert resultado == LISTADO_VALIDO
+
+
+def test_extraer_listado_consolidado_usa_el_prompt_y_el_limite_de_tokens_propios():
+    with patch("core.lector_comandas._llamar_api_claude", return_value=json.dumps(LISTADO_VALIDO)) as mock_llamar:
+        extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+    mock_llamar.assert_called_once_with(
+        IMAGEN_DE_PRUEBA, None, prompt=PROMPT_LISTADO_CONSOLIDADO, max_tokens=MAX_TOKENS_LISTADO_CONSOLIDADO
+    )
+
+
+def test_extraer_listado_consolidado_json_invalido_lanza_error():
+    with patch("core.lector_comandas._llamar_api_claude", return_value="esto no es JSON"):
+        with pytest.raises(ValueError):
+            extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+
+def test_extraer_listado_consolidado_json_que_no_es_objeto_lanza_error():
+    with patch("core.lector_comandas._llamar_api_claude", return_value=json.dumps([1, 2, 3])):
+        with pytest.raises(ValueError):
+            extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+
+def test_extraer_listado_consolidado_respuesta_vacia_lanza_error():
+    with patch("core.lector_comandas._llamar_api_claude", return_value=""):
+        with pytest.raises(ValueError):
+            extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+
+def test_extraer_listado_consolidado_limpia_backticks_antes_de_parsear():
+    respuesta_con_backticks = "```json\n" + json.dumps(LISTADO_VALIDO) + "\n```"
+    with patch("core.lector_comandas._llamar_api_claude", return_value=respuesta_con_backticks):
+        resultado = extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+    assert resultado == LISTADO_VALIDO
+
+
+def test_extraer_listado_consolidado_renglon_dudoso_pasa_confianza_baja():
+    listado_con_dato_dudoso = {
+        "renglones": [
+            {
+                "es_idem": False,
+                "proveedor_texto": "completar proveedor",
+                "codigo": "",
+                "articulo": "completar articulo",
+                "cantidad": 10,
+                "kg_x_bulto": None,
+                "importe": None,
+                "nota_margen": "",
+                "confianza": "baja",
+            }
+        ]
+    }
+    with patch("core.lector_comandas._llamar_api_claude", return_value=json.dumps(listado_con_dato_dudoso)):
+        resultado = extraer_listado_consolidado(IMAGEN_DE_PRUEBA)
+
+    assert resultado["renglones"][0]["articulo"] == "completar articulo"
+    assert resultado["renglones"][0]["confianza"] == "baja"
+
+
+def test_prompt_listado_consolidado_incluye_las_reglas_clave():
+    # Test de regresión, mismo criterio que test_prompt_incluye_las_reglas_
+    # clave_de_extraccion: si alguien edita el prompt sin querer, esto avisa
+    # que se perdió alguna regla de negocio importante.
+    assert "es_idem" in PROMPT_LISTADO_CONSOLIDADO
+    assert "NUNCA copies vos el" in PROMPT_LISTADO_CONSOLIDADO
+    assert "NUNCA adivinar" in PROMPT_LISTADO_CONSOLIDADO
+    assert "kg_x_bulto" in PROMPT_LISTADO_CONSOLIDADO
+    assert "nota_margen" in PROMPT_LISTADO_CONSOLIDADO
+    assert "Granny" in PROMPT_LISTADO_CONSOLIDADO
+    assert "completar proveedor" in PROMPT_LISTADO_CONSOLIDADO
 
 
 def test_detectar_media_type_png():

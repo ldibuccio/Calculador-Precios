@@ -58,6 +58,50 @@ def test_eliminar_compra_no_devuelve_el_foto_ruta_si_otro_renglon_lo_sigue_usand
     conexion.commit.assert_called_once()
 
 
+def test_eliminar_compra_no_borra_la_foto_si_otro_proveedor_del_mismo_listado_la_sigue_usando():
+    # Regresión explícita para "Cargar Listado de Compras Consolidado": una
+    # sola foto de planilla queda compartida por compras de VARIOS
+    # proveedores distintos (ej. Saturno, Crefu, Agro), no solo por varios
+    # renglones de un mismo proveedor. El conteo de referencias filtra
+    # únicamente por foto_ruta, nunca por proveedor_id, así que borrar la
+    # compra de un proveedor no borra la foto mientras compras de OTRO
+    # proveedor sigan usándola.
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/listado-abc123.jpg",),  # SELECT foto_ruta
+            (2,),  # SELECT COUNT(*): quedan 2 compras de otros proveedores usándola
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compra(30)
+
+    assert resultado is None
+    # El conteo de referencias es global por foto_ruta, sin ningún filtro
+    # de proveedor_id — por eso alcanza para cubrir el caso de varios
+    # proveedores compartiendo la misma foto de planilla.
+    consulta_conteo, parametros_conteo = cursor.execute.call_args_list[2].args
+    assert "proveedor_id" not in consulta_conteo
+    assert parametros_conteo == ("2026-08-13/listado-abc123.jpg",)
+
+
+def test_eliminar_compra_borra_la_foto_al_eliminar_la_ultima_compra_de_cualquier_proveedor_del_listado():
+    # Mismo escenario que arriba, pero esta es la ÚLTIMA compra que queda
+    # (de cualquiera de los proveedores del listado): ahí sí hay que borrar
+    # la foto del bucket.
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/listado-abc123.jpg",),  # SELECT foto_ruta
+            (0,),  # SELECT COUNT(*): ya no queda ninguna compra usándola
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compra(30)
+
+    assert resultado == "2026-08-13/listado-abc123.jpg"
+
+
 def test_eliminar_compra_sin_foto_no_cuenta_referencias():
     conexion, cursor = _conexion_falsa(
         [

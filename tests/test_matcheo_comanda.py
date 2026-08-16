@@ -1,6 +1,7 @@
 from core.matcheo_comanda import (
     adivinar_articulo,
     adivinar_proveedor,
+    agrupar_renglones_por_proveedor,
     construir_codigo_puesto,
     normalizar_texto,
 )
@@ -132,6 +133,109 @@ def test_adivinar_proveedor_codigo_existente_tiene_prioridad_sobre_proponer_uno_
 
     assert resultado == PROVEEDORES_DE_PRUEBA[0]
     assert resultado["id"] == 200
+
+
+def _renglon(es_idem=False, proveedor_texto="", articulo="Kiwi"):
+    return {"es_idem": es_idem, "proveedor_texto": proveedor_texto, "articulo": articulo}
+
+
+def test_agrupar_renglones_por_proveedor_agrupa_bloques_contiguos():
+    renglones = [
+        _renglon(proveedor_texto="Saturno", articulo="Manzana"),
+        _renglon(proveedor_texto="Frutamax", articulo="Pera"),
+    ]
+    grupos = agrupar_renglones_por_proveedor(renglones, PROVEEDORES_DE_PRUEBA)
+
+    assert len(grupos) == 2
+    assert grupos[0]["proveedor_texto"] == "Saturno"
+    assert [r["articulo"] for r in grupos[0]["renglones"]] == ["Manzana"]
+    assert grupos[1]["proveedor_texto"] == "Frutamax"
+    assert [r["articulo"] for r in grupos[1]["renglones"]] == ["Pera"]
+
+
+def test_agrupar_renglones_por_proveedor_idem_arrastra_el_proveedor_de_la_fila_de_arriba():
+    renglones = [
+        _renglon(proveedor_texto="Saturno", articulo="Manzana"),
+        _renglon(es_idem=True, articulo="Pera"),
+        _renglon(es_idem=True, articulo="Limon"),
+        _renglon(proveedor_texto="Crefu", articulo="Tomate"),
+    ]
+    grupos = agrupar_renglones_por_proveedor(renglones, PROVEEDORES_DE_PRUEBA)
+
+    assert len(grupos) == 2
+    assert grupos[0]["proveedor_texto"] == "Saturno"
+    assert [r["articulo"] for r in grupos[0]["renglones"]] == ["Manzana", "Pera", "Limon"]
+    assert grupos[1]["proveedor_texto"] == "Crefu"
+    assert [r["articulo"] for r in grupos[1]["renglones"]] == ["Tomate"]
+
+
+def test_agrupar_renglones_por_proveedor_funde_bloques_no_contiguos_del_mismo_proveedor_existente():
+    # Caso real: "Saturno" aparece dos veces en la planilla, en bloques
+    # separados por otro proveedor en el medio, sin ídem entre ellos. Como
+    # las dos menciones matchean el MISMO proveedor ya existente (por
+    # nombre parecido), tienen que quedar en un solo grupo.
+    renglones = [
+        _renglon(proveedor_texto="Saturno", articulo="Manzana"),
+        _renglon(proveedor_texto="Crefu", articulo="Tomate"),
+        _renglon(proveedor_texto="Saturno SA", articulo="Limon"),
+    ]
+    grupos = agrupar_renglones_por_proveedor(renglones, PROVEEDORES_DE_PRUEBA)
+
+    assert len(grupos) == 2
+    assert grupos[0]["proveedor_texto"] == "Saturno"
+    assert [r["articulo"] for r in grupos[0]["renglones"]] == ["Manzana", "Limon"]
+    assert grupos[1]["proveedor_texto"] == "Crefu"
+
+
+def test_agrupar_renglones_por_proveedor_funde_bloques_no_contiguos_de_un_proveedor_nuevo_por_texto_igual():
+    # Mismo caso, pero el proveedor NO existe en la base todavía (nombre
+    # nuevo) — ahí no hay id para matchear, se funde por texto normalizado
+    # idéntico.
+    renglones = [
+        _renglon(proveedor_texto="Agro Nuevo", articulo="Zapallo"),
+        _renglon(proveedor_texto="Crefu", articulo="Tomate"),
+        _renglon(proveedor_texto="Agro Nuevo", articulo="Berenjena"),
+    ]
+    grupos = agrupar_renglones_por_proveedor(renglones, PROVEEDORES_DE_PRUEBA)
+
+    assert len(grupos) == 2
+    assert grupos[0]["proveedor_texto"] == "Agro Nuevo"
+    assert [r["articulo"] for r in grupos[0]["renglones"]] == ["Zapallo", "Berenjena"]
+    assert grupos[1]["proveedor_texto"] == "Crefu"
+
+
+def test_agrupar_renglones_por_proveedor_no_funde_proveedores_nuevos_distintos():
+    renglones = [
+        _renglon(proveedor_texto="Agro Nuevo", articulo="Zapallo"),
+        _renglon(proveedor_texto="Otro Proveedor Nuevo", articulo="Berenjena"),
+    ]
+    grupos = agrupar_renglones_por_proveedor(renglones, PROVEEDORES_DE_PRUEBA)
+
+    assert len(grupos) == 2
+    assert grupos[0]["proveedor_texto"] == "Agro Nuevo"
+    assert grupos[1]["proveedor_texto"] == "Otro Proveedor Nuevo"
+
+
+def test_agrupar_renglones_por_proveedor_idem_como_primera_fila_sin_proveedor_para_arrastrar():
+    # Caso límite: si la planilla arranca con un renglón "ídem" (mal
+    # marcado, o la IA se equivocó), no hay ninguna fila previa de la que
+    # arrastrar el proveedor — el grupo queda con proveedor_texto vacío,
+    # así el comprador lo completa a mano en el buscador combinado (Opción
+    # A: nada se guarda sin que el usuario lo revise).
+    renglones = [
+        _renglon(es_idem=True, articulo="Manzana"),
+        _renglon(proveedor_texto="Saturno", articulo="Pera"),
+    ]
+    grupos = agrupar_renglones_por_proveedor(renglones, PROVEEDORES_DE_PRUEBA)
+
+    assert len(grupos) == 2
+    assert grupos[0]["proveedor_texto"] == ""
+    assert [r["articulo"] for r in grupos[0]["renglones"]] == ["Manzana"]
+    assert grupos[1]["proveedor_texto"] == "Saturno"
+
+
+def test_agrupar_renglones_por_proveedor_lista_vacia_devuelve_lista_vacia():
+    assert agrupar_renglones_por_proveedor([], PROVEEDORES_DE_PRUEBA) == []
 
 
 ARTICULOS_DE_PRUEBA = [

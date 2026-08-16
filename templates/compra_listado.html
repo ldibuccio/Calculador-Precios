@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar listado de compras</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .tarjeta.con-advertencia {
+    border: 2px solid #dc2626;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+  .texto-leido {
+    color: #555;
+    font-size: 0.9rem;
+    margin: 0 0 0.5rem;
+  }
+  .advertencia {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form select, form input[type="text"], form input[type="number"] {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .input-foto-oculto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .campo-descartar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+  }
+  .campo-descartar input {
+    width: auto;
+    margin-top: 0;
+  }
+  .campo-descartar label {
+    margin-top: 0;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .boton-descartar { background: #d97706; }
+  .buscador-proveedor {
+    position: relative;
+  }
+  .lista-proveedores {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-proveedores.visible {
+    display: block;
+  }
+  .opcion-proveedor {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-proveedor:last-child {
+    border-bottom: none;
+  }
+  .opcion-proveedor:active {
+    background: #f0f5ff;
+  }
+  .opcion-proveedor span {
+    color: #666;
+    font-size: 0.85rem;
+  }
+  .boton-ver-foto {
+    margin-top: 0.75rem;
+    width: auto;
+    display: inline-block;
+    padding: 0.5rem 0.9rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .modal-foto {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 100;
+    padding: 1rem;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-foto.visible {
+    display: flex;
+  }
+  .modal-foto-contenido {
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .modal-foto img {
+    max-width: 100%;
+    max-height: 85vh;
+    display: block;
+    border-radius: 8px;
+  }
+  .modal-foto-cerrar {
+    margin-top: 0.75rem;
+    width: 100%;
+    padding: 0.65rem;
+    background: #fff;
+    color: #222;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Cargar listado de compras" %}
+  {% include "_barra_navegacion.html" %}
+  <p class="ayuda">Tocá el botón: se abre la cámara o la galería del celular. En cuanto elijas la foto de la planilla, el sistema la lee entera y agrupa los renglones por proveedor. Después revisás y guardás de a un proveedor por vez, como en Múltiples comandas.</p>
+
+  <div id="seccion-elegir-foto" class="tarjeta">
+    <input type="file" id="input-foto-listado" accept="image/*" class="input-foto-oculto">
+    <button type="button" id="boton-elegir-foto-listado">Elegir foto de la planilla</button>
+  </div>
+
+  <div id="seccion-leyendo" class="tarjeta" style="display: none;">
+    <p class="ayuda">Leyendo la planilla completa, puede tardar unos segundos (trae varios proveedores, lleva más que una comanda sola)...</p>
+  </div>
+
+  <div id="error-listado" class="error" style="display: none;"></div>
+
+  <div id="contenedor-revision" style="display: none;">
+    <form id="form-revision-multiple">
+      <div id="contenido-fragmento"></div>
+
+      <button type="button" id="boton-guardar-siguiente" class="boton-exito">Guardar y siguiente</button>
+      <button type="button" id="boton-descartar-siguiente" class="boton-descartar">Descartar y siguiente</button>
+      <button type="button" id="boton-agregar-articulos">Agregar Artículos</button>
+      <button type="button" id="boton-cancelar-multiple" class="boton-peligro">Cancelar</button>
+    </form>
+  </div>
+
+  <script>
+    let gruposLeidos = [];
+    let indiceActual = 0;
+    let fotoPreviewCompartida = null;
+    let fotoRutaCompartida = null;
+    let CANTIDAD_RENGLONES_ACTUAL = 0;
+
+    // Buscador combinado del proveedor. Se define UNA vez acá, a nivel de
+    // página: el fragmento del proveedor se re-inyecta por cada grupo del
+    // listado, pero como los onfocus/oninput/onblur del fragmento son
+    // atributos inline (no listeners agregados por JS), siguen apuntando a
+    // estas mismas funciones globales cada vez que se inyecta un grupo
+    // nuevo — no hace falta "reactivarlos" a mano.
+    const PROVEEDORES_LISTA = [
+      {% for p in proveedores %}{ codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+    ];
+
+    function normalizarBusquedaProveedor(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaProveedores(campo) {
+      const input = document.getElementById(campo);
+      const contenedor = document.getElementById("lista-" + campo);
+      if (!input || !contenedor) {
+        return;
+      }
+      const filtro = normalizarBusquedaProveedor(input.value);
+      const coincidencias = PROVEEDORES_LISTA.filter(function (p) {
+        if (!filtro) {
+          return true;
+        }
+        return p.nombre.toLowerCase().indexOf(filtro) !== -1 || p.codigo.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (p) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-proveedor";
+        const nombreEl = document.createElement("strong");
+        nombreEl.textContent = p.nombre;
+        const codigoEl = document.createElement("span");
+        codigoEl.textContent = " (" + p.codigo + ")";
+        opcion.appendChild(nombreEl);
+        opcion.appendChild(codigoEl);
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirProveedor(p.codigo, p.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaProveedores(campo) {
+      const contenedor = document.getElementById("lista-" + campo);
+      if (contenedor) {
+        contenedor.classList.remove("visible");
+      }
+    }
+
+    function elegirProveedor(codigo, nombre) {
+      const campoCodigo = document.getElementById("codigo_puesto");
+      const campoNombre = document.getElementById("nombre");
+      if (campoCodigo) {
+        campoCodigo.value = codigo;
+      }
+      if (campoNombre) {
+        campoNombre.value = nombre;
+      }
+      ocultarListaProveedores("codigo_puesto");
+      ocultarListaProveedores("nombre");
+    }
+
+    function verFoto(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.add("visible");
+      }
+    }
+
+    function cerrarFoto(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.remove("visible");
+      }
+    }
+
+    function aplicarRetiroATodosSiCorresponde() {
+      const checkbox = document.getElementById("aplicar_retiro_a_todos");
+      if (!checkbox || !checkbox.checked) {
+        return;
+      }
+      const valorRetiro = document.getElementById("item_0_tipo_retiro").value;
+      for (let indice = 1; indice < CANTIDAD_RENGLONES_ACTUAL; indice++) {
+        const select = document.getElementById("item_" + indice + "_tipo_retiro");
+        if (select) {
+          select.value = valorRetiro;
+        }
+      }
+    }
+
+    function actualizarContenidoRenglon(indice, select) {
+      const opcion = select.selectedOptions[0];
+      const contenidoInput = document.getElementById("item_" + indice + "_contenido_por_cajon");
+      if (!opcion) {
+        return;
+      }
+      const contenidoReferencia = opcion.dataset.contenidoReferencia;
+      if (contenidoReferencia) {
+        contenidoInput.value = contenidoReferencia;
+      }
+    }
+
+    function alternarDescarte(indice, checkbox) {
+      const campos = [
+        document.getElementById("item_" + indice + "_articulo_id"),
+        document.getElementById("item_" + indice + "_cantidad_cajones"),
+        document.getElementById("item_" + indice + "_contenido_por_cajon"),
+        document.getElementById("item_" + indice + "_tipo_retiro"),
+      ];
+      campos.forEach(function (campo) {
+        if (campo) {
+          campo.required = !checkbox.checked;
+        }
+      });
+    }
+
+    function inicializarDescartes() {
+      const cantidadInput = document.querySelector('input[name="cantidad_renglones"]');
+      CANTIDAD_RENGLONES_ACTUAL = cantidadInput ? parseInt(cantidadInput.value, 10) || 0 : 0;
+      for (let indice = 0; indice < CANTIDAD_RENGLONES_ACTUAL; indice++) {
+        const checkbox = document.getElementById("item_" + indice + "_descartar");
+        if (checkbox) {
+          alternarDescarte(indice, checkbox);
+        }
+      }
+    }
+
+    function actualizarBotonGuardar() {
+      const esUltimo = indiceActual === gruposLeidos.length - 1;
+
+      const botonGuardar = document.getElementById("boton-guardar-siguiente");
+      if (botonGuardar) {
+        botonGuardar.textContent = esUltimo ? "Guardar y terminar" : "Guardar y siguiente";
+        botonGuardar.disabled = false;
+      }
+
+      const botonDescartar = document.getElementById("boton-descartar-siguiente");
+      if (botonDescartar) {
+        botonDescartar.textContent = esUltimo ? "Descartar y terminar" : "Descartar y siguiente";
+      }
+    }
+
+    function mostrarRevision(html) {
+      document.getElementById("contenido-fragmento").innerHTML = html;
+      document.getElementById("contenedor-revision").style.display = "block";
+      inicializarDescartes();
+      actualizarBotonGuardar();
+    }
+
+    function mostrarErrorMultiple(mensaje) {
+      const errorDiv = document.getElementById("error-listado");
+      errorDiv.textContent = mensaje;
+      errorDiv.style.display = "block";
+    }
+
+    function ocultarErrorMultiple() {
+      document.getElementById("error-listado").style.display = "none";
+    }
+
+    // Si el grupo no se pudo guardar (validación o error de base de
+    // datos), el servidor devuelve la pantalla completa de revisión de
+    // nuevo, con lo que el usuario había tipeado ya cargado en los campos.
+    // Se extrae de ahí el mensaje de error y los renglones para no perder
+    // lo que el usuario ya había corregido.
+    function mostrarErrorDesdeHtml(html) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+
+      const errorDiv = doc.querySelector(".error");
+      mostrarErrorMultiple(errorDiv ? errorDiv.textContent : "No se pudo guardar el grupo.");
+
+      const formOriginal = doc.getElementById("form-confirmar-foto");
+      if (formOriginal) {
+        const codigoNuevo = formOriginal.querySelector("#codigo_puesto");
+        const nombreNuevo = formOriginal.querySelector("#nombre");
+        if (codigoNuevo) {
+          document.getElementById("codigo_puesto").value = codigoNuevo.value;
+        }
+        if (nombreNuevo) {
+          document.getElementById("nombre").value = nombreNuevo.value;
+        }
+
+        const tarjetas = formOriginal.querySelectorAll(".tarjeta");
+        const soloRenglones = Array.from(tarjetas).filter(function (el) {
+          const titulo = el.querySelector("h2");
+          return titulo && titulo.textContent.indexOf("Artículo") === 0;
+        });
+        const contenedorRenglones = document.getElementById("renglones-comanda");
+        if (contenedorRenglones && soloRenglones.length > 0) {
+          contenedorRenglones.innerHTML = "";
+          soloRenglones.forEach(function (el) {
+            contenedorRenglones.appendChild(el);
+          });
+          const cantidadInput = document.querySelector('input[name="cantidad_renglones"]');
+          if (cantidadInput) {
+            cantidadInput.value = soloRenglones.length;
+          }
+        }
+      }
+
+      document.getElementById("contenedor-revision").style.display = "block";
+      inicializarDescartes();
+      actualizarBotonGuardar();
+    }
+
+    function mostrarGrupoActual() {
+      if (indiceActual >= gruposLeidos.length) {
+        window.location = "/compras/ultimas";
+        return;
+      }
+
+      // Sin esto, después de guardar/descartar la pantalla queda scrolleada
+      // abajo en los botones del grupo anterior y no queda claro que ya
+      // arrancó uno nuevo.
+      window.scrollTo(0, 0);
+
+      ocultarErrorMultiple();
+      mostrarRevision(gruposLeidos[indiceActual].html);
+    }
+
+    function avanzarSiguienteOFinalizar() {
+      indiceActual += 1;
+      mostrarGrupoActual();
+    }
+
+    // Sube la foto de la planilla UNA sola vez, antes de guardar el primer
+    // grupo, y guarda la ruta para reusarla en los grupos siguientes — así
+    // no se sube una copia por cada proveedor. Si la subida falla, no
+    // bloquea nada: el guardado sigue sin foto_ruta_ya_subida, y
+    // confirmar_compra_foto sube la foto de la forma de siempre (a partir
+    // de foto_preview, que sigue viajando en el form igual que en comanda
+    // única y múltiples fotos).
+    function asegurarFotoSubida() {
+      if (fotoRutaCompartida || !fotoPreviewCompartida) {
+        return Promise.resolve();
+      }
+      const datos = new URLSearchParams();
+      datos.append("foto_preview", fotoPreviewCompartida);
+      return fetch("/compras/nueva/listado/subir-foto", { method: "POST", body: datos })
+        .then(function (resp) {
+          return resp.json();
+        })
+        .then(function (data) {
+          if (data.ok) {
+            fotoRutaCompartida = data.foto_ruta;
+          }
+        })
+        .catch(function () {
+          // No hace nada a propósito: ver comentario arriba de la función.
+        });
+    }
+
+    function guardarComandaActual() {
+      const form = document.getElementById("form-revision-multiple");
+      if (!form.reportValidity()) {
+        return;
+      }
+      const boton = document.getElementById("boton-guardar-siguiente");
+      boton.disabled = true;
+      boton.textContent = "Guardando...";
+
+      asegurarFotoSubida().then(function () {
+        const formData = new FormData(form);
+        formData.append("accion", "guardar");
+        if (fotoRutaCompartida) {
+          formData.set("foto_ruta_ya_subida", fotoRutaCompartida);
+        }
+
+        return fetch("/compras/nueva/foto/confirmar", { method: "POST", body: formData })
+          .then(function (resp) {
+            if (resp.redirected) {
+              avanzarSiguienteOFinalizar();
+              return null;
+            }
+            return resp.text();
+          })
+          .then(function (texto) {
+            if (texto) {
+              mostrarErrorDesdeHtml(texto);
+            }
+          })
+          .catch(function (error) {
+            boton.disabled = false;
+            boton.textContent = "Guardar y siguiente";
+            mostrarErrorMultiple("No se pudo conectar con el servidor: " + error);
+          });
+      });
+    }
+
+    // Clona el bloque del primer renglón (con el <select> de artículos ya
+    // armado) para agregar una fila en blanco sin ir a buscar la lista de
+    // artículos de nuevo ni tocar el servidor.
+    function agregarRenglonEnBlanco() {
+      const contenedor = document.getElementById("renglones-comanda");
+      if (!contenedor) {
+        return;
+      }
+      const bloques = contenedor.querySelectorAll(".tarjeta");
+      if (bloques.length === 0) {
+        return;
+      }
+      const nuevoIndice = bloques.length;
+      const clon = bloques[0].cloneNode(true);
+
+      const campoAplicarATodos = clon.querySelector("#aplicar_retiro_a_todos");
+      if (campoAplicarATodos) {
+        const contenedorCampo = campoAplicarATodos.closest(".campo-descartar");
+        if (contenedorCampo) {
+          contenedorCampo.remove();
+        }
+      }
+
+      const selectRetiro = clon.querySelector('select[id^="item_"][id$="_tipo_retiro"]');
+      if (selectRetiro) {
+        selectRetiro.removeAttribute("onchange");
+      }
+
+      clon.querySelectorAll("[id]").forEach(function (el) {
+        el.id = el.id.replace(/^item_0_/, "item_" + nuevoIndice + "_");
+      });
+      clon.querySelectorAll("[name]").forEach(function (el) {
+        el.name = el.name.replace(/^item_0_/, "item_" + nuevoIndice + "_");
+      });
+      clon.querySelectorAll("[for]").forEach(function (el) {
+        el.setAttribute("for", el.getAttribute("for").replace(/^item_0_/, "item_" + nuevoIndice + "_"));
+      });
+      clon.querySelectorAll("[onchange]").forEach(function (el) {
+        const valor = el.getAttribute("onchange");
+        if (valor.indexOf("(0,") !== -1) {
+          el.setAttribute("onchange", valor.replace("(0,", "(" + nuevoIndice + ","));
+        }
+      });
+
+      clon.classList.remove("con-advertencia");
+      const advertencia = clon.querySelector(".advertencia");
+      if (advertencia) {
+        advertencia.remove();
+      }
+
+      const textoLeido = clon.querySelector(".texto-leido");
+      if (textoLeido) {
+        textoLeido.textContent = 'Texto leído: "(sin leer)"';
+      }
+
+      clon.querySelectorAll('input[type="text"], input[type="hidden"], input[type="number"]').forEach(function (el) {
+        el.value = "";
+      });
+      const selectArticulo = clon.querySelector('select[id$="_articulo_id"]');
+      if (selectArticulo) {
+        selectArticulo.value = "";
+      }
+      if (selectRetiro) {
+        // Si el tilde "usar este retiro para todos" está activo, el
+        // renglón nuevo arranca con ese mismo retiro (en vez de "Elegí...")
+        // para no obligar a elegirlo de nuevo cuando ya está todo definido.
+        const checkboxAplicarATodos = document.getElementById("aplicar_retiro_a_todos");
+        const retiroActivo = checkboxAplicarATodos && checkboxAplicarATodos.checked;
+        selectRetiro.value = retiroActivo ? document.getElementById("item_0_tipo_retiro").value : "";
+      }
+      const checkboxDescartar = clon.querySelector('input[type="checkbox"][id$="_descartar"]');
+      if (checkboxDescartar) {
+        checkboxDescartar.checked = false;
+      }
+
+      const titulo = clon.querySelector("h2");
+      if (titulo) {
+        titulo.textContent = "Artículo " + (nuevoIndice + 1);
+      }
+
+      contenedor.appendChild(clon);
+
+      const cantidadInput = document.querySelector('input[name="cantidad_renglones"]');
+      if (cantidadInput) {
+        cantidadInput.value = nuevoIndice + 1;
+      }
+      CANTIDAD_RENGLONES_ACTUAL = nuevoIndice + 1;
+      if (checkboxDescartar) {
+        alternarDescarte(nuevoIndice, checkboxDescartar);
+      }
+    }
+
+    // Un solo toque: el botón abre el selector nativo del celular
+    // (cámara/galería); apenas se elige la foto de la planilla, arranca
+    // sola la lectura completa — sin un segundo botón "Leer" de por medio.
+    // Si el usuario cancela el selector sin elegir nada, "change" no se
+    // dispara y la pantalla queda como estaba.
+    const inputFotoListado = document.getElementById("input-foto-listado");
+    document.getElementById("boton-elegir-foto-listado").addEventListener("click", function () {
+      inputFotoListado.click();
+    });
+
+    inputFotoListado.addEventListener("change", function () {
+      if (!inputFotoListado.files || inputFotoListado.files.length === 0) {
+        return;
+      }
+
+      ocultarErrorMultiple();
+      document.getElementById("seccion-elegir-foto").style.display = "none";
+      document.getElementById("seccion-leyendo").style.display = "block";
+
+      const formData = new FormData();
+      formData.append("foto", inputFotoListado.files[0]);
+
+      fetch("/compras/nueva/listado/leer", { method: "POST", body: formData })
+        .then(function (resp) {
+          return resp.json();
+        })
+        .then(function (data) {
+          document.getElementById("seccion-leyendo").style.display = "none";
+
+          if (!data.ok) {
+            mostrarErrorMultiple(data.error || "No se pudo leer la planilla.");
+            document.getElementById("seccion-elegir-foto").style.display = "block";
+            return;
+          }
+
+          gruposLeidos = data.grupos;
+          fotoPreviewCompartida = data.foto_preview;
+          fotoRutaCompartida = null;
+          indiceActual = 0;
+          mostrarGrupoActual();
+        })
+        .catch(function (error) {
+          document.getElementById("seccion-leyendo").style.display = "none";
+          document.getElementById("seccion-elegir-foto").style.display = "block";
+          mostrarErrorMultiple("No se pudo conectar con el servidor: " + error);
+        });
+    });
+
+    document.getElementById("boton-guardar-siguiente").addEventListener("click", guardarComandaActual);
+    document.getElementById("boton-agregar-articulos").addEventListener("click", agregarRenglonEnBlanco);
+
+    document.getElementById("boton-descartar-siguiente").addEventListener("click", function () {
+      avanzarSiguienteOFinalizar();
+    });
+
+    document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
+      if (confirm("¿Seguro? Se pierde el proveedor que estás cargando ahora (los que ya guardaste quedan guardados).")) {
+        window.location = "/compras/ultimas";
+      }
+    });
+  </script>
+</body>
+</html>

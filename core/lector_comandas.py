@@ -71,6 +71,73 @@ Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
 comillas invertidas (backticks) ni bloques de código markdown.
 """
 
+MAX_TOKENS_LISTADO_CONSOLIDADO = 16384
+
+PROMPT_LISTADO_CONSOLIDADO = """
+Estás leyendo la foto de una planilla de compras CONSOLIDADA de un
+distribuidor mayorista de frutas y verduras: una sola hoja con muchos
+artículos de VARIOS proveedores mezclados (a diferencia de una comanda
+normal, que es de un solo proveedor). Tu trabajo es extraer los datos
+crudos tal como están escritos, renglón por renglón, sin hacer ninguna
+cuenta ni interpretación de costos, y SIN agrupar vos por proveedor — eso
+lo hace el sistema después.
+
+Devolvé ÚNICAMENTE un JSON con este formato exacto:
+
+{
+  "renglones": [
+    {
+      "es_idem": true|false,
+      "proveedor_texto": "...",
+      "codigo": "...",
+      "articulo": "...",
+      "cantidad": ...,
+      "kg_x_bulto": ...,
+      "importe": ...,
+      "nota_margen": "...",
+      "confianza": "alta|baja"
+    }
+  ]
+}
+
+REGLAS DE EXTRACCIÓN:
+
+- Un renglón del JSON por cada FILA de la planilla, en el mismo orden en
+  que aparecen.
+- COLUMNA PROVEEDOR: si la fila tiene el nombre del proveedor escrito,
+  ponelo tal cual en "proveedor_texto" y "es_idem": false. Si la fila usa
+  comillas ("), guiones (—, -), la palabra "ídem"/"idem", o cualquier otra
+  marca que signifique "mismo proveedor que la fila de arriba", poné
+  "es_idem": true y dejá "proveedor_texto" vacío (""). NUNCA copies vos el
+  nombre del proveedor de la fila anterior — eso lo resuelve el sistema
+  después con el flag "es_idem", no adivines ni arrastres el texto.
+- "codigo": el código de producto de la fila si la planilla tiene esa
+  columna, tal cual está escrito. Si no hay columna de código, dejalo
+  vacío.
+- "articulo": el texto COMPLETO tal como está escrito, nunca una parte
+  cortada de la palabra. Si está abreviado (fuera de las abreviaciones de
+  la lista de abajo), transcribí la abreviatura completa tal cual, no la
+  acortes más ni inventes el resto.
+- "kg_x_bulto": el contenido por bulto/cajón si la planilla lo tiene en su
+  propia columna (ej. "18", "10kg"). Si la fila no tiene ese dato, null.
+- "importe": el precio de la fila, si está. Si no está, null.
+- NUNCA adivinar. Si un dato no se lee con seguridad, poner el texto
+  "completar articulo", "completar cantidad" o "completar proveedor" según
+  corresponda (en el campo que no se pudo leer), y marcar
+  "confianza": "baja" en ese renglón. Mejor un campo marcado para revisar
+  a mano que un dato inventado.
+- Capturar SIEMPRE las anotaciones al margen junto al artículo (ej. "84",
+  "x5", "4 kg"), en el campo "nota_margen".
+- Abreviaciones conocidas: "M rojo"/"M.Rojo" = Morrón Rojo, "M verde" =
+  Morrón Verde, "Red" = Manzana Red, "Granny" = Manzana Granny, "Pg" =
+  Manzana PG.
+- Si una fila está completamente vacía o es un encabezado/subtítulo de
+  sección (no un artículo), no la incluyas en "renglones".
+
+Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
+comillas invertidas (backticks) ni bloques de código markdown.
+"""
+
 
 def _detectar_media_type(imagen: bytes) -> str:
     """Detecta el media_type de una imagen (JPEG o PNG) a partir de su firma de bytes."""
@@ -98,8 +165,15 @@ def _limpiar_respuesta_json(texto: str) -> str:
     return texto.strip()
 
 
-def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
-    """Envía la imagen y el prompt de extracción a la API de Claude y devuelve el texto de la respuesta."""
+def _llamar_api_claude(
+    imagen: bytes, media_type: str | None = None, prompt: str = PROMPT_EXTRACCION, max_tokens: int = 8192
+) -> str:
+    """Envía la imagen y un prompt de extracción a la API de Claude y devuelve el texto de la respuesta.
+
+    prompt y max_tokens son configurables para reusar esta misma llamada
+    con el prompt de listado consolidado (más renglones esperados, por eso
+    necesita más espacio de respuesta que una comanda de un solo proveedor).
+    """
     media_type = media_type or _detectar_media_type(imagen)
     api_key = _obtener_api_key()
     imagen_base64 = base64.standard_b64encode(imagen).decode("utf-8")
@@ -112,7 +186,7 @@ def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
             # Generoso a propósito: con el thinking activado y una comanda con
             # varios artículos, un límite chico corta la respuesta a mitad del
             # JSON (quedaba un "Unterminated string" al parsearlo).
-            max_tokens=8192,
+            max_tokens=max_tokens,
             messages=[
                 {
                     "role": "user",
@@ -125,7 +199,7 @@ def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
                                 "data": imagen_base64,
                             },
                         },
-                        {"type": "text", "text": PROMPT_EXTRACCION},
+                        {"type": "text", "text": prompt},
                     ],
                 }
             ],
@@ -137,7 +211,7 @@ def _llamar_api_claude(imagen: bytes, media_type: str | None = None) -> str:
 
     if respuesta.stop_reason == "max_tokens":
         raise RuntimeError(
-            "La respuesta de la API se cortó por quedarse sin espacio (la comanda debe tener muchos artículos). "
+            "La respuesta de la API se cortó por quedarse sin espacio (debe tener muchos artículos). "
             "Probá sacar la foto en partes, o avisale a Lionel para subir el límite."
         )
 
@@ -159,13 +233,12 @@ def _extraer_texto_de_la_respuesta(bloques) -> str:
     return "".join(textos)
 
 
-def extraer_comanda(imagen: bytes, media_type: str | None = None) -> dict:
-    """Extrae los datos crudos de una comanda a partir de una foto.
+def _parsear_json_de_la_respuesta(respuesta_texto: str) -> dict:
+    """Limpia backticks si los hubiera y parsea el JSON de una respuesta de la API.
 
     Devuelve el JSON estructurado ya parseado (dict). Lanza ValueError si la
-    respuesta de la API no es un JSON válido o no tiene forma de objeto.
+    respuesta no es un JSON válido o no tiene forma de objeto.
     """
-    respuesta_texto = _llamar_api_claude(imagen, media_type)
     respuesta_limpia = _limpiar_respuesta_json(respuesta_texto)
 
     try:
@@ -177,3 +250,22 @@ def extraer_comanda(imagen: bytes, media_type: str | None = None) -> dict:
         raise ValueError("La respuesta de la API debe ser un objeto JSON (dict)")
 
     return datos
+
+
+def extraer_comanda(imagen: bytes, media_type: str | None = None) -> dict:
+    """Extrae los datos crudos de una comanda (un solo proveedor) a partir de una foto."""
+    respuesta_texto = _llamar_api_claude(imagen, media_type)
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def extraer_listado_consolidado(imagen: bytes, media_type: str | None = None) -> dict:
+    """Extrae los renglones crudos de una planilla de compras consolidada (varios proveedores en una sola foto).
+
+    Devuelve {"renglones": [...]}, todavía SIN agrupar por proveedor — eso
+    lo hace agrupar_renglones_por_proveedor en core/matcheo_comanda.py, a
+    partir del flag "es_idem" de cada renglón.
+    """
+    respuesta_texto = _llamar_api_claude(
+        imagen, media_type, prompt=PROMPT_LISTADO_CONSOLIDADO, max_tokens=MAX_TOKENS_LISTADO_CONSOLIDADO
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)

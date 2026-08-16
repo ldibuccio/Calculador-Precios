@@ -1378,13 +1378,30 @@ def test_cambiar_proveedor_en_carga_manual_apunta_a_la_pantalla_manual():
     assert 'href="/compras/nueva/manual"' in respuesta.text
 
 
-def test_cargar_listado_de_compras_muestra_en_construccion():
+def test_ver_cargar_listado_de_compras_muestra_la_pantalla():
     respuesta = cliente.get("/compras/nueva/listado")
 
     assert respuesta.status_code == 200
     assert "Cargar listado de compras" in respuesta.text
-    assert "En construcción" in respuesta.text
-    assert 'href="/compras"' in respuesta.text
+    # Un solo toque: el botón abre el selector nativo, no hace falta un
+    # segundo botón "Leer" — mismo criterio que en Múltiples comandas.
+    assert 'class="input-foto-oculto"' in respuesta.text
+    assert 'id="input-foto-listado"' in respuesta.text
+    assert '>Elegir foto de la planilla<' in respuesta.text
+    assert "inputFotoListado.click();" in respuesta.text
+    assert 'inputFotoListado.addEventListener("change"' in respuesta.text
+    assert 'id="boton-guardar-siguiente"' in respuesta.text
+    assert 'id="boton-descartar-siguiente"' in respuesta.text
+    assert 'id="boton-cancelar-multiple"' in respuesta.text
+
+
+def test_ver_cargar_listado_de_compras_incluye_los_proveedores_conocidos_para_sugerir():
+    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/nueva/listado")
+
+    assert respuesta.status_code == 200
+    assert '{ codigo: "N07P41", nombre: "Saturno" }' in respuesta.text
+    assert '{ codigo: "L03P38", nombre: "Frutamax" }' in respuesta.text
 
 
 def test_buscar_compras_muestra_en_construccion():
@@ -1423,6 +1440,7 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     assert 'href="/compras/nueva/fotos"' in respuesta.text
     assert "Cargar Múltiples Fotos" in respuesta.text
     assert 'href="/compras/nueva/listado"' in respuesta.text
+    assert "Cargar Listado de Compras" in respuesta.text
     # Grupo Operaciones: Últimas Compras, Buscar Compras, Armar Listado,
     # Compras sin precio, Disponibles. "Enviar a Logística" se retiró de
     # acá (ahora vive dentro de /compras/ultimas).
@@ -1451,8 +1469,9 @@ def test_ver_compras_botonera_diferencia_grupos_por_color():
     assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
     assert ".boton-naranja { background: #ea580c; }" in respuesta.text
     # "Próximamente": color del grupo pero atenuado (mismo criterio en
-    # Cargar y en Operaciones).
-    assert 'class="boton boton-proximamente" href="/compras/nueva/listado"' in respuesta.text
+    # Cargar y en Operaciones). Cargar Listado de Compras ya no es
+    # "próximamente" — quedó activo.
+    assert 'class="boton" href="/compras/nueva/listado"' in respuesta.text
     assert 'class="boton boton-naranja boton-proximamente" href="/compras/buscar"' in respuesta.text
     assert 'class="boton boton-naranja boton-proximamente" href="/compras/disponibles"' in respuesta.text
     assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
@@ -3148,6 +3167,269 @@ def test_leer_foto_comanda_multiple_error_de_base_devuelve_ok_false():
     datos = respuesta.json()
     assert datos["ok"] is False
     assert "error" in datos
+
+
+RENGLONES_LISTADO_DE_PRUEBA = [
+    {
+        "es_idem": False,
+        "proveedor_texto": "Saturno",
+        "codigo": "",
+        "articulo": "Kiwi",
+        "cantidad": 10,
+        "kg_x_bulto": 18,
+        "importe": 5000,
+        "nota_margen": "84",
+        "confianza": "alta",
+    },
+    {
+        "es_idem": True,
+        "proveedor_texto": "",
+        "codigo": "",
+        "articulo": "Kiwi",
+        "cantidad": 5,
+        "kg_x_bulto": 20,
+        "importe": 3000,
+        "nota_margen": "",
+        "confianza": "alta",
+    },
+    {
+        "es_idem": False,
+        "proveedor_texto": "Frutamax",
+        "codigo": "",
+        "articulo": "completar articulo",
+        "cantidad": 3,
+        "kg_x_bulto": None,
+        "importe": None,
+        "nota_margen": "",
+        "confianza": "baja",
+    },
+]
+
+
+def test_leer_listado_consolidado_agrupa_por_proveedor_y_arma_un_grupo_revisable_por_cada_uno():
+    with (
+        patch("app.main.extraer_listado_consolidado", return_value={"renglones": RENGLONES_LISTADO_DE_PRUEBA}),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/leer",
+            files={"foto": ("planilla.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is True
+    # Saturno (2 renglones, el segundo es ídem) y Frutamax (1 renglón),
+    # cada uno un grupo revisable aparte, en orden de primera aparición.
+    assert len(datos["grupos"]) == 2
+    assert datos["grupos"][0]["cantidad_renglones"] == 2
+    assert "Saturno" in datos["grupos"][0]["html"]
+    assert "N07P41" in datos["grupos"][0]["html"]
+    assert datos["grupos"][1]["cantidad_renglones"] == 1
+    assert "Frutamax" in datos["grupos"][1]["html"]
+    # Opción A: renglón con articulo no reconocido queda marcado para
+    # revisar a mano, nunca se guarda solo.
+    assert "⚠ revisar" in datos["grupos"][1]["html"]
+    # La foto de la planilla se manda en la respuesta para poder subirla
+    # una sola vez desde el cliente (asegurarFotoSubida en el template).
+    assert datos["foto_preview"].startswith("data:image/jpeg;base64,")
+
+
+def test_leer_listado_consolidado_kg_x_bulto_de_la_planilla_pisa_el_de_catalogo():
+    # Regresión: a diferencia de una comanda normal (contenido_por_cajon
+    # sale del catálogo), en el listado cada renglón trae su propio
+    # kg_x_bulto — el primer renglón de prueba trae 18 (coincide con el
+    # catálogo) y el segundo (ídem) trae 20 (distinto al catálogo, 18):
+    # tiene que quedar 20, no el del catálogo.
+    with (
+        patch("app.main.extraer_listado_consolidado", return_value={"renglones": RENGLONES_LISTADO_DE_PRUEBA}),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/leer",
+            files={"foto": ("planilla.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    datos = respuesta.json()
+    assert 'value="20.0"' in datos["grupos"][0]["html"] or 'value="20"' in datos["grupos"][0]["html"]
+
+
+def test_leer_listado_consolidado_proveedor_no_matcheado_queda_para_revisar():
+    # Opción A también para proveedor no reconocido: el grupo queda armado
+    # igual (con el nombre leído, id None), el comprador lo completa a mano
+    # en el buscador combinado antes de guardar.
+    renglones = [
+        {
+            "es_idem": False,
+            "proveedor_texto": "Proveedor Desconocido SRL",
+            "codigo": "",
+            "articulo": "Kiwi",
+            "cantidad": 10,
+            "kg_x_bulto": 18,
+            "importe": 5000,
+            "nota_margen": "",
+            "confianza": "alta",
+        }
+    ]
+    with (
+        patch("app.main.extraer_listado_consolidado", return_value={"renglones": renglones}),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/leer",
+            files={"foto": ("planilla.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    datos = respuesta.json()
+    assert datos["ok"] is True
+    assert len(datos["grupos"]) == 1
+    assert "Proveedor Desconocido SRL" in datos["grupos"][0]["html"]
+
+
+def test_leer_listado_consolidado_si_falla_la_ia_devuelve_ok_false():
+    with (
+        patch("app.main.extraer_listado_consolidado", side_effect=Exception("no se pudo leer la planilla")),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/leer",
+            files={"foto": ("planilla.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "error" in datos
+
+
+def test_leer_listado_consolidado_error_de_base_devuelve_ok_false():
+    with (
+        patch("app.main.extraer_listado_consolidado", return_value={"renglones": RENGLONES_LISTADO_DE_PRUEBA}),
+        patch("app.main.listar_proveedores", side_effect=Exception("sin conexión")),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/leer",
+            files={"foto": ("planilla.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "error" in datos
+
+
+def test_leer_listado_consolidado_sin_renglones_leidos_devuelve_ok_false():
+    with (
+        patch("app.main.extraer_listado_consolidado", return_value={"renglones": []}),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/leer",
+            files={"foto": ("planilla.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "error" in datos
+
+
+def test_subir_foto_listado_sube_una_vez_y_devuelve_la_ruta():
+    with patch("app.main.subir_foto_comanda", return_value="2026-08-15/listado-abc123.jpg") as mock_subir:
+        respuesta = cliente.post(
+            "/compras/nueva/listado/subir-foto",
+            data={"foto_preview": FOTO_PREVIEW_DE_PRUEBA},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is True
+    assert datos["foto_ruta"] == "2026-08-15/listado-abc123.jpg"
+    mock_subir.assert_called_once_with(b"hello", "listado")
+
+
+def test_subir_foto_listado_data_uri_invalida_devuelve_ok_false():
+    respuesta = cliente.post(
+        "/compras/nueva/listado/subir-foto",
+        data={"foto_preview": "esto no es una data uri"},
+    )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "error" in datos
+
+
+def test_subir_foto_listado_si_falla_la_subida_devuelve_ok_false():
+    with patch("app.main.subir_foto_comanda", side_effect=RuntimeError("Supabase Storage rechazó la subida (403)")):
+        respuesta = cliente.post(
+            "/compras/nueva/listado/subir-foto",
+            data={"foto_preview": FOTO_PREVIEW_DE_PRUEBA},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert datos["ok"] is False
+    assert "error" in datos
+
+
+def test_confirmar_compra_foto_con_foto_ruta_ya_subida_no_vuelve_a_subir():
+    # Regresión: en el listado consolidado, a partir del segundo proveedor
+    # guardado el form manda foto_ruta_ya_subida — no hay que llamar a
+    # subir_foto_comanda de nuevo, hay que usar esa ruta tal cual.
+    datos = _datos_confirmar_foto()
+    datos["foto_ruta_ya_subida"] = "2026-08-15/listado-abc123.jpg"
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.subir_foto_comanda") as mock_subir,
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo"),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_subir.assert_not_called()
+    mock_crear.assert_called_once_with(
+        HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", "2026-08-15/listado-abc123.jpg"
+    )
+
+
+def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
+    # Regresión: sin ese campo (comanda única y múltiples fotos, que nunca
+    # lo mandan), el comportamiento no cambia — sigue subiendo a partir de
+    # foto_preview como siempre.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-123-abcdef12.jpg") as mock_subir,
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo"),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=_datos_confirmar_foto(foto_preview=FOTO_PREVIEW_DE_PRUEBA),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_subir.assert_called_once_with(b"hello", "N07P41")
+    assert mock_crear.call_args.args[-1] == "2026-08-06/n07p41-123-abcdef12.jpg"
 
 
 def test_ver_costeo_prueba_muestra_tabla_con_formato():

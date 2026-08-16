@@ -58,8 +58,8 @@ from app.db import (
     obtener_proveedor,
     obtener_uso_storage_bucket,
 )
-from core.lector_comandas import extraer_comanda
-from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, normalizar_texto
+from core.lector_comandas import extraer_comanda, extraer_listado_consolidado
+from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
@@ -1086,7 +1086,11 @@ def _renderizar_en_construccion(
 
 @app.get("/compras/nueva/listado")
 def ver_cargar_listado_compras(request: Request):
-    return _renderizar_en_construccion(request, "Cargar listado de compras")
+    try:
+        proveedores = listar_proveedores()
+    except Exception:
+        proveedores = []
+    return templates.TemplateResponse(request, "compra_listado.html", {"proveedores": proveedores})
 
 
 @app.get("/compras/buscar")
@@ -1587,6 +1591,114 @@ async def leer_foto_comanda_multiple(foto: UploadFile = File(...)):
     return JSONResponse({"ok": True, "html": html, "cantidad_renglones": len(renglones)})
 
 
+@app.post("/compras/nueva/listado/leer")
+async def leer_listado_consolidado(foto: UploadFile = File(...)):
+    """Lee UNA foto de planilla consolidada (varios proveedores mezclados) y arma un grupo revisable por proveedor.
+
+    A diferencia de leer_foto_comanda_multiple (una foto = una comanda de UN
+    proveedor), acá una sola llamada devuelve TODOS los grupos de una: no
+    hace falta cola ni concurrencia, la planilla se lee una sola vez.
+    """
+    imagen = await foto.read()
+    foto_preview = _generar_preview_foto(imagen)
+    try:
+        datos = extraer_listado_consolidado(imagen)
+    except Exception as error_lector:
+        return JSONResponse({"ok": False, "error": f"No se pudo leer la planilla: {error_lector}"})
+
+    try:
+        proveedores_existentes = listar_proveedores()
+        articulos_existentes = listar_articulos()
+        conversiones_existentes = listar_todas_las_conversiones()
+    except Exception as error_db:
+        return JSONResponse({"ok": False, "error": f"Error al conectar con la base de datos: {error_db}"})
+
+    renglones_leidos = datos.get("renglones") or []
+    if not renglones_leidos:
+        return JSONResponse({"ok": False, "error": "No se pudo leer ningún renglón de la planilla."})
+
+    grupos_por_proveedor = agrupar_renglones_por_proveedor(renglones_leidos, proveedores_existentes)
+
+    grupos_respuesta = []
+    for grupo in grupos_por_proveedor:
+        datos_grupo = {
+            "proveedor": {"nombre": grupo["proveedor_texto"]},
+            "items": [
+                {
+                    "articulo": renglon.get("articulo") or "",
+                    "cantidad": renglon.get("cantidad"),
+                    "importe": renglon.get("importe"),
+                    "sena": None,
+                    "nota_margen": renglon.get("nota_margen") or "",
+                    "confianza": renglon.get("confianza"),
+                }
+                for renglon in grupo["renglones"]
+            ],
+        }
+        sugerencias = _armar_sugerencias_desde_datos_leidos(
+            datos_grupo, proveedores_existentes, articulos_existentes, conversiones_existentes
+        )
+
+        renglones_sugeridos = sugerencias["renglones"]
+        # kg_x_bulto viene escrito en la planilla renglón por renglón (a
+        # diferencia de una comanda normal, donde ese dato sale del
+        # catálogo) — cuando está, pisa el valor de referencia que ya trajo
+        # _armar_sugerencias_desde_datos_leidos.
+        for renglon_sugerido, renglon_leido in zip(renglones_sugeridos, grupo["renglones"]):
+            kg_x_bulto = _numero_o_none(renglon_leido.get("kg_x_bulto"))
+            if kg_x_bulto is not None:
+                renglon_sugerido["contenido_por_cajon"] = kg_x_bulto
+
+        renglones_sugeridos = renglones_sugeridos or [
+            {
+                "texto_leido": "",
+                "articulo_id": None,
+                "cantidad_cajones": None,
+                "contenido_por_cajon": None,
+                "importe": None,
+                "sena": None,
+                "nota_margen": "",
+                "advertencia": True,
+                "descartado": False,
+            }
+        ]
+
+        html = templates.env.get_template("_fragmento_revision_comanda_multiple.html").render(
+            {
+                "articulos": articulos_existentes,
+                "codigo_puesto_sugerido": sugerencias["codigo_puesto_sugerido"],
+                "nombre_sugerido": sugerencias["nombre_sugerido"],
+                "renglones": renglones_sugeridos,
+                "foto_preview": foto_preview,
+            }
+        )
+        grupos_respuesta.append({"html": html, "cantidad_renglones": len(renglones_sugeridos)})
+
+    return JSONResponse({"ok": True, "grupos": grupos_respuesta, "foto_preview": foto_preview})
+
+
+@app.post("/compras/nueva/listado/subir-foto")
+async def subir_foto_listado_ruta(foto_preview: str = Form(...)):
+    """Sube UNA sola vez la foto de la planilla consolidada, compartida por todos sus grupos/proveedores.
+
+    Ruta chica y separada a propósito (no reusa confirmar_compra_foto): la
+    pantalla de listado la llama una única vez, antes de guardar el primer
+    grupo, y guarda la foto_ruta devuelta para pasarla en los guardados
+    siguientes (ver foto_ruta_ya_subida en confirmar_compra_foto) — así la
+    foto no se vuelve a subir una vez por proveedor.
+    """
+    bytes_foto = _bytes_desde_data_uri(foto_preview)
+    if not bytes_foto:
+        return JSONResponse({"ok": False, "error": "No se pudo leer la foto para subir."})
+
+    try:
+        foto_ruta = subir_foto_comanda(bytes_foto, "listado")
+    except Exception as error:
+        return JSONResponse({"ok": False, "error": f"No se pudo subir la foto: {error}"})
+
+    return JSONResponse({"ok": True, "foto_ruta": foto_ruta})
+
+
 @app.post("/compras/nueva/foto/confirmar")
 async def confirmar_compra_foto(request: Request):
     form = await request.form()
@@ -1594,6 +1706,12 @@ async def confirmar_compra_foto(request: Request):
     codigo_puesto_texto = str(form.get("codigo_puesto", ""))
     nombre_texto = str(form.get("nombre", ""))
     foto_preview_texto = str(form.get("foto_preview", ""))
+    # Solo la pantalla de listado consolidado manda esto: la foto de la
+    # planilla ya se subió una vez (ver /compras/nueva/listado/subir-foto),
+    # compartida por todos sus proveedores — si viene, no hay que volver a
+    # subir nada. En comanda única y múltiples fotos este campo no existe
+    # nunca, así que ahí el comportamiento no cambia.
+    foto_ruta_ya_subida_texto = str(form.get("foto_ruta_ya_subida", "")).strip()
     accion = str(form.get("accion", "agregar_articulos"))
     try:
         cantidad_renglones = int(form.get("cantidad_renglones", "0") or "0")
@@ -1698,18 +1816,26 @@ async def confirmar_compra_foto(request: Request):
         # los renglones — mejor una compra guardada sin foto que ninguna
         # compra guardada. Se sube UNA sola vez (una comanda = una foto =
         # varios renglones), no una vez por renglón.
-        foto_ruta = None
-        bytes_foto = _bytes_desde_data_uri(foto_preview_texto)
-        if bytes_foto:
-            try:
-                foto_ruta = subir_foto_comanda(bytes_foto, codigo_valor)
-            except Exception:
-                logger.exception(
-                    "No se pudo subir la foto de la comanda a Supabase Storage (proveedor %s) "
-                    "— se guarda la compra igual, sin foto",
-                    codigo_valor,
-                )
-                foto_ruta = None
+        #
+        # Si foto_ruta_ya_subida vino con valor (listado consolidado, a
+        # partir del segundo grupo guardado), se usa directo y no se sube
+        # nada de nuevo — la foto de la planilla ya está en Storage,
+        # compartida por todos sus proveedores.
+        if foto_ruta_ya_subida_texto:
+            foto_ruta = foto_ruta_ya_subida_texto
+        else:
+            foto_ruta = None
+            bytes_foto = _bytes_desde_data_uri(foto_preview_texto)
+            if bytes_foto:
+                try:
+                    foto_ruta = subir_foto_comanda(bytes_foto, codigo_valor)
+                except Exception:
+                    logger.exception(
+                        "No se pudo subir la foto de la comanda a Supabase Storage (proveedor %s) "
+                        "— se guarda la compra igual, sin foto",
+                        codigo_valor,
+                    )
+                    foto_ruta = None
 
         hoy = _hoy_argentina()
         for texto_leido, valores, articulo in renglones_a_guardar:

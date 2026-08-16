@@ -100,6 +100,68 @@ def adivinar_proveedor(proveedor_leido: dict, proveedores_existentes: list[dict]
     return None
 
 
+def agrupar_renglones_por_proveedor(renglones: list[dict], proveedores_existentes: list[dict]) -> list[dict]:
+    """Agrupa los renglones planos de un listado consolidado (varios proveedores en una sola foto) por proveedor.
+
+    Cada renglón trae "proveedor_texto" (puede venir vacío) y "es_idem"
+    (True si la fila usaba comillas/guiones/"ídem" para decir "mismo
+    proveedor que la fila de arriba" — ver PROMPT_LISTADO_CONSOLIDADO en
+    core/lector_comandas.py). Recorre en orden: si es_idem, el renglón se
+    suma al grupo del proveedor_texto vigente (el de la última fila que sí
+    traía nombre propio); si no, actualiza cuál es el proveedor vigente.
+
+    Después funde entre sí los grupos que no quedaron contiguos pero son en
+    realidad el mismo proveedor: por id (si ambos matchean, vía
+    adivinar_proveedor, al mismo proveedor ya existente) o, si ninguno
+    matchea nada existente, por texto normalizado idéntico (mismo
+    proveedor nuevo mencionado dos veces en la planilla, en bloques
+    separados, sin ídem entre medio).
+
+    Devuelve una lista de {"proveedor_texto": str, "renglones": [...]}, en
+    el orden de primera aparición de cada proveedor.
+    """
+    grupos_en_orden = []
+    proveedor_vigente = ""
+
+    for renglon in renglones:
+        if not renglon.get("es_idem"):
+            proveedor_vigente = (renglon.get("proveedor_texto") or "").strip()
+
+        if grupos_en_orden and grupos_en_orden[-1]["proveedor_texto"] == proveedor_vigente:
+            grupo = grupos_en_orden[-1]
+        else:
+            grupo = {"proveedor_texto": proveedor_vigente, "renglones": []}
+            grupos_en_orden.append(grupo)
+
+        grupo["renglones"].append(renglon)
+
+    grupos_fundidos = []
+    indice_por_proveedor_id = {}
+    indice_por_texto_normalizado = {}
+    for grupo in grupos_en_orden:
+        proveedor_texto = grupo["proveedor_texto"]
+        proveedor_sugerido = adivinar_proveedor({"nombre": proveedor_texto}, proveedores_existentes)
+        proveedor_id = proveedor_sugerido["id"] if proveedor_sugerido else None
+        texto_normalizado = normalizar_texto(proveedor_texto)
+
+        indice_existente = indice_por_proveedor_id.get(proveedor_id) if proveedor_id is not None else None
+        if indice_existente is None and texto_normalizado:
+            indice_existente = indice_por_texto_normalizado.get(texto_normalizado)
+
+        if indice_existente is not None:
+            grupos_fundidos[indice_existente]["renglones"].extend(grupo["renglones"])
+            continue
+
+        grupos_fundidos.append({"proveedor_texto": proveedor_texto, "renglones": grupo["renglones"]})
+        nuevo_indice = len(grupos_fundidos) - 1
+        if proveedor_id is not None:
+            indice_por_proveedor_id[proveedor_id] = nuevo_indice
+        if texto_normalizado:
+            indice_por_texto_normalizado[texto_normalizado] = nuevo_indice
+
+    return grupos_fundidos
+
+
 def _mejor_candidato(texto_normalizado: str, candidatos: list[tuple[str, int]], umbral: float) -> int | None:
     """Busca el mejor candidato en (texto_candidato_normalizado, valor): exacto, por palabra completa, o por parecido.
 
