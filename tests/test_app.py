@@ -3926,7 +3926,11 @@ def test_ver_precios_muestra_la_botonera():
     assert respuesta.status_code == 200
     assert 'href="/precios/consultar"' in respuesta.text
     assert 'href="/precios/cargar"' in respuesta.text
+    assert 'href="/precios/cargar-foto"' in respuesta.text
     assert 'href="/precios/generar-listado"' in respuesta.text
+    assert "Carga Manual de Precios" in respuesta.text
+    assert "Cargar Foto Precios" in respuesta.text
+    assert "Cargar Precios Nuevos" not in respuesta.text
     assert "Próximamente" in respuesta.text
 
 
@@ -4449,6 +4453,281 @@ def test_cargar_precios_cliente_invalido_da_400():
 def test_cargar_precios_cliente_inexistente_da_404():
     with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
         respuesta = cliente.post("/precios/cargar", data={"cliente_id": "999"})
+
+    assert respuesta.status_code == 404
+
+
+# --- /precios/cargar-foto: carga de precios leyendo un archivo (foto, PDF o Excel) con IA ---
+
+LISTADO_PRECIOS_LEIDO_DE_PRUEBA = {
+    "items": [
+        {"articulo": "Tomate Cherry", "precio": 520.0, "confianza": "alta"},
+        {"articulo": "algo ilegible", "precio": 999.0, "confianza": "baja"},
+    ]
+}
+
+
+def test_ver_cargar_foto_precios_sin_cliente_muestra_selector():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/cargar-foto")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente para subirle un listado de precios." in respuesta.text
+
+
+def test_ver_cargar_foto_precios_con_cliente_muestra_boton_de_subir():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/cargar-foto?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="archivo"' in respuesta.text
+    assert 'accept="image/*,.pdf,.xlsx"' in respuesta.text
+
+
+def test_ver_cargar_foto_precios_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/cargar-foto?cliente_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def test_leer_foto_precios_matchea_y_muestra_pantalla_de_revision():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.extraer_listado_precios_de_imagenes", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA) as mock_extraer,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={"archivo": ("lista.jpg", b"contenido falso de una foto", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert "Tomate Cherry" in respuesta.text
+    assert 'value="520.0"' in respuesta.text
+    assert "Precio vigente: $500" in respuesta.text
+    assert "⚠ revisar" in respuesta.text  # el segundo ítem, no matcheado
+    mock_extraer.assert_called_once_with([b"contenido falso de una foto"])
+
+
+def test_leer_foto_precios_pdf_convierte_paginas_a_imagenes():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.imagenes_desde_pdf", return_value=[b"pagina1", b"pagina2"]) as mock_pdf,
+        patch("app.main.extraer_listado_precios_de_imagenes", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA) as mock_extraer,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={"archivo": ("lista.pdf", b"contenido falso de un pdf", "application/pdf")},
+        )
+
+    assert respuesta.status_code == 200
+    mock_pdf.assert_called_once_with(b"contenido falso de un pdf")
+    mock_extraer.assert_called_once_with([b"pagina1", b"pagina2"])
+
+
+def test_leer_foto_precios_excel_convierte_a_texto():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.texto_desde_excel", return_value="Tomate Cherry | 520") as mock_excel,
+        patch("app.main.extraer_listado_precios_de_texto", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA) as mock_extraer,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={
+                "archivo": (
+                    "lista.xlsx",
+                    b"contenido falso de un excel",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+
+    assert respuesta.status_code == 200
+    mock_excel.assert_called_once_with(b"contenido falso de un excel")
+    mock_extraer.assert_called_once_with("Tomate Cherry | 520")
+
+
+def test_leer_foto_precios_extension_no_soportada_muestra_mensaje_claro():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={"archivo": ("lista.docx", b"contenido falso", "application/msword")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "No se pudo reconocer el tipo de archivo" in respuesta.text
+
+
+def test_leer_foto_precios_error_de_lectura_no_rompe_muestra_mensaje_claro():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.extraer_listado_precios_de_imagenes", side_effect=RuntimeError("la IA no pudo leer nada")),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={"archivo": ("lista.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo leer el archivo" in respuesta.text
+    assert "la IA no pudo leer nada" in respuesta.text
+
+
+def test_leer_foto_precios_sin_ningun_articulo_muestra_mensaje_claro():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.extraer_listado_precios_de_imagenes", return_value={"items": []}),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={"archivo": ("lista.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "No se encontró ningún artículo" in respuesta.text
+
+
+def test_leer_foto_precios_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "999"},
+            files={"archivo": ("lista.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 404
+
+
+def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.subir_archivo_comanda", return_value="2026-08-16/dia-123-abc.jpg") as mock_subir,
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto/confirmar",
+            data={
+                "cliente_id": "1",
+                "cantidad_renglones": "1",
+                "tipo_archivo": "foto",
+                "archivo_preview": "data:image/jpeg;base64,QUJD",
+                "item_0_articulo_id": "1",
+                "item_0_precio_original": "500.0",
+                "item_0_precio_nuevo": "520",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/precios?guardado=1"
+    mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg")
+    mock_guardar.assert_called_once_with(1, [{"articulo_id": 1, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+
+
+def test_confirmar_carga_foto_precios_renglon_descartado_no_se_guarda():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.subir_archivo_comanda") as mock_subir,
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto/confirmar",
+            data={
+                "cliente_id": "1",
+                "cantidad_renglones": "1",
+                "tipo_archivo": "foto",
+                "archivo_preview": "",
+                "item_0_articulo_id": "1",
+                "item_0_precio_original": "500.0",
+                "item_0_precio_nuevo": "520",
+                "item_0_descartar": "on",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_subir.assert_not_called()
+    mock_guardar.assert_called_once_with(1, [], foto_ruta=None)
+
+
+def test_confirmar_carga_foto_precios_error_al_subir_archivo_guarda_igual_sin_archivo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.subir_archivo_comanda", side_effect=RuntimeError("Storage caído")),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto/confirmar",
+            data={
+                "cliente_id": "1",
+                "cantidad_renglones": "1",
+                "tipo_archivo": "foto",
+                "archivo_preview": "data:image/jpeg;base64,QUJD",
+                "item_0_articulo_id": "1",
+                "item_0_precio_original": "500.0",
+                "item_0_precio_nuevo": "520",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(1, [{"articulo_id": 1, "precio": 520.0}], foto_ruta=None)
+
+
+def test_confirmar_carga_foto_precios_pdf_sube_con_extension_y_content_type_correctos():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.subir_archivo_comanda", return_value="ruta.pdf") as mock_subir,
+        patch("app.main.guardar_precios_cliente"),
+    ):
+        cliente.post(
+            "/precios/cargar-foto/confirmar",
+            data={
+                "cliente_id": "1",
+                "cantidad_renglones": "1",
+                "tipo_archivo": "pdf",
+                "archivo_preview": "data:application/pdf;base64,QUJD",
+                "item_0_articulo_id": "1",
+                "item_0_precio_original": "",
+                "item_0_precio_nuevo": "520",
+            },
+            follow_redirects=False,
+        )
+
+    mock_subir.assert_called_once_with(b"ABC", "Día", "pdf", "application/pdf")
+
+
+def test_confirmar_carga_foto_precios_cliente_invalido_da_400():
+    respuesta = cliente.post("/precios/cargar-foto/confirmar", data={"cliente_id": "abc"})
+
+    assert respuesta.status_code == 400
+
+
+def test_confirmar_carga_foto_precios_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post("/precios/cargar-foto/confirmar", data={"cliente_id": "999"})
 
     assert respuesta.status_code == 404
 

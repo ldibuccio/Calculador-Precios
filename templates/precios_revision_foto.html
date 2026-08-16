@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revisar listado leído</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .tarjeta.con-advertencia {
+    border: 2px solid #dc2626;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+  .precio-vigente {
+    font-weight: 600;
+    color: #222;
+  }
+  .texto-leido {
+    color: #555;
+    font-size: 0.9rem;
+    margin: 0 0 0.5rem;
+  }
+  .advertencia {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form select, form input[type="number"] {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .campo-descartar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+  }
+  .campo-descartar input {
+    width: auto;
+    margin-top: 0;
+  }
+  .campo-descartar label {
+    margin-top: 0;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
+  .boton-ver-foto {
+    margin-top: 0.75rem;
+    width: auto;
+    display: inline-block;
+    padding: 0.5rem 0.9rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .modal-foto {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 100;
+    padding: 1rem;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-foto.visible {
+    display: flex;
+  }
+  .modal-foto-contenido {
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .modal-foto img {
+    max-width: 100%;
+    max-height: 85vh;
+    display: block;
+    border-radius: 8px;
+  }
+  .modal-foto-cerrar {
+    margin-top: 0.75rem;
+    width: 100%;
+    padding: 0.65rem;
+    background: #fff;
+    color: #222;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Revisar listado leído" %}
+  {% include "_barra_navegacion.html" %}
+  <p class="ayuda">Esto es lo que el sistema pudo leer e interpretar del archivo. Revisá y corregí lo que haga falta antes de guardar — todavía no se guardó nada.</p>
+
+  {% if tipo_archivo == "foto" and archivo_preview %}
+  <div id="modal-foto" class="modal-foto" onclick="cerrarArchivo(event)">
+    <div class="modal-foto-contenido" onclick="event.stopPropagation()">
+      <img src="{{ archivo_preview }}" alt="Foto del listado de precios">
+      <button type="button" class="modal-foto-cerrar" onclick="cerrarArchivo(event)">Cerrar</button>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <p><strong>Cliente:</strong> {{ cliente_nombre }}</p>
+    {% if nombre_archivo %}<p class="ayuda">Archivo: {{ nombre_archivo }}</p>{% endif %}
+    {% if tipo_archivo == "foto" %}
+    <button type="button" class="boton-ver-foto" onclick="verArchivo(event)">Ver foto</button>
+    {% else %}
+    <a href="{{ archivo_preview }}" target="_blank" rel="noopener" class="boton-ver-foto">Ver archivo</a>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/precios/cargar-foto/confirmar" id="form-confirmar-precios">
+    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+    <input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
+    <input type="hidden" name="tipo_archivo" value="{{ tipo_archivo }}">
+    <input type="hidden" name="archivo_preview" value="{{ archivo_preview }}">
+
+    {% for r in renglones %}
+    <div class="tarjeta{% if r.advertencia %} con-advertencia{% endif %}">
+      <h2>Artículo {{ loop.index }}</h2>
+      {% if r.advertencia %}
+      <span class="advertencia">⚠ revisar</span>
+      {% endif %}
+      <p class="texto-leido">Texto leído: "{{ r.texto_leido or "(sin leer)" }}"</p>
+
+      <label for="item_{{ loop.index0 }}_articulo_id">Artículo *</label>
+      <select id="item_{{ loop.index0 }}_articulo_id" name="item_{{ loop.index0 }}_articulo_id"
+              onchange="actualizarPrecioVigente({{ loop.index0 }}, this)" required>
+        <option value="" {% if not r.articulo_id %}selected{% endif %}>Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.articulo_id }}"
+                data-precio-vigente="{% if a.precio_vigente is not none %}{{ a.precio_vigente }}{% endif %}"
+                {% if r.articulo_id == a.articulo_id %}selected{% endif %}>{{ a.articulo_nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <p class="ayuda precio-vigente" id="item_{{ loop.index0 }}_precio_vigente_texto">
+        {% if r.precio_original is not none %}Precio vigente: {{ r.precio_original|moneda }}
+        {% else %}Todavía no tiene precio cargado.{% endif %}
+      </p>
+      <input type="hidden" id="item_{{ loop.index0 }}_precio_original" name="item_{{ loop.index0 }}_precio_original"
+             value="{% if r.precio_original is not none %}{{ r.precio_original }}{% endif %}">
+
+      <label for="item_{{ loop.index0 }}_precio_nuevo">Precio nuevo *</label>
+      <input type="number" step="0.01" min="0.01" id="item_{{ loop.index0 }}_precio_nuevo" name="item_{{ loop.index0 }}_precio_nuevo"
+             required value="{% if r.precio_nuevo is not none %}{{ r.precio_nuevo }}{% endif %}">
+
+      <div class="campo-descartar">
+        <input type="checkbox" id="item_{{ loop.index0 }}_descartar" name="item_{{ loop.index0 }}_descartar"
+               onchange="alternarDescarte({{ loop.index0 }}, this)" {% if r.descartado %}checked{% endif %}>
+        <label for="item_{{ loop.index0 }}_descartar">No cargar este artículo</label>
+      </div>
+    </div>
+    {% endfor %}
+
+    <button type="submit" class="boton-exito" id="boton-guardar-precios">Guardar</button>
+    <a href="/precios/cargar-foto?cliente_id={{ cliente_id }}" class="boton boton-peligro" id="boton-cancelar"
+       onclick="return confirm('¿Seguro? Se pierde lo que se leyó de este archivo.');">Cancelar</a>
+  </form>
+
+  <script>
+    const CANTIDAD_RENGLONES = {{ renglones|length }};
+
+    function formatearMoneda(valor) {
+      const entero = Math.round(valor);
+      const negativo = entero < 0;
+      const texto = Math.abs(entero).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+      return "$" + (negativo ? "-" : "") + texto;
+    }
+
+    function actualizarPrecioVigente(indice, select) {
+      const opcion = select.selectedOptions[0];
+      const textoEl = document.getElementById("item_" + indice + "_precio_vigente_texto");
+      const ocultoEl = document.getElementById("item_" + indice + "_precio_original");
+      if (!opcion || !textoEl || !ocultoEl) {
+        return;
+      }
+      const precioVigente = opcion.dataset.precioVigente;
+      if (precioVigente) {
+        ocultoEl.value = precioVigente;
+        textoEl.textContent = "Precio vigente: " + formatearMoneda(parseFloat(precioVigente));
+      } else {
+        ocultoEl.value = "";
+        textoEl.textContent = "Todavía no tiene precio cargado.";
+      }
+    }
+
+    // Un renglón descartado no tiene por qué estar completo: si no, el
+    // navegador bloquea todo el envío por los campos obligatorios vacíos
+    // de ESE renglón, aunque no se vaya a guardar.
+    function alternarDescarte(indice, checkbox) {
+      const campos = [
+        document.getElementById("item_" + indice + "_articulo_id"),
+        document.getElementById("item_" + indice + "_precio_nuevo"),
+      ];
+      campos.forEach(function (campo) {
+        if (campo) {
+          campo.required = !checkbox.checked;
+        }
+      });
+    }
+
+    for (let indice = 0; indice < CANTIDAD_RENGLONES; indice++) {
+      const checkbox = document.getElementById("item_" + indice + "_descartar");
+      if (checkbox) {
+        alternarDescarte(indice, checkbox);
+      }
+    }
+
+    function verArchivo(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.add("visible");
+      }
+    }
+
+    function cerrarArchivo(evento) {
+      evento.preventDefault();
+      const modal = document.getElementById("modal-foto");
+      if (modal) {
+        modal.classList.remove("visible");
+      }
+    }
+
+    // El guardado puede tardar unos segundos; sin este cartel se pierde la
+    // noción de que algo está pasando. OJO: en Safari/iOS, deshabilitar el
+    // botón DURANTE el evento submit cancela el envío del formulario — por
+    // eso el disabled se aplica en un setTimeout, después de que el
+    // navegador ya arrancó el envío.
+    const formConfirmarPrecios = document.getElementById("form-confirmar-precios");
+    if (formConfirmarPrecios) {
+      formConfirmarPrecios.addEventListener("submit", function () {
+        const boton = document.getElementById("boton-guardar-precios");
+        if (boton) {
+          boton.textContent = "Guardando...";
+          setTimeout(function () {
+            boton.disabled = true;
+          }, 0);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

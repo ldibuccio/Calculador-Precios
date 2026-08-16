@@ -48,8 +48,8 @@ def _sanear_nombre(texto: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", sin_acentos.lower()).strip("-")
 
 
-def _armar_ruta_unica(nombre_archivo: str) -> str:
-    """Arma un path único dentro del bucket: "aaaa-mm-dd/base-timestampms-random.jpg".
+def _armar_ruta_unica(nombre_archivo: str, extension: str = "jpg") -> str:
+    """Arma un path único dentro del bucket: "aaaa-mm-dd/base-timestampms-random.ext".
 
     "base" es nombre_archivo saneado (ej. "comanda" o el código de puesto
     del proveedor) — solo para que el path se pueda leer a simple vista, no
@@ -58,41 +58,39 @@ def _armar_ruta_unica(nombre_archivo: str) -> str:
     ej. dos comandas del mismo proveedor casi en simultáneo) es el
     timestamp en milisegundos + 8 caracteres random. La carpeta por fecha
     es solo para que el bucket quede ordenado y sea fácil de recorrer a
-    mano desde el panel de Supabase si hace falta.
+    mano desde el panel de Supabase si hace falta. "extension" es la
+    extensión real del archivo (sin el punto) — "jpg" por defecto para no
+    romper a quien ya llama a subir_foto_comanda sin pasarla.
     """
     base = _sanear_nombre(nombre_archivo) or "comanda"
     fecha = time.strftime("%Y-%m-%d")
     timestamp_ms = int(time.time() * 1000)
     sufijo_random = uuid.uuid4().hex[:8]
-    return f"{fecha}/{base}-{timestamp_ms}-{sufijo_random}.jpg"
+    return f"{fecha}/{base}-{timestamp_ms}-{sufijo_random}.{extension}"
 
 
-def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str) -> str:
-    """Sube una foto (ya comprimida a JPEG) al bucket privado "comandas" y devuelve la ruta con la que quedó guardada.
+def subir_archivo_comanda(bytes_archivo: bytes, nombre_archivo: str, extension: str, content_type: str) -> str:
+    """Sube un archivo cualquiera (foto ya comprimida, PDF o Excel tal cual) al bucket privado "comandas".
 
-    nombre_archivo es una base descriptiva (ej. "comanda", o el código de
-    puesto del proveedor) — la ruta final siempre es única, ver
-    _armar_ruta_unica. Guardá la ruta devuelta (no hace falta guardar nada
-    más) para poder pedir después una URL con obtener_url_foto(ruta).
+    Generalización de subir_foto_comanda para aceptar cualquier formato de
+    archivo (no solo JPEG): "Cargar Foto Precios" puede subir una foto, un
+    PDF o un Excel, cada uno con su extensión y content-type reales.
+    Devuelve la ruta con la que quedó guardado, ver _armar_ruta_unica.
 
-    Lanza RuntimeError con un mensaje claro si:
-    - Faltan SUPABASE_URL o SUPABASE_SERVICE_KEY en el entorno.
-    - No se pudo conectar (sin internet, DNS, timeout, etc.).
-    - Supabase Storage rechazó la subida (credencial inválida, bucket
-      inexistente, etc.) — se incluye el status code y el mensaje que
-      devolvió Supabase, para poder diagnosticar sin adivinar.
+    Mismos errores que subir_foto_comanda (RuntimeError con mensaje claro
+    si faltan credenciales, no hay conexión, o Supabase rechaza la subida).
     """
     url_base, service_key = _obtener_credenciales()
-    ruta = _armar_ruta_unica(nombre_archivo)
+    ruta = _armar_ruta_unica(nombre_archivo, extension)
 
     try:
         respuesta = httpx.post(
             f"{url_base}/storage/v1/object/{BUCKET_COMANDAS}/{ruta}",
-            content=bytes_jpeg,
+            content=bytes_archivo,
             headers={
                 "Authorization": f"Bearer {service_key}",
                 "apikey": service_key,
-                "Content-Type": "image/jpeg",
+                "Content-Type": content_type,
             },
             timeout=TIMEOUT_HTTP_SEGUNDOS,
         )
@@ -103,6 +101,20 @@ def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str) -> str:
         raise RuntimeError(f"Supabase Storage rechazó la subida ({respuesta.status_code}): {respuesta.text}")
 
     return ruta
+
+
+def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str) -> str:
+    """Sube una foto (ya comprimida a JPEG) al bucket privado "comandas" y devuelve la ruta con la que quedó guardada.
+
+    nombre_archivo es una base descriptiva (ej. "comanda", o el código de
+    puesto del proveedor) — la ruta final siempre es única, ver
+    _armar_ruta_unica. Guardá la ruta devuelta (no hace falta guardar nada
+    más) para poder pedir después una URL con obtener_url_foto(ruta).
+
+    Caso particular de subir_archivo_comanda para JPEG — se mantiene aparte
+    porque es el que usa todo el flujo de compras, sin tocarlo.
+    """
+    return subir_archivo_comanda(bytes_jpeg, nombre_archivo, extension="jpg", content_type="image/jpeg")
 
 
 def borrar_foto_comanda(ruta: str) -> None:

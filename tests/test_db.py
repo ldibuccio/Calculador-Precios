@@ -333,8 +333,8 @@ def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viej
         assert "CURRENT_DATE" in consulta
         assert "ON CONFLICT (articulo_id, cliente_id, vigente_desde)" in consulta
         assert "DO UPDATE" in consulta
-    assert cursor.execute.call_args_list[0].args[1] == (7, 1, 550.0)
-    assert cursor.execute.call_args_list[1].args[1] == (3, 1, 900.0)
+    assert cursor.execute.call_args_list[0].args[1] == (7, 1, 550.0, None)
+    assert cursor.execute.call_args_list[1].args[1] == (3, 1, 900.0, None)
     conexion.commit.assert_called_once()
 
 
@@ -346,3 +346,15 @@ def test_guardar_precios_cliente_sin_cambios_no_ejecuta_nada():
 
     cursor.execute.assert_not_called()
     conexion.commit.assert_not_called()
+
+
+def test_guardar_precios_cliente_con_foto_ruta_la_guarda_en_cada_fila():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_precios_cliente(1, [{"articulo_id": 7, "precio": 550.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+
+    consulta, parametros = cursor.execute.call_args_list[0].args
+    assert "foto_ruta" in consulta
+    assert "COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)" in consulta
+    assert parametros == (7, 1, 550.0, "2026-08-16/dia-123-abc.jpg")

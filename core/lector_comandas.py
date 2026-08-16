@@ -73,6 +73,47 @@ comillas invertidas (backticks) ni bloques de código markdown.
 
 MAX_TOKENS_LISTADO_CONSOLIDADO = 16384
 
+MAX_TOKENS_LISTADO_PRECIOS = 16384
+
+PROMPT_LISTADO_PRECIOS = """
+Estás leyendo un listado de precios de venta que un distribuidor mayorista
+de frutas y verduras le pasa a un cliente puntual. Puede venir como foto,
+página(s) de PDF, o el contenido de una planilla Excel ya convertido a
+texto — no importa el formato ni el orden de las columnas, tu trabajo es
+extraer cada artículo con su precio, tal como está escrito, sin hacer
+ninguna cuenta ni interpretación.
+
+Devolvé ÚNICAMENTE un JSON con este formato exacto:
+
+{
+  "items": [
+    {"articulo": "...", "precio": ..., "confianza": "alta|baja"}
+  ]
+}
+
+REGLAS DE EXTRACCIÓN:
+
+- Un ítem por cada artículo con precio que aparezca, en el mismo orden en
+  que aparecen.
+- "articulo": el texto COMPLETO tal como está escrito, nunca una parte
+  cortada de la palabra. Si está abreviado, transcribir la abreviatura tal
+  cual, no acortarla más ni inventar el resto.
+- "precio": el número tal como está, SIN el símbolo $ ni separadores de
+  miles ni de decimales (ej. "$1.250,50" -> 1250.50, "1250" -> 1250). Si un
+  renglón no tiene precio, no lo incluyas en la lista.
+- NUNCA adivinar. Si el nombre o el precio de un renglón no se leen con
+  seguridad, igual transcribí lo que se alcanza a leer y marcá
+  "confianza": "baja" en ese ítem — mejor un dato marcado para revisar a
+  mano que uno inventado.
+- Si el archivo tiene varias páginas (PDF) u hojas (Excel), juntá todos
+  los artículos encontrados en una sola lista "items".
+- Ignorar encabezados, totales, fechas, subtítulos, o cualquier fila que
+  no sea un artículo con su precio.
+
+Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
+comillas invertidas (backticks) ni bloques de código markdown.
+"""
+
 PROMPT_LISTADO_CONSOLIDADO = """
 Estás leyendo la foto de una planilla de compras CONSOLIDADA de un
 distribuidor mayorista de frutas y verduras: una sola hoja con muchos
@@ -165,19 +206,30 @@ def _limpiar_respuesta_json(texto: str) -> str:
     return texto.strip()
 
 
-def _llamar_api_claude(
-    imagen: bytes, media_type: str | None = None, prompt: str = PROMPT_EXTRACCION, max_tokens: int = 8192
-) -> str:
-    """Envía la imagen y un prompt de extracción a la API de Claude y devuelve el texto de la respuesta.
-
-    prompt y max_tokens son configurables para reusar esta misma llamada
-    con el prompt de listado consolidado (más renglones esperados, por eso
-    necesita más espacio de respuesta que una comanda de un solo proveedor).
-    """
+def _bloque_imagen(imagen: bytes, media_type: str | None = None) -> dict:
+    """Arma un bloque de contenido "image" para el mensaje a la API, en base64."""
     media_type = media_type or _detectar_media_type(imagen)
-    api_key = _obtener_api_key()
-    imagen_base64 = base64.standard_b64encode(imagen).decode("utf-8")
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type,
+            "data": base64.standard_b64encode(imagen).decode("utf-8"),
+        },
+    }
 
+
+def _llamar_api_claude_con_contenido(contenido: list[dict], max_tokens: int) -> str:
+    """Manda un bloque de contenido ya armado (imágenes y/o texto) a la API de Claude y devuelve el texto de la respuesta.
+
+    Pieza compartida por las tres formas de leer un listado (una imagen,
+    varias imágenes de un PDF página por página, o texto plano de un
+    Excel) — todo lo que no depende de CÓMO se armó el contenido (llamar a
+    la API, manejar errores de conexión/status, revisar que no se haya
+    cortado por max_tokens, extraer el texto de la respuesta) vive acá una
+    sola vez.
+    """
+    api_key = _obtener_api_key()
     cliente = anthropic.Anthropic(api_key=api_key)
 
     try:
@@ -187,22 +239,7 @@ def _llamar_api_claude(
             # varios artículos, un límite chico corta la respuesta a mitad del
             # JSON (quedaba un "Unterminated string" al parsearlo).
             max_tokens=max_tokens,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": imagen_base64,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
+            messages=[{"role": "user", "content": contenido}],
         )
     except anthropic.APIConnectionError as error:
         raise RuntimeError(f"No se pudo conectar con la API de Claude: {error}") from error
@@ -216,6 +253,43 @@ def _llamar_api_claude(
         )
 
     return _extraer_texto_de_la_respuesta(respuesta.content)
+
+
+def _llamar_api_claude(
+    imagen: bytes, media_type: str | None = None, prompt: str = PROMPT_EXTRACCION, max_tokens: int = 8192
+) -> str:
+    """Envía UNA imagen y un prompt de extracción a la API de Claude y devuelve el texto de la respuesta.
+
+    prompt y max_tokens son configurables para reusar esta misma llamada
+    con el prompt de listado consolidado (más renglones esperados, por eso
+    necesita más espacio de respuesta que una comanda de un solo proveedor).
+    """
+    contenido = [_bloque_imagen(imagen, media_type), {"type": "text", "text": prompt}]
+    return _llamar_api_claude_con_contenido(contenido, max_tokens)
+
+
+def _llamar_api_claude_multi_imagen(imagenes: list[bytes], prompt: str, max_tokens: int) -> str:
+    """Envía VARIAS imágenes (ej. las páginas de un PDF) en un solo mensaje, con un único prompt.
+
+    El media_type de cada imagen se detecta solo (todas se renderizan como
+    JPEG, ver core/lector_archivos.py). Manda todas las páginas juntas para
+    que la IA pueda ver el listado completo de una — no hay que juntar
+    varias respuestas JSON parciales después.
+    """
+    contenido = [_bloque_imagen(imagen) for imagen in imagenes]
+    contenido.append({"type": "text", "text": prompt})
+    return _llamar_api_claude_con_contenido(contenido, max_tokens)
+
+
+def _llamar_api_claude_texto(texto: str, prompt: str, max_tokens: int) -> str:
+    """Envía texto plano (ej. el contenido de un Excel ya extraído) en vez de una imagen.
+
+    Mismo contrato de salida que la lectura por imagen, pero sin tokens de
+    imagen — más rápido y más barato para lo que ya viene como texto
+    estructurado (no hace falta "ver" nada, solo interpretar).
+    """
+    contenido = [{"type": "text", "text": texto}, {"type": "text", "text": prompt}]
+    return _llamar_api_claude_con_contenido(contenido, max_tokens)
 
 
 def _extraer_texto_de_la_respuesta(bloques) -> str:
@@ -267,5 +341,30 @@ def extraer_listado_consolidado(imagen: bytes, media_type: str | None = None) ->
     """
     respuesta_texto = _llamar_api_claude(
         imagen, media_type, prompt=PROMPT_LISTADO_CONSOLIDADO, max_tokens=MAX_TOKENS_LISTADO_CONSOLIDADO
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def extraer_listado_precios_de_imagenes(imagenes: list[bytes]) -> dict:
+    """Extrae {"items": [{"articulo", "precio", "confianza"}, ...]} a partir de una o varias imágenes.
+
+    Usado para "Cargar Foto Precios" con una foto (una sola imagen) o un
+    PDF (una imagen por página, todas juntas en el mismo pedido — ver
+    core/lector_archivos.py para el renderizado de páginas).
+    """
+    respuesta_texto = _llamar_api_claude_multi_imagen(
+        imagenes, prompt=PROMPT_LISTADO_PRECIOS, max_tokens=MAX_TOKENS_LISTADO_PRECIOS
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def extraer_listado_precios_de_texto(texto: str) -> dict:
+    """Extrae {"items": [{"articulo", "precio", "confianza"}, ...]} a partir de texto plano (ej. celdas de un Excel).
+
+    Mismo contrato que extraer_listado_precios_de_imagenes — la pantalla de
+    revisión no necesita saber de qué formato salió cada ítem.
+    """
+    respuesta_texto = _llamar_api_claude_texto(
+        texto, prompt=PROMPT_LISTADO_PRECIOS, max_tokens=MAX_TOKENS_LISTADO_PRECIOS
     )
     return _parsear_json_de_la_respuesta(respuesta_texto)

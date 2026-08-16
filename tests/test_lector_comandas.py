@@ -7,14 +7,20 @@ import pytest
 from core.lector_comandas import (
     ANTHROPIC_API_KEY_ENV_VAR,
     MAX_TOKENS_LISTADO_CONSOLIDADO,
+    MAX_TOKENS_LISTADO_PRECIOS,
     PROMPT_EXTRACCION,
     PROMPT_LISTADO_CONSOLIDADO,
+    PROMPT_LISTADO_PRECIOS,
     _detectar_media_type,
     _extraer_texto_de_la_respuesta,
     _limpiar_respuesta_json,
     _llamar_api_claude,
+    _llamar_api_claude_multi_imagen,
+    _llamar_api_claude_texto,
     extraer_comanda,
     extraer_listado_consolidado,
+    extraer_listado_precios_de_imagenes,
+    extraer_listado_precios_de_texto,
 )
 
 IMAGEN_DE_PRUEBA = b"contenido falso de una imagen"
@@ -304,3 +310,108 @@ def test_llamar_api_claude_cortada_por_max_tokens_da_error_claro(monkeypatch):
     with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
         with pytest.raises(RuntimeError, match="se cortó"):
             _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
+
+
+# --- extraer_listado_precios_de_imagenes / extraer_listado_precios_de_texto: "Cargar Foto Precios" ---
+
+LISTADO_PRECIOS_VALIDO = {
+    "items": [
+        {"articulo": "Tomate Cherry", "precio": 500.0, "confianza": "alta"},
+        {"articulo": "Mango", "precio": 350.0, "confianza": "alta"},
+    ]
+}
+
+
+def test_extraer_listado_precios_de_imagenes_devuelve_el_json_parseado():
+    with patch(
+        "core.lector_comandas._llamar_api_claude_multi_imagen", return_value=json.dumps(LISTADO_PRECIOS_VALIDO)
+    ):
+        resultado = extraer_listado_precios_de_imagenes([IMAGEN_DE_PRUEBA])
+
+    assert resultado == LISTADO_PRECIOS_VALIDO
+
+
+def test_extraer_listado_precios_de_imagenes_usa_el_prompt_y_el_limite_de_tokens_propios():
+    imagenes = [IMAGEN_JPEG_DE_PRUEBA, IMAGEN_PNG_DE_PRUEBA]
+    with patch(
+        "core.lector_comandas._llamar_api_claude_multi_imagen", return_value=json.dumps(LISTADO_PRECIOS_VALIDO)
+    ) as mock_llamar:
+        extraer_listado_precios_de_imagenes(imagenes)
+
+    mock_llamar.assert_called_once_with(
+        imagenes, prompt=PROMPT_LISTADO_PRECIOS, max_tokens=MAX_TOKENS_LISTADO_PRECIOS
+    )
+
+
+def test_extraer_listado_precios_de_imagenes_json_invalido_lanza_error():
+    with patch("core.lector_comandas._llamar_api_claude_multi_imagen", return_value="esto no es JSON"):
+        with pytest.raises(ValueError):
+            extraer_listado_precios_de_imagenes([IMAGEN_DE_PRUEBA])
+
+
+def test_extraer_listado_precios_de_texto_devuelve_el_json_parseado():
+    with patch("core.lector_comandas._llamar_api_claude_texto", return_value=json.dumps(LISTADO_PRECIOS_VALIDO)):
+        resultado = extraer_listado_precios_de_texto("Tomate Cherry | 500\nMango | 350")
+
+    assert resultado == LISTADO_PRECIOS_VALIDO
+
+
+def test_extraer_listado_precios_de_texto_usa_el_prompt_y_el_limite_de_tokens_propios():
+    with patch(
+        "core.lector_comandas._llamar_api_claude_texto", return_value=json.dumps(LISTADO_PRECIOS_VALIDO)
+    ) as mock_llamar:
+        extraer_listado_precios_de_texto("texto de la planilla")
+
+    mock_llamar.assert_called_once_with(
+        "texto de la planilla", prompt=PROMPT_LISTADO_PRECIOS, max_tokens=MAX_TOKENS_LISTADO_PRECIOS
+    )
+
+
+def test_extraer_listado_precios_de_texto_json_invalido_lanza_error():
+    with patch("core.lector_comandas._llamar_api_claude_texto", return_value="esto no es JSON"):
+        with pytest.raises(ValueError):
+            extraer_listado_precios_de_texto("texto de la planilla")
+
+
+def test_prompt_listado_precios_incluye_las_reglas_clave():
+    assert "NUNCA adivinar" in PROMPT_LISTADO_PRECIOS
+    assert "sin el símbolo $" in PROMPT_LISTADO_PRECIOS.lower() or "\"precio\"" in PROMPT_LISTADO_PRECIOS
+    assert "confianza" in PROMPT_LISTADO_PRECIOS
+    assert "varias páginas" in PROMPT_LISTADO_PRECIOS
+
+
+def test_llamar_api_claude_multi_imagen_manda_todas_las_imagenes_en_un_solo_mensaje(monkeypatch):
+    monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
+    bloque_texto = SimpleNamespace(type="text", text=json.dumps(LISTADO_PRECIOS_VALIDO))
+    cliente_falso = Mock()
+    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_texto])
+
+    with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
+        resultado = _llamar_api_claude_multi_imagen(
+            [IMAGEN_JPEG_DE_PRUEBA, IMAGEN_PNG_DE_PRUEBA], prompt="prompt de prueba", max_tokens=1000
+        )
+
+    assert resultado == json.dumps(LISTADO_PRECIOS_VALIDO)
+    contenido = cliente_falso.messages.create.call_args.kwargs["messages"][0]["content"]
+    # 2 imágenes + el bloque de texto del prompt al final.
+    assert len(contenido) == 3
+    assert contenido[0]["type"] == "image"
+    assert contenido[1]["type"] == "image"
+    assert contenido[2] == {"type": "text", "text": "prompt de prueba"}
+
+
+def test_llamar_api_claude_texto_manda_el_texto_y_el_prompt(monkeypatch):
+    monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
+    bloque_texto = SimpleNamespace(type="text", text=json.dumps(LISTADO_PRECIOS_VALIDO))
+    cliente_falso = Mock()
+    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_texto])
+
+    with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
+        resultado = _llamar_api_claude_texto("contenido de la planilla", prompt="prompt de prueba", max_tokens=1000)
+
+    assert resultado == json.dumps(LISTADO_PRECIOS_VALIDO)
+    contenido = cliente_falso.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert contenido == [
+        {"type": "text", "text": "contenido de la planilla"},
+        {"type": "text", "text": "prompt de prueba"},
+    ]

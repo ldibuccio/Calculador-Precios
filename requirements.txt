@@ -7,3 +7,5 @@ httpx
 jinja2
 python-multipart
 Pillow
+openpyxl
+pypdfium2

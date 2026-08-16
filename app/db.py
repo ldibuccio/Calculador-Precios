@@ -726,7 +726,7 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
         conexion.close()
 
 
-def guardar_precios_cliente(cliente_id: int, cambios: list[dict]) -> None:
+def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str | None = None) -> None:
     """Agrega a precios_venta_historial SOLO las filas de precio que realmente cambiaron.
 
     cambios: [{"articulo_id", "precio"}, ...] — ya calculado por
@@ -735,6 +735,13 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict]) -> None:
     el precio viejo NUNCA se pisa. Si ya existe una fila de HOY para ese
     mismo (articulo_id, cliente_id) -- segunda edición el mismo día -- se
     actualiza esa en vez de duplicarla.
+
+    foto_ruta es la ruta del archivo (foto/PDF/Excel) del bucket "comandas"
+    del que salieron estos precios (ver "Cargar Foto Precios") — None para
+    la Carga Manual, que no tiene archivo. En un conflicto (segunda edición
+    el mismo día), solo se pisa foto_ruta si el nuevo valor no es None: una
+    corrección manual del mismo día no debe borrar la trazabilidad de una
+    carga por archivo anterior de ese mismo día.
     """
     if not cambios:
         return
@@ -745,12 +752,14 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict]) -> None:
             for cambio in cambios:
                 cursor.execute(
                     """
-                    INSERT INTO precios_venta_historial (articulo_id, cliente_id, precio, vigente_desde)
-                    VALUES (%s, %s, %s, CURRENT_DATE)
+                    INSERT INTO precios_venta_historial (articulo_id, cliente_id, precio, vigente_desde, foto_ruta)
+                    VALUES (%s, %s, %s, CURRENT_DATE, %s)
                     ON CONFLICT (articulo_id, cliente_id, vigente_desde)
-                    DO UPDATE SET precio = EXCLUDED.precio
+                    DO UPDATE SET
+                        precio = EXCLUDED.precio,
+                        foto_ruta = COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)
                     """,
-                    (cambio["articulo_id"], cliente_id, cambio["precio"]),
+                    (cambio["articulo_id"], cliente_id, cambio["precio"], foto_ruta),
                 )
         conexion.commit()
     finally:

@@ -59,9 +59,15 @@ from app.db import (
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.precios_venta import calcular_cambios_de_precios
-from core.lector_comandas import extraer_comanda, extraer_listado_consolidado
+from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
+from core.lector_comandas import (
+    extraer_comanda,
+    extraer_listado_consolidado,
+    extraer_listado_precios_de_imagenes,
+    extraer_listado_precios_de_texto,
+)
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
-from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
+from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
@@ -2735,6 +2741,300 @@ def ver_generar_listado_precios(request: Request):
     return _renderizar_en_construccion(
         request, "Generar Listado Actualizado", volver_url="/precios", volver_texto="Volver a Lista de Precios", sector="comercial"
     )
+
+
+MIME_POR_TIPO_ARCHIVO_PRECIOS = {
+    "foto": "image/jpeg",
+    "pdf": "application/pdf",
+    "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+EXTENSION_POR_TIPO_ARCHIVO_PRECIOS = {"foto": "jpg", "pdf": "pdf", "excel": "xlsx"}
+
+
+def _detectar_tipo_archivo_precios(nombre_archivo: str) -> str | None:
+    """Clasifica el archivo subido por su extensión: "foto", "pdf" o "excel" — None si no es ninguno de los tres."""
+    nombre = (nombre_archivo or "").lower()
+    if nombre.endswith((".jpg", ".jpeg", ".png")):
+        return "foto"
+    if nombre.endswith(".pdf"):
+        return "pdf"
+    if nombre.endswith(".xlsx"):
+        return "excel"
+    return None
+
+
+def _generar_data_uri_generico(bytes_archivo: bytes, mime_type: str) -> str:
+    """Arma un data URI con los bytes tal cual, sin comprimir — para PDF/Excel, que no tienen un Pillow equivalente."""
+    datos_base64 = base64.standard_b64encode(bytes_archivo).decode("ascii")
+    return f"data:{mime_type};base64,{datos_base64}"
+
+
+def _extraer_listado_precios_de_archivo(bytes_archivo: bytes, tipo_archivo: str) -> dict:
+    """Lee un listado de precios de un archivo según su tipo — un solo punto de entrada para los 3 formatos.
+
+    Todos terminan en el mismo contrato JSON ({"items": [...]})  — foto y
+    PDF (página por página, convertida a imagen) van por la IA en modo
+    imagen; Excel (volcado a texto) va por la IA en modo texto. Cualquier
+    error de conversión (core/lector_archivos.py) o de lectura con IA
+    (core/lector_comandas.py) se propaga tal cual: quien llama es
+    responsable de mostrarlo como un mensaje claro, no un error técnico.
+    """
+    if tipo_archivo == "foto":
+        return extraer_listado_precios_de_imagenes([bytes_archivo])
+    if tipo_archivo == "pdf":
+        imagenes = imagenes_desde_pdf(bytes_archivo)
+        return extraer_listado_precios_de_imagenes(imagenes)
+    if tipo_archivo == "excel":
+        texto = texto_desde_excel(bytes_archivo)
+        return extraer_listado_precios_de_texto(texto)
+    raise ValueError(f"Tipo de archivo no soportado: {tipo_archivo}")
+
+
+def _armar_renglones_precios_desde_datos_leidos(
+    datos: dict, fichas_cliente: list[dict], articulos_existentes: list[dict], precio_por_articulo: dict
+) -> list[dict]:
+    """Arma los renglones sugeridos (artículo matcheado + precio leído) a partir de lo que devolvió la IA.
+
+    Acota el catálogo candidato del matcheo a los artículos con ficha de
+    ESTE cliente — su propio nombre_cliente (fichas_logistica) es el alias
+    más preciso que existe, y no tiene sentido sugerir un artículo que ni
+    siquiera tiene ficha para él. Si el cliente todavía no tiene ninguna
+    ficha, se cae al catálogo completo como respaldo. Sin aprendizaje por
+    cliente todavía (se pasa vacío) — el que existe hoy es por proveedor,
+    para comandas.
+    """
+    conversiones_cliente = [f for f in fichas_cliente if f.get("nombre_cliente")]
+    candidatos_articulo = (
+        [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas_cliente]
+        if fichas_cliente
+        else articulos_existentes
+    )
+
+    renglones = []
+    for item in datos.get("items") or []:
+        texto_leido = item.get("articulo") or ""
+        articulo_id_sugerido = adivinar_articulo(texto_leido, {}, candidatos_articulo, conversiones_cliente)
+        renglones.append(
+            {
+                "texto_leido": texto_leido,
+                "articulo_id": articulo_id_sugerido,
+                "precio_original": precio_por_articulo.get(articulo_id_sugerido)
+                if articulo_id_sugerido is not None
+                else None,
+                "precio_nuevo": _numero_o_none(item.get("precio")),
+                "advertencia": item.get("confianza") == "baja" or articulo_id_sugerido is None,
+                "descartado": False,
+            }
+        )
+    return renglones
+
+
+@app.get("/precios/cargar-foto")
+def ver_cargar_foto_precios(request: Request, cliente_id: str | None = None):
+    """Carga de precios a partir de un archivo (foto, PDF o Excel) leído por IA, con revisión antes de guardar."""
+    cliente_id = _id_opcional_desde_query(cliente_id)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if cliente_id is None:
+        return templates.TemplateResponse(request, "precios_cargar_foto.html", {"clientes": clientes, "cliente_id": None, "error": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    return templates.TemplateResponse(
+        request,
+        "precios_cargar_foto.html",
+        {"clientes": clientes, "cliente_id": cliente_id, "cliente_nombre": cliente["nombre"], "error": None},
+    )
+
+
+@app.post("/precios/cargar-foto")
+async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archivo: UploadFile = File(...)):
+    cliente_id_valor = _id_opcional_desde_query(cliente_id)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id_valor), None) if cliente_id_valor is not None else None
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    tipo_archivo = _detectar_tipo_archivo_precios(archivo.filename or "")
+    if tipo_archivo is None:
+        return templates.TemplateResponse(
+            request,
+            "precios_cargar_foto.html",
+            {
+                "clientes": clientes,
+                "cliente_id": cliente_id_valor,
+                "cliente_nombre": cliente["nombre"],
+                "error": "No se pudo reconocer el tipo de archivo. Subí una foto (jpg/png), un PDF o un Excel (.xlsx).",
+            },
+            status_code=400,
+        )
+
+    try:
+        bytes_archivo = await archivo.read()
+        datos = _extraer_listado_precios_de_archivo(bytes_archivo, tipo_archivo)
+    except Exception as error_lector:
+        return templates.TemplateResponse(
+            request,
+            "precios_cargar_foto.html",
+            {
+                "clientes": clientes,
+                "cliente_id": cliente_id_valor,
+                "cliente_nombre": cliente["nombre"],
+                "error": f"No se pudo leer el archivo: {error_lector}",
+            },
+            status_code=500,
+        )
+
+    try:
+        fichas_cliente = listar_fichas_por_cliente(cliente_id_valor)
+        articulos_existentes = listar_articulos()
+        precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id_valor, _hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
+    renglones = _armar_renglones_precios_desde_datos_leidos(
+        datos, fichas_cliente, articulos_existentes, precio_por_articulo
+    )
+
+    if not renglones:
+        return templates.TemplateResponse(
+            request,
+            "precios_cargar_foto.html",
+            {
+                "clientes": clientes,
+                "cliente_id": cliente_id_valor,
+                "cliente_nombre": cliente["nombre"],
+                "error": "No se encontró ningún artículo con precio en el archivo. Probá con otra foto, o cargalo a mano.",
+            },
+            status_code=400,
+        )
+
+    if tipo_archivo == "foto":
+        archivo_preview = _generar_preview_foto(bytes_archivo)
+    else:
+        archivo_preview = _generar_data_uri_generico(bytes_archivo, MIME_POR_TIPO_ARCHIVO_PRECIOS[tipo_archivo])
+
+    articulos_para_select = (
+        [
+            {
+                "articulo_id": f["articulo_id"],
+                "articulo_nombre": f["articulo_nombre"],
+                "precio_vigente": precio_por_articulo.get(f["articulo_id"]),
+            }
+            for f in fichas_cliente
+        ]
+        if fichas_cliente
+        else [
+            {"articulo_id": a["id"], "articulo_nombre": a["nombre"], "precio_vigente": precio_por_articulo.get(a["id"])}
+            for a in articulos_existentes
+        ]
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "precios_revision_foto.html",
+        {
+            "cliente_id": cliente_id_valor,
+            "cliente_nombre": cliente["nombre"],
+            "articulos": articulos_para_select,
+            "renglones": renglones,
+            "tipo_archivo": tipo_archivo,
+            "archivo_preview": archivo_preview,
+            "nombre_archivo": archivo.filename,
+            "error": None,
+        },
+    )
+
+
+@app.post("/precios/cargar-foto/confirmar")
+async def confirmar_carga_foto_precios(request: Request):
+    form = await request.form()
+    try:
+        cliente_id = int(form.get("cliente_id", ""))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        cantidad_renglones = int(form.get("cantidad_renglones", "0"))
+    except ValueError:
+        cantidad_renglones = 0
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    nombre_por_articulo = {f["articulo_id"]: f["articulo_nombre"] for f in fichas}
+
+    filas_crudas = []
+    for indice in range(cantidad_renglones):
+        if str(form.get(f"item_{indice}_descartar", "")).strip():
+            continue
+        articulo_id_texto = str(form.get(f"item_{indice}_articulo_id", "")).strip()
+        if not articulo_id_texto:
+            continue
+        try:
+            articulo_id = int(articulo_id_texto)
+        except ValueError:
+            continue
+        filas_crudas.append(
+            {
+                "articulo_id": articulo_id,
+                "articulo_nombre": nombre_por_articulo.get(articulo_id, f"Artículo #{articulo_id}"),
+                "original_texto": str(form.get(f"item_{indice}_precio_original", "")).strip(),
+                "nuevo_texto": str(form.get(f"item_{indice}_precio_nuevo", "")).strip(),
+            }
+        )
+
+    error, filas_para_diff = _validar_precios(filas_crudas)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    cambios = calcular_cambios_de_precios(filas_para_diff)
+
+    tipo_archivo = str(form.get("tipo_archivo", "")).strip()
+    archivo_preview = str(form.get("archivo_preview", "")).strip()
+    foto_ruta = None
+    bytes_archivo = _bytes_desde_data_uri(archivo_preview)
+    if bytes_archivo:
+        extension = EXTENSION_POR_TIPO_ARCHIVO_PRECIOS.get(tipo_archivo, "jpg")
+        content_type = MIME_POR_TIPO_ARCHIVO_PRECIOS.get(tipo_archivo, "image/jpeg")
+        try:
+            foto_ruta = subir_archivo_comanda(bytes_archivo, cliente["nombre"], extension, content_type)
+        except Exception:
+            logger.exception(
+                "No se pudo subir el archivo de precios a Supabase Storage (cliente %s) "
+                "— se guardan los precios igual, sin archivo",
+                cliente_id,
+            )
+            foto_ruta = None
+
+    try:
+        guardar_precios_cliente(cliente_id, cambios, foto_ruta=foto_ruta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudieron guardar los precios: {error_db}") from error_db
+
+    return RedirectResponse(url=f"/precios?guardado={len(cambios)}", status_code=303)
 
 
 def _fecha_de_corte_limpieza_fotos():
