@@ -902,23 +902,50 @@ def crear_compra(
     tipo_retiro: str,
     foto_ruta: str | None = None,
 ) -> None:
-    """Inserta una compra cargada por el comprador.
+    """Inserta una compra cargada por el comprador, con su guía asignada.
 
     foto_ruta es la ruta (en el bucket "comandas" de Supabase Storage) de
     la foto de la comanda de la que salió este renglón — None si la
     compra se cargó a mano, o si la subida de la foto falló (la foto es un
     extra, nunca bloquea guardar la compra). Cuando varios renglones salen
     de la misma foto, comparten la misma foto_ruta.
+
+    La guía (para Depósito) es una por proveedor por día: se crea o
+    reusa la fila de guias_compra para (fecha_operacion, proveedor_id) con
+    ON CONFLICT DO NOTHING, y el punto dentro de la guía (el ".1"/".2"/
+    ".3") es la cantidad de compras que ya tiene esa guía más uno — se
+    graba una sola vez acá, nunca se recalcula después, así que borrar un
+    renglón más adelante no renumera a los demás. Todo en la misma
+    transacción que el INSERT de la compra.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
+                INSERT INTO guias_compra (fecha_operacion, proveedor_id)
+                VALUES (%s, %s)
+                ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING
+                """,
+                (fecha_operacion, proveedor_id),
+            )
+            cursor.execute(
+                "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
+                (fecha_operacion, proveedor_id),
+            )
+            (guia_id,) = cursor.fetchone()
+
+            cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
+            (cantidad_existente,) = cursor.fetchone()
+            guia_punto = cantidad_existente + 1
+
+            cursor.execute(
+                """
                 INSERT INTO compras
                     (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                     cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                     guia_id, guia_punto)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     fecha_operacion,
@@ -932,6 +959,8 @@ def crear_compra(
                     sena,
                     tipo_retiro,
                     foto_ruta,
+                    guia_id,
+                    guia_punto,
                 ),
             )
         conexion.commit()

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from app.db import (
     actualizar_cliente,
     crear_cliente,
+    crear_compra,
     eliminar_compra,
     guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
@@ -121,6 +122,52 @@ def test_eliminar_compra_sin_foto_no_cuenta_referencias():
     assert resultado is None
     # Solo el SELECT foto_ruta y el DELETE — sin el SELECT COUNT de más.
     assert cursor.execute.call_count == 2
+
+
+def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
+    conexion, cursor = _conexion_falsa(
+        [
+            (105,),  # SELECT id de guias_compra (ya existía o se acaba de crear)
+            (0,),  # SELECT COUNT(*) de compras con esa guía: ninguna todavía
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark"
+        )
+
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert "INSERT INTO guias_compra" in consultas[0]
+    assert "ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING" in consultas[0]
+    assert "SELECT id FROM guias_compra" in consultas[1]
+    assert "SELECT COUNT(*) FROM compras WHERE guia_id" in consultas[2]
+
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
+    assert "INSERT INTO compras" in consulta_insert
+    assert "guia_id" in consulta_insert
+    assert "guia_punto" in consulta_insert
+    assert parametros_insert[-2:] == (105, 1)  # guia_id, guia_punto
+    conexion.commit.assert_called_once()
+
+
+def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
+    # Segundo (y tercer) artículo del mismo proveedor el mismo día: misma
+    # guía, el punto sigue la cuenta (no vuelve a 1).
+    conexion, cursor = _conexion_falsa(
+        [
+            (105,),  # SELECT id de guias_compra
+            (2,),  # ya hay 2 compras con esa guía
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Granel"
+        )
+
+    _, parametros_insert = cursor.execute.call_args_list[3].args
+    assert parametros_insert[-2:] == (105, 3)  # guia_id, guia_punto
 
 
 def test_obtener_uso_storage_bucket_devuelve_cantidad_y_bytes():
