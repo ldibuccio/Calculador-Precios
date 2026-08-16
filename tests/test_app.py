@@ -4014,6 +4014,57 @@ def test_ver_precios_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
+def test_ver_precios_articulo_id_vacio_trae_el_listado_completo():
+    # Regresión: "Todos los artículos" manda articulo_id="" (el <select>
+    # sin elegir nada puntual) — antes esto rompía con un 422 crudo de
+    # FastAPI ("Input should be a valid integer") en vez de traer el
+    # listado completo, que es lo que realmente significa un campo vacío.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&fecha=2026-08-15&articulo_id=")
+
+    assert respuesta.status_code == 200
+    assert "Tomate Cherry" in respuesta.text
+    assert "Mango" in respuesta.text
+
+
+def test_ver_precios_articulo_id_no_numerico_no_rompe_trae_el_listado_completo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&articulo_id=no-es-un-numero")
+
+    assert respuesta.status_code == 200
+    assert "Tomate Cherry" in respuesta.text
+    assert "Mango" in respuesta.text
+
+
+def test_ver_precios_cliente_id_vacio_muestra_el_selector_sin_romper():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios?cliente_id=")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente para ver sus precios." in respuesta.text
+
+
+def test_ver_precios_url_no_repite_cliente_id():
+    # Regresión: el form tenía un input hidden "cliente_id" duplicando el
+    # <select> del mismo nombre, generando ?cliente_id=1&...&cliente_id=1.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1")
+
+    assert respuesta.text.count('name="cliente_id"') == 1
+
+
 # --- /precios/cargar: carga de precios nuevos, respetando el historial ---
 
 

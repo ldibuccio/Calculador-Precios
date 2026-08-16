@@ -2454,8 +2454,26 @@ def ver_cuadro_negociar_precios(request: Request, cliente_id: int | None = None)
     )
 
 
+def _id_opcional_desde_query(valor: str | None) -> int | None:
+    """Convierte un id opcional de query string a int, sin romper si viene vacío o no numérico.
+
+    FastAPI declarado como "int | None" rechaza con un 422 crudo un
+    query param presente pero vacío (ej. "articulo_id=", que manda el
+    <select> "Todos los artículos" al no elegir ninguno) — Pydantic
+    intenta parsear "" como int y explota antes de llegar acá. Recibiendo
+    el valor como texto y convirtiéndolo acá, "" o cualquier cosa no
+    numérica se trata como "no vino nada", nunca como error.
+    """
+    if not valor:
+        return None
+    try:
+        return int(valor)
+    except ValueError:
+        return None
+
+
 @app.get("/precios")
-def ver_precios(request: Request, cliente_id: int | None = None, fecha: str | None = None, articulo_id: int | None = None):
+def ver_precios(request: Request, cliente_id: str | None = None, fecha: str | None = None, articulo_id: str | None = None):
     """Consulta de precios vigentes de un cliente a una fecha (todos, o uno puntual). Solo lectura.
 
     Mismo patrón de selector que /fichas y /negociar: sin cliente_id en la
@@ -2464,6 +2482,9 @@ def ver_precios(request: Request, cliente_id: int | None = None, fecha: str | No
     que ya usa la Rutina A) — acá solo se cruza con los artículos del
     cliente para mostrar el nombre y, si se pidió, filtrar a uno puntual.
     """
+    cliente_id = _id_opcional_desde_query(cliente_id)
+    articulo_id = _id_opcional_desde_query(articulo_id)
+
     try:
         clientes = listar_clientes()
     except Exception as error_db:
