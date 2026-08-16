@@ -4142,6 +4142,7 @@ def test_ver_cargar_precios_embebe_el_catalogo_con_precio_vigente():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -4157,6 +4158,7 @@ def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -4169,11 +4171,82 @@ def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
     assert respuesta.status_code == 200
     assert "sin fichas no hay artículos a los que ponerle precio" in respuesta.text
+
+
+# --- /precios/cargar: panel "Ver negociación" (estado oficial, con los precios ya vigentes) ---
+
+ARTICULOS_NEGOCIACION_DE_PRUEBA = [
+    {
+        "articulo_nombre": "Tomate Cherry",
+        "fresco": True,
+        "variacion": "bajo",
+        "costo_anterior": 300.0,
+        "costo_actual": 280.0,
+        "precio_sugerido": 420.0,
+        "precio_vigente": 500.0,  # vigente >= sugerido -> ✓
+        "utilidad_aproximada": 0.30,
+    },
+]
+
+
+def test_ver_cargar_precios_incluye_boton_y_panel_de_negociacion():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIACION_DE_PRUEBA) as mock_negociar,
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Ver negociación" in respuesta.text
+    assert 'id="panel-negociacion"' in respuesta.text
+    assert "abrirNegociacion" in respuesta.text
+    assert "cerrarNegociacion" in respuesta.text
+    # Reusa la misma función que /negociar, con el mismo cliente_id.
+    assert mock_negociar.call_args[0][0] == 1
+    # El cuadro embebido tiene que traer los datos reales de la negociación.
+    assert "Bajas (frescos que bajaron de costo)" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "$420" in respuesta.text
+
+
+def test_ver_cargar_precios_panel_de_negociacion_no_usa_pendientes_sin_guardar():
+    # El panel se arma UNA vez al cargar la pantalla, con lo que ya está
+    # guardado — no hay forma de que use nada tipeado en el navegador
+    # porque en ese momento todavía no se tipeó nada.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]) as mock_negociar,
+    ):
+        cliente.get("/precios/cargar?cliente_id=1")
+
+    # Un solo cálculo, en el momento de armar la pantalla.
+    mock_negociar.assert_called_once()
+
+
+def test_ver_cargar_precios_sin_fichas_igual_muestra_boton_de_negociacion():
+    # Aunque no haya fichas para cargar precios, el botón de negociación
+    # sigue disponible (el panel tiene su propio aviso de "sin fichas").
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Ver negociación" in respuesta.text
+    assert 'id="panel-negociacion"' in respuesta.text
 
 
 def test_ver_cargar_precios_cliente_inexistente_da_404():

@@ -110,6 +110,72 @@
   .fila-pendiente .nombre { flex: 1 1 auto; }
   .fila-pendiente .precios { flex: 0 0 auto; text-align: right; color: #444; white-space: nowrap; }
   .fila-pendiente .precios .nuevo { font-weight: 700; color: #16a34a; }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .tabla-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  th {
+    background: #eee;
+    font-weight: 600;
+  }
+  .ok { color: #16a34a; }
+  .falta { color: #dc2626; font-weight: 600; }
+  .utilidad-negativa { color: #dc2626; font-weight: 600; }
+  .utilidad-baja { background: #fef9c3; padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600; }
+  /* Panel de negociación: mismo criterio que el modal-foto que ya se usa
+     para ver la comanda en la carga de compras — se abre encima con un
+     toggle de CSS, no navega a otra pantalla, así que cerrarlo deja todo
+     tal cual estaba (los pendientes no se tocan). */
+  .panel-negociacion {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 100;
+    padding: 1rem;
+    box-sizing: border-box;
+    align-items: flex-start;
+    justify-content: center;
+    overflow-y: auto;
+  }
+  .panel-negociacion.visible {
+    display: flex;
+  }
+  .panel-negociacion-contenido {
+    background: #f5f5f5;
+    border-radius: 10px;
+    padding: 1rem;
+    width: 100%;
+    max-width: 480px;
+    box-sizing: border-box;
+    margin: auto 0;
+  }
+  .panel-negociacion-cerrar {
+    margin-top: 0;
+    margin-bottom: 0.85rem;
+    background: #fff;
+    color: #222;
+  }
+  .panel-negociacion h2:first-of-type { margin-top: 0; }
 </style>
 </head>
 <body>
@@ -127,7 +193,35 @@
         {% endfor %}
       </select>
     </form>
+    {% if cliente_id %}
+    <button type="button" class="boton-secundario" onclick="abrirNegociacion()">Ver negociación</button>
+    {% endif %}
   </div>
+
+  {% if cliente_id %}
+  <div id="panel-negociacion" class="panel-negociacion" onclick="cerrarNegociacion(event)">
+    <div class="panel-negociacion-contenido" onclick="event.stopPropagation()">
+      <button type="button" class="panel-negociacion-cerrar" onclick="cerrarNegociacion(event)">✕ Cerrar</button>
+      <h2>Negociación — {{ cliente_nombre }}</h2>
+      {% include "_cuadro_negociacion.html" %}
+    </div>
+  </div>
+  <script>
+    // Solo un toggle de CSS, no navega a otra pantalla — abrir y cerrar no
+    // toca nada de lo que se esté cargando en la pantalla de atrás (mismo
+    // criterio que el modal-foto de la carga de compras).
+    function abrirNegociacion() {
+      document.getElementById("panel-negociacion").classList.add("visible");
+    }
+
+    function cerrarNegociacion(evento) {
+      if (evento) {
+        evento.preventDefault();
+      }
+      document.getElementById("panel-negociacion").classList.remove("visible");
+    }
+  </script>
+  {% endif %}
 
   {% if not cliente_id %}
   <div class="tarjeta">

@@ -2396,15 +2396,48 @@ async def completar_importes_pendientes(request: Request):
     return RedirectResponse(url="/compras/pendientes", status_code=303)
 
 
+def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente: list[dict]) -> dict:
+    """Arma el contexto del cuadro de negociación (Bajas, Subas, bajo objetivo) de un cliente.
+
+    Usa exactamente los mismos datos que calcular_listado_para_negociar_precios
+    (vía agrupar_para_negociar) — no recalcula nada, solo los agrupa y
+    ordena distinto para negociar rápido. Con los precios YA VIGENTES
+    (guardados): quien llama a esto lo hace para ver el estado "oficial"
+    de la negociación, no una proyección con cambios todavía sin guardar
+    en otra pantalla (ver el panel "Ver negociación" de /precios/cargar).
+    """
+    momento_referencia = datetime.now(ARGENTINA)
+    articulos = calcular_listado_para_negociar_precios(cliente_id, momento_referencia)
+
+    utilidad_objetivo_cliente = (
+        cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
+    )
+    grupos = agrupar_para_negociar(articulos, utilidad_objetivo_cliente)
+
+    return {
+        "cliente_nombre": cliente["nombre"],
+        "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
+        "bajas": grupos["bajas"],
+        "subas": grupos["subas"],
+        "bajo_objetivo": grupos["bajo_objetivo"],
+        "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
+        # Para explicar por qué no hay nada, en vez de mostrar la
+        # pantalla vacía sin avisar (ver templates/_cuadro_negociacion.html):
+        # sin ninguna ficha, calcular_listado_para_negociar_precios
+        # nunca puede devolver nada; con fichas pero sin ningún
+        # artículo con compra en los últimos 15 días, tampoco.
+        "sin_fichas": len(fichas_cliente) == 0,
+        "sin_articulos_recientes": len(fichas_cliente) > 0 and len(articulos) == 0,
+    }
+
+
 @app.get("/negociar")
 def ver_cuadro_negociar_precios(request: Request, cliente_id: int | None = None):
     """Cuadro para negociar precios (Bajas, Subas y artículos bajo la utilidad objetivo) de UN cliente elegido.
 
-    Usa exactamente los mismos datos que calcular_listado_para_negociar_precios
-    (vía agrupar_para_negociar) — no recalcula nada, solo los agrupa y
-    ordena distinto para negociar rápido. Mismo patrón de selector que
-    /fichas: sin cliente_id en la URL, se muestra solo el selector; al
-    elegir uno, se recarga con ?cliente_id=N y ahí se calcula.
+    Mismo patrón de selector que /fichas: sin cliente_id en la URL, se
+    muestra solo el selector; al elegir uno, se recarga con ?cliente_id=N
+    y ahí se calcula.
     """
     try:
         clientes = listar_clientes()
@@ -2418,18 +2451,11 @@ def ver_cuadro_negociar_precios(request: Request, cliente_id: int | None = None)
     if cliente is None:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    momento_referencia = datetime.now(ARGENTINA)
-
     try:
         fichas_cliente = listar_fichas_por_cliente(cliente_id)
-        articulos = calcular_listado_para_negociar_precios(cliente_id, momento_referencia)
+        contexto_negociacion = _calcular_cuadro_negociacion(cliente, cliente_id, fichas_cliente)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al calcular el costeo: {error_db}") from error_db
-
-    utilidad_objetivo_cliente = (
-        cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
-    )
-    grupos = agrupar_para_negociar(articulos, utilidad_objetivo_cliente)
 
     return templates.TemplateResponse(
         request,
@@ -2437,19 +2463,7 @@ def ver_cuadro_negociar_precios(request: Request, cliente_id: int | None = None)
         {
             "clientes": clientes,
             "cliente_id": cliente_id,
-            "cliente_nombre": cliente["nombre"],
-            "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
-            "bajas": grupos["bajas"],
-            "subas": grupos["subas"],
-            "bajo_objetivo": grupos["bajo_objetivo"],
-            "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
-            # Para explicar por qué no hay nada, en vez de mostrar la
-            # pantalla vacía sin avisar (ver templates/negociar.html):
-            # sin ninguna ficha, calcular_listado_para_negociar_precios
-            # nunca puede devolver nada; con fichas pero sin ningún
-            # artículo con compra en los últimos 15 días, tampoco.
-            "sin_fichas": len(fichas_cliente) == 0,
-            "sin_articulos_recientes": len(fichas_cliente) > 0 and len(articulos) == 0,
+            **contexto_negociacion,
         },
     )
 
@@ -2610,6 +2624,10 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
     try:
         fichas = listar_fichas_por_cliente(cliente_id)
         precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, _hoy_argentina())
+        # El panel "Ver negociación" muestra el estado oficial (con los
+        # precios ya guardados), calculado una sola vez acá al cargar la
+        # pantalla — no se recalcula con los pendientes sin guardar.
+        contexto_negociacion = _calcular_cuadro_negociacion(cliente, cliente_id, fichas)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -2629,9 +2647,8 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
         {
             "clientes": clientes,
             "cliente_id": cliente_id,
-            "cliente_nombre": cliente["nombre"],
             "articulos_cliente": articulos_cliente,
-            "sin_fichas": len(fichas) == 0,
+            **contexto_negociacion,
         },
     )
 
