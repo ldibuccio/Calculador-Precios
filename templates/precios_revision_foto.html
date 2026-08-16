@@ -215,10 +215,10 @@
     {% endfor %}
 
     <button type="submit" class="boton-exito" id="boton-guardar-precios">Guardar</button>
-    <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
-    <div id="opciones-exportar" style="display:none;">
-      <button type="button" class="boton" id="boton-exportar-pdf" onclick="exportarRevisionFoto('pdf')">Exportar PDF</button>
-      <button type="button" class="boton" id="boton-exportar-excel" onclick="exportarRevisionFoto('excel')">Exportar Excel</button>
+    <button type="button" class="boton" id="boton-guardar-y-generar" onclick="mostrarOpcionesGenerarListado()">Guardar y generar listado</button>
+    <div id="opciones-generar-listado" style="display:none;">
+      <button type="button" class="boton" id="boton-generar-pdf" onclick="guardarYGenerarListado('pdf')">Generar PDF</button>
+      <button type="button" class="boton" id="boton-generar-excel" onclick="guardarYGenerarListado('excel')">Generar Excel</button>
     </div>
     <a href="/precios/cargar-foto?cliente_id={{ cliente_id }}" class="boton boton-peligro" id="boton-cancelar"
        onclick="return confirm('¿Seguro? Se pierde lo que se leyó de este archivo.');">Cancelar</a>
@@ -274,73 +274,73 @@
       }
     }
 
-    // "Exportar" es un preview de cómo quedaría la lista con lo que se está
-    // por guardar de este archivo — no guarda nada. A diferencia de
-    // "Guardar" (que sí navega a propósito), acá NO podemos perder la
-    // pantalla: si el navegador navegara a la URL de descarga, se pierde
-    // toda la revisión sin guardar. Por eso se pide el archivo por fetch
-    // (sin navegar) y se dispara la descarga con un blob temporal — ver
-    // descargarArchivoExportado más abajo.
-    function mostrarOpcionesExportar() {
-      document.getElementById("opciones-exportar").style.display = "block";
-      document.getElementById("boton-exportar").style.display = "none";
+    function mostrarOpcionesGenerarListado() {
+      document.getElementById("opciones-generar-listado").style.display = "block";
+      document.getElementById("boton-guardar-y-generar").style.display = "none";
     }
 
-    async function exportarRevisionFoto(tipo) {
-      const boton = document.getElementById(tipo === "pdf" ? "boton-exportar-pdf" : "boton-exportar-excel");
+    // "Guardar y generar listado" primero GUARDA los renglones (quedan
+    // firmes en el historial, con fecha de hoy) y recién después arma el
+    // PDF/Excel con lo que se acaba de guardar — no tiene sentido mandarle
+    // al cliente una lista con precios que no se pactaron todavía. Como ya
+    // se guardó antes de pedir el archivo, no hay revisión que perder al
+    // descargar: se pide por fetch (sin navegar el form de "Guardar") y se
+    // dispara la descarga con un blob temporal; recién cuando la descarga
+    // arrancó se navega a la botonera de Precios con el mensaje.
+    async function guardarYGenerarListado(tipo) {
+      const boton = document.getElementById(tipo === "pdf" ? "boton-generar-pdf" : "boton-generar-excel");
       const textoOriginal = boton ? boton.textContent : "";
+      const botonGuardar = document.getElementById("boton-guardar-precios");
       if (boton) {
         boton.disabled = true;
-        boton.textContent = "Exportando...";
+        boton.textContent = "Guardando...";
+      }
+      if (botonGuardar) {
+        botonGuardar.disabled = true;
       }
 
+      // Mismos campos que ya tiene el <form> de "Guardar" (cliente_id,
+      // item_N_*, cantidad_renglones, tipo_archivo, archivo_preview) — se
+      // toman tal cual del formulario, no hace falta rearmarlos a mano.
+      const datosFormulario = new FormData(document.getElementById("form-confirmar-precios"));
       const datos = new URLSearchParams();
-      datos.set("cliente_id", CLIENTE_ID);
-      for (let indice = 0; indice < CANTIDAD_RENGLONES; indice++) {
-        const descartar = document.getElementById("item_" + indice + "_descartar");
-        if (descartar && descartar.checked) {
-          continue;
-        }
-        const articuloId = document.getElementById("item_" + indice + "_articulo_id");
-        const precioNuevo = document.getElementById("item_" + indice + "_precio_nuevo");
-        if (!articuloId || !articuloId.value || !precioNuevo || !precioNuevo.value) {
-          continue;
-        }
-        datos.set("pendiente_precio_" + articuloId.value, precioNuevo.value);
-      }
-
-      try {
-        await descargarArchivoExportado(
-          tipo === "pdf" ? "/precios/cargar/exportar-pdf" : "/precios/cargar/exportar-excel",
-          datos,
-          tipo
-        );
-      } catch (error) {
-        alert("No se pudo exportar. Probá de nuevo.");
-      } finally {
-        if (boton) {
-          boton.disabled = false;
-          boton.textContent = textoOriginal;
-        }
-      }
-    }
-
-    // Pide el archivo por POST vía fetch (nunca navega de esta pantalla) y
-    // lo baja armando un <a> temporal con un blob URL. target="_blank" es
-    // un resguardo: si algún navegador (Safari/iOS incluido) no respeta el
-    // atributo "download" para blobs, abre en una pestaña nueva en vez de
-    // reemplazar esta pantalla — de cualquier manera, la revisión en curso
-    // nunca se pierde.
-    async function descargarArchivoExportado(url, datosFormulario, tipo) {
-      const respuesta = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: datosFormulario.toString(),
+      datosFormulario.forEach(function (valor, clave) {
+        datos.set(clave, valor);
       });
-      if (!respuesta.ok) {
-        throw new Error("Error al exportar");
+
+      const url = tipo === "pdf" ? "/precios/cargar-foto/guardar-y-exportar-pdf" : "/precios/cargar-foto/guardar-y-exportar-excel";
+
+      let respuesta;
+      try {
+        respuesta = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: datos.toString(),
+        });
+      } catch (error) {
+        alert("No se pudo guardar ni generar el listado. Probá de nuevo.");
+        if (boton) { boton.disabled = false; boton.textContent = textoOriginal; }
+        if (botonGuardar) { botonGuardar.disabled = false; }
+        return;
       }
 
+      if (!respuesta.ok) {
+        let detalle = "No se pudo guardar ni generar el listado.";
+        try {
+          const cuerpo = await respuesta.json();
+          if (cuerpo && cuerpo.detail) {
+            detalle = cuerpo.detail;
+          }
+        } catch (error) {
+          // Respuesta sin cuerpo JSON — se usa el mensaje genérico.
+        }
+        alert(detalle);
+        if (boton) { boton.disabled = false; boton.textContent = textoOriginal; }
+        if (botonGuardar) { botonGuardar.disabled = false; }
+        return;
+      }
+
+      const cantidadGuardada = respuesta.headers.get("x-cantidad-guardada") || "0";
       const blob = await respuesta.blob();
       const disposicion = respuesta.headers.get("content-disposition") || "";
       const coincidencia = disposicion.match(/filename="?([^"]+)"?/);
@@ -356,6 +356,8 @@
       enlace.click();
       enlace.remove();
       setTimeout(function () { URL.revokeObjectURL(urlBlob); }, 30000);
+
+      window.location.href = "/precios?guardado=" + cantidadGuardada + "&listado=1";
     }
 
     function verArchivo(evento) {

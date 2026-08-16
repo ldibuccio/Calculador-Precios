@@ -2518,22 +2518,32 @@ def _id_opcional_desde_query(valor: str | None) -> int | None:
 
 
 @app.get("/precios")
-def ver_precios(request: Request, guardado: str | None = None):
+def ver_precios(request: Request, guardado: str | None = None, listado: str | None = None):
     """Botonera de Lista de Precios: Consultar, Cargar Precios Nuevos, Generar Listado (Próximamente).
 
-    "guardado" llega desde el redirect de POST /precios/cargar con la
-    cantidad de precios que efectivamente se guardaron (puede ser menos que
-    los pendientes cargados, si alguno quedó igual al vigente y no generó
-    fila nueva), para mostrar un mensaje de confirmación acá.
+    "guardado" llega desde el redirect de POST /precios/cargar (o de
+    "Guardar y generar listado", en /precios/cargar/guardar-y-exportar-*)
+    con la cantidad de precios que efectivamente se guardaron (puede ser
+    menos que los pendientes cargados, si alguno quedó igual al vigente y
+    no generó fila nueva), para mostrar un mensaje de confirmación acá.
+    "listado" viene solo desde "Guardar y generar listado", para dejar en
+    claro que además del guardado se generó el PDF/Excel.
     """
     cantidad_guardada = _id_opcional_desde_query(guardado)
     mensaje = None
     if cantidad_guardada is not None:
-        mensaje = (
-            f"Se cargaron {cantidad_guardada} precios."
-            if cantidad_guardada > 0
-            else "No se guardó ningún cambio: los precios ya estaban al día."
-        )
+        if listado:
+            mensaje = (
+                f"Se guardaron {cantidad_guardada} precios y se generó el listado."
+                if cantidad_guardada > 0
+                else "Los precios ya estaban al día — se generó el listado igual."
+            )
+        else:
+            mensaje = (
+                f"Se cargaron {cantidad_guardada} precios."
+                if cantidad_guardada > 0
+                else "No se guardó ningún cambio: los precios ya estaban al día."
+            )
     return templates.TemplateResponse(request, "precios.html", {"mensaje": mensaje})
 
 
@@ -2718,135 +2728,40 @@ def exportar_precios_excel(cliente_id: str = "", fecha: str = ""):
     )
 
 
-def _validar_cliente_para_exportar_pendientes(cliente_id_texto: str) -> dict:
-    """Valida el cliente_id que llega en el form de exportación de pendientes (Carga Manual / Carga Foto)."""
-    try:
-        cliente_id = int(cliente_id_texto)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Cliente inválido")
+def _respuesta_listado_generado(cliente: dict, cambios: list[dict], tipo: str) -> Response:
+    """Genera el PDF/Excel de la Lista de Precios ya guardada (precios vigentes de HOY, con lo que se
+    acaba de guardar resaltado en rojo — mismo criterio que /precios/consultar) y lo devuelve como
+    adjunto. Se usa desde "Guardar y generar listado": primero se guarda de verdad (ver
+    _guardar_pendientes_carga_manual / _guardar_pendientes_carga_foto), y esto arma el archivo con lo
+    recién guardado — no hay pendientes de por medio, así que reusa _armar_filas_exportacion_precios tal
+    cual, sin necesidad de superponer nada.
 
-    try:
-        clientes = listar_clientes()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
-    if cliente is None:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    return cliente
-
-
-def _leer_pendientes_precio_por_articulo(form) -> dict[int, float]:
-    """Lee del form los pendientes sin guardar de la carga actual, como {articulo_id: precio_nuevo}.
-
-    Mismo prefijo "pendiente_precio_<articulo_id>" que ya arma la pantalla de Carga Manual al guardar
-    (ver _leer_pendientes_del_form) — se reusa tal cual para el preview de exportación, y la pantalla de
-    Carga Foto arma el mismo campo por JS antes de exportar, así ambas pantallas comparten esta lectura.
-    Entradas vacías o no numéricas se ignoran (es un preview, no hace falta bloquear la exportación por eso).
-    """
-    pendientes: dict[int, float] = {}
-    prefijo = "pendiente_precio_"
-    for clave in form.keys():
-        if not clave.startswith(prefijo):
-            continue
-        try:
-            articulo_id = int(clave[len(prefijo) :])
-        except ValueError:
-            continue
-        try:
-            precio = float(str(form.get(clave, "")).strip())
-        except ValueError:
-            continue
-        if precio > 0:
-            pendientes[articulo_id] = precio
-    return pendientes
-
-
-def _armar_filas_exportacion_con_pendientes(cliente_id: int, pendientes_por_articulo: dict[int, float]) -> list[dict]:
-    """Arma las filas para el PREVIEW en PDF/Excel de la carga en curso: los precios vigentes de hoy,
-    con los pendientes de esta sesión (todavía sin guardar) superpuestos encima.
-
-    No toca la base — es solo para armar el documento. Los artículos con un pendiente en esta sesión
-    quedan marcados es_nuevo=True (van en rojo, con badge "Nuevo precio" en generar_pdf/excel_lista_precios);
-    el resto, con su precio vigente de hoy tal cual, en negro.
+    La cantidad guardada viaja en el header X-Cantidad-Guardada (no en el cuerpo, que es el archivo) —
+    la pantalla que llama la usa para armar el mensaje al volver a /precios después de descargar.
     """
     hoy = _hoy_argentina()
-    fichas = listar_fichas_por_cliente(cliente_id)
-    precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
-    articulos_existentes = listar_articulos()
-
-    # Mismo criterio que _armar_filas_exportacion_precios: nombre_cliente de
-    # la ficha (el que el cliente entiende), con el nombre del catálogo como
-    # respaldo si no está cargado.
-    nombre_por_articulo = {
-        ficha["articulo_id"]: ficha.get("nombre_cliente") or ficha["articulo_nombre"] for ficha in fichas
-    }
-    unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
-    grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
-    precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
-
-    articulos_a_exportar = set(precio_por_articulo) | set(pendientes_por_articulo)
-
-    filas = []
-    for articulo_id in articulos_a_exportar:
-        es_pendiente = articulo_id in pendientes_por_articulo
-        filas.append(
-            {
-                "articulo_nombre": nombre_por_articulo.get(articulo_id, f"Artículo #{articulo_id}"),
-                "grupo": grupo_por_articulo.get(articulo_id),
-                "precio": pendientes_por_articulo[articulo_id] if es_pendiente else precio_por_articulo.get(articulo_id),
-                "unidad": unidad_por_articulo.get(articulo_id),
-                "es_nuevo": es_pendiente,
-            }
-        )
-    return filas
-
-
-@app.post("/precios/cargar/exportar-pdf")
-async def exportar_precios_cargar_pdf(request: Request):
-    """Preview en PDF de la carga en curso (Manual o Foto): pendientes de esta sesión sobre los precios
-    vigentes de hoy — no guarda nada. Ambas pantallas de carga postean acá con el mismo formato de campos."""
-    form = await request.form()
-    cliente = _validar_cliente_para_exportar_pendientes(str(form.get("cliente_id", "")))
-    pendientes = _leer_pendientes_precio_por_articulo(form)
-
     try:
-        filas = _armar_filas_exportacion_con_pendientes(cliente["id"], pendientes)
+        filas, es_hoy = _armar_filas_exportacion_precios(cliente["id"], hoy)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    hoy = _hoy_argentina()
-    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, True)
-    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], hoy, "pdf")
+    if tipo == "pdf":
+        archivo_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, es_hoy)
+        media_type = "application/pdf"
+        extension = "pdf"
+    else:
+        archivo_bytes = generar_excel_lista_precios(cliente["nombre"], hoy, filas, es_hoy)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        extension = "xlsx"
 
+    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], hoy, extension)
     return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
-    )
-
-
-@app.post("/precios/cargar/exportar-excel")
-async def exportar_precios_cargar_excel(request: Request):
-    """Preview en Excel de la carga en curso (Manual o Foto): pendientes de esta sesión sobre los precios
-    vigentes de hoy — no guarda nada. Ambas pantallas de carga postean acá con el mismo formato de campos."""
-    form = await request.form()
-    cliente = _validar_cliente_para_exportar_pendientes(str(form.get("cliente_id", "")))
-    pendientes = _leer_pendientes_precio_por_articulo(form)
-
-    try:
-        filas = _armar_filas_exportacion_con_pendientes(cliente["id"], pendientes)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    hoy = _hoy_argentina()
-    excel_bytes = generar_excel_lista_precios(cliente["nombre"], hoy, filas, True)
-    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], hoy, "xlsx")
-
-    return Response(
-        content=excel_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+        content=archivo_bytes,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{nombre_archivo}"',
+            "X-Cantidad-Guardada": str(len(cambios)),
+        },
     )
 
 
@@ -2955,15 +2870,15 @@ def _leer_pendientes_del_form(form) -> list[dict]:
     return filas
 
 
-@app.post("/precios/cargar")
-async def cargar_precios(request: Request):
-    """Guarda de una vez todos los pendientes cargados en el navegador durante la sesión.
+def _guardar_pendientes_carga_manual(form) -> tuple[dict, list[dict]]:
+    """Valida y guarda los pendientes de Carga Manual (mismo form que ya arma precios_cargar.html al
+    guardar). Devuelve el cliente y los cambios efectivamente guardados — lo usan tanto "Guardar" a
+    secas como "Guardar y generar listado", que hacen lo mismo acá y después responden distinto.
 
     Un solo uso, carga puntual: se guarda tal cual lo que se cargó, sin
     revalidar contra lo que haya vigente en la base en este momento (no
     hace falta detectar conflictos para este caso de uso).
     """
-    form = await request.form()
     try:
         cliente_id = int(form.get("cliente_id", ""))
     except ValueError:
@@ -3000,7 +2915,31 @@ async def cargar_precios(request: Request):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar los precios: {error_db}") from error_db
 
+    return cliente, cambios
+
+
+@app.post("/precios/cargar")
+async def cargar_precios(request: Request):
+    """Guarda de una vez todos los pendientes cargados en el navegador durante la sesión."""
+    form = await request.form()
+    _cliente, cambios = _guardar_pendientes_carga_manual(form)
     return RedirectResponse(url=f"/precios?guardado={len(cambios)}", status_code=303)
+
+
+@app.post("/precios/cargar/guardar-y-exportar-pdf")
+async def guardar_y_exportar_precios_cargar_manual_pdf(request: Request):
+    """Guarda los pendientes de Carga Manual y devuelve el PDF de la Lista de Precios ya actualizada."""
+    form = await request.form()
+    cliente, cambios = _guardar_pendientes_carga_manual(form)
+    return _respuesta_listado_generado(cliente, cambios, "pdf")
+
+
+@app.post("/precios/cargar/guardar-y-exportar-excel")
+async def guardar_y_exportar_precios_cargar_manual_excel(request: Request):
+    """Guarda los pendientes de Carga Manual y devuelve el Excel de la Lista de Precios ya actualizada."""
+    form = await request.form()
+    cliente, cambios = _guardar_pendientes_carga_manual(form)
+    return _respuesta_listado_generado(cliente, cambios, "excel")
 
 
 @app.get("/precios/generar-listado")
@@ -3238,9 +3177,11 @@ async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archi
     )
 
 
-@app.post("/precios/cargar-foto/confirmar")
-async def confirmar_carga_foto_precios(request: Request):
-    form = await request.form()
+def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
+    """Valida y guarda los renglones de Carga Foto (mismo form que ya arma precios_revision_foto.html
+    al guardar). Devuelve el cliente y los cambios efectivamente guardados — lo usan tanto "Guardar" a
+    secas como "Guardar y generar listado".
+    """
     try:
         cliente_id = int(form.get("cliente_id", ""))
     except ValueError:
@@ -3314,7 +3255,30 @@ async def confirmar_carga_foto_precios(request: Request):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar los precios: {error_db}") from error_db
 
+    return cliente, cambios
+
+
+@app.post("/precios/cargar-foto/confirmar")
+async def confirmar_carga_foto_precios(request: Request):
+    form = await request.form()
+    _cliente, cambios = _guardar_pendientes_carga_foto(form)
     return RedirectResponse(url=f"/precios?guardado={len(cambios)}", status_code=303)
+
+
+@app.post("/precios/cargar-foto/guardar-y-exportar-pdf")
+async def guardar_y_exportar_precios_cargar_foto_pdf(request: Request):
+    """Guarda los renglones de Carga Foto y devuelve el PDF de la Lista de Precios ya actualizada."""
+    form = await request.form()
+    cliente, cambios = _guardar_pendientes_carga_foto(form)
+    return _respuesta_listado_generado(cliente, cambios, "pdf")
+
+
+@app.post("/precios/cargar-foto/guardar-y-exportar-excel")
+async def guardar_y_exportar_precios_cargar_foto_excel(request: Request):
+    """Guarda los renglones de Carga Foto y devuelve el Excel de la Lista de Precios ya actualizada."""
+    form = await request.form()
+    cliente, cambios = _guardar_pendientes_carga_foto(form)
+    return _respuesta_listado_generado(cliente, cambios, "excel")
 
 
 def _fecha_de_corte_limpieza_fotos():
