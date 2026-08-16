@@ -603,9 +603,16 @@
       enlace.remove();
       setTimeout(function () { URL.revokeObjectURL(urlBlob); }, 30000);
 
-      // Ya se guardó y se generó el archivo: no hay más nada que perder acá,
-      // así que ahora sí conviene navegar a la botonera con el mensaje.
-      window.location.href = "/precios?guardado=" + cantidadGuardada + "&listado=1";
+      // Ya se guardó y se generó el archivo: no hay más nada que perder
+      // acá, así que ahora sí conviene navegar a la botonera con el
+      // mensaje — pero con una pequeña espera antes. Si se navega
+      // enseguida, en navegadores embebidos (como el que abren WhatsApp o
+      // Instagram al tocar un link) la descarga recién disparada se
+      // cancela porque la pestaña ya se está yendo a otro lado antes de
+      // que el navegador termine de agarrarla.
+      setTimeout(function () {
+        window.location.href = "/precios?guardado=" + cantidadGuardada + "&listado=1";
+      }, 800);
     }
   </script>
   {% endif %}

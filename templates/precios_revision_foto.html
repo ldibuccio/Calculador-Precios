@@ -355,7 +355,14 @@
       enlace.remove();
       setTimeout(function () { URL.revokeObjectURL(urlBlob); }, 30000);
 
-      window.location.href = "/precios?guardado=" + cantidadGuardada + "&listado=1";
+      // Pequeña espera antes de navegar: si se navega enseguida, en
+      // navegadores embebidos (como el que abren WhatsApp o Instagram al
+      // tocar un link) la descarga recién disparada se cancela porque la
+      // pestaña ya se está yendo a otro lado antes de que el navegador
+      // termine de agarrarla.
+      setTimeout(function () {
+        window.location.href = "/precios?guardado=" + cantidadGuardada + "&listado=1";
+      }, 800);
     }
 
     function verArchivo(evento) {
