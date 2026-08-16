@@ -23,6 +23,7 @@ from app.db import (
     actualizar_ficha,
     actualizar_importe_compra,
     aprender_articulo,
+    buscar_compras,
     contar_articulos,
     crear_articulo,
     crear_cliente,
@@ -58,6 +59,7 @@ from app.db import (
     obtener_uso_storage_bucket,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
+from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
@@ -1288,8 +1290,140 @@ def ver_cargar_listado_compras(request: Request):
 
 
 @app.get("/compras/buscar")
-def ver_buscar_compras(request: Request):
-    return _renderizar_en_construccion(request, "Buscar compras")
+def ver_buscar_compras(
+    request: Request,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    proveedor_id: str | None = None,
+    articulo_id: str | None = None,
+):
+    """Búsqueda de compras por rango de fechas, con proveedor y artículo opcionales.
+
+    Sin fechas en la URL, arranca mostrando las últimas 48hs (mismo rango
+    que /compras/ultimas) — el usuario puede ampliarlo desde acá. Mismo
+    criterio de fecha inválida que /precios/consultar: se cae a un valor
+    por defecto y se muestra el error, sin bloquear la pantalla.
+    """
+    proveedor_id_valor = _id_opcional_desde_query(proveedor_id)
+    articulo_id_valor = _id_opcional_desde_query(articulo_id)
+
+    hoy = _hoy_argentina()
+    fecha_desde_valor = hoy - timedelta(days=1)
+    fecha_hasta_valor = hoy
+    error_fecha = None
+
+    if fecha_desde:
+        try:
+            fecha_desde_valor = date.fromisoformat(fecha_desde)
+        except ValueError:
+            error_fecha = "La fecha desde no es válida."
+    if fecha_hasta:
+        try:
+            fecha_hasta_valor = date.fromisoformat(fecha_hasta)
+        except ValueError:
+            error_fecha = "La fecha hasta no es válida."
+    if error_fecha is None and fecha_desde_valor > fecha_hasta_valor:
+        error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
+
+    try:
+        proveedores = listar_proveedores()
+        articulos = listar_articulos()
+        compras = buscar_compras(fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    proveedor_nombre_actual = (
+        next((p["nombre"] for p in proveedores if p["id"] == proveedor_id_valor), None)
+        if proveedor_id_valor is not None
+        else None
+    )
+    articulo_nombre_actual = (
+        next((a["nombre"] for a in articulos if a["id"] == articulo_id_valor), None)
+        if articulo_id_valor is not None
+        else None
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "compras_buscar.html",
+        {
+            "proveedores": proveedores,
+            "articulos": articulos,
+            "fecha_desde": fecha_desde_valor.isoformat(),
+            "fecha_hasta": fecha_hasta_valor.isoformat(),
+            "proveedor_id": proveedor_id_valor,
+            "proveedor_nombre_actual": proveedor_nombre_actual,
+            "articulo_id": articulo_id_valor,
+            "articulo_nombre_actual": articulo_nombre_actual,
+            "error_fecha": error_fecha,
+            "compras": compras,
+        },
+    )
+
+
+def _nombre_archivo_exportacion_compras(fecha_desde: date, fecha_hasta: date, extension: str) -> str:
+    return f"Listado_Compras_{fecha_desde.isoformat()}_a_{fecha_hasta.isoformat()}.{extension}"
+
+
+def _leer_filtros_buscar_compras(
+    fecha_desde_texto: str, fecha_hasta_texto: str, proveedor_id_texto: str, articulo_id_texto: str
+) -> tuple[date, date, int | None, int | None]:
+    """Valida los filtros para las rutas de exportación de compras. El link solo lo arma la propia
+    pantalla con valores ya válidos, así que un error acá es un caso de URL manipulada a mano — alcanza
+    con HTTPException (mismo criterio que el resto de las rutas de confirmación de esta app).
+    """
+    try:
+        fecha_desde = date.fromisoformat(fecha_desde_texto)
+        fecha_hasta = date.fromisoformat(fecha_hasta_texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+    proveedor_id = _id_opcional_desde_query(proveedor_id_texto)
+    articulo_id = _id_opcional_desde_query(articulo_id_texto)
+    return fecha_desde, fecha_hasta, proveedor_id, articulo_id
+
+
+@app.get("/compras/buscar/exportar-pdf")
+def exportar_listado_compras_pdf(fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = ""):
+    """Genera el Listado de Compras (con los mismos filtros de la búsqueda) en PDF — no se guarda en ningún lado."""
+    fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor = _leer_filtros_buscar_compras(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id
+    )
+
+    try:
+        compras = buscar_compras(fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    pdf_bytes = generar_pdf_listado_compras(fecha_desde_valor, fecha_hasta_valor, compras)
+    nombre_archivo = _nombre_archivo_exportacion_compras(fecha_desde_valor, fecha_hasta_valor, "pdf")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/compras/buscar/exportar-excel")
+def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = ""):
+    """Genera el Listado de Compras (con los mismos filtros de la búsqueda) en Excel — no se guarda en ningún lado."""
+    fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor = _leer_filtros_buscar_compras(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id
+    )
+
+    try:
+        compras = buscar_compras(fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    excel_bytes = generar_excel_listado_compras(fecha_desde_valor, fecha_hasta_valor, compras)
+    nombre_archivo = _nombre_archivo_exportacion_compras(fecha_desde_valor, fecha_hasta_valor, "xlsx")
+
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
 
 
 @app.get("/compras/enviar-logistica")

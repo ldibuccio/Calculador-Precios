@@ -639,10 +639,10 @@ def obtener_proveedor(proveedor_id: int) -> dict | None:
 def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
     """Devuelve las compras entre dos fechas (inclusive), agrupadas por día y por proveedor (estilo comanda).
 
-    Hoy la pantalla /compras siempre llama a esto con los últimos 2 días fijos
-    (hoy y ayer). TODO: a futuro agregar un filtro de fecha/rango a demanda en
-    la pantalla, reusando esta misma función con las fechas que elija el
-    usuario en vez de un rango fijo.
+    La pantalla /compras/ultimas siempre llama a esto con los últimos 2 días
+    fijos (hoy y ayer) — se deja tal cual, sin filtro de proveedor/artículo,
+    para no tocar esa pantalla. La búsqueda a demanda con filtros vive en
+    buscar_compras, más abajo.
     """
     conexion = obtener_conexion()
     try:
@@ -661,6 +661,47 @@ def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
                 ORDER BY c.fecha_operacion DESC, p.codigo_puesto, c.cargado_el
                 """,
                 (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, articulo_id: int | None = None) -> list[dict]:
+    """Busca compras por rango de fechas (obligatorio) y, opcionalmente, por proveedor y/o artículo.
+
+    Mismas columnas que listar_compras_por_rango_fechas (misma base de datos
+    para la pantalla y para el export a PDF/Excel) — WHERE dinámico según
+    qué filtros opcionales vinieron.
+    """
+    condiciones = ["c.fecha_operacion BETWEEN %s AND %s"]
+    parametros: list = [fecha_desde, fecha_hasta]
+    if proveedor_id is not None:
+        condiciones.append("c.proveedor_id = %s")
+        parametros.append(proveedor_id)
+    if articulo_id is not None:
+        condiciones.append("c.articulo_id = %s")
+        parametros.append(articulo_id)
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre,
+                       p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon,
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE {" AND ".join(condiciones)}
+                ORDER BY c.fecha_operacion DESC, p.codigo_puesto, c.cargado_el
+                """,
+                parametros,
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()

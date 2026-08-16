@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buscar Compras</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0 0 0.75rem;
+    text-align: center;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form select, form input[type="date"], form input[type="text"] {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .vacio { color: #888; font-style: italic; }
+  .buscador-proveedor, .buscador-articulo {
+    position: relative;
+  }
+  .lista-proveedores, .lista-articulos {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-proveedores.visible, .lista-articulos.visible {
+    display: block;
+  }
+  .opcion-proveedor, .opcion-articulo {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-proveedor:last-child, .opcion-articulo:last-child {
+    border-bottom: none;
+  }
+  .opcion-proveedor:active, .opcion-articulo:active {
+    background: #f0f5ff;
+  }
+  .opcion-proveedor span {
+    color: #666;
+    font-size: 0.85rem;
+  }
+  .tabla-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.3rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  thead tr {
+    background: #eef2f7;
+  }
+  th {
+    color: #444;
+    font-weight: 700;
+  }
+  .sin-precio { color: #dc2626; font-weight: 600; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Buscar Compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form method="get" action="/compras/buscar" id="form-buscar">
+      <label for="fecha_desde">Desde</label>
+      <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+
+      <label for="fecha_hasta">Hasta</label>
+      <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+
+      <label for="proveedor_texto">Proveedor (opcional — dejalo vacío para ver todos)</label>
+      <div class="buscador-proveedor">
+        <input type="text" id="proveedor_texto" autocomplete="off" placeholder="Buscar proveedor..."
+               value="{{ proveedor_nombre_actual or '' }}"
+               onfocus="actualizarListaProveedores()" oninput="actualizarListaProveedores()" onblur="ocultarListaProveedores()">
+        <div class="lista-proveedores" id="lista-proveedores"></div>
+      </div>
+      <input type="hidden" id="proveedor_id" name="proveedor_id" value="{{ proveedor_id if proveedor_id is not none else '' }}">
+      {% if proveedor_id %}
+      <button type="button" class="boton-secundario" onclick="limpiarProveedor()">✕ Ver todos los proveedores</button>
+      {% endif %}
+
+      <label for="articulo_texto">Artículo (opcional — dejalo vacío para ver todos)</label>
+      <div class="buscador-articulo">
+        <input type="text" id="articulo_texto" autocomplete="off" placeholder="Buscar artículo..."
+               value="{{ articulo_nombre_actual or '' }}"
+               onfocus="actualizarListaArticulos()" oninput="actualizarListaArticulos()" onblur="ocultarListaArticulos()">
+        <div class="lista-articulos" id="lista-articulos"></div>
+      </div>
+      <input type="hidden" id="articulo_id" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+      {% if articulo_id %}
+      <button type="button" class="boton-secundario" onclick="limpiarArticulo()">✕ Ver todos los artículos</button>
+      {% endif %}
+
+      <button type="submit">Buscar</button>
+    </form>
+  </div>
+
+  {% if error_fecha %}
+  <div class="error">{{ error_fecha }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <p class="ayuda">{{ compras|length }} compra{{ "s" if compras|length != 1 else "" }} encontrada{{ "s" if compras|length != 1 else "" }}</p>
+    {% if compras %}
+    <div class="tabla-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Proveedor</th>
+            <th>Artículo</th>
+            <th>Cantidad</th>
+            <th>Importe</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in compras %}
+          <tr>
+            <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
+            <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
+            <td>{{ c.articulo_nombre }}</td>
+            <td>{{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</td>
+            <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="vacio">No se encontraron compras con estos filtros.</p>
+    {% endif %}
+  </div>
+
+  {% if compras %}
+  <div class="tarjeta">
+    <button type="button" class="boton-secundario" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton" href="/compras/buscar/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar PDF</a>
+      <a class="boton" href="/compras/buscar/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar Excel</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <script>
+    const PROVEEDORES_LISTA = [
+      {% for p in proveedores %}{ id: {{ p.id }}, codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+    ];
+    const ARTICULOS_LISTA = [
+      {% for a in articulos %}{ id: {{ a.id }}, nombre: "{{ a.nombre }}" },{% endfor %}
+    ];
+
+    function normalizarBusqueda(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaProveedores() {
+      const input = document.getElementById("proveedor_texto");
+      const contenedor = document.getElementById("lista-proveedores");
+      const filtro = normalizarBusqueda(input.value);
+      const coincidencias = PROVEEDORES_LISTA.filter(function (p) {
+        if (!filtro) {
+          return true;
+        }
+        return p.nombre.toLowerCase().indexOf(filtro) !== -1 || p.codigo.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (p) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-proveedor";
+        const nombreEl = document.createElement("strong");
+        nombreEl.textContent = p.nombre;
+        const codigoEl = document.createElement("span");
+        codigoEl.textContent = " (" + p.codigo + ")";
+        opcion.appendChild(nombreEl);
+        opcion.appendChild(codigoEl);
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirProveedor(p.id, p.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaProveedores() {
+      document.getElementById("lista-proveedores").classList.remove("visible");
+    }
+
+    function elegirProveedor(id, nombre) {
+      document.getElementById("proveedor_id").value = id;
+      document.getElementById("proveedor_texto").value = nombre;
+      ocultarListaProveedores();
+    }
+
+    function limpiarProveedor() {
+      document.getElementById("proveedor_id").value = "";
+      document.getElementById("proveedor_texto").value = "";
+      document.getElementById("form-buscar").submit();
+    }
+
+    function actualizarListaArticulos() {
+      const input = document.getElementById("articulo_texto");
+      const contenedor = document.getElementById("lista-articulos");
+      const filtro = normalizarBusqueda(input.value);
+      const coincidencias = ARTICULOS_LISTA.filter(function (a) {
+        return !filtro || a.nombre.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (a) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-articulo";
+        opcion.textContent = a.nombre;
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirArticulo(a.id, a.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaArticulos() {
+      document.getElementById("lista-articulos").classList.remove("visible");
+    }
+
+    function elegirArticulo(id, nombre) {
+      document.getElementById("articulo_id").value = id;
+      document.getElementById("articulo_texto").value = nombre;
+      ocultarListaArticulos();
+    }
+
+    function limpiarArticulo() {
+      document.getElementById("articulo_id").value = "";
+      document.getElementById("articulo_texto").value = "";
+      document.getElementById("form-buscar").submit();
+    }
+
+    // "Exportar" es un solo toque para desplegar las 2 opciones, en vez de
+    // navegar a una pantalla intermedia — mismo criterio que Consultar Precios.
+    function mostrarOpcionesExportar() {
+      const boton = document.getElementById("boton-exportar");
+      const opciones = document.getElementById("opciones-exportar");
+      if (boton && opciones) {
+        opciones.style.display = "block";
+        boton.style.display = "none";
+      }
+    }
+  </script>
+</body>
+</html>

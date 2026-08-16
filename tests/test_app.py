@@ -1695,12 +1695,218 @@ def test_ver_cargar_listado_de_compras_incluye_los_proveedores_conocidos_para_su
     assert '{ codigo: "L03P38", nombre: "Frutamax" }' in respuesta.text
 
 
-def test_buscar_compras_muestra_en_construccion():
-    respuesta = cliente.get("/compras/buscar")
+# --- /compras/buscar: búsqueda de compras por rango de fechas, proveedor y artículo opcionales ---
+
+COMPRAS_BUSQUEDA_DE_PRUEBA = [
+    {
+        "id": 1,
+        "fecha_operacion": HOY_DE_PRUEBA,
+        "articulo_nombre": "Tomate Cherry",
+        "unidad_compra": "kilo",
+        "proveedor_nombre": "Saturno",
+        "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 40,
+        "contenido_por_cajon": 20,
+        "cantidad_kilos": 800,
+        "cantidad_fraccion": None,
+        "importe": 45000.0,
+        "sena": None,
+        "tipo_retiro": "Clark",
+        "foto_ruta": None,
+    },
+    {
+        "id": 2,
+        "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=1),
+        "articulo_nombre": "Mango",
+        "unidad_compra": "unidad",
+        "proveedor_nombre": "Frutamax",
+        "proveedor_codigo_puesto": "L03P38",
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 12,
+        "cantidad_kilos": None,
+        "cantidad_fraccion": 120,
+        "importe": None,
+        "sena": None,
+        "tipo_retiro": "Granel",
+        "foto_ruta": None,
+    },
+]
+
+
+def test_ver_buscar_compras_sin_filtros_usa_las_ultimas_48hs():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar,
+    ):
+        respuesta = cliente.get("/compras/buscar")
 
     assert respuesta.status_code == 200
-    assert "Buscar compras" in respuesta.text
-    assert "En construcción" in respuesta.text
+    mock_buscar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None)
+    assert f'value="{(HOY_DE_PRUEBA - timedelta(days=1)).isoformat()}"' in respuesta.text
+    assert f'value="{HOY_DE_PRUEBA.isoformat()}"' in respuesta.text
+
+
+def test_ver_buscar_compras_con_filtros_de_fecha_proveedor_y_articulo():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar,
+    ):
+        respuesta = cliente.get(
+            "/compras/buscar?fecha_desde=2026-08-01&fecha_hasta=2026-08-06&proveedor_id=200&articulo_id=5"
+        )
+
+    assert respuesta.status_code == 200
+    mock_buscar.assert_called_once_with(date(2026, 8, 1), date(2026, 8, 6), 200, 5)
+    # Los buscadores combinados quedan precargados con el nombre elegido.
+    assert 'value="Saturno"' in respuesta.text
+    assert 'value="Kiwi"' in respuesta.text
+    assert "✕ Ver todos los proveedores" in respuesta.text
+    assert "✕ Ver todos los artículos" in respuesta.text
+
+
+def test_ver_buscar_compras_muestra_contador_y_tabla():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert "2 compras encontradas" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "Saturno (N07P41)" in respuesta.text
+    assert "40 cajones × 20k" in respuesta.text
+    assert "$45.000" in respuesta.text
+    # Sin importe -> "SIN PRECIO" en rojo, mismo criterio que Últimas Compras.
+    assert "SIN PRECIO" in respuesta.text
+
+
+def test_ver_buscar_compras_sin_resultados_muestra_mensaje_y_no_boton_exportar():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert "0 compras encontradas" in respuesta.text
+    assert "No se encontraron compras con estos filtros." in respuesta.text
+    assert 'id="boton-exportar"' not in respuesta.text
+
+
+def test_ver_buscar_compras_con_resultados_muestra_boton_exportar():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/buscar?fecha_desde=2026-08-01&fecha_hasta=2026-08-06")
+
+    assert 'id="boton-exportar"' in respuesta.text
+    assert "/compras/buscar/exportar-pdf?fecha_desde=2026-08-01&fecha_hasta=2026-08-06" in respuesta.text
+    assert "/compras/buscar/exportar-excel?fecha_desde=2026-08-01&fecha_hasta=2026-08-06" in respuesta.text
+
+
+def test_ver_buscar_compras_fecha_invalida_muestra_error_y_usa_default():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]) as mock_buscar,
+    ):
+        respuesta = cliente.get("/compras/buscar?fecha_desde=no-es-una-fecha")
+
+    assert respuesta.status_code == 200
+    assert "La fecha desde no es válida." in respuesta.text
+    mock_buscar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None)
+
+
+def test_ver_buscar_compras_fecha_desde_posterior_a_hasta_muestra_error():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/buscar?fecha_desde=2026-08-10&fecha_hasta=2026-08-01")
+
+    assert "La fecha desde no puede ser posterior a la fecha hasta." in respuesta.text
+
+
+def test_ver_buscar_compras_incluye_buscadores_combinados():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert '{ id: 200, codigo: "N07P41", nombre: "Saturno" }' in respuesta.text
+    assert '{ id: 5, nombre: "Kiwi" }' in respuesta.text
+    assert "actualizarListaProveedores" in respuesta.text
+    assert "actualizarListaArticulos" in respuesta.text
+
+
+def test_ver_buscar_compras_error_de_base_da_500():
+    with patch("app.main.listar_proveedores", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.status_code == 500
+
+
+# --- /compras/buscar/exportar-pdf y exportar-excel ---
+
+
+def test_exportar_listado_compras_pdf_devuelve_archivo_adjunto():
+    with patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar:
+        respuesta = cliente.get(
+            "/compras/buscar/exportar-pdf?fecha_desde=2026-08-01&fecha_hasta=2026-08-06&proveedor_id=200&articulo_id=5"
+        )
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "attachment" in respuesta.headers["content-disposition"]
+    assert "Listado_Compras_2026-08-01_a_2026-08-06" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"%PDF")
+    mock_buscar.assert_called_once_with(date(2026, 8, 1), date(2026, 8, 6), 200, 5)
+
+
+def test_exportar_listado_compras_pdf_agrupa_por_fecha_y_proveedor():
+    with patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA):
+        respuesta = cliente.get("/compras/buscar/exportar-pdf?fecha_desde=2026-08-01&fecha_hasta=2026-08-06")
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Listado de Compras" in texto
+    # La fecha más reciente (HOY_DE_PRUEBA) va antes que la del día anterior.
+    assert texto.index(HOY_DE_PRUEBA.strftime("%d/%m/%Y")) < texto.index(
+        (HOY_DE_PRUEBA - timedelta(days=1)).strftime("%d/%m/%Y")
+    )
+    assert "Saturno (N07P41)" in texto
+    assert "Frutamax (L03P38)" in texto
+
+
+def test_exportar_listado_compras_pdf_fecha_invalida_da_400():
+    respuesta = cliente.get("/compras/buscar/exportar-pdf?fecha_desde=no-es-fecha&fecha_hasta=2026-08-06")
+
+    assert respuesta.status_code == 400
+
+
+def test_exportar_listado_compras_excel_devuelve_archivo_adjunto():
+    with patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA):
+        respuesta = cliente.get("/compras/buscar/exportar-excel?fecha_desde=2026-08-01&fecha_hasta=2026-08-06")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "attachment" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+
+def test_exportar_listado_compras_excel_fecha_invalida_da_400():
+    respuesta = cliente.get("/compras/buscar/exportar-excel?fecha_desde=2026-08-01&fecha_hasta=no-es-fecha")
+
+    assert respuesta.status_code == 400
 
 
 def test_enviar_a_logistica_muestra_en_construccion():
@@ -1760,10 +1966,10 @@ def test_ver_compras_botonera_diferencia_grupos_por_color():
     assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
     assert ".boton-naranja { background: #ea580c; }" in respuesta.text
     # "Próximamente": color del grupo pero atenuado (mismo criterio en
-    # Cargar y en Operaciones). Cargar Listado de Compras ya no es
-    # "próximamente" — quedó activo.
+    # Cargar y en Operaciones). Cargar Listado de Compras y Buscar Compras
+    # ya no son "próximamente" — quedaron activos.
     assert 'class="boton" href="/compras/nueva/listado"' in respuesta.text
-    assert 'class="boton boton-naranja boton-proximamente" href="/compras/buscar"' in respuesta.text
+    assert 'class="boton boton-naranja" href="/compras/buscar"' in respuesta.text
     assert 'class="boton boton-naranja boton-proximamente" href="/compras/disponibles"' in respuesta.text
     assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
 
@@ -5468,7 +5674,6 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
         "/logistica",
         "/deposito",
         "/gerencia",
-        "/compras/buscar",
         "/compras/nueva/listado",
     ]
     for url in urls:
@@ -5478,6 +5683,15 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
 
     with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
         respuesta = cliente.get("/compras/nueva/manual")
+    assert respuesta.status_code == 200
+    assert "titulo-sector" not in respuesta.text
+
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/buscar")
     assert respuesta.status_code == 200
     assert "titulo-sector" not in respuesta.text
 
