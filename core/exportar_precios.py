@@ -23,8 +23,11 @@ from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, TableStyle
 
 VERDE_ENCABEZADO = colors.Color(0.18, 0.55, 0.34)
+VERDE_CLARO_ENCABEZADO_TABLA = colors.Color(0.87, 0.94, 0.89)
 ROJO_PRECIO_NUEVO = colors.Color(0.80, 0.10, 0.10)
+ROSA_FILA_NUEVA = colors.Color(0.98, 0.91, 0.91)
 GRIS_TEXTO_AYUDA = colors.Color(0.35, 0.35, 0.35)
+GRIS_FILA_ALTERNADA = colors.Color(0.97, 0.97, 0.97)
 VERDE_ENCABEZADO_HEX = "2E8C57"  # equivalente aproximado de (0.18, 0.55, 0.34) en hex, para Excel
 ROJO_PRECIO_NUEVO_HEX = "CC1A1A"
 ROJO_FONDO_CLARO_HEX = "FCE4E4"
@@ -47,11 +50,11 @@ def _texto_unidad(unidad) -> str:
 
 
 def _formatear_moneda(valor) -> str:
-    """"$45.000": símbolo $, "." cada tres cifras, redondeado al peso entero — mismo criterio que el resto de la app."""
+    """"$ 45.000": símbolo $ con espacio, "." cada tres cifras, redondeado al peso entero."""
     entero = round(float(valor))
     negativo = entero < 0
     texto = f"{abs(entero):,}".replace(",", ".")
-    return f"${'-' if negativo else ''}{texto}"
+    return f"$ {'-' if negativo else ''}{texto}"
 
 
 def _agrupar_y_ordenar_filas(filas: list[dict]) -> dict:
@@ -69,51 +72,58 @@ LEYENDA_PRECIO_NUEVO = "Nuevo precio indica los productos cuyo precio fue actual
 PIE_PAGINA = "* Todos los precios están expresados en pesos y no incluyen IVA."
 
 
-ALTURA_BANDA_ENCABEZADO = 24 * mm
-# Espacio reservado debajo de la banda verde para "Cliente:", "Vigencia:" y
-# la leyenda — se pinta directo en el canvas (ver _dibujar_datos_encabezado),
-# no como flowable, para que se repita en TODAS las páginas, no solo la
-# primera.
-ALTURA_DATOS_ENCABEZADO = 22 * mm
+# Posiciones (desde el borde superior de la página) de cada línea del
+# encabezado: título negro a la izquierda, Cliente, Vigencia, el filete
+# verde fino, y la leyenda con el puntito rojo — sin banda de color, como
+# en el formato de referencia.
+OFFSET_TITULO = 15 * mm
+OFFSET_CLIENTE = 22 * mm
+OFFSET_VIGENCIA = 27.5 * mm
+OFFSET_LINEA = 32 * mm
+OFFSET_LEYENDA = 38 * mm
+ALTURA_ENCABEZADO = 46 * mm  # topMargin: deja aire entre la leyenda y el cuerpo
 
 
-def _dibujar_banda_encabezado(canvas, documento):
-    """Pinta la banda verde con "Lista de Precios" directo en el canvas, de punta a punta de la hoja.
+def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str):
+    """Título, Cliente, Vigencia, filete verde y leyenda — directo en el canvas, en TODAS las páginas.
 
-    Se dibuja así (no como Table/Paragraph dentro del flujo normal) porque
-    un flowable queda acotado por los márgenes del documento — para que el
-    color llegue de borde a borde de la página hay que pintarlo antes, en
-    el canvas crudo, en cada página (onFirstPage/onLaterPages).
-    """
-    ancho_pagina, alto_pagina = A4
-    canvas.saveState()
-    canvas.setFillColor(VERDE_ENCABEZADO)
-    canvas.rect(0, alto_pagina - ALTURA_BANDA_ENCABEZADO, ancho_pagina, ALTURA_BANDA_ENCABEZADO, stroke=0, fill=1)
-    canvas.setFillColor(colors.white)
-    canvas.setFont("Helvetica-Bold", 20)
-    canvas.drawCentredString(ancho_pagina / 2, alto_pagina - ALTURA_BANDA_ENCABEZADO / 2 - 7, "Lista de Precios")
-    canvas.restoreState()
-
-
-def _dibujar_datos_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str):
-    """Pinta "Cliente:", "Vigencia:" y la leyenda debajo de la banda verde, en TODAS las páginas.
-
-    Van en el canvas (no como Paragraph en el flujo normal) por el mismo
-    motivo que la banda: un flowable normal solo aparece una vez, en el
-    lugar donde cae dentro del flujo — para que se repita en cada página
-    (si una sección se corta y sigue en la siguiente) hay que pintarlo acá.
+    Va en el canvas (no como Paragraph en el flujo normal) para que se
+    repita en cada página, incluso si una sección se corta y sigue en la
+    siguiente — un flowable normal solo aparece una vez, en el lugar donde
+    cae dentro del flujo.
     """
     ancho_pagina, alto_pagina = A4
     x = documento.leftMargin
-    y_base = alto_pagina - ALTURA_BANDA_ENCABEZADO - 7 * mm
+    x_derecha = ancho_pagina - documento.rightMargin
     canvas.saveState()
+
     canvas.setFillColor(colors.black)
+    canvas.setFont("Helvetica-Bold", 22)
+    canvas.drawString(x, alto_pagina - OFFSET_TITULO, "Lista de Precios")
+
     canvas.setFont("Helvetica", 10)
-    canvas.drawString(x, y_base, f"Cliente: {cliente_nombre}")
-    canvas.drawString(x, y_base - 5.5 * mm, f"Vigencia: {fecha_texto} · Precios + IVA")
+    canvas.drawString(x, alto_pagina - OFFSET_CLIENTE, f"Cliente: {cliente_nombre}")
+
     canvas.setFillColor(GRIS_TEXTO_AYUDA)
+    canvas.drawString(x, alto_pagina - OFFSET_VIGENCIA, f"Vigencia: {fecha_texto} · Precios + IVA")
+
+    canvas.setStrokeColor(VERDE_ENCABEZADO)
+    canvas.setLineWidth(1)
+    canvas.line(x, alto_pagina - OFFSET_LINEA, x_derecha, alto_pagina - OFFSET_LINEA)
+
+    # El puntito va en un drawString aparte (con el espacio incluido en el
+    # mismo texto) para que quede realmente rojo y separado de la leyenda
+    # gris que sigue, sin depender de cómo un lector de PDF una texto
+    # dibujado en llamadas distintas.
+    y_leyenda = alto_pagina - OFFSET_LEYENDA
     canvas.setFont("Helvetica-Oblique", 9)
-    canvas.drawString(x, y_base - 12 * mm, LEYENDA_PRECIO_NUEVO)
+    canvas.setFillColor(ROJO_PRECIO_NUEVO)
+    prefijo_bullet = "• "
+    canvas.drawString(x, y_leyenda, prefijo_bullet)
+    ancho_bullet = canvas.stringWidth(prefijo_bullet, "Helvetica-Oblique", 9)
+    canvas.setFillColor(GRIS_TEXTO_AYUDA)
+    canvas.drawString(x + ancho_bullet, y_leyenda, LEYENDA_PRECIO_NUEVO)
+
     canvas.restoreState()
 
 
@@ -134,7 +144,7 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
     documento = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=ALTURA_BANDA_ENCABEZADO + ALTURA_DATOS_ENCABEZADO,
+        topMargin=ALTURA_ENCABEZADO,
         leftMargin=16 * mm,
         rightMargin=16 * mm,
         bottomMargin=16 * mm,
@@ -142,8 +152,7 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
     ancho_util = documento.width
 
     def _dibujar_encabezado_pagina(canvas, documento):
-        _dibujar_banda_encabezado(canvas, documento)
-        _dibujar_datos_encabezado(canvas, documento, cliente_nombre, fecha_texto)
+        _dibujar_encabezado(canvas, documento, cliente_nombre, fecha_texto)
 
     estilo_ayuda = ParagraphStyle(
         "ayuda", fontName="Helvetica-Oblique", fontSize=9, textColor=GRIS_TEXTO_AYUDA, spaceBefore=16
@@ -152,16 +161,14 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
         "seccion_en_tabla", fontName="Helvetica-Bold", fontSize=13, textColor=VERDE_ENCABEZADO
     )
     estilo_encabezado_tabla = ParagraphStyle(
-        "encabezado_tabla", fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.white
+        "encabezado_tabla", fontName="Helvetica-Bold", fontSize=9.5, textColor=VERDE_ENCABEZADO
     )
     estilo_producto = ParagraphStyle("producto", fontName="Helvetica", fontSize=9.5, textColor=colors.black)
-    estilo_precio = ParagraphStyle("precio", fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.black)
+    estilo_precio = ParagraphStyle("precio", fontName="Helvetica-Bold", fontSize=9.5, textColor=VERDE_ENCABEZADO)
     estilo_precio_nuevo = ParagraphStyle(
         "precio_nuevo", fontName="Helvetica-Bold", fontSize=9.5, textColor=ROJO_PRECIO_NUEVO
     )
-    estilo_badge_nuevo = ParagraphStyle(
-        "badge_nuevo", fontName="Helvetica-Bold", fontSize=7, textColor=ROJO_PRECIO_NUEVO, spaceBefore=1
-    )
+    estilo_badge_nuevo = ParagraphStyle("badge_nuevo", fontName="Helvetica-Bold", fontSize=8, textColor=ROJO_PRECIO_NUEVO)
     estilo_unidad = ParagraphStyle("unidad", fontName="Helvetica", fontSize=9.5, textColor=GRIS_TEXTO_AYUDA)
 
     elementos = []
@@ -178,45 +185,61 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
         hay_grupo_previo = True
 
         datos_tabla = [
-            [Paragraph(titulo, estilo_seccion_en_tabla), "", ""],
+            [Paragraph(titulo, estilo_seccion_en_tabla), "", "", ""],
             [
                 Paragraph("Producto", estilo_encabezado_tabla),
                 Paragraph("Precio", estilo_encabezado_tabla),
                 Paragraph("Unidad", estilo_encabezado_tabla),
+                "",
             ],
         ]
-        for fila in filas_grupo:
+        # Comandos de TableStyle propios de cada fila de datos (resaltado
+        # rosa + franja roja izquierda en las nuevas, gris muy suave
+        # alternado en el resto) — se arman acá porque dependen del índice
+        # real de cada fila dentro de la tabla (2 = primera fila de datos,
+        # después del título y el encabezado de columnas).
+        estilos_filas = []
+        for indice_dato, fila in enumerate(filas_grupo):
             es_nueva = es_hoy and bool(fila.get("es_nuevo"))
+            indice_tabla = indice_dato + 2
+
             precio_texto = _formatear_moneda(fila["precio"])
             celda_precio = Paragraph(precio_texto, estilo_precio_nuevo if es_nueva else estilo_precio)
-            if es_nueva:
-                celda_producto = [
-                    Paragraph(fila["articulo_nombre"], estilo_producto),
-                    Paragraph("Nuevo precio", estilo_badge_nuevo),
-                ]
-            else:
-                celda_producto = Paragraph(fila["articulo_nombre"], estilo_producto)
+            celda_badge = Paragraph("• Nuevo precio", estilo_badge_nuevo) if es_nueva else ""
+
             datos_tabla.append(
                 [
-                    celda_producto,
+                    Paragraph(fila["articulo_nombre"], estilo_producto),
                     celda_precio,
                     Paragraph(_texto_unidad(fila.get("unidad")), estilo_unidad),
+                    celda_badge,
                 ]
             )
 
-        tabla = Table(datos_tabla, colWidths=[ancho_util * 0.5, ancho_util * 0.25, ancho_util * 0.25], repeatRows=2)
+            if es_nueva:
+                estilos_filas.append(("BACKGROUND", (0, indice_tabla), (-1, indice_tabla), ROSA_FILA_NUEVA))
+                estilos_filas.append(("LINEBEFORE", (0, indice_tabla), (0, indice_tabla), 3, ROJO_PRECIO_NUEVO))
+            elif indice_dato % 2 == 1:
+                estilos_filas.append(("BACKGROUND", (0, indice_tabla), (-1, indice_tabla), GRIS_FILA_ALTERNADA))
+
+        tabla = Table(
+            datos_tabla,
+            colWidths=[ancho_util * 0.40, ancho_util * 0.16, ancho_util * 0.16, ancho_util * 0.28],
+            repeatRows=2,
+        )
         tabla.setStyle(
             TableStyle(
                 [
                     ("SPAN", (0, 0), (-1, 0)),
-                    ("BACKGROUND", (0, 1), (-1, 1), VERDE_ENCABEZADO),
+                    ("BACKGROUND", (0, 1), (-1, 1), VERDE_CLARO_ENCABEZADO_TABLA),
                     ("LINEBELOW", (0, 2), (-1, -1), 0.5, colors.Color(0.85, 0.85, 0.85)),
                     ("TOPPADDING", (0, 0), (-1, 0), 0),
                     ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
-                    ("TOPPADDING", (0, 1), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 1), (-1, -1), 8),
+                    ("BOTTOMPADDING", (0, 1), (-1, -1), 8),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    *estilos_filas,
                 ]
             )
         )

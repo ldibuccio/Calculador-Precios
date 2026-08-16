@@ -71,8 +71,8 @@ def test_generar_pdf_precios_formateados_con_signo_pesos_y_separador_de_miles():
     pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
     texto = _texto_del_pdf(pdf_bytes)
 
-    assert "$1.200" in texto
-    assert "$15.000" in texto
+    assert "$ 1.200" in texto
+    assert "$ 15.000" in texto
 
 
 def test_generar_pdf_unidad_segun_la_ficha():
@@ -103,18 +103,32 @@ def test_generar_pdf_fecha_pasada_no_resalta_nada_aunque_venga_es_nuevo():
     assert "Nuevo precio" not in texto
 
 
-def test_generar_pdf_badge_nuevo_precio_va_junto_al_producto():
-    # El badge tiene que quedar en la celda del Producto, no partiendo la
-    # fila Precio/Unidad — o sea, en el texto extraído tiene que aparecer
-    # justo después del nombre del artículo y ANTES del precio.
+def test_generar_pdf_badge_nuevo_precio_va_en_su_propia_columna_a_la_derecha():
+    # El badge va en una columna aparte, después de Precio y Unidad — no
+    # debajo del producto ni partiendo la fila Precio/Unidad.
     pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
     texto = _texto_del_pdf(pdf_bytes)
 
     bloque_fruta = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
     posicion_nombre = bloque_fruta.index("Manzana Red")
+    posicion_precio = bloque_fruta.index("$ 890")
+    posicion_unidad = bloque_fruta.index("por kilo")
     posicion_badge = bloque_fruta.index("Nuevo precio")
-    posicion_precio = bloque_fruta.index("$890")
-    assert posicion_nombre < posicion_badge < posicion_precio
+    assert posicion_nombre < posicion_precio < posicion_unidad < posicion_badge
+
+
+def test_generar_pdf_badge_nuevo_precio_tiene_puntito():
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    texto = _texto_del_pdf(pdf_bytes)
+
+    assert "• Nuevo precio" in texto
+
+
+def test_generar_pdf_leyenda_tiene_puntito_rojo():
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    texto = _texto_del_pdf(pdf_bytes)
+
+    assert "• Nuevo precio indica los productos cuyo precio fue actualizado." in texto
 
 
 def test_generar_pdf_cada_grupo_empieza_en_su_propia_pagina():
