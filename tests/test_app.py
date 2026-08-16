@@ -3878,6 +3878,323 @@ def test_costeo_prueba_ya_no_existe():
     assert respuesta.status_code == 404
 
 
+# --- /precios: consulta de precios vigentes (por cliente+fecha, o cliente+articulo+fecha) ---
+
+FICHAS_PRECIOS_DE_PRUEBA = [
+    {"id": 1, "articulo_id": 1, "articulo_nombre": "Tomate Cherry"},
+    {"id": 2, "articulo_id": 2, "articulo_nombre": "Mango"},
+]
+
+PRECIOS_VIGENTES_DE_PRUEBA = [
+    {"articulo_id": 1, "precio": 500.0},
+    {"articulo_id": 2, "precio": 350.0},
+]
+
+
+def test_ver_precios_sin_cliente_muestra_selector():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente") as mock_precios,
+    ):
+        respuesta = cliente.get("/precios")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente para ver sus precios." in respuesta.text
+    assert "Día" in respuesta.text
+    mock_precios.assert_not_called()
+
+
+def test_ver_precios_con_cliente_lista_todos_los_precios_vigentes():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA) as mock_precios,
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Tomate Cherry" in respuesta.text
+    assert "$500" in respuesta.text
+    assert "Mango" in respuesta.text
+    assert "$350" in respuesta.text
+    # Sin fecha en la URL, consulta a HOY.
+    assert mock_precios.call_args[0] == (1, HOY_DE_PRUEBA)
+
+
+def test_ver_precios_fecha_pasada_usa_esa_fecha():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]) as mock_precios,
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&fecha=2026-01-15")
+
+    assert respuesta.status_code == 200
+    assert mock_precios.call_args[0][1] == date(2026, 1, 15)
+    assert "15/01/2026" in respuesta.text
+
+
+def test_ver_precios_fecha_invalida_muestra_error():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&fecha=no-es-una-fecha")
+
+    assert respuesta.status_code == 200
+    assert "La fecha no es válida." in respuesta.text
+
+
+def test_ver_precios_articulo_puntual_filtra_a_ese_solo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&articulo_id=2")
+
+    assert respuesta.status_code == 200
+    # El selector de artículo sigue listando todos (para poder elegir
+    # otro), pero el RESULTADO tiene que quedar filtrado a uno solo.
+    import re
+
+    bloque_resultado = re.search(r'<h2>Precios vigentes.*?</div>\s*</div>', respuesta.text, re.S).group(0)
+    assert "Mango" in bloque_resultado
+    assert "Tomate Cherry" not in bloque_resultado
+
+
+def test_ver_precios_articulo_puntual_sin_precio_vigente_muestra_mensaje():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&articulo_id=2")
+
+    assert respuesta.status_code == 200
+    assert "no tiene precio vigente" in respuesta.text
+
+
+def test_ver_precios_cliente_sin_precios_muestra_mensaje():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "no tiene ningún precio vigente" in respuesta.text
+
+
+def test_ver_precios_incluye_link_para_cargar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1")
+
+    assert 'href="/precios/cargar?cliente_id=1"' in respuesta.text
+
+
+def test_ver_precios_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios?cliente_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_precios_error_de_base_da_500():
+    with patch("app.main.listar_clientes", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/precios")
+
+    assert respuesta.status_code == 500
+
+
+# --- /precios/cargar: carga de precios nuevos, respetando el historial ---
+
+
+def test_ver_cargar_precios_sin_cliente_muestra_selector():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/cargar")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente para cargarle precios nuevos." in respuesta.text
+
+
+def test_ver_cargar_precios_precarga_con_los_vigentes_de_hoy():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Tomate Cherry" in respuesta.text
+    assert 'name="precio_1_original" value="500.0"' in respuesta.text
+    assert 'name="precio_1"' in respuesta.text
+    assert 'value="500.0"' in respuesta.text
+    assert "Todavía no tiene precio cargado." not in respuesta.text
+
+
+def test_ver_cargar_precios_articulo_sin_precio_previo_arranca_vacio():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Todavía no tiene precio cargado." in respuesta.text
+    assert 'name="precio_1_original" value=""' in respuesta.text
+
+
+def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "sin fichas no hay artículos a los que ponerle precio" in respuesta.text
+
+
+def test_ver_cargar_precios_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/cargar?cliente_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def _datos_cargar_precios(**overrides):
+    datos = {
+        "cliente_id": "1",
+        "precio_1_original": "500.0",
+        "precio_1": "500.0",
+        "precio_2_original": "350.0",
+        "precio_2": "350.0",
+    }
+    datos.update(overrides)
+    return datos
+
+
+def test_cargar_precios_sin_cambios_no_guarda_nada():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post("/precios/cargar", data=_datos_cargar_precios(), follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/precios?cliente_id=1"
+    mock_guardar.assert_called_once_with(1, [])
+
+
+def test_cargar_precios_editado_genera_fila_nueva_sin_pisar_la_vieja():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar", data=_datos_cargar_precios(precio_2="380"), follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(1, [{"articulo_id": 2, "precio": 380.0}])
+
+
+def test_cargar_precios_nuevo_para_articulo_sin_precio_previo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar",
+            data=_datos_cargar_precios(precio_2_original="", precio_2="400"),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(1, [{"articulo_id": 2, "precio": 400.0}])
+
+
+def test_cargar_precios_campo_vacio_no_pisa_ni_borra_nada():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar", data=_datos_cargar_precios(precio_2=""), follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(1, [])
+
+
+def test_cargar_precios_invalido_muestra_error_y_preserva_lo_tipeado():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post("/precios/cargar", data=_datos_cargar_precios(precio_2="abc"))
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser un número" in respuesta.text
+    # No se pierde lo que ya estaba bien tipeado en el otro artículo.
+    assert 'value="500.0"' in respuesta.text
+    mock_guardar.assert_not_called()
+
+
+def test_cargar_precios_cero_o_negativo_muestra_error():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post("/precios/cargar", data=_datos_cargar_precios(precio_2="0"))
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser mayor a 0" in respuesta.text
+    mock_guardar.assert_not_called()
+
+
+def test_cargar_precios_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.post("/precios/cargar", data=_datos_cargar_precios(precio_2="380"))
+
+    assert respuesta.status_code == 500
+    assert "No se pudieron guardar los precios" in respuesta.text
+
+
+def test_cargar_precios_cliente_invalido_da_400():
+    respuesta = cliente.post("/precios/cargar", data={"cliente_id": "abc"})
+
+    assert respuesta.status_code == 400
+
+
+def test_cargar_precios_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post("/precios/cargar", data={"cliente_id": "999"})
+
+    assert respuesta.status_code == 404
+
+
 def test_ver_inicio_muestra_las_6_areas():
     respuesta = cliente.get("/inicio")
 
@@ -3902,13 +4219,15 @@ def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
         assert SECTORES[sector]["icono"] in respuesta.text
 
 
-def test_ver_comercial_muestra_los_tres_accesos():
+def test_ver_comercial_muestra_los_cuatro_accesos():
     respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
     assert 'href="/clientes"' in respuesta.text
     assert 'href="/fichas"' in respuesta.text
     assert 'href="/negociar"' in respuesta.text
+    assert 'href="/precios"' in respuesta.text
+    assert "Lista de Precios" in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
 

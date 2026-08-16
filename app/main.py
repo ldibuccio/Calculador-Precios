@@ -8,7 +8,7 @@ import base64
 import io
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -33,6 +33,7 @@ from app.db import (
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
+    guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
@@ -45,6 +46,7 @@ from app.db import (
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
+    listar_precios_vigentes_por_cliente,
     listar_proveedores,
     listar_todas_las_conversiones,
     obtener_articulo,
@@ -56,6 +58,7 @@ from app.db import (
     obtener_uso_storage_bucket,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
+from core.precios_venta import calcular_cambios_de_precios
 from core.lector_comandas import extraer_comanda, extraer_listado_consolidado
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_foto_comanda
@@ -2449,6 +2452,238 @@ def ver_cuadro_negociar_precios(request: Request, cliente_id: int | None = None)
             "sin_articulos_recientes": len(fichas_cliente) > 0 and len(articulos) == 0,
         },
     )
+
+
+@app.get("/precios")
+def ver_precios(request: Request, cliente_id: int | None = None, fecha: str | None = None, articulo_id: int | None = None):
+    """Consulta de precios vigentes de un cliente a una fecha (todos, o uno puntual). Solo lectura.
+
+    Mismo patrón de selector que /fichas y /negociar: sin cliente_id en la
+    URL, se muestra solo el selector. "Vigente a una fecha" usa
+    listar_precios_vigentes_por_cliente tal cual (mismo patrón vigente_desde
+    que ya usa la Rutina A) — acá solo se cruza con los artículos del
+    cliente para mostrar el nombre y, si se pidió, filtrar a uno puntual.
+    """
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if cliente_id is None:
+        return templates.TemplateResponse(request, "precios_consulta.html", {"clientes": clientes, "cliente_id": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    fecha_error = None
+    fecha_consulta = _hoy_argentina()
+    if fecha:
+        try:
+            fecha_consulta = date.fromisoformat(fecha)
+        except ValueError:
+            fecha_error = "La fecha no es válida."
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id)
+        precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    filas = [
+        {
+            "articulo_id": precio["articulo_id"],
+            "articulo_nombre": nombre_por_articulo.get(precio["articulo_id"], f"Artículo #{precio['articulo_id']}"),
+            "precio": precio["precio"],
+        }
+        for precio in precios_vigentes
+    ]
+    if articulo_id is not None:
+        filas = [fila for fila in filas if fila["articulo_id"] == articulo_id]
+    filas.sort(key=lambda fila: fila["articulo_nombre"])
+
+    return templates.TemplateResponse(
+        request,
+        "precios_consulta.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
+            "cliente_nombre": cliente["nombre"],
+            "articulos_cliente": fichas,
+            "articulo_id": articulo_id,
+            "fecha": fecha_consulta.isoformat(),
+            "fecha_mostrar": fecha_consulta.strftime("%d/%m/%Y"),
+            "fecha_error": fecha_error,
+            "filas": filas,
+        },
+    )
+
+
+def _filas_precios_desde_fichas(fichas: list[dict], precio_por_articulo: dict) -> list[dict]:
+    """Arma el contexto del template a partir de lo que ya está guardado (GET, recién cargada la pantalla).
+
+    valor_input arranca igual al precio vigente (o vacío si no tiene) —
+    es el punto de partida contra el que se compara al guardar.
+    """
+    return [
+        {
+            "articulo_id": ficha["articulo_id"],
+            "articulo_nombre": ficha["articulo_nombre"],
+            "precio_original": precio_por_articulo.get(ficha["articulo_id"]),
+            "valor_input": precio_por_articulo.get(ficha["articulo_id"]),
+        }
+        for ficha in fichas
+    ]
+
+
+def _leer_precios_del_form(form, fichas: list[dict]) -> list[dict]:
+    """Lee del form el precio original (oculto) y el nuevo tipeado para cada artículo, sin validar todavía."""
+    filas = []
+    for ficha in fichas:
+        articulo_id = ficha["articulo_id"]
+        filas.append(
+            {
+                "articulo_id": articulo_id,
+                "articulo_nombre": ficha["articulo_nombre"],
+                "original_texto": str(form.get(f"precio_{articulo_id}_original", "")).strip(),
+                "nuevo_texto": str(form.get(f"precio_{articulo_id}", "")).strip(),
+            }
+        )
+    return filas
+
+
+def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
+    """Valida cada precio tipeado (número positivo) y arma las filas para calcular_cambios_de_precios."""
+    filas_validas = []
+    for fila in filas:
+        precio_original = float(fila["original_texto"]) if fila["original_texto"] else None
+
+        precio_nuevo = None
+        if fila["nuevo_texto"]:
+            try:
+                precio_nuevo = float(fila["nuevo_texto"])
+            except ValueError:
+                return f'El precio de "{fila["articulo_nombre"]}" tiene que ser un número.', []
+            if precio_nuevo <= 0:
+                return f'El precio de "{fila["articulo_nombre"]}" tiene que ser mayor a 0.', []
+
+        filas_validas.append(
+            {"articulo_id": fila["articulo_id"], "precio_original": precio_original, "precio_nuevo": precio_nuevo}
+        )
+    return None, filas_validas
+
+
+@app.get("/precios/cargar")
+def ver_cargar_precios(request: Request, cliente_id: int | None = None):
+    """Carga de precios nuevos de un cliente: una fila por artículo con ficha, precargada con el vigente de hoy."""
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if cliente_id is None:
+        return templates.TemplateResponse(request, "precios_cargar.html", {"clientes": clientes, "cliente_id": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id)
+        precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, _hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
+
+    return templates.TemplateResponse(
+        request,
+        "precios_cargar.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
+            "cliente_nombre": cliente["nombre"],
+            "filas": _filas_precios_desde_fichas(fichas, precio_por_articulo),
+            "error": None,
+        },
+    )
+
+
+@app.post("/precios/cargar")
+async def cargar_precios(request: Request):
+    form = await request.form()
+    try:
+        cliente_id = int(form.get("cliente_id", ""))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    filas_crudas = _leer_precios_del_form(form, fichas)
+    error, filas_para_diff = _validar_precios(filas_crudas)
+
+    if error:
+        return templates.TemplateResponse(
+            request,
+            "precios_cargar.html",
+            {
+                "clientes": clientes,
+                "cliente_id": cliente_id,
+                "cliente_nombre": cliente["nombre"],
+                "filas": [
+                    {
+                        "articulo_id": fila["articulo_id"],
+                        "articulo_nombre": fila["articulo_nombre"],
+                        "precio_original": fila["original_texto"],
+                        "valor_input": fila["nuevo_texto"],
+                    }
+                    for fila in filas_crudas
+                ],
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    cambios = calcular_cambios_de_precios(filas_para_diff)
+
+    try:
+        guardar_precios_cliente(cliente_id, cambios)
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "precios_cargar.html",
+            {
+                "clientes": clientes,
+                "cliente_id": cliente_id,
+                "cliente_nombre": cliente["nombre"],
+                "filas": [
+                    {
+                        "articulo_id": fila["articulo_id"],
+                        "articulo_nombre": fila["articulo_nombre"],
+                        "precio_original": fila["original_texto"],
+                        "valor_input": fila["nuevo_texto"],
+                    }
+                    for fila in filas_crudas
+                ],
+                "error": f"No se pudieron guardar los precios: {error_db}",
+            },
+            status_code=500,
+        )
+
+    return RedirectResponse(url=f"/precios?cliente_id={cliente_id}", status_code=303)
 
 
 def _fecha_de_corte_limpieza_fotos():

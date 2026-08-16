@@ -726,6 +726,37 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
         conexion.close()
 
 
+def guardar_precios_cliente(cliente_id: int, cambios: list[dict]) -> None:
+    """Agrega a precios_venta_historial SOLO las filas de precio que realmente cambiaron.
+
+    cambios: [{"articulo_id", "precio"}, ...] — ya calculado por
+    core.precios_venta.calcular_cambios_de_precios a partir de lo que
+    cambió en el formulario. Cada uno se inserta con vigente_desde = hoy;
+    el precio viejo NUNCA se pisa. Si ya existe una fila de HOY para ese
+    mismo (articulo_id, cliente_id) -- segunda edición el mismo día -- se
+    actualiza esa en vez de duplicarla.
+    """
+    if not cambios:
+        return
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            for cambio in cambios:
+                cursor.execute(
+                    """
+                    INSERT INTO precios_venta_historial (articulo_id, cliente_id, precio, vigente_desde)
+                    VALUES (%s, %s, %s, CURRENT_DATE)
+                    ON CONFLICT (articulo_id, cliente_id, vigente_desde)
+                    DO UPDATE SET precio = EXCLUDED.precio
+                    """,
+                    (cambio["articulo_id"], cliente_id, cambio["precio"]),
+                )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def listar_costos_envases_vigentes(fecha_referencia) -> list[dict]:
     """Costo vigente de cada envase, a una fecha dada (mismo patrón "vigente" que el resto).
 

@@ -5,6 +5,7 @@ from app.db import (
     actualizar_cliente,
     crear_cliente,
     eliminar_compra,
+    guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
     listar_clientes,
     listar_conceptos_editables_por_cliente,
@@ -316,3 +317,32 @@ def test_listar_clientes_suma_las_tasas_vigentes_de_descuento_y_adicionales():
     assert "WHERE c.activo = true ORDER BY c.nombre" in consulta
     assert "FILTER (WHERE tipo = 'resta')" in consulta
     assert "FILTER (WHERE tipo = 'suma')" in consulta
+
+
+def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viejo():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_precios_cliente(1, [{"articulo_id": 7, "precio": 550.0}, {"articulo_id": 3, "precio": 900.0}])
+
+    assert cursor.execute.call_count == 2
+    for llamada in cursor.execute.call_args_list:
+        consulta, parametros = llamada.args
+        assert "INSERT INTO precios_venta_historial" in consulta
+        assert "vigente_desde" in consulta
+        assert "CURRENT_DATE" in consulta
+        assert "ON CONFLICT (articulo_id, cliente_id, vigente_desde)" in consulta
+        assert "DO UPDATE" in consulta
+    assert cursor.execute.call_args_list[0].args[1] == (7, 1, 550.0)
+    assert cursor.execute.call_args_list[1].args[1] == (3, 1, 900.0)
+    conexion.commit.assert_called_once()
+
+
+def test_guardar_precios_cliente_sin_cambios_no_ejecuta_nada():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_precios_cliente(1, [])
+
+    cursor.execute.assert_not_called()
+    conexion.commit.assert_not_called()
