@@ -123,8 +123,8 @@ def test_obtener_conexion_sin_database_url_lanza_error_claro(monkeypatch):
 
 
 ARTICULOS_DE_PRUEBA = [
-    {"id": 1, "nombre": "Frutilla", "unidad_compra": None, "contenido_referencia": None},
-    {"id": 2, "nombre": "Mango", "unidad_compra": None, "contenido_referencia": None},
+    {"id": 1, "nombre": "Frutilla", "unidad_compra": None, "contenido_referencia": None, "grupo": "fruta"},
+    {"id": 2, "nombre": "Mango", "unidad_compra": None, "contenido_referencia": None, "grupo": None},
 ]
 
 
@@ -162,6 +162,16 @@ def test_ver_articulos_muestra_solo_nombre():
     assert "merma" not in respuesta.text.lower()
 
 
+def test_ver_articulos_muestra_columna_grupo_con_sin_clasificar():
+    with patch("app.main.listar_articulos", return_value=ARTICULOS_DE_PRUEBA):
+        respuesta = cliente.get("/articulos")
+
+    assert respuesta.status_code == 200
+    assert "<th>Grupo</th>" in respuesta.text
+    assert "Fruta" in respuesta.text
+    assert "Sin clasificar" in respuesta.text
+
+
 def test_ver_articulos_incluye_link_a_inicio():
     with patch("app.main.listar_articulos", return_value=[]):
         respuesta = cliente.get("/articulos")
@@ -180,7 +190,7 @@ def test_agregar_articulo_exitoso_redirige_a_articulos():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/articulos"
-    mock_crear.assert_called_once_with("Kiwi", "unidad", 10.0)
+    mock_crear.assert_called_once_with("Kiwi", "unidad", 10.0, None)
 
 
 def test_agregar_articulo_sin_contenido_referencia_guarda_none():
@@ -192,7 +202,31 @@ def test_agregar_articulo_sin_contenido_referencia_guarda_none():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Kiwi", "kilo", None)
+    mock_crear.assert_called_once_with("Kiwi", "kilo", None, None)
+
+
+def test_agregar_articulo_con_grupo_valido_lo_guarda():
+    with patch("app.main.crear_articulo") as mock_crear:
+        respuesta = cliente.post(
+            "/articulos/nuevo",
+            data={"nombre": "Kiwi", "unidad_compra": "kilo", "contenido_referencia": "", "grupo": "fruta"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("Kiwi", "kilo", None, "fruta")
+
+
+def test_agregar_articulo_grupo_invalido_muestra_error():
+    with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post(
+            "/articulos/nuevo",
+            data={"nombre": "Kiwi", "unidad_compra": "kilo", "grupo": "lacteo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "grupo válido" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def test_agregar_articulo_nombre_vacio_muestra_error():
@@ -235,7 +269,13 @@ def test_agregar_articulo_error_de_base_muestra_mensaje_claro():
     assert "No se pudo guardar" in respuesta.text
 
 
-ARTICULO_DE_PRUEBA = {"id": 1, "nombre": "Frutilla", "unidad_compra": "cubeta", "contenido_referencia": 12}
+ARTICULO_DE_PRUEBA = {
+    "id": 1,
+    "nombre": "Frutilla",
+    "unidad_compra": "cubeta",
+    "contenido_referencia": 12,
+    "grupo": "fruta",
+}
 
 
 def test_ver_editar_articulo_muestra_datos_precargados():
@@ -246,6 +286,7 @@ def test_ver_editar_articulo_muestra_datos_precargados():
     assert "Frutilla" in respuesta.text
     assert 'action="/articulos/1/editar"' in respuesta.text
     assert "merma" not in respuesta.text.lower()
+    assert '<option value="fruta" selected>Fruta</option>' in respuesta.text
 
 
 def test_ver_editar_articulo_inexistente_da_404():
@@ -272,7 +313,31 @@ def test_editar_articulo_exitoso_redirige_a_articulos():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/articulos"
-    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0)
+    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0, None)
+
+
+def test_editar_articulo_con_grupo_valido_lo_guarda():
+    with patch("app.main.actualizar_articulo") as mock_actualizar:
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "Frutilla", "unidad_compra": "cubeta", "contenido_referencia": "12", "grupo": "hortaliza"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(1, "Frutilla", "cubeta", 12.0, "hortaliza")
+
+
+def test_editar_articulo_grupo_invalido_muestra_error():
+    with patch("app.main.actualizar_articulo") as mock_actualizar:
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "Frutilla", "unidad_compra": "cubeta", "grupo": "lacteo"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "grupo válido" in respuesta.text
+    mock_actualizar.assert_not_called()
 
 
 def test_editar_articulo_nombre_vacio_muestra_error():

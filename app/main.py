@@ -70,6 +70,7 @@ from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
+GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -412,6 +413,16 @@ def _validar_unidad_compra(valor: str) -> str | None:
     return None
 
 
+def _validar_grupo(valor: str) -> tuple[str | None, str | None]:
+    """Valida el grupo del artículo (fruta, hortaliza, ...). Vacío es válido: sin clasificar todavía."""
+    valor = valor.strip()
+    if not valor:
+        return None, None
+    if valor not in GRUPOS_ARTICULO_VALIDOS:
+        return "Elegí un grupo válido (fruta u hortaliza).", None
+    return None, valor
+
+
 def _validar_envase(envase_id_texto: str) -> tuple[str | None, int | None]:
     """Valida el envase elegido (opcional: "sin envase" es válido). Devuelve (error, envase_id)."""
     envase_id_texto = envase_id_texto.strip()
@@ -621,6 +632,7 @@ def agregar_articulo(
     nombre: str = Form(""),
     unidad_compra: str = Form(""),
     contenido_referencia: str = Form(""),
+    grupo: str = Form(""),
 ):
     error, nombre = _validar_nombre(nombre)
 
@@ -630,6 +642,10 @@ def agregar_articulo(
     contenido_referencia_valor = None
     if not error:
         error, contenido_referencia_valor = _validar_cantidad_opcional(contenido_referencia, "El contenido de referencia")
+
+    grupo_valor = None
+    if not error:
+        error, grupo_valor = _validar_grupo(grupo)
 
     if error:
         articulos = listar_articulos()
@@ -641,7 +657,7 @@ def agregar_articulo(
         )
 
     try:
-        crear_articulo(nombre, unidad_compra, contenido_referencia_valor)
+        crear_articulo(nombre, unidad_compra, contenido_referencia_valor, grupo_valor)
     except Exception as error:
         articulos = listar_articulos()
         return templates.TemplateResponse(
@@ -676,6 +692,7 @@ def editar_articulo(
     nombre: str = Form(""),
     unidad_compra: str = Form(""),
     contenido_referencia: str = Form(""),
+    grupo: str = Form(""),
 ):
     error, nombre = _validar_nombre(nombre)
 
@@ -685,6 +702,10 @@ def editar_articulo(
     contenido_referencia_valor = None
     if not error:
         error, contenido_referencia_valor = _validar_cantidad_opcional(contenido_referencia, "El contenido de referencia")
+
+    grupo_valor = None
+    if not error:
+        error, grupo_valor = _validar_grupo(grupo)
 
     if error:
         return templates.TemplateResponse(
@@ -696,6 +717,7 @@ def editar_articulo(
                     "nombre": nombre,
                     "unidad_compra": unidad_compra,
                     "contenido_referencia": contenido_referencia,
+                    "grupo": grupo,
                 },
                 "error": error,
             },
@@ -703,7 +725,7 @@ def editar_articulo(
         )
 
     try:
-        actualizar_articulo(articulo_id, nombre, unidad_compra, contenido_referencia_valor)
+        actualizar_articulo(articulo_id, nombre, unidad_compra, contenido_referencia_valor, grupo_valor)
     except Exception as error:
         return templates.TemplateResponse(
             request,
@@ -714,6 +736,7 @@ def editar_articulo(
                     "nombre": nombre,
                     "unidad_compra": unidad_compra,
                     "contenido_referencia": contenido_referencia_valor,
+                    "grupo": grupo_valor,
                 },
                 "error": f"No se pudo guardar el artículo: {error}",
             },

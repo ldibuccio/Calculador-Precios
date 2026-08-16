@@ -49,7 +49,7 @@ def listar_articulos() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia
+                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia, grupo
                 FROM articulos WHERE activo = true ORDER BY nombre
                 """
             )
@@ -67,7 +67,7 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia
+                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia, grupo
                 FROM articulos WHERE id = %s
                 """,
                 (articulo_id,),
@@ -81,32 +81,34 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         conexion.close()
 
 
-def crear_articulo(nombre: str, unidad_compra: str, contenido_referencia: float | None) -> None:
-    """Inserta un artículo nuevo en la tabla articulos."""
+def crear_articulo(nombre: str, unidad_compra: str, contenido_referencia: float | None, grupo: str | None = None) -> None:
+    """Inserta un artículo nuevo en la tabla articulos. grupo es opcional: None = sin clasificar todavía."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO articulos (nombre, unidad_compra, contenido_referencia) VALUES (%s, %s, %s)",
-                (nombre, unidad_compra, contenido_referencia),
+                "INSERT INTO articulos (nombre, unidad_compra, contenido_referencia, grupo) VALUES (%s, %s, %s, %s)",
+                (nombre, unidad_compra, contenido_referencia, grupo),
             )
         conexion.commit()
     finally:
         conexion.close()
 
 
-def actualizar_articulo(articulo_id: int, nombre: str, unidad_compra: str, contenido_referencia: float | None) -> None:
-    """Actualiza nombre, unidad de compra y contenido de referencia de un artículo existente."""
+def actualizar_articulo(
+    articulo_id: int, nombre: str, unidad_compra: str, contenido_referencia: float | None, grupo: str | None = None
+) -> None:
+    """Actualiza nombre, unidad de compra, contenido de referencia y grupo de un artículo existente."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE articulos
-                SET nombre = %s, unidad_compra = %s, contenido_referencia = %s, actualizado_en = now()
+                SET nombre = %s, unidad_compra = %s, contenido_referencia = %s, grupo = %s, actualizado_en = now()
                 WHERE id = %s
                 """,
-                (nombre, unidad_compra, contenido_referencia, articulo_id),
+                (nombre, unidad_compra, contenido_referencia, grupo, articulo_id),
             )
         conexion.commit()
     finally:
