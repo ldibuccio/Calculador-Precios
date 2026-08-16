@@ -2,6 +2,7 @@ import io
 from datetime import date, timedelta
 from unittest.mock import patch
 
+import pypdfium2 as pdfium
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -215,6 +216,18 @@ def test_agregar_articulo_con_grupo_valido_lo_guarda():
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with("Kiwi", "kilo", None, "fruta")
+
+
+def test_agregar_articulo_con_grupo_pesada_lo_guarda():
+    with patch("app.main.crear_articulo") as mock_crear:
+        respuesta = cliente.post(
+            "/articulos/nuevo",
+            data={"nombre": "Zapallo", "unidad_compra": "kilo", "contenido_referencia": "", "grupo": "pesada"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("Zapallo", "kilo", None, "pesada")
 
 
 def test_agregar_articulo_grupo_invalido_muestra_error():
@@ -4248,6 +4261,177 @@ def test_ver_precios_consultar_articulo_elegido_muestra_boton_para_limpiar():
 
     assert "Ver todos los artículos" in respuesta.text
     assert 'value="Mango"' in respuesta.text
+
+
+def test_ver_precios_consultar_con_resultados_muestra_boton_exportar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/consultar?cliente_id=1")
+
+    assert 'id="boton-exportar"' in respuesta.text
+    assert "/precios/consultar/exportar-pdf?cliente_id=1&fecha=" in respuesta.text
+    assert "/precios/consultar/exportar-excel?cliente_id=1&fecha=" in respuesta.text
+
+
+def test_ver_precios_consultar_sin_resultados_no_muestra_boton_exportar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/consultar?cliente_id=1")
+
+    assert 'id="boton-exportar"' not in respuesta.text
+
+
+# --- /precios/consultar/exportar-pdf y exportar-excel ---
+
+
+def _texto_del_pdf_de_respuesta(pdf_bytes: bytes) -> str:
+    documento = pdfium.PdfDocument(pdf_bytes)
+    return "\n".join(pagina.get_textpage().get_text_range() for pagina in documento)
+
+
+FICHAS_EXPORTACION_DE_PRUEBA = [
+    {"id": 1, "articulo_id": 1, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
+    {"id": 2, "articulo_id": 2, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
+]
+
+ARTICULOS_EXPORTACION_DE_PRUEBA = [
+    {"id": 1, "nombre": "Tomate Cherry", "grupo": "hortaliza"},
+    {"id": 2, "nombre": "Mango", "grupo": "fruta"},
+]
+
+
+def _precios_vigentes_exportacion(vigente_desde_articulo_1):
+    return [
+        {"articulo_id": 1, "precio": 500.0, "vigente_desde": vigente_desde_articulo_1},
+        {"articulo_id": 2, "precio": 350.0, "vigente_desde": date(2026, 1, 1)},
+    ]
+
+
+def test_exportar_precios_pdf_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
+        ),
+    ):
+        respuesta = cliente.get(f"/precios/consultar/exportar-pdf?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "attachment" in respuesta.headers["content-disposition"]
+    assert "Lista_Precios_D" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"%PDF")
+
+
+def test_exportar_precios_pdf_hoy_resalta_el_que_cambio_hoy():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
+        ),
+    ):
+        respuesta = cliente.get(f"/precios/consultar/exportar-pdf?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    bloque_tablas = texto[texto.index("HORTALIZA") :]
+    assert bloque_tablas.count("Nuevo precio") == 1
+
+
+def test_exportar_precios_pdf_fecha_pasada_no_resalta_nada():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 15)),
+        ),
+    ):
+        respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-15")
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    bloque_tablas = texto[texto.index("HORTALIZA") :]
+    assert "Nuevo precio" not in bloque_tablas
+
+
+def test_exportar_precios_pdf_separa_por_grupo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-01")
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert texto.index("FRUTA") < texto.index("HORTALIZA")
+    assert "Mango" in texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
+    assert "Tomate Cherry" in texto[texto.index("HORTALIZA") :]
+
+
+def test_exportar_precios_pdf_cliente_invalido_da_400():
+    respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=abc&fecha=2026-08-16")
+
+    assert respuesta.status_code == 400
+
+
+def test_exportar_precios_pdf_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=999&fecha=2026-08-16")
+
+    assert respuesta.status_code == 404
+
+
+def test_exportar_precios_pdf_fecha_invalida_da_400():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=no-es-una-fecha")
+
+    assert respuesta.status_code == 400
+
+
+def test_exportar_precios_excel_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
+        ),
+    ):
+        respuesta = cliente.get(f"/precios/consultar/exportar-excel?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "attachment" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+
+def test_exportar_precios_excel_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/precios/consultar/exportar-excel?cliente_id=999&fecha=2026-08-16")
+
+    assert respuesta.status_code == 404
 
 
 # --- /precios/cargar: carga de precios nuevos uno a la vez, con revisión antes de guardar ---

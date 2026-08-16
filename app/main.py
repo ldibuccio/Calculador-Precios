@@ -11,7 +11,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
@@ -58,6 +58,7 @@ from app.db import (
     obtener_uso_storage_bucket,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
+from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
@@ -70,7 +71,7 @@ from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
-GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza"}
+GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "pesada"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -419,7 +420,7 @@ def _validar_grupo(valor: str) -> tuple[str | None, str | None]:
     if not valor:
         return None, None
     if valor not in GRUPOS_ARTICULO_VALIDOS:
-        return "Elegí un grupo válido (fruta u hortaliza).", None
+        return "Elegí un grupo válido (fruta, hortaliza o pesada).", None
     return None, valor
 
 
@@ -2603,6 +2604,111 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
             "fecha_error": fecha_error,
             "filas": filas,
         },
+    )
+
+
+def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[list[dict], bool]:
+    """Arma las filas para exportar (PDF/Excel) la lista de precios de un cliente a una fecha.
+
+    Reusa exactamente los mismos datos que ya arma /precios/consultar
+    (fichas para nombre/unidad, precios vigentes, catálogo para el grupo)
+    — no calcula nada nuevo. es_hoy determina si corresponde resaltar
+    "precio nuevo": solo cuando se exporta la fecha de HOY, nunca para una
+    fecha pasada.
+    """
+    fichas = listar_fichas_por_cliente(cliente_id)
+    precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
+    articulos_existentes = listar_articulos()
+
+    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
+    grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
+
+    hoy = _hoy_argentina()
+    es_hoy = fecha_consulta == hoy
+
+    filas = [
+        {
+            "articulo_nombre": nombre_por_articulo.get(precio["articulo_id"], f"Artículo #{precio['articulo_id']}"),
+            "grupo": grupo_por_articulo.get(precio["articulo_id"]),
+            "precio": precio["precio"],
+            "unidad": unidad_por_articulo.get(precio["articulo_id"]),
+            "es_nuevo": es_hoy and precio.get("vigente_desde") == hoy,
+        }
+        for precio in precios_vigentes
+    ]
+    return filas, es_hoy
+
+
+def _validar_cliente_y_fecha_para_exportar(cliente_id_texto: str, fecha_texto: str) -> tuple[dict, date]:
+    """Valida cliente_id y fecha para las rutas de exportación. Los links solo los arma la propia pantalla
+    con valores ya válidos, así que un error acá es un caso de URL manipulada a mano, no un uso normal —
+    alcanza con HTTPException (mismo criterio que el resto de las rutas de confirmación de esta app).
+    """
+    try:
+        cliente_id = int(cliente_id_texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        fecha_valor = date.fromisoformat(fecha_texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+
+    return cliente, fecha_valor
+
+
+def _nombre_archivo_exportacion(cliente_nombre: str, fecha, extension: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9]+", "_", cliente_nombre).strip("_") or "cliente"
+    return f"Lista_Precios_{base}_{fecha.isoformat()}.{extension}"
+
+
+@app.get("/precios/consultar/exportar-pdf")
+def exportar_precios_pdf(cliente_id: str = "", fecha: str = ""):
+    """Genera la Lista de Precios en PDF y la devuelve para descargar — no se guarda en ningún lado."""
+    cliente, fecha_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, fecha)
+
+    try:
+        filas, es_hoy = _armar_filas_exportacion_precios(cliente["id"], fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy)
+    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "pdf")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/precios/consultar/exportar-excel")
+def exportar_precios_excel(cliente_id: str = "", fecha: str = ""):
+    """Genera la Lista de Precios en Excel y la devuelve para descargar — no se guarda en ningún lado."""
+    cliente, fecha_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, fecha)
+
+    try:
+        filas, es_hoy = _armar_filas_exportacion_precios(cliente["id"], fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    excel_bytes = generar_excel_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy)
+    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "xlsx")
+
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
 
 

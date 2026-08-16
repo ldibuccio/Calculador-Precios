@@ -118,6 +118,7 @@
         <option value="" selected>Sin clasificar</option>
         <option value="fruta">Fruta</option>
         <option value="hortaliza">Hortaliza</option>
+        <option value="pesada">Pesada</option>
       </select>
 
       <button type="submit">Guardar</button>
@@ -147,6 +148,7 @@
             <td>
               {% if articulo.grupo == "fruta" %}Fruta
               {% elif articulo.grupo == "hortaliza" %}Hortaliza
+              {% elif articulo.grupo == "pesada" %}Pesada
               {% else %}<span class="vacio">Sin clasificar</span>
               {% endif %}
             </td>

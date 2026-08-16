@@ -10,6 +10,7 @@ from app.db import (
     listar_clientes,
     listar_conceptos_editables_por_cliente,
     listar_fotos_para_limpiar,
+    listar_precios_vigentes_por_cliente,
     obtener_uso_storage_bucket,
 )
 
@@ -317,6 +318,25 @@ def test_listar_clientes_suma_las_tasas_vigentes_de_descuento_y_adicionales():
     assert "WHERE c.activo = true ORDER BY c.nombre" in consulta
     assert "FILTER (WHERE tipo = 'resta')" in consulta
     assert "FILTER (WHERE tipo = 'suma')" in consulta
+
+
+def test_listar_precios_vigentes_por_cliente_trae_vigente_desde():
+    # La exportación a PDF/Excel necesita vigente_desde para saber si un
+    # precio es "nuevo" (cambió justo en la fecha exportada).
+    conexion, cursor = _conexion_falsa(
+        filas_fetchall=[(1, 500.0, date(2026, 8, 16)), (2, 350.0, date(2026, 8, 10))]
+    )
+    cursor.description = [("articulo_id",), ("precio",), ("vigente_desde",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_precios_vigentes_por_cliente(1, date(2026, 8, 16))
+
+    assert resultado == [
+        {"articulo_id": 1, "precio": 500.0, "vigente_desde": date(2026, 8, 16)},
+        {"articulo_id": 2, "precio": 350.0, "vigente_desde": date(2026, 8, 10)},
+    ]
+    consulta = cursor.execute.call_args[0][0]
+    assert "vigente_desde" in consulta
 
 
 def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viejo():

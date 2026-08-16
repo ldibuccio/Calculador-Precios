@@ -176,6 +176,16 @@
     </p>
     {% endif %}
   </div>
+
+  {% if filas %}
+  <div class="tarjeta">
+    <button type="button" class="boton-secundario" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton" href="/precios/consultar/exportar-pdf?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar PDF</a>
+      <a class="boton" href="/precios/consultar/exportar-excel?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar Excel</a>
+    </div>
+  </div>
+  {% endif %}
   {% endif %}
 
   {% if cliente_id %}
@@ -233,6 +243,18 @@
       document.getElementById("articulo_id").value = "";
       document.getElementById("articulo_texto").value = "";
       document.getElementById("form-consulta").submit();
+    }
+  </script>
+  {% endif %}
+
+  {% if filas %}
+  <script>
+    // "Exportar" es un solo toque para desplegar las 2 opciones, en vez de
+    // navegar a una pantalla intermedia — mismo criterio de menos pasos
+    // que el resto de la app.
+    function mostrarOpcionesExportar() {
+      document.getElementById("opciones-exportar").style.display = "block";
+      document.getElementById("boton-exportar").style.display = "none";
     }
   </script>
   {% endif %}

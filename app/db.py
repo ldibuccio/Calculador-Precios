@@ -708,13 +708,18 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
     descuento/utilidad vigente de clientes_parametros_historial). Un
     artículo sin ninguna fila con vigente_desde <= fecha_referencia
     simplemente no aparece en el resultado — no tiene precio vigente todavía.
+
+    Trae también vigente_desde (aparte de articulo_id y precio) — lo usa
+    la exportación a PDF/Excel para saber si un precio es "nuevo" (cambió
+    justo en la fecha consultada). Los demás llamadores lo ignoran, leen
+    por clave de diccionario.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT DISTINCT ON (articulo_id) articulo_id, precio
+                SELECT DISTINCT ON (articulo_id) articulo_id, precio, vigente_desde
                 FROM precios_venta_historial
                 WHERE cliente_id = %s AND vigente_desde <= %s
                 ORDER BY articulo_id, vigente_desde DESC
