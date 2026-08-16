@@ -4706,6 +4706,12 @@ def test_ver_cargar_precios_incluye_boton_y_panel_de_negociacion():
     assert "Bajas (frescos que bajaron de costo)" in respuesta.text
     assert "Tomate Cherry" in respuesta.text
     assert "$420" in respuesta.text
+    # Mientras el panel está abierto, la barra de navegación (con el ícono
+    # "Inicio") queda inhabilitada — evita que un toque se cuele por un
+    # resquicio del overlay en Safari/iOS y navegue a /inicio en vez de
+    # cerrar el panel.
+    assert 'querySelector(".barra-navegacion").style.pointerEvents = "none"' in respuesta.text
+    assert 'querySelector(".barra-navegacion").style.pointerEvents = ""' in respuesta.text
 
 
 def test_ver_cargar_precios_panel_de_negociacion_no_usa_pendientes_sin_guardar():

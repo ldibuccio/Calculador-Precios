@@ -210,8 +210,18 @@
     // Solo un toggle de CSS, no navega a otra pantalla — abrir y cerrar no
     // toca nada de lo que se esté cargando en la pantalla de atrás (mismo
     // criterio que el modal-foto de la carga de compras).
+    //
+    // Mientras el panel está abierto, la barra de navegación de arriba
+    // (con el ícono "Inicio") queda inhabilitada con pointer-events:none.
+    // En Safari/iOS, la barra de direcciones que aparece/desaparece puede
+    // hacer que un overlay "position:fixed; inset:0" no cubra el pixel
+    // exacto de arriba de todo, dejando un resquicio donde ese ícono
+    // sigue siendo tocable por debajo del panel — un toque ahí navegaba a
+    // /inicio en vez de cerrar el panel. Deshabilitarlo evita eso pase lo
+    // que pase con ese resquicio.
     function abrirNegociacion() {
       document.getElementById("panel-negociacion").classList.add("visible");
+      document.querySelector(".barra-navegacion").style.pointerEvents = "none";
     }
 
     function cerrarNegociacion(evento) {
@@ -219,6 +229,7 @@
         evento.preventDefault();
       }
       document.getElementById("panel-negociacion").classList.remove("visible");
+      document.querySelector(".barra-navegacion").style.pointerEvents = "";
     }
   </script>
   {% endif %}
