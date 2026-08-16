@@ -6,6 +6,7 @@ from app.db import (
     crear_cliente,
     eliminar_compra,
     limpiar_foto_ruta_de_compras,
+    listar_clientes,
     listar_conceptos_editables_por_cliente,
     listar_fotos_para_limpiar,
     obtener_uso_storage_bucket,
@@ -285,3 +286,33 @@ def test_actualizar_cliente_sin_cambios_de_conceptos_solo_pisa_el_nombre():
     # de historial de más.
     assert cursor.execute.call_count == 1
     conexion.commit.assert_called_once()
+
+
+def test_listar_clientes_suma_las_tasas_vigentes_de_descuento_y_adicionales():
+    # La consulta real (WITH vigentes/totales/utilidades, ver
+    # _CLIENTE_CON_TASAS_VIGENTES_SQL) se probó a mano contra un Postgres
+    # real con datos que reproducen el caso reportado: un cliente con 3
+    # tasas de descuento (Logística 15% + Flete 5% + Otro 3% = 23%), una
+    # tasa vieja de Flete ya reemplazada (no debe sumar) y una tasa dada de
+    # baja en 0 (tampoco debe sumar) — dio exactamente 23.00 / 10.500 /
+    # 18.00, igual que este mock. Acá solo se verifica que Python arma bien
+    # la consulta y mapea las columnas del resultado.
+    conexion, cursor = _conexion_falsa(
+        filas_fetchall=[
+            (2, "Cliente 3", 23.00, 10.500, 18.00),
+            (1, "Día", 23.00, 0, 20.00),
+        ]
+    )
+    cursor.description = [("id",), ("nombre",), ("descuento",), ("adicionales",), ("utilidad_objetivo",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_clientes()
+
+    assert resultado == [
+        {"id": 2, "nombre": "Cliente 3", "descuento": 23.00, "adicionales": 10.500, "utilidad_objetivo": 18.00},
+        {"id": 1, "nombre": "Día", "descuento": 23.00, "adicionales": 0, "utilidad_objetivo": 20.00},
+    ]
+    consulta = cursor.execute.call_args[0][0]
+    assert "WHERE c.activo = true ORDER BY c.nombre" in consulta
+    assert "FILTER (WHERE tipo = 'resta')" in consulta
+    assert "FILTER (WHERE tipo = 'suma')" in consulta

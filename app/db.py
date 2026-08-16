@@ -127,32 +127,53 @@ def desactivar_articulo(articulo_id: int) -> None:
         conexion.close()
 
 
-_CLIENTE_CON_DESCUENTO_Y_UTILIDAD_VIGENTES_SQL = """
-    SELECT c.id, c.nombre, d.valor * 100 AS descuento, u.valor * 100 AS utilidad_objetivo
+_CLIENTE_CON_TASAS_VIGENTES_SQL = """
+    WITH vigentes AS (
+        SELECT DISTINCT ON (cliente_id, nombre_parametro) cliente_id, nombre_parametro, tipo, valor
+        FROM clientes_parametros_historial
+        WHERE vigente_desde <= CURRENT_DATE
+        ORDER BY cliente_id, nombre_parametro, vigente_desde DESC
+    ),
+    totales AS (
+        SELECT cliente_id,
+               COALESCE(SUM(valor) FILTER (WHERE tipo = 'resta'), 0) AS total_resta,
+               COALESCE(SUM(valor) FILTER (WHERE tipo = 'suma'), 0) AS total_suma
+        FROM vigentes
+        GROUP BY cliente_id
+    ),
+    utilidades AS (
+        SELECT DISTINCT ON (cliente_id) cliente_id, valor
+        FROM vigentes
+        WHERE tipo = 'utilidad'
+        ORDER BY cliente_id, (nombre_parametro = 'utilidad_objetivo') DESC
+    )
+    SELECT c.id, c.nombre,
+           COALESCE(totales.total_resta, 0) * 100 AS descuento,
+           COALESCE(totales.total_suma, 0) * 100 AS adicionales,
+           utilidades.valor * 100 AS utilidad_objetivo
     FROM clientes c
-    LEFT JOIN LATERAL (
-        SELECT valor FROM clientes_parametros_historial
-        WHERE cliente_id = c.id AND nombre_parametro = 'descuento' AND vigente_desde <= CURRENT_DATE
-        ORDER BY vigente_desde DESC LIMIT 1
-    ) d ON true
-    LEFT JOIN LATERAL (
-        SELECT valor FROM clientes_parametros_historial
-        WHERE cliente_id = c.id AND nombre_parametro = 'utilidad_objetivo' AND vigente_desde <= CURRENT_DATE
-        ORDER BY vigente_desde DESC LIMIT 1
-    ) u ON true
+    LEFT JOIN totales ON totales.cliente_id = c.id
+    LEFT JOIN utilidades ON utilidades.cliente_id = c.id
 """
 
 
 def listar_clientes() -> list[dict]:
-    """Devuelve los clientes activos (id, nombre, descuento %, utilidad_objetivo %) ordenados por nombre.
+    """Devuelve los clientes activos (id, nombre, descuento %, adicionales %, utilidad_objetivo %) ordenados por nombre.
 
-    El descuento/utilidad vigente es el registro de clientes_parametros_historial
-    con la fecha de vigencia más reciente que ya llegó (no futura).
+    "descuento" es la SUMA de todas las tasas vigentes de tipo 'resta'
+    (ej. Logística 23% + Flete 3% -> 26%), "adicionales" la suma de las de
+    tipo 'suma' (ej. IVA), y "utilidad_objetivo" la única tasa vigente de
+    tipo 'utilidad'. El detalle tasa por tasa se ve al editar el cliente
+    (listar_conceptos_editables_por_cliente); acá alcanza con los totales.
+    "Vigente" es, para cada nombre_parametro por separado, el registro de
+    clientes_parametros_historial con vigente_desde más reciente que ya
+    llegó (no futura) — una tasa dada de baja (valor 0) no suma nada, sin
+    necesitar ningún caso especial.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_CLIENTE_CON_DESCUENTO_Y_UTILIDAD_VIGENTES_SQL + " WHERE c.activo = true ORDER BY c.nombre")
+            cursor.execute(_CLIENTE_CON_TASAS_VIGENTES_SQL + " WHERE c.activo = true ORDER BY c.nombre")
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
@@ -161,11 +182,11 @@ def listar_clientes() -> list[dict]:
 
 
 def obtener_cliente(cliente_id: int) -> dict | None:
-    """Devuelve un cliente por id con su descuento/utilidad vigentes, o None si no existe."""
+    """Devuelve un cliente por id con sus totales de tasas vigentes (ver listar_clientes), o None si no existe."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(_CLIENTE_CON_DESCUENTO_Y_UTILIDAD_VIGENTES_SQL + " WHERE c.id = %s", (cliente_id,))
+            cursor.execute(_CLIENTE_CON_TASAS_VIGENTES_SQL + " WHERE c.id = %s", (cliente_id,))
             fila = cursor.fetchone()
             if fila is None:
                 return None

@@ -58,32 +58,44 @@
     display: block;
     box-sizing: border-box;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  th, td {
-    text-align: left;
-    padding: 0.55rem 0.3rem;
-    border-bottom: 1px solid #eee;
-    font-size: 0.9rem;
-  }
-  th {
-    color: #666;
-    font-weight: 600;
-  }
   .vacio { color: #888; font-style: italic; }
-  .tabla-scroll { overflow-x: auto; }
-  .acciones { display: flex; gap: 0.4rem; }
+  /* En vez de una tabla ancha de 5 columnas (no entra sin scroll
+     horizontal en un celular), cada cliente es una tarjeta chica:
+     nombre arriba, los 3 porcentajes en una fila compacta debajo, y las
+     acciones al final — todo apilado, aprovechando el alto en vez del
+     ancho. */
+  .fila-cliente {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #eee;
+  }
+  .fila-cliente:last-child { border-bottom: none; }
+  .fila-cliente-nombre {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.4rem;
+  }
+  .fila-cliente-datos {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.6rem;
+  }
+  .fila-cliente-datos span { white-space: nowrap; }
+  .fila-cliente-datos strong { color: #666; font-weight: 600; }
+  .acciones { display: flex; gap: 0.5rem; }
   .acciones .boton, .acciones button {
     margin-top: 0;
-    padding: 0.4rem 0.6rem;
+    padding: 0.5rem 0.9rem;
     font-size: 0.85rem;
     width: auto;
+    flex: 1;
   }
   .boton-editar { background: #2563eb; }
   .boton-eliminar { background: #dc2626; }
-  .form-eliminar { display: inline; }
+  .form-eliminar { display: flex; flex: 1; }
+  .form-eliminar button { width: 100%; }
 </style>
 </head>
 <body>
@@ -102,36 +114,23 @@
   <div class="tarjeta">
     <h2>Clientes ({{ clientes|length }})</h2>
     {% if clientes %}
-    <div class="tabla-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Descuento</th>
-            <th>Utilidad</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for cliente in clientes %}
-          <tr>
-            <td>{{ cliente.nombre }}</td>
-            <td>{{ cliente.descuento if cliente.descuento is not none else "-" }}%</td>
-            <td>{{ cliente.utilidad_objetivo if cliente.utilidad_objetivo is not none else "-" }}%</td>
-            <td>
-              <div class="acciones">
-                <a class="boton boton-editar" href="/clientes/{{ cliente.id }}/editar">Editar</a>
-                <form class="form-eliminar" method="post" action="/clientes/{{ cliente.id }}/eliminar"
-                      onsubmit="return confirm('¿Eliminar {{ cliente.nombre }}?');">
-                  <button type="submit" class="boton-eliminar">Eliminar</button>
-                </form>
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    {% for cliente in clientes %}
+    <div class="fila-cliente">
+      <div class="fila-cliente-nombre">{{ cliente.nombre }}</div>
+      <div class="fila-cliente-datos">
+        <span><strong>Descuentos:</strong> {{ cliente.descuento if cliente.descuento is not none else "-" }}%</span>
+        <span><strong>Adicionales:</strong> {{ cliente.adicionales if cliente.adicionales is not none else "-" }}%</span>
+        <span><strong>Utilidad:</strong> {{ cliente.utilidad_objetivo if cliente.utilidad_objetivo is not none else "-" }}%</span>
+      </div>
+      <div class="acciones">
+        <a class="boton boton-editar" href="/clientes/{{ cliente.id }}/editar">Editar</a>
+        <form class="form-eliminar" method="post" action="/clientes/{{ cliente.id }}/eliminar"
+              onsubmit="return confirm('¿Eliminar {{ cliente.nombre }}?');">
+          <button type="submit" class="boton-eliminar">Eliminar</button>
+        </form>
+      </div>
     </div>
+    {% endfor %}
     {% else %}
     <p class="vacio">No hay clientes cargados todavía.</p>
     {% endif %}

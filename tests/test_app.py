@@ -327,8 +327,8 @@ def test_eliminar_articulo_error_de_base_da_500():
 
 
 CLIENTES_DE_PRUEBA = [
-    {"id": 1, "nombre": "Día", "descuento": 23.0, "utilidad_objetivo": 20.0},
-    {"id": 2, "nombre": "Otro cliente", "descuento": 15.0, "utilidad_objetivo": 10.0},
+    {"id": 1, "nombre": "Día", "descuento": 23.0, "adicionales": 0.0, "utilidad_objetivo": 20.0},
+    {"id": 2, "nombre": "Otro cliente", "descuento": 15.0, "adicionales": 10.5, "utilidad_objetivo": 10.0},
 ]
 
 
@@ -348,16 +348,30 @@ def test_ver_clientes_error_de_base_muestra_pagina_de_error_clara():
     assert "No se pudo leer los clientes" in respuesta.text
 
 
-def test_ver_clientes_muestra_nombre_descuento_y_utilidad_como_porcentaje():
+def test_ver_clientes_muestra_nombre_descuentos_adicionales_y_utilidad_como_porcentaje():
     with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
         respuesta = cliente.get("/clientes")
 
     assert respuesta.status_code == 200
     assert "Día" in respuesta.text
+    assert "Descuentos" in respuesta.text
+    assert "Adicionales" in respuesta.text
     assert "23.0%" in respuesta.text
     assert "20.0%" in respuesta.text
+    # "Otro cliente" tiene adicionales (10.5%, ej. IVA) además de descuentos.
+    assert "10.5%" in respuesta.text
     assert "/clientes/1/editar" in respuesta.text
     assert "/clientes/1/eliminar" in respuesta.text
+
+
+def test_ver_clientes_sin_adicionales_muestra_cero_por_ciento():
+    # Regla explícita: si no tiene ninguna tasa de tipo suma, se muestra
+    # "0%" (no una celda vacía ni un guión que confunda con "no se sabe").
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/clientes")
+
+    assert respuesta.status_code == 200
+    assert "0.0%" in respuesta.text
 
 
 def test_ver_clientes_incluye_link_a_inicio():
