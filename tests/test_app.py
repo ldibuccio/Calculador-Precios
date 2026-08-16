@@ -4657,6 +4657,26 @@ def test_ver_cargar_precios_incluye_boton_guardar_y_generar_listado():
     assert 'id="boton-exportar"' not in respuesta.text
 
 
+def test_ver_cargar_precios_boton_cargar_otro_precio_va_en_azul_y_hay_cancelar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # "Cargar otro Precio" en azul sólido (clase "boton" a secas), no el
+    # outline blanco-y-azul de "boton-secundario".
+    assert '<button type="button" class="boton" onclick="cargarOtroPrecio()">Cargar otro Precio</button>' in respuesta.text
+    # "Cancelar" junto a "Guardar y terminar", mismo criterio de
+    # visibilidad (solo si hay algo cargado o un artículo elegido).
+    assert 'class="boton-peligro" id="boton-cancelar-carga"' in respuesta.text
+    assert 'onclick="cancelarTodo()"' in respuesta.text
+    assert '"boton-cancelar-carga").style.display' in respuesta.text
+
+
 def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),

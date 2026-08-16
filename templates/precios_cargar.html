@@ -266,7 +266,7 @@
       <p class="ayuda precio-vigente" id="precio-vigente-texto"></p>
       <label for="precio_nuevo">Precio nuevo</label>
       <input type="number" step="0.01" min="0.01" id="precio_nuevo" placeholder="Precio nuevo">
-      <button type="button" class="boton-secundario" onclick="cargarOtroPrecio()">Cargar otro Precio</button>
+      <button type="button" class="boton" onclick="cargarOtroPrecio()">Cargar otro Precio</button>
     </div>
 
     <div id="lista-pendientes-carga" style="display:none;">
@@ -274,11 +274,13 @@
       <div id="filas-pendientes-carga"></div>
     </div>
 
-    <!-- Siempre disponible mientras haya algo para terminar (un artículo
-         recién elegido, o pendientes ya cargados) — así sirve tanto para
-         cerrar tras el último artículo sin un paso extra, como para volver
-         a terminar después de "Modificar" sin tener que elegir de nuevo. -->
+    <!-- Siempre disponibles mientras haya algo para terminar o cancelar (un
+         artículo recién elegido, o pendientes ya cargados) — así sirven
+         tanto para cerrar tras el último artículo sin un paso extra, como
+         para volver a terminar después de "Modificar" sin tener que elegir
+         de nuevo. -->
     <button type="button" class="boton-exito" id="boton-guardar-y-terminar" style="display:none;" onclick="guardarYTerminar()">Guardar y terminar</button>
+    <button type="button" class="boton-peligro" id="boton-cancelar-carga" style="display:none;" onclick="cancelarTodo()">Cancelar</button>
   </div>
 
   <div class="tarjeta" id="seccion-revision" style="display:none;">
@@ -369,8 +371,9 @@
     }
 
     function actualizarVisibilidadBotonTerminar() {
-      const boton = document.getElementById("boton-guardar-y-terminar");
-      boton.style.display = (pendientes.length > 0 || articuloElegido !== null) ? "block" : "none";
+      const hayAlgoParaTerminar = pendientes.length > 0 || articuloElegido !== null;
+      document.getElementById("boton-guardar-y-terminar").style.display = hayAlgoParaTerminar ? "block" : "none";
+      document.getElementById("boton-cancelar-carga").style.display = hayAlgoParaTerminar ? "block" : "none";
     }
 
     // Intenta agregar (o reemplazar, si ya estaba) el artículo elegido con
