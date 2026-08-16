@@ -20,18 +20,14 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
-  .error {
-    background: #fee2e2;
-    color: #991b1b;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
-  }
   .ayuda {
     color: #888;
-    font-size: 0.85rem;
-    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    margin: 0.35rem 0 0.75rem;
+  }
+  .precio-vigente {
+    font-weight: 600;
+    color: #222;
   }
   form label {
     display: block;
@@ -66,18 +62,9 @@
     cursor: pointer;
   }
   .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
   .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
   .vacio { color: #888; font-style: italic; }
-  .fila-precio {
-    border-top: 1px solid #eee;
-    padding-top: 0.9rem;
-    margin-top: 0.9rem;
-  }
-  .fila-precio:first-of-type {
-    border-top: none;
-    padding-top: 0;
-    margin-top: 0;
-  }
   .buscador-articulo {
     position: relative;
   }
@@ -110,6 +97,19 @@
   .opcion-articulo:active {
     background: #f0f5ff;
   }
+  .fila-pendiente {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  .fila-pendiente:last-child { border-bottom: none; }
+  .fila-pendiente .nombre { flex: 1 1 auto; }
+  .fila-pendiente .precios { flex: 0 0 auto; text-align: right; color: #444; white-space: nowrap; }
+  .fila-pendiente .precios .nuevo { font-weight: 700; color: #16a34a; }
 </style>
 </head>
 <body>
@@ -126,72 +126,73 @@
         <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
         {% endfor %}
       </select>
-
-      {% if cliente_id %}
-      <label for="articulo_texto">Artículo (opcional — dejalo vacío para editar todos)</label>
-      <div class="buscador-articulo">
-        <input type="text" id="articulo_texto" autocomplete="off" placeholder="Buscar artículo..."
-               value="{{ articulo_nombre_actual or '' }}"
-               onfocus="actualizarListaArticulos()" oninput="actualizarListaArticulos()" onblur="ocultarListaArticulos()">
-        <div class="lista-articulos" id="lista-articulos"></div>
-      </div>
-      <input type="hidden" id="articulo_id" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
-      {% if articulo_id %}
-      <button type="button" class="boton-secundario" onclick="limpiarArticulo()">✕ Ver todos los artículos</button>
-      {% endif %}
-      {% endif %}
     </form>
   </div>
-
-  {% if error %}
-  <div class="error">{{ error }}</div>
-  {% endif %}
 
   {% if not cliente_id %}
   <div class="tarjeta">
     <p class="vacio">Elegí un cliente para cargarle precios nuevos.</p>
   </div>
+  {% elif sin_fichas %}
+  <div class="tarjeta">
+    <p class="vacio">{{ cliente_nombre }} todavía no tiene ninguna ficha de logística cargada — sin fichas no hay artículos a los que ponerle precio.</p>
+  </div>
   {% else %}
-  <p class="ayuda">
-    Los precios vigentes ya vienen precargados: tocá solo los que cambiaron. Lo que no toques queda como estaba, sin generar nada nuevo.
-  </p>
 
-  {% if filas %}
-  <form method="post" action="/precios/cargar">
-    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-    <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
-    <div class="tarjeta">
-      {% for fila in filas %}
-      <div class="fila-precio">
-        <h2>{{ fila.articulo_nombre }}</h2>
-        <p class="ayuda">
-          {% if fila.precio_original %}Precio vigente hoy: {{ fila.precio_original|moneda }}
-          {% else %}Todavía no tiene precio cargado.{% endif %}
-        </p>
-        <input type="hidden" name="precio_{{ fila.articulo_id }}_original" value="{{ fila.precio_original if fila.precio_original is not none else '' }}">
-        <label for="precio_{{ fila.articulo_id }}">Precio nuevo</label>
-        <input type="number" step="0.01" min="0" id="precio_{{ fila.articulo_id }}" name="precio_{{ fila.articulo_id }}" value="{{ fila.valor_input if fila.valor_input is not none else '' }}">
-      </div>
-      {% endfor %}
+  <div class="tarjeta" id="seccion-carga">
+    <h2>Cargar precio nuevo</h2>
+    <label for="articulo_texto">Artículo</label>
+    <div class="buscador-articulo">
+      <input type="text" id="articulo_texto" autocomplete="off" placeholder="Buscar artículo..."
+             onfocus="actualizarListaArticulos()" oninput="actualizarListaArticulos()" onblur="ocultarListaArticulos()">
+      <div class="lista-articulos" id="lista-articulos"></div>
     </div>
 
-    <button type="submit" class="boton-exito">Guardar todos</button>
-  </form>
-  {% else %}
-  <div class="tarjeta">
-    <p class="vacio">
-      {% if articulo_id %}Este artículo no corresponde a {{ cliente_nombre }}.
-      {% else %}{{ cliente_nombre }} todavía no tiene ninguna ficha de logística cargada — sin fichas no hay artículos a los que ponerle precio.{% endif %}
-    </p>
+    <div id="info-articulo-elegido" style="display:none;">
+      <p class="ayuda precio-vigente" id="precio-vigente-texto"></p>
+      <label for="precio_nuevo">Precio nuevo</label>
+      <input type="number" step="0.01" min="0.01" id="precio_nuevo" placeholder="Precio nuevo">
+      <button type="button" class="boton-secundario" onclick="cargarOtroPrecio()">Cargar otro Precio</button>
+    </div>
+
+    <div id="lista-pendientes-carga" style="display:none;">
+      <h2 style="margin-top:1.1rem;">Cargados en esta sesión (<span id="contador-pendientes">0</span>)</h2>
+      <div id="filas-pendientes-carga"></div>
+    </div>
+
+    <!-- Siempre disponible mientras haya algo para terminar (un artículo
+         recién elegido, o pendientes ya cargados) — así sirve tanto para
+         cerrar tras el último artículo sin un paso extra, como para volver
+         a terminar después de "Modificar" sin tener que elegir de nuevo. -->
+    <button type="button" class="boton-exito" id="boton-guardar-y-terminar" style="display:none;" onclick="guardarYTerminar()">Guardar y terminar</button>
   </div>
-  {% endif %}
+
+  <div class="tarjeta" id="seccion-revision" style="display:none;">
+    <h2>Revisión de precios cargados</h2>
+    <div id="filas-pendientes-revision"></div>
+    <button type="button" class="boton-exito" id="boton-guardar-revision" onclick="guardarTodo()">Guardar</button>
+    <button type="button" class="boton-secundario" onclick="volverAModificar()">Modificar</button>
+    <button type="button" class="boton-peligro" onclick="cancelarTodo()">Cancelar</button>
+  </div>
+
   {% endif %}
 
-  {% if cliente_id %}
+  {% if cliente_id and not sin_fichas %}
   <script>
+    const CLIENTE_ID = {{ cliente_id }};
     const ARTICULOS_LISTA = [
-      {% for a in articulos_cliente %}{ id: {{ a.articulo_id }}, nombre: "{{ a.articulo_nombre }}" },{% endfor %}
+      {% for a in articulos_cliente %}{ id: {{ a.articulo_id }}, nombre: "{{ a.articulo_nombre }}", precioVigente: {{ a.precio_vigente if a.precio_vigente is not none else "null" }} },{% endfor %}
     ];
+
+    let pendientes = [];
+    let articuloElegido = null;
+
+    function formatearMoneda(valor) {
+      const entero = Math.round(valor);
+      const negativo = entero < 0;
+      const texto = Math.abs(entero).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+      return "$" + (negativo ? "-" : "") + texto;
+    }
 
     function normalizarBusquedaArticulo(texto) {
       return (texto || "").trim().toLowerCase();
@@ -218,7 +219,7 @@
           evento.preventDefault();
         });
         opcion.addEventListener("click", function () {
-          elegirArticulo(a.id, a.nombre);
+          elegirArticulo(a.id);
         });
         contenedor.appendChild(opcion);
       });
@@ -229,18 +230,176 @@
       document.getElementById("lista-articulos").classList.remove("visible");
     }
 
-    // Acá sí conviene mandar apenas se elige: no hay otro campo (como la
-    // fecha en la consulta) con el que combinarlo antes de aplicar.
-    function elegirArticulo(id, nombre) {
-      document.getElementById("articulo_id").value = id;
-      document.getElementById("articulo_texto").value = nombre;
-      document.getElementById("form-selector").submit();
+    function elegirArticulo(id) {
+      articuloElegido = ARTICULOS_LISTA.find(function (a) { return a.id === id; });
+      if (!articuloElegido) {
+        return;
+      }
+      document.getElementById("articulo_texto").value = articuloElegido.nombre;
+      ocultarListaArticulos();
+
+      document.getElementById("info-articulo-elegido").style.display = "block";
+      document.getElementById("precio-vigente-texto").textContent = articuloElegido.precioVigente !== null
+        ? "Precio vigente actual: " + formatearMoneda(articuloElegido.precioVigente)
+        : "Todavía no tiene precio cargado.";
+
+      const campoPrecio = document.getElementById("precio_nuevo");
+      campoPrecio.value = "";
+      campoPrecio.focus();
+      actualizarVisibilidadBotonTerminar();
     }
 
-    function limpiarArticulo() {
-      document.getElementById("articulo_id").value = "";
+    function actualizarVisibilidadBotonTerminar() {
+      const boton = document.getElementById("boton-guardar-y-terminar");
+      boton.style.display = (pendientes.length > 0 || articuloElegido !== null) ? "block" : "none";
+    }
+
+    // Intenta agregar (o reemplazar, si ya estaba) el artículo elegido con
+    // el precio tipeado. Devuelve true si había algo para agregar.
+    function agregarOActualizarPendiente() {
+      if (!articuloElegido) {
+        return false;
+      }
+      const campoPrecio = document.getElementById("precio_nuevo");
+      const precioNuevo = parseFloat(campoPrecio.value);
+      if (!campoPrecio.value || isNaN(precioNuevo) || precioNuevo <= 0) {
+        return false;
+      }
+
+      const indiceExistente = pendientes.findIndex(function (p) { return p.articuloId === articuloElegido.id; });
+      const pendiente = {
+        articuloId: articuloElegido.id,
+        articuloNombre: articuloElegido.nombre,
+        precioOriginal: articuloElegido.precioVigente,
+        precioNuevo: precioNuevo,
+      };
+      if (indiceExistente === -1) {
+        pendientes.push(pendiente);
+      } else {
+        pendientes[indiceExistente] = pendiente;
+      }
+      return true;
+    }
+
+    function limpiarSeleccionArticulo() {
+      articuloElegido = null;
       document.getElementById("articulo_texto").value = "";
-      document.getElementById("form-selector").submit();
+      document.getElementById("precio_nuevo").value = "";
+      document.getElementById("info-articulo-elegido").style.display = "none";
+    }
+
+    function renderizarPendientesCarga() {
+      const contenedorLista = document.getElementById("lista-pendientes-carga");
+      const contenedorFilas = document.getElementById("filas-pendientes-carga");
+      document.getElementById("contador-pendientes").textContent = pendientes.length;
+
+      if (pendientes.length === 0) {
+        contenedorLista.style.display = "none";
+      } else {
+        contenedorLista.style.display = "block";
+        contenedorFilas.innerHTML = "";
+        pendientes.forEach(function (p) {
+          contenedorFilas.appendChild(crearFilaPendiente(p));
+        });
+      }
+      actualizarVisibilidadBotonTerminar();
+    }
+
+    function crearFilaPendiente(p) {
+      const fila = document.createElement("div");
+      fila.className = "fila-pendiente";
+
+      const nombre = document.createElement("span");
+      nombre.className = "nombre";
+      nombre.textContent = p.articuloNombre;
+
+      const precios = document.createElement("span");
+      precios.className = "precios";
+      const viejo = p.precioOriginal !== null ? formatearMoneda(p.precioOriginal) : "sin precio";
+      precios.innerHTML = viejo + " → <span class=\"nuevo\">" + formatearMoneda(p.precioNuevo) + "</span>";
+
+      fila.appendChild(nombre);
+      fila.appendChild(precios);
+      return fila;
+    }
+
+    function cargarOtroPrecio() {
+      if (!agregarOActualizarPendiente()) {
+        alert("Elegí un artículo y cargá un precio válido antes de continuar.");
+        return;
+      }
+      limpiarSeleccionArticulo();
+      renderizarPendientesCarga();
+      document.getElementById("articulo_texto").focus();
+    }
+
+    function guardarYTerminar() {
+      // Si había un artículo con precio tipeado sin apretar "Cargar otro
+      // Precio" todavía, se suma solo — no hace falta ese paso extra para
+      // el último artículo de la sesión.
+      agregarOActualizarPendiente();
+
+      if (pendientes.length === 0) {
+        alert("Cargá al menos un precio antes de continuar.");
+        return;
+      }
+
+      limpiarSeleccionArticulo();
+      renderizarPendientesCarga();
+      mostrarRevision();
+    }
+
+    function mostrarRevision() {
+      const contenedor = document.getElementById("filas-pendientes-revision");
+      contenedor.innerHTML = "";
+      pendientes.forEach(function (p) {
+        contenedor.appendChild(crearFilaPendiente(p));
+      });
+      document.getElementById("seccion-carga").style.display = "none";
+      document.getElementById("seccion-revision").style.display = "block";
+      window.scrollTo(0, 0);
+    }
+
+    function volverAModificar() {
+      document.getElementById("seccion-revision").style.display = "none";
+      document.getElementById("seccion-carga").style.display = "block";
+      window.scrollTo(0, 0);
+    }
+
+    function cancelarTodo() {
+      if (!confirm("¿Descartar todos los precios cargados en esta sesión? No se va a guardar nada.")) {
+        return;
+      }
+      window.location.href = "/precios";
+    }
+
+    function guardarTodo() {
+      const formOculto = document.createElement("form");
+      formOculto.method = "post";
+      formOculto.action = "/precios/cargar";
+
+      function agregarCampoOculto(nombre, valor) {
+        const campo = document.createElement("input");
+        campo.type = "hidden";
+        campo.name = nombre;
+        campo.value = valor;
+        formOculto.appendChild(campo);
+      }
+
+      agregarCampoOculto("cliente_id", CLIENTE_ID);
+      pendientes.forEach(function (p) {
+        agregarCampoOculto("pendiente_precio_" + p.articuloId, p.precioNuevo);
+        agregarCampoOculto("pendiente_original_" + p.articuloId, p.precioOriginal !== null ? p.precioOriginal : "");
+      });
+
+      const boton = document.getElementById("boton-guardar-revision");
+      if (boton) {
+        boton.disabled = true;
+        boton.textContent = "Guardando...";
+      }
+
+      document.body.appendChild(formOculto);
+      formOculto.submit();
     }
   </script>
   {% endif %}

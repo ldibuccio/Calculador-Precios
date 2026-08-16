@@ -117,7 +117,7 @@
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <form method="get" action="/precios" id="form-consulta">
+    <form method="get" action="/precios/consultar" id="form-consulta">
       <label for="cliente_id">Cliente</label>
       <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
         <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
@@ -157,7 +157,7 @@
   </div>
   {% else %}
   <div class="tarjeta">
-    <a class="boton boton-secundario" href="/precios/cargar?cliente_id={{ cliente_id }}{% if articulo_id %}&articulo_id={{ articulo_id }}{% endif %}">Cargar precios de este cliente</a>
+    <a class="boton boton-secundario" href="/precios/cargar?cliente_id={{ cliente_id }}">Cargar precios de este cliente</a>
   </div>
 
   <div class="tarjeta">

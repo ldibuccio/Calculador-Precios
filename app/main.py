@@ -2473,7 +2473,27 @@ def _id_opcional_desde_query(valor: str | None) -> int | None:
 
 
 @app.get("/precios")
-def ver_precios(request: Request, cliente_id: str | None = None, fecha: str | None = None, articulo_id: str | None = None):
+def ver_precios(request: Request, guardado: str | None = None):
+    """Botonera de Lista de Precios: Consultar, Cargar Precios Nuevos, Generar Listado (Próximamente).
+
+    "guardado" llega desde el redirect de POST /precios/cargar con la
+    cantidad de precios que efectivamente se guardaron (puede ser menos que
+    los pendientes cargados, si alguno quedó igual al vigente y no generó
+    fila nueva), para mostrar un mensaje de confirmación acá.
+    """
+    cantidad_guardada = _id_opcional_desde_query(guardado)
+    mensaje = None
+    if cantidad_guardada is not None:
+        mensaje = (
+            f"Se cargaron {cantidad_guardada} precios."
+            if cantidad_guardada > 0
+            else "No se guardó ningún cambio: los precios ya estaban al día."
+        )
+    return templates.TemplateResponse(request, "precios.html", {"mensaje": mensaje})
+
+
+@app.get("/precios/consultar")
+def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha: str | None = None, articulo_id: str | None = None):
     """Consulta de precios vigentes de un cliente a una fecha (todos, o uno puntual). Solo lectura.
 
     Mismo patrón de selector que /fichas y /negociar: sin cliente_id en la
@@ -2542,39 +2562,6 @@ def ver_precios(request: Request, cliente_id: str | None = None, fecha: str | No
     )
 
 
-def _filas_precios_desde_fichas(fichas: list[dict], precio_por_articulo: dict) -> list[dict]:
-    """Arma el contexto del template a partir de lo que ya está guardado (GET, recién cargada la pantalla).
-
-    valor_input arranca igual al precio vigente (o vacío si no tiene) —
-    es el punto de partida contra el que se compara al guardar.
-    """
-    return [
-        {
-            "articulo_id": ficha["articulo_id"],
-            "articulo_nombre": ficha["articulo_nombre"],
-            "precio_original": precio_por_articulo.get(ficha["articulo_id"]),
-            "valor_input": precio_por_articulo.get(ficha["articulo_id"]),
-        }
-        for ficha in fichas
-    ]
-
-
-def _leer_precios_del_form(form, fichas: list[dict]) -> list[dict]:
-    """Lee del form el precio original (oculto) y el nuevo tipeado para cada artículo, sin validar todavía."""
-    filas = []
-    for ficha in fichas:
-        articulo_id = ficha["articulo_id"]
-        filas.append(
-            {
-                "articulo_id": articulo_id,
-                "articulo_nombre": ficha["articulo_nombre"],
-                "original_texto": str(form.get(f"precio_{articulo_id}_original", "")).strip(),
-                "nuevo_texto": str(form.get(f"precio_{articulo_id}", "")).strip(),
-            }
-        )
-    return filas
-
-
 def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
     """Valida cada precio tipeado (número positivo) y arma las filas para calcular_cambios_de_precios."""
     filas_validas = []
@@ -2597,15 +2584,16 @@ def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
 
 
 @app.get("/precios/cargar")
-def ver_cargar_precios(request: Request, cliente_id: str | None = None, articulo_id: str | None = None):
-    """Carga de precios nuevos de un cliente: una fila por artículo con ficha, precargada con el vigente de hoy.
+def ver_cargar_precios(request: Request, cliente_id: str | None = None):
+    """Carga de precios nuevos de un cliente, uno a la vez, con revisión antes de guardar.
 
-    Con articulo_id, se filtra a esa única fila (para ir directo a un
-    artículo sin scrollear la lista completa) — sin tocar ni leer las
-    demás filas del cliente al guardar.
+    Trae el catálogo completo del cliente (artículo + precio vigente de
+    hoy) y lo embebe en la página como para que elegir artículos y armar
+    la lista de pendientes no necesite volver a pedirle nada al servidor
+    — recién se vuelve a pegarle al servidor una sola vez, al guardar en
+    la pantalla de revisión (ver POST /precios/cargar).
     """
     cliente_id = _id_opcional_desde_query(cliente_id)
-    articulo_id = _id_opcional_desde_query(articulo_id)
 
     try:
         clientes = listar_clientes()
@@ -2626,10 +2614,14 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None, articulo
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
-    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
-    fichas_a_mostrar = fichas
-    if articulo_id is not None:
-        fichas_a_mostrar = [ficha for ficha in fichas if ficha["articulo_id"] == articulo_id]
+    articulos_cliente = [
+        {
+            "articulo_id": ficha["articulo_id"],
+            "articulo_nombre": ficha["articulo_nombre"],
+            "precio_vigente": precio_por_articulo.get(ficha["articulo_id"]),
+        }
+        for ficha in fichas
+    ]
 
     return templates.TemplateResponse(
         request,
@@ -2638,28 +2630,53 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None, articulo
             "clientes": clientes,
             "cliente_id": cliente_id,
             "cliente_nombre": cliente["nombre"],
-            "articulos_cliente": fichas,
-            "articulo_id": articulo_id,
-            "articulo_nombre_actual": nombre_por_articulo.get(articulo_id) if articulo_id is not None else None,
-            "filas": _filas_precios_desde_fichas(fichas_a_mostrar, precio_por_articulo),
-            "error": None,
+            "articulos_cliente": articulos_cliente,
+            "sin_fichas": len(fichas) == 0,
         },
     )
 
 
+def _leer_pendientes_del_form(form) -> list[dict]:
+    """Lee del form oculto (armado por JS con los pendientes de la sesión) un precio nuevo por artículo.
+
+    Cada pendiente viaja como "pendiente_precio_<articulo_id>" (el nuevo) y
+    "pendiente_original_<articulo_id>" (el vigente al elegirlo, para que
+    calcular_cambios_de_precios no genere una fila si no cambió nada) — no
+    hace falta un índice porque los pendientes ya vienen sin duplicados por
+    artículo (el navegador se encarga de eso).
+    """
+    filas = []
+    prefijo = "pendiente_precio_"
+    for clave in form.keys():
+        if not clave.startswith(prefijo):
+            continue
+        try:
+            articulo_id = int(clave[len(prefijo) :])
+        except ValueError:
+            continue
+        filas.append(
+            {
+                "articulo_id": articulo_id,
+                "original_texto": str(form.get(f"pendiente_original_{articulo_id}", "")).strip(),
+                "nuevo_texto": str(form.get(clave, "")).strip(),
+            }
+        )
+    return filas
+
+
 @app.post("/precios/cargar")
 async def cargar_precios(request: Request):
+    """Guarda de una vez todos los pendientes cargados en el navegador durante la sesión.
+
+    Un solo uso, carga puntual: se guarda tal cual lo que se cargó, sin
+    revalidar contra lo que haya vigente en la base en este momento (no
+    hace falta detectar conflictos para este caso de uso).
+    """
     form = await request.form()
     try:
         cliente_id = int(form.get("cliente_id", ""))
     except ValueError:
         raise HTTPException(status_code=400, detail="Cliente inválido")
-
-    # Si se estaba editando un solo artículo filtrado, viaja oculto para
-    # no leer/tocar las demás filas del cliente y para volver a esa misma
-    # vista filtrada después de guardar.
-    articulo_id_texto = str(form.get("articulo_id", "")).strip()
-    articulo_id_filtro = _id_opcional_desde_query(articulo_id_texto)
 
     try:
         clientes = listar_clientes()
@@ -2675,73 +2692,31 @@ async def cargar_precios(request: Request):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    fichas_a_procesar = fichas
-    if articulo_id_filtro is not None:
-        fichas_a_procesar = [ficha for ficha in fichas if ficha["articulo_id"] == articulo_id_filtro]
     nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
-    articulo_nombre_actual = nombre_por_articulo.get(articulo_id_filtro) if articulo_id_filtro is not None else None
 
-    filas_crudas = _leer_precios_del_form(form, fichas_a_procesar)
+    filas_crudas = _leer_pendientes_del_form(form)
+    for fila in filas_crudas:
+        fila["articulo_nombre"] = nombre_por_articulo.get(fila["articulo_id"], f"Artículo #{fila['articulo_id']}")
+
     error, filas_para_diff = _validar_precios(filas_crudas)
-
     if error:
-        return templates.TemplateResponse(
-            request,
-            "precios_cargar.html",
-            {
-                "clientes": clientes,
-                "cliente_id": cliente_id,
-                "cliente_nombre": cliente["nombre"],
-                "articulos_cliente": fichas,
-                "articulo_id": articulo_id_filtro,
-                "articulo_nombre_actual": articulo_nombre_actual,
-                "filas": [
-                    {
-                        "articulo_id": fila["articulo_id"],
-                        "articulo_nombre": fila["articulo_nombre"],
-                        "precio_original": fila["original_texto"],
-                        "valor_input": fila["nuevo_texto"],
-                    }
-                    for fila in filas_crudas
-                ],
-                "error": error,
-            },
-            status_code=400,
-        )
+        raise HTTPException(status_code=400, detail=error)
 
     cambios = calcular_cambios_de_precios(filas_para_diff)
 
     try:
         guardar_precios_cliente(cliente_id, cambios)
     except Exception as error_db:
-        return templates.TemplateResponse(
-            request,
-            "precios_cargar.html",
-            {
-                "clientes": clientes,
-                "cliente_id": cliente_id,
-                "cliente_nombre": cliente["nombre"],
-                "articulos_cliente": fichas,
-                "articulo_id": articulo_id_filtro,
-                "articulo_nombre_actual": articulo_nombre_actual,
-                "filas": [
-                    {
-                        "articulo_id": fila["articulo_id"],
-                        "articulo_nombre": fila["articulo_nombre"],
-                        "precio_original": fila["original_texto"],
-                        "valor_input": fila["nuevo_texto"],
-                    }
-                    for fila in filas_crudas
-                ],
-                "error": f"No se pudieron guardar los precios: {error_db}",
-            },
-            status_code=500,
-        )
+        raise HTTPException(status_code=500, detail=f"No se pudieron guardar los precios: {error_db}") from error_db
 
-    redirect_url = f"/precios?cliente_id={cliente_id}"
-    if articulo_id_filtro is not None:
-        redirect_url += f"&articulo_id={articulo_id_filtro}"
-    return RedirectResponse(url=redirect_url, status_code=303)
+    return RedirectResponse(url=f"/precios?guardado={len(cambios)}", status_code=303)
+
+
+@app.get("/precios/generar-listado")
+def ver_generar_listado_precios(request: Request):
+    return _renderizar_en_construccion(
+        request, "Generar Listado Actualizado", volver_url="/precios", volver_texto="Volver a Lista de Precios", sector="comercial"
+    )
 
 
 def _fecha_de_corte_limpieza_fotos():
