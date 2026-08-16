@@ -229,7 +229,16 @@
         evento.preventDefault();
       }
       document.getElementById("panel-negociacion").classList.remove("visible");
-      document.querySelector(".barra-navegacion").style.pointerEvents = "";
+      // El botón "✕ Cerrar" queda justo arriba del ícono Inicio de la
+      // barra — si se reactiva pointer-events en el mismo instante en que
+      // se procesa el toque de "Cerrar", en el celular ese mismo toque
+      // puede llegar a "filtrarse" al ícono recién reactivado y navegar a
+      // /inicio en vez de solo cerrar el panel. Con un pequeño margen
+      // (200ms) el toque termina de procesarse del todo antes de que la
+      // barra vuelva a responder.
+      setTimeout(function () {
+        document.querySelector(".barra-navegacion").style.pointerEvents = "";
+      }, 200);
     }
   </script>
   {% endif %}
