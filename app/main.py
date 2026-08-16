@@ -2620,7 +2620,13 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
     articulos_existentes = listar_articulos()
 
-    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    # La lista exportada es para mandarle al cliente — usa el nombre que el
+    # cliente conoce (nombre_cliente de su ficha), no el nombre interno del
+    # catálogo. Si la ficha no tiene nombre_cliente cargado, se cae al
+    # nombre del catálogo como respaldo.
+    nombre_por_articulo = {
+        ficha["articulo_id"]: ficha.get("nombre_cliente") or ficha["articulo_nombre"] for ficha in fichas
+    }
     unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
     grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
 
@@ -2769,7 +2775,12 @@ def _armar_filas_exportacion_con_pendientes(cliente_id: int, pendientes_por_arti
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
     articulos_existentes = listar_articulos()
 
-    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    # Mismo criterio que _armar_filas_exportacion_precios: nombre_cliente de
+    # la ficha (el que el cliente entiende), con el nombre del catálogo como
+    # respaldo si no está cargado.
+    nombre_por_articulo = {
+        ficha["articulo_id"]: ficha.get("nombre_cliente") or ficha["articulo_nombre"] for ficha in fichas
+    }
     unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
     grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
     precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}

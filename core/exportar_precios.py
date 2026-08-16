@@ -20,7 +20,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, TableStyle
 
 VERDE_ENCABEZADO = colors.Color(0.18, 0.55, 0.34)
 ROJO_PRECIO_NUEVO = colors.Color(0.80, 0.10, 0.10)
@@ -70,6 +70,11 @@ PIE_PAGINA = "* Todos los precios están expresados en pesos y no incluyen IVA."
 
 
 ALTURA_BANDA_ENCABEZADO = 24 * mm
+# Espacio reservado debajo de la banda verde para "Cliente:", "Vigencia:" y
+# la leyenda — se pinta directo en el canvas (ver _dibujar_datos_encabezado),
+# no como flowable, para que se repita en TODAS las páginas, no solo la
+# primera.
+ALTURA_DATOS_ENCABEZADO = 22 * mm
 
 
 def _dibujar_banda_encabezado(canvas, documento):
@@ -90,6 +95,28 @@ def _dibujar_banda_encabezado(canvas, documento):
     canvas.restoreState()
 
 
+def _dibujar_datos_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str):
+    """Pinta "Cliente:", "Vigencia:" y la leyenda debajo de la banda verde, en TODAS las páginas.
+
+    Van en el canvas (no como Paragraph en el flujo normal) por el mismo
+    motivo que la banda: un flowable normal solo aparece una vez, en el
+    lugar donde cae dentro del flujo — para que se repita en cada página
+    (si una sección se corta y sigue en la siguiente) hay que pintarlo acá.
+    """
+    ancho_pagina, alto_pagina = A4
+    x = documento.leftMargin
+    y_base = alto_pagina - ALTURA_BANDA_ENCABEZADO - 7 * mm
+    canvas.saveState()
+    canvas.setFillColor(colors.black)
+    canvas.setFont("Helvetica", 10)
+    canvas.drawString(x, y_base, f"Cliente: {cliente_nombre}")
+    canvas.drawString(x, y_base - 5.5 * mm, f"Vigencia: {fecha_texto} · Precios + IVA")
+    canvas.setFillColor(GRIS_TEXTO_AYUDA)
+    canvas.setFont("Helvetica-Oblique", 9)
+    canvas.drawString(x, y_base - 12 * mm, LEYENDA_PRECIO_NUEVO)
+    canvas.restoreState()
+
+
 def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool) -> bytes:
     """Arma el PDF de la Lista de Precios de un cliente a una fecha, con el formato ya definido.
 
@@ -97,22 +124,32 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
     fecha exportada es HOY — si no lo es, ningún precio se resalta como nuevo aunque
     fila["es_nuevo"] venga en True (quien arma "filas" ya debería respetar esto, pero se vuelve a
     chequear acá para no depender de que el llamador no se equivoque).
+
+    Cada grupo (Fruta/Hortaliza/Pesada/Sin clasificar) arranca en su propia página, y lleva su título
+    de sección DENTRO de la tabla (repeatRows=2, junto con el encabezado de columnas) para que, si una
+    sección es tan larga que igual se corta sola entre dos páginas, el título se repita solo.
     """
     buffer = BytesIO()
+    fecha_texto = fecha.strftime("%d/%m/%Y")
     documento = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=ALTURA_BANDA_ENCABEZADO + 8 * mm,
+        topMargin=ALTURA_BANDA_ENCABEZADO + ALTURA_DATOS_ENCABEZADO,
         leftMargin=16 * mm,
         rightMargin=16 * mm,
         bottomMargin=16 * mm,
     )
     ancho_util = documento.width
 
-    estilo_normal = ParagraphStyle("normal", fontName="Helvetica", fontSize=10, textColor=colors.black, leading=13)
-    estilo_ayuda = ParagraphStyle("ayuda", fontName="Helvetica-Oblique", fontSize=9, textColor=GRIS_TEXTO_AYUDA)
-    estilo_seccion = ParagraphStyle(
-        "seccion", fontName="Helvetica-Bold", fontSize=13, textColor=VERDE_ENCABEZADO, spaceBefore=14, spaceAfter=6
+    def _dibujar_encabezado_pagina(canvas, documento):
+        _dibujar_banda_encabezado(canvas, documento)
+        _dibujar_datos_encabezado(canvas, documento, cliente_nombre, fecha_texto)
+
+    estilo_ayuda = ParagraphStyle(
+        "ayuda", fontName="Helvetica-Oblique", fontSize=9, textColor=GRIS_TEXTO_AYUDA, spaceBefore=16
+    )
+    estilo_seccion_en_tabla = ParagraphStyle(
+        "seccion_en_tabla", fontName="Helvetica-Bold", fontSize=13, textColor=VERDE_ENCABEZADO
     )
     estilo_encabezado_tabla = ParagraphStyle(
         "encabezado_tabla", fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.white
@@ -129,53 +166,55 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
 
     elementos = []
 
-    fecha_texto = fecha.strftime("%d/%m/%Y")
-    elementos.append(Paragraph(f"Cliente: {cliente_nombre}", estilo_normal))
-    elementos.append(Paragraph(f"Vigencia: {fecha_texto} · Precios + IVA", estilo_normal))
-    elementos.append(Spacer(1, 6))
-    elementos.append(Paragraph(LEYENDA_PRECIO_NUEVO, estilo_ayuda))
-
     grupos = _agrupar_y_ordenar_filas(filas)
+    hay_grupo_previo = False
     for clave, titulo in ORDEN_GRUPOS:
         filas_grupo = grupos[clave]
         if not filas_grupo:
             continue
 
-        elementos.append(Paragraph(titulo, estilo_seccion))
+        if hay_grupo_previo:
+            elementos.append(PageBreak())
+        hay_grupo_previo = True
 
         datos_tabla = [
+            [Paragraph(titulo, estilo_seccion_en_tabla), "", ""],
             [
                 Paragraph("Producto", estilo_encabezado_tabla),
                 Paragraph("Precio", estilo_encabezado_tabla),
                 Paragraph("Unidad", estilo_encabezado_tabla),
-            ]
+            ],
         ]
         for fila in filas_grupo:
             es_nueva = es_hoy and bool(fila.get("es_nuevo"))
             precio_texto = _formatear_moneda(fila["precio"])
+            celda_precio = Paragraph(precio_texto, estilo_precio_nuevo if es_nueva else estilo_precio)
             if es_nueva:
-                celda_precio = [
-                    Paragraph(precio_texto, estilo_precio_nuevo),
+                celda_producto = [
+                    Paragraph(fila["articulo_nombre"], estilo_producto),
                     Paragraph("Nuevo precio", estilo_badge_nuevo),
                 ]
             else:
-                celda_precio = Paragraph(precio_texto, estilo_precio)
+                celda_producto = Paragraph(fila["articulo_nombre"], estilo_producto)
             datos_tabla.append(
                 [
-                    Paragraph(fila["articulo_nombre"], estilo_producto),
+                    celda_producto,
                     celda_precio,
                     Paragraph(_texto_unidad(fila.get("unidad")), estilo_unidad),
                 ]
             )
 
-        tabla = Table(datos_tabla, colWidths=[ancho_util * 0.5, ancho_util * 0.25, ancho_util * 0.25], repeatRows=1)
+        tabla = Table(datos_tabla, colWidths=[ancho_util * 0.5, ancho_util * 0.25, ancho_util * 0.25], repeatRows=2)
         tabla.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), VERDE_ENCABEZADO),
-                    ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.Color(0.85, 0.85, 0.85)),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("SPAN", (0, 0), (-1, 0)),
+                    ("BACKGROUND", (0, 1), (-1, 1), VERDE_ENCABEZADO),
+                    ("LINEBELOW", (0, 2), (-1, -1), 0.5, colors.Color(0.85, 0.85, 0.85)),
+                    ("TOPPADDING", (0, 0), (-1, 0), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+                    ("TOPPADDING", (0, 1), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
                     ("LEFTPADDING", (0, 0), (-1, -1), 6),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ]
@@ -183,10 +222,9 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
         )
         elementos.append(tabla)
 
-    elementos.append(Spacer(1, 16))
     elementos.append(Paragraph(PIE_PAGINA, estilo_ayuda))
 
-    documento.build(elementos, onFirstPage=_dibujar_banda_encabezado, onLaterPages=_dibujar_banda_encabezado)
+    documento.build(elementos, onFirstPage=_dibujar_encabezado_pagina, onLaterPages=_dibujar_encabezado_pagina)
     return buffer.getvalue()
 
 

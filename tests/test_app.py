@@ -4295,6 +4295,15 @@ def _texto_del_pdf_de_respuesta(pdf_bytes: bytes) -> str:
     return "\n".join(pagina.get_textpage().get_text_range() for pagina in documento)
 
 
+def _texto_sin_leyenda_de_respuesta(pdf_bytes: bytes) -> str:
+    # La leyenda fija se repite en el encabezado de CADA página (para que
+    # se vea aunque una sección se corte entre dos hojas) — se descarta acá
+    # para contar los badges reales sin que la paginación lo altere.
+    from core.exportar_precios import LEYENDA_PRECIO_NUEVO
+
+    return _texto_del_pdf_de_respuesta(pdf_bytes).replace(LEYENDA_PRECIO_NUEVO, "")
+
+
 FICHAS_EXPORTACION_DE_PRUEBA = [
     {"id": 1, "articulo_id": 1, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
     {"id": 2, "articulo_id": 2, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
@@ -4346,9 +4355,8 @@ def test_exportar_precios_pdf_hoy_resalta_el_que_cambio_hoy():
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-pdf?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
-    texto = _texto_del_pdf_de_respuesta(respuesta.content)
-    bloque_tablas = texto[texto.index("HORTALIZA") :]
-    assert bloque_tablas.count("Nuevo precio") == 1
+    texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
+    assert texto.count("Nuevo precio") == 1
 
 
 def test_exportar_precios_pdf_fecha_pasada_no_resalta_nada():
@@ -4364,9 +4372,8 @@ def test_exportar_precios_pdf_fecha_pasada_no_resalta_nada():
     ):
         respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-15")
 
-    texto = _texto_del_pdf_de_respuesta(respuesta.content)
-    bloque_tablas = texto[texto.index("HORTALIZA") :]
-    assert "Nuevo precio" not in bloque_tablas
+    texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
+    assert "Nuevo precio" not in texto
 
 
 def test_exportar_precios_pdf_separa_por_grupo():
@@ -4386,6 +4393,35 @@ def test_exportar_precios_pdf_separa_por_grupo():
     assert texto.index("FRUTA") < texto.index("HORTALIZA")
     assert "Mango" in texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
     assert "Tomate Cherry" in texto[texto.index("HORTALIZA") :]
+
+
+FICHAS_EXPORTACION_NOMBRE_CLIENTE_DE_PRUEBA = [
+    # Con nombre_cliente cargado: la lista exportada tiene que usar ESE
+    # nombre, no el interno del catálogo (articulo_nombre).
+    {"id": 1, "articulo_id": 1, "articulo_nombre": "Mzn Red", "unidad_venta": "kilo", "nombre_cliente": "Manzana Red Elegida"},
+    # Sin nombre_cliente cargado: se cae al nombre del catálogo.
+    {"id": 2, "articulo_id": 2, "articulo_nombre": "Anana", "unidad_venta": "unidad", "nombre_cliente": None},
+]
+
+
+def test_exportar_precios_pdf_usa_nombre_cliente_de_la_ficha_no_el_interno():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_NOMBRE_CLIENTE_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-01")
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Manzana Red Elegida" in texto
+    assert "Mzn Red" not in texto
+    # Sin nombre_cliente cargado, se cae al nombre del catálogo.
+    assert "Anana" in texto
 
 
 def test_exportar_precios_pdf_cliente_invalido_da_400():
@@ -4478,7 +4514,7 @@ def test_exportar_precios_cargar_pdf_solo_resalta_los_pendientes_de_esta_sesion(
             data={"cliente_id": "1", "pendiente_precio_2": "400"},
         )
 
-    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
     bloque_frutas = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
     bloque_hortalizas = texto[texto.index("HORTALIZA") :]
     assert bloque_frutas.count("Nuevo precio") == 1
@@ -4499,7 +4535,7 @@ def test_exportar_precios_cargar_pdf_pendiente_sin_precio_vigente_previo_aparece
             data={"cliente_id": "1", "pendiente_precio_1": "600"},
         )
 
-    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
     assert "Tomate Cherry" in texto
     bloque_hortalizas = texto[texto.index("HORTALIZA") :]
     assert "$600" in bloque_hortalizas
@@ -4523,10 +4559,32 @@ def test_exportar_precios_cargar_pdf_pendientes_invalidos_se_ignoran():
         )
 
     assert respuesta.status_code == 200
-    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
     bloque_frutas = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
     assert "Nuevo precio" not in bloque_frutas
     assert "$350" in bloque_frutas  # se muestra el vigente, no el pendiente inválido
+
+
+def test_exportar_precios_cargar_pdf_usa_nombre_cliente_de_la_ficha_no_el_interno():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_NOMBRE_CLIENTE_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar/exportar-pdf",
+            data={"cliente_id": "1", "pendiente_precio_1": "950"},
+        )
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Manzana Red Elegida" in texto
+    assert "Mzn Red" not in texto
+    assert "Anana" in texto
 
 
 def test_exportar_precios_cargar_pdf_cliente_invalido_da_400():

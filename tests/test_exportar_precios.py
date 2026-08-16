@@ -4,7 +4,7 @@ from io import BytesIO
 import openpyxl
 import pypdfium2 as pdfium
 
-from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
+from core.exportar_precios import LEYENDA_PRECIO_NUEVO, generar_excel_lista_precios, generar_pdf_lista_precios
 
 FILAS_DE_PRUEBA = [
     {"articulo_nombre": "Mango", "grupo": "fruta", "precio": 350.0, "unidad": "unidad", "es_nuevo": False},
@@ -22,6 +22,19 @@ def _texto_del_pdf(pdf_bytes: bytes) -> str:
     for pagina in documento:
         textos.append(pagina.get_textpage().get_text_range())
     return "\n".join(textos)
+
+
+def _textos_por_pagina(pdf_bytes: bytes) -> list[str]:
+    documento = pdfium.PdfDocument(pdf_bytes)
+    return [pagina.get_textpage().get_text_range() for pagina in documento]
+
+
+def _texto_sin_leyenda(pdf_bytes: bytes) -> str:
+    # La leyenda fija se repite en el encabezado de CADA página (para que
+    # se vea aunque una sección se corte entre dos hojas) — se descarta acá
+    # para poder contar los badges reales de las filas sin que la cantidad
+    # de páginas altere el resultado.
+    return _texto_del_pdf(pdf_bytes).replace(LEYENDA_PRECIO_NUEVO, "")
 
 
 # --- generar_pdf_lista_precios ---
@@ -73,14 +86,10 @@ def test_generar_pdf_unidad_segun_la_ficha():
 
 def test_generar_pdf_hoy_muestra_badge_nuevo_precio_solo_en_los_nuevos():
     pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
-    texto = _texto_del_pdf(pdf_bytes)
+    texto = _texto_sin_leyenda(pdf_bytes)
 
-    # La leyenda de arriba también dice "Nuevo precio" — se cuenta solo a
-    # partir de las tablas (después de la primera sección) para no
-    # confundir esa frase con los badges de las filas.
-    bloque_tablas = texto[texto.index("FRUTA") :]
     # Solo Manzana Red y Tomate Cherry vinieron con es_nuevo=True.
-    assert bloque_tablas.count("Nuevo precio") == 2
+    assert texto.count("Nuevo precio") == 2
 
 
 def test_generar_pdf_fecha_pasada_no_resalta_nada_aunque_venga_es_nuevo():
@@ -89,12 +98,46 @@ def test_generar_pdf_fecha_pasada_no_resalta_nada_aunque_venga_es_nuevo():
     # aunque las filas traigan es_nuevo=True (eso pasaría si vigente_desde
     # coincidiera con la fecha exportada, pero esa fecha no es HOY).
     pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 1, 15), FILAS_DE_PRUEBA, es_hoy=False)
+    texto = _texto_sin_leyenda(pdf_bytes)
+
+    assert "Nuevo precio" not in texto
+
+
+def test_generar_pdf_badge_nuevo_precio_va_junto_al_producto():
+    # El badge tiene que quedar en la celda del Producto, no partiendo la
+    # fila Precio/Unidad — o sea, en el texto extraído tiene que aparecer
+    # justo después del nombre del artículo y ANTES del precio.
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
     texto = _texto_del_pdf(pdf_bytes)
 
-    # La leyenda fija sigue apareciendo (no depende de es_hoy); lo que no
-    # tiene que aparecer es el badge en ninguna fila de las tablas.
-    bloque_tablas = texto[texto.index("FRUTA") :]
-    assert "Nuevo precio" not in bloque_tablas
+    bloque_fruta = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
+    posicion_nombre = bloque_fruta.index("Manzana Red")
+    posicion_badge = bloque_fruta.index("Nuevo precio")
+    posicion_precio = bloque_fruta.index("$890")
+    assert posicion_nombre < posicion_badge < posicion_precio
+
+
+def test_generar_pdf_cada_grupo_empieza_en_su_propia_pagina():
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    paginas = _textos_por_pagina(pdf_bytes)
+
+    assert len(paginas) == 4  # fruta, hortaliza, pesada, sin clasificar
+    assert "FRUTA" in paginas[0] and "HORTALIZA" not in paginas[0]
+    assert "HORTALIZA" in paginas[1] and "FRUTA" not in paginas[1] and "PESADA" not in paginas[1]
+    assert "PESADA" in paginas[2] and "HORTALIZA" not in paginas[2]
+    assert "SIN CLASIFICAR" in paginas[3]
+
+
+def test_generar_pdf_repite_encabezado_en_cada_pagina():
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    paginas = _textos_por_pagina(pdf_bytes)
+
+    assert len(paginas) > 1  # si no hay más de una página, esto no prueba nada
+    for texto_pagina in paginas:
+        assert "Lista de Precios" in texto_pagina
+        assert "Cliente: Día" in texto_pagina
+        assert "Vigencia: 16/08/2026 · Precios + IVA" in texto_pagina
+        assert LEYENDA_PRECIO_NUEVO in texto_pagina
 
 
 def test_generar_pdf_sin_filas_no_rompe():
