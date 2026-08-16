@@ -147,6 +147,31 @@
     color: #666;
     font-size: 0.85rem;
   }
+  .tarjeta-leyendo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 2rem 1rem;
+  }
+  .spinner {
+    width: 42px;
+    height: 42px;
+    border: 4px solid #dbeafe;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    margin-bottom: 1rem;
+    animation: girar 0.8s linear infinite;
+  }
+  @keyframes girar {
+    to { transform: rotate(360deg); }
+  }
+  .texto-leyendo {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #222;
+    margin: 0 0 0.35rem;
+  }
   .boton-ver-foto {
     margin-top: 0.75rem;
     width: auto;
@@ -208,8 +233,10 @@
     <button type="button" id="boton-elegir-foto-listado">Elegir foto de la planilla</button>
   </div>
 
-  <div id="seccion-leyendo" class="tarjeta" style="display: none;">
-    <p class="ayuda">Leyendo la planilla completa, puede tardar unos segundos (trae varios proveedores, lleva más que una comanda sola)...</p>
+  <div id="seccion-leyendo" class="tarjeta tarjeta-leyendo" style="display: none;">
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="texto-leyendo">Leyendo la planilla...</p>
+    <p class="ayuda">Puede tardar unos segundos: trae varios proveedores, lleva más que una comanda sola. No cierres la pantalla.</p>
   </div>
 
   <div id="error-listado" class="error" style="display: none;"></div>
@@ -642,8 +669,12 @@
       }
 
       ocultarErrorMultiple();
+      // Además de tapar el botón con el cartel de "Leyendo...", se
+      // deshabilita explícitamente para que no se pueda disparar una
+      // segunda lectura mientras la primera sigue en curso.
+      document.getElementById("boton-elegir-foto-listado").disabled = true;
       document.getElementById("seccion-elegir-foto").style.display = "none";
-      document.getElementById("seccion-leyendo").style.display = "block";
+      document.getElementById("seccion-leyendo").style.display = "flex";
 
       const formData = new FormData();
       formData.append("foto", inputFotoListado.files[0]);
@@ -657,6 +688,7 @@
 
           if (!data.ok) {
             mostrarErrorMultiple(data.error || "No se pudo leer la planilla.");
+            document.getElementById("boton-elegir-foto-listado").disabled = false;
             document.getElementById("seccion-elegir-foto").style.display = "block";
             return;
           }
@@ -669,6 +701,7 @@
         })
         .catch(function (error) {
           document.getElementById("seccion-leyendo").style.display = "none";
+          document.getElementById("boton-elegir-foto-listado").disabled = false;
           document.getElementById("seccion-elegir-foto").style.display = "block";
           mostrarErrorMultiple("No se pudo conectar con el servidor: " + error);
         });

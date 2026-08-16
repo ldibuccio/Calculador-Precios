@@ -1393,6 +1393,15 @@ def test_ver_cargar_listado_de_compras_muestra_la_pantalla():
     assert 'id="boton-guardar-siguiente"' in respuesta.text
     assert 'id="boton-descartar-siguiente"' in respuesta.text
     assert 'id="boton-cancelar-multiple"' in respuesta.text
+    # Regresión: mientras la IA lee la planilla (puede tardar, es una foto
+    # con varios proveedores), tiene que quedar clarísimo que el sistema
+    # está trabajando — spinner + cartel, no un cartelito chico gris — y el
+    # botón no se puede volver a tocar (queda tapado Y deshabilitado).
+    assert 'id="seccion-leyendo"' in respuesta.text
+    assert 'class="spinner"' in respuesta.text
+    assert "Leyendo la planilla..." in respuesta.text
+    assert 'document.getElementById("boton-elegir-foto-listado").disabled = true;' in respuesta.text
+    assert 'document.getElementById("seccion-leyendo").style.display = "flex";' in respuesta.text
 
 
 def test_ver_cargar_listado_de_compras_incluye_los_proveedores_conocidos_para_sugerir():
