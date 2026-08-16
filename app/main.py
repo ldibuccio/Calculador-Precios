@@ -2533,6 +2533,7 @@ def ver_precios(request: Request, cliente_id: str | None = None, fecha: str | No
             "cliente_nombre": cliente["nombre"],
             "articulos_cliente": fichas,
             "articulo_id": articulo_id,
+            "articulo_nombre_actual": nombre_por_articulo.get(articulo_id) if articulo_id is not None else None,
             "fecha": fecha_consulta.isoformat(),
             "fecha_mostrar": fecha_consulta.strftime("%d/%m/%Y"),
             "fecha_error": fecha_error,
@@ -2596,8 +2597,16 @@ def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
 
 
 @app.get("/precios/cargar")
-def ver_cargar_precios(request: Request, cliente_id: int | None = None):
-    """Carga de precios nuevos de un cliente: una fila por artículo con ficha, precargada con el vigente de hoy."""
+def ver_cargar_precios(request: Request, cliente_id: str | None = None, articulo_id: str | None = None):
+    """Carga de precios nuevos de un cliente: una fila por artículo con ficha, precargada con el vigente de hoy.
+
+    Con articulo_id, se filtra a esa única fila (para ir directo a un
+    artículo sin scrollear la lista completa) — sin tocar ni leer las
+    demás filas del cliente al guardar.
+    """
+    cliente_id = _id_opcional_desde_query(cliente_id)
+    articulo_id = _id_opcional_desde_query(articulo_id)
+
     try:
         clientes = listar_clientes()
     except Exception as error_db:
@@ -2617,6 +2626,10 @@ def ver_cargar_precios(request: Request, cliente_id: int | None = None):
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
+    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    fichas_a_mostrar = fichas
+    if articulo_id is not None:
+        fichas_a_mostrar = [ficha for ficha in fichas if ficha["articulo_id"] == articulo_id]
 
     return templates.TemplateResponse(
         request,
@@ -2625,7 +2638,10 @@ def ver_cargar_precios(request: Request, cliente_id: int | None = None):
             "clientes": clientes,
             "cliente_id": cliente_id,
             "cliente_nombre": cliente["nombre"],
-            "filas": _filas_precios_desde_fichas(fichas, precio_por_articulo),
+            "articulos_cliente": fichas,
+            "articulo_id": articulo_id,
+            "articulo_nombre_actual": nombre_por_articulo.get(articulo_id) if articulo_id is not None else None,
+            "filas": _filas_precios_desde_fichas(fichas_a_mostrar, precio_por_articulo),
             "error": None,
         },
     )
@@ -2638,6 +2654,12 @@ async def cargar_precios(request: Request):
         cliente_id = int(form.get("cliente_id", ""))
     except ValueError:
         raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    # Si se estaba editando un solo artículo filtrado, viaja oculto para
+    # no leer/tocar las demás filas del cliente y para volver a esa misma
+    # vista filtrada después de guardar.
+    articulo_id_texto = str(form.get("articulo_id", "")).strip()
+    articulo_id_filtro = _id_opcional_desde_query(articulo_id_texto)
 
     try:
         clientes = listar_clientes()
@@ -2653,7 +2675,13 @@ async def cargar_precios(request: Request):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    filas_crudas = _leer_precios_del_form(form, fichas)
+    fichas_a_procesar = fichas
+    if articulo_id_filtro is not None:
+        fichas_a_procesar = [ficha for ficha in fichas if ficha["articulo_id"] == articulo_id_filtro]
+    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    articulo_nombre_actual = nombre_por_articulo.get(articulo_id_filtro) if articulo_id_filtro is not None else None
+
+    filas_crudas = _leer_precios_del_form(form, fichas_a_procesar)
     error, filas_para_diff = _validar_precios(filas_crudas)
 
     if error:
@@ -2664,6 +2692,9 @@ async def cargar_precios(request: Request):
                 "clientes": clientes,
                 "cliente_id": cliente_id,
                 "cliente_nombre": cliente["nombre"],
+                "articulos_cliente": fichas,
+                "articulo_id": articulo_id_filtro,
+                "articulo_nombre_actual": articulo_nombre_actual,
                 "filas": [
                     {
                         "articulo_id": fila["articulo_id"],
@@ -2690,6 +2721,9 @@ async def cargar_precios(request: Request):
                 "clientes": clientes,
                 "cliente_id": cliente_id,
                 "cliente_nombre": cliente["nombre"],
+                "articulos_cliente": fichas,
+                "articulo_id": articulo_id_filtro,
+                "articulo_nombre_actual": articulo_nombre_actual,
                 "filas": [
                     {
                         "articulo_id": fila["articulo_id"],
@@ -2704,7 +2738,10 @@ async def cargar_precios(request: Request):
             status_code=500,
         )
 
-    return RedirectResponse(url=f"/precios?cliente_id={cliente_id}", status_code=303)
+    redirect_url = f"/precios?cliente_id={cliente_id}"
+    if articulo_id_filtro is not None:
+        redirect_url += f"&articulo_id={articulo_id_filtro}"
+    return RedirectResponse(url=redirect_url, status_code=303)
 
 
 def _fecha_de_corte_limpieza_fotos():

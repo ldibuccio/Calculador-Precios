@@ -39,7 +39,7 @@
     font-size: 0.9rem;
     color: #444;
   }
-  form select, form input[type="date"] {
+  form select, form input[type="date"], form input[type="text"] {
     width: 100%;
     padding: 0.65rem;
     margin-top: 0.25rem;
@@ -77,6 +77,38 @@
   }
   .fila-precio:last-child { border-bottom: none; }
   .fila-precio .precio { font-weight: 700; font-size: 1.05rem; }
+  .buscador-articulo {
+    position: relative;
+  }
+  .lista-articulos {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-articulos.visible {
+    display: block;
+  }
+  .opcion-articulo {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-articulo:last-child {
+    border-bottom: none;
+  }
+  .opcion-articulo:active {
+    background: #f0f5ff;
+  }
 </style>
 </head>
 <body>
@@ -85,7 +117,7 @@
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <form method="get" action="/precios">
+    <form method="get" action="/precios" id="form-consulta">
       <label for="cliente_id">Cliente</label>
       <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
         <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
@@ -98,13 +130,17 @@
       <label for="fecha">Fecha</label>
       <input type="date" id="fecha" name="fecha" value="{{ fecha }}">
 
-      <label for="articulo_id">Artículo</label>
-      <select id="articulo_id" name="articulo_id">
-        <option value="" {% if not articulo_id %}selected{% endif %}>Todos los artículos</option>
-        {% for a in articulos_cliente %}
-        <option value="{{ a.articulo_id }}" {% if articulo_id == a.articulo_id %}selected{% endif %}>{{ a.articulo_nombre }}</option>
-        {% endfor %}
-      </select>
+      <label for="articulo_texto">Artículo (opcional — dejalo vacío para ver todos)</label>
+      <div class="buscador-articulo">
+        <input type="text" id="articulo_texto" autocomplete="off" placeholder="Buscar artículo..."
+               value="{{ articulo_nombre_actual or '' }}"
+               onfocus="actualizarListaArticulos()" oninput="actualizarListaArticulos()" onblur="ocultarListaArticulos()">
+        <div class="lista-articulos" id="lista-articulos"></div>
+      </div>
+      <input type="hidden" id="articulo_id" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+      {% if articulo_id %}
+      <button type="button" class="boton-secundario" onclick="limpiarArticulo()">✕ Ver todos los artículos</button>
+      {% endif %}
 
       <button type="submit">Ver</button>
       {% endif %}
@@ -121,7 +157,7 @@
   </div>
   {% else %}
   <div class="tarjeta">
-    <a class="boton boton-secundario" href="/precios/cargar?cliente_id={{ cliente_id }}">Cargar precios de este cliente</a>
+    <a class="boton boton-secundario" href="/precios/cargar?cliente_id={{ cliente_id }}{% if articulo_id %}&articulo_id={{ articulo_id }}{% endif %}">Cargar precios de este cliente</a>
   </div>
 
   <div class="tarjeta">
@@ -140,6 +176,65 @@
     </p>
     {% endif %}
   </div>
+  {% endif %}
+
+  {% if cliente_id %}
+  <script>
+    const ARTICULOS_LISTA = [
+      {% for a in articulos_cliente %}{ id: {{ a.articulo_id }}, nombre: "{{ a.articulo_nombre }}" },{% endfor %}
+    ];
+
+    function normalizarBusquedaArticulo(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaArticulos() {
+      const input = document.getElementById("articulo_texto");
+      const contenedor = document.getElementById("lista-articulos");
+      const filtro = normalizarBusquedaArticulo(input.value);
+      const coincidencias = ARTICULOS_LISTA.filter(function (a) {
+        return !filtro || a.nombre.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (a) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-articulo";
+        opcion.textContent = a.nombre;
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirArticulo(a.id, a.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaArticulos() {
+      document.getElementById("lista-articulos").classList.remove("visible");
+    }
+
+    function elegirArticulo(id, nombre) {
+      document.getElementById("articulo_id").value = id;
+      document.getElementById("articulo_texto").value = nombre;
+      ocultarListaArticulos();
+    }
+
+    // Limpiar es una acción definitiva (no una tecla más al tipear): se
+    // manda directo, sin esperar a que toquen "Ver" — mismo criterio que
+    // elegir cliente (auto-submit).
+    function limpiarArticulo() {
+      document.getElementById("articulo_id").value = "";
+      document.getElementById("articulo_texto").value = "";
+      document.getElementById("form-consulta").submit();
+    }
+  </script>
   {% endif %}
 </body>
 </html>

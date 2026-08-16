@@ -4124,6 +4124,93 @@ def test_ver_cargar_precios_cliente_inexistente_da_404():
     assert respuesta.status_code == 404
 
 
+def test_ver_precios_incluye_buscador_de_articulo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1")
+
+    assert 'id="articulo_texto"' in respuesta.text
+    assert "actualizarListaArticulos" in respuesta.text
+    assert '{ id: 1, nombre: "Tomate Cherry" }' in respuesta.text
+    assert '{ id: 2, nombre: "Mango" }' in respuesta.text
+
+
+def test_ver_precios_articulo_elegido_muestra_boton_para_limpiar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios?cliente_id=1&articulo_id=2")
+
+    assert "Ver todos los artículos" in respuesta.text
+    assert 'value="Mango"' in respuesta.text
+
+
+def test_ver_cargar_precios_incluye_buscador_de_articulo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert 'id="articulo_texto"' in respuesta.text
+    assert "actualizarListaArticulos" in respuesta.text
+
+
+def test_ver_cargar_precios_articulo_id_filtra_a_una_sola_fila():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1&articulo_id=2")
+
+    assert respuesta.status_code == 200
+    assert "Mango" in respuesta.text
+    assert 'name="precio_2"' in respuesta.text
+    assert 'name="precio_1"' not in respuesta.text
+    # El buscador de arriba sigue mostrando el nombre elegido y el botón
+    # para volver a ver todos.
+    assert 'value="Mango"' in respuesta.text
+    assert "Ver todos los artículos" in respuesta.text
+
+
+def test_ver_cargar_precios_articulo_id_no_correspondiente_muestra_mensaje():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1&articulo_id=999")
+
+    assert respuesta.status_code == 200
+    assert "Este artículo no corresponde" in respuesta.text
+
+
+def test_cargar_precios_con_filtro_de_articulo_guarda_solo_ese_y_redirige_filtrado():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.guardar_precios_cliente") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar",
+            data={"cliente_id": "1", "articulo_id": "2", "precio_2_original": "350.0", "precio_2": "380"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/precios?cliente_id=1&articulo_id=2"
+    # Solo se procesa/guarda el artículo filtrado — el resto del cliente
+    # nunca se lee ni se toca, aunque el form no traiga sus campos.
+    mock_guardar.assert_called_once_with(1, [{"articulo_id": 2, "precio": 380.0}])
+
+
 def _datos_cargar_precios(**overrides):
     datos = {
         "cliente_id": "1",
