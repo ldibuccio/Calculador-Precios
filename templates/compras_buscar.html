@@ -164,6 +164,14 @@
 
       <button type="submit">Buscar</button>
     </form>
+
+    {% if compras %}
+    <button type="button" class="boton-secundario" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton" href="/compras/buscar/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar PDF</a>
+      <a class="boton" href="/compras/buscar/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar Excel</a>
+    </div>
+    {% endif %}
   </div>
 
   {% if error_fecha %}
@@ -201,16 +209,6 @@
     <p class="vacio">No se encontraron compras con estos filtros.</p>
     {% endif %}
   </div>
-
-  {% if compras %}
-  <div class="tarjeta">
-    <button type="button" class="boton-secundario" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
-    <div id="opciones-exportar" style="display: none;">
-      <a class="boton" href="/compras/buscar/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar PDF</a>
-      <a class="boton" href="/compras/buscar/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Exportar Excel</a>
-    </div>
-  </div>
-  {% endif %}
 
   <script>
     const PROVEEDORES_LISTA = [

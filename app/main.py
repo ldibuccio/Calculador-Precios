@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios
 from app.db import (
@@ -1740,9 +1740,19 @@ def _generar_preview_foto(imagen: bytes) -> str:
     hace falta esa resolución, solo que se lea. Si algo falla generándola
     (formato raro, etc.), devuelve "" — no tiene que romper la carga por eso,
     la extracción ya se hizo con la imagen original aparte.
+
+    Las fotos de celular vienen casi siempre con el dato de rotación en el
+    EXIF (el sensor graba "acostado" y el celular anota cómo hay que
+    girarla para verse derecha), no con los píxeles ya rotados. exif_transpose
+    aplica esa rotación a los píxeles antes de guardar — si no se hace acá,
+    se pierde: este preview (sin EXIF) es lo que termina subido a Storage
+    en todos los flujos que usan esta función (comandas, listado de
+    compras, fotos de precios), así que de no rotarla ahora la foto queda
+    guardada girada para siempre.
     """
     try:
         imagen_pil = Image.open(io.BytesIO(imagen))
+        imagen_pil = ImageOps.exif_transpose(imagen_pil)
         imagen_pil = imagen_pil.convert("RGB")
         imagen_pil.thumbnail((LADO_MAXIMO_PREVIEW_FOTO, LADO_MAXIMO_PREVIEW_FOTO))
         buffer = io.BytesIO()

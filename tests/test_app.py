@@ -1,3 +1,4 @@
+import base64
 import io
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -1669,7 +1670,7 @@ def test_ver_cargar_listado_de_compras_muestra_la_pantalla():
     # segundo botón "Leer" — mismo criterio que en Múltiples comandas.
     assert 'class="input-foto-oculto"' in respuesta.text
     assert 'id="input-foto-listado"' in respuesta.text
-    assert '>Elegir foto de la planilla<' in respuesta.text
+    assert '>Subir plantilla compras<' in respuesta.text
     assert "inputFotoListado.click();" in respuesta.text
     assert 'inputFotoListado.addEventListener("change"' in respuesta.text
     assert 'id="boton-guardar-siguiente"' in respuesta.text
@@ -3457,6 +3458,30 @@ def test_generar_preview_foto_devuelve_data_uri_para_una_imagen_valida():
 
 def test_generar_preview_foto_devuelve_vacio_si_no_es_una_imagen():
     assert _generar_preview_foto(b"esto no es una imagen") == ""
+
+
+def _imagen_apaisada_con_orientacion_exif(orientacion: int) -> bytes:
+    """Imagen rectangular (30x10) con el tag EXIF Orientation seteado, como la que graba un celular."""
+    imagen = Image.new("RGB", (30, 10), color="red")
+    exif = imagen.getexif()
+    exif[274] = orientacion  # 274 = Orientation
+    buffer = io.BytesIO()
+    imagen.save(buffer, format="JPEG", exif=exif.tobytes())
+    return buffer.getvalue()
+
+
+def test_generar_preview_foto_aplica_la_rotacion_del_exif():
+    # Orientation 6 = hay que rotar 90° para verse derecha: una foto de
+    # celular "vertical" que el sensor graba apaisada (30x10) tiene que
+    # terminar parada (alto > ancho) en el preview, no apaisada.
+    imagen_con_exif = _imagen_apaisada_con_orientacion_exif(6)
+    preview = _generar_preview_foto(imagen_con_exif)
+
+    assert preview.startswith("data:image/jpeg;base64,")
+    _, base64_texto = preview.split(";base64,", 1)
+    imagen_resultante = Image.open(io.BytesIO(base64.standard_b64decode(base64_texto)))
+    ancho, alto = imagen_resultante.size
+    assert alto > ancho
 
 
 def test_subir_foto_compra_incluye_preview_de_la_foto_para_el_boton_ver_foto():
