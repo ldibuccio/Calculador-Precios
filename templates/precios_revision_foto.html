@@ -215,11 +215,17 @@
     {% endfor %}
 
     <button type="submit" class="boton-exito" id="boton-guardar-precios">Guardar</button>
+    <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display:none;">
+      <button type="button" class="boton" onclick="exportarRevisionFoto('pdf')">Exportar PDF</button>
+      <button type="button" class="boton" onclick="exportarRevisionFoto('excel')">Exportar Excel</button>
+    </div>
     <a href="/precios/cargar-foto?cliente_id={{ cliente_id }}" class="boton boton-peligro" id="boton-cancelar"
        onclick="return confirm('¿Seguro? Se pierde lo que se leyó de este archivo.');">Cancelar</a>
   </form>
 
   <script>
+    const CLIENTE_ID = {{ cliente_id }};
     const CANTIDAD_RENGLONES = {{ renglones|length }};
 
     function formatearMoneda(valor) {
@@ -266,6 +272,49 @@
       if (checkbox) {
         alternarDescarte(indice, checkbox);
       }
+    }
+
+    // "Exportar" es un preview de cómo quedaría la lista con lo que se está
+    // por guardar de este archivo — no guarda nada, así que se arma un form
+    // aparte del de "Guardar" (mismos campos "pendiente_precio_<id>" que usa
+    // la Carga Manual) y se manda a las rutas de exportación. El PDF/Excel
+    // se descarga sin navegar de esta pantalla, así que la revisión sigue
+    // ahí tal cual después de exportar.
+    function mostrarOpcionesExportar() {
+      document.getElementById("opciones-exportar").style.display = "block";
+      document.getElementById("boton-exportar").style.display = "none";
+    }
+
+    function exportarRevisionFoto(tipo) {
+      const formOculto = document.createElement("form");
+      formOculto.method = "post";
+      formOculto.action = tipo === "pdf" ? "/precios/cargar/exportar-pdf" : "/precios/cargar/exportar-excel";
+
+      function agregarCampoOculto(nombre, valor) {
+        const campo = document.createElement("input");
+        campo.type = "hidden";
+        campo.name = nombre;
+        campo.value = valor;
+        formOculto.appendChild(campo);
+      }
+
+      agregarCampoOculto("cliente_id", CLIENTE_ID);
+      for (let indice = 0; indice < CANTIDAD_RENGLONES; indice++) {
+        const descartar = document.getElementById("item_" + indice + "_descartar");
+        if (descartar && descartar.checked) {
+          continue;
+        }
+        const articuloId = document.getElementById("item_" + indice + "_articulo_id");
+        const precioNuevo = document.getElementById("item_" + indice + "_precio_nuevo");
+        if (!articuloId || !articuloId.value || !precioNuevo || !precioNuevo.value) {
+          continue;
+        }
+        agregarCampoOculto("pendiente_precio_" + articuloId.value, precioNuevo.value);
+      }
+
+      document.body.appendChild(formOculto);
+      formOculto.submit();
+      formOculto.remove();
     }
 
     function verArchivo(evento) {

@@ -265,6 +265,11 @@
     <h2>Revisión de precios cargados</h2>
     <div id="filas-pendientes-revision"></div>
     <button type="button" class="boton-exito" id="boton-guardar-revision" onclick="guardarTodo()">Guardar</button>
+    <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display:none;">
+      <button type="button" class="boton" onclick="exportarPendientes('pdf')">Exportar PDF</button>
+      <button type="button" class="boton" onclick="exportarPendientes('excel')">Exportar Excel</button>
+    </div>
     <button type="button" class="boton-secundario" onclick="volverAModificar()">Modificar</button>
     <button type="button" class="boton-peligro" onclick="cancelarTodo()">Cancelar</button>
   </div>
@@ -494,6 +499,39 @@
 
       document.body.appendChild(formOculto);
       formOculto.submit();
+    }
+
+    // "Exportar" es un preview de cómo quedaría la lista con los pendientes
+    // de esta sesión — no guarda nada, así que se arma un form aparte del
+    // de "Guardar" y se manda a las rutas de exportación. El PDF/Excel se
+    // descarga sin navegar de esta pantalla, así que los pendientes siguen
+    // ahí tal cual después de exportar.
+    function mostrarOpcionesExportar() {
+      document.getElementById("opciones-exportar").style.display = "block";
+      document.getElementById("boton-exportar").style.display = "none";
+    }
+
+    function exportarPendientes(tipo) {
+      const formOculto = document.createElement("form");
+      formOculto.method = "post";
+      formOculto.action = tipo === "pdf" ? "/precios/cargar/exportar-pdf" : "/precios/cargar/exportar-excel";
+
+      function agregarCampoOculto(nombre, valor) {
+        const campo = document.createElement("input");
+        campo.type = "hidden";
+        campo.name = nombre;
+        campo.value = valor;
+        formOculto.appendChild(campo);
+      }
+
+      agregarCampoOculto("cliente_id", CLIENTE_ID);
+      pendientes.forEach(function (p) {
+        agregarCampoOculto("pendiente_precio_" + p.articuloId, p.precioNuevo);
+      });
+
+      document.body.appendChild(formOculto);
+      formOculto.submit();
+      formOculto.remove();
     }
   </script>
   {% endif %}

@@ -2712,6 +2712,133 @@ def exportar_precios_excel(cliente_id: str = "", fecha: str = ""):
     )
 
 
+def _validar_cliente_para_exportar_pendientes(cliente_id_texto: str) -> dict:
+    """Valida el cliente_id que llega en el form de exportación de pendientes (Carga Manual / Carga Foto)."""
+    try:
+        cliente_id = int(cliente_id_texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return cliente
+
+
+def _leer_pendientes_precio_por_articulo(form) -> dict[int, float]:
+    """Lee del form los pendientes sin guardar de la carga actual, como {articulo_id: precio_nuevo}.
+
+    Mismo prefijo "pendiente_precio_<articulo_id>" que ya arma la pantalla de Carga Manual al guardar
+    (ver _leer_pendientes_del_form) — se reusa tal cual para el preview de exportación, y la pantalla de
+    Carga Foto arma el mismo campo por JS antes de exportar, así ambas pantallas comparten esta lectura.
+    Entradas vacías o no numéricas se ignoran (es un preview, no hace falta bloquear la exportación por eso).
+    """
+    pendientes: dict[int, float] = {}
+    prefijo = "pendiente_precio_"
+    for clave in form.keys():
+        if not clave.startswith(prefijo):
+            continue
+        try:
+            articulo_id = int(clave[len(prefijo) :])
+        except ValueError:
+            continue
+        try:
+            precio = float(str(form.get(clave, "")).strip())
+        except ValueError:
+            continue
+        if precio > 0:
+            pendientes[articulo_id] = precio
+    return pendientes
+
+
+def _armar_filas_exportacion_con_pendientes(cliente_id: int, pendientes_por_articulo: dict[int, float]) -> list[dict]:
+    """Arma las filas para el PREVIEW en PDF/Excel de la carga en curso: los precios vigentes de hoy,
+    con los pendientes de esta sesión (todavía sin guardar) superpuestos encima.
+
+    No toca la base — es solo para armar el documento. Los artículos con un pendiente en esta sesión
+    quedan marcados es_nuevo=True (van en rojo, con badge "Nuevo precio" en generar_pdf/excel_lista_precios);
+    el resto, con su precio vigente de hoy tal cual, en negro.
+    """
+    hoy = _hoy_argentina()
+    fichas = listar_fichas_por_cliente(cliente_id)
+    precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
+    articulos_existentes = listar_articulos()
+
+    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
+    grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
+    precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
+
+    articulos_a_exportar = set(precio_por_articulo) | set(pendientes_por_articulo)
+
+    filas = []
+    for articulo_id in articulos_a_exportar:
+        es_pendiente = articulo_id in pendientes_por_articulo
+        filas.append(
+            {
+                "articulo_nombre": nombre_por_articulo.get(articulo_id, f"Artículo #{articulo_id}"),
+                "grupo": grupo_por_articulo.get(articulo_id),
+                "precio": pendientes_por_articulo[articulo_id] if es_pendiente else precio_por_articulo.get(articulo_id),
+                "unidad": unidad_por_articulo.get(articulo_id),
+                "es_nuevo": es_pendiente,
+            }
+        )
+    return filas
+
+
+@app.post("/precios/cargar/exportar-pdf")
+async def exportar_precios_cargar_pdf(request: Request):
+    """Preview en PDF de la carga en curso (Manual o Foto): pendientes de esta sesión sobre los precios
+    vigentes de hoy — no guarda nada. Ambas pantallas de carga postean acá con el mismo formato de campos."""
+    form = await request.form()
+    cliente = _validar_cliente_para_exportar_pendientes(str(form.get("cliente_id", "")))
+    pendientes = _leer_pendientes_precio_por_articulo(form)
+
+    try:
+        filas = _armar_filas_exportacion_con_pendientes(cliente["id"], pendientes)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    hoy = _hoy_argentina()
+    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, True)
+    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], hoy, "pdf")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.post("/precios/cargar/exportar-excel")
+async def exportar_precios_cargar_excel(request: Request):
+    """Preview en Excel de la carga en curso (Manual o Foto): pendientes de esta sesión sobre los precios
+    vigentes de hoy — no guarda nada. Ambas pantallas de carga postean acá con el mismo formato de campos."""
+    form = await request.form()
+    cliente = _validar_cliente_para_exportar_pendientes(str(form.get("cliente_id", "")))
+    pendientes = _leer_pendientes_precio_por_articulo(form)
+
+    try:
+        filas = _armar_filas_exportacion_con_pendientes(cliente["id"], pendientes)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    hoy = _hoy_argentina()
+    excel_bytes = generar_excel_lista_precios(cliente["nombre"], hoy, filas, True)
+    nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], hoy, "xlsx")
+
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
 def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
     """Valida cada precio tipeado (número positivo) y arma las filas para calcular_cambios_de_precios."""
     filas_validas = []

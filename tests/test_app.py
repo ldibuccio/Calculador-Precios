@@ -4434,6 +4434,143 @@ def test_exportar_precios_excel_cliente_inexistente_da_404():
     assert respuesta.status_code == 404
 
 
+# --- /precios/cargar/exportar-pdf y exportar-excel: preview desde la carga (Manual y Foto comparten
+# estas rutas), con los pendientes de la sesión sin guardar superpuestos a los precios vigentes de hoy ---
+
+
+def test_exportar_precios_cargar_pdf_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.post("/precios/cargar/exportar-pdf", data={"cliente_id": "1"})
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "attachment" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"%PDF")
+
+
+def test_exportar_precios_cargar_pdf_solo_resalta_los_pendientes_de_esta_sesion():
+    # Tomate Cherry cambió HOY (ya guardado en la base) — pero como no está
+    # entre los pendientes de esta sesión, en el preview de la carga tiene
+    # que ir en negro. Mango no cambió nunca en la base, pero SÍ está
+    # pendiente en esta sesión (todavía sin guardar) — tiene que ir en rojo
+    # con "Nuevo precio", con el precio pendiente (no el vigente viejo).
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
+        ),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar/exportar-pdf",
+            data={"cliente_id": "1", "pendiente_precio_2": "400"},
+        )
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    bloque_frutas = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
+    bloque_hortalizas = texto[texto.index("HORTALIZA") :]
+    assert bloque_frutas.count("Nuevo precio") == 1
+    assert "$400" in bloque_frutas
+    assert "Nuevo precio" not in bloque_hortalizas
+
+
+def test_exportar_precios_cargar_pdf_pendiente_sin_precio_vigente_previo_aparece():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar/exportar-pdf",
+            data={"cliente_id": "1", "pendiente_precio_1": "600"},
+        )
+
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Tomate Cherry" in texto
+    bloque_hortalizas = texto[texto.index("HORTALIZA") :]
+    assert "$600" in bloque_hortalizas
+    assert bloque_hortalizas.count("Nuevo precio") == 1
+
+
+def test_exportar_precios_cargar_pdf_pendientes_invalidos_se_ignoran():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar/exportar-pdf",
+            data={"cliente_id": "1", "pendiente_precio_2": "no-es-un-numero"},
+        )
+
+    assert respuesta.status_code == 200
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    bloque_frutas = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
+    assert "Nuevo precio" not in bloque_frutas
+    assert "$350" in bloque_frutas  # se muestra el vigente, no el pendiente inválido
+
+
+def test_exportar_precios_cargar_pdf_cliente_invalido_da_400():
+    respuesta = cliente.post("/precios/cargar/exportar-pdf", data={"cliente_id": "abc"})
+
+    assert respuesta.status_code == 400
+
+
+def test_exportar_precios_cargar_pdf_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post("/precios/cargar/exportar-pdf", data={"cliente_id": "999"})
+
+    assert respuesta.status_code == 404
+
+
+def test_exportar_precios_cargar_excel_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar/exportar-excel",
+            data={"cliente_id": "1", "pendiente_precio_2": "400"},
+        )
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "attachment" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+
+def test_exportar_precios_cargar_excel_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post("/precios/cargar/exportar-excel", data={"cliente_id": "999"})
+
+    assert respuesta.status_code == 404
+
+
 # --- /precios/cargar: carga de precios nuevos uno a la vez, con revisión antes de guardar ---
 
 
@@ -4472,6 +4609,22 @@ def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
 
     assert respuesta.status_code == 200
     assert '{ id: 1, nombre: "Tomate Cherry", precioVigente: null }' in respuesta.text
+
+
+def test_ver_cargar_precios_incluye_boton_exportar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="boton-exportar"' in respuesta.text
+    assert "exportarPendientes" in respuesta.text
+    assert "/precios/cargar/exportar-pdf" in respuesta.text
+    assert "/precios/cargar/exportar-excel" in respuesta.text
 
 
 def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
@@ -4776,6 +4929,26 @@ def test_leer_foto_precios_matchea_y_muestra_pantalla_de_revision():
     assert "Precio vigente: $500" in respuesta.text
     assert "⚠ revisar" in respuesta.text  # el segundo ítem, no matcheado
     mock_extraer.assert_called_once_with([b"contenido falso de una foto"])
+
+
+def test_leer_foto_precios_pantalla_revision_incluye_boton_exportar():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.extraer_listado_precios_de_imagenes", return_value=LISTADO_PRECIOS_LEIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/precios/cargar-foto",
+            data={"cliente_id": "1"},
+            files={"archivo": ("lista.jpg", b"contenido falso de una foto", "image/jpeg")},
+        )
+
+    assert 'id="boton-exportar"' in respuesta.text
+    assert "exportarRevisionFoto" in respuesta.text
+    assert "/precios/cargar/exportar-pdf" in respuesta.text
+    assert "/precios/cargar/exportar-excel" in respuesta.text
 
 
 def test_leer_foto_precios_pdf_convierte_paginas_a_imagenes():
