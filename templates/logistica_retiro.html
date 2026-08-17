@@ -12,7 +12,7 @@
     background: #f5f5f5;
     color: #222;
   }
-  h2 { font-size: 1.05rem; margin: 0 0 0.15rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.85rem; }
   .tarjeta {
     background: #fff;
     border-radius: 10px;
@@ -37,11 +37,6 @@
     font-size: 0.9rem;
   }
   .vacio { color: #888; font-style: italic; }
-  .proveedor {
-    color: #666;
-    font-size: 0.85rem;
-    margin: 0 0 0.85rem;
-  }
   .renglon {
     padding: 0.85rem 0;
     border-top: 1px solid #eee;
@@ -100,8 +95,7 @@
   {% if guias %}
     {% for guia in guias %}
     <div class="tarjeta">
-      <h2>Guía {{ guia.guia_id }}</h2>
-      <p class="proveedor">{{ guia.proveedor_nombre }} ({{ guia.proveedor_codigo_puesto }})</p>
+      <h2>{{ guia.proveedor_nombre }} ({{ guia.proveedor_codigo_puesto }})</h2>
 
       {% for c in guia.compras %}
       <div class="renglon">

@@ -5872,13 +5872,16 @@ COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA = [
 ]
 
 
-def test_ver_logistica_retiro_agrupa_por_guia():
+def test_ver_logistica_retiro_agrupa_por_guia_sin_mostrar_el_numero():
+    # A diferencia de Recepción en Depósito, acá no interesa el número de
+    # guía — el título de cada tarjeta es directamente el proveedor.
     with patch("app.main.listar_compras_pendientes_retiro", return_value=COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA) as mock_listar:
         respuesta = cliente.get("/logistica/retiro/Clark")
 
     assert respuesta.status_code == 200
     mock_listar.assert_called_once_with("Clark")
-    assert "Guía 105" in respuesta.text
+    assert "Guía" not in respuesta.text
+    assert "105" not in respuesta.text
     assert "Saturno (N07P41)" in respuesta.text
     assert "Tomate Cherry" in respuesta.text
     assert "Mango" in respuesta.text
