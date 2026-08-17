@@ -5940,6 +5940,17 @@ def test_ver_deposito_muestra_el_acceso_a_recepcion():
     assert "En construcción" not in respuesta.text
 
 
+def test_ver_deposito_muestra_el_acceso_a_retirar_mercaderia():
+    # El personal de depósito también retira la mercadería que figura como
+    # "bases" en el puesto — es la misma pantalla que usa Logística
+    # (Clark/Carro/Pases), no una copia: el botón lleva directo a /logistica.
+    respuesta = cliente.get("/deposito")
+
+    assert respuesta.status_code == 200
+    assert 'href="/logistica"' in respuesta.text
+    assert "Retirar Mercadería" in respuesta.text
+
+
 def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
     respuesta = cliente.get("/gerencia")
 
