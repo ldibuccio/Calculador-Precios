@@ -6335,14 +6335,20 @@ COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA = [
 def test_ver_logistica_retiro_agrupa_por_guia_sin_mostrar_el_numero():
     # A diferencia de Recepción en Depósito, acá no interesa el número de
     # guía — el título de cada tarjeta es directamente el proveedor.
-    with patch("app.main.listar_compras_pendientes_retiro", return_value=COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA) as mock_listar:
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA) as mock_listar,
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
         respuesta = cliente.get("/logistica/retiro/Clark")
 
     assert respuesta.status_code == 200
     mock_listar.assert_called_once_with("Clark")
     assert "Guía" not in respuesta.text
     assert "105" not in respuesta.text
-    assert "Saturno (N07P41)" in respuesta.text
+    # Puesto grande primero, proveedor chico debajo (busca antes por dónde
+    # ir que confirma quién es).
+    assert '<p class="puesto-nombre">N07P41</p>' in respuesta.text
+    assert '<p class="proveedor-nombre">Saturno</p>' in respuesta.text
     assert "Tomate Cherry" in respuesta.text
     assert "Mango" in respuesta.text
     # Sin ?origen en la URL, cae en logistica (el default).
@@ -6351,7 +6357,10 @@ def test_ver_logistica_retiro_agrupa_por_guia_sin_mostrar_el_numero():
 
 
 def test_ver_logistica_retiro_sin_origen_muestra_el_icono_y_el_volver_de_logistica():
-    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
         respuesta = cliente.get("/logistica/retiro/Clark")
 
     assert respuesta.status_code == 200
@@ -6362,7 +6371,10 @@ def test_ver_logistica_retiro_sin_origen_muestra_el_icono_y_el_volver_de_logisti
 def test_ver_logistica_retiro_con_origen_deposito_muestra_el_icono_y_el_volver_de_deposito():
     # Entrando desde el botón "Retirar Mercadería" de Depósito: la barrita
     # y el "Volver" tienen que ser de Depósito, no de Logística.
-    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
         respuesta = cliente.get("/logistica/retiro/Pases?origen=deposito")
 
     assert respuesta.status_code == 200
@@ -6372,7 +6384,10 @@ def test_ver_logistica_retiro_con_origen_deposito_muestra_el_icono_y_el_volver_d
 
 
 def test_ver_logistica_retiro_origen_invalido_cae_en_logistica():
-    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
         respuesta = cliente.get("/logistica/retiro/Clark?origen=algo-raro")
 
     assert respuesta.status_code == 200
@@ -6386,7 +6401,10 @@ def test_ver_logistica_retiro_tipo_invalido_da_404():
 
 
 def test_ver_logistica_retiro_sin_pendientes_muestra_mensaje():
-    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
         respuesta = cliente.get("/logistica/retiro/Pases")
 
     assert respuesta.status_code == 200
@@ -6398,8 +6416,9 @@ def test_retirar_compra_marca_retirada_y_redirige():
         respuesta = cliente.post("/logistica/retiro/Clark/1/retirar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    # Sin origen en el POST, el redirect vuelve con el default (logistica).
-    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica"
+    # Sin origen en el POST, el redirect vuelve con el default (logistica),
+    # y con ?procesado=1 para que la tarjeta efímera aparezca en la próxima carga.
+    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica&procesado=1"
     mock_marcar.assert_called_once_with(1, "logistica", None)
 
 
@@ -6413,7 +6432,7 @@ def test_retirar_compra_conserva_el_origen_deposito_en_el_redirect():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito"
+    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito&procesado=1"
 
 
 def test_retirar_compra_origen_invalido_cae_en_logistica():
@@ -6423,7 +6442,7 @@ def test_retirar_compra_origen_invalido_cae_en_logistica():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica"
+    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica&procesado=1"
 
 
 def test_retirar_compra_con_cantidad_cajones_retirada_la_pasa_a_marcar_compra_retirada():
@@ -6442,6 +6461,7 @@ def test_retirar_compra_con_cantidad_no_numerica_da_error_sin_llamar_a_marcar():
     with (
         patch("app.main.marcar_compra_retirada", return_value=None) as mock_marcar,
         patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
     ):
         respuesta = cliente.post(
             "/logistica/retiro/Clark/1/retirar",
@@ -6457,6 +6477,7 @@ def test_retirar_compra_con_cantidad_negativa_da_error_sin_llamar_a_marcar():
     with (
         patch("app.main.marcar_compra_retirada", return_value=None) as mock_marcar,
         patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
     ):
         respuesta = cliente.post(
             "/logistica/retiro/Clark/1/retirar",
@@ -6473,7 +6494,7 @@ def test_cancelar_retiro_compra_marca_cancelada_y_redirige():
         respuesta = cliente.post("/logistica/retiro/Carro/1/cancelar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/logistica/retiro/Carro?origen=logistica"
+    assert respuesta.headers["location"] == "/logistica/retiro/Carro?origen=logistica&procesado=1"
     mock_marcar.assert_called_once_with(1, "logistica")
 
 
@@ -6484,18 +6505,192 @@ def test_cancelar_retiro_compra_conserva_el_origen_deposito_en_el_redirect():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito"
+    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito&procesado=1"
 
 
 def test_retirar_compra_error_de_base_muestra_mensaje():
     with (
         patch("app.main.marcar_compra_retirada", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
     ):
         respuesta = cliente.post("/logistica/retiro/Clark/1/retirar")
 
     assert respuesta.status_code == 500
     assert "No se pudo marcar como retirada" in respuesta.text
+
+
+def test_ver_logistica_retiro_confirmacion_es_en_el_lugar_no_confirm_nativo():
+    # Punto central: nada de confirm() del navegador. El único confirm()
+    # que puede quedar en el HTML es el que arma Playwright/el usuario en
+    # otro lado — acá se verifica que el markup usa las funciones JS
+    # propias (mostrarConfirmacion/ocultarConfirmacion), no un onsubmit
+    # con confirm(...).
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    # El único confirm() nativo que quedaba (onsubmit de Cancelado) se
+    # saca del todo — la comprobación pasa a ser en el lugar, con las
+    # funciones JS propias.
+    assert "onsubmit=\"return confirm(" not in respuesta.text
+    assert "onclick=\"mostrarConfirmacion('1', 'retirar')\"" in respuesta.text
+    assert "onclick=\"mostrarConfirmacion('1', 'cancelar')\"" in respuesta.text
+    assert '¿Retirar Tomate Cherry?' in respuesta.text
+    assert '¿Cancelar el retiro de Tomate Cherry?' in respuesta.text
+
+
+PROCESADOS_HOY_DE_PRUEBA = [
+    {
+        "id": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_cajones_retirada": 38,
+        "estado_retiro": "retirado", "retiro_procesado_el": datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc),
+        "estado": "pendiente",
+    },
+    {
+        "id": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_cajones_retirada": None,
+        "estado_retiro": "cancelado", "retiro_procesado_el": datetime(2026, 8, 17, 12, 30, tzinfo=timezone.utc),
+        "estado": "pendiente",
+    },
+]
+
+
+def test_ver_logistica_retiro_con_procesado_muestra_la_tarjeta_efimera():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=PROCESADOS_HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark?procesado=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="tarjeta-efimera"' in respuesta.text
+    assert "Retiraste" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "N07P41" in respuesta.text
+    assert 'action="/logistica/retiro/Clark/1/deshacer?origen=logistica"' in respuesta.text
+
+
+def test_ver_logistica_retiro_con_procesado_cancelado_dice_cancelaste():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=PROCESADOS_HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark?procesado=2")
+
+    assert respuesta.status_code == 200
+    assert "Cancelaste" in respuesta.text
+    assert "Mango" in respuesta.text
+
+
+def test_ver_logistica_retiro_sin_procesado_no_muestra_tarjeta_efimera():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=PROCESADOS_HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    assert 'id="tarjeta-efimera"' not in respuesta.text
+
+
+def test_ver_logistica_retiro_procesado_que_no_esta_en_hoy_no_muestra_tarjeta():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark?procesado=999")
+
+    assert respuesta.status_code == 200
+    assert 'id="tarjeta-efimera"' not in respuesta.text
+
+
+def test_ver_logistica_retiro_panel_procesados_hoy_muestra_hora_y_deshacer():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=PROCESADOS_HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    assert "Ver procesados hoy (2)" in respuesta.text
+    assert "Retirado a las 10:00" in respuesta.text  # 13:00 UTC -> 10:00 ARG
+    assert "Cancelado a las 09:30" in respuesta.text
+    assert 'action="/logistica/retiro/Clark/1/deshacer?origen=logistica"' in respuesta.text
+    assert 'action="/logistica/retiro/Clark/2/deshacer?origen=logistica"' in respuesta.text
+
+
+def test_ver_logistica_retiro_panel_procesados_hoy_bloqueado_muestra_aviso_no_boton():
+    procesado_recepcionado = dict(PROCESADOS_HOY_DE_PRUEBA[0], estado="recepcionado")
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[procesado_recepcionado]),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    assert "no se puede deshacer" in respuesta.text
+    assert 'action="/logistica/retiro/Clark/1/deshacer' not in respuesta.text
+
+
+def test_ver_logistica_retiro_sin_procesados_hoy_muestra_mensaje_vacio():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    assert "Ver procesados hoy" in respuesta.text
+    assert "Todavía no se procesó nada hoy." in respuesta.text
+
+
+def test_deshacer_retiro_compra_ruta_redirige_sin_procesado():
+    with patch("app.main.deshacer_retiro_compra", return_value=None) as mock_deshacer:
+        respuesta = cliente.post("/logistica/retiro/Clark/1/deshacer", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica"
+    mock_deshacer.assert_called_once_with(1)
+
+
+def test_deshacer_retiro_compra_ruta_conserva_origen():
+    with patch("app.main.deshacer_retiro_compra", return_value=None):
+        respuesta = cliente.post(
+            "/logistica/retiro/Pases/1/deshacer?origen=deposito", follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito"
+
+
+def test_deshacer_retiro_compra_ruta_bloqueado_da_400():
+    with (
+        patch("app.main.deshacer_retiro_compra", side_effect=ValueError("Esta compra ya fue procesada en Depósito, no se puede deshacer el retiro.")),
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
+        respuesta = cliente.post("/logistica/retiro/Clark/1/deshacer")
+
+    assert respuesta.status_code == 400
+    assert "no se puede deshacer el retiro" in respuesta.text
+
+
+def test_deshacer_retiro_compra_ruta_error_de_base_da_500():
+    with (
+        patch("app.main.deshacer_retiro_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
+        respuesta = cliente.post("/logistica/retiro/Clark/1/deshacer")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo deshacer" in respuesta.text
 
 
 def test_ver_deposito_muestra_el_acceso_a_recepcion():

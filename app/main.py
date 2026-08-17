@@ -30,6 +30,7 @@ from app.db import (
     buscar_compras,
     cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
+    compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_articulos,
     crear_articulo,
@@ -38,6 +39,7 @@ from app.db import (
     crear_ficha,
     desactivar_articulo,
     desactivar_cliente,
+    deshacer_retiro_compra,
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
@@ -51,6 +53,7 @@ from app.db import (
     listar_compras_pendientes_recepcion,
     listar_compras_pendientes_retiro,
     listar_compras_por_fecha_y_proveedor,
+    listar_compras_procesadas_hoy_retiro,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_detalle_disponible,
@@ -195,6 +198,13 @@ def _formatear_fecha_hora(valor) -> str:
     return valor.astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
 
 
+def _formatear_hora(valor) -> str:
+    """Solo la hora en horario argentino ("14:35"), para listas ya acotadas a un día (ej. "Procesados hoy")."""
+    if valor is None:
+        return ""
+    return valor.astimezone(ARGENTINA).strftime("%H:%M")
+
+
 def _formatear_porcentaje(valor) -> str:
     """Formatea una fracción (0.2548) como porcentaje con un decimal y coma decimal ("25,5%")."""
     if valor is None:
@@ -237,6 +247,7 @@ templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
+templates.env.filters["hora"] = _formatear_hora
 
 
 # Íconos de navegación: SVG minimalistas de línea (heroicons, MIT), un solo
@@ -3987,6 +3998,7 @@ def _renderizar_pantalla_logistica_retiro(
     tipo_retiro: str,
     *,
     origen: str = "logistica",
+    recien_procesado_id: int | None = None,
     aviso: str | None = None,
     error: str | None = None,
     status_code: int = 200,
@@ -3996,6 +4008,7 @@ def _renderizar_pantalla_logistica_retiro(
 
     try:
         compras_pendientes = listar_compras_pendientes_retiro(tipo_retiro)
+        procesados_hoy = listar_compras_procesadas_hoy_retiro(tipo_retiro, _hoy_argentina())
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
@@ -4004,23 +4017,43 @@ def _renderizar_pantalla_logistica_retiro(
                 "tipo_retiro": tipo_retiro,
                 "origen": origen,
                 "guias": [],
+                "procesados_hoy": [],
+                "recien_procesado": None,
                 "error": f"No se pudieron leer las compras pendientes: {error_db}",
             },
             status_code=500,
         )
 
+    for procesado in procesados_hoy:
+        procesado["deshacer_bloqueado"] = compra_tiene_deshacer_retiro_bloqueado(procesado["estado"])
+        procesado["motivo_bloqueo"] = ESTADOS_RECEPCION_LABELS.get(procesado["estado"]) if procesado["deshacer_bloqueado"] else None
+
+    recien_procesado = None
+    if recien_procesado_id is not None:
+        recien_procesado = next((p for p in procesados_hoy if p["id"] == recien_procesado_id), None)
+
     guias = _agrupar_pendientes_por_guia(compras_pendientes)
     return templates.TemplateResponse(
         request,
         "logistica_retiro.html",
-        {"tipo_retiro": tipo_retiro, "origen": origen, "guias": guias, "aviso": aviso, "error": error},
+        {
+            "tipo_retiro": tipo_retiro,
+            "origen": origen,
+            "guias": guias,
+            "procesados_hoy": procesados_hoy,
+            "recien_procesado": recien_procesado,
+            "aviso": aviso,
+            "error": error,
+        },
         status_code=status_code,
     )
 
 
 @app.get("/logistica/retiro/{tipo_retiro}")
-def ver_logistica_retiro(request: Request, tipo_retiro: str, origen: str | None = None):
-    return _renderizar_pantalla_logistica_retiro(request, tipo_retiro, origen=_validar_origen_retiro(origen))
+def ver_logistica_retiro(request: Request, tipo_retiro: str, origen: str | None = None, procesado: str | None = None):
+    return _renderizar_pantalla_logistica_retiro(
+        request, tipo_retiro, origen=_validar_origen_retiro(origen), recien_procesado_id=_id_opcional_desde_query(procesado)
+    )
 
 
 def _validar_cantidad_cajones_retirada(texto: str) -> tuple[str | None, float | None]:
@@ -4054,7 +4087,7 @@ def retirar_compra_ruta(
             request, tipo_retiro, origen=origen_valido, error=f"No se pudo marcar como retirada: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}?origen={origen_valido}", status_code=303)
+    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}?origen={origen_valido}&procesado={compra_id}", status_code=303)
 
 
 @app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/cancelar")
@@ -4066,6 +4099,25 @@ def cancelar_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: i
     except Exception as error_db:
         return _renderizar_pantalla_logistica_retiro(
             request, tipo_retiro, origen=origen_valido, error=f"No se pudo marcar como cancelada: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}?origen={origen_valido}&procesado={compra_id}", status_code=303)
+
+
+@app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/deshacer")
+def deshacer_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: int, origen: str | None = None):
+    """Vuelve una compra retirada/cancelada a pendiente — tarjeta efímera o panel "Procesados hoy"."""
+    origen_valido = _validar_origen_retiro(origen)
+
+    try:
+        deshacer_retiro_compra(compra_id)
+    except ValueError as error_bloqueo:
+        return _renderizar_pantalla_logistica_retiro(
+            request, tipo_retiro, origen=origen_valido, error=str(error_bloqueo), status_code=400
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_logistica_retiro(
+            request, tipo_retiro, origen=origen_valido, error=f"No se pudo deshacer: {error_db}", status_code=500
         )
 
     return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}?origen={origen_valido}", status_code=303)

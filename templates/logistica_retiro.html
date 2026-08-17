@@ -37,6 +37,19 @@
     font-size: 0.9rem;
   }
   .vacio { color: #888; font-style: italic; }
+  /* Puesto grande arriba, proveedor chico debajo: el que retira busca
+     primero adónde tiene que ir (el puesto), el nombre lo confirma después. */
+  .puesto-nombre {
+    font-weight: 700;
+    font-size: 1.25rem;
+    margin: 0 0 0.1rem;
+  }
+  .proveedor-nombre {
+    color: #666;
+    font-size: 0.85rem;
+    margin: 0 0 0.85rem;
+    font-weight: 400;
+  }
   .renglon {
     padding: 0.85rem 0;
     border-top: 1px solid #eee;
@@ -73,7 +86,8 @@
     flex-wrap: wrap;
     gap: 0.5rem;
   }
-  .acciones-renglon form { flex: 1 1 45%; }
+  .acciones-renglon form { flex: 1 1 45%; margin: 0; }
+  .acciones-renglon button { flex: 1 1 45%; }
   button {
     width: 100%;
     padding: 0.85rem;
@@ -82,9 +96,45 @@
     font-size: 1rem;
     font-weight: 600;
     box-sizing: border-box;
+    cursor: pointer;
   }
   .boton-exito { background: #16a34a; color: #fff; }
   .boton-peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
+  .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  /* Confirmación en dos pasos, en el lugar: nada de confirm() nativo ni
+     slider — dos toques deliberados dentro del mismo renglón. */
+  .confirmacion { display: none; }
+  .confirmacion.visible { display: block; }
+  .texto-confirmacion {
+    font-size: 0.92rem;
+    font-weight: 600;
+    margin: 0 0 0.6rem;
+  }
+  /* Tarjeta efímera: lo que se acaba de procesar, atenuada, con Deshacer,
+     unos segundos hasta que se esconde sola. */
+  .tarjeta-efimera {
+    opacity: 0.75;
+    border: 1px solid #ddd;
+  }
+  .tarjeta-efimera .texto-efimero {
+    font-size: 0.92rem;
+    margin: 0 0 0.6rem;
+    color: #444;
+  }
+  #panel-procesados-hoy { display: none; }
+  #panel-procesados-hoy.visible { display: block; }
+  .renglon-procesado {
+    padding: 0.7rem 0;
+    border-top: 1px solid #eee;
+  }
+  .renglon-procesado:first-of-type { border-top: none; padding-top: 0; }
+  .renglon-procesado form { margin: 0; }
+  .aviso-bloqueo {
+    color: #888;
+    font-size: 0.85rem;
+    font-style: italic;
+    margin: 0;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -108,10 +158,50 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
+  {% if recien_procesado %}
+  <div class="tarjeta tarjeta-efimera" id="tarjeta-efimera">
+    <p class="texto-efimero">
+      {{ "Retiraste" if recien_procesado.estado_retiro == "retirado" else "Cancelaste" }}
+      <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.proveedor_codigo_puesto }})
+    </p>
+    <form method="post" action="/logistica/retiro/{{ tipo_retiro }}/{{ recien_procesado.id }}/deshacer?origen={{ origen }}">
+      <button type="submit" class="boton-secundario">Deshacer</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <button type="button" class="boton-secundario" id="boton-ver-procesados" onclick="alternarProcesadosHoy()">
+    Ver procesados hoy{% if procesados_hoy %} ({{ procesados_hoy|length }}){% endif %}
+  </button>
+
+  <div class="tarjeta" id="panel-procesados-hoy">
+    <h2>Procesados hoy</h2>
+    {% if procesados_hoy %}
+      {% for p in procesados_hoy %}
+      <div class="renglon-procesado">
+        <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
+        <p class="cantidad">
+          {{ "Retirado" if p.estado_retiro == "retirado" else "Cancelado" }} a las {{ p.retiro_procesado_el|hora }}
+        </p>
+        {% if p.deshacer_bloqueado %}
+        <p class="aviso-bloqueo">{{ p.motivo_bloqueo }} — no se puede deshacer.</p>
+        {% else %}
+        <form method="post" action="/logistica/retiro/{{ tipo_retiro }}/{{ p.id }}/deshacer?origen={{ origen }}">
+          <button type="submit" class="boton-secundario">Deshacer</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no se procesó nada hoy.</p>
+    {% endif %}
+  </div>
+
   {% if guias %}
     {% for guia in guias %}
     <div class="tarjeta">
-      <h2>{{ guia.proveedor_nombre }} ({{ guia.proveedor_codigo_puesto }})</h2>
+      <p class="puesto-nombre">{{ guia.proveedor_codigo_puesto }}</p>
+      <p class="proveedor-nombre">{{ guia.proveedor_nombre }}</p>
 
       {% for c in guia.compras %}
       <div class="renglon">
@@ -124,12 +214,27 @@
                  value="{{ c.cantidad_cajones }}">
         </form>
 
-        <div class="acciones-renglon">
-          <button type="submit" form="form-retirar-{{ c.id }}" class="boton-exito">Retirado</button>
-          <form method="post" action="/logistica/retiro/{{ tipo_retiro }}/{{ c.id }}/cancelar?origen={{ origen }}"
-                onsubmit="return confirm('¿Cancelar el retiro de {{ c.articulo_nombre }}? Significa que no se retiró del puesto.');">
-            <button type="submit" class="boton-peligro">Cancelado</button>
-          </form>
+        <div class="acciones-renglon" id="acciones-{{ c.id }}">
+          <button type="button" class="boton-exito" onclick="mostrarConfirmacion('{{ c.id }}', 'retirar')">Retirado</button>
+          <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'cancelar')">Cancelado</button>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-retirar-{{ c.id }}">
+          <p class="texto-confirmacion">¿Retirar {{ c.articulo_nombre }}?</p>
+          <div class="acciones-renglon">
+            <button type="submit" form="form-retirar-{{ c.id }}" class="boton-exito">Sí</button>
+            <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'retirar')">No</button>
+          </div>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-cancelar-{{ c.id }}">
+          <p class="texto-confirmacion">¿Cancelar el retiro de {{ c.articulo_nombre }}? Significa que no se retiró del puesto.</p>
+          <div class="acciones-renglon">
+            <form method="post" action="/logistica/retiro/{{ tipo_retiro }}/{{ c.id }}/cancelar?origen={{ origen }}">
+              <button type="submit" class="boton-peligro">Sí</button>
+            </form>
+            <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'cancelar')">No</button>
+          </div>
         </div>
       </div>
       {% endfor %}
@@ -142,5 +247,47 @@
   {% endif %}
 
   <a class="volver" href="{{ SECTORES[origen].url }}">Volver a {{ SECTORES[origen].nombre }}</a>
+
+  <script>
+    function mostrarConfirmacion(compraId, accion) {
+      document.getElementById('acciones-' + compraId).style.display = 'none';
+      document.getElementById('confirmacion-' + accion + '-' + compraId).classList.add('visible');
+    }
+
+    function ocultarConfirmacion(compraId, accion) {
+      document.getElementById('confirmacion-' + accion + '-' + compraId).classList.remove('visible');
+      document.getElementById('acciones-' + compraId).style.display = 'flex';
+    }
+
+    function alternarProcesadosHoy() {
+      document.getElementById('panel-procesados-hoy').classList.toggle('visible');
+    }
+
+    {% if recien_procesado %}
+    (function () {
+      // 30 segundos: alcanza para darse cuenta de que se tocó sin querer,
+      // entender qué pasó y llegar a Deshacer, sin quedar mirando fijo la
+      // pantalla — y el timer se reinicia con cualquier toque o scroll,
+      // para no perderla por distracción justo cuando hace falta.
+      var TIEMPO_TARJETA_EFIMERA_MS = 30000;
+      var tarjeta = document.getElementById('tarjeta-efimera');
+      var timer = null;
+
+      function esconder() {
+        tarjeta.style.display = 'none';
+      }
+
+      function reiniciarTimer() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(esconder, TIEMPO_TARJETA_EFIMERA_MS);
+      }
+
+      document.addEventListener('touchstart', reiniciarTimer, { passive: true });
+      document.addEventListener('scroll', reiniciarTimer, { passive: true });
+      document.addEventListener('click', reiniciarTimer);
+      reiniciarTimer();
+    })();
+    {% endif %}
+  </script>
 </body>
 </html>

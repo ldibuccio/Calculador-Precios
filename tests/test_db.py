@@ -8,9 +8,11 @@ from app.db import (
     buscar_compras,
     cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
+    compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     crear_cliente,
     crear_compra,
+    deshacer_retiro_compra,
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
     guardar_disponible,
@@ -20,6 +22,7 @@ from app.db import (
     listar_compras_para_costeo,
     listar_compras_pendientes_recepcion,
     listar_compras_pendientes_retiro,
+    listar_compras_procesadas_hoy_retiro,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_detalle_disponible,
@@ -615,6 +618,58 @@ def test_marcar_compra_cancelada_guarda_origen():
     assert "estado_retiro = 'cancelado'" in consulta
     assert parametros == ("logistica", 30)
     conexion.commit.assert_called_once()
+
+
+def test_compra_tiene_deshacer_retiro_bloqueado():
+    assert compra_tiene_deshacer_retiro_bloqueado("recepcionado") is True
+    assert compra_tiene_deshacer_retiro_bloqueado("rechazado") is True
+    assert compra_tiene_deshacer_retiro_bloqueado("no_ingresado") is True
+    assert compra_tiene_deshacer_retiro_bloqueado("pendiente") is False
+    assert compra_tiene_deshacer_retiro_bloqueado(None) is False
+
+
+def test_deshacer_retiro_compra_vuelve_todo_a_pendiente():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente",)])  # SELECT estado
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        deshacer_retiro_compra(30)
+
+    consulta, parametros = cursor.execute.call_args_list[1].args
+    assert "estado_retiro = 'pendiente'" in consulta
+    assert "retiro_procesado_el = NULL" in consulta
+    assert "retiro_origen = NULL" in consulta
+    assert "cantidad_cajones_retirada = NULL" in consulta
+    assert parametros == (30,)
+    conexion.commit.assert_called_once()
+
+
+def test_deshacer_retiro_compra_bloqueado_si_ya_paso_por_deposito():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            deshacer_retiro_compra(30)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert "no se puede deshacer" in str(error)
+
+    # Solo el SELECT — nunca llega a ejecutar el UPDATE ni a hacer commit.
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
+
+
+def test_listar_compras_procesadas_hoy_retiro_filtra_por_tipo_y_fecha():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_procesadas_hoy_retiro("Clark", date(2026, 8, 17))
+
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "c.tipo_retiro = %s" in consulta
+    assert "estado_retiro IN ('retirado', 'cancelado')" in consulta
+    assert "retiro_procesado_el::date = %s" in consulta
+    assert "ORDER BY c.retiro_procesado_el DESC" in consulta
+    assert parametros == ("Clark", date(2026, 8, 17))
 
 
 def test_obtener_detalle_compra_devuelve_la_fila_mapeada():

@@ -1382,6 +1382,86 @@ def marcar_compra_cancelada(compra_id: int, origen: str) -> None:
         conexion.close()
 
 
+def compra_tiene_deshacer_retiro_bloqueado(estado: str | None) -> bool:
+    """True si ya no se puede deshacer un Retirado/Cancelado (ver /logistica/retiro, deshacer_retiro_compra).
+
+    Única definición de esta regla — la usan la tarjeta efímera y el
+    panel "Procesados hoy" (para mostrar el botón Deshacer o el aviso de
+    por qué no) y deshacer_retiro_compra (para bloquear el guardado de
+    verdad). Una vez que Depósito tocó la compra (la recepcionó, la
+    rechazó, o la marcó como nunca ingresada), el retiro queda cerrado:
+    deshacerlo dejaría una compra "pendiente de retiro" que en los
+    hechos ya pasó por Depósito, un estado que no debería poder existir.
+    """
+    return estado in ("recepcionado", "rechazado", "no_ingresado")
+
+
+def deshacer_retiro_compra(compra_id: int) -> None:
+    """Vuelve una compra retirada/cancelada a pendiente de retiro (deshacer, ver /logistica/retiro).
+
+    Vuelve estado_retiro/retiro_procesado_el/retiro_origen/
+    cantidad_cajones_retirada a su valor original de antes de marcarla
+    — no queda ningún rastro de que hubo un toque y un deshacer (a
+    propósito: el objetivo es poder corregir un toque accidental sin
+    dejar cicatriz, no auditar quién se equivocó). Bloqueada (ValueError)
+    si compra_tiene_deshacer_retiro_bloqueado ya dio True — re-chequeado
+    acá adentro, no solo en la pantalla, por si el botón quedó mostrado
+    con datos viejos (ej. dos pestañas abiertas).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT estado FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            estado = fila[0] if fila else None
+
+            if compra_tiene_deshacer_retiro_bloqueado(estado):
+                raise ValueError("Esta compra ya fue procesada en Depósito, no se puede deshacer el retiro.")
+
+            cursor.execute(
+                """
+                UPDATE compras
+                SET estado_retiro = 'pendiente', retiro_procesado_el = NULL,
+                    retiro_origen = NULL, cantidad_cajones_retirada = NULL
+                WHERE id = %s
+                """,
+                (compra_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
+    """Compras de un tipo de retiro marcadas retirado/cancelado HOY, para la tarjeta efímera y el panel
+    "Procesados hoy" de /logistica/retiro. Más recientes primero (lo último que se tocó, arriba).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_cajones_retirada,
+                       c.estado_retiro, c.retiro_procesado_el, c.estado
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.tipo_retiro = %s
+                  AND c.estado_retiro IN ('retirado', 'cancelado')
+                  AND c.retiro_procesado_el::date = %s
+                ORDER BY c.retiro_procesado_el DESC
+                """,
+                (tipo_retiro, fecha),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
 def listar_compras_sin_precio() -> list[dict]:
     """Compras (de cualquier fecha) con importe todavía vacío, para completarlo desde /compras/pendientes.
 
