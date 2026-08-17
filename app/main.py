@@ -30,6 +30,7 @@ from app.db import (
     buscar_compras,
     cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
+    compra_tiene_deshacer_recepcion_bloqueado,
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_articulos,
@@ -39,6 +40,7 @@ from app.db import (
     crear_ficha,
     desactivar_articulo,
     desactivar_cliente,
+    deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
@@ -53,6 +55,7 @@ from app.db import (
     listar_compras_pendientes_recepcion,
     listar_compras_pendientes_retiro,
     listar_compras_por_fecha_y_proveedor,
+    listar_compras_procesadas_hoy_recepcion,
     listar_compras_procesadas_hoy_retiro,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
@@ -4186,27 +4189,62 @@ def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
 
 
 def _renderizar_pantalla_recepcion(
-    request: Request, *, error: str | None = None, aviso: str | None = None, status_code: int = 200
+    request: Request,
+    *,
+    recien_procesado_id: int | None = None,
+    error: str | None = None,
+    aviso: str | None = None,
+    status_code: int = 200,
 ):
     try:
         compras_pendientes = listar_compras_pendientes_recepcion()
+        procesados_hoy = listar_compras_procesadas_hoy_recepcion(_hoy_argentina())
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
             "deposito_recepcion.html",
-            {"guias": [], "error": f"No se pudieron leer las compras pendientes: {error_db}"},
+            {
+                "guias": [],
+                "procesados_hoy": [],
+                "recien_procesado": None,
+                "error": f"No se pudieron leer las compras pendientes: {error_db}",
+            },
             status_code=500,
         )
 
+    for procesado in procesados_hoy:
+        procesado["deshacer_bloqueado"] = compra_tiene_deshacer_recepcion_bloqueado(procesado["estado"])
+        procesado["estado_label"] = ESTADOS_RECEPCION_LABELS.get(procesado["estado"], procesado["estado"])
+
+    recien_procesado = None
+    if recien_procesado_id is not None:
+        recien_procesado = next((p for p in procesados_hoy if p["id"] == recien_procesado_id), None)
+
     guias = _agrupar_pendientes_por_guia(compras_pendientes)
     return templates.TemplateResponse(
-        request, "deposito_recepcion.html", {"guias": guias, "error": error, "aviso": aviso}, status_code=status_code
+        request,
+        "deposito_recepcion.html",
+        {
+            "guias": guias,
+            "procesados_hoy": procesados_hoy,
+            "recien_procesado": recien_procesado,
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
     )
 
 
 @app.get("/deposito/recepcion")
-def ver_recepcion(request: Request, aviso: str | None = None):
-    return _renderizar_pantalla_recepcion(request, aviso=aviso)
+def ver_recepcion(request: Request, aviso: str | None = None, procesado: str | None = None):
+    return _renderizar_pantalla_recepcion(request, aviso=aviso, recien_procesado_id=_id_opcional_desde_query(procesado))
+
+
+def _url_recepcion_con_procesado(compra_id: int, aviso_retiro: str | None) -> str:
+    parametros = {"procesado": compra_id}
+    if aviso_retiro:
+        parametros["aviso"] = aviso_retiro
+    return f"/deposito/recepcion?{urlencode(parametros)}"
 
 
 @app.post("/deposito/recepcion/{compra_id}/recepcionar")
@@ -4230,8 +4268,7 @@ def recepcionar_compra_ruta(
             request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
         )
 
-    url = f"/deposito/recepcion?{urlencode({'aviso': aviso_retiro})}" if aviso_retiro else "/deposito/recepcion"
-    return RedirectResponse(url=url, status_code=303)
+    return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)
 
 
 @app.post("/deposito/recepcion/{compra_id}/rechazar")
@@ -4243,8 +4280,7 @@ def rechazar_compra_ruta(request: Request, compra_id: int):
             request, error=f"No se pudo rechazar la compra: {error_db}", status_code=500
         )
 
-    url = f"/deposito/recepcion?{urlencode({'aviso': aviso_retiro})}" if aviso_retiro else "/deposito/recepcion"
-    return RedirectResponse(url=url, status_code=303)
+    return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)
 
 
 @app.post("/deposito/recepcion/{compra_id}/no-ingreso")
@@ -4256,6 +4292,19 @@ def no_ingreso_compra_ruta(request: Request, compra_id: int):
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo marcar la compra como no ingresada: {error_db}", status_code=500
         )
+
+    return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, None), status_code=303)
+
+
+@app.post("/deposito/recepcion/{compra_id}/deshacer-no-ingreso")
+def deshacer_no_ingreso_compra_ruta(request: Request, compra_id: int):
+    """Vuelve una compra marcada "No ingresó" a pendiente — tarjeta efímera o panel "Procesados hoy"."""
+    try:
+        deshacer_no_ingresado_compra(compra_id)
+    except ValueError as error_bloqueo:
+        return _renderizar_pantalla_recepcion(request, error=str(error_bloqueo), status_code=400)
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(request, error=f"No se pudo deshacer: {error_db}", status_code=500)
 
     return RedirectResponse(url="/deposito/recepcion", status_code=303)
 

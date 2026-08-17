@@ -1292,6 +1292,89 @@ def marcar_compra_no_ingresada(compra_id: int) -> None:
         conexion.close()
 
 
+def compra_tiene_deshacer_recepcion_bloqueado(estado: str | None) -> bool:
+    """True si ya no se puede deshacer un "No ingresó" (ver /deposito/recepcion, deshacer_no_ingresado_compra).
+
+    Única definición de esta regla — la usan el panel "Procesados hoy" de
+    Recepción (para mostrar el botón Deshacer o el aviso de por qué no) y
+    deshacer_no_ingresado_compra (para bloquear el guardado de verdad).
+    Recepcionada o rechazada: la mercadería ya se contó (o se rechazó
+    después de contarla), ese resultado ya es un hecho, no hay nada que
+    "deshacer" ahí — si hubo un error, se corrige por otro lado. Solo
+    no_ingresado se puede volver a pendiente: significa que nunca se
+    contó nada, así que no hay ningún conteo real que se pierda al
+    corregir el toque.
+    """
+    return estado in ("recepcionado", "rechazado")
+
+
+def deshacer_no_ingresado_compra(compra_id: int) -> None:
+    """Vuelve una compra marcada "No ingresó" a pendiente de recepción (deshacer, ver /deposito/recepcion).
+
+    Vuelve estado a 'pendiente' y borra procesada_el junto con todos los
+    valores reales (cantidad_cajones_real, contenido_por_cajon_real,
+    cantidad_kilos_real, cantidad_fraccion_real) — aunque marcar_compra_
+    no_ingresada nunca los llega a cargar, se limpian igual acá por las
+    dudas, mismo criterio "sin cicatriz" que deshacer_retiro_compra. No
+    toca estado_retiro: marcar_compra_no_ingresada tampoco lo tocaba.
+    Bloqueada (ValueError) si compra_tiene_deshacer_recepcion_bloqueado
+    ya dio True — re-chequeado acá adentro, no solo en la pantalla.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT estado FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            estado = fila[0] if fila else None
+
+            if compra_tiene_deshacer_recepcion_bloqueado(estado):
+                raise ValueError("Esta compra ya fue recepcionada o rechazada, no se puede deshacer.")
+
+            cursor.execute(
+                """
+                UPDATE compras
+                SET estado = 'pendiente', procesada_el = NULL,
+                    cantidad_cajones_real = NULL, contenido_por_cajon_real = NULL,
+                    cantidad_kilos_real = NULL, cantidad_fraccion_real = NULL
+                WHERE id = %s
+                """,
+                (compra_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
+    """Compras marcadas recepcionado/rechazado/no_ingresado HOY, para la tarjeta efímera y el panel
+    "Procesados hoy" de /deposito/recepcion. Más recientes primero.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon,
+                       c.cantidad_cajones_real, c.contenido_por_cajon_real,
+                       c.estado, c.procesada_el
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')
+                  AND c.procesada_el::date = %s
+                ORDER BY c.procesada_el DESC
+                """,
+                (fecha,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
 def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
     """Compras de un tipo de retiro puntual (Clark/Carro/Pases) que todavía no se procesaron en Logística.
 
@@ -1388,12 +1471,15 @@ def compra_tiene_deshacer_retiro_bloqueado(estado: str | None) -> bool:
     Única definición de esta regla — la usan la tarjeta efímera y el
     panel "Procesados hoy" (para mostrar el botón Deshacer o el aviso de
     por qué no) y deshacer_retiro_compra (para bloquear el guardado de
-    verdad). Una vez que Depósito tocó la compra (la recepcionó, la
-    rechazó, o la marcó como nunca ingresada), el retiro queda cerrado:
-    deshacerlo dejaría una compra "pendiente de retiro" que en los
-    hechos ya pasó por Depósito, un estado que no debería poder existir.
+    verdad). Recepcionada o rechazada: la mercadería llegó y se contó (o
+    se rechazó después de contarla) — ahí el retiro ya es un hecho, no
+    se puede deshacer. no_ingresado NO bloquea a propósito: significa
+    justo lo contrario, que nada llegó, así que no hay ningún motivo
+    para impedir que Logística corrija un Retirado/Cancelado hecho por
+    error (ver también compra_tiene_deshacer_recepcion_bloqueado, la
+    misma idea para el lado de Depósito).
     """
-    return estado in ("recepcionado", "rechazado", "no_ingresado")
+    return estado in ("recepcionado", "rechazado")
 
 
 def deshacer_retiro_compra(compra_id: int) -> None:

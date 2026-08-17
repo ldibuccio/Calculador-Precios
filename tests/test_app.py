@@ -3273,7 +3273,10 @@ COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
 
 
 def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
@@ -3294,7 +3297,10 @@ def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
 
 
 def test_ver_recepcion_prellena_los_inputs_con_el_estimado():
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
@@ -3307,7 +3313,10 @@ def test_ver_recepcion_prellena_los_inputs_con_el_estimado():
 
 
 def test_ver_recepcion_muestra_el_proveedor_grande_y_la_guia_chica():
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
@@ -3316,7 +3325,10 @@ def test_ver_recepcion_muestra_el_proveedor_grande_y_la_guia_chica():
 
 
 def test_ver_recepcion_muestra_los_tres_botones_con_sus_nombres():
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
@@ -3326,8 +3338,29 @@ def test_ver_recepcion_muestra_los_tres_botones_con_sus_nombres():
     assert 'action="/deposito/recepcion/1/no-ingreso"' in respuesta.text
 
 
+def test_ver_recepcion_confirmacion_es_en_el_lugar_no_confirm_nativo():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "onsubmit=\"return confirm(" not in respuesta.text
+    assert "onclick=\"mostrarConfirmacion('1', 'recibir')\"" in respuesta.text
+    assert "onclick=\"mostrarConfirmacion('1', 'rechazar')\"" in respuesta.text
+    assert "onclick=\"mostrarConfirmacion('1', 'no-ingreso')\"" in respuesta.text
+    assert "¿Recepcionar Tomate Cherry?" in respuesta.text
+    assert "¿Rechazar por calidad Tomate Cherry? No se puede deshacer." in respuesta.text
+    # "No ingresó" ya NO dice "No se puede deshacer" -- ahora sí se puede.
+    assert "¿Tomate Cherry nunca llegó al depósito?" in respuesta.text
+
+
 def test_ver_recepcion_sin_pendientes_muestra_mensaje_vacio():
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
@@ -3350,7 +3383,7 @@ def test_recepcionar_compra_guarda_los_reales_y_redirige():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/recepcion"
+    assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1"
     mock_recepcionar.assert_called_once_with(1, 38.0, 760.0)
 
 
@@ -3368,13 +3401,14 @@ def test_recepcionar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/recepcion?aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
+    assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1&aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
 
 
 def test_recepcionar_compra_sin_datos_muestra_error_sin_guardar():
     with (
         patch("app.main.recepcionar_compra") as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
         respuesta = cliente.post(
             "/deposito/recepcion/1/recepcionar",
@@ -3390,6 +3424,7 @@ def test_recepcionar_compra_con_numero_invalido_muestra_error_sin_guardar():
     with (
         patch("app.main.recepcionar_compra") as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
         respuesta = cliente.post(
             "/deposito/recepcion/1/recepcionar",
@@ -3405,6 +3440,7 @@ def test_recepcionar_compra_error_de_base_muestra_mensaje():
     with (
         patch("app.main.recepcionar_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
         respuesta = cliente.post(
             "/deposito/recepcion/1/recepcionar",
@@ -3420,7 +3456,7 @@ def test_rechazar_compra_redirige_y_no_pide_datos():
         respuesta = cliente.post("/deposito/recepcion/2/rechazar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/recepcion"
+    assert respuesta.headers["location"] == "/deposito/recepcion?procesado=2"
     mock_rechazar.assert_called_once_with(2)
 
 
@@ -3431,11 +3467,14 @@ def test_rechazar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
         respuesta = cliente.post("/deposito/recepcion/2/rechazar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/recepcion?aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
+    assert respuesta.headers["location"] == "/deposito/recepcion?procesado=2&aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
 
 
 def test_ver_recepcion_muestra_el_aviso_cuando_viene_en_la_url():
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion?aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica.")
 
     assert respuesta.status_code == 200
@@ -3446,6 +3485,7 @@ def test_rechazar_compra_error_de_base_muestra_mensaje():
     with (
         patch("app.main.rechazar_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
         respuesta = cliente.post("/deposito/recepcion/2/rechazar")
 
@@ -3458,7 +3498,7 @@ def test_no_ingreso_compra_redirige_y_no_pide_datos():
         respuesta = cliente.post("/deposito/recepcion/2/no-ingreso", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/recepcion"
+    assert respuesta.headers["location"] == "/deposito/recepcion?procesado=2"
     mock_no_ingreso.assert_called_once_with(2)
 
 
@@ -3466,11 +3506,168 @@ def test_no_ingreso_compra_error_de_base_muestra_mensaje():
     with (
         patch("app.main.marcar_compra_no_ingresada", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
         respuesta = cliente.post("/deposito/recepcion/2/no-ingreso")
 
     assert respuesta.status_code == 500
     assert "No se pudo marcar la compra como no ingresada" in respuesta.text
+
+
+PROCESADOS_HOY_RECEPCION_DE_PRUEBA = [
+    {
+        "id": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 40, "contenido_por_cajon": 20,
+        "cantidad_cajones_real": 38, "contenido_por_cajon_real": 19,
+        "estado": "no_ingresado", "procesada_el": datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc),
+    },
+    {
+        "id": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 12,
+        "cantidad_cajones_real": 10, "contenido_por_cajon_real": None,
+        "estado": "recepcionado", "procesada_el": datetime(2026, 8, 17, 12, 30, tzinfo=timezone.utc),
+    },
+]
+
+
+def test_ver_recepcion_con_procesado_no_ingresado_muestra_la_tarjeta_efimera():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=PROCESADOS_HOY_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion?procesado=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="tarjeta-efimera"' in respuesta.text
+    assert 'Marcaste "No ingresó" en' in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "N07P41" in respuesta.text
+    assert 'action="/deposito/recepcion/1/deshacer-no-ingreso"' in respuesta.text
+
+
+def test_ver_recepcion_con_procesado_recepcionado_dice_recibiste_y_no_deja_deshacer():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=PROCESADOS_HOY_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion?procesado=2")
+
+    assert respuesta.status_code == 200
+    assert "Recibiste" in respuesta.text
+    assert "Mango" in respuesta.text
+    assert "No se puede deshacer." in respuesta.text
+
+
+def test_ver_recepcion_con_procesado_rechazado_dice_rechazaste():
+    procesado_rechazado = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1], estado="rechazado")
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[procesado_rechazado]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion?procesado=2")
+
+    assert respuesta.status_code == 200
+    assert "Rechazaste" in respuesta.text
+
+
+def test_ver_recepcion_sin_procesado_no_muestra_tarjeta_efimera():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=PROCESADOS_HOY_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert 'id="tarjeta-efimera"' not in respuesta.text
+
+
+def test_ver_recepcion_procesado_que_no_esta_en_hoy_no_muestra_tarjeta():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion?procesado=999")
+
+    assert respuesta.status_code == 200
+    assert 'id="tarjeta-efimera"' not in respuesta.text
+
+
+def test_ver_recepcion_panel_procesados_hoy_muestra_hora_y_deshacer_solo_no_ingresado():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=PROCESADOS_HOY_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Ver procesados hoy (2)" in respuesta.text
+    assert "No ingresó a las 10:00" in respuesta.text  # 13:00 UTC -> 10:00 ARG
+    assert "Recibido a las 09:30" in respuesta.text
+    assert 'action="/deposito/recepcion/1/deshacer-no-ingreso"' in respuesta.text
+    assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
+
+
+def test_ver_recepcion_panel_procesados_hoy_rechazado_muestra_aviso_no_boton():
+    procesado_rechazado = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1], estado="rechazado")
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[procesado_rechazado]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "No se puede deshacer." in respuesta.text
+    assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
+
+
+def test_ver_recepcion_sin_procesados_hoy_muestra_mensaje_vacio():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Ver procesados hoy" in respuesta.text
+    assert "Todavía no se procesó nada hoy." in respuesta.text
+
+
+def test_deshacer_no_ingreso_compra_ruta_redirige_sin_procesado():
+    with patch("app.main.deshacer_no_ingresado_compra", return_value=None) as mock_deshacer:
+        respuesta = cliente.post("/deposito/recepcion/1/deshacer-no-ingreso", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion"
+    mock_deshacer.assert_called_once_with(1)
+
+
+def test_deshacer_no_ingreso_compra_ruta_bloqueado_da_400():
+    with (
+        patch(
+            "app.main.deshacer_no_ingresado_compra",
+            side_effect=ValueError("Esta compra ya fue recepcionada o rechazada, no se puede deshacer."),
+        ),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.post("/deposito/recepcion/1/deshacer-no-ingreso")
+
+    assert respuesta.status_code == 400
+    assert "no se puede deshacer" in respuesta.text
+
+
+def test_deshacer_no_ingreso_compra_ruta_error_de_base_da_500():
+    with (
+        patch("app.main.deshacer_no_ingresado_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.post("/deposito/recepcion/1/deshacer-no-ingreso")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo deshacer" in respuesta.text
 
 
 def test_ver_foto_compra_redirige_a_la_url_firmada():
@@ -6814,7 +7011,10 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
     assert respuesta.status_code == 200
     assert "titulo-sector" not in respuesta.text
 
-    with patch("app.main.listar_compras_pendientes_recepcion", return_value=[]):
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
         respuesta = cliente.get("/deposito/recepcion")
     assert respuesta.status_code == 200
     assert "titulo-sector" not in respuesta.text

@@ -57,6 +57,11 @@
     font-size: 0.88rem;
     margin: 0 0 0.7rem;
   }
+  .cantidad {
+    color: #666;
+    font-size: 0.88rem;
+    margin: 0 0 0.7rem;
+  }
   .campo-real label {
     display: block;
     font-size: 0.85rem;
@@ -78,7 +83,8 @@
     flex-wrap: wrap;
     gap: 0.5rem;
   }
-  .acciones-renglon form { flex: 1 1 45%; }
+  .acciones-renglon form { flex: 1 1 45%; margin: 0; }
+  .acciones-renglon button { flex: 1 1 45%; }
   button {
     width: 100%;
     padding: 0.75rem;
@@ -87,10 +93,46 @@
     font-size: 0.95rem;
     font-weight: 600;
     box-sizing: border-box;
+    cursor: pointer;
   }
   .boton-exito { background: #16a34a; color: #fff; }
   .boton-peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
   .boton-neutro { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
+  .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  /* Confirmación en dos pasos, en el lugar: nada de confirm() nativo —
+     dos toques deliberados dentro del mismo renglón. */
+  .confirmacion { display: none; }
+  .confirmacion.visible { display: block; }
+  .texto-confirmacion {
+    font-size: 0.92rem;
+    font-weight: 600;
+    margin: 0 0 0.6rem;
+  }
+  /* Tarjeta efímera: lo que se acaba de procesar, atenuada, con Deshacer
+     si corresponde, unos segundos hasta que se esconde sola. */
+  .tarjeta-efimera {
+    opacity: 0.75;
+    border: 1px solid #ddd;
+  }
+  .tarjeta-efimera .texto-efimero {
+    font-size: 0.92rem;
+    margin: 0 0 0.6rem;
+    color: #444;
+  }
+  #panel-procesados-hoy { display: none; }
+  #panel-procesados-hoy.visible { display: block; }
+  .renglon-procesado {
+    padding: 0.7rem 0;
+    border-top: 1px solid #eee;
+  }
+  .renglon-procesado:first-of-type { border-top: none; padding-top: 0; }
+  .renglon-procesado form { margin: 0; }
+  .aviso-bloqueo {
+    color: #888;
+    font-size: 0.85rem;
+    font-style: italic;
+    margin: 0;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -113,6 +155,50 @@
   {% if aviso %}
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
+
+  {% if recien_procesado %}
+  <div class="tarjeta tarjeta-efimera" id="tarjeta-efimera">
+    <p class="texto-efimero">
+      {% if recien_procesado.estado == "recepcionado" %}Recibiste
+      {% elif recien_procesado.estado == "rechazado" %}Rechazaste
+      {% else %}Marcaste "No ingresó" en
+      {% endif %}
+      <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.proveedor_codigo_puesto }})
+    </p>
+    {% if recien_procesado.estado == "no_ingresado" %}
+    <form method="post" action="/deposito/recepcion/{{ recien_procesado.id }}/deshacer-no-ingreso">
+      <button type="submit" class="boton-secundario">Deshacer</button>
+    </form>
+    {% else %}
+    <p class="aviso-bloqueo">No se puede deshacer.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <button type="button" class="boton-secundario" id="boton-ver-procesados" onclick="alternarProcesadosHoy()">
+    Ver procesados hoy{% if procesados_hoy %} ({{ procesados_hoy|length }}){% endif %}
+  </button>
+
+  <div class="tarjeta" id="panel-procesados-hoy">
+    <h2>Procesados hoy</h2>
+    {% if procesados_hoy %}
+      {% for p in procesados_hoy %}
+      <div class="renglon-procesado">
+        <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
+        <p class="cantidad">{{ p.estado_label }} a las {{ p.procesada_el|hora }}</p>
+        {% if p.deshacer_bloqueado %}
+        <p class="aviso-bloqueo">No se puede deshacer.</p>
+        {% else %}
+        <form method="post" action="/deposito/recepcion/{{ p.id }}/deshacer-no-ingreso">
+          <button type="submit" class="boton-secundario">Deshacer</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no se procesó nada hoy.</p>
+    {% endif %}
+  </div>
 
   {% if guias %}
     {% for guia in guias %}
@@ -145,16 +231,38 @@
           {% endif %}
         </form>
 
-        <div class="acciones-renglon">
-          <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-exito">Recibir</button>
-          <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazar"
-                onsubmit="return confirm('¿Rechazar por calidad {{ c.articulo_nombre }}? No se puede deshacer.');">
-            <button type="submit" class="boton-peligro">Rechazar por calidad</button>
-          </form>
-          <form method="post" action="/deposito/recepcion/{{ c.id }}/no-ingreso"
-                onsubmit="return confirm('¿{{ c.articulo_nombre }} nunca llegó al depósito? No se puede deshacer.');">
-            <button type="submit" class="boton-neutro">No ingresó</button>
-          </form>
+        <div class="acciones-renglon" id="acciones-{{ c.id }}">
+          <button type="button" class="boton-exito" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
+          <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazar por calidad</button>
+          <button type="button" class="boton-neutro" onclick="mostrarConfirmacion('{{ c.id }}', 'no-ingreso')">No ingresó</button>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-recibir-{{ c.id }}">
+          <p class="texto-confirmacion">¿Recepcionar {{ c.articulo_nombre }}?</p>
+          <div class="acciones-renglon">
+            <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-exito">Sí</button>
+            <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'recibir')">No</button>
+          </div>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-rechazar-{{ c.id }}">
+          <p class="texto-confirmacion">¿Rechazar por calidad {{ c.articulo_nombre }}? No se puede deshacer.</p>
+          <div class="acciones-renglon">
+            <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazar">
+              <button type="submit" class="boton-peligro">Sí</button>
+            </form>
+            <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'rechazar')">No</button>
+          </div>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-no-ingreso-{{ c.id }}">
+          <p class="texto-confirmacion">¿{{ c.articulo_nombre }} nunca llegó al depósito?</p>
+          <div class="acciones-renglon">
+            <form method="post" action="/deposito/recepcion/{{ c.id }}/no-ingreso">
+              <button type="submit" class="boton-neutro">Sí</button>
+            </form>
+            <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'no-ingreso')">No</button>
+          </div>
         </div>
       </div>
       {% endfor %}
@@ -167,5 +275,45 @@
   {% endif %}
 
   <a class="volver" href="/deposito">Volver a Depósito</a>
+
+  <script>
+    function mostrarConfirmacion(compraId, accion) {
+      document.getElementById('acciones-' + compraId).style.display = 'none';
+      document.getElementById('confirmacion-' + accion + '-' + compraId).classList.add('visible');
+    }
+
+    function ocultarConfirmacion(compraId, accion) {
+      document.getElementById('confirmacion-' + accion + '-' + compraId).classList.remove('visible');
+      document.getElementById('acciones-' + compraId).style.display = 'flex';
+    }
+
+    function alternarProcesadosHoy() {
+      document.getElementById('panel-procesados-hoy').classList.toggle('visible');
+    }
+
+    {% if recien_procesado %}
+    (function () {
+      // 30 segundos, reiniciados con cualquier toque o scroll -- mismo
+      // criterio que la tarjeta efímera de Logística.
+      var TIEMPO_TARJETA_EFIMERA_MS = 30000;
+      var tarjeta = document.getElementById('tarjeta-efimera');
+      var timer = null;
+
+      function esconder() {
+        tarjeta.style.display = 'none';
+      }
+
+      function reiniciarTimer() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(esconder, TIEMPO_TARJETA_EFIMERA_MS);
+      }
+
+      document.addEventListener('touchstart', reiniciarTimer, { passive: true });
+      document.addEventListener('scroll', reiniciarTimer, { passive: true });
+      document.addEventListener('click', reiniciarTimer);
+      reiniciarTimer();
+    })();
+    {% endif %}
+  </script>
 </body>
 </html>
