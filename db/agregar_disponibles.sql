@@ -31,6 +31,14 @@
 -- una vez al guardar (ver app/main.py), típicamente arrancando en el
 -- orden fruta/hortaliza/pesada de la precarga.
 --
+-- version: cuenta los reenvíos del mismo cliente + fecha_desde el mismo
+-- día (ej. se manda el Disponible a la mañana y hay que reenviar uno
+-- actualizado a media mañana porque llegó mercadería nueva). NULL
+-- mientras es borrador; se calcula y se fija recién al generar el Excel
+-- (COUNT de 'generado' previos con ese mismo cliente_id+fecha_desde, +1).
+-- El nombre del archivo lleva "_v2", "_v3", etc. a partir del segundo,
+-- así nunca se pisa el que ya se mandó por mail.
+--
 -- Seguro de correr más de una vez (create table if not exists, create
 -- unique index/constraint con manejo de "ya existe" no hace falta porque
 -- son objetos nuevos). Solo aditivo: no toca ninguna tabla existente.
@@ -43,6 +51,7 @@ create table if not exists disponibles (
     fecha_desde     date not null,
     fecha_hasta     date not null,
     estado          text not null check (estado in ('borrador', 'generado')),
+    version         integer,
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now()
 );
@@ -51,6 +60,7 @@ comment on table disponibles is 'Cabecera de una planilla de Disponibles (mercad
 comment on column disponibles.fecha_desde is 'Primer día del rango mostrado en el Excel como "Fecha: ...".';
 comment on column disponibles.fecha_hasta is 'Último día del rango. Igual a fecha_desde si es un solo día (el Excel muestra "Fecha: DD/MM/AAAA"); si son dos días distintos, muestra "Fecha: DD/MM/AAAA al DD/MM/AAAA".';
 comment on column disponibles.estado is 'borrador o generado. Sin DEFAULT: /compras/disponibles siempre lo escribe explícito, nunca a cargo de la base.';
+comment on column disponibles.version is 'Reenvío número N del mismo cliente+fecha_desde el mismo día (1 = el primero, sin sufijo en el archivo). NULL mientras es borrador; se fija recién al generar el Excel.';
 
 create unique index if not exists disponibles_un_borrador_por_cliente_idx
     on disponibles (cliente_id)
