@@ -6,6 +6,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 
 import base64
 import io
+import json
 import logging
 import os
 import re
@@ -27,6 +28,7 @@ from app.db import (
     actualizar_precio_compra,
     aprender_articulo,
     buscar_compras,
+    cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_precio_bloqueado,
     contar_articulos,
@@ -39,6 +41,7 @@ from app.db import (
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
+    guardar_disponible,
     guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
     listar_aprendizaje_articulos_por_proveedor,
@@ -50,6 +53,7 @@ from app.db import (
     listar_compras_por_fecha_y_proveedor,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
+    listar_detalle_disponible,
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
@@ -60,18 +64,21 @@ from app.db import (
     marcar_compra_no_ingresada,
     marcar_compra_retirada,
     obtener_articulo,
+    obtener_borrador_disponible,
     obtener_cliente,
     obtener_compra,
     obtener_detalle_compra,
     obtener_ficha,
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
+    obtener_ultimo_disponible_cliente,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
+from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
@@ -105,6 +112,18 @@ ORIGENES_RETIRO_LABELS = {
 }
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
+
+# Para el nombre del archivo de Disponibles (ej. "Disponibles_Frutamax_14_Ago_2026.xlsx").
+MESES_ABREVIADOS = {
+    1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
+    7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic",
+}
+
+# Orden de secciones al precargar Disponibles desde fichas_logistica (primera
+# vez que se arma uno para un cliente, sin ningún Disponible previo). Los
+# renglones tipeados a mano (sin articulo_id, sin grupo) van al final. De
+# ahí en más el orden queda fijo en disponibles_detalle.orden.
+ORDEN_GRUPOS_DISPONIBLES = ["fruta", "hortaliza", "pesada"]
 
 NOMBRE_EMPRESA_ENV_VAR = "NOMBRE_EMPRESA"
 # Mismo código para varias empresas (cada una con su propia base): el
@@ -1472,9 +1491,244 @@ def ver_armar_listado_compras(request: Request):
     return _renderizar_en_construccion(request, "Armar listado de compras")
 
 
+def _orden_grupo_disponible(grupo: str | None) -> int:
+    """Posición del grupo en la precarga desde fichas_logistica (fruta, hortaliza, pesada, el resto al final)."""
+    try:
+        return ORDEN_GRUPOS_DISPONIBLES.index(grupo)
+    except ValueError:
+        return len(ORDEN_GRUPOS_DISPONIBLES)
+
+
+def _renglones_iniciales_desde_fichas(fichas: list[dict]) -> list[dict]:
+    """Primera vez que se arma un Disponible para un cliente (nunca tuvo uno): un renglón por cada
+    ficha que ya tenga codigo_cliente o nombre_cliente cargado (las que no, se agregan a mano cuando
+    hagan falta, desde "Agregar desde el catálogo"), en orden fruta/hortaliza/pesada/sin clasificar,
+    cantidad en 0 (no hay nada previo que sugerir)."""
+    fichas_con_alias = [f for f in fichas if f.get("codigo_cliente") or f.get("nombre_cliente")]
+    fichas_ordenadas = sorted(fichas_con_alias, key=lambda f: (_orden_grupo_disponible(f.get("articulo_grupo")), f["articulo_nombre"]))
+    return [
+        {
+            "articulo_id": ficha["articulo_id"],
+            "codigo": ficha.get("codigo_cliente"),
+            "nombre": ficha.get("nombre_cliente") or ficha["articulo_nombre"],
+            "cantidad": 0,
+        }
+        for ficha in fichas_ordenadas
+    ]
+
+
+def _nombre_archivo_disponibles(fecha_desde: date, version: int) -> str:
+    mes = MESES_ABREVIADOS[fecha_desde.month]
+    base = f"Disponibles_Frutamax_{fecha_desde.day}_{mes}_{fecha_desde.year}"
+    if version > 1:
+        base += f"_v{version}"
+    return f"{base}.xlsx"
+
+
+def _validar_rango_fechas_disponible(fecha_desde_texto: str, fecha_hasta_texto: str) -> tuple[str | None, date | None, date | None]:
+    try:
+        fecha_desde = date.fromisoformat(fecha_desde_texto)
+        fecha_hasta = date.fromisoformat(fecha_hasta_texto)
+    except ValueError:
+        return "Fecha inválida.", None, None
+    if fecha_hasta < fecha_desde:
+        return "La fecha hasta no puede ser anterior a la fecha desde.", None, None
+    return None, fecha_desde, fecha_hasta
+
+
+def _leer_renglones_disponible_del_form(form) -> list[dict]:
+    """Lee del form oculto (armado por JS con los renglones en pantalla, ya en el orden final) los
+    datos crudos de cada renglón — indexados 0, 1, 2... en vez de por articulo_id, porque un renglón
+    tipeado a mano no tiene uno."""
+    renglones = []
+    indice = 0
+    while f"renglon_nombre_{indice}" in form:
+        articulo_id_texto = str(form.get(f"renglon_articulo_id_{indice}", "")).strip()
+        renglones.append(
+            {
+                "articulo_id_texto": articulo_id_texto,
+                "codigo_texto": str(form.get(f"renglon_codigo_{indice}", "")).strip(),
+                "nombre_texto": str(form.get(f"renglon_nombre_{indice}", "")).strip(),
+                "cantidad_texto": str(form.get(f"renglon_cantidad_{indice}", "")).strip(),
+            }
+        )
+        indice += 1
+    return renglones
+
+
+def _validar_renglones_disponible(renglones_crudos: list[dict]) -> tuple[str | None, list[dict]]:
+    if not renglones_crudos:
+        return "Agregá al menos un artículo.", []
+
+    renglones = []
+    for renglon in renglones_crudos:
+        if not renglon["nombre_texto"]:
+            return "Todos los renglones necesitan un producto.", []
+        try:
+            cantidad = float(renglon["cantidad_texto"])
+        except ValueError:
+            return f"La cantidad de \"{renglon['nombre_texto']}\" tiene que ser un número.", []
+        if cantidad < 0:
+            return f"La cantidad de \"{renglon['nombre_texto']}\" no puede ser negativa.", []
+
+        articulo_id = int(renglon["articulo_id_texto"]) if renglon["articulo_id_texto"] else None
+        renglones.append(
+            {
+                "articulo_id": articulo_id,
+                "codigo": renglon["codigo_texto"] or None,
+                "nombre": renglon["nombre_texto"],
+                "cantidad": cantidad,
+            }
+        )
+    return None, renglones
+
+
+async def _guardar_pendientes_disponible(request: Request) -> tuple[dict, int, list[dict], date, date]:
+    """Valida y guarda (upsert) el Disponible del form de disponibles.html. Lo comparten "Guardar" y
+    "Guardar y generar Excel", que hacen lo mismo acá y después responden distinto."""
+    form = await request.form()
+
+    try:
+        cliente_id = int(form.get("cliente_id", ""))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    disponible_id_texto = str(form.get("disponible_id", "")).strip()
+    disponible_id = int(disponible_id_texto) if disponible_id_texto else None
+
+    error_fecha, fecha_desde, fecha_hasta = _validar_rango_fechas_disponible(
+        str(form.get("fecha_desde", "")), str(form.get("fecha_hasta", ""))
+    )
+    if error_fecha:
+        raise HTTPException(status_code=400, detail=error_fecha)
+
+    renglones_crudos = _leer_renglones_disponible_del_form(form)
+    error_renglones, renglones = _validar_renglones_disponible(renglones_crudos)
+    if error_renglones:
+        raise HTTPException(status_code=400, detail=error_renglones)
+
+    try:
+        disponible_id = guardar_disponible(disponible_id, cliente_id, fecha_desde, fecha_hasta, renglones)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el Disponible: {error_db}") from error_db
+
+    return cliente, disponible_id, renglones, fecha_desde, fecha_hasta
+
+
 @app.get("/compras/disponibles")
-def ver_disponibles(request: Request):
-    return _renderizar_en_construccion(request, "Disponibles")
+def ver_disponibles(request: Request, cliente_id: str | None = None, guardado: str | None = None, generado: str | None = None):
+    """Planilla de mercadería disponible que se manda por mail a un cliente. Cada cliente tiene su
+    propio Disponible: sin cliente_id en la URL, se muestra solo el selector (mismo patrón que
+    /fichas, /negociar y /precios/cargar).
+
+    Precarga, en este orden: (1) el borrador abierto del cliente, si tiene uno — se sigue editando
+    in place; (2) si no, el último Disponible de ese cliente (cualquier estado), para arrancar uno
+    nuevo con esos mismos artículos y cantidades; (3) si el cliente nunca tuvo uno, sus fichas de
+    logística, cantidad en 0.
+    """
+    cliente_id_valor = _id_opcional_desde_query(cliente_id)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if cliente_id_valor is None:
+        return templates.TemplateResponse(request, "disponibles.html", {"clientes": clientes, "cliente_id": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id_valor), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id_valor)
+        borrador = obtener_borrador_disponible(cliente_id_valor)
+        if borrador is not None:
+            disponible_id = borrador["id"]
+            fecha_desde = borrador["fecha_desde"]
+            fecha_hasta = borrador["fecha_hasta"]
+            renglones = listar_detalle_disponible(disponible_id)
+        else:
+            disponible_id = None
+            fecha_desde = fecha_hasta = _hoy_argentina()
+            ultimo = obtener_ultimo_disponible_cliente(cliente_id_valor)
+            renglones = listar_detalle_disponible(ultimo["id"]) if ultimo is not None else _renglones_iniciales_desde_fichas(fichas)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    mensaje = None
+    if guardado:
+        mensaje = "Se guardó el borrador."
+    elif generado:
+        mensaje = "Se guardó y se generó el Excel."
+
+    renglones_json = json.dumps(
+        [
+            {"articuloId": r["articulo_id"], "codigo": r["codigo"], "nombre": r["nombre"], "cantidad": float(r["cantidad"])}
+            for r in renglones
+        ]
+    )
+    catalogo_json = json.dumps(
+        [
+            {
+                "articuloId": f["articulo_id"],
+                "codigo": f.get("codigo_cliente"),
+                "nombre": f.get("nombre_cliente") or f["articulo_nombre"],
+            }
+            for f in fichas
+        ]
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "disponibles.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id_valor,
+            "cliente_nombre": cliente["nombre"],
+            "disponible_id": disponible_id,
+            "fecha_desde": fecha_desde.isoformat(),
+            "fecha_hasta": fecha_hasta.isoformat(),
+            "renglones_json": renglones_json,
+            "catalogo_json": catalogo_json,
+            "mensaje": mensaje,
+        },
+    )
+
+
+@app.post("/compras/disponibles/guardar")
+async def guardar_disponible_ruta(request: Request):
+    cliente, _disponible_id, _renglones, _fecha_desde, _fecha_hasta = await _guardar_pendientes_disponible(request)
+    return RedirectResponse(url=f"/compras/disponibles?cliente_id={cliente['id']}&guardado=1", status_code=303)
+
+
+@app.post("/compras/disponibles/guardar-y-exportar-excel")
+async def guardar_y_exportar_disponible_excel(request: Request):
+    """Guarda el Disponible, lo cierra en 'generado' (queda fijo, como historial) y devuelve el Excel."""
+    cliente, disponible_id, renglones, fecha_desde, fecha_hasta = await _guardar_pendientes_disponible(request)
+
+    try:
+        version = cerrar_disponible_generado(disponible_id, cliente["id"], fecha_desde)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo generar el Excel: {error_db}") from error_db
+
+    excel_bytes = generar_excel_disponibles(fecha_desde, fecha_hasta, renglones)
+    nombre_archivo = _nombre_archivo_disponibles(fecha_desde, version)
+
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
 
 
 @app.get("/compras/nueva/manual")

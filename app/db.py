@@ -393,7 +393,8 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, fl.envase_id, e.nombre AS envase_nombre,
+                SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, a.grupo AS articulo_grupo,
+                       fl.envase_id, e.nombre AS envase_nombre,
                        fl.contenido_caja, fl.unidad_venta, fl.envase_variable, fl.nombre_cliente, fl.codigo_cliente
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
@@ -1608,5 +1609,157 @@ def aprender_articulo(proveedor_id: int, texto_leido: str, articulo_id: int) -> 
                 (proveedor_id, texto_leido, articulo_id),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def obtener_borrador_disponible(cliente_id: int) -> dict | None:
+    """El borrador de Disponibles abierto de este cliente, si hay uno (a lo sumo uno, por el índice único)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, cliente_id, fecha_desde, fecha_hasta, estado, version, creado_en, actualizado_en
+                FROM disponibles
+                WHERE cliente_id = %s AND estado = 'borrador'
+                """,
+                (cliente_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def obtener_ultimo_disponible_cliente(cliente_id: int) -> dict | None:
+    """El Disponible más reciente de este cliente (cualquier estado), para precargar uno nuevo cuando
+    no hay borrador abierto. None si el cliente nunca tuvo uno."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, cliente_id, fecha_desde, fecha_hasta, estado, version, creado_en, actualizado_en
+                FROM disponibles
+                WHERE cliente_id = %s
+                ORDER BY creado_en DESC
+                LIMIT 1
+                """,
+                (cliente_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def listar_detalle_disponible(disponible_id: int) -> list[dict]:
+    """Renglones de un Disponible, en el orden en que van en la planilla."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, articulo_id, codigo, nombre, cantidad, orden
+                FROM disponibles_detalle
+                WHERE disponible_id = %s
+                ORDER BY orden
+                """,
+                (disponible_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def guardar_disponible(
+    disponible_id: int | None, cliente_id: int, fecha_desde, fecha_hasta, renglones: list[dict]
+) -> int:
+    """Crea (si disponible_id es None) o actualiza in place un borrador de Disponibles, reemplazando
+    todo su detalle. Nunca toca un Disponible 'generado' — quien llama solo pasa acá el id de un
+    borrador (ver obtener_borrador_disponible) o None para crear uno nuevo.
+
+    renglones: [{"articulo_id": int | None, "codigo": str | None, "nombre": str, "cantidad": float}, ...],
+    ya en el orden final (el orden en pantalla al guardar) — orden se asigna acá mismo, 1 a N.
+
+    Devuelve el id del Disponible (el mismo que se pasó, o el recién creado).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if disponible_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO disponibles (cliente_id, fecha_desde, fecha_hasta, estado)
+                    VALUES (%s, %s, %s, 'borrador')
+                    RETURNING id
+                    """,
+                    (cliente_id, fecha_desde, fecha_hasta),
+                )
+                disponible_id = cursor.fetchone()[0]
+            else:
+                cursor.execute(
+                    """
+                    UPDATE disponibles
+                    SET fecha_desde = %s, fecha_hasta = %s, actualizado_en = now()
+                    WHERE id = %s AND estado = 'borrador'
+                    """,
+                    (fecha_desde, fecha_hasta, disponible_id),
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError("Este Disponible ya fue generado, no se puede seguir editando.")
+
+            cursor.execute("DELETE FROM disponibles_detalle WHERE disponible_id = %s", (disponible_id,))
+            for orden, renglon in enumerate(renglones, start=1):
+                cursor.execute(
+                    """
+                    INSERT INTO disponibles_detalle (disponible_id, articulo_id, codigo, nombre, cantidad, orden)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (disponible_id, renglon["articulo_id"], renglon["codigo"], renglon["nombre"], renglon["cantidad"], orden),
+                )
+        conexion.commit()
+        return disponible_id
+    finally:
+        conexion.close()
+
+
+def cerrar_disponible_generado(disponible_id: int, cliente_id: int, fecha_desde) -> int:
+    """Pasa un Disponible a 'generado' (queda cerrado, como historial) y devuelve la versión que le tocó.
+
+    version = cuántos 'generado' ya existen para este mismo cliente_id + fecha_desde, + 1 — así el
+    nombre del archivo sale numerado (_v2, _v3, ...) si se genera más de uno el mismo día sin que se
+    pisen entre sí. Todo en una sola transacción para que el conteo y el cierre sean atómicos.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM disponibles WHERE cliente_id = %s AND fecha_desde = %s AND estado = 'generado'",
+                (cliente_id, fecha_desde),
+            )
+            version = cursor.fetchone()[0] + 1
+
+            cursor.execute(
+                """
+                UPDATE disponibles
+                SET estado = 'generado', version = %s, actualizado_en = now()
+                WHERE id = %s AND estado = 'borrador'
+                """,
+                (version, disponible_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("Este Disponible ya fue generado antes.")
+        conexion.commit()
+        return version
     finally:
         conexion.close()

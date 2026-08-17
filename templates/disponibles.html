@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disponibles</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .vacio { color: #888; font-style: italic; }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.35rem 0 0; }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  select, input[type="date"], input[type="number"], input[type="text"] {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .fila-fechas {
+    display: flex;
+    gap: 0.6rem;
+  }
+  .fila-fechas > div { flex: 1 1 50%; }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.85rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; margin-top: 0.5rem; padding: 0.6rem; font-size: 0.9rem; }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+
+  .renglon {
+    padding: 0.85rem 0;
+    border-top: 1px solid #eee;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .renglon .nombre-articulo { font-weight: 700; font-size: 1rem; margin: 0 0 0.1rem; }
+  .renglon .codigo-articulo { color: #888; font-size: 0.82rem; margin: 0 0 0.5rem; }
+  .renglon .input-codigo, .renglon .input-nombre { margin-top: 0.4rem; }
+  .renglon label { margin-top: 0.5rem; }
+  /* Cantidad: input grande, pensado para tocar con el pulgar en el Mercado. */
+  .input-cantidad {
+    font-size: 1.3rem;
+    font-weight: 700;
+    padding: 0.9rem;
+    text-align: center;
+  }
+
+  .buscador-articulo { position: relative; }
+  .lista-articulos {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-articulos.visible { display: block; }
+  .opcion-articulo {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-articulo:last-child { border-bottom: none; }
+  .opcion-articulo:active { background: #f0f5ff; }
+
+  .separador-agregar {
+    margin: 1.1rem 0 0.75rem;
+    padding-top: 1rem;
+    border-top: 2px solid #eee;
+  }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Disponibles" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if mensaje %}
+  <div class="aviso">{{ mensaje }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form method="get" action="/compras/disponibles" id="form-selector">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  {% if not cliente_id %}
+  <div class="tarjeta">
+    <p class="vacio">Elegí un cliente para armarle su Disponible.</p>
+  </div>
+  {% else %}
+
+  <div class="tarjeta">
+    <h2>Fecha</h2>
+    <div class="fila-fechas">
+      <div>
+        <label for="fecha_desde">Desde</label>
+        <input type="date" id="fecha_desde" value="{{ fecha_desde }}">
+      </div>
+      <div>
+        <label for="fecha_hasta">Hasta</label>
+        <input type="date" id="fecha_hasta" value="{{ fecha_hasta }}">
+      </div>
+    </div>
+    <p class="ayuda">Si es un solo día, dejá las dos fechas iguales.</p>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Artículos</h2>
+    <div id="lista-renglones"></div>
+    <p class="vacio" id="aviso-sin-renglones" style="display:none;">Todavía no hay artículos. Agregá uno abajo.</p>
+
+    <div class="separador-agregar">
+      <label for="buscar_articulo_texto">Agregar desde el catálogo</label>
+      <div class="buscador-articulo">
+        <input type="text" id="buscar_articulo_texto" autocomplete="off" placeholder="Buscar artículo..."
+               onfocus="actualizarListaArticulos()" oninput="actualizarListaArticulos()" onblur="ocultarListaArticulosConDemora()">
+        <div class="lista-articulos" id="lista-articulos"></div>
+      </div>
+    </div>
+
+    <div class="separador-agregar">
+      <label for="agregar_codigo_manual">Código (opcional, si no tiene ficha)</label>
+      <input type="text" id="agregar_codigo_manual" placeholder="Código">
+      <label for="agregar_nombre_manual">Producto</label>
+      <input type="text" id="agregar_nombre_manual" placeholder="Nombre del producto">
+      <button type="button" class="boton-secundario" onclick="agregarRenglonManual()">Agregar a mano</button>
+    </div>
+  </div>
+
+  <div class="tarjeta">
+    <button type="button" class="boton-exito" id="boton-guardar" onclick="guardar()">Guardar</button>
+    <button type="button" class="boton" id="boton-generar" onclick="guardarYGenerarExcel()">Guardar y generar Excel</button>
+  </div>
+
+  <script>
+    const CLIENTE_ID = {{ cliente_id }};
+    const DISPONIBLE_ID = {{ disponible_id if disponible_id is not none else "null" }};
+    const CATALOGO = {{ catalogo_json|safe }};
+    let renglones = {{ renglones_json|safe }};
+
+    function crearElemento(tipo, clase, texto) {
+      const el = document.createElement(tipo);
+      if (clase) el.className = clase;
+      if (texto !== undefined) el.textContent = texto;
+      return el;
+    }
+
+    function renderizarRenglones() {
+      const contenedor = document.getElementById("lista-renglones");
+      contenedor.innerHTML = "";
+      document.getElementById("aviso-sin-renglones").style.display = renglones.length === 0 ? "block" : "none";
+
+      renglones.forEach(function (r, indice) {
+        const fila = crearElemento("div", "renglon");
+
+        if (r.articuloId !== null) {
+          fila.appendChild(crearElemento("p", "nombre-articulo", r.nombre));
+          fila.appendChild(crearElemento("p", "codigo-articulo", "Código: " + (r.codigo || "Sin código")));
+        } else {
+          const inputCodigo = document.createElement("input");
+          inputCodigo.type = "text";
+          inputCodigo.className = "input-codigo";
+          inputCodigo.placeholder = "Código (opcional)";
+          inputCodigo.value = r.codigo || "";
+          inputCodigo.addEventListener("input", function () { renglones[indice].codigo = inputCodigo.value.trim() || null; });
+          fila.appendChild(inputCodigo);
+
+          const inputNombre = document.createElement("input");
+          inputNombre.type = "text";
+          inputNombre.className = "input-nombre";
+          inputNombre.placeholder = "Producto";
+          inputNombre.value = r.nombre || "";
+          inputNombre.addEventListener("input", function () { renglones[indice].nombre = inputNombre.value; });
+          fila.appendChild(inputNombre);
+        }
+
+        fila.appendChild(crearElemento("label", null, "Cantidad"));
+        const inputCantidad = document.createElement("input");
+        inputCantidad.type = "number";
+        inputCantidad.className = "input-cantidad";
+        inputCantidad.step = "0.01";
+        inputCantidad.min = "0";
+        inputCantidad.value = r.cantidad;
+        inputCantidad.addEventListener("input", function () { renglones[indice].cantidad = inputCantidad.value; });
+        fila.appendChild(inputCantidad);
+
+        const botonQuitar = crearElemento("button", "boton-peligro", "Quitar");
+        botonQuitar.type = "button";
+        botonQuitar.addEventListener("click", function () { quitarRenglon(indice); });
+        fila.appendChild(botonQuitar);
+
+        contenedor.appendChild(fila);
+      });
+    }
+
+    function quitarRenglon(indice) {
+      renglones.splice(indice, 1);
+      renderizarRenglones();
+    }
+
+    function normalizarBusqueda(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaArticulos() {
+      const input = document.getElementById("buscar_articulo_texto");
+      const contenedor = document.getElementById("lista-articulos");
+      const filtro = normalizarBusqueda(input.value);
+      const idsYaAgregados = renglones.map(function (r) { return r.articuloId; });
+      const coincidencias = CATALOGO.filter(function (a) {
+        if (idsYaAgregados.indexOf(a.articuloId) !== -1) return false;
+        return !filtro || a.nombre.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (a) {
+        const opcion = crearElemento("div", "opcion-articulo", a.nombre);
+        opcion.addEventListener("mousedown", function (evento) { evento.preventDefault(); });
+        opcion.addEventListener("click", function () { agregarRenglonDeCatalogo(a); });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaArticulosConDemora() {
+      // Demora corta: si no, el blur se dispara antes que el click de la
+      // opción tocada (mousedown ya lo evita para el foco, pero en algunos
+      // navegadores móviles el blur igual gana la carrera).
+      setTimeout(function () { document.getElementById("lista-articulos").classList.remove("visible"); }, 150);
+    }
+
+    function agregarRenglonDeCatalogo(articulo) {
+      renglones.push({ articuloId: articulo.articuloId, codigo: articulo.codigo, nombre: articulo.nombre, cantidad: 0 });
+      document.getElementById("buscar_articulo_texto").value = "";
+      document.getElementById("lista-articulos").classList.remove("visible");
+      renderizarRenglones();
+    }
+
+    function agregarRenglonManual() {
+      const campoNombre = document.getElementById("agregar_nombre_manual");
+      const campoCodigo = document.getElementById("agregar_codigo_manual");
+      const nombre = campoNombre.value.trim();
+      if (!nombre) {
+        alert("Escribí el nombre del producto.");
+        return;
+      }
+      renglones.push({ articuloId: null, codigo: campoCodigo.value.trim() || null, nombre: nombre, cantidad: 0 });
+      campoNombre.value = "";
+      campoCodigo.value = "";
+      renderizarRenglones();
+    }
+
+    function validarAntesDeGuardar() {
+      const fechaDesde = document.getElementById("fecha_desde").value;
+      const fechaHasta = document.getElementById("fecha_hasta").value;
+      if (!fechaDesde || !fechaHasta) {
+        alert("Completá las dos fechas.");
+        return false;
+      }
+      if (fechaHasta < fechaDesde) {
+        alert("La fecha hasta no puede ser anterior a la fecha desde.");
+        return false;
+      }
+      if (renglones.length === 0) {
+        alert("Agregá al menos un artículo.");
+        return false;
+      }
+      for (let i = 0; i < renglones.length; i++) {
+        if (!renglones[i].nombre || !String(renglones[i].nombre).trim()) {
+          alert("Todos los renglones necesitan un producto.");
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function datosFormulario() {
+      const datos = new URLSearchParams();
+      datos.set("cliente_id", CLIENTE_ID);
+      datos.set("disponible_id", DISPONIBLE_ID !== null ? DISPONIBLE_ID : "");
+      datos.set("fecha_desde", document.getElementById("fecha_desde").value);
+      datos.set("fecha_hasta", document.getElementById("fecha_hasta").value);
+      renglones.forEach(function (r, indice) {
+        datos.set("renglon_articulo_id_" + indice, r.articuloId !== null ? r.articuloId : "");
+        datos.set("renglon_codigo_" + indice, r.codigo || "");
+        datos.set("renglon_nombre_" + indice, r.nombre);
+        datos.set("renglon_cantidad_" + indice, r.cantidad);
+      });
+      return datos;
+    }
+
+    function guardar() {
+      if (!validarAntesDeGuardar()) return;
+
+      const formOculto = document.createElement("form");
+      formOculto.method = "post";
+      formOculto.action = "/compras/disponibles/guardar";
+      const datos = datosFormulario();
+      datos.forEach(function (valor, nombre) {
+        const campo = document.createElement("input");
+        campo.type = "hidden";
+        campo.name = nombre;
+        campo.value = valor;
+        formOculto.appendChild(campo);
+      });
+
+      const boton = document.getElementById("boton-guardar");
+      boton.disabled = true;
+      boton.textContent = "Guardando...";
+
+      document.body.appendChild(formOculto);
+      formOculto.submit();
+    }
+
+    // "Guardar y generar Excel" guarda y cierra el Disponible (queda
+    // 'generado', como historial) y recién después arma el archivo — se
+    // pide por fetch (sin navegar) y se dispara la descarga con un blob
+    // temporal; recién cuando arrancó se navega de vuelta a esta pantalla,
+    // que va a precargar un Disponible nuevo (ya no hay borrador).
+    async function guardarYGenerarExcel() {
+      if (!validarAntesDeGuardar()) return;
+
+      const botonGenerar = document.getElementById("boton-generar");
+      const botonGuardar = document.getElementById("boton-guardar");
+      const textoOriginal = botonGenerar.textContent;
+      botonGenerar.disabled = true;
+      botonGenerar.textContent = "Generando...";
+      botonGuardar.disabled = true;
+
+      const datos = datosFormulario();
+
+      let respuesta;
+      try {
+        respuesta = await fetch("/compras/disponibles/guardar-y-exportar-excel", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: datos.toString(),
+        });
+      } catch (error) {
+        alert("No se pudo guardar ni generar el Excel. Probá de nuevo.");
+        botonGenerar.disabled = false;
+        botonGenerar.textContent = textoOriginal;
+        botonGuardar.disabled = false;
+        return;
+      }
+
+      if (!respuesta.ok) {
+        let detalle = "No se pudo guardar ni generar el Excel.";
+        try {
+          const cuerpo = await respuesta.json();
+          if (cuerpo && cuerpo.detail) detalle = cuerpo.detail;
+        } catch (error) {
+          // Respuesta sin cuerpo JSON — se usa el mensaje genérico.
+        }
+        alert(detalle);
+        botonGenerar.disabled = false;
+        botonGenerar.textContent = textoOriginal;
+        botonGuardar.disabled = false;
+        return;
+      }
+
+      const blob = await respuesta.blob();
+      const disposicion = respuesta.headers.get("content-disposition") || "";
+      const coincidencia = disposicion.match(/filename="?([^"]+)"?/);
+      const nombreArchivo = coincidencia ? coincidencia[1] : "Disponibles.xlsx";
+
+      const urlBlob = URL.createObjectURL(blob);
+      const enlace = document.createElement("a");
+      enlace.href = urlBlob;
+      enlace.download = nombreArchivo;
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      setTimeout(function () { URL.revokeObjectURL(urlBlob); }, 30000);
+
+      setTimeout(function () {
+        window.location.href = "/compras/disponibles?cliente_id=" + CLIENTE_ID + "&generado=1";
+      }, 800);
+    }
+
+    renderizarRenglones();
+  </script>
+
+  {% endif %}
+
+  <a class="volver" href="/compras">Volver a Compras</a>
+</body>
+</html>

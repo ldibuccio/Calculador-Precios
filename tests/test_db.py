@@ -6,12 +6,14 @@ from app.db import (
     actualizar_cliente,
     actualizar_precio_compra,
     buscar_compras,
+    cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_precio_bloqueado,
     crear_cliente,
     crear_compra,
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
+    guardar_disponible,
     guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
     listar_clientes,
@@ -20,12 +22,15 @@ from app.db import (
     listar_compras_pendientes_retiro,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
+    listar_detalle_disponible,
     listar_fotos_para_limpiar,
     listar_precios_vigentes_por_cliente,
     marcar_compra_cancelada,
     marcar_compra_no_ingresada,
     marcar_compra_retirada,
+    obtener_borrador_disponible,
     obtener_detalle_compra,
+    obtener_ultimo_disponible_cliente,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
@@ -927,3 +932,170 @@ def test_guardar_precios_cliente_con_foto_ruta_la_guarda_en_cada_fila():
     assert "foto_ruta" in consulta
     assert "COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)" in consulta
     assert parametros == (7, 1, 550.0, "2026-08-16/dia-123-abc.jpg")
+
+
+def test_obtener_borrador_disponible_devuelve_la_fila():
+    conexion, cursor = _conexion_falsa(
+        filas_fetchone=[(30, 1, date(2026, 8, 14), date(2026, 8, 14), "borrador", None, "2026-08-14T09:00", "2026-08-14T09:00")]
+    )
+    cursor.description = [
+        ("id",), ("cliente_id",), ("fecha_desde",), ("fecha_hasta",), ("estado",), ("version",), ("creado_en",), ("actualizado_en",),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_borrador_disponible(1)
+
+    assert resultado["id"] == 30
+    assert resultado["estado"] == "borrador"
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "estado = 'borrador'" in consulta
+    assert parametros == (1,)
+
+
+def test_obtener_borrador_disponible_devuelve_none_si_no_hay():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_borrador_disponible(1)
+
+    assert resultado is None
+
+
+def test_obtener_ultimo_disponible_cliente_devuelve_el_mas_reciente():
+    conexion, cursor = _conexion_falsa(
+        filas_fetchone=[(29, 1, date(2026, 8, 10), date(2026, 8, 10), "generado", 1, "2026-08-10T09:00", "2026-08-10T09:00")]
+    )
+    cursor.description = [
+        ("id",), ("cliente_id",), ("fecha_desde",), ("fecha_hasta",), ("estado",), ("version",), ("creado_en",), ("actualizado_en",),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_ultimo_disponible_cliente(1)
+
+    assert resultado["id"] == 29
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "ORDER BY creado_en DESC" in consulta
+    assert parametros == (1,)
+
+
+def test_obtener_ultimo_disponible_cliente_devuelve_none_si_nunca_tuvo():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_ultimo_disponible_cliente(1)
+
+    assert resultado is None
+
+
+def test_listar_detalle_disponible_devuelve_filas_en_orden():
+    conexion, cursor = _conexion_falsa(
+        filas_fetchall=[(1, 5, "90039", "Manzana", 40.0, 1), (2, None, None, "Frutilla", 12.0, 2)]
+    )
+    cursor.description = [("id",), ("articulo_id",), ("codigo",), ("nombre",), ("cantidad",), ("orden",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_detalle_disponible(30)
+
+    assert resultado == [
+        {"id": 1, "articulo_id": 5, "codigo": "90039", "nombre": "Manzana", "cantidad": 40.0, "orden": 1},
+        {"id": 2, "articulo_id": None, "codigo": None, "nombre": "Frutilla", "cantidad": 12.0, "orden": 2},
+    ]
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "ORDER BY orden" in consulta
+    assert parametros == (30,)
+
+
+def test_guardar_disponible_nuevo_inserta_cabecera_y_detalle():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(42,)])
+
+    renglones = [
+        {"articulo_id": 5, "codigo": "90039", "nombre": "Manzana", "cantidad": 40.0},
+        {"articulo_id": None, "codigo": None, "nombre": "Frutilla", "cantidad": 12.0},
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = guardar_disponible(None, 1, date(2026, 8, 14), date(2026, 8, 14), renglones)
+
+    assert resultado == 42
+    llamadas = cursor.execute.call_args_list
+    assert "INSERT INTO disponibles" in llamadas[0].args[0]
+    assert llamadas[0].args[1] == (1, date(2026, 8, 14), date(2026, 8, 14))
+    assert "DELETE FROM disponibles_detalle" in llamadas[1].args[0]
+    assert llamadas[1].args[1] == (42,)
+    assert "INSERT INTO disponibles_detalle" in llamadas[2].args[0]
+    assert llamadas[2].args[1] == (42, 5, "90039", "Manzana", 40.0, 1)
+    assert llamadas[3].args[1] == (42, None, None, "Frutilla", 12.0, 2)
+    conexion.commit.assert_called_once()
+
+
+def test_guardar_disponible_existente_actualiza_cabecera_y_reemplaza_detalle():
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1  # el UPDATE encontró el borrador
+
+    renglones = [{"articulo_id": 5, "codigo": "90039", "nombre": "Manzana", "cantidad": 38.0}]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = guardar_disponible(30, 1, date(2026, 8, 14), date(2026, 8, 15), renglones)
+
+    assert resultado == 30
+    llamadas = cursor.execute.call_args_list
+    assert "UPDATE disponibles" in llamadas[0].args[0]
+    assert "estado = 'borrador'" in llamadas[0].args[0]
+    assert llamadas[0].args[1] == (date(2026, 8, 14), date(2026, 8, 15), 30)
+    assert "DELETE FROM disponibles_detalle" in llamadas[1].args[0]
+    conexion.commit.assert_called_once()
+
+
+def test_guardar_disponible_existente_ya_generado_lanza_error():
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 0  # no matcheó ningún borrador con ese id (ya está generado)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            guardar_disponible(30, 1, date(2026, 8, 14), date(2026, 8, 14), [])
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert "ya fue generado" in str(error)
+
+    conexion.commit.assert_not_called()
+
+
+def test_cerrar_disponible_generado_primera_vez_devuelve_version_1():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,)])  # SELECT COUNT(*): ningún generado previo
+    cursor.rowcount = 1
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        version = cerrar_disponible_generado(30, 1, date(2026, 8, 14))
+
+    assert version == 1
+    llamadas = cursor.execute.call_args_list
+    assert "SELECT COUNT(*)" in llamadas[0].args[0]
+    assert llamadas[0].args[1] == (1, date(2026, 8, 14))
+    assert "UPDATE disponibles" in llamadas[1].args[0]
+    assert "estado = 'generado'" in llamadas[1].args[0]
+    assert llamadas[1].args[1] == (1, 30)
+    conexion.commit.assert_called_once()
+
+
+def test_cerrar_disponible_generado_reenvio_el_mismo_dia_suma_version():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(2,)])  # ya hay 2 generados ese mismo cliente+fecha
+    cursor.rowcount = 1
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        version = cerrar_disponible_generado(31, 1, date(2026, 8, 14))
+
+    assert version == 3
+
+
+def test_cerrar_disponible_generado_ya_cerrado_lanza_error():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,)])
+    cursor.rowcount = 0  # no matcheó ningún borrador con ese id
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            cerrar_disponible_generado(30, 1, date(2026, 8, 14))
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert "ya fue generado" in str(error)
+
+    conexion.commit.assert_not_called()

@@ -1870,10 +1870,11 @@ def test_ver_compras_botonera_diferencia_grupos_por_color():
     assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
     assert ".boton-naranja { background: #ea580c; }" in respuesta.text
     # "Próximamente": color del grupo pero atenuado (mismo criterio en
-    # Cargar y en Operaciones). Cargar Listado de Compras y Buscar Compras
-    # ya no son "próximamente" — quedaron activos.
+    # Cargar y en Operaciones). Cargar Listado de Compras, Buscar Compras y
+    # Disponibles ya no son "próximamente" — quedaron activos.
     assert 'class="boton" href="/compras/nueva/listado"' in respuesta.text
-    assert 'class="boton boton-naranja boton-proximamente" href="/compras/disponibles"' in respuesta.text
+    assert 'class="boton boton-naranja" href="/compras/disponibles"' in respuesta.text
+    assert "Disponibles (Próximamente)" not in respuesta.text
     assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
 
 
@@ -6542,3 +6543,334 @@ def test_barra_navegacion_muestra_el_titulo_del_sector_en_las_pantallas_principa
         respuesta = cliente.get(url)
         assert respuesta.status_code == 200
         assert f'<div class="barra-titulo">{nombre}</div>' in respuesta.text
+
+
+# --- /compras/disponibles ---
+
+FICHAS_DISPONIBLES_DE_PRUEBA = [
+    {
+        "id": 1, "articulo_id": 10, "articulo_nombre": "Tomate Cherry", "articulo_grupo": "hortaliza",
+        "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+        "envase_variable": False, "nombre_cliente": "TOM CHERRY", "codigo_cliente": "90039",
+    },
+    {
+        "id": 2, "articulo_id": 11, "articulo_nombre": "Manzana Roja", "articulo_grupo": "fruta",
+        "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+        "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "20044",
+    },
+    {
+        "id": 3, "articulo_id": 12, "articulo_nombre": "Cubeta Pesada", "articulo_grupo": "pesada",
+        "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "cubeta",
+        "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "10021",
+    },
+    {
+        # Sin código ni nombre de cliente: nunca se le armó la ficha de
+        # logística completa para este cliente todavía — no se precarga
+        # sola, hay que agregarla a mano desde "Agregar desde el catálogo".
+        "id": 4, "articulo_id": 13, "articulo_nombre": "Sin Alias Todavía", "articulo_grupo": "fruta",
+        "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+        "envase_variable": False, "nombre_cliente": None, "codigo_cliente": None,
+    },
+]
+
+BORRADOR_DISPONIBLE_DE_PRUEBA = {
+    "id": 30, "cliente_id": 1, "fecha_desde": date(2026, 8, 14), "fecha_hasta": date(2026, 8, 14),
+    "estado": "borrador", "version": None,
+}
+
+DETALLE_DISPONIBLE_DE_PRUEBA = [
+    {"id": 1, "articulo_id": 10, "codigo": "90039", "nombre": "TOM CHERRY", "cantidad": 38.0, "orden": 1},
+    {"id": 2, "articulo_id": None, "codigo": None, "nombre": "Frutilla", "cantidad": 12.0, "orden": 2},
+]
+
+
+def test_ver_disponibles_sin_cliente_muestra_selector():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/disponibles")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente para armarle su Disponible." in respuesta.text
+    assert "Día" in respuesta.text
+
+
+def test_ver_disponibles_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/disponibles?cliente_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_disponibles_error_de_base_da_500():
+    with patch("app.main.listar_clientes", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/disponibles")
+
+    assert respuesta.status_code == 500
+
+
+def test_ver_disponibles_precarga_desde_borrador_existente():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_DISPONIBLES_DE_PRUEBA),
+        patch("app.main.obtener_borrador_disponible", return_value=BORRADOR_DISPONIBLE_DE_PRUEBA) as mock_borrador,
+        patch("app.main.listar_detalle_disponible", return_value=DETALLE_DISPONIBLE_DE_PRUEBA) as mock_detalle,
+        patch("app.main.obtener_ultimo_disponible_cliente") as mock_ultimo,
+    ):
+        respuesta = cliente.get("/compras/disponibles?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    mock_borrador.assert_called_once_with(1)
+    mock_detalle.assert_called_once_with(30)
+    mock_ultimo.assert_not_called()
+    # Los renglones del borrador (con lo ya cargado) quedan embebidos para editar.
+    assert '"nombre": "TOM CHERRY"' in respuesta.text
+    assert '"cantidad": 38.0' in respuesta.text
+    assert '"nombre": "Frutilla"' in respuesta.text
+    assert "2026-08-14" in respuesta.text
+
+
+def test_ver_disponibles_precarga_desde_ultimo_disponible_si_no_hay_borrador():
+    ultimo = {"id": 29, "cliente_id": 1, "fecha_desde": date(2026, 8, 10), "fecha_hasta": date(2026, 8, 10)}
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_DISPONIBLES_DE_PRUEBA),
+        patch("app.main.obtener_borrador_disponible", return_value=None),
+        patch("app.main.obtener_ultimo_disponible_cliente", return_value=ultimo) as mock_ultimo,
+        patch("app.main.listar_detalle_disponible", return_value=DETALLE_DISPONIBLE_DE_PRUEBA) as mock_detalle,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 16)),
+    ):
+        respuesta = cliente.get("/compras/disponibles?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    mock_ultimo.assert_called_once_with(1)
+    mock_detalle.assert_called_once_with(29)
+    # Nuevo Disponible (sin id todavía) pero con los renglones del último, y
+    # la fecha por default es HOY, no la del último Disponible (10/08).
+    assert "null" in respuesta.text  # DISPONIBLE_ID = null
+    assert 'value="2026-08-16"' in respuesta.text
+    assert '"nombre": "TOM CHERRY"' in respuesta.text
+
+
+def test_ver_disponibles_precarga_desde_fichas_si_nunca_tuvo_uno():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_DISPONIBLES_DE_PRUEBA),
+        patch("app.main.obtener_borrador_disponible", return_value=None),
+        patch("app.main.obtener_ultimo_disponible_cliente", return_value=None),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 16)),
+    ):
+        respuesta = cliente.get("/compras/disponibles?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # Orden fruta -> hortaliza -> pesada dentro de "renglones" (la precarga
+    # editable) — no dentro de CATALOGO, que lista las fichas tal cual
+    # vienen de la base, sin reordenar. Se busca a partir de "let renglones"
+    # para no confundirse con el orden de CATALOGO, que aparece antes.
+    texto_renglones = respuesta.text[respuesta.text.index("let renglones"):]
+    indice_manzana = texto_renglones.index("Manzana Roja")
+    indice_tomate = texto_renglones.index("TOM CHERRY")
+    indice_cubeta = texto_renglones.index("Cubeta Pesada")
+    assert indice_manzana < indice_tomate < indice_cubeta
+    # Sin nombre_cliente cargado (Manzana Roja), cae al nombre interno del artículo.
+    assert '"nombre": "Manzana Roja"' in respuesta.text
+    # Cantidad en 0: primera vez, no hay nada previo que sugerir.
+    assert '"cantidad": 0.0}' in respuesta.text
+    # Sin código NI nombre de cliente todavía: no se precarga sola.
+    assert '"nombre": "Sin Alias Todavía"' not in texto_renglones
+
+
+def test_guardar_disponible_ruta_guarda_y_redirige():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.guardar_disponible", return_value=30) as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_articulo_id_0": "10",
+                "renglon_codigo_0": "90039",
+                "renglon_nombre_0": "TOM CHERRY",
+                "renglon_cantidad_0": "38",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/disponibles?cliente_id=1&guardado=1"
+    mock_guardar.assert_called_once_with(
+        None, 1, date(2026, 8, 14), date(2026, 8, 14),
+        [{"articulo_id": 10, "codigo": "90039", "nombre": "TOM CHERRY", "cantidad": 38.0}],
+    )
+
+
+def test_guardar_disponible_ruta_con_disponible_id_actualiza_el_mismo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.guardar_disponible", return_value=30) as mock_guardar,
+    ):
+        cliente.post(
+            "/compras/disponibles/guardar",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "30",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_articulo_id_0": "",
+                "renglon_codigo_0": "",
+                "renglon_nombre_0": "Frutilla",
+                "renglon_cantidad_0": "12",
+            },
+        )
+
+    mock_guardar.assert_called_once_with(
+        30, 1, date(2026, 8, 14), date(2026, 8, 14),
+        [{"articulo_id": None, "codigo": None, "nombre": "Frutilla", "cantidad": 12.0}],
+    )
+
+
+def test_guardar_disponible_ruta_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar",
+            data={"cliente_id": "999", "disponible_id": "", "fecha_desde": "2026-08-14", "fecha_hasta": "2026-08-14"},
+        )
+
+    assert respuesta.status_code == 404
+
+
+def test_guardar_disponible_ruta_fecha_hasta_anterior_a_desde_da_400():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-10",
+                "renglon_nombre_0": "Frutilla",
+                "renglon_cantidad_0": "12",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser anterior" in respuesta.text
+
+
+def test_guardar_disponible_ruta_sin_renglones_da_400():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar",
+            data={"cliente_id": "1", "disponible_id": "", "fecha_desde": "2026-08-14", "fecha_hasta": "2026-08-14"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Agregá al menos un artículo" in respuesta.text
+
+
+def test_guardar_disponible_ruta_cantidad_no_numerica_da_400():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_nombre_0": "Frutilla",
+                "renglon_cantidad_0": "no-es-un-numero",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser un número" in respuesta.text
+
+
+def test_guardar_disponible_ruta_cantidad_negativa_da_400():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_nombre_0": "Frutilla",
+                "renglon_cantidad_0": "-5",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser negativa" in respuesta.text
+
+
+def test_guardar_y_exportar_disponible_excel_cierra_y_devuelve_excel():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.guardar_disponible", return_value=30),
+        patch("app.main.cerrar_disponible_generado", return_value=1) as mock_cerrar,
+    ):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar-y-exportar-excel",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_articulo_id_0": "10",
+                "renglon_codigo_0": "90039",
+                "renglon_nombre_0": "TOM CHERRY",
+                "renglon_cantidad_0": "38",
+            },
+        )
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert 'filename="Disponibles_Frutamax_14_Ago_2026.xlsx"' in respuesta.headers["content-disposition"]
+    mock_cerrar.assert_called_once_with(30, 1, date(2026, 8, 14))
+
+
+def test_guardar_y_exportar_disponible_excel_con_reenvio_agrega_sufijo_de_version():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.guardar_disponible", return_value=31),
+        patch("app.main.cerrar_disponible_generado", return_value=2),
+    ):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar-y-exportar-excel",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_nombre_0": "Frutilla",
+                "renglon_cantidad_0": "12",
+            },
+        )
+
+    assert respuesta.status_code == 200
+    assert 'filename="Disponibles_Frutamax_14_Ago_2026_v2.xlsx"' in respuesta.headers["content-disposition"]
+
+
+def test_guardar_y_exportar_disponible_excel_error_de_base_da_500():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.guardar_disponible", return_value=30),
+        patch("app.main.cerrar_disponible_generado", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.post(
+            "/compras/disponibles/guardar-y-exportar-excel",
+            data={
+                "cliente_id": "1",
+                "disponible_id": "",
+                "fecha_desde": "2026-08-14",
+                "fecha_hasta": "2026-08-14",
+                "renglon_nombre_0": "Frutilla",
+                "renglon_cantidad_0": "12",
+            },
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo generar el Excel" in respuesta.text
