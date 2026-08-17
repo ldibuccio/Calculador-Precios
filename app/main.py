@@ -2271,6 +2271,7 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
 def editar_compra(
     request: Request,
     compra_id: int,
+    accion: str = Form("guardar"),
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
@@ -2278,6 +2279,18 @@ def editar_compra(
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
 ):
+    """"Guardar" actualiza el renglón que se está editando (bloqueado si ya está recepcionado/retirado).
+
+    "Agregar artículo" es una operación totalmente distinta: inserta una
+    compra NUEVA en la misma guía (mismo proveedor y fecha_operacion que
+    la compra que se está editando, tomando de ahí el próximo punto de
+    guía — mismo mecanismo de crear_compra que cualquier carga). Nunca
+    toca ni hereda el estado de la compra que se está editando: entra con
+    estado/estado_retiro 'pendiente' como cualquier compra nueva, así que
+    aparece en Logística para retirar aunque el renglón original ya esté
+    retirado. Por eso "Agregar artículo" queda habilitado incluso cuando
+    el renglón viejo está bloqueado — no pasa por actualizar_compra.
+    """
     try:
         compra_actual = obtener_compra(compra_id)
     except Exception as error_db:
@@ -2349,6 +2362,47 @@ def editar_compra(
         cantidad_kilos, cantidad_fraccion = total, None
     else:
         cantidad_kilos, cantidad_fraccion = None, total
+
+    if accion == "agregar":
+        try:
+            crear_compra(
+                compra_actual["fecha_operacion"],
+                valores["articulo_id"],
+                compra_actual["proveedor_id"],
+                valores["cantidad_cajones"],
+                valores["contenido_por_cajon"],
+                cantidad_kilos,
+                cantidad_fraccion,
+                valores["importe"],
+                valores["sena"],
+                valores["tipo_retiro"],
+            )
+        except Exception as error_db:
+            articulos = listar_articulos()
+            compra = {
+                "id": compra_id,
+                "articulo_id": valores["articulo_id"],
+                "proveedor_nombre": compra_actual["proveedor_nombre"],
+                "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
+                "cantidad_cajones": cantidad_cajones,
+                "contenido_por_cajon": contenido_por_cajon,
+                "importe": importe,
+                "sena": sena,
+                "tipo_retiro": tipo_retiro,
+            }
+            return templates.TemplateResponse(
+                request,
+                "compra_form.html",
+                {
+                    "articulos": articulos,
+                    "modo": "editar",
+                    "compra": compra,
+                    "error": f"No se pudo agregar el artículo: {error_db}",
+                },
+                status_code=500,
+            )
+
+        return RedirectResponse(url=f"/compras/{compra_id}/editar", status_code=303)
 
     try:
         actualizar_compra(

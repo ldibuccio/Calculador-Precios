@@ -2601,6 +2601,94 @@ def test_editar_compra_exitosa_redirige_a_compras():
     mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Carro")
 
 
+def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
+    # "Agregar artículo" NO actualiza el renglón 30: inserta una compra
+    # nueva (mismo proveedor y fecha que la compra editada — crear_compra
+    # arma el siguiente punto de esa guía solo). Se queda en la pantalla
+    # de edición del renglón original, no va a Buscar Compras.
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "accion": "agregar",
+                "articulo_id": "6",
+                "cantidad_cajones": "5",
+                "contenido_por_cajon": "10",
+                "importe": "20000",
+                "sena": "",
+                "tipo_retiro": "Pases",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/30/editar"
+    mock_actualizar.assert_not_called()
+    mock_crear.assert_called_once_with(
+        COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0, None, 20000.0, None, "Pases"
+    )
+
+
+def test_editar_compra_agregar_articulo_funciona_aunque_el_renglon_original_este_bloqueado():
+    # Punto 3: agregar no es editar. Aunque el renglón 30 ya esté
+    # recepcionado/retirado (bloqueado para Guardar), "Agregar artículo"
+    # tiene que seguir funcionando — no pasa por actualizar_compra.
+    compra_bloqueada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_bloqueada),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "accion": "agregar",
+                "articulo_id": "6",
+                "cantidad_cajones": "5",
+                "contenido_por_cajon": "10",
+                "importe": "20000",
+                "sena": "",
+                "tipo_retiro": "Pases",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/30/editar"
+    mock_actualizar.assert_not_called()
+    mock_crear.assert_called_once()
+
+
+def test_editar_compra_agregar_articulo_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.crear_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "accion": "agregar",
+                "articulo_id": "6",
+                "cantidad_cajones": "5",
+                "contenido_por_cajon": "10",
+                "importe": "20000",
+                "sena": "",
+                "tipo_retiro": "Pases",
+            },
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo agregar el artículo" in respuesta.text
+
+
 def test_editar_compra_inexistente_da_404():
     with patch("app.main.obtener_compra", return_value=None):
         respuesta = cliente.post(
@@ -2689,7 +2777,10 @@ def test_editar_compra_ya_retirada_da_400_con_el_mensaje():
     assert "Esta compra ya fue retirada, no se puede editar." in respuesta.text
 
 
-def test_ver_editar_compra_recepcionada_muestra_aviso_y_deshabilita_el_form():
+def test_ver_editar_compra_recepcionada_muestra_aviso_y_deshabilita_solo_guardar():
+    # Solo el botón Guardar se deshabilita — los campos y "Agregar artículo"
+    # tienen que seguir usables: agregar un artículo nuevo a la guía es una
+    # operación distinta de editar el renglón bloqueado.
     compra_bloqueada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
     with (
         patch("app.main.obtener_compra", return_value=compra_bloqueada),
@@ -2699,7 +2790,9 @@ def test_ver_editar_compra_recepcionada_muestra_aviso_y_deshabilita_el_form():
 
     assert respuesta.status_code == 200
     assert "Esta compra ya fue recepcionada o retirada, no se puede editar." in respuesta.text
-    assert "<fieldset disabled>" in respuesta.text
+    assert 'name="accion" value="guardar" disabled' in respuesta.text
+    assert 'name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>' in respuesta.text
+    assert 'id="articulo_id" name="articulo_id" required' in respuesta.text
 
 
 def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
@@ -2711,7 +2804,20 @@ def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
 
     assert respuesta.status_code == 200
     assert "no se puede editar" not in respuesta.text
-    assert "<fieldset disabled>" not in respuesta.text
+    assert 'name="accion" value="guardar" disabled' not in respuesta.text
+
+
+def test_ver_editar_compra_muestra_boton_volver_rojo():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert '<a class="boton boton-peligro" href="/compras/buscar" id="boton-volver" onclick="return confirmarVolver()">Volver</a>' in respuesta.text
+    assert "Volver a compras" not in respuesta.text
+    assert "confirmarVolver" in respuesta.text
 
 
 def test_eliminar_compra_exitosa_redirige_a_compras():

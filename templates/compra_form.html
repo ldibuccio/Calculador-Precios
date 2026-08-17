@@ -103,8 +103,7 @@
   }
   .vacio { color: #888; font-style: italic; }
   .tabla-scroll { overflow-x: auto; }
-  fieldset { border: none; margin: 0; padding: 0; }
-  fieldset[disabled] .boton-exito, fieldset[disabled] button { opacity: 0.5; }
+  button[disabled] { opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -139,7 +138,6 @@
       <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
       {% endif %}
 
-      <fieldset {% if modo == "editar" and bloqueada %}disabled{% endif %}>
       <label for="articulo_id">Artículo *</label>
       <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)">
         <option value="" {% if not compra %}selected disabled{% endif %}>Elegí un artículo...</option>
@@ -181,9 +179,9 @@
       <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
       <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
       {% else %}
-      <button type="submit" id="boton-guardar-compra">Guardar</button>
+      <button type="submit" name="accion" value="guardar" {% if bloqueada %}disabled{% endif %} class="boton-exito" id="boton-guardar-compra">Guardar</button>
+      <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
       {% endif %}
-      </fieldset>
     </form>
     {% if modo == "nueva" %}
     <form method="post" action="/compras/nueva/cancelar" id="form-cancelar-carga"
@@ -193,7 +191,7 @@
     </form>
     {% endif %}
     {% if modo == "editar" %}
-    <a class="volver" href="/compras/buscar">Volver a compras</a>
+    <a class="boton boton-peligro" href="/compras/buscar" id="boton-volver" onclick="return confirmarVolver()">Volver</a>
     {% endif %}
   </div>
 
@@ -292,5 +290,33 @@
       });
     })();
   </script>
+
+  {% if modo == "editar" %}
+  <script>
+    // "Volver" avisa antes de salir solo si algún campo cambió respecto de
+    // lo que había cargado al abrir la pantalla — no hace falta el aviso si
+    // no se tocó nada.
+    (function () {
+      var camposIniciales = {};
+      ["articulo_id", "cantidad_cajones", "contenido_por_cajon", "importe", "sena", "tipo_retiro"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) {
+          camposIniciales[id] = el.value;
+        }
+      });
+
+      window.confirmarVolver = function () {
+        var huboCambios = Object.keys(camposIniciales).some(function (id) {
+          var el = document.getElementById(id);
+          return el && el.value !== camposIniciales[id];
+        });
+        if (!huboCambios) {
+          return true;
+        }
+        return confirm("Tenés cambios sin guardar en este renglón. ¿Seguro que querés salir?");
+      };
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>
