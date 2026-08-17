@@ -40,6 +40,7 @@ from app.db import (
     listar_articulos,
     listar_articulos_sin_ficha,
     listar_clientes,
+    listar_compras_pendientes_recepcion,
     listar_compras_por_fecha_y_proveedor,
     listar_compras_por_rango_fechas,
     listar_compras_sin_precio,
@@ -57,6 +58,8 @@ from app.db import (
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
     obtener_uso_storage_bucket,
+    recepcionar_compra,
+    rechazar_compra,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
@@ -2390,6 +2393,8 @@ def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
 def eliminar_compra_ruta(compra_id: int):
     try:
         _eliminar_compra_y_su_foto_si_corresponde(compra_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
@@ -3521,9 +3526,115 @@ def ver_logistica(request: Request):
 
 @app.get("/deposito")
 def ver_deposito(request: Request):
-    return _renderizar_en_construccion(
-        request, "Depósito", volver_url="/inicio", volver_texto="Volver a Inicio", sector="deposito"
+    """Hub del área Depósito: por ahora, Recepción es la única pantalla real."""
+    return templates.TemplateResponse(request, "deposito.html", {})
+
+
+def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None]:
+    """Valida la cantidad de cajones real cargada en Recepción: obligatoria, número positivo."""
+    texto = texto.strip()
+    if not texto:
+        return "La cantidad de cajones real es obligatoria.", None
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "La cantidad de cajones real tiene que ser un número.", None
+    if valor <= 0:
+        return "La cantidad de cajones real tiene que ser mayor a cero.", None
+    return None, valor
+
+
+def _validar_total_real_recepcion(texto: str) -> tuple[str | None, float | None]:
+    """Valida el total real (kilos/unidades/cubetas pesado o contado) cargado en Recepción: obligatorio, número positivo."""
+    texto = texto.strip()
+    if not texto:
+        return "El total real es obligatorio.", None
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "El total real tiene que ser un número.", None
+    if valor <= 0:
+        return "El total real tiene que ser mayor a cero.", None
+    return None, valor
+
+
+def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
+    """Agrupa las compras pendientes de Recepción por guía, en el orden en que ya vienen (por guia_id, guia_punto).
+
+    Devuelve una lista de {"guia_id", "proveedor_nombre", "proveedor_codigo_puesto", "compras"}.
+    """
+    guias_por_id: dict[int, dict] = {}
+    orden_guias: list[int] = []
+    for compra in compras:
+        guia_id = compra["guia_id"]
+        if guia_id not in guias_por_id:
+            guias_por_id[guia_id] = {
+                "guia_id": guia_id,
+                "proveedor_nombre": compra["proveedor_nombre"],
+                "proveedor_codigo_puesto": compra["proveedor_codigo_puesto"],
+                "compras": [],
+            }
+            orden_guias.append(guia_id)
+        guias_por_id[guia_id]["compras"].append(compra)
+    return [guias_por_id[guia_id] for guia_id in orden_guias]
+
+
+def _renderizar_pantalla_recepcion(request: Request, *, error: str | None = None, status_code: int = 200):
+    try:
+        compras_pendientes = listar_compras_pendientes_recepcion()
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "deposito_recepcion.html",
+            {"guias": [], "error": f"No se pudieron leer las compras pendientes: {error_db}"},
+            status_code=500,
+        )
+
+    guias = _agrupar_pendientes_por_guia(compras_pendientes)
+    return templates.TemplateResponse(
+        request, "deposito_recepcion.html", {"guias": guias, "error": error}, status_code=status_code
     )
+
+
+@app.get("/deposito/recepcion")
+def ver_recepcion(request: Request):
+    return _renderizar_pantalla_recepcion(request)
+
+
+@app.post("/deposito/recepcion/{compra_id}/recepcionar")
+def recepcionar_compra_ruta(
+    request: Request,
+    compra_id: int,
+    cantidad_cajones_real: str = Form(""),
+    cantidad_total_real: str = Form(""),
+):
+    error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
+    if not error:
+        error, total_valor = _validar_total_real_recepcion(cantidad_total_real)
+
+    if error:
+        return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
+
+    try:
+        recepcionar_compra(compra_id, cajones_valor, total_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url="/deposito/recepcion", status_code=303)
+
+
+@app.post("/deposito/recepcion/{compra_id}/rechazar")
+def rechazar_compra_ruta(request: Request, compra_id: int):
+    try:
+        rechazar_compra(compra_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo rechazar la compra: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url="/deposito/recepcion", status_code=303)
 
 
 @app.get("/gerencia")

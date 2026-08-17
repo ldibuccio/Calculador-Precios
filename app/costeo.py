@@ -252,9 +252,13 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     es la inversa de precio_sugerido: parte del precio_vigente en vez de la
     utilidad objetivo, le aplica las mismas tasas del cliente, y compara
     contra el costo total (mercadería + envase) para ver qué utilidad deja
-    HOY el precio ya cargado. Es aproximada porque el costo es el estimado
-    de compra, no el de recepción. Solo se calcula si hay precio_vigente
-    (sin eso, None) — no depende de la utilidad objetivo del cliente.
+    HOY el precio ya cargado. Se sigue llamando "aproximada" porque el
+    costo puede ser el estimado de compra (si Depósito todavía no
+    recepcionó ese artículo) — para las compras ya recepcionadas,
+    costo_actual ya viene con el kilaje/cantidad REAL (ver
+    listar_compras_para_costeo), así que ahí deja de ser una aproximación.
+    Solo se calcula si hay precio_vigente (sin eso, None) — no depende de
+    la utilidad objetivo del cliente.
 
     Devuelve una lista de dicts (frescos primero, después por nombre) con:
     articulo_id, articulo_nombre, unidad_venta, fresco, costo_actual,
@@ -358,11 +362,14 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
 
         # utilidad_aproximada: la inversa de precio_sugerido, partiendo del
         # precio vigente en vez de la utilidad objetivo. Solo si hay precio
-        # vigente cargado — sin eso no hay nada que medir. Es "aproximada"
-        # porque el costo es el estimado de compra (costo_actual), no el de
-        # recepción. Se calcula por bulto (contenido de la ficha), aunque el
-        # resultado da igual por kilo — es un cociente, la unidad se cancela
-        # (ver core.motor_costeo.utilidad_real_multi_concepto).
+        # vigente cargado — sin eso no hay nada que medir. Sigue llamándose
+        # "aproximada" porque costo_actual puede ser el estimado de compra
+        # (si Depósito todavía no recepcionó ese artículo) — para las
+        # compras ya recepcionadas, costo_actual ya viene con el kilaje/
+        # cantidad REAL (ver listar_compras_para_costeo), así que ahí deja
+        # de ser una aproximación. Se calcula por bulto (contenido de la
+        # ficha), aunque el resultado da igual por kilo — es un cociente,
+        # la unidad se cancela (ver core.motor_costeo.utilidad_real_multi_concepto).
         precio_vigente = precio_vigente_por_articulo.get(articulo_id)
         utilidad_aproximada = None
         if costo_actual is not None and precio_vigente is not None:

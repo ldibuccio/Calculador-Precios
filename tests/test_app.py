@@ -2756,6 +2756,17 @@ def test_eliminar_compra_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
+def test_eliminar_compra_ya_recepcionada_da_400_con_el_mensaje():
+    with patch(
+        "app.main.eliminar_compra",
+        side_effect=ValueError("Esta compra ya fue recepcionada, no se puede eliminar."),
+    ):
+        respuesta = cliente.post("/compras/30/eliminar")
+
+    assert respuesta.status_code == 400
+    assert "Esta compra ya fue recepcionada, no se puede eliminar." in respuesta.text
+
+
 def test_eliminar_varias_compras_exitosa_redirige_a_compras():
     with (
         patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
@@ -2836,6 +2847,147 @@ def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
     assert "No se pudieron borrar 2" in respuesta.text
     assert "Mzn Red (Saturno)" in respuesta.text
     assert "Mango (Frutamax)" in respuesta.text
+
+
+COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
+    {
+        "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
+    },
+    {
+        "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
+    },
+    {
+        "id": 3, "guia_id": 106, "guia_punto": 1, "articulo_nombre": "Frutilla", "unidad_compra": "cubeta",
+        "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
+        "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 60,
+    },
+]
+
+
+def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Guía 105" in respuesta.text
+    assert "Guía 106" in respuesta.text
+    assert "Saturno (N07P41)" in respuesta.text
+    assert "Don Pepe (N01P02)" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "Mango" in respuesta.text
+    assert "Frutilla" in respuesta.text
+    assert "40 cajones × 20k" in respuesta.text
+    # Etiquetas según unidad_compra de cada artículo.
+    assert "Kilos reales" in respuesta.text
+    assert "Unidades reales" in respuesta.text
+    assert "Cubetas reales" in respuesta.text
+
+
+def test_ver_recepcion_prellena_los_inputs_con_el_estimado():
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert 'id="cajones-real-1"' in respuesta.text
+    assert 'value="40"' in respuesta.text
+    assert 'id="total-real-1"' in respuesta.text
+    assert 'value="800"' in respuesta.text
+
+
+def test_ver_recepcion_sin_pendientes_muestra_mensaje_vacio():
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=[]):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "No hay compras pendientes de recepción." in respuesta.text
+
+
+def test_ver_recepcion_error_de_base_da_500():
+    with patch("app.main.listar_compras_pendientes_recepcion", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 500
+
+
+def test_recepcionar_compra_guarda_los_reales_y_redirige():
+    with patch("app.main.recepcionar_compra") as mock_recepcionar:
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "38", "cantidad_total_real": "760"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion"
+    mock_recepcionar.assert_called_once_with(1, 38.0, 760.0)
+
+
+def test_recepcionar_compra_sin_datos_muestra_error_sin_guardar():
+    with (
+        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "", "cantidad_total_real": "760"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "La cantidad de cajones real es obligatoria." in respuesta.text
+    mock_recepcionar.assert_not_called()
+
+
+def test_recepcionar_compra_con_numero_invalido_muestra_error_sin_guardar():
+    with (
+        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "abc", "cantidad_total_real": "760"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser un número" in respuesta.text
+    mock_recepcionar.assert_not_called()
+
+
+def test_recepcionar_compra_error_de_base_muestra_mensaje():
+    with (
+        patch("app.main.recepcionar_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "38", "cantidad_total_real": "760"},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo recepcionar la compra" in respuesta.text
+
+
+def test_rechazar_compra_redirige_y_no_pide_datos():
+    with patch("app.main.rechazar_compra") as mock_rechazar:
+        respuesta = cliente.post("/deposito/recepcion/2/rechazar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion"
+    mock_rechazar.assert_called_once_with(2)
+
+
+def test_rechazar_compra_error_de_base_muestra_mensaje():
+    with (
+        patch("app.main.rechazar_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.post("/deposito/recepcion/2/rechazar")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo rechazar la compra" in respuesta.text
 
 
 def test_ver_foto_compra_redirige_a_la_url_firmada():
@@ -5614,13 +5766,15 @@ def test_ver_logistica_muestra_en_construccion_y_vuelve_a_inicio():
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_ver_deposito_muestra_en_construccion_y_vuelve_a_inicio():
+def test_ver_deposito_muestra_el_acceso_a_recepcion():
+    # /deposito dejó de ser "en construcción": ahora es un hub, como
+    # /compras o /comercial, con Recepción como primer acceso real.
     respuesta = cliente.get("/deposito")
 
     assert respuesta.status_code == 200
-    assert "Depósito" in respuesta.text
-    assert "En construcción" in respuesta.text
-    assert 'href="/inicio"' in respuesta.text
+    assert 'href="/deposito/recepcion"' in respuesta.text
+    assert "Recepción" in respuesta.text
+    assert "En construcción" not in respuesta.text
 
 
 def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
@@ -5660,12 +5814,21 @@ def test_barra_navegacion_en_sistema():
     assert f'href="/sistema" aria-label="Ir a Sistema">{SECTORES["sistema"]["icono"]}</a>' in respuesta.text
 
 
-def test_barra_navegacion_en_placeholders_logistica_deposito_gerencia():
-    casos = [("/logistica", "logistica", "Logística"), ("/deposito", "deposito", "Depósito"), ("/gerencia", "gerencia", "Gerencia")]
+def test_barra_navegacion_en_placeholders_logistica_gerencia():
+    casos = [("/logistica", "logistica", "Logística"), ("/gerencia", "gerencia", "Gerencia")]
     for url, sector, nombre in casos:
         respuesta = cliente.get(url)
         assert respuesta.status_code == 200
         assert f'href="{url}" aria-label="Ir a {nombre}">{SECTORES[sector]["icono"]}</a>' in respuesta.text
+
+
+def test_barra_navegacion_en_deposito_apunta_a_deposito_y_a_inicio():
+    respuesta = cliente.get("/deposito")
+
+    assert respuesta.status_code == 200
+    assert f'href="/inicio" aria-label="Ir a Inicio">{_ICONO_INICIO}</a>' in respuesta.text
+    assert f'href="/deposito" aria-label="Ir a Depósito">{SECTORES["deposito"]["icono"]}</a>' in respuesta.text
+    assert '<div class="barra-titulo">Depósito</div>' in respuesta.text
 
 
 def test_ver_inicio_no_tiene_barra_de_navegacion():
@@ -5708,6 +5871,11 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
 
     with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
         respuesta = cliente.get("/compras/nueva/manual")
+    assert respuesta.status_code == 200
+    assert "titulo-sector" not in respuesta.text
+
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=[]):
+        respuesta = cliente.get("/deposito/recepcion")
     assert respuesta.status_code == 200
     assert "titulo-sector" not in respuesta.text
 

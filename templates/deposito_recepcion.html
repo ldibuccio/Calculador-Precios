@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recepción</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.15rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .vacio { color: #888; font-style: italic; }
+  .proveedor {
+    color: #666;
+    font-size: 0.85rem;
+    margin: 0 0 0.85rem;
+  }
+  .renglon {
+    padding: 0.85rem 0;
+    border-top: 1px solid #eee;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .articulo-nombre {
+    font-weight: 700;
+    font-size: 1rem;
+    margin: 0 0 0.15rem;
+  }
+  .estimado {
+    color: #666;
+    font-size: 0.88rem;
+    margin: 0 0 0.7rem;
+  }
+  .campo-real label {
+    display: block;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  .campo-real input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-bottom: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .acciones-renglon {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .acciones-renglon form { flex: 1 1 45%; }
+  button {
+    width: 100%;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    box-sizing: border-box;
+  }
+  .boton-exito { background: #16a34a; color: #fff; }
+  .boton-peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Recepción" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if guias %}
+    {% for guia in guias %}
+    <div class="tarjeta">
+      <h2>Guía {{ guia.guia_id }}</h2>
+      <p class="proveedor">{{ guia.proveedor_nombre }} ({{ guia.proveedor_codigo_puesto }})</p>
+
+      {% for c in guia.compras %}
+      <div class="renglon">
+        <p class="articulo-nombre">{{ c.articulo_nombre }}</p>
+        <p class="estimado">Estimado: {{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</p>
+
+        <form method="post" action="/deposito/recepcion/{{ c.id }}/recepcionar" class="campo-real" id="form-recepcionar-{{ c.id }}">
+          <label for="cajones-real-{{ c.id }}">Cajones reales</label>
+          <input type="number" id="cajones-real-{{ c.id }}" name="cantidad_cajones_real" min="0" step="0.01"
+                 value="{{ c.cantidad_cajones }}">
+
+          {% if c.unidad_compra == "kilo" %}
+          <label for="total-real-{{ c.id }}">Kilos reales</label>
+          <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
+                 value="{{ c.cantidad_kilos }}">
+          {% elif c.unidad_compra == "cubeta" %}
+          <label for="total-real-{{ c.id }}">Cubetas reales</label>
+          <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
+                 value="{{ c.cantidad_fraccion }}">
+          {% else %}
+          <label for="total-real-{{ c.id }}">Unidades reales</label>
+          <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
+                 value="{{ c.cantidad_fraccion }}">
+          {% endif %}
+        </form>
+
+        <div class="acciones-renglon">
+          <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-exito">Recepcionar</button>
+          <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazar"
+                onsubmit="return confirm('¿Rechazar {{ c.articulo_nombre }}? No se puede deshacer.');">
+            <button type="submit" class="boton-peligro">Rechazar</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="tarjeta">
+    <p class="vacio">No hay compras pendientes de recepción.</p>
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/deposito">Volver a Depósito</a>
+</body>
+</html>

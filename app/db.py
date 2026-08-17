@@ -643,6 +643,12 @@ def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
     fijos (hoy y ayer) — se deja tal cual, sin filtro de proveedor/artículo,
     para no tocar esa pantalla. La búsqueda a demanda con filtros vive en
     buscar_compras, más abajo.
+
+    Cantidad/contenido/kilos/fracción vienen con el valor REAL (pesado por
+    Depósito al recepcionar) si ya existe, si no el estimado que cargó el
+    comprador — ver recepcionar_compra. Quien llama sigue leyendo
+    "cantidad_cajones" etc. como si fuera la única columna, sin saber nada
+    de esta sustitución.
     """
     conexion = obtener_conexion()
     try:
@@ -652,8 +658,11 @@ def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
-                       c.cantidad_cajones, c.contenido_por_cajon,
-                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
+                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
+                       COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
+                       COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
+                       c.importe, c.sena, c.tipo_retiro, c.foto_ruta
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -675,6 +684,10 @@ def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, ar
     Mismas columnas que listar_compras_por_rango_fechas (misma base de datos
     para la pantalla y para el export a PDF/Excel) — WHERE dinámico según
     qué filtros opcionales vinieron.
+
+    Mismo criterio de real-si-existe que listar_compras_por_rango_fechas
+    (ver ahí el detalle): así el export a PDF/Excel, que arma sus filas a
+    partir de esta función, hereda el real sin ningún cambio propio.
     """
     condiciones = ["c.fecha_operacion BETWEEN %s AND %s"]
     parametros: list = [fecha_desde, fecha_hasta]
@@ -693,8 +706,11 @@ def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, ar
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre,
                        p.codigo_puesto AS proveedor_codigo_puesto,
-                       c.cantidad_cajones, c.contenido_por_cajon,
-                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
+                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
+                       COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
+                       COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
+                       c.importe, c.sena, c.tipo_retiro, c.foto_ruta
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -719,6 +735,17 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
     afuera por artículo). Incluye fecha_operacion: hace falta para poder
     agrupar las compras por día y reconstruir ventanas de costeo ancladas en
     una fecha puntual (ej. costo actual vs. costo anterior).
+
+    cantidad_cajones/contenido_por_cajon/cantidad_kilos vienen con el valor
+    REAL (pesado por Depósito) si ya existe, si no el estimado — ver
+    recepcionar_compra. app/costeo.py arma su cuenta como
+    cantidad_cajones × contenido_por_cajon (nunca lee cantidad_kilos), así
+    que esta sustitución alcanza sola para que el costo, el precio sugerido
+    y la utilidad aproximada usen el real en cuanto existe, sin tocar
+    ninguna fórmula ahí.
+
+    Excluye las compras rechazadas (estado = 'rechazado'): no se
+    recibieron, no tienen que ensuciar el costo promedio.
     """
     conexion = obtener_conexion()
     try:
@@ -726,10 +753,14 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.articulo_id, a.nombre AS articulo_nombre, c.fecha_operacion,
-                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.importe
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
+                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
+                       COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
+                       c.importe
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 WHERE c.fecha_operacion BETWEEN %s AND %s
+                  AND c.estado IS DISTINCT FROM 'rechazado'
                 ORDER BY a.nombre
                 """,
                 (fecha_desde, fecha_hasta),
@@ -917,6 +948,11 @@ def crear_compra(
     graba una sola vez acá, nunca se recalcula después, así que borrar un
     renglón más adelante no renumera a los demás. Todo en la misma
     transacción que el INSERT de la compra.
+
+    estado arranca en 'pendiente' (queda a la espera de Recepción en
+    Depósito) — se escribe acá explícitamente, a propósito SIN default a
+    nivel de columna: así las compras cargadas antes de este cambio quedan
+    con estado NULL para siempre, sin aparecer nunca en Recepción.
     """
     conexion = obtener_conexion()
     try:
@@ -944,8 +980,8 @@ def crear_compra(
                 INSERT INTO compras
                     (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
                      cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
-                     guia_id, guia_punto)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     guia_id, guia_punto, estado)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente')
                 """,
                 (
                     fecha_operacion,
@@ -1008,12 +1044,113 @@ def actualizar_compra(
         conexion.close()
 
 
+def listar_compras_pendientes_recepcion() -> list[dict]:
+    """Compras con estado 'pendiente' (guía asignada, todavía sin procesar en Depósito).
+
+    A diferencia de las consultas de arriba, acá NO se aplica el
+    real-si-existe: esta es justo la pantalla donde se cargan los valores
+    reales, hace falta el estimado en crudo (para prellenar los inputs) y
+    ninguna compra pendiente tiene un real todavía. Las compras cargadas
+    antes de la guía/Recepción tienen estado NULL — nunca igualan
+    'pendiente' en SQL, así que quedan afuera solas; guia_id IS NOT NULL
+    se agrega igual, a modo documental.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.guia_id, c.guia_punto, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.estado = 'pendiente' AND c.guia_id IS NOT NULL
+                ORDER BY c.guia_id, c.guia_punto
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_total_real: float) -> None:
+    """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
+
+    cantidad_total_real es un solo número (lo que da la balanza o el
+    recuento) — Depósito no tiene que pensar en "contenido por cajón": acá
+    adentro se deriva contenido_por_cajon_real = cantidad_total_real /
+    cantidad_cajones_real, y cantidad_total_real se guarda en
+    cantidad_kilos_real o cantidad_fraccion_real según la unidad_compra del
+    artículo (mismo criterio que usa crear_compra con el estimado). El
+    estimado nunca se toca.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.unidad_compra
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            unidad_compra = fila[0] if fila else None
+
+            contenido_por_cajon_real = cantidad_total_real / cantidad_cajones_real if cantidad_cajones_real else None
+            if unidad_compra == "kilo":
+                cantidad_kilos_real, cantidad_fraccion_real = cantidad_total_real, None
+            else:
+                cantidad_kilos_real, cantidad_fraccion_real = None, cantidad_total_real
+
+            cursor.execute(
+                """
+                UPDATE compras
+                SET estado = 'recepcionado',
+                    cantidad_cajones_real = %s,
+                    contenido_por_cajon_real = %s,
+                    cantidad_kilos_real = %s,
+                    cantidad_fraccion_real = %s,
+                    procesada_el = now()
+                WHERE id = %s
+                """,
+                (cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real, compra_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def rechazar_compra(compra_id: int) -> None:
+    """Marca una compra como rechazada. No toca ningún valor real — nada se pesó ni se contó."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE compras SET estado = 'rechazado', procesada_el = now() WHERE id = %s",
+                (compra_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def listar_compras_sin_precio() -> list[dict]:
     """Compras (de cualquier fecha) con importe todavía vacío, para completarlo desde /compras/pendientes.
 
     NOTA para cuando el motor de costeo empiece a leer compras de la base
     (hoy no lo hace): las consultas de costeo tienen que excluir las filas
     con importe IS NULL, son compras sin precio todavía.
+
+    cantidad_cajones/contenido_por_cajon vienen con el valor REAL si ya se
+    recepcionó, si no el estimado — mismo criterio que el resto de las
+    pantallas de consulta (ver listar_compras_por_rango_fechas).
     """
     conexion = obtener_conexion()
     try:
@@ -1022,7 +1159,9 @@ def listar_compras_sin_precio() -> list[dict]:
                 """
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre,
-                       p.codigo_puesto AS proveedor_codigo_puesto, c.cantidad_cajones, c.contenido_por_cajon
+                       p.codigo_puesto AS proveedor_codigo_puesto,
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
+                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -1049,7 +1188,14 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
 
 
 def eliminar_compra(compra_id: int) -> str | None:
-    """Borra una compra (borrado real; Postgres rechaza el borrado si alguna recepción ya la referencia).
+    """Borra una compra (borrado real), salvo que ya haya sido recepcionada en Depósito.
+
+    Una compra con estado 'recepcionado' tiene kilaje real pesado — borrarla
+    lo perdería para siempre, así que se rechaza acá con un ValueError (el
+    mensaje es el que se le muestra al usuario tal cual). Por ahora esto no
+    tiene excepción: cuando exista el sistema de permisos, un gerente podrá
+    forzarlo con su acceso, pero eso no se resuelve en esta función.
+    'pendiente' y 'rechazado' se siguen pudiendo borrar sin restricción.
 
     Una misma foto de comanda (foto_ruta) puede estar compartida por varios
     renglones/compras. Devuelve el foto_ruta que hay que borrar del Storage
@@ -1061,9 +1207,12 @@ def eliminar_compra(compra_id: int) -> str | None:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT foto_ruta FROM compras WHERE id = %s", (compra_id,))
+            cursor.execute("SELECT foto_ruta, estado FROM compras WHERE id = %s", (compra_id,))
             fila = cursor.fetchone()
-            foto_ruta = fila[0] if fila else None
+            foto_ruta, estado = fila if fila else (None, None)
+
+            if estado == "recepcionado":
+                raise ValueError("Esta compra ya fue recepcionada, no se puede eliminar.")
 
             cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
 

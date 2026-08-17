@@ -3,16 +3,23 @@ from unittest.mock import MagicMock, patch
 
 from app.db import (
     actualizar_cliente,
+    buscar_compras,
     crear_cliente,
     crear_compra,
     eliminar_compra,
     guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
     listar_clientes,
+    listar_compras_para_costeo,
+    listar_compras_pendientes_recepcion,
+    listar_compras_por_rango_fechas,
+    listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_fotos_para_limpiar,
     listar_precios_vigentes_por_cliente,
     obtener_uso_storage_bucket,
+    recepcionar_compra,
+    rechazar_compra,
 )
 
 
@@ -34,7 +41,7 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
 def test_eliminar_compra_devuelve_el_foto_ruta_si_era_la_unica_referencia():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg",),  # SELECT foto_ruta
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente"),  # SELECT foto_ruta, estado
             (0,),  # SELECT COUNT(*) después del DELETE: nadie más la usa
         ]
     )
@@ -53,7 +60,7 @@ def test_eliminar_compra_no_devuelve_el_foto_ruta_si_otro_renglon_lo_sigue_usand
     # puede borrar del bucket todavía.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg",),  # SELECT foto_ruta
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente"),  # SELECT foto_ruta, estado
             (1,),  # SELECT COUNT(*) después del DELETE: queda 1 compra usándola
         ]
     )
@@ -75,7 +82,7 @@ def test_eliminar_compra_no_borra_la_foto_si_otro_proveedor_del_mismo_listado_la
     # proveedor sigan usándola.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/listado-abc123.jpg",),  # SELECT foto_ruta
+            ("2026-08-13/listado-abc123.jpg", "pendiente"),  # SELECT foto_ruta, estado
             (2,),  # SELECT COUNT(*): quedan 2 compras de otros proveedores usándola
         ]
     )
@@ -98,7 +105,7 @@ def test_eliminar_compra_borra_la_foto_al_eliminar_la_ultima_compra_de_cualquier
     # la foto del bucket.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/listado-abc123.jpg",),  # SELECT foto_ruta
+            ("2026-08-13/listado-abc123.jpg", "pendiente"),  # SELECT foto_ruta, estado
             (0,),  # SELECT COUNT(*): ya no queda ninguna compra usándola
         ]
     )
@@ -112,7 +119,7 @@ def test_eliminar_compra_borra_la_foto_al_eliminar_la_ultima_compra_de_cualquier
 def test_eliminar_compra_sin_foto_no_cuenta_referencias():
     conexion, cursor = _conexion_falsa(
         [
-            (None,),  # SELECT foto_ruta: esta compra no tenía foto
+            (None, "pendiente"),  # SELECT foto_ruta, estado: esta compra no tenía foto
         ]
     )
 
@@ -122,6 +129,41 @@ def test_eliminar_compra_sin_foto_no_cuenta_referencias():
     assert resultado is None
     # Solo el SELECT foto_ruta y el DELETE — sin el SELECT COUNT de más.
     assert cursor.execute.call_count == 2
+
+
+def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "rechazado"),  # SELECT foto_ruta, estado
+            (0,),
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compra(30)
+
+    assert resultado == "2026-08-13/n07p41-123-abcdef12.jpg"
+    conexion.commit.assert_called_once()
+
+
+def test_eliminar_compra_recepcionada_no_se_borra():
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "recepcionado"),  # SELECT foto_ruta, estado
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            eliminar_compra(30)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == "Esta compra ya fue recepcionada, no se puede eliminar."
+
+    # Ni el DELETE ni ningún commit: se corta antes de tocar nada.
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
+    conexion.close.assert_called_once()
 
 
 def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
@@ -147,6 +189,7 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
     assert "INSERT INTO compras" in consulta_insert
     assert "guia_id" in consulta_insert
     assert "guia_punto" in consulta_insert
+    assert "'pendiente'" in consulta_insert
     assert parametros_insert[-2:] == (105, 1)  # guia_id, guia_punto
     conexion.commit.assert_called_once()
 
@@ -168,6 +211,116 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
 
     _, parametros_insert = cursor.execute.call_args_list[3].args
     assert parametros_insert[-2:] == (105, 3)  # guia_id, guia_punto
+
+
+def test_listar_compras_por_rango_fechas_usa_el_real_si_existe():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_por_rango_fechas(date(2026, 8, 15), date(2026, 8, 16))
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
+    assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
+    assert "COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion" in consulta
+
+
+def test_buscar_compras_usa_el_real_si_existe():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_compras(date(2026, 8, 15), date(2026, 8, 16))
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
+    assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
+    assert "COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion" in consulta
+
+
+def test_listar_compras_para_costeo_usa_el_real_si_existe_y_excluye_rechazadas():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_para_costeo(date(2026, 8, 1), date(2026, 8, 16))
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
+    assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
+    # Una compra rechazada no se recibió: no puede ensuciar el costo promedio.
+    assert "estado IS DISTINCT FROM 'rechazado'" in consulta
+
+
+def test_listar_compras_sin_precio_usa_el_real_si_existe():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_sin_precio()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
+
+
+def test_listar_compras_pendientes_recepcion_filtra_por_estado_y_guia():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_pendientes_recepcion()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "estado = 'pendiente'" in consulta
+    assert "guia_id IS NOT NULL" in consulta
+    # Sin real-si-existe acá: esta pantalla necesita el estimado en crudo
+    # para prellenar los inputs (ninguna compra pendiente tiene real todavía).
+    assert "COALESCE" not in consulta
+
+
+def test_recepcionar_compra_articulo_por_kilo_guarda_cantidad_kilos_real():
+    conexion, cursor = _conexion_falsa([("kilo",)])  # SELECT unidad_compra
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
+
+    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    assert "estado = 'recepcionado'" in consulta_update
+    assert "procesada_el = now()" in consulta_update
+    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    assert cajones == 38
+    assert contenido == 20  # 760 / 38
+    assert kilos == 760
+    assert fraccion is None
+    assert compra_id == 30
+    conexion.commit.assert_called_once()
+
+
+def test_recepcionar_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
+    conexion, cursor = _conexion_falsa([("unidad",)])  # SELECT unidad_compra
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra(31, cantidad_cajones_real=10, cantidad_total_real=118)
+
+    _, parametros_update = cursor.execute.call_args_list[1].args
+    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    assert contenido == 11.8  # 118 / 10
+    assert kilos is None
+    assert fraccion == 118
+
+
+def test_rechazar_compra_marca_estado_y_no_toca_los_reales():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        rechazar_compra(32)
+
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "estado = 'rechazado'" in consulta
+    assert "procesada_el = now()" in consulta
+    assert "cantidad_cajones_real" not in consulta
+    assert parametros == (32,)
+    conexion.commit.assert_called_once()
 
 
 def test_obtener_uso_storage_bucket_devuelve_cantidad_y_bytes():
