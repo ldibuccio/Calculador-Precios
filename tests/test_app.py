@@ -6050,13 +6050,13 @@ def test_ver_deposito_muestra_el_acceso_a_recepcion():
 
 
 def test_ver_deposito_muestra_el_acceso_a_retirar_mercaderia():
-    # El personal de depósito también retira la mercadería que figura como
-    # "bases" en el puesto — es la misma pantalla que usa Logística
-    # (Clark/Carro/Pases), no una copia: el botón lleva directo a /logistica.
+    # El personal de depósito retira puntualmente por Pases (no Clark ni
+    # Carro, que son de Logística) — el botón va directo a esa pantalla,
+    # sin pasar por el hub de /logistica con los 3 botones.
     respuesta = cliente.get("/deposito")
 
     assert respuesta.status_code == 200
-    assert 'href="/logistica"' in respuesta.text
+    assert 'href="/logistica/retiro/Pases"' in respuesta.text
     assert "Retirar Mercadería" in respuesta.text
 
 
