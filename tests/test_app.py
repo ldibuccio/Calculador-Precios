@@ -5801,18 +5801,19 @@ def test_ver_inicio_usa_el_nombre_de_empresa_configurado():
     assert "Frutamax" not in respuesta.text
 
 
-def test_ver_inicio_deposito_ya_no_dice_proximamente():
-    # Depósito dejó de ser "en construcción" desde que existe Recepción —
-    # la tarjeta de /inicio tiene que verse igual de activa que Compras o
-    # Comercial, no atenuada como Logística/Gerencia (que sí siguen sin
-    # nada adentro).
+def test_ver_inicio_deposito_y_logistica_ya_no_dicen_proximamente():
+    # Depósito y Logística dejaron de ser "en construcción" (existen
+    # Recepción y Retiro) — sus tarjetas en /inicio tienen que verse igual
+    # de activas que Compras o Comercial, no atenuadas como Gerencia (que
+    # sigue sin nada adentro).
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
     assert "Depósito (Próximamente)" not in respuesta.text
     assert '<a class="boton-area" href="/deposito">' in respuesta.text
-    # Logística y Gerencia siguen siendo placeholders: no se tocaron.
-    assert "Logística (Próximamente)" in respuesta.text
+    assert "Logística (Próximamente)" not in respuesta.text
+    assert '<a class="boton-area" href="/logistica">' in respuesta.text
+    # Gerencia sigue siendo placeholder: no se tocó.
     assert "Gerencia (Próximamente)" in respuesta.text
 
 
