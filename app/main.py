@@ -10,6 +10,7 @@ import logging
 import os
 import re
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -42,8 +43,8 @@ from app.db import (
     listar_articulos_sin_ficha,
     listar_clientes,
     listar_compras_pendientes_recepcion,
+    listar_compras_pendientes_retiro,
     listar_compras_por_fecha_y_proveedor,
-    listar_compras_por_rango_fechas,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_envases_por_cliente,
@@ -52,6 +53,8 @@ from app.db import (
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
     listar_todas_las_conversiones,
+    marcar_compra_cancelada,
+    marcar_compra_retirada,
     obtener_articulo,
     obtener_cliente,
     obtener_compra,
@@ -1252,31 +1255,6 @@ def ver_compras(request: Request):
     return templates.TemplateResponse(request, "compras.html", {})
 
 
-def _renderizar_pantalla_ultimas_compras(request: Request, *, error: str | None = None, status_code: int = 200):
-    # TODO: a futuro agregar acá un filtro de fecha/rango a demanda (elegido
-    # por el usuario). Por ahora siempre son los últimos 2 días fijos (hoy y
-    # ayer), usando listar_compras_por_rango_fechas que ya soporta un rango.
-    hoy = _hoy_argentina()
-    try:
-        compras = listar_compras_por_rango_fechas(hoy - timedelta(days=1), hoy)
-    except Exception as error_db:
-        return templates.TemplateResponse(
-            request,
-            "ultimas_compras.html",
-            {"compras": [], "error": f"No se pudieron leer las compras: {error_db}"},
-            status_code=500,
-        )
-
-    return templates.TemplateResponse(
-        request, "ultimas_compras.html", {"compras": compras, "error": error}, status_code=status_code
-    )
-
-
-@app.get("/compras/ultimas")
-def ver_ultimas_compras(request: Request, error: str | None = None):
-    return _renderizar_pantalla_ultimas_compras(request, error=error)
-
-
 def _renderizar_en_construccion(
     request: Request,
     titulo: str,
@@ -1301,20 +1279,26 @@ def ver_cargar_listado_compras(request: Request):
     return templates.TemplateResponse(request, "compra_listado.html", {"proveedores": proveedores})
 
 
-@app.get("/compras/buscar")
-def ver_buscar_compras(
+def _renderizar_pantalla_buscar_compras(
     request: Request,
     fecha_desde: str | None = None,
     fecha_hasta: str | None = None,
     proveedor_id: str | None = None,
     articulo_id: str | None = None,
+    aviso: str | None = None,
+    status_code: int = 200,
 ):
     """Búsqueda de compras por rango de fechas, con proveedor y artículo opcionales.
 
     Sin fechas en la URL, arranca mostrando las últimas 48hs (mismo rango
-    que /compras/ultimas) — el usuario puede ampliarlo desde acá. Mismo
-    criterio de fecha inválida que /precios/consultar: se cae a un valor
-    por defecto y se muestra el error, sin bloquear la pantalla.
+    que tenía /compras/ultimas, ya eliminada) — el usuario puede ampliarlo
+    desde acá. Mismo criterio de fecha inválida que /precios/consultar: se
+    cae a un valor por defecto y se muestra el error, sin bloquear la
+    pantalla.
+
+    Reutilizada por la ruta GET y por el borrado múltiple (POST
+    /compras/eliminar-varias), que renderiza esta misma pantalla con un
+    aviso de qué se borró y qué no, conservando los filtros activos.
     """
     proveedor_id_valor = _id_opcional_desde_query(proveedor_id)
     articulo_id_valor = _id_opcional_desde_query(articulo_id)
@@ -1369,7 +1353,23 @@ def ver_buscar_compras(
             "articulo_nombre_actual": articulo_nombre_actual,
             "error_fecha": error_fecha,
             "compras": compras,
+            "aviso": aviso,
         },
+        status_code=status_code,
+    )
+
+
+@app.get("/compras/buscar")
+def ver_buscar_compras(
+    request: Request,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    proveedor_id: str | None = None,
+    articulo_id: str | None = None,
+    aviso: str | None = None,
+):
+    return _renderizar_pantalla_buscar_compras(
+        request, fecha_desde, fecha_hasta, proveedor_id, articulo_id, aviso=aviso
     )
 
 
@@ -1436,11 +1436,6 @@ def exportar_listado_compras_excel(fecha_desde: str = "", fecha_hasta: str = "",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
-
-
-@app.get("/compras/enviar-logistica")
-def ver_enviar_logistica(request: Request):
-    return _renderizar_en_construccion(request, "Enviar a logística", volver_url="/compras/ultimas", volver_texto="Volver a últimas compras")
 
 
 @app.get("/compras/armar-listado")
@@ -1567,7 +1562,7 @@ def agregar_compra(
         campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro)
     )
     if accion == "terminar" and renglon_vacio:
-        return RedirectResponse(url="/compras/ultimas", status_code=303)
+        return RedirectResponse(url="/compras/buscar", status_code=303)
 
     try:
         proveedor = obtener_proveedor(proveedor_id)
@@ -1688,24 +1683,27 @@ def agregar_compra(
         )
 
     if accion == "terminar":
-        return RedirectResponse(url="/compras/ultimas", status_code=303)
+        return RedirectResponse(url="/compras/buscar", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
 
 @app.post("/compras/nueva/cancelar")
 def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
-    """Descarta TODA la carga de hoy de este proveedor (incluso lo ya guardado con "Agregar artículo") y vuelve a /compras.
+    """Descarta TODA la carga de hoy de este proveedor (incluso lo ya guardado con "Agregar artículo") y va a Buscar Compras.
 
     La confirmación la pide el navegador (confirm() antes de mandar el
-    POST); acá no queda nada más por decidir: si llegó el POST, se borra.
+    POST); acá no queda nada más por decidir: si llegó el POST, se borra
+    lo que se pueda. No es silencioso: si algo quedó afuera (ya retirado o
+    recepcionado), Buscar Compras lo va a mostrar en el aviso.
     """
+    hoy = _hoy_argentina()
     try:
-        eliminar_compras_del_dia_por_proveedor(_hoy_argentina(), proveedor_id)
+        resultado = eliminar_compras_del_dia_por_proveedor(hoy, proveedor_id)
     except Exception as error_db:
         proveedor = obtener_proveedor(proveedor_id)
         articulos = listar_articulos()
-        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(hoy, proveedor_id)
         return templates.TemplateResponse(
             request,
             "compra_form.html",
@@ -1720,7 +1718,18 @@ def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
             status_code=500,
         )
 
-    return RedirectResponse(url="/compras/ultimas", status_code=303)
+    if resultado["protegidas"]:
+        aviso = (
+            f"{resultado['borradas']} compras canceladas. {resultado['protegidas']} no se pudieron eliminar: "
+            "ya fueron retiradas o recepcionadas."
+        )
+    else:
+        aviso = f"{resultado['borradas']} compras canceladas."
+
+    query = urlencode(
+        {"fecha_desde": hoy.isoformat(), "fecha_hasta": hoy.isoformat(), "proveedor_id": proveedor_id, "aviso": aviso}
+    )
+    return RedirectResponse(url=f"/compras/buscar?{query}", status_code=303)
 
 
 def _numero_o_none(valor) -> float | None:
@@ -2227,7 +2236,7 @@ async def confirmar_compra_foto(request: Request):
         )
 
     if accion == "guardar":
-        return RedirectResponse(url="/compras/ultimas", status_code=303)
+        return RedirectResponse(url="/compras/buscar", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
@@ -2247,10 +2256,14 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    bloqueada = compra["estado"] == "recepcionado" or compra["estado_retiro"] == "retirado"
+    if bloqueada and not error:
+        error = "Esta compra ya fue recepcionada o retirada, no se puede editar."
+
     return templates.TemplateResponse(
         request,
         "compra_form.html",
-        {"articulos": articulos, "modo": "editar", "compra": compra, "error": error},
+        {"articulos": articulos, "modo": "editar", "compra": compra, "error": error, "bloqueada": bloqueada},
     )
 
 
@@ -2349,6 +2362,8 @@ def editar_compra(
             valores["sena"],
             valores["tipo_retiro"],
         )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error_db:
         articulos = listar_articulos()
         compra = {
@@ -2374,7 +2389,7 @@ def editar_compra(
             status_code=500,
         )
 
-    return RedirectResponse(url="/compras/ultimas", status_code=303)
+    return RedirectResponse(url="/compras/buscar", status_code=303)
 
 
 def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
@@ -2407,20 +2422,33 @@ def eliminar_compra_ruta(compra_id: int):
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
-    return RedirectResponse(url="/compras/ultimas", status_code=303)
+    return RedirectResponse(url="/compras/buscar", status_code=303)
 
 
 @app.post("/compras/eliminar-varias")
 async def eliminar_varias_compras_ruta(request: Request):
+    """Borrado múltiple desde Buscar Compras. Conserva los filtros activos (van como campos ocultos del
+    formulario) para volver a mostrar exactamente la misma búsqueda, con un aviso de qué se borró y qué no.
+
+    No es silencioso: procesa todas las que puede y, si alguna queda
+    afuera (ya retirada o recepcionada), lo dice explícitamente en el
+    aviso — nunca las excluye sin avisar.
+    """
     form = await request.form()
     ids = [int(valor) for valor in form.getlist("compra_id") if valor.isdigit()]
+    fecha_desde = str(form.get("fecha_desde", ""))
+    fecha_hasta = str(form.get("fecha_hasta", ""))
+    proveedor_id = str(form.get("proveedor_id", ""))
+    articulo_id = str(form.get("articulo_id", ""))
 
     if not ids:
-        return RedirectResponse(url="/compras/ultimas", status_code=303)
+        return _renderizar_pantalla_buscar_compras(request, fecha_desde, fecha_hasta, proveedor_id, articulo_id)
 
-    hoy = _hoy_argentina()
+    fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor = _leer_filtros_buscar_compras(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id
+    )
     try:
-        compras_antes = listar_compras_por_rango_fechas(hoy - timedelta(days=1), hoy)
+        compras_antes = buscar_compras(fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor)
     except Exception:
         compras_antes = []
     etiqueta_por_id = {
@@ -2435,19 +2463,20 @@ async def eliminar_varias_compras_ruta(request: Request):
             logger.exception("No se pudo borrar la compra %s (borrado múltiple)", compra_id)
             etiquetas_fallidas.append(etiqueta_por_id.get(compra_id, "una compra"))
 
-    if not etiquetas_fallidas:
-        return RedirectResponse(url="/compras/ultimas", status_code=303)
-
     cantidad_borradas = len(ids) - len(etiquetas_fallidas)
-    # Mensaje pensado para un usuario no técnico: sin ids ni jerga de base
-    # de datos. La causa más probable de un fallo real es la FK de
-    # recepciones (ver relevamiento previo), pero se explica en criollo.
-    error = (
-        f"Se borraron {cantidad_borradas} de {len(ids)} compras. "
-        f"No se pudieron borrar {len(etiquetas_fallidas)} (puede que tengan una recepción asociada): "
-        f"{', '.join(etiquetas_fallidas)}."
-    )
-    return _renderizar_pantalla_ultimas_compras(request, error=error)
+    if not etiquetas_fallidas:
+        aviso = f"Se eliminaron {cantidad_borradas} compras."
+    else:
+        # Mensaje pensado para un usuario no técnico: sin ids ni jerga de
+        # base de datos. La causa más probable es que ya fueron retiradas o
+        # recepcionadas (bloqueado en eliminar_compra), se explica en criollo.
+        aviso = (
+            f"Se eliminaron {cantidad_borradas} de {len(ids)} compras. "
+            f"{len(etiquetas_fallidas)} no se pudieron eliminar (ya fueron retiradas o recepcionadas): "
+            f"{', '.join(etiquetas_fallidas)}."
+        )
+
+    return _renderizar_pantalla_buscar_compras(request, fecha_desde, fecha_hasta, proveedor_id, articulo_id, aviso=aviso)
 
 
 @app.get("/compras/{compra_id}/foto")
@@ -3528,9 +3557,62 @@ def ver_comercial(request: Request):
 
 @app.get("/logistica")
 def ver_logistica(request: Request):
-    return _renderizar_en_construccion(
-        request, "Logística", volver_url="/inicio", volver_texto="Volver a Inicio", sector="logistica"
+    """Hub del área Logística: retiro de mercadería en el Mercado Central, uno por tipo de retiro."""
+    return templates.TemplateResponse(request, "logistica.html", {})
+
+
+def _renderizar_pantalla_logistica_retiro(
+    request: Request, tipo_retiro: str, *, aviso: str | None = None, error: str | None = None, status_code: int = 200
+):
+    if tipo_retiro not in TIPOS_RETIRO_VALIDOS:
+        raise HTTPException(status_code=404, detail="Tipo de retiro no válido")
+
+    try:
+        compras_pendientes = listar_compras_pendientes_retiro(tipo_retiro)
+    except Exception as error_db:
+        return templates.TemplateResponse(
+            request,
+            "logistica_retiro.html",
+            {"tipo_retiro": tipo_retiro, "guias": [], "error": f"No se pudieron leer las compras pendientes: {error_db}"},
+            status_code=500,
+        )
+
+    guias = _agrupar_pendientes_por_guia(compras_pendientes)
+    return templates.TemplateResponse(
+        request,
+        "logistica_retiro.html",
+        {"tipo_retiro": tipo_retiro, "guias": guias, "aviso": aviso, "error": error},
+        status_code=status_code,
     )
+
+
+@app.get("/logistica/retiro/{tipo_retiro}")
+def ver_logistica_retiro(request: Request, tipo_retiro: str):
+    return _renderizar_pantalla_logistica_retiro(request, tipo_retiro)
+
+
+@app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/retirar")
+def retirar_compra_ruta(request: Request, tipo_retiro: str, compra_id: int):
+    try:
+        marcar_compra_retirada(compra_id, "logistica")
+    except Exception as error_db:
+        return _renderizar_pantalla_logistica_retiro(
+            request, tipo_retiro, error=f"No se pudo marcar como retirada: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}", status_code=303)
+
+
+@app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/cancelar")
+def cancelar_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: int):
+    try:
+        marcar_compra_cancelada(compra_id, "logistica")
+    except Exception as error_db:
+        return _renderizar_pantalla_logistica_retiro(
+            request, tipo_retiro, error=f"No se pudo marcar como cancelada: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}", status_code=303)
 
 
 @app.get("/deposito")
@@ -3588,7 +3670,9 @@ def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
     return [guias_por_id[guia_id] for guia_id in orden_guias]
 
 
-def _renderizar_pantalla_recepcion(request: Request, *, error: str | None = None, status_code: int = 200):
+def _renderizar_pantalla_recepcion(
+    request: Request, *, error: str | None = None, aviso: str | None = None, status_code: int = 200
+):
     try:
         compras_pendientes = listar_compras_pendientes_recepcion()
     except Exception as error_db:
@@ -3601,13 +3685,13 @@ def _renderizar_pantalla_recepcion(request: Request, *, error: str | None = None
 
     guias = _agrupar_pendientes_por_guia(compras_pendientes)
     return templates.TemplateResponse(
-        request, "deposito_recepcion.html", {"guias": guias, "error": error}, status_code=status_code
+        request, "deposito_recepcion.html", {"guias": guias, "error": error, "aviso": aviso}, status_code=status_code
     )
 
 
 @app.get("/deposito/recepcion")
-def ver_recepcion(request: Request):
-    return _renderizar_pantalla_recepcion(request)
+def ver_recepcion(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_recepcion(request, aviso=aviso)
 
 
 @app.post("/deposito/recepcion/{compra_id}/recepcionar")
@@ -3625,25 +3709,27 @@ def recepcionar_compra_ruta(
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
 
     try:
-        recepcionar_compra(compra_id, cajones_valor, total_valor)
+        aviso_retiro = recepcionar_compra(compra_id, cajones_valor, total_valor)
     except Exception as error_db:
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url="/deposito/recepcion", status_code=303)
+    url = f"/deposito/recepcion?{urlencode({'aviso': aviso_retiro})}" if aviso_retiro else "/deposito/recepcion"
+    return RedirectResponse(url=url, status_code=303)
 
 
 @app.post("/deposito/recepcion/{compra_id}/rechazar")
 def rechazar_compra_ruta(request: Request, compra_id: int):
     try:
-        rechazar_compra(compra_id)
+        aviso_retiro = rechazar_compra(compra_id)
     except Exception as error_db:
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo rechazar la compra: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url="/deposito/recepcion", status_code=303)
+    url = f"/deposito/recepcion?{urlencode({'aviso': aviso_retiro})}" if aviso_retiro else "/deposito/recepcion"
+    return RedirectResponse(url=url, status_code=303)
 
 
 @app.get("/gerencia")

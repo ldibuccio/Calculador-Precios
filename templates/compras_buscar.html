@@ -123,6 +123,29 @@
     font-weight: 700;
   }
   .sin-precio { color: #dc2626; font-weight: 600; }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .acciones .boton, .acciones button {
+    margin-top: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+    width: auto;
+  }
+  .boton-editar { background: #2563eb; }
+  .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; cursor: pointer; }
+  .boton-ver-foto { background: #6b7280; }
+  .form-eliminar { display: inline; }
+  #boton-borrar-seleccionadas {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+  }
 </style>
 </head>
 <body>
@@ -178,28 +201,66 @@
   <div class="error">{{ error_fecha }}</div>
   {% endif %}
 
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
   <div class="tarjeta">
     <p class="ayuda">{{ compras|length }} compra{{ "s" if compras|length != 1 else "" }} encontrada{{ "s" if compras|length != 1 else "" }}</p>
     {% if compras %}
+    <!--
+      Un <form> no puede anidar otro <form> adentro (el de "Eliminar" de
+      cada fila). En vez de envolver la tabla en el form del borrado
+      múltiple, este form queda vacío y afuera; los checkboxes se lo
+      asocian con el atributo form="..." (HTML5), sin necesidad de estar
+      físicamente adentro de él. Los filtros activos viajan como campos
+      ocultos, así el backend puede volver a mostrar esta misma búsqueda.
+    -->
+    <form method="post" action="/compras/eliminar-varias" id="form-borrado-multiple"
+          onsubmit="return confirmarBorradoMultiple();">
+      <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+      <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="proveedor_id" value="{{ proveedor_id if proveedor_id is not none else '' }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+    </form>
+    <button type="submit" form="form-borrado-multiple" class="boton boton-eliminar" id="boton-borrar-seleccionadas"
+            style="display: none;">
+      Eliminar seleccionadas (0)
+    </button>
     <div class="tabla-scroll">
       <table>
         <thead>
           <tr>
+            <th><input type="checkbox" id="check-todas"></th>
             <th>Fecha</th>
             <th>Proveedor</th>
             <th>Artículo</th>
             <th>Cantidad</th>
             <th>Importe</th>
+            <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {% for c in compras %}
           <tr>
+            <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
             <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
             <td>{{ c.articulo_nombre }}</td>
             <td>{{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
+            <td>
+              <div class="acciones">
+                <a class="boton boton-editar" href="/compras/{{ c.id }}/editar">Editar</a>
+                {% if c.foto_ruta %}
+                <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver foto</a>
+                {% endif %}
+                <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
+                      onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
+                  <button type="submit" class="boton-eliminar">Eliminar</button>
+                </form>
+              </div>
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -211,6 +272,46 @@
   </div>
 
   <script>
+    const checkTodas = document.getElementById("check-todas");
+    const checksFila = Array.from(document.querySelectorAll(".check-fila"));
+    const botonBorrarSeleccionadas = document.getElementById("boton-borrar-seleccionadas");
+
+    function actualizarBotonBorrarSeleccionadas() {
+      const seleccionadas = checksFila.filter(function (c) { return c.checked; });
+      if (!botonBorrarSeleccionadas) {
+        return;
+      }
+      if (seleccionadas.length === 0) {
+        botonBorrarSeleccionadas.style.display = "none";
+      } else {
+        botonBorrarSeleccionadas.style.display = "block";
+        botonBorrarSeleccionadas.textContent = "Eliminar seleccionadas (" + seleccionadas.length + ")";
+      }
+      if (checkTodas) {
+        checkTodas.checked = seleccionadas.length > 0 && seleccionadas.length === checksFila.length;
+      }
+    }
+
+    if (checkTodas) {
+      checkTodas.addEventListener("change", function () {
+        checksFila.forEach(function (c) {
+          c.checked = checkTodas.checked;
+        });
+        actualizarBotonBorrarSeleccionadas();
+      });
+    }
+
+    checksFila.forEach(function (c) {
+      c.addEventListener("change", actualizarBotonBorrarSeleccionadas);
+    });
+
+    function confirmarBorradoMultiple() {
+      const cantidad = checksFila.filter(function (c) { return c.checked; }).length;
+      return confirm(
+        "¿Seguro que querés eliminar las " + cantidad + " compras seleccionadas? No se puede deshacer."
+      );
+    }
+
     const PROVEEDORES_LISTA = [
       {% for p in proveedores %}{ id: {{ p.id }}, codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
     ];

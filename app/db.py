@@ -636,58 +636,17 @@ def obtener_proveedor(proveedor_id: int) -> dict | None:
         conexion.close()
 
 
-def listar_compras_por_rango_fechas(fecha_desde, fecha_hasta) -> list[dict]:
-    """Devuelve las compras entre dos fechas (inclusive), agrupadas por día y por proveedor (estilo comanda).
+def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, articulo_id: int | None = None) -> list[dict]:
+    """Busca compras por rango de fechas (obligatorio) y, opcionalmente, por proveedor y/o artículo.
 
-    La pantalla /compras/ultimas siempre llama a esto con los últimos 2 días
-    fijos (hoy y ayer) — se deja tal cual, sin filtro de proveedor/artículo,
-    para no tocar esa pantalla. La búsqueda a demanda con filtros vive en
-    buscar_compras, más abajo.
+    Base de la pantalla Buscar Compras y del export a PDF/Excel — WHERE
+    dinámico según qué filtros opcionales vinieron.
 
     Cantidad/contenido/kilos/fracción vienen con el valor REAL (pesado por
     Depósito al recepcionar) si ya existe, si no el estimado que cargó el
     comprador — ver recepcionar_compra. Quien llama sigue leyendo
     "cantidad_cajones" etc. como si fuera la única columna, sin saber nada
     de esta sustitución.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT c.id, c.fecha_operacion, a.nombre AS articulo_nombre, a.unidad_compra,
-                       p.nombre AS proveedor_nombre,
-                       p.codigo_puesto AS proveedor_codigo_puesto,
-                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
-                       COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
-                       COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
-                       COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
-                       c.importe, c.sena, c.tipo_retiro, c.foto_ruta
-                FROM compras c
-                JOIN articulos a ON a.id = c.articulo_id
-                JOIN proveedores p ON p.id = c.proveedor_id
-                WHERE c.fecha_operacion BETWEEN %s AND %s
-                ORDER BY c.fecha_operacion DESC, p.codigo_puesto, c.cargado_el
-                """,
-                (fecha_desde, fecha_hasta),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
-
-
-def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, articulo_id: int | None = None) -> list[dict]:
-    """Busca compras por rango de fechas (obligatorio) y, opcionalmente, por proveedor y/o artículo.
-
-    Mismas columnas que listar_compras_por_rango_fechas (misma base de datos
-    para la pantalla y para el export a PDF/Excel) — WHERE dinámico según
-    qué filtros opcionales vinieron.
-
-    Mismo criterio de real-si-existe que listar_compras_por_rango_fechas
-    (ver ahí el detalle): así el export a PDF/Excel, que arma sus filas a
-    partir de esta función, hereda el real sin ningún cambio propio.
     """
     condiciones = ["c.fecha_operacion BETWEEN %s AND %s"]
     parametros: list = [fecha_desde, fecha_hasta]
@@ -745,7 +704,10 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
     ninguna fórmula ahí.
 
     Excluye las compras rechazadas (estado = 'rechazado'): no se
-    recibieron, no tienen que ensuciar el costo promedio.
+    recibieron, no tienen que ensuciar el costo promedio. Excluye también
+    las canceladas en Logística (estado_retiro = 'cancelado'): una
+    compra cancelada nunca se retiró del puesto, o sea nunca se compró
+    de verdad.
     """
     conexion = obtener_conexion()
     try:
@@ -761,6 +723,7 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                 JOIN articulos a ON a.id = c.articulo_id
                 WHERE c.fecha_operacion BETWEEN %s AND %s
                   AND c.estado IS DISTINCT FROM 'rechazado'
+                  AND c.estado_retiro IS DISTINCT FROM 'cancelado'
                 ORDER BY a.nombre
                 """,
                 (fecha_desde, fecha_hasta),
@@ -903,7 +866,8 @@ def obtener_compra(compra_id: int) -> dict | None:
                 SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon,
-                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta,
+                       c.estado, c.estado_retiro
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -953,6 +917,11 @@ def crear_compra(
     Depósito) — se escribe acá explícitamente, a propósito SIN default a
     nivel de columna: así las compras cargadas antes de este cambio quedan
     con estado NULL para siempre, sin aparecer nunca en Recepción.
+
+    estado_retiro arranca también en 'pendiente' (queda a la espera de
+    Logística, que retira del puesto en el Mercado ANTES de que la
+    mercadería llegue al depósito — ver listar_compras_pendientes_retiro),
+    mismo criterio sin default de columna.
     """
     conexion = obtener_conexion()
     try:
@@ -980,8 +949,8 @@ def crear_compra(
                 INSERT INTO compras
                     (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
                      cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
-                     guia_id, guia_punto, estado)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente')
+                     guia_id, guia_punto, estado, estado_retiro)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
                 """,
                 (
                     fecha_operacion,
@@ -1015,10 +984,25 @@ def actualizar_compra(
     sena: float | None,
     tipo_retiro: str,
 ) -> None:
-    """Actualiza una compra existente (no cambia su proveedor ni su fecha de operación)."""
+    """Actualiza una compra existente (no cambia su proveedor ni su fecha de operación).
+
+    Bloqueada (ValueError) si la compra ya fue recepcionada o retirada:
+    editar cajones/kilaje después de eso cambiaría un costo que ya se pudo
+    haber usado para negociar precios con el cliente — más grave que
+    borrarla, así que la regla es la misma que en eliminar_compra.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute("SELECT estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            estado, estado_retiro = fila if fila else (None, None)
+
+            if estado == "recepcionado":
+                raise ValueError("Esta compra ya fue recepcionada, no se puede editar.")
+            if estado_retiro == "retirado":
+                raise ValueError("Esta compra ya fue retirada, no se puede editar.")
+
             cursor.execute(
                 """
                 UPDATE compras
@@ -1077,7 +1061,36 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
         conexion.close()
 
 
-def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_total_real: float) -> None:
+def _auto_retirar_si_corresponde(cursor, compra_id: int) -> str | None:
+    """Si la compra todavía no fue retirada, la marca retirada con origen='deposito'.
+
+    Si llegó al depósito, alguien la retiró del puesto — aunque Logística
+    nunca haya tildado el botón. Si estado_retiro ya es 'retirado', no
+    hace nada (ya está bien). Si es 'cancelado', es una contradicción real
+    (mercadería que supuestamente no salió del puesto) — NO se pisa, para
+    no borrar ese dato; en cambio se devuelve un aviso para mostrar en
+    pantalla. Devuelve el aviso, o None si no hay nada que avisar.
+    """
+    cursor.execute("SELECT estado_retiro FROM compras WHERE id = %s", (compra_id,))
+    fila = cursor.fetchone()
+    estado_retiro_actual = fila[0] if fila else None
+
+    if estado_retiro_actual == "cancelado":
+        return "Esta compra figuraba cancelada en Logística."
+
+    if estado_retiro_actual != "retirado":
+        cursor.execute(
+            """
+            UPDATE compras
+            SET estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = 'deposito'
+            WHERE id = %s
+            """,
+            (compra_id,),
+        )
+    return None
+
+
+def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_total_real: float) -> str | None:
     """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
 
     cantidad_total_real es un solo número (lo que da la balanza o el
@@ -1087,6 +1100,9 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_to
     cantidad_kilos_real o cantidad_fraccion_real según la unidad_compra del
     artículo (mismo criterio que usa crear_compra con el estimado). El
     estimado nunca se toca.
+
+    Además marca la compra como retirada (ver _auto_retirar_si_corresponde)
+    si todavía no lo estaba. Devuelve el aviso de esa función (o None).
     """
     conexion = obtener_conexion()
     try:
@@ -1122,19 +1138,111 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_to
                 """,
                 (cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real, compra_id),
             )
+
+            aviso = _auto_retirar_si_corresponde(cursor, compra_id)
         conexion.commit()
+        return aviso
     finally:
         conexion.close()
 
 
-def rechazar_compra(compra_id: int) -> None:
-    """Marca una compra como rechazada. No toca ningún valor real — nada se pesó ni se contó."""
+def rechazar_compra(compra_id: int) -> str | None:
+    """Marca una compra como rechazada. No toca ningún valor real — nada se pesó ni se contó.
+
+    Igual que recepcionar_compra, también marca la compra como retirada
+    si todavía no lo estaba (ver _auto_retirar_si_corresponde) — rechazar
+    algo en Depósito también implica que llegó hasta ahí. Devuelve el
+    aviso de esa función (o None).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 "UPDATE compras SET estado = 'rechazado', procesada_el = now() WHERE id = %s",
                 (compra_id,),
+            )
+            aviso = _auto_retirar_si_corresponde(cursor, compra_id)
+        conexion.commit()
+        return aviso
+    finally:
+        conexion.close()
+
+
+def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
+    """Compras de un tipo de retiro puntual (Clark/Carro/Pases) que todavía no se procesaron en Logística.
+
+    Sin límite de fechas (a diferencia de Recepción, acá puede haber
+    compras de hace rato si nadie las retiró todavía). Ordenado por
+    código de puesto del proveedor — como cada guía es de un solo
+    proveedor, ordenar así ya deja las guías agrupadas de forma natural,
+    sin necesidad de un ORDER BY guia_id aparte.
+
+    El filtro es "estado_retiro IS DISTINCT FROM 'retirado' AND ... FROM
+    'cancelado'" en vez de "= 'pendiente'" a propósito: si por algún error
+    una compra quedara con estado_retiro NULL (no debería pasar — los 4
+    métodos de carga pasan todos por crear_compra, que siempre pone
+    'pendiente' — pero por las dudas), con este filtro esa fila SIGUE
+    apareciendo acá (molesta, se nota, se puede arreglar) en vez de
+    desaparecer en silencio para siempre.
+
+    Sin real-si-existe (COALESCE): el retiro pasa ANTES de la recepción,
+    ninguna compra pendiente de retiro puede tener un valor real todavía.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.guia_id, c.guia_punto, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.tipo_retiro = %s
+                  AND c.estado_retiro IS DISTINCT FROM 'retirado'
+                  AND c.estado_retiro IS DISTINCT FROM 'cancelado'
+                ORDER BY p.codigo_puesto, c.guia_id, c.guia_punto
+                """,
+                (tipo_retiro,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def marcar_compra_retirada(compra_id: int, origen: str) -> None:
+    """Marca una compra como retirada del puesto (ver Logística, /logistica/retiro)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE compras
+                SET estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = %s
+                WHERE id = %s
+                """,
+                (origen, compra_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def marcar_compra_cancelada(compra_id: int, origen: str) -> None:
+    """Marca una compra como cancelada en el retiro: nunca salió del puesto."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE compras
+                SET estado_retiro = 'cancelado', retiro_procesado_el = now(), retiro_origen = %s
+                WHERE id = %s
+                """,
+                (origen, compra_id),
             )
         conexion.commit()
     finally:
@@ -1188,14 +1296,16 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
 
 
 def eliminar_compra(compra_id: int) -> str | None:
-    """Borra una compra (borrado real), salvo que ya haya sido recepcionada en Depósito.
+    """Borra una compra (borrado real), salvo que ya haya sido recepcionada o retirada.
 
-    Una compra con estado 'recepcionado' tiene kilaje real pesado — borrarla
-    lo perdería para siempre, así que se rechaza acá con un ValueError (el
-    mensaje es el que se le muestra al usuario tal cual). Por ahora esto no
-    tiene excepción: cuando exista el sistema de permisos, un gerente podrá
+    Una compra recepcionada tiene kilaje real pesado, y una retirada ya
+    salió del puesto — borrar cualquiera de las dos las perdería para
+    siempre, así que se rechaza acá con un ValueError (el mensaje es el
+    que se le muestra al usuario tal cual). Por ahora esto no tiene
+    excepción: cuando exista el sistema de permisos, un gerente podrá
     forzarlo con su acceso, pero eso no se resuelve en esta función.
-    'pendiente' y 'rechazado' se siguen pudiendo borrar sin restricción.
+    'pendiente' y 'rechazado'/'cancelado' se siguen pudiendo borrar sin
+    restricción.
 
     Una misma foto de comanda (foto_ruta) puede estar compartida por varios
     renglones/compras. Devuelve el foto_ruta que hay que borrar del Storage
@@ -1207,12 +1317,14 @@ def eliminar_compra(compra_id: int) -> str | None:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT foto_ruta, estado FROM compras WHERE id = %s", (compra_id,))
+            cursor.execute("SELECT foto_ruta, estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
             fila = cursor.fetchone()
-            foto_ruta, estado = fila if fila else (None, None)
+            foto_ruta, estado, estado_retiro = fila if fila else (None, None, None)
 
             if estado == "recepcionado":
                 raise ValueError("Esta compra ya fue recepcionada, no se puede eliminar.")
+            if estado_retiro == "retirado":
+                raise ValueError("Esta compra ya fue retirada, no se puede eliminar.")
 
             cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
 
@@ -1293,25 +1405,43 @@ def limpiar_foto_ruta_de_compras(foto_ruta: str) -> None:
         conexion.close()
 
 
-def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -> None:
-    """Borra TODAS las compras de un proveedor en una fecha (borrado real, mismo criterio que eliminar_compra).
+def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -> dict:
+    """Borra las compras de un proveedor en una fecha que todavía se pueden borrar (mismo criterio que eliminar_compra).
 
     Usado por "Cancelar" en /compras/nueva: descarta de una toda la carga
     del día para ese proveedor, incluso los renglones que ya se habían
     guardado al apretar "Agregar artículo" (esa acción guarda cada renglón
-    al toque, no queda nada pendiente del lado del cliente). Es una sola
-    sentencia DELETE: si Postgres rechaza el borrado de alguna fila (por
-    ejemplo, porque una recepción ya la referencia), no se borra ninguna —
-    ni siquiera hace falta un rollback explícito, no llega a haber commit.
+    al toque, no queda nada pendiente del lado del cliente).
+
+    Ya no es un DELETE ciego de todo el lote: las compras ya recepcionadas
+    o retiradas quedan afuera del borrado (mismo criterio que
+    eliminar_compra) — nunca en silencio, quien llama tiene que avisar
+    con los números que devuelve esta función, no dar por hecho que se
+    borró todo.
+
+    Devuelve {"borradas": int, "protegidas": int}.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "DELETE FROM compras WHERE fecha_operacion = %s AND proveedor_id = %s",
+                "SELECT COUNT(*) FROM compras WHERE fecha_operacion = %s AND proveedor_id = %s",
                 (fecha_operacion, proveedor_id),
             )
+            (total,) = cursor.fetchone()
+
+            cursor.execute(
+                """
+                DELETE FROM compras
+                WHERE fecha_operacion = %s AND proveedor_id = %s
+                  AND estado IS DISTINCT FROM 'recepcionado'
+                  AND estado_retiro IS DISTINCT FROM 'retirado'
+                """,
+                (fecha_operacion, proveedor_id),
+            )
+            borradas = cursor.rowcount
         conexion.commit()
+        return {"borradas": borradas, "protegidas": total - borradas}
     finally:
         conexion.close()
 

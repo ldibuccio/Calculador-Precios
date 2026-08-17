@@ -103,6 +103,8 @@
   }
   .vacio { color: #888; font-style: italic; }
   .tabla-scroll { overflow-x: auto; }
+  fieldset { border: none; margin: 0; padding: 0; }
+  fieldset[disabled] .boton-exito, fieldset[disabled] button { opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -137,6 +139,7 @@
       <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
       {% endif %}
 
+      <fieldset {% if modo == "editar" and bloqueada %}disabled{% endif %}>
       <label for="articulo_id">Artículo *</label>
       <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)">
         <option value="" {% if not compra %}selected disabled{% endif %}>Elegí un artículo...</option>
@@ -180,6 +183,7 @@
       {% else %}
       <button type="submit" id="boton-guardar-compra">Guardar</button>
       {% endif %}
+      </fieldset>
     </form>
     {% if modo == "nueva" %}
     <form method="post" action="/compras/nueva/cancelar" id="form-cancelar-carga"
@@ -189,7 +193,7 @@
     </form>
     {% endif %}
     {% if modo == "editar" %}
-    <a class="volver" href="/compras/ultimas">Volver a compras</a>
+    <a class="volver" href="/compras/buscar">Volver a compras</a>
     {% endif %}
   </div>
 

@@ -575,7 +575,7 @@
     // termina una lectura relevante para el índice que se está mirando.
     function mostrarEstadoIndiceActual() {
       if (indiceActual >= colaFotos.length) {
-        window.location = "/compras/ultimas";
+        window.location = "/compras/buscar";
         return;
       }
 
@@ -763,7 +763,7 @@
 
     document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
       if (confirm("¿Seguro? Se pierde la foto que estás cargando ahora (las que ya guardaste quedan guardadas).")) {
-        window.location = "/compras/ultimas";
+        window.location = "/compras/buscar";
       }
     });
 

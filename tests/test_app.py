@@ -1265,8 +1265,8 @@ COMPRAS_DE_PRUEBA = [
 
 
 def test_ver_compras_muestra_solo_la_botonera():
-    # /compras pasó a ser solo el título y las dos botoneras — el listado
-    # se mudó a /compras/ultimas.
+    # /compras es solo el título y las dos botoneras — el listado vive en
+    # /compras/buscar (Últimas Compras ya no existe como pantalla propia).
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
@@ -1274,94 +1274,10 @@ def test_ver_compras_muestra_solo_la_botonera():
     assert ">Cargar<" in respuesta.text
     assert ">Operaciones<" in respuesta.text
     assert respuesta.text.index(">Cargar<") < respuesta.text.index(">Operaciones<")
-    assert "Últimas Compras" in respuesta.text  # el botón, no el listado
+    assert "Buscar Compras" in respuesta.text
+    assert "Últimas Compras" not in respuesta.text
     assert "<table" not in respuesta.text
     assert 'id="boton-borrar-seleccionadas"' not in respuesta.text
-
-
-def test_ver_ultimas_compras_muestra_las_de_los_ultimos_2_dias():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA) as mock_listar,
-    ):
-        respuesta = cliente.get("/compras/ultimas")
-
-    assert respuesta.status_code == 200
-    assert '<div class="barra-titulo">Últimas Compras</div>' in respuesta.text
-    assert "Mzn Red" in respuesta.text
-    assert "Saturno" in respuesta.text
-    assert "N07P41" in respuesta.text
-    assert "Mango" in respuesta.text
-    assert "Fecha" in respuesta.text
-    # Regresión: encabezado de la tabla con fondo propio, para
-    # diferenciarlo de las filas.
-    assert "thead tr {" in respuesta.text
-    assert "background: #eef2f7" in respuesta.text
-    # Regresión: "Enviar a Logística" vive acá adentro (Próximamente),
-    # no en la botonera principal de /compras.
-    assert 'id="boton-enviar-logistica"' in respuesta.text
-    assert 'href="/compras/enviar-logistica"' in respuesta.text
-    # Regresión: encabezados compactos para pantalla de celular.
-    assert "<th>Cant</th>" in respuesta.text
-    assert "<th>K/U</th>" in respuesta.text
-    assert "<th>$</th>" in respuesta.text
-    # sin totales calculados: no debe mostrarse la columna de fracción/kilos ya procesada
-    assert "Fracción" not in respuesta.text
-    mock_listar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA)
-    # Regresión: pantalla compacta para celular — fecha dd/mm (sin año) y
-    # números sin decimales de sobra (10 en vez de 10.0).
-    assert "06/08" in respuesta.text
-    assert "05/08" in respuesta.text
-    assert "2026" not in respuesta.text
-    assert "<td>10</td>" in respuesta.text
-    assert "10.0" not in respuesta.text
-    assert "18.0" not in respuesta.text
-    # Regresión: letra de unidad pegada al contenido por cajón (18k, 10u).
-    assert "<td>18k</td>" in respuesta.text
-    assert "<td>10u</td>" in respuesta.text
-    # Regresión: importe y seña con signo $ y "." cada tres cifras.
-    assert "$50.000" in respuesta.text
-    assert "$15.000" in respuesta.text
-    assert "$2.000" in respuesta.text
-
-
-def test_ver_ultimas_compras_muestra_ver_foto_solo_en_las_filas_con_foto():
-    compras = [
-        dict(COMPRAS_DE_PRUEBA[0], foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg"),
-        dict(COMPRAS_DE_PRUEBA[1], foto_ruta=None),
-    ]
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=compras),
-    ):
-        respuesta = cliente.get("/compras/ultimas")
-
-    assert respuesta.status_code == 200
-    assert respuesta.text.count("Ver foto") == 1
-    assert 'href="/compras/30/foto"' in respuesta.text
-    assert 'href="/compras/31/foto"' not in respuesta.text
-
-
-def test_ver_ultimas_compras_sin_compras_muestra_mensaje():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=[]),
-    ):
-        respuesta = cliente.get("/compras/ultimas")
-
-    assert respuesta.status_code == 200
-    assert "No hay compras cargadas en los últimos 2 días" in respuesta.text
-
-
-def test_ver_ultimas_compras_error_de_base_muestra_error_claro():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", side_effect=Exception("no se pudo conectar")),
-    ):
-        respuesta = cliente.get("/compras/ultimas")
-
-    assert respuesta.status_code == 500
-    assert "No se pudieron leer las compras" in respuesta.text
 
 
 def test_ver_compras_no_muestra_nada_de_sistema_ahi():
@@ -1369,8 +1285,6 @@ def test_ver_compras_no_muestra_nada_de_sistema_ahi():
     # movieron a /sistema — /compras es operativa, no tiene que mostrar
     # nada de eso (ni siquiera si esas funciones responden bien).
     with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
         patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/x.jpg"]),
     ):
@@ -1383,11 +1297,7 @@ def test_ver_compras_no_muestra_nada_de_sistema_ahi():
 
 
 def test_ver_compras_incluye_links_a_catalogo_y_a_inicio():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
-    ):
-        respuesta = cliente.get("/compras")
+    respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     assert 'href="/articulos"' in respuesta.text
@@ -1911,14 +1821,6 @@ def test_exportar_listado_compras_excel_fecha_invalida_da_400():
     assert respuesta.status_code == 400
 
 
-def test_enviar_a_logistica_muestra_en_construccion():
-    respuesta = cliente.get("/compras/enviar-logistica")
-
-    assert respuesta.status_code == 200
-    assert "Enviar a logística" in respuesta.text
-    assert "En construcción" in respuesta.text
-
-
 def test_armar_listado_de_compras_muestra_en_construccion():
     respuesta = cliente.get("/compras/armar-listado")
 
@@ -1940,11 +1842,11 @@ def test_ver_compras_muestra_la_botonera_de_cargar_y_operaciones():
     assert "Cargar Múltiples Fotos" in respuesta.text
     assert 'href="/compras/nueva/listado"' in respuesta.text
     assert "Cargar Listado de Compras" in respuesta.text
-    # Grupo Operaciones: Últimas Compras, Buscar Compras, Armar Listado,
-    # Compras sin precio, Disponibles. "Enviar a Logística" se retiró de
-    # acá (ahora vive dentro de /compras/ultimas).
-    assert 'href="/compras/ultimas"' in respuesta.text
-    assert "Últimas Compras" in respuesta.text
+    # Grupo Operaciones: Buscar Compras, Armar Listado, Compras sin precio,
+    # Disponibles. "Últimas Compras" y "Enviar a Logística" ya no existen
+    # (Buscar Compras + Logística los reemplazan).
+    assert 'href="/compras/ultimas"' not in respuesta.text
+    assert "Últimas Compras" not in respuesta.text
     assert 'href="/compras/buscar"' in respuesta.text
     assert 'href="/compras/armar-listado"' in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
@@ -1964,30 +1866,61 @@ def test_ver_compras_botonera_diferencia_grupos_por_color():
     # Cargar: azul, el color de acción normal (sin clase extra de color).
     assert 'class="boton" href="/compras/nueva/manual"' in respuesta.text
     # Operaciones: naranja — ni verde (=guardar) ni rojo (=borrar/cancelar).
-    assert 'class="boton boton-naranja" href="/compras/ultimas"' in respuesta.text
+    assert 'class="boton boton-naranja" href="/compras/buscar"' in respuesta.text
     assert 'class="boton boton-naranja" href="/compras/pendientes"' in respuesta.text
     assert ".boton-naranja { background: #ea580c; }" in respuesta.text
     # "Próximamente": color del grupo pero atenuado (mismo criterio en
     # Cargar y en Operaciones). Cargar Listado de Compras y Buscar Compras
     # ya no son "próximamente" — quedaron activos.
     assert 'class="boton" href="/compras/nueva/listado"' in respuesta.text
-    assert 'class="boton boton-naranja" href="/compras/buscar"' in respuesta.text
     assert 'class="boton boton-naranja boton-proximamente" href="/compras/disponibles"' in respuesta.text
     assert ".boton-proximamente { opacity: 0.6; }" in respuesta.text
 
 
-def test_ver_ultimas_compras_boton_borrar_seleccionadas_es_tamano_normal():
+def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
     # Regresión: el botón no puede depender solo de .boton-eliminar (que no
     # trae padding/ancho propios) — necesita la clase .boton para tener un
     # área de toque cómoda en celular, no quedar chico/finito.
     with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/compras/ultimas")
+        respuesta = cliente.get("/compras/buscar")
 
     assert respuesta.status_code == 200
     assert 'class="boton boton-eliminar" id="boton-borrar-seleccionadas"' in respuesta.text
+
+
+def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
+    compras = [
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg"),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], foto_ruta=None),
+    ]
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=compras),
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.text.count(">Editar<") == 2
+    assert respuesta.text.count("Ver foto") == 1
+    assert 'href="/compras/1/foto"' in respuesta.text
+    assert 'href="/compras/2/foto"' not in respuesta.text
+    assert 'href="/compras/1/editar"' in respuesta.text
+    assert 'href="/compras/2/editar"' in respuesta.text
+
+
+def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/buscar?aviso=3+compras+canceladas.")
+
+    assert '<div class="aviso">3 compras canceladas.</div>' in respuesta.text
 
 
 def test_elegir_proveedor_compra_exitoso_redirige_con_proveedor_id():
@@ -2233,7 +2166,7 @@ def test_agregar_compra_terminar_con_renglon_vacio_va_a_compras_sin_guardar():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.headers["location"] == "/compras/buscar"
     mock_proveedor.assert_not_called()
     mock_crear.assert_not_called()
 
@@ -2261,7 +2194,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.headers["location"] == "/compras/buscar"
     mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark")
 
 
@@ -2537,7 +2470,7 @@ def test_agregar_compra_error_de_base_muestra_mensaje_claro():
 def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_a_compras():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.eliminar_compras_del_dia_por_proveedor") as mock_eliminar,
+        patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 0}) as mock_eliminar,
     ):
         respuesta = cliente.post(
             "/compras/nueva/cancelar",
@@ -2546,11 +2479,32 @@ def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    location = respuesta.headers["location"]
+    assert location.startswith("/compras/buscar?")
+    assert f"fecha_desde={HOY_DE_PRUEBA.isoformat()}" in location
+    assert f"fecha_hasta={HOY_DE_PRUEBA.isoformat()}" in location
+    assert "proveedor_id=200" in location
+    assert "aviso=3+compras+canceladas." in location
     # Se borra TODO lo del proveedor en el día, no un renglón puntual: no
     # hace falta que el comprador haya cargado nada en el formulario para
     # que se descarte lo que ya estaba guardado de "Agregar artículo".
     mock_eliminar.assert_called_once_with(HOY_DE_PRUEBA, 200)
+
+
+def test_cancelar_carga_proveedor_con_protegidas_avisa_sin_tecnicismos():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 2}),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/cancelar",
+            data={"proveedor_id": "200"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert "aviso=3+compras+canceladas.+2+no+se+pudieron+eliminar%3A+ya+fueron+retiradas+o+recepcionadas." in location
 
 
 def test_cancelar_carga_proveedor_error_de_base_muestra_mensaje_claro():
@@ -2585,6 +2539,8 @@ COMPRA_DE_PRUEBA = {
     "importe": 50000,
     "sena": None,
     "tipo_retiro": "Clark",
+    "estado": "pendiente",
+    "estado_retiro": "pendiente",
 }
 
 
@@ -2641,7 +2597,7 @@ def test_editar_compra_exitosa_redirige_a_compras():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.headers["location"] == "/compras/buscar"
     mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Carro")
 
 
@@ -2708,6 +2664,56 @@ def test_editar_compra_error_de_base_muestra_mensaje_claro():
     assert "No se pudo guardar la compra" in respuesta.text
 
 
+def test_editar_compra_ya_retirada_da_400_con_el_mensaje():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch(
+            "app.main.actualizar_compra",
+            side_effect=ValueError("Esta compra ya fue retirada, no se puede editar."),
+        ),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "12.5",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Esta compra ya fue retirada, no se puede editar." in respuesta.text
+
+
+def test_ver_editar_compra_recepcionada_muestra_aviso_y_deshabilita_el_form():
+    compra_bloqueada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_bloqueada),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert "Esta compra ya fue recepcionada o retirada, no se puede editar." in respuesta.text
+    assert "<fieldset disabled>" in respuesta.text
+
+
+def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert "no se puede editar" not in respuesta.text
+    assert "<fieldset disabled>" not in respuesta.text
+
+
 def test_eliminar_compra_exitosa_redirige_a_compras():
     with (
         patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
@@ -2716,7 +2722,7 @@ def test_eliminar_compra_exitosa_redirige_a_compras():
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.headers["location"] == "/compras/buscar"
     mock_eliminar.assert_called_once_with(30)
     # Esta compra no tenía foto (eliminar_compra devolvió None): no hay
     # nada que borrar del Storage.
@@ -2744,7 +2750,7 @@ def test_eliminar_compra_si_falla_el_borrado_de_la_foto_igual_redirige_bien():
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.headers["location"] == "/compras/buscar"
 
 
 def test_eliminar_compra_error_de_base_da_500():
@@ -2765,61 +2771,77 @@ def test_eliminar_compra_ya_recepcionada_da_400_con_el_mensaje():
     assert "Esta compra ya fue recepcionada, no se puede eliminar." in respuesta.text
 
 
-def test_eliminar_varias_compras_exitosa_redirige_a_compras():
+def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
     with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
     ):
         respuesta = cliente.post(
             "/compras/eliminar-varias",
-            data={"compra_id": ["30", "31"]},
-            follow_redirects=False,
+            data={
+                "compra_id": ["30", "31"],
+                "fecha_desde": "2026-08-01",
+                "fecha_hasta": "2026-08-06",
+                "proveedor_id": "200",
+                "articulo_id": "",
+            },
         )
 
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.status_code == 200
     assert mock_eliminar.call_count == 2
     mock_eliminar.assert_any_call(30)
     mock_eliminar.assert_any_call(31)
     mock_borrar_foto.assert_not_called()
+    assert '<div class="aviso">Se eliminaron 2 compras.</div>' in respuesta.text
+    # Conserva los filtros que estaban activos cuando se apretó el borrado.
+    assert 'value="2026-08-01"' in respuesta.text
+    assert 'value="2026-08-06"' in respuesta.text
 
 
-def test_eliminar_varias_compras_sin_ninguna_seleccionada_redirige_sin_hacer_nada():
-    with patch("app.main.eliminar_compra") as mock_eliminar:
-        respuesta = cliente.post("/compras/eliminar-varias", data={}, follow_redirects=False)
+def test_eliminar_varias_compras_sin_ninguna_seleccionada_no_hace_nada():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+        patch("app.main.eliminar_compra") as mock_eliminar,
+    ):
+        respuesta = cliente.post("/compras/eliminar-varias", data={})
 
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.status_code == 200
     mock_eliminar.assert_not_called()
 
 
 def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicismos():
     # id 30 (Mzn Red, Saturno) se borra bien; id 31 (Mango, Frutamax) falla
-    # (ej. por la FK de recepciones). El mensaje al usuario no debe mostrar
-    # ids ni el error crudo de Postgres, y sí debe nombrar el renglón que
-    # no se pudo borrar de forma reconocible (artículo + proveedor).
+    # (ej. porque ya fue retirada o recepcionada). El mensaje al usuario no
+    # debe mostrar ids ni el error crudo de Postgres, y sí debe nombrar el
+    # renglón que no se pudo borrar de forma reconocible (artículo + proveedor).
     def eliminar_side_effect(compra_id):
         if compra_id == 31:
             raise Exception('update or delete on table "compras" violates foreign key constraint')
         return None
 
     with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.eliminar_compra", side_effect=eliminar_side_effect) as mock_eliminar,
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
     ):
         respuesta = cliente.post(
             "/compras/eliminar-varias",
-            data={"compra_id": ["30", "31"]},
+            data={"compra_id": ["30", "31"], "fecha_desde": "2026-08-01", "fecha_hasta": "2026-08-06"},
         )
 
     assert respuesta.status_code == 200
     assert mock_eliminar.call_count == 2
     mock_borrar_foto.assert_not_called()
-    assert "Se borraron 1 de 2 compras" in respuesta.text
-    assert "No se pudieron borrar 1" in respuesta.text
-    assert "recepción asociada" in respuesta.text
+    assert "Se eliminaron 1 de 2 compras" in respuesta.text
+    assert "1 no se pudieron eliminar" in respuesta.text
+    assert "ya fueron retiradas o recepcionadas" in respuesta.text
     # Identifica el renglón fallido por artículo+proveedor, no por id ni con
     # el texto crudo de Postgres. (El "31" en la fila de la tabla es el
     # value del checkbox, no el mensaje de error — no cuenta como fuga.)
@@ -2831,18 +2853,19 @@ def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicis
 
 def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
     with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_compras_por_rango_fechas", return_value=COMPRAS_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.eliminar_compra", side_effect=Exception("no se pudo conectar")),
     ):
         respuesta = cliente.post(
             "/compras/eliminar-varias",
-            data={"compra_id": ["30", "31"]},
+            data={"compra_id": ["30", "31"], "fecha_desde": "2026-08-01", "fecha_hasta": "2026-08-06"},
         )
 
     assert respuesta.status_code == 200
-    assert "Se borraron 0 de 2 compras" in respuesta.text
-    assert "No se pudieron borrar 2" in respuesta.text
+    assert "Se eliminaron 0 de 2 compras" in respuesta.text
+    assert "2 no se pudieron eliminar" in respuesta.text
     assert "Mzn Red (Saturno)" in respuesta.text
     assert "Mango (Frutamax)" in respuesta.text
 
@@ -2912,7 +2935,7 @@ def test_ver_recepcion_error_de_base_da_500():
 
 
 def test_recepcionar_compra_guarda_los_reales_y_redirige():
-    with patch("app.main.recepcionar_compra") as mock_recepcionar:
+    with patch("app.main.recepcionar_compra", return_value=None) as mock_recepcionar:
         respuesta = cliente.post(
             "/deposito/recepcion/1/recepcionar",
             data={"cantidad_cajones_real": "38", "cantidad_total_real": "760"},
@@ -2922,6 +2945,23 @@ def test_recepcionar_compra_guarda_los_reales_y_redirige():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion"
     mock_recepcionar.assert_called_once_with(1, 38.0, 760.0)
+
+
+def test_recepcionar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
+    # Si Depósito recepciona algo que Logística ya había marcado 'cancelado',
+    # recepcionar_compra devuelve un aviso — no se pisa el cancelado, pero
+    # tampoco puede pasar callado.
+    with patch(
+        "app.main.recepcionar_compra", return_value="Esta compra figuraba cancelada en Logística."
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "38", "cantidad_total_real": "760"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion?aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
 
 
 def test_recepcionar_compra_sin_datos_muestra_error_sin_guardar():
@@ -2969,12 +3009,30 @@ def test_recepcionar_compra_error_de_base_muestra_mensaje():
 
 
 def test_rechazar_compra_redirige_y_no_pide_datos():
-    with patch("app.main.rechazar_compra") as mock_rechazar:
+    with patch("app.main.rechazar_compra", return_value=None) as mock_rechazar:
         respuesta = cliente.post("/deposito/recepcion/2/rechazar", follow_redirects=False)
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion"
     mock_rechazar.assert_called_once_with(2)
+
+
+def test_rechazar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
+    with patch(
+        "app.main.rechazar_compra", return_value="Esta compra figuraba cancelada en Logística."
+    ):
+        respuesta = cliente.post("/deposito/recepcion/2/rechazar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion?aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
+
+
+def test_ver_recepcion_muestra_el_aviso_cuando_viene_en_la_url():
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=[]):
+        respuesta = cliente.get("/deposito/recepcion?aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica.")
+
+    assert respuesta.status_code == 200
+    assert '<div class="aviso">Esta compra figuraba cancelada en Logística.</div>' in respuesta.text
 
 
 def test_rechazar_compra_error_de_base_muestra_mensaje():
@@ -3434,7 +3492,7 @@ def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igu
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/ultimas"
+    assert respuesta.headers["location"] == "/compras/buscar"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
     mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
@@ -5785,13 +5843,89 @@ def test_ver_comercial_muestra_los_tres_accesos():
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_ver_logistica_muestra_en_construccion_y_vuelve_a_inicio():
+def test_ver_logistica_muestra_los_tres_botones_de_retiro():
     respuesta = cliente.get("/logistica")
 
     assert respuesta.status_code == 200
     assert "Logística" in respuesta.text
-    assert "En construcción" in respuesta.text
+    assert 'href="/logistica/retiro/Clark"' in respuesta.text
+    assert 'href="/logistica/retiro/Carro"' in respuesta.text
+    assert 'href="/logistica/retiro/Pases"' in respuesta.text
+    assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
+
+
+# --- /logistica/retiro/{tipo_retiro}: retiro de mercadería en el Mercado Central ---
+
+COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA = [
+    {
+        "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
+    },
+    {
+        "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
+    },
+]
+
+
+def test_ver_logistica_retiro_agrupa_por_guia():
+    with patch("app.main.listar_compras_pendientes_retiro", return_value=COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA) as mock_listar:
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    mock_listar.assert_called_once_with("Clark")
+    assert "Guía 105" in respuesta.text
+    assert "Saturno (N07P41)" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+    assert "Mango" in respuesta.text
+    assert 'action="/logistica/retiro/Clark/1/retirar"' in respuesta.text
+    assert 'action="/logistica/retiro/Clark/1/cancelar"' in respuesta.text
+
+
+def test_ver_logistica_retiro_tipo_invalido_da_404():
+    respuesta = cliente.get("/logistica/retiro/Moto")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_logistica_retiro_sin_pendientes_muestra_mensaje():
+    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+        respuesta = cliente.get("/logistica/retiro/Pases")
+
+    assert respuesta.status_code == 200
+    assert "No hay compras pendientes de retiro por Pases." in respuesta.text
+
+
+def test_retirar_compra_marca_retirada_y_redirige():
+    with patch("app.main.marcar_compra_retirada", return_value=None) as mock_marcar:
+        respuesta = cliente.post("/logistica/retiro/Clark/1/retirar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Clark"
+    mock_marcar.assert_called_once_with(1, "logistica")
+
+
+def test_cancelar_retiro_compra_marca_cancelada_y_redirige():
+    with patch("app.main.marcar_compra_cancelada", return_value=None) as mock_marcar:
+        respuesta = cliente.post("/logistica/retiro/Carro/1/cancelar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Carro"
+    mock_marcar.assert_called_once_with(1, "logistica")
+
+
+def test_retirar_compra_error_de_base_muestra_mensaje():
+    with (
+        patch("app.main.marcar_compra_retirada", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+    ):
+        respuesta = cliente.post("/logistica/retiro/Clark/1/retirar")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo marcar como retirada" in respuesta.text
 
 
 def test_ver_deposito_muestra_el_acceso_a_recepcion():

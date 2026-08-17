@@ -3,20 +3,24 @@ from unittest.mock import MagicMock, patch
 
 from app.db import (
     actualizar_cliente,
+    actualizar_compra,
     buscar_compras,
     crear_cliente,
     crear_compra,
     eliminar_compra,
+    eliminar_compras_del_dia_por_proveedor,
     guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
     listar_clientes,
     listar_compras_para_costeo,
     listar_compras_pendientes_recepcion,
-    listar_compras_por_rango_fechas,
+    listar_compras_pendientes_retiro,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_fotos_para_limpiar,
     listar_precios_vigentes_por_cliente,
+    marcar_compra_cancelada,
+    marcar_compra_retirada,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
@@ -41,7 +45,7 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
 def test_eliminar_compra_devuelve_el_foto_ruta_si_era_la_unica_referencia():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente"),  # SELECT foto_ruta, estado
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
             (0,),  # SELECT COUNT(*) después del DELETE: nadie más la usa
         ]
     )
@@ -60,7 +64,7 @@ def test_eliminar_compra_no_devuelve_el_foto_ruta_si_otro_renglon_lo_sigue_usand
     # puede borrar del bucket todavía.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente"),  # SELECT foto_ruta, estado
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
             (1,),  # SELECT COUNT(*) después del DELETE: queda 1 compra usándola
         ]
     )
@@ -82,7 +86,7 @@ def test_eliminar_compra_no_borra_la_foto_si_otro_proveedor_del_mismo_listado_la
     # proveedor sigan usándola.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/listado-abc123.jpg", "pendiente"),  # SELECT foto_ruta, estado
+            ("2026-08-13/listado-abc123.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
             (2,),  # SELECT COUNT(*): quedan 2 compras de otros proveedores usándola
         ]
     )
@@ -105,7 +109,7 @@ def test_eliminar_compra_borra_la_foto_al_eliminar_la_ultima_compra_de_cualquier
     # la foto del bucket.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/listado-abc123.jpg", "pendiente"),  # SELECT foto_ruta, estado
+            ("2026-08-13/listado-abc123.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
             (0,),  # SELECT COUNT(*): ya no queda ninguna compra usándola
         ]
     )
@@ -119,7 +123,7 @@ def test_eliminar_compra_borra_la_foto_al_eliminar_la_ultima_compra_de_cualquier
 def test_eliminar_compra_sin_foto_no_cuenta_referencias():
     conexion, cursor = _conexion_falsa(
         [
-            (None, "pendiente"),  # SELECT foto_ruta, estado: esta compra no tenía foto
+            (None, "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro: esta compra no tenía foto
         ]
     )
 
@@ -134,7 +138,22 @@ def test_eliminar_compra_sin_foto_no_cuenta_referencias():
 def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "rechazado"),  # SELECT foto_ruta, estado
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "rechazado", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
+            (0,),
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compra(30)
+
+    assert resultado == "2026-08-13/n07p41-123-abcdef12.jpg"
+    conexion.commit.assert_called_once()
+
+
+def test_eliminar_compra_cancelada_en_retiro_se_puede_borrar_igual_que_antes():
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "cancelado"),  # SELECT foto_ruta, estado, estado_retiro
             (0,),
         ]
     )
@@ -149,7 +168,7 @@ def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
 def test_eliminar_compra_recepcionada_no_se_borra():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "recepcionado"),  # SELECT foto_ruta, estado
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "recepcionado", "retirado"),  # SELECT foto_ruta, estado, estado_retiro
         ]
     )
 
@@ -164,6 +183,24 @@ def test_eliminar_compra_recepcionada_no_se_borra():
     assert cursor.execute.call_count == 1
     conexion.commit.assert_not_called()
     conexion.close.assert_called_once()
+
+
+def test_eliminar_compra_retirada_no_se_borra():
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "retirado"),  # SELECT foto_ruta, estado, estado_retiro
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            eliminar_compra(30)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == "Esta compra ya fue retirada, no se puede eliminar."
+
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
 
 
 def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
@@ -213,17 +250,44 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
     assert parametros_insert[-2:] == (105, 3)  # guia_id, guia_punto
 
 
-def test_listar_compras_por_rango_fechas_usa_el_real_si_existe():
-    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+def test_actualizar_compra_pisa_los_valores():
+    conexion, cursor = _conexion_falsa([(None, None)])  # SELECT estado, estado_retiro: compra sin procesar
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        listar_compras_por_rango_fechas(date(2026, 8, 15), date(2026, 8, 16))
+        actualizar_compra(30, 5, 10, 20, 200, None, 5000.0, None, "Clark")
 
-    consulta = cursor.execute.call_args[0][0]
-    assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
-    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
-    assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
-    assert "COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion" in consulta
+    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    assert "UPDATE compras" in consulta_update
+    assert parametros_update[-1] == 30
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_compra_recepcionada_no_se_edita():
+    conexion, cursor = _conexion_falsa([("recepcionado", "retirado")])  # SELECT estado, estado_retiro
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            actualizar_compra(30, 5, 10, 20, 200, None, 5000.0, None, "Clark")
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == "Esta compra ya fue recepcionada, no se puede editar."
+
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
+
+
+def test_actualizar_compra_retirada_no_se_edita():
+    conexion, cursor = _conexion_falsa([("pendiente", "retirado")])  # SELECT estado, estado_retiro
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            actualizar_compra(30, 5, 10, 20, 200, None, 5000.0, None, "Clark")
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == "Esta compra ya fue retirada, no se puede editar."
+
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
 
 
 def test_buscar_compras_usa_el_real_si_existe():
@@ -251,6 +315,8 @@ def test_listar_compras_para_costeo_usa_el_real_si_existe_y_excluye_rechazadas()
     assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
     # Una compra rechazada no se recibió: no puede ensuciar el costo promedio.
     assert "estado IS DISTINCT FROM 'rechazado'" in consulta
+    # Una compra cancelada en Logística nunca se retiró del puesto: tampoco es una compra real.
+    assert "estado_retiro IS DISTINCT FROM 'cancelado'" in consulta
 
 
 def test_listar_compras_sin_precio_usa_el_real_si_existe():
@@ -279,10 +345,12 @@ def test_listar_compras_pendientes_recepcion_filtra_por_estado_y_guia():
 
 
 def test_recepcionar_compra_articulo_por_kilo_guarda_cantidad_kilos_real():
-    conexion, cursor = _conexion_falsa([("kilo",)])  # SELECT unidad_compra
+    # 2 fetchone: SELECT unidad_compra, y SELECT estado_retiro dentro de
+    # _auto_retirar_si_corresponde (acá viene 'pendiente', se auto-retira).
+    conexion, cursor = _conexion_falsa([("kilo",), ("pendiente",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
+        aviso = recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
 
     consulta_update, parametros_update = cursor.execute.call_args_list[1].args
     assert "estado = 'recepcionado'" in consulta_update
@@ -293,11 +361,17 @@ def test_recepcionar_compra_articulo_por_kilo_guarda_cantidad_kilos_real():
     assert kilos == 760
     assert fraccion is None
     assert compra_id == 30
+    assert aviso is None
+    # Se auto-retira: UPDATE final con estado_retiro = 'retirado', origen 'deposito'.
+    consulta_retiro, parametros_retiro = cursor.execute.call_args_list[3].args
+    assert "estado_retiro = 'retirado'" in consulta_retiro
+    assert "retiro_origen = 'deposito'" in consulta_retiro
+    assert parametros_retiro == (30,)
     conexion.commit.assert_called_once()
 
 
 def test_recepcionar_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
-    conexion, cursor = _conexion_falsa([("unidad",)])  # SELECT unidad_compra
+    conexion, cursor = _conexion_falsa([("unidad",), ("pendiente",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         recepcionar_compra(31, cantidad_cajones_real=10, cantidad_total_real=118)
@@ -309,17 +383,104 @@ def test_recepcionar_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
     assert fraccion == 118
 
 
-def test_rechazar_compra_marca_estado_y_no_toca_los_reales():
-    conexion, cursor = _conexion_falsa()
+def test_recepcionar_compra_ya_retirada_no_pisa_el_auto_retiro():
+    conexion, cursor = _conexion_falsa([("kilo",), ("retirado",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        rechazar_compra(32)
+        aviso = recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
 
-    consulta, parametros = cursor.execute.call_args[0]
+    assert aviso is None
+    # Solo 2 execute: SELECT unidad_compra + UPDATE recepcionado, y dentro de
+    # _auto_retirar_si_corresponde el SELECT estado_retiro — sin UPDATE de más.
+    assert cursor.execute.call_count == 3
+
+
+def test_recepcionar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
+    conexion, cursor = _conexion_falsa([("kilo",), ("cancelado",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        aviso = recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
+
+    assert aviso == "Esta compra figuraba cancelada en Logística."
+    # Sin UPDATE de estado_retiro: se corta después del SELECT.
+    assert cursor.execute.call_count == 3
+    conexion.commit.assert_called_once()
+
+
+def test_rechazar_compra_marca_estado_y_no_toca_los_reales():
+    conexion, cursor = _conexion_falsa([("pendiente",)])  # SELECT estado_retiro (auto-retiro)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        aviso = rechazar_compra(32)
+
+    consulta, parametros = cursor.execute.call_args_list[0].args
     assert "estado = 'rechazado'" in consulta
     assert "procesada_el = now()" in consulta
     assert "cantidad_cajones_real" not in consulta
     assert parametros == (32,)
+    assert aviso is None
+    conexion.commit.assert_called_once()
+
+
+def test_rechazar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
+    conexion, cursor = _conexion_falsa([("cancelado",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        aviso = rechazar_compra(32)
+
+    assert aviso == "Esta compra figuraba cancelada en Logística."
+
+
+def test_listar_compras_pendientes_retiro_filtra_por_tipo_y_estado_retiro():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_pendientes_retiro("Clark")
+
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "c.tipo_retiro = %s" in consulta
+    assert "estado_retiro IS DISTINCT FROM 'retirado'" in consulta
+    assert "estado_retiro IS DISTINCT FROM 'cancelado'" in consulta
+    assert "ORDER BY p.codigo_puesto" in consulta
+    assert parametros == ("Clark",)
+
+
+def test_marcar_compra_retirada_guarda_origen():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_compra_retirada(30, "logistica")
+
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "estado_retiro = 'retirado'" in consulta
+    assert "retiro_procesado_el = now()" in consulta
+    assert parametros == ("logistica", 30)
+    conexion.commit.assert_called_once()
+
+
+def test_marcar_compra_cancelada_guarda_origen():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_compra_cancelada(30, "logistica")
+
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "estado_retiro = 'cancelado'" in consulta
+    assert parametros == ("logistica", 30)
+    conexion.commit.assert_called_once()
+
+
+def test_eliminar_compras_del_dia_por_proveedor_devuelve_borradas_y_protegidas():
+    conexion, cursor = _conexion_falsa([(5,)])  # SELECT COUNT(*): 5 compras en total
+    cursor.rowcount = 3  # solo 3 se pudieron borrar (2 protegidas)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compras_del_dia_por_proveedor(date(2026, 8, 16), 7)
+
+    assert resultado == {"borradas": 3, "protegidas": 2}
+    consulta_delete = cursor.execute.call_args_list[1].args[0]
+    assert "estado IS DISTINCT FROM 'recepcionado'" in consulta_delete
+    assert "estado_retiro IS DISTINCT FROM 'retirado'" in consulta_delete
     conexion.commit.assert_called_once()
 
 
