@@ -53,12 +53,13 @@ create table if not exists disponibles (
     estado          text not null check (estado in ('borrador', 'generado')),
     version         integer,
     creado_en       timestamptz not null default now(),
-    actualizado_en  timestamptz not null default now()
+    actualizado_en  timestamptz not null default now(),
+    check (fecha_hasta >= fecha_desde)
 );
 
 comment on table disponibles is 'Cabecera de una planilla de Disponibles (mercadería en stock) para un cliente, con el rango de fechas mostrado en el Excel. borrador = se sigue editando (se puede retomar); generado = ya se bajó el Excel, queda como historial.';
 comment on column disponibles.fecha_desde is 'Primer día del rango mostrado en el Excel como "Fecha: ...".';
-comment on column disponibles.fecha_hasta is 'Último día del rango. Igual a fecha_desde si es un solo día (el Excel muestra "Fecha: DD/MM/AAAA"); si son dos días distintos, muestra "Fecha: DD/MM/AAAA al DD/MM/AAAA".';
+comment on column disponibles.fecha_hasta is 'Último día del rango. Igual a fecha_desde si es un solo día (el Excel muestra "Fecha: DD/MM/AAAA"); si son dos días distintos, muestra "Fecha: DD/MM/AAAA al DD/MM/AAAA". CHECK fecha_hasta >= fecha_desde: agregado por el usuario al correr el SQL, para que un dedazo no deje un rango invertido.';
 comment on column disponibles.estado is 'borrador o generado. Sin DEFAULT: /compras/disponibles siempre lo escribe explícito, nunca a cargo de la base.';
 comment on column disponibles.version is 'Reenvío número N del mismo cliente+fecha_desde el mismo día (1 = el primero, sin sufijo en el archivo). NULL mientras es borrador; se fija recién al generar el Excel.';
 
