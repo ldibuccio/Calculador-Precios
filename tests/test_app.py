@@ -5730,6 +5730,21 @@ def test_ver_inicio_muestra_las_6_areas():
     assert 'href="/sistema"' in respuesta.text
 
 
+def test_ver_inicio_deposito_ya_no_dice_proximamente():
+    # Depósito dejó de ser "en construcción" desde que existe Recepción —
+    # la tarjeta de /inicio tiene que verse igual de activa que Compras o
+    # Comercial, no atenuada como Logística/Gerencia (que sí siguen sin
+    # nada adentro).
+    respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    assert "Depósito (Próximamente)" not in respuesta.text
+    assert '<a class="boton-area" href="/deposito">' in respuesta.text
+    # Logística y Gerencia siguen siendo placeholders: no se tocaron.
+    assert "Logística (Próximamente)" in respuesta.text
+    assert "Gerencia (Próximamente)" in respuesta.text
+
+
 def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
     # Regresión: el mismo ícono que representa a cada sector en la barrita
     # de arriba tiene que estar en su tarjeta de la home, para un lenguaje
