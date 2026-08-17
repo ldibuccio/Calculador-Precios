@@ -169,10 +169,9 @@
 
       <label for="tipo_retiro">Retiro *</label>
       <select id="tipo_retiro" name="tipo_retiro" required>
-        <option value="" {% if not compra %}selected disabled{% endif %}>Elegí...</option>
-        <option value="Clark" {% if compra and compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
-        <option value="Granel" {% if compra and compra.tipo_retiro == "Granel" %}selected{% endif %}>Granel</option>
-        <option value="Propia" {% if compra and compra.tipo_retiro == "Propia" %}selected{% endif %}>Propia</option>
+        <option value="Clark" {% if not compra or not compra.tipo_retiro or compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
+        <option value="Carro" {% if compra and compra.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
+        <option value="Pases" {% if compra and compra.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
       </select>
 
       {% if modo == "nueva" %}

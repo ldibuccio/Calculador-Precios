@@ -1259,7 +1259,7 @@ COMPRAS_DE_PRUEBA = [
         "cantidad_fraccion": 50,
         "importe": 15000,
         "sena": 2000,
-        "tipo_retiro": "Granel",
+        "tipo_retiro": "Carro",
     },
 ]
 
@@ -1729,7 +1729,7 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "cantidad_fraccion": 120,
         "importe": None,
         "sena": None,
-        "tipo_retiro": "Granel",
+        "tipo_retiro": "Carro",
         "foto_ruta": None,
     },
 ]
@@ -2184,14 +2184,14 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
                 "contenido_por_cajon": "10",
                 "importe": "30000",
                 "sena": "",
-                "tipo_retiro": "Granel",
+                "tipo_retiro": "Carro",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     # 5 cajones × 10 unidades = 50 unidades (unidad_compra del artículo = unidad)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Granel")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro")
 
 
 def test_agregar_compra_proveedor_inexistente_da_404():
@@ -2441,11 +2441,8 @@ def test_agregar_compra_tipo_retiro_invalido_muestra_error():
     mock_crear.assert_not_called()
 
 
-def test_agregar_compra_tipo_retiro_propia_se_acepta():
-    # "Propia" es el tercer tipo de retiro, agregado además de Clark/Granel.
-    # OJO: hasta que el CHECK de la base también lo permita, esto pasa la
-    # validación de la app pero el INSERT real fallaría — acá se mockea
-    # crear_compra, así que no depende de que la base ya esté migrada.
+def test_agregar_compra_tipo_retiro_pases_se_acepta():
+    # "Pases" es el tercer tipo de retiro, junto con Clark/Carro.
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
@@ -2462,13 +2459,13 @@ def test_agregar_compra_tipo_retiro_propia_se_acepta():
                 "contenido_por_cajon": "18",
                 "importe": "50000",
                 "sena": "",
-                "tipo_retiro": "Propia",
+                "tipo_retiro": "Pases",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Propia")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases")
 
 
 def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
@@ -2480,9 +2477,9 @@ def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
         respuesta = cliente.get("/compras/nueva?proveedor_id=200")
 
     assert respuesta.status_code == 200
-    assert '<option value="Clark"' in respuesta.text
-    assert '<option value="Granel"' in respuesta.text
-    assert '<option value="Propia"' in respuesta.text
+    assert '<option value="Clark" selected>' in respuesta.text
+    assert '<option value="Carro"' in respuesta.text
+    assert '<option value="Pases"' in respuesta.text
 
 
 def test_agregar_compra_articulo_sin_unidad_compra_configurada_muestra_error():
@@ -2638,14 +2635,14 @@ def test_editar_compra_exitosa_redirige_a_compras():
                 "contenido_por_cajon": "15",
                 "importe": "55000",
                 "sena": "1000",
-                "tipo_retiro": "Granel",
+                "tipo_retiro": "Carro",
             },
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/ultimas"
-    mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Granel")
+    mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Carro")
 
 
 def test_editar_compra_inexistente_da_404():
@@ -2658,7 +2655,7 @@ def test_editar_compra_inexistente_da_404():
                 "contenido_por_cajon": "15",
                 "importe": "55000",
                 "sena": "",
-                "tipo_retiro": "Granel",
+                "tipo_retiro": "Carro",
             },
         )
 
@@ -3268,8 +3265,10 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     assert 'class="boton-exito" id="boton-guardar"' in respuesta.text
     assert 'class="boton boton-peligro"' in respuesta.text
     assert "confirm('¿Seguro? Se pierde lo que cargaste de esta compra')" in respuesta.text
-    # Tercer tipo de retiro (Propia), además de Clark/Granel.
-    assert '<option value="Propia"' in respuesta.text
+    # Tercer tipo de retiro (Pases), además de Clark/Carro. Clark viene
+    # preseleccionado por defecto (mismo default que la carga manual).
+    assert '<option value="Clark" selected>' in respuesta.text
+    assert '<option value="Pases"' in respuesta.text
     # Regresión: la sugerencia puesto<->nombre de la carga manual también
     # está disponible acá (ayuda extra sobre lo que ya adivinó la IA).
     assert '{ codigo: "N07P41", nombre: "Saturno" }' in respuesta.text

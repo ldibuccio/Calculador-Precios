@@ -65,7 +65,7 @@ create table compras (
     unidad            text not null check (unidad in ('kilo', 'unidad')),
     importe           numeric not null,
     sena              numeric, -- opcional, por artículo (no por toda la compra)
-    tipo_retiro       text not null check (tipo_retiro in ('Clark', 'Granel')),
+    tipo_retiro       text not null default 'Clark' check (tipo_retiro in ('Clark', 'Carro', 'Pases')),
     palets            numeric,
     cargado_el        timestamptz not null default now()
 );

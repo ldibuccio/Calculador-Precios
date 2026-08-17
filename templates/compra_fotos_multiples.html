@@ -705,11 +705,11 @@
       }
       if (selectRetiro) {
         // Si el tilde "usar este retiro para todos" está activo, el
-        // renglón nuevo arranca con ese mismo retiro (en vez de "Elegí...")
-        // para no obligar a elegirlo de nuevo cuando ya está todo definido.
+        // renglón nuevo arranca con ese mismo retiro; si no, arranca en
+        // "Clark" (el default), no en blanco — ya no hay opción vacía.
         const checkboxAplicarATodos = document.getElementById("aplicar_retiro_a_todos");
         const retiroActivo = checkboxAplicarATodos && checkboxAplicarATodos.checked;
-        selectRetiro.value = retiroActivo ? document.getElementById("item_0_tipo_retiro").value : "";
+        selectRetiro.value = retiroActivo ? document.getElementById("item_0_tipo_retiro").value : "Clark";
       }
       const checkboxDescartar = clon.querySelector('input[type="checkbox"][id$="_descartar"]');
       if (checkboxDescartar) {

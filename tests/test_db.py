@@ -206,7 +206,7 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
-            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Granel"
+            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Carro"
         )
 
     _, parametros_insert = cursor.execute.call_args_list[3].args

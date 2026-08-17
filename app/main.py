@@ -78,7 +78,7 @@ from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto,
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "pesada"}
-TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
+TIPOS_RETIRO_VALIDOS = {"Clark", "Carro", "Pases"}
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 
@@ -547,9 +547,9 @@ def _validar_sena(texto: str) -> tuple[str | None, float | None]:
 
 
 def _validar_tipo_retiro(valor: str) -> str | None:
-    """Valida que el tipo de retiro sea uno de TIPOS_RETIRO_VALIDOS (Clark, Granel o Propia)."""
+    """Valida que el tipo de retiro sea uno de TIPOS_RETIRO_VALIDOS (Clark, Carro o Pases)."""
     if valor not in TIPOS_RETIRO_VALIDOS:
-        return "Elegí un tipo de retiro válido (Clark, Granel o Propia)."
+        return "Elegí un tipo de retiro válido (Clark, Carro o Pases)."
     return None
 
 

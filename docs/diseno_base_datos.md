@@ -67,7 +67,7 @@ Cada renglón que carga el comprador.
 | cantidad_fraccion | dato crudo: cuánta "fracción" (unidad o cubeta, según el artículo) se compró (opcional si se cargó en kilos) |
 | importe | — |
 | seña | opcional, por artículo (no por toda la compra) |
-| tipo_retiro | Clark / Granel |
+| tipo_retiro | Clark / Carro / Pases (default Clark) |
 | palets | — |
 | cargado_el | fecha y hora de carga, para auditoría |
 
