@@ -54,6 +54,7 @@ from app.db import (
     listar_proveedores,
     listar_todas_las_conversiones,
     marcar_compra_cancelada,
+    marcar_compra_no_ingresada,
     marcar_compra_retirada,
     obtener_articulo,
     obtener_cliente,
@@ -3689,17 +3690,24 @@ def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None
     return None, valor
 
 
-def _validar_total_real_recepcion(texto: str) -> tuple[str | None, float | None]:
-    """Valida el total real (kilos/unidades/cubetas pesado o contado) cargado en Recepción: obligatorio, número positivo."""
+def _validar_valor_real_recepcion(texto: str) -> tuple[str | None, float | None]:
+    """Valida el valor real cargado en Recepción: obligatorio, número positivo.
+
+    Según la unidad de compra del artículo, este valor significa cosas
+    distintas (ver recepcionar_compra en app/db.py): kilos de UN bulto
+    pesado, o cantidad total de unidades/cubetas contadas. La validación
+    en sí (obligatorio, número, mayor a cero) es la misma para ambos
+    casos, por eso el mensaje queda genérico.
+    """
     texto = texto.strip()
     if not texto:
-        return "El total real es obligatorio.", None
+        return "El valor real es obligatorio.", None
     try:
         valor = float(texto)
     except ValueError:
-        return "El total real tiene que ser un número.", None
+        return "El valor real tiene que ser un número.", None
     if valor <= 0:
-        return "El total real tiene que ser mayor a cero.", None
+        return "El valor real tiene que ser mayor a cero.", None
     return None, valor
 
 
@@ -3757,13 +3765,13 @@ def recepcionar_compra_ruta(
 ):
     error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
     if not error:
-        error, total_valor = _validar_total_real_recepcion(cantidad_total_real)
+        error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
 
     if error:
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
 
     try:
-        aviso_retiro = recepcionar_compra(compra_id, cajones_valor, total_valor)
+        aviso_retiro = recepcionar_compra(compra_id, cajones_valor, valor_real)
     except Exception as error_db:
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
@@ -3784,6 +3792,19 @@ def rechazar_compra_ruta(request: Request, compra_id: int):
 
     url = f"/deposito/recepcion?{urlencode({'aviso': aviso_retiro})}" if aviso_retiro else "/deposito/recepcion"
     return RedirectResponse(url=url, status_code=303)
+
+
+@app.post("/deposito/recepcion/{compra_id}/no-ingreso")
+def no_ingreso_compra_ruta(request: Request, compra_id: int):
+    """La mercadería nunca llegó al depósito. A diferencia de recepcionar/rechazar, no marca retirada la compra."""
+    try:
+        marcar_compra_no_ingresada(compra_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo marcar la compra como no ingresada: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url="/deposito/recepcion", status_code=303)
 
 
 @app.get("/gerencia")

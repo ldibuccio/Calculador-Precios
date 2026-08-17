@@ -705,9 +705,10 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
 
     Excluye las compras rechazadas (estado = 'rechazado'): no se
     recibieron, no tienen que ensuciar el costo promedio. Excluye también
-    las canceladas en Logística (estado_retiro = 'cancelado'): una
-    compra cancelada nunca se retiró del puesto, o sea nunca se compró
-    de verdad.
+    las que nunca ingresaron al depósito (estado = 'no_ingresado'): mismo
+    motivo, no hay mercadería real detrás de esa compra. Y las canceladas
+    en Logística (estado_retiro = 'cancelado'): una compra cancelada
+    nunca se retiró del puesto, o sea nunca se compró de verdad.
     """
     conexion = obtener_conexion()
     try:
@@ -723,6 +724,7 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                 JOIN articulos a ON a.id = c.articulo_id
                 WHERE c.fecha_operacion BETWEEN %s AND %s
                   AND c.estado IS DISTINCT FROM 'rechazado'
+                  AND c.estado IS DISTINCT FROM 'no_ingresado'
                   AND c.estado_retiro IS DISTINCT FROM 'cancelado'
                 ORDER BY a.nombre
                 """,
@@ -1090,16 +1092,24 @@ def _auto_retirar_si_corresponde(cursor, compra_id: int) -> str | None:
     return None
 
 
-def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_total_real: float) -> str | None:
+def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> str | None:
     """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
 
-    cantidad_total_real es un solo número (lo que da la balanza o el
-    recuento) — Depósito no tiene que pensar en "contenido por cajón": acá
-    adentro se deriva contenido_por_cajon_real = cantidad_total_real /
-    cantidad_cajones_real, y cantidad_total_real se guarda en
-    cantidad_kilos_real o cantidad_fraccion_real según la unidad_compra del
-    artículo (mismo criterio que usa crear_compra con el estimado). El
-    estimado nunca se toca.
+    El significado de valor_real depende de la unidad de compra del
+    artículo:
+
+    - Por kilo: Depósito pesa UN bulto/cajón en la balanza, no toda la
+      carga junta — valor_real es directamente contenido_por_cajon_real
+      (kilos de ese bulto), y cantidad_kilos_real se deriva acá adentro
+      como cantidad_cajones_real × valor_real.
+    - Por unidad/cubeta: se sigue contando el total (no tiene sentido
+      "pesar" bulto a bulto algo que se cuenta) — valor_real es
+      cantidad_fraccion_real directo, y contenido_por_cajon_real se
+      deriva como promedio (valor_real / cantidad_cajones_real), igual
+      que antes.
+
+    El estimado (cantidad_cajones/contenido_por_cajon/etc., sin "_real")
+    nunca se toca.
 
     Además marca la compra como retirada (ver _auto_retirar_si_corresponde)
     si todavía no lo estaba. Devuelve el aviso de esa función (o None).
@@ -1119,11 +1129,14 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, cantidad_to
             fila = cursor.fetchone()
             unidad_compra = fila[0] if fila else None
 
-            contenido_por_cajon_real = cantidad_total_real / cantidad_cajones_real if cantidad_cajones_real else None
             if unidad_compra == "kilo":
-                cantidad_kilos_real, cantidad_fraccion_real = cantidad_total_real, None
+                contenido_por_cajon_real = valor_real
+                cantidad_kilos_real = cantidad_cajones_real * valor_real
+                cantidad_fraccion_real = None
             else:
-                cantidad_kilos_real, cantidad_fraccion_real = None, cantidad_total_real
+                cantidad_fraccion_real = valor_real
+                contenido_por_cajon_real = valor_real / cantidad_cajones_real if cantidad_cajones_real else None
+                cantidad_kilos_real = None
 
             cursor.execute(
                 """
@@ -1164,6 +1177,26 @@ def rechazar_compra(compra_id: int) -> str | None:
             aviso = _auto_retirar_si_corresponde(cursor, compra_id)
         conexion.commit()
         return aviso
+    finally:
+        conexion.close()
+
+
+def marcar_compra_no_ingresada(compra_id: int) -> None:
+    """Marca una compra como no_ingresado: nunca llegó al depósito (no se la fueron a buscar, se perdió, etc.).
+
+    A diferencia de recepcionar_compra/rechazar_compra, NO llama a
+    _auto_retirar_si_corresponde: si la mercadería nunca llegó al
+    depósito, no hay ninguna base para asumir que sí se retiró del
+    puesto en el Mercado — estado_retiro queda exactamente como estaba.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE compras SET estado = 'no_ingresado', procesada_el = now() WHERE id = %s",
+                (compra_id,),
+            )
+        conexion.commit()
     finally:
         conexion.close()
 
@@ -1304,8 +1337,8 @@ def eliminar_compra(compra_id: int) -> str | None:
     que se le muestra al usuario tal cual). Por ahora esto no tiene
     excepción: cuando exista el sistema de permisos, un gerente podrá
     forzarlo con su acceso, pero eso no se resuelve en esta función.
-    'pendiente' y 'rechazado'/'cancelado' se siguen pudiendo borrar sin
-    restricción.
+    'pendiente', 'rechazado'/'cancelado' y 'no_ingresado' se siguen
+    pudiendo borrar sin restricción.
 
     Una misma foto de comanda (foto_ruta) puede estar compartida por varios
     renglones/compras. Devuelve el foto_ruta que hay que borrar del Storage

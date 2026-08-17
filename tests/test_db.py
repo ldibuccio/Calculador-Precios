@@ -20,6 +20,7 @@ from app.db import (
     listar_fotos_para_limpiar,
     listar_precios_vigentes_por_cliente,
     marcar_compra_cancelada,
+    marcar_compra_no_ingresada,
     marcar_compra_retirada,
     obtener_uso_storage_bucket,
     recepcionar_compra,
@@ -315,6 +316,8 @@ def test_listar_compras_para_costeo_usa_el_real_si_existe_y_excluye_rechazadas()
     assert "COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos" in consulta
     # Una compra rechazada no se recibió: no puede ensuciar el costo promedio.
     assert "estado IS DISTINCT FROM 'rechazado'" in consulta
+    # Una compra que nunca ingresó al depósito tampoco es mercadería real.
+    assert "estado IS DISTINCT FROM 'no_ingresado'" in consulta
     # Una compra cancelada en Logística nunca se retiró del puesto: tampoco es una compra real.
     assert "estado_retiro IS DISTINCT FROM 'cancelado'" in consulta
 
@@ -344,21 +347,24 @@ def test_listar_compras_pendientes_recepcion_filtra_por_estado_y_guia():
     assert "COALESCE" not in consulta
 
 
-def test_recepcionar_compra_articulo_por_kilo_guarda_cantidad_kilos_real():
+def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_total():
+    # Depósito pesa UN bulto en la balanza (no toda la carga): valor_real
+    # para un artículo por kilo es directamente contenido_por_cajon_real,
+    # y cantidad_kilos_real se deriva acá (cajones × valor_real).
     # 2 fetchone: SELECT unidad_compra, y SELECT estado_retiro dentro de
     # _auto_retirar_si_corresponde (acá viene 'pendiente', se auto-retira).
     conexion, cursor = _conexion_falsa([("kilo",), ("pendiente",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        aviso = recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
+        aviso = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
 
     consulta_update, parametros_update = cursor.execute.call_args_list[1].args
     assert "estado = 'recepcionado'" in consulta_update
     assert "procesada_el = now()" in consulta_update
     cajones, contenido, kilos, fraccion, compra_id = parametros_update
     assert cajones == 38
-    assert contenido == 20  # 760 / 38
-    assert kilos == 760
+    assert contenido == 20  # tomado directo, sin dividir
+    assert kilos == 760  # 38 × 20, derivado
     assert fraccion is None
     assert compra_id == 30
     assert aviso is None
@@ -371,10 +377,13 @@ def test_recepcionar_compra_articulo_por_kilo_guarda_cantidad_kilos_real():
 
 
 def test_recepcionar_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
+    # Unidad/cubeta se sigue contando en total (no se "pesa" bulto a
+    # bulto) — mismo criterio que antes, contenido_por_cajon_real se
+    # sigue derivando como promedio.
     conexion, cursor = _conexion_falsa([("unidad",), ("pendiente",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        recepcionar_compra(31, cantidad_cajones_real=10, cantidad_total_real=118)
+        recepcionar_compra(31, cantidad_cajones_real=10, valor_real=118)
 
     _, parametros_update = cursor.execute.call_args_list[1].args
     cajones, contenido, kilos, fraccion, compra_id = parametros_update
@@ -387,7 +396,7 @@ def test_recepcionar_compra_ya_retirada_no_pisa_el_auto_retiro():
     conexion, cursor = _conexion_falsa([("kilo",), ("retirado",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        aviso = recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
+        aviso = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
 
     assert aviso is None
     # Solo 2 execute: SELECT unidad_compra + UPDATE recepcionado, y dentro de
@@ -399,7 +408,7 @@ def test_recepcionar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
     conexion, cursor = _conexion_falsa([("kilo",), ("cancelado",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        aviso = recepcionar_compra(30, cantidad_cajones_real=38, cantidad_total_real=760)
+        aviso = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
 
     assert aviso == "Esta compra figuraba cancelada en Logística."
     # Sin UPDATE de estado_retiro: se corta después del SELECT.
@@ -429,6 +438,23 @@ def test_rechazar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
         aviso = rechazar_compra(32)
 
     assert aviso == "Esta compra figuraba cancelada en Logística."
+
+
+def test_marcar_compra_no_ingresada_marca_estado_y_no_toca_el_retiro():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_compra_no_ingresada(32)
+
+    # Un solo UPDATE — a diferencia de recepcionar/rechazar, no llama a
+    # _auto_retirar_si_corresponde (no hay SELECT ni UPDATE de estado_retiro).
+    assert cursor.execute.call_count == 1
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "estado = 'no_ingresado'" in consulta
+    assert "procesada_el = now()" in consulta
+    assert "estado_retiro" not in consulta
+    assert parametros == (32,)
+    conexion.commit.assert_called_once()
 
 
 def test_listar_compras_pendientes_retiro_filtra_por_tipo_y_estado_retiro():

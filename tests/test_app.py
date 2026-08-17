@@ -3008,8 +3008,10 @@ def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
     assert "Mango" in respuesta.text
     assert "Frutilla" in respuesta.text
     assert "40 cajones × 20k" in respuesta.text
-    # Etiquetas según unidad_compra de cada artículo.
-    assert "Kilos reales" in respuesta.text
+    # Etiquetas según unidad_compra de cada artículo. Kilos pide por
+    # cajón/bulto (Depósito pesa un bulto, no toda la carga junta);
+    # unidad/cubeta se siguen contando en total.
+    assert "Kilos por cajón/bulto (real)" in respuesta.text
     assert "Unidades reales" in respuesta.text
     assert "Cubetas reales" in respuesta.text
 
@@ -3021,8 +3023,30 @@ def test_ver_recepcion_prellena_los_inputs_con_el_estimado():
     assert respuesta.status_code == 200
     assert 'id="cajones-real-1"' in respuesta.text
     assert 'value="40"' in respuesta.text
+    # El input de kilos precarga con el contenido por cajón estimado (20),
+    # no con el total (800) — ahora pide kilos de UN bulto, no de toda la carga.
     assert 'id="total-real-1"' in respuesta.text
-    assert 'value="800"' in respuesta.text
+    assert 'value="20"' in respuesta.text
+
+
+def test_ver_recepcion_muestra_el_proveedor_grande_y_la_guia_chica():
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert '<h2>Saturno (N07P41)</h2>' in respuesta.text
+    assert '<p class="guia-numero">Guía 105</p>' in respuesta.text
+
+
+def test_ver_recepcion_muestra_los_tres_botones_con_sus_nombres():
+    with patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert ">Recibir<" in respuesta.text
+    assert ">Rechazar por calidad<" in respuesta.text
+    assert ">No ingresó<" in respuesta.text
+    assert 'action="/deposito/recepcion/1/no-ingreso"' in respuesta.text
 
 
 def test_ver_recepcion_sin_pendientes_muestra_mensaje_vacio():
@@ -3150,6 +3174,26 @@ def test_rechazar_compra_error_de_base_muestra_mensaje():
 
     assert respuesta.status_code == 500
     assert "No se pudo rechazar la compra" in respuesta.text
+
+
+def test_no_ingreso_compra_redirige_y_no_pide_datos():
+    with patch("app.main.marcar_compra_no_ingresada", return_value=None) as mock_no_ingreso:
+        respuesta = cliente.post("/deposito/recepcion/2/no-ingreso", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion"
+    mock_no_ingreso.assert_called_once_with(2)
+
+
+def test_no_ingreso_compra_error_de_base_muestra_mensaje():
+    with (
+        patch("app.main.marcar_compra_no_ingresada", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+    ):
+        respuesta = cliente.post("/deposito/recepcion/2/no-ingreso")
+
+    assert respuesta.status_code == 500
+    assert "No se pudo marcar la compra como no ingresada" in respuesta.text
 
 
 def test_ver_foto_compra_redirige_a_la_url_firmada():
