@@ -2581,7 +2581,8 @@ def test_editar_compra_exitosa_redirige_a_compras():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
     ):
         respuesta = cliente.post(
             "/compras/30/editar",
@@ -2598,7 +2599,95 @@ def test_editar_compra_exitosa_redirige_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_actualizar.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, 55000.0, 1000.0, "Carro")
+    # COMPRA_DE_PRUEBA está pendiente/pendiente: ni cantidad ni precio
+    # están bloqueados, se actualizan los dos.
+    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro")
+    mock_actualizar_precio.assert_called_once_with(30, 55000.0, 1000.0)
+
+
+def test_editar_compra_recepcionada_guarda_precio_pero_no_cantidad():
+    # Punto central del pedido: precio se puede editar aunque la
+    # cantidad ya esté bloqueada por estar recepcionada.
+    compra_recepcionada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_recepcionada),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "15",
+                "importe": "60000",
+                "sena": "",
+                "tipo_retiro": "Carro",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar_cantidad.assert_not_called()
+    mock_actualizar_precio.assert_called_once_with(30, 60000.0, None)
+
+
+def test_editar_compra_rechazada_guarda_cantidad_pero_no_precio():
+    # Caso límite: rechazada pero el retiro nunca se marcó (cancelado
+    # antes) — cantidad queda editable, precio no (rechazada por calidad).
+    compra_rechazada = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="cancelado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_rechazada),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "15",
+                "importe": "60000",
+                "sena": "",
+                "tipo_retiro": "Carro",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro")
+    mock_actualizar_precio.assert_not_called()
+
+
+def test_editar_compra_rechazada_y_retirada_no_guarda_nada():
+    # Ambos bloqueados: el POST no rompe nada, simplemente no guarda ni
+    # cantidad ni precio (el botón Guardar ya está deshabilitado en
+    # pantalla para este caso, esto es el resguardo del backend).
+    compra_bloqueada_del_todo = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_bloqueada_del_todo),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "15",
+                "importe": "60000",
+                "sena": "",
+                "tipo_retiro": "Carro",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar_cantidad.assert_not_called()
+    mock_actualizar_precio.assert_not_called()
 
 
 def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
@@ -2609,7 +2698,8 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -2628,7 +2718,8 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/30/editar"
-    mock_actualizar.assert_not_called()
+    mock_actualizar_cantidad.assert_not_called()
+    mock_actualizar_precio.assert_not_called()
     mock_crear.assert_called_once_with(
         COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0, None, 20000.0, None, "Pases"
     )
@@ -2637,12 +2728,14 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
 def test_editar_compra_agregar_articulo_funciona_aunque_el_renglon_original_este_bloqueado():
     # Punto 3: agregar no es editar. Aunque el renglón 30 ya esté
     # recepcionado/retirado (bloqueado para Guardar), "Agregar artículo"
-    # tiene que seguir funcionando — no pasa por actualizar_compra.
+    # tiene que seguir funcionando — no pasa por actualizar_cantidad_compra
+    # ni actualizar_precio_compra.
     compra_bloqueada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
     with (
         patch("app.main.obtener_compra", return_value=compra_bloqueada),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -2661,7 +2754,8 @@ def test_editar_compra_agregar_articulo_funciona_aunque_el_renglon_original_este
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/30/editar"
-    mock_actualizar.assert_not_called()
+    mock_actualizar_cantidad.assert_not_called()
+    mock_actualizar_precio.assert_not_called()
     mock_crear.assert_called_once()
 
 
@@ -2709,7 +2803,8 @@ def test_editar_compra_inexistente_da_404():
 def test_editar_compra_sin_cantidad_de_cajones_muestra_error():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.actualizar_compra") as mock_actualizar,
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
         respuesta = cliente.post(
@@ -2726,14 +2821,15 @@ def test_editar_compra_sin_cantidad_de_cajones_muestra_error():
 
     assert respuesta.status_code == 400
     assert "La cantidad de cajones es obligatoria" in respuesta.text
-    mock_actualizar.assert_not_called()
+    mock_actualizar_cantidad.assert_not_called()
+    mock_actualizar_precio.assert_not_called()
 
 
 def test_editar_compra_error_de_base_muestra_mensaje_claro():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.actualizar_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.actualizar_cantidad_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
         respuesta = cliente.post(
@@ -2757,8 +2853,8 @@ def test_editar_compra_ya_retirada_da_400_con_el_mensaje():
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch(
-            "app.main.actualizar_compra",
-            side_effect=ValueError("Esta compra ya fue retirada, no se puede editar."),
+            "app.main.actualizar_cantidad_compra",
+            side_effect=ValueError("Esta compra ya fue retirada, no se puede editar la cantidad."),
         ),
     ):
         respuesta = cliente.post(
@@ -2774,25 +2870,61 @@ def test_editar_compra_ya_retirada_da_400_con_el_mensaje():
         )
 
     assert respuesta.status_code == 400
-    assert "Esta compra ya fue retirada, no se puede editar." in respuesta.text
+    assert "Esta compra ya fue retirada, no se puede editar la cantidad." in respuesta.text
 
 
-def test_ver_editar_compra_recepcionada_muestra_aviso_y_deshabilita_solo_guardar():
-    # Solo el botón Guardar se deshabilita — los campos y "Agregar artículo"
-    # tienen que seguir usables: agregar un artículo nuevo a la guía es una
-    # operación distinta de editar el renglón bloqueado.
-    compra_bloqueada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
+def test_ver_editar_compra_recepcionada_bloquea_cantidad_pero_deja_precio_habilitado():
+    # Recepcionada: cantidad bloqueada, precio NO (el comprador puede
+    # seguir renegociando el precio con el proveedor). Guardar sigue
+    # habilitado porque todavía hay algo que se puede guardar.
+    compra_recepcionada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
     with (
-        patch("app.main.obtener_compra", return_value=compra_bloqueada),
+        patch("app.main.obtener_compra", return_value=compra_recepcionada),
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
     assert respuesta.status_code == 200
-    assert "Esta compra ya fue recepcionada o retirada, no se puede editar." in respuesta.text
+    assert "La cantidad no se puede modificar: la compra ya fue recepcionada. El precio sí se puede corregir." in respuesta.text
+    assert 'name="accion" value="guardar" disabled' not in respuesta.text
+    # Los 4 campos de cantidad (artículo, cajones, contenido, retiro) grises;
+    # importe/seña no.
+    assert respuesta.text.count('class="campo-bloqueado"') == 4
+
+
+def test_ver_editar_compra_no_ingresada_bloquea_precio_pero_deja_cantidad_habilitada():
+    # No ingresó: precio bloqueado (nunca entra al costeo), cantidad NO
+    # (nunca llegó a recepcionarse ni a retirarse, se puede seguir corrigiendo).
+    compra_no_ingresada = dict(COMPRA_DE_PRUEBA, estado="no_ingresado", estado_retiro="pendiente")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_no_ingresada),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert "El precio no se puede modificar: la compra nunca ingresó al depósito. La cantidad sí se puede corregir." in respuesta.text
+    assert 'name="accion" value="guardar" disabled' not in respuesta.text
+    # Solo importe/seña grises.
+    assert respuesta.text.count('class="campo-bloqueado"') == 2
+
+
+def test_ver_editar_compra_rechazada_y_retirada_bloquea_todo_y_deshabilita_guardar():
+    # Único caso donde de verdad no queda nada para guardar: rechazada
+    # (bloquea precio) y retirada (bloquea cantidad) a la vez.
+    compra_bloqueada_del_todo = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_bloqueada_del_todo),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert "Esta compra fue rechazada por calidad: no se puede modificar ni la cantidad ni el precio." in respuesta.text
     assert 'name="accion" value="guardar" disabled' in respuesta.text
+    assert respuesta.text.count('class="campo-bloqueado"') == 6
+    # "Agregar artículo" sigue habilitado siempre, incluso acá.
     assert 'name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>' in respuesta.text
-    assert 'id="articulo_id" name="articulo_id" required' in respuesta.text
 
 
 def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
@@ -2804,7 +2936,9 @@ def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
 
     assert respuesta.status_code == 200
     assert "no se puede editar" not in respuesta.text
+    assert "no se puede modificar" not in respuesta.text
     assert 'name="accion" value="guardar" disabled' not in respuesta.text
+    assert respuesta.text.count('class="campo-bloqueado"') == 0
 
 
 def test_ver_editar_compra_muestra_boton_volver_rojo():
@@ -2818,6 +2952,28 @@ def test_ver_editar_compra_muestra_boton_volver_rojo():
     assert '<a class="boton boton-peligro" href="/compras/buscar" id="boton-volver" onclick="return confirmarVolver()">Volver</a>' in respuesta.text
     assert "Volver a compras" not in respuesta.text
     assert "confirmarVolver" in respuesta.text
+
+
+def test_ver_editar_compra_recepcionada_marca_la_bandera_js_para_el_aviso_de_precio():
+    compra_recepcionada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_recepcionada),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert "var compraRecepcionada = true;" in respuesta.text
+    assert "cambia el costo del artículo" in respuesta.text
+
+
+def test_ver_editar_compra_no_recepcionada_no_marca_la_bandera_js():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert "var compraRecepcionada = false;" in respuesta.text
 
 
 def test_eliminar_compra_exitosa_redirige_a_compras():

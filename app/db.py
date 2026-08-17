@@ -975,23 +975,48 @@ def crear_compra(
         conexion.close()
 
 
-def actualizar_compra(
+def compra_tiene_cantidad_bloqueada(estado: str | None, estado_retiro: str | None) -> bool:
+    """True si el artículo/cantidad/tipo de retiro de la compra ya no se pueden editar.
+
+    Única definición de esta regla en todo el código — la usan la
+    pantalla de Editar Compra (para mostrar el aviso y atenuar los
+    campos) y actualizar_cantidad_compra (para bloquear el guardado de
+    verdad). Recepcionada o retirada: cambiar la cantidad después de eso
+    modificaría un costo que ya se pudo haber usado para negociar
+    precios con el cliente.
+    """
+    return estado == "recepcionado" or estado_retiro == "retirado"
+
+
+def compra_tiene_precio_bloqueado(estado: str | None) -> bool:
+    """True si el importe/seña de la compra ya no se pueden editar.
+
+    Única definición de esta regla — la usan la pantalla de Editar
+    Compra y actualizar_precio_compra. Rechazada o nunca ingresada al
+    depósito: esa mercadería no entra al costeo, no tiene sentido
+    tocarle el precio. A propósito NO mira estado_retiro: es habitual
+    que el comprador renegocie el precio con el proveedor después de
+    que la mercadería ya se retiró del puesto, así que eso solo no
+    bloquea nada acá (ver compra_tiene_cantidad_bloqueada, que es la
+    que sí lo bloquea para la cantidad).
+    """
+    return estado in ("rechazado", "no_ingresado")
+
+
+def actualizar_cantidad_compra(
     compra_id: int,
     articulo_id: int,
     cantidad_cajones: float,
     contenido_por_cajon: float,
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
-    importe: float | None,
-    sena: float | None,
     tipo_retiro: str,
 ) -> None:
-    """Actualiza una compra existente (no cambia su proveedor ni su fecha de operación).
+    """Actualiza artículo/cantidad/tipo de retiro de una compra existente. No toca importe ni seña.
 
-    Bloqueada (ValueError) si la compra ya fue recepcionada o retirada:
-    editar cajones/kilaje después de eso cambiaría un costo que ya se pudo
-    haber usado para negociar precios con el cliente — más grave que
-    borrarla, así que la regla es la misma que en eliminar_compra.
+    Bloqueada (ValueError) si la compra ya fue recepcionada o retirada
+    (ver compra_tiene_cantidad_bloqueada) — independiente del bloqueo de
+    precio, que vive aparte en actualizar_precio_compra.
     """
     conexion = obtener_conexion()
     try:
@@ -1000,31 +1025,48 @@ def actualizar_compra(
             fila = cursor.fetchone()
             estado, estado_retiro = fila if fila else (None, None)
 
-            if estado == "recepcionado":
-                raise ValueError("Esta compra ya fue recepcionada, no se puede editar.")
-            if estado_retiro == "retirado":
-                raise ValueError("Esta compra ya fue retirada, no se puede editar.")
+            if compra_tiene_cantidad_bloqueada(estado, estado_retiro):
+                if estado == "recepcionado":
+                    raise ValueError("Esta compra ya fue recepcionada, no se puede editar la cantidad.")
+                raise ValueError("Esta compra ya fue retirada, no se puede editar la cantidad.")
 
             cursor.execute(
                 """
                 UPDATE compras
                 SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
-                    cantidad_kilos = %s, cantidad_fraccion = %s,
-                    importe = %s, sena = %s, tipo_retiro = %s
+                    cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s
                 WHERE id = %s
                 """,
-                (
-                    articulo_id,
-                    cantidad_cajones,
-                    contenido_por_cajon,
-                    cantidad_kilos,
-                    cantidad_fraccion,
-                    importe,
-                    sena,
-                    tipo_retiro,
-                    compra_id,
-                ),
+                (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
             )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def actualizar_precio_compra(compra_id: int, importe: float | None, sena: float | None) -> None:
+    """Actualiza importe/seña de una compra existente. No toca artículo, cantidad ni tipo de retiro.
+
+    Bloqueada (ValueError) solo si la compra fue rechazada o nunca
+    ingresó al depósito (ver compra_tiene_precio_bloqueado). A
+    diferencia de la cantidad, el precio SÍ se puede seguir editando
+    después de recepcionada o retirada — es habitual que el comprador
+    renegocie el precio con el proveedor una vez que la mercadería ya
+    llegó.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT estado FROM compras WHERE id = %s", (compra_id,))
+            fila = cursor.fetchone()
+            estado = fila[0] if fila else None
+
+            if compra_tiene_precio_bloqueado(estado):
+                if estado == "rechazado":
+                    raise ValueError("Esta compra fue rechazada por calidad, no se puede editar el precio.")
+                raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar el precio.")
+
+            cursor.execute("UPDATE compras SET importe = %s, sena = %s WHERE id = %s", (importe, sena, compra_id))
         conexion.commit()
     finally:
         conexion.close()

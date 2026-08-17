@@ -104,6 +104,7 @@
   .vacio { color: #888; font-style: italic; }
   .tabla-scroll { overflow-x: auto; }
   button[disabled] { opacity: 0.5; }
+  .campo-bloqueado { background: #f0f0f0 !important; color: #888; }
 </style>
 </head>
 <body>
@@ -139,7 +140,8 @@
       {% endif %}
 
       <label for="articulo_id">Artículo *</label>
-      <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)">
+      <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)"
+              class="{{ 'campo-bloqueado' if cantidad_bloqueada }}">
         <option value="" {% if not compra %}selected disabled{% endif %}>Elegí un artículo...</option>
         {% for a in articulos %}
         <option value="{{ a.id }}"
@@ -152,24 +154,28 @@
 
       <label for="cantidad_cajones">Cantidad de cajones/cajas *</label>
       <input type="number" id="cantidad_cajones" name="cantidad_cajones" min="0" step="0.01" required
+             class="{{ 'campo-bloqueado' if cantidad_bloqueada }}"
              value="{% if compra and compra.cantidad_cajones is not none %}{{ compra.cantidad_cajones }}{% endif %}">
 
       <label for="contenido_por_cajon">Contenido por cajón *</label>
       <input type="number" id="contenido_por_cajon" name="contenido_por_cajon" min="0" step="0.01" required
+             class="{{ 'campo-bloqueado' if cantidad_bloqueada }}"
              value="{% if compra and compra.contenido_por_cajon is not none %}{{ compra.contenido_por_cajon }}{% endif %}">
       <p class="ayuda">Se pre-carga con el contenido de referencia del artículo, pero podés corregirlo si ese día vino distinto.</p>
 
       <label for="importe">Importe</label>
       <input type="number" id="importe" name="importe" min="0" step="0.01"
+             class="{{ 'campo-bloqueado' if precio_bloqueado }}"
              value="{% if compra and compra.importe is not none %}{{ compra.importe }}{% endif %}">
       <p class="ayuda">Dejalo vacío si todavía no tenés precio (se completa después desde "Compras pendientes").</p>
 
       <label for="sena">Seña</label>
       <input type="number" id="sena" name="sena" min="0" step="0.01"
+             class="{{ 'campo-bloqueado' if precio_bloqueado }}"
              value="{% if compra and compra.sena is not none %}{{ compra.sena }}{% endif %}">
 
       <label for="tipo_retiro">Retiro *</label>
-      <select id="tipo_retiro" name="tipo_retiro" required>
+      <select id="tipo_retiro" name="tipo_retiro" required class="{{ 'campo-bloqueado' if cantidad_bloqueada }}">
         <option value="Clark" {% if not compra or not compra.tipo_retiro or compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
         <option value="Carro" {% if compra and compra.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
         <option value="Pases" {% if compra and compra.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
@@ -179,7 +185,7 @@
       <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
       <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
       {% else %}
-      <button type="submit" name="accion" value="guardar" {% if bloqueada %}disabled{% endif %} class="boton-exito" id="boton-guardar-compra">Guardar</button>
+      <button type="submit" name="accion" value="guardar" {% if cantidad_bloqueada and precio_bloqueado %}disabled{% endif %} class="boton-exito" id="boton-guardar-compra">Guardar</button>
       <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
       {% endif %}
     </form>
@@ -253,6 +259,50 @@
       }
     }
   </script>
+
+  {% if modo == "editar" %}
+  <script>
+    // Guardar un precio nuevo sobre una compra ya recepcionada cambia un
+    // costo que ya se pudo haber usado para calcular precios sugeridos —
+    // se avisa antes de guardar, mismo criterio de confirm() que el
+    // resto de las acciones importantes de esta pantalla. Este listener
+    // se registra ANTES que el de más abajo (que deshabilita los
+    // botones): si el usuario cancela acá, stopImmediatePropagation()
+    // frena también a ese otro listener, para no dejar los botones
+    // trabados en "Guardando..." de una acción que no se mandó.
+    (function () {
+      var form = document.getElementById("form-compra");
+      var importeInput = document.getElementById("importe");
+      var botonGuardar = document.getElementById("boton-guardar-compra");
+      if (!form || !importeInput || !botonGuardar) {
+        return;
+      }
+      var importeInicial = importeInput.value;
+      var compraRecepcionada = {{ "true" if compra and compra.estado == "recepcionado" else "false" }};
+      var seEligioGuardar = false;
+
+      botonGuardar.addEventListener("click", function () {
+        seEligioGuardar = true;
+      });
+
+      form.addEventListener("submit", function (evento) {
+        var eligioGuardarAhora = seEligioGuardar;
+        seEligioGuardar = false;
+        if (!eligioGuardarAhora || !compraRecepcionada || importeInput.value === importeInicial) {
+          return;
+        }
+        var confirmado = confirm(
+          "Vas a cambiar el precio de una compra ya recepcionada. Esto cambia el costo del artículo y " +
+          "puede afectar los precios sugeridos que ya se calcularon. ¿Confirmás guardar?"
+        );
+        if (!confirmado) {
+          evento.preventDefault();
+          evento.stopImmediatePropagation();
+        }
+      });
+    })();
+  </script>
+  {% endif %}
 
   <script>
     // Evita que, al no ver ningún cambio en pantalla mientras guarda, el

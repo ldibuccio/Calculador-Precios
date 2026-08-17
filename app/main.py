@@ -20,12 +20,15 @@ from PIL import Image, ImageOps
 from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios
 from app.db import (
     actualizar_articulo,
+    actualizar_cantidad_compra,
     actualizar_cliente,
-    actualizar_compra,
     actualizar_ficha,
     actualizar_importe_compra,
+    actualizar_precio_compra,
     aprender_articulo,
     buscar_compras,
+    compra_tiene_cantidad_bloqueada,
+    compra_tiene_precio_bloqueado,
     contar_articulos,
     crear_articulo,
     crear_cliente,
@@ -2242,6 +2245,18 @@ async def confirmar_compra_foto(request: Request):
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 
 
+def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, precio_bloqueado: bool) -> str:
+    """Arma el aviso de qué no se puede editar (cantidad, precio, o ambos) y por qué, para Editar Compra."""
+    razon_cantidad = "ya fue recepcionada" if estado == "recepcionado" else "ya fue retirada"
+    razon_precio = "fue rechazada por calidad" if estado == "rechazado" else "nunca ingresó al depósito"
+
+    if cantidad_bloqueada and precio_bloqueado:
+        return f"Esta compra {razon_precio}: no se puede modificar ni la cantidad ni el precio."
+    if cantidad_bloqueada:
+        return f"La cantidad no se puede modificar: la compra {razon_cantidad}. El precio sí se puede corregir."
+    return f"El precio no se puede modificar: la compra {razon_precio}. La cantidad sí se puede corregir."
+
+
 @app.get("/compras/{compra_id}/editar")
 def ver_editar_compra(request: Request, compra_id: int, error: str | None = None):
     try:
@@ -2257,14 +2272,22 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    bloqueada = compra["estado"] == "recepcionado" or compra["estado_retiro"] == "retirado"
-    if bloqueada and not error:
-        error = "Esta compra ya fue recepcionada o retirada, no se puede editar."
+    cantidad_bloqueada = compra_tiene_cantidad_bloqueada(compra["estado"], compra["estado_retiro"])
+    precio_bloqueado = compra_tiene_precio_bloqueado(compra["estado"])
+    if (cantidad_bloqueada or precio_bloqueado) and not error:
+        error = _armar_aviso_bloqueo_edicion(compra["estado"], cantidad_bloqueada, precio_bloqueado)
 
     return templates.TemplateResponse(
         request,
         "compra_form.html",
-        {"articulos": articulos, "modo": "editar", "compra": compra, "error": error, "bloqueada": bloqueada},
+        {
+            "articulos": articulos,
+            "modo": "editar",
+            "compra": compra,
+            "error": error,
+            "cantidad_bloqueada": cantidad_bloqueada,
+            "precio_bloqueado": precio_bloqueado,
+        },
     )
 
 
@@ -2405,18 +2428,30 @@ def editar_compra(
 
         return RedirectResponse(url=f"/compras/{compra_id}/editar", status_code=303)
 
+    # Cantidad y precio son dos bloqueos independientes (ver
+    # compra_tiene_cantidad_bloqueada/compra_tiene_precio_bloqueado en
+    # app/db.py, la única definición de cada regla): si uno de los dos
+    # está bloqueado acá simplemente no se llama a su actualización — lo
+    # que haya llegado en ese campo del formulario se descarta, nunca se
+    # guarda. Si algo cambió de verdad en la base entre que se abrió la
+    # pantalla y se mandó el POST, actualizar_cantidad_compra/
+    # actualizar_precio_compra lo vuelven a chequear solas y frenan igual.
+    cantidad_bloqueada = compra_tiene_cantidad_bloqueada(compra_actual["estado"], compra_actual["estado_retiro"])
+    precio_bloqueado = compra_tiene_precio_bloqueado(compra_actual["estado"])
+
     try:
-        actualizar_compra(
-            compra_id,
-            valores["articulo_id"],
-            valores["cantidad_cajones"],
-            valores["contenido_por_cajon"],
-            cantidad_kilos,
-            cantidad_fraccion,
-            valores["importe"],
-            valores["sena"],
-            valores["tipo_retiro"],
-        )
+        if not cantidad_bloqueada:
+            actualizar_cantidad_compra(
+                compra_id,
+                valores["articulo_id"],
+                valores["cantidad_cajones"],
+                valores["contenido_por_cajon"],
+                cantidad_kilos,
+                cantidad_fraccion,
+                valores["tipo_retiro"],
+            )
+        if not precio_bloqueado:
+            actualizar_precio_compra(compra_id, valores["importe"], valores["sena"])
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error_db:
