@@ -4773,6 +4773,39 @@ def test_ver_negociar_todos_los_articulos_utilidad_ok_sin_color_de_alerta():
     assert "30,0%" in fila_tomate
 
 
+def test_ver_negociar_todos_los_articulos_incluye_el_buscador():
+    # El filtro es 100% client-side (ver filtrarTodosArticulos en
+    # _cuadro_negociacion.html) — acá solo se verifica que el markup y el
+    # script estén, no el comportamiento en el navegador.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="buscar-todos-articulos"' in respuesta.text
+    assert 'placeholder="Buscar artículo"' in respuesta.text
+    assert 'onclick="limpiarBusquedaTodosArticulos()"' in respuesta.text
+    assert "function filtrarTodosArticulos()" in respuesta.text
+    assert "Ningún artículo coincide." in respuesta.text
+
+
+def test_ver_negociar_sin_articulos_no_muestra_el_buscador():
+    # Sin nada para listar, el buscador no tiene sentido — no se renderiza.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="buscar-todos-articulos"' not in respuesta.text
+    assert "No hay artículos para mostrar." in respuesta.text
+
+
 def test_ver_negociar_sin_fichas_muestra_aviso_y_link_para_cargarlas():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -6312,8 +6345,38 @@ def test_ver_logistica_retiro_agrupa_por_guia_sin_mostrar_el_numero():
     assert "Saturno (N07P41)" in respuesta.text
     assert "Tomate Cherry" in respuesta.text
     assert "Mango" in respuesta.text
-    assert 'action="/logistica/retiro/Clark/1/retirar"' in respuesta.text
-    assert 'action="/logistica/retiro/Clark/1/cancelar"' in respuesta.text
+    # Sin ?origen en la URL, cae en logistica (el default).
+    assert 'action="/logistica/retiro/Clark/1/retirar?origen=logistica"' in respuesta.text
+    assert 'action="/logistica/retiro/Clark/1/cancelar?origen=logistica"' in respuesta.text
+
+
+def test_ver_logistica_retiro_sin_origen_muestra_el_icono_y_el_volver_de_logistica():
+    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    assert 'href="/logistica" aria-label="Ir a Logística"' in respuesta.text
+    assert '<a class="volver" href="/logistica">Volver a Logística</a>' in respuesta.text
+
+
+def test_ver_logistica_retiro_con_origen_deposito_muestra_el_icono_y_el_volver_de_deposito():
+    # Entrando desde el botón "Retirar Mercadería" de Depósito: la barrita
+    # y el "Volver" tienen que ser de Depósito, no de Logística.
+    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+        respuesta = cliente.get("/logistica/retiro/Pases?origen=deposito")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito" aria-label="Ir a Depósito"' in respuesta.text
+    assert '<a class="volver" href="/deposito">Volver a Depósito</a>' in respuesta.text
+    assert "Volver a Logística" not in respuesta.text
+
+
+def test_ver_logistica_retiro_origen_invalido_cae_en_logistica():
+    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+        respuesta = cliente.get("/logistica/retiro/Clark?origen=algo-raro")
+
+    assert respuesta.status_code == 200
+    assert '<a class="volver" href="/logistica">Volver a Logística</a>' in respuesta.text
 
 
 def test_ver_logistica_retiro_tipo_invalido_da_404():
@@ -6335,8 +6398,32 @@ def test_retirar_compra_marca_retirada_y_redirige():
         respuesta = cliente.post("/logistica/retiro/Clark/1/retirar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/logistica/retiro/Clark"
+    # Sin origen en el POST, el redirect vuelve con el default (logistica).
+    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica"
     mock_marcar.assert_called_once_with(1, "logistica", None)
+
+
+def test_retirar_compra_conserva_el_origen_deposito_en_el_redirect():
+    # El botón "Retirar Mercadería" de Depósito entra con ?origen=deposito
+    # — al tocar "Retirado" el redirect tiene que conservarlo, si no la
+    # persona vuelve a Logística en vez de a Depósito.
+    with patch("app.main.marcar_compra_retirada", return_value=None):
+        respuesta = cliente.post(
+            "/logistica/retiro/Pases/1/retirar?origen=deposito", follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito"
+
+
+def test_retirar_compra_origen_invalido_cae_en_logistica():
+    with patch("app.main.marcar_compra_retirada", return_value=None):
+        respuesta = cliente.post(
+            "/logistica/retiro/Clark/1/retirar?origen=cualquier-cosa", follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Clark?origen=logistica"
 
 
 def test_retirar_compra_con_cantidad_cajones_retirada_la_pasa_a_marcar_compra_retirada():
@@ -6386,8 +6473,18 @@ def test_cancelar_retiro_compra_marca_cancelada_y_redirige():
         respuesta = cliente.post("/logistica/retiro/Carro/1/cancelar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/logistica/retiro/Carro"
+    assert respuesta.headers["location"] == "/logistica/retiro/Carro?origen=logistica"
     mock_marcar.assert_called_once_with(1, "logistica")
+
+
+def test_cancelar_retiro_compra_conserva_el_origen_deposito_en_el_redirect():
+    with patch("app.main.marcar_compra_cancelada", return_value=None):
+        respuesta = cliente.post(
+            "/logistica/retiro/Pases/1/cancelar?origen=deposito", follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/logistica/retiro/Pases?origen=deposito"
 
 
 def test_retirar_compra_error_de_base_muestra_mensaje():
@@ -6419,7 +6516,9 @@ def test_ver_deposito_muestra_el_acceso_a_retirar_mercaderia():
     respuesta = cliente.get("/deposito")
 
     assert respuesta.status_code == 200
-    assert 'href="/logistica/retiro/Pases"' in respuesta.text
+    # Con ?origen=deposito, para que la barrita y el "Volver" de esa
+    # pantalla sean de Depósito (de donde realmente se entró), no Logística.
+    assert 'href="/logistica/retiro/Pases?origen=deposito"' in respuesta.text
     assert "Retirar Mercadería" in respuesta.text
 
 

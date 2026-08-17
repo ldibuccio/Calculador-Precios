@@ -129,6 +129,11 @@
 
 <h2>Todos los artículos</h2>
 {% if todos %}
+<label for="buscar-todos-articulos" class="etiqueta-buscar-todos">Buscar artículo</label>
+<div class="campo-buscar-todos">
+  <input type="text" id="buscar-todos-articulos" placeholder="Buscar artículo" autocomplete="off" oninput="filtrarTodosArticulos()">
+  <button type="button" class="boton-limpiar-busqueda" onclick="limpiarBusquedaTodosArticulos()" aria-label="Limpiar búsqueda">✕</button>
+</div>
 <div class="tabla-scroll">
   <table>
     <thead>
@@ -139,7 +144,7 @@
         <th>Utilidad</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="tbody-todos-articulos">
       {% for a in todos %}
       <tr>
         <td>{{ a.articulo_nombre }}</td>
@@ -157,6 +162,41 @@
     </tbody>
   </table>
 </div>
+<p class="vacio" id="sin-coincidencias-todos-articulos" style="display:none;">Ningún artículo coincide.</p>
+<script>
+  // Filtro 100% en el navegador: los renglones ya están renderizados, solo
+  // se muestran/esconden. Sin distinguir mayúsculas ni acentos (NFD +
+  // sacar los diacríticos), coincidencia parcial. El orden que ya traen
+  // (por rentabilidad) no se toca — nunca se reordena el DOM, solo se
+  // oculta lo que no matchea.
+  function _normalizarBusquedaArticulo(texto) {
+    return (texto || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  }
+
+  function filtrarTodosArticulos() {
+    const campo = document.getElementById("buscar-todos-articulos");
+    const boton = document.querySelector(".boton-limpiar-busqueda");
+    const filtro = _normalizarBusquedaArticulo(campo.value);
+    boton.classList.toggle("visible", campo.value.length > 0);
+
+    const filas = document.querySelectorAll("#tbody-todos-articulos tr");
+    let visibles = 0;
+    filas.forEach(function (fila) {
+      const nombre = _normalizarBusquedaArticulo(fila.cells[0].textContent);
+      const coincide = !filtro || nombre.indexOf(filtro) !== -1;
+      fila.style.display = coincide ? "" : "none";
+      if (coincide) visibles++;
+    });
+    document.getElementById("sin-coincidencias-todos-articulos").style.display = visibles === 0 ? "block" : "none";
+  }
+
+  function limpiarBusquedaTodosArticulos() {
+    const campo = document.getElementById("buscar-todos-articulos");
+    campo.value = "";
+    campo.focus();
+    filtrarTodosArticulos();
+  }
+</script>
 {% else %}
 <p class="vacio">No hay artículos para mostrar.</p>
 {% endif %}

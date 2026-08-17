@@ -3967,8 +3967,29 @@ def ver_logistica(request: Request):
     return templates.TemplateResponse(request, "logistica.html", {})
 
 
+ORIGENES_RETIRO_VALIDOS = {"logistica", "deposito"}
+
+
+def _validar_origen_retiro(origen: str | None) -> str:
+    """A qué módulo volver desde /logistica/retiro (para la barrita de navegación y el "Volver a...").
+
+    Se accede a esta misma pantalla desde dos lados (el hub de Logística, y el botón "Retirar
+    Mercadería" de Depósito) — origen viaja en la URL (?origen=deposito) para que el ícono de sector
+    y el link de "Volver" sean del módulo real desde el que se entró, no siempre Logística.
+    Cualquier valor que no sea uno de los dos válidos (incluido None, si no vino nada) cae en
+    'logistica' — el módulo dueño de esta pantalla.
+    """
+    return origen if origen in ORIGENES_RETIRO_VALIDOS else "logistica"
+
+
 def _renderizar_pantalla_logistica_retiro(
-    request: Request, tipo_retiro: str, *, aviso: str | None = None, error: str | None = None, status_code: int = 200
+    request: Request,
+    tipo_retiro: str,
+    *,
+    origen: str = "logistica",
+    aviso: str | None = None,
+    error: str | None = None,
+    status_code: int = 200,
 ):
     if tipo_retiro not in TIPOS_RETIRO_VALIDOS:
         raise HTTPException(status_code=404, detail="Tipo de retiro no válido")
@@ -3979,7 +4000,12 @@ def _renderizar_pantalla_logistica_retiro(
         return templates.TemplateResponse(
             request,
             "logistica_retiro.html",
-            {"tipo_retiro": tipo_retiro, "guias": [], "error": f"No se pudieron leer las compras pendientes: {error_db}"},
+            {
+                "tipo_retiro": tipo_retiro,
+                "origen": origen,
+                "guias": [],
+                "error": f"No se pudieron leer las compras pendientes: {error_db}",
+            },
             status_code=500,
         )
 
@@ -3987,14 +4013,14 @@ def _renderizar_pantalla_logistica_retiro(
     return templates.TemplateResponse(
         request,
         "logistica_retiro.html",
-        {"tipo_retiro": tipo_retiro, "guias": guias, "aviso": aviso, "error": error},
+        {"tipo_retiro": tipo_retiro, "origen": origen, "guias": guias, "aviso": aviso, "error": error},
         status_code=status_code,
     )
 
 
 @app.get("/logistica/retiro/{tipo_retiro}")
-def ver_logistica_retiro(request: Request, tipo_retiro: str):
-    return _renderizar_pantalla_logistica_retiro(request, tipo_retiro)
+def ver_logistica_retiro(request: Request, tipo_retiro: str, origen: str | None = None):
+    return _renderizar_pantalla_logistica_retiro(request, tipo_retiro, origen=_validar_origen_retiro(origen))
 
 
 def _validar_cantidad_cajones_retirada(texto: str) -> tuple[str | None, float | None]:
@@ -4013,32 +4039,36 @@ def _validar_cantidad_cajones_retirada(texto: str) -> tuple[str | None, float | 
 
 @app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/retirar")
 def retirar_compra_ruta(
-    request: Request, tipo_retiro: str, compra_id: int, cantidad_cajones_retirada: str = Form("")
+    request: Request, tipo_retiro: str, compra_id: int, origen: str | None = None, cantidad_cajones_retirada: str = Form("")
 ):
+    origen_valido = _validar_origen_retiro(origen)
+
     error, valor = _validar_cantidad_cajones_retirada(cantidad_cajones_retirada)
     if error:
-        return _renderizar_pantalla_logistica_retiro(request, tipo_retiro, error=error, status_code=400)
+        return _renderizar_pantalla_logistica_retiro(request, tipo_retiro, origen=origen_valido, error=error, status_code=400)
 
     try:
         marcar_compra_retirada(compra_id, "logistica", valor)
     except Exception as error_db:
         return _renderizar_pantalla_logistica_retiro(
-            request, tipo_retiro, error=f"No se pudo marcar como retirada: {error_db}", status_code=500
+            request, tipo_retiro, origen=origen_valido, error=f"No se pudo marcar como retirada: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}", status_code=303)
+    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}?origen={origen_valido}", status_code=303)
 
 
 @app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/cancelar")
-def cancelar_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: int):
+def cancelar_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: int, origen: str | None = None):
+    origen_valido = _validar_origen_retiro(origen)
+
     try:
         marcar_compra_cancelada(compra_id, "logistica")
     except Exception as error_db:
         return _renderizar_pantalla_logistica_retiro(
-            request, tipo_retiro, error=f"No se pudo marcar como cancelada: {error_db}", status_code=500
+            request, tipo_retiro, origen=origen_valido, error=f"No se pudo marcar como cancelada: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}", status_code=303)
+    return RedirectResponse(url=f"/logistica/retiro/{tipo_retiro}?origen={origen_valido}", status_code=303)
 
 
 @app.get("/deposito")
