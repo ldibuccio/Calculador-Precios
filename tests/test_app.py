@@ -2722,9 +2722,10 @@ def test_editar_compra_recepcionada_guarda_precio_pero_no_cantidad():
     mock_actualizar_precio.assert_called_once_with(30, 60000.0, None)
 
 
-def test_editar_compra_rechazada_guarda_cantidad_pero_no_precio():
-    # Caso límite: rechazada pero el retiro nunca se marcó (cancelado
-    # antes) — cantidad queda editable, precio no (rechazada por calidad).
+def test_editar_compra_rechazada_no_guarda_ni_cantidad_ni_precio():
+    # Rechazada por calidad: esa historia ya terminó y no entra al
+    # costeo, así que queda bloqueada del todo (cantidad y precio), sin
+    # importar el estado_retiro.
     compra_rechazada = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="cancelado")
     with (
         patch("app.main.obtener_compra", return_value=compra_rechazada),
@@ -2746,7 +2747,35 @@ def test_editar_compra_rechazada_guarda_cantidad_pero_no_precio():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro")
+    mock_actualizar_cantidad.assert_not_called()
+    mock_actualizar_precio.assert_not_called()
+
+
+def test_editar_compra_no_ingresada_no_guarda_ni_cantidad_ni_precio():
+    # Nunca ingresó al depósito: mismo criterio que rechazada, queda
+    # bloqueada del todo.
+    compra_no_ingresada = dict(COMPRA_DE_PRUEBA, estado="no_ingresado", estado_retiro="retirado")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_no_ingresada),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={
+                "articulo_id": "5",
+                "cantidad_cajones": "8",
+                "contenido_por_cajon": "15",
+                "importe": "60000",
+                "sena": "",
+                "tipo_retiro": "Carro",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar_cantidad.assert_not_called()
     mock_actualizar_precio.assert_not_called()
 
 
@@ -2981,9 +3010,10 @@ def test_ver_editar_compra_recepcionada_bloquea_cantidad_pero_deja_precio_habili
     assert respuesta.text.count('class="campo-bloqueado"') == 4
 
 
-def test_ver_editar_compra_no_ingresada_bloquea_precio_pero_deja_cantidad_habilitada():
-    # No ingresó: precio bloqueado (nunca entra al costeo), cantidad NO
-    # (nunca llegó a recepcionarse ni a retirarse, se puede seguir corrigiendo).
+def test_ver_editar_compra_no_ingresada_bloquea_todo_aunque_nunca_se_haya_retirado():
+    # No ingresó: esa historia ya terminó y no entra al costeo, así que
+    # queda bloqueada del todo (cantidad y precio) sin importar el
+    # estado_retiro — ni siquiera hace falta que se haya retirado.
     compra_no_ingresada = dict(COMPRA_DE_PRUEBA, estado="no_ingresado", estado_retiro="pendiente")
     with (
         patch("app.main.obtener_compra", return_value=compra_no_ingresada),
@@ -2992,18 +3022,19 @@ def test_ver_editar_compra_no_ingresada_bloquea_precio_pero_deja_cantidad_habili
         respuesta = cliente.get("/compras/30/editar")
 
     assert respuesta.status_code == 200
-    assert "El precio no se puede modificar: la compra nunca ingresó al depósito. La cantidad sí se puede corregir." in respuesta.text
-    assert 'name="accion" value="guardar" disabled' not in respuesta.text
-    # Solo importe/seña grises.
-    assert respuesta.text.count('class="campo-bloqueado"') == 2
+    assert "Esta compra nunca ingresó al depósito: no se puede modificar ni la cantidad ni el precio." in respuesta.text
+    assert 'name="accion" value="guardar" disabled' in respuesta.text
+    assert respuesta.text.count('class="campo-bloqueado"') == 6
+    # "Agregar artículo" sigue habilitado siempre, incluso acá.
+    assert 'name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>' in respuesta.text
 
 
-def test_ver_editar_compra_rechazada_y_retirada_bloquea_todo_y_deshabilita_guardar():
-    # Único caso donde de verdad no queda nada para guardar: rechazada
-    # (bloquea precio) y retirada (bloquea cantidad) a la vez.
-    compra_bloqueada_del_todo = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="retirado")
+def test_ver_editar_compra_rechazada_bloquea_todo_aunque_nunca_se_haya_retirado():
+    # Rechazada por calidad: mismo criterio que no_ingresado, bloquea
+    # del todo sin importar el estado_retiro.
+    compra_rechazada = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="cancelado")
     with (
-        patch("app.main.obtener_compra", return_value=compra_bloqueada_del_todo),
+        patch("app.main.obtener_compra", return_value=compra_rechazada),
         patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
     ):
         respuesta = cliente.get("/compras/30/editar")

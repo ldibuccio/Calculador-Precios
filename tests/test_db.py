@@ -258,7 +258,11 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
 def test_compra_tiene_cantidad_bloqueada():
     assert compra_tiene_cantidad_bloqueada("recepcionado", "pendiente") is True
     assert compra_tiene_cantidad_bloqueada("pendiente", "retirado") is True
-    assert compra_tiene_cantidad_bloqueada("rechazado", "cancelado") is False
+    # Rechazada o nunca ingresada al depósito: esa historia ya terminó, se
+    # bloquea también la cantidad (junto con el precio, quedan cerradas del todo).
+    assert compra_tiene_cantidad_bloqueada("rechazado", "cancelado") is True
+    assert compra_tiene_cantidad_bloqueada("no_ingresado", "cancelado") is True
+    assert compra_tiene_cantidad_bloqueada("pendiente", "pendiente") is False
     assert compra_tiene_cantidad_bloqueada(None, None) is False
 
 
@@ -310,16 +314,33 @@ def test_actualizar_cantidad_compra_retirada_no_se_edita():
             assert str(error) == "Esta compra ya fue retirada, no se puede editar la cantidad."
 
 
-def test_actualizar_cantidad_compra_se_puede_editar_si_esta_rechazada_sin_retirar():
-    # Caso límite pero real: rechazada en Depósito, con el retiro cancelado
-    # antes en Logística (así que el auto-retiro nunca la marcó 'retirado').
-    # No cae en ninguna de las dos condiciones de cantidad bloqueada.
+def test_actualizar_cantidad_compra_rechazada_no_se_edita_aunque_nunca_se_haya_retirado():
+    # Rechazada en Depósito, con el retiro cancelado antes en Logística
+    # (así que el auto-retiro nunca la marcó 'retirado'): esa historia ya
+    # terminó y no entra al costeo, se bloquea igual.
     conexion, cursor = _conexion_falsa([("rechazado", "cancelado")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+        try:
+            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == "Esta compra fue rechazada por calidad, no se puede editar la cantidad."
 
-    conexion.commit.assert_called_once()
+    conexion.commit.assert_not_called()
+
+
+def test_actualizar_cantidad_compra_no_ingresada_no_se_edita():
+    conexion, cursor = _conexion_falsa([("no_ingresado", "retirado")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == "Esta compra nunca ingresó al depósito, no se puede editar la cantidad."
+
+    conexion.commit.assert_not_called()
 
 
 def test_actualizar_precio_compra_pisa_importe_y_sena():

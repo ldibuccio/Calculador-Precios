@@ -1022,9 +1022,13 @@ def compra_tiene_cantidad_bloqueada(estado: str | None, estado_retiro: str | Non
     campos) y actualizar_cantidad_compra (para bloquear el guardado de
     verdad). Recepcionada o retirada: cambiar la cantidad después de eso
     modificaría un costo que ya se pudo haber usado para negociar
-    precios con el cliente.
+    precios con el cliente. Rechazada o nunca ingresada al depósito:
+    esa historia ya terminó y esa mercadería no entra al costeo, así
+    que tampoco tiene sentido tocarle la cantidad (junto con
+    compra_tiene_precio_bloqueado, que bloquea el precio en estos
+    mismos dos casos, quedan totalmente cerradas).
     """
-    return estado == "recepcionado" or estado_retiro == "retirado"
+    return estado in ("recepcionado", "rechazado", "no_ingresado") or estado_retiro == "retirado"
 
 
 def compra_tiene_precio_bloqueado(estado: str | None) -> bool:
@@ -1053,8 +1057,9 @@ def actualizar_cantidad_compra(
 ) -> None:
     """Actualiza artículo/cantidad/tipo de retiro de una compra existente. No toca importe ni seña.
 
-    Bloqueada (ValueError) si la compra ya fue recepcionada o retirada
-    (ver compra_tiene_cantidad_bloqueada) — independiente del bloqueo de
+    Bloqueada (ValueError) si la compra ya fue recepcionada o retirada,
+    o si fue rechazada por calidad o nunca ingresó al depósito (ver
+    compra_tiene_cantidad_bloqueada) — independiente del bloqueo de
     precio, que vive aparte en actualizar_precio_compra.
     """
     conexion = obtener_conexion()
@@ -1067,6 +1072,10 @@ def actualizar_cantidad_compra(
             if compra_tiene_cantidad_bloqueada(estado, estado_retiro):
                 if estado == "recepcionado":
                     raise ValueError("Esta compra ya fue recepcionada, no se puede editar la cantidad.")
+                if estado == "rechazado":
+                    raise ValueError("Esta compra fue rechazada por calidad, no se puede editar la cantidad.")
+                if estado == "no_ingresado":
+                    raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar la cantidad.")
                 raise ValueError("Esta compra ya fue retirada, no se puede editar la cantidad.")
 
             cursor.execute(
