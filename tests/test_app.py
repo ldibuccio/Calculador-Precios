@@ -21,6 +21,7 @@ from app.main import (
     _generar_preview_foto,
     _sufijo_unidad,
     app,
+    templates,
 )
 
 cliente = TestClient(app)
@@ -5728,6 +5729,19 @@ def test_ver_inicio_muestra_las_6_areas():
     assert 'href="/deposito"' in respuesta.text
     assert 'href="/gerencia"' in respuesta.text
     assert 'href="/sistema"' in respuesta.text
+
+
+def test_ver_inicio_usa_el_nombre_de_empresa_configurado():
+    # Mismo código para varias empresas, cada una con su propia base: el
+    # nombre que se ve en /inicio sale de la variable de entorno
+    # NOMBRE_EMPRESA (ver app/main.py), no queda fijo en "Frutamax".
+    with patch.dict(templates.env.globals, {"NOMBRE_EMPRESA": "Palmala"}):
+        respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    assert "<h1>Palmala</h1>" in respuesta.text
+    assert "<title>Palmala</title>" in respuesta.text
+    assert "Frutamax" not in respuesta.text
 
 
 def test_ver_inicio_deposito_ya_no_dice_proximamente():

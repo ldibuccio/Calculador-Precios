@@ -7,6 +7,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 import base64
 import io
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 
@@ -80,6 +81,13 @@ GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "pesada"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Granel", "Propia"}
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
+
+NOMBRE_EMPRESA_ENV_VAR = "NOMBRE_EMPRESA"
+# Mismo código para varias empresas (cada una con su propia base): el
+# nombre que se ve en /inicio sale de esta variable de entorno, para no
+# tener que bifurcar el código por empresa. Frutamax es el valor de
+# siempre — si la variable no está seteada, no cambia nada para ese deploy.
+NOMBRE_EMPRESA = os.environ.get(NOMBRE_EMPRESA_ENV_VAR, "Frutamax")
 
 
 def _hoy_argentina():
@@ -249,6 +257,7 @@ SECTORES = {
 
 templates.env.globals["SECTORES"] = SECTORES
 templates.env.globals["ICONO_INICIO"] = _ICONO_INICIO
+templates.env.globals["NOMBRE_EMPRESA"] = NOMBRE_EMPRESA
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -3645,8 +3654,6 @@ def ver_gerencia(request: Request):
 
 
 if __name__ == "__main__":
-    import os
-
     import uvicorn
 
     puerto = int(os.environ.get("PORT", 8000))

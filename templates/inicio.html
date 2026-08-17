@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Frutamax</title>
+<title>{{ NOMBRE_EMPRESA }}</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -47,7 +47,7 @@
 </style>
 </head>
 <body>
-  <h1>Frutamax</h1>
+  <h1>{{ NOMBRE_EMPRESA }}</h1>
 
   <a class="boton-area" href="{{ SECTORES.compras.url }}">{{ SECTORES.compras.icono|safe }} Compras</a>
   <a class="boton-area" href="{{ SECTORES.comercial.url }}">{{ SECTORES.comercial.icono|safe }} Comercial</a>
