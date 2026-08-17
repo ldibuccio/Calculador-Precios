@@ -62,6 +62,7 @@ from app.db import (
     obtener_articulo,
     obtener_cliente,
     obtener_compra,
+    obtener_detalle_compra,
     obtener_ficha,
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
@@ -86,6 +87,22 @@ from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto,
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "pesada"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Carro", "Pases"}
+
+# Textos legibles para la pantalla de Detalle de una compra (ver ver_detalle_compra).
+ESTADOS_RETIRO_LABELS = {None: "Sin datos", "pendiente": "Pendiente", "retirado": "Retirado", "cancelado": "Cancelado"}
+ESTADOS_RECEPCION_LABELS = {
+    None: "Sin datos",
+    "pendiente": "Pendiente",
+    "recepcionado": "Recibido",
+    "rechazado": "Rechazado por calidad",
+    "no_ingresado": "No ingresó",
+}
+ORIGENES_RETIRO_LABELS = {
+    None: None,
+    "logistica": "Logística (a mano)",
+    "deposito": "Depósito (automático)",
+    "migracion": "Migración",
+}
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 
@@ -152,6 +169,13 @@ def _formatear_kilos(valor) -> str:
     return str(round(float(valor)))
 
 
+def _formatear_fecha_hora(valor) -> str:
+    """Fecha y hora completas en horario argentino ("17/08/2026 14:35"), para pantallas de historial como Detalle."""
+    if valor is None:
+        return ""
+    return valor.astimezone(ARGENTINA).strftime("%d/%m/%Y %H:%M")
+
+
 def _formatear_porcentaje(valor) -> str:
     """Formatea una fracción (0.2548) como porcentaje con un decimal y coma decimal ("25,5%")."""
     if valor is None:
@@ -193,6 +217,7 @@ templates.env.filters["porcentaje"] = _formatear_porcentaje
 templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
+templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 
 
 # Íconos de navegación: SVG minimalistas de línea (heroicons, MIT), un solo
@@ -2598,6 +2623,43 @@ def ver_foto_compra(compra_id: int):
     return RedirectResponse(url=url_firmada, status_code=307)
 
 
+@app.get("/compras/{compra_id}/detalle")
+def ver_detalle_compra(request: Request, compra_id: int):
+    """Historia completa de una compra: carga, retiro y recepción. Solo lectura, no se edita nada acá."""
+    try:
+        compra = obtener_detalle_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    diferencia_cajones_retirados = None
+    if compra["cantidad_cajones_retirada"] is not None:
+        diferencia_cajones_retirados = compra["cantidad_cajones_retirada"] - compra["cantidad_cajones"]
+
+    diferencia_cajones_recepcion = None
+    diferencia_contenido_recepcion = None
+    if compra["cantidad_cajones_real"] is not None:
+        diferencia_cajones_recepcion = compra["cantidad_cajones_real"] - compra["cantidad_cajones"]
+    if compra["contenido_por_cajon_real"] is not None:
+        diferencia_contenido_recepcion = compra["contenido_por_cajon_real"] - compra["contenido_por_cajon"]
+
+    return templates.TemplateResponse(
+        request,
+        "compra_detalle.html",
+        {
+            "compra": compra,
+            "estado_retiro_label": ESTADOS_RETIRO_LABELS.get(compra["estado_retiro"], compra["estado_retiro"]),
+            "estado_recepcion_label": ESTADOS_RECEPCION_LABELS.get(compra["estado"], compra["estado"]),
+            "origen_retiro_label": ORIGENES_RETIRO_LABELS.get(compra["retiro_origen"], compra["retiro_origen"]),
+            "diferencia_cajones_retirados": diferencia_cajones_retirados,
+            "diferencia_cajones_recepcion": diferencia_cajones_recepcion,
+            "diferencia_contenido_recepcion": diferencia_contenido_recepcion,
+        },
+    )
+
+
 @app.get("/compras/pendientes")
 def ver_compras_pendientes(request: Request, error: str | None = None):
     try:
@@ -3681,10 +3743,30 @@ def ver_logistica_retiro(request: Request, tipo_retiro: str):
     return _renderizar_pantalla_logistica_retiro(request, tipo_retiro)
 
 
-@app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/retirar")
-def retirar_compra_ruta(request: Request, tipo_retiro: str, compra_id: int):
+def _validar_cantidad_cajones_retirada(texto: str) -> tuple[str | None, float | None]:
+    """Valida los cajones retirados que anota Logística: opcional, si viene tiene que ser un número no negativo."""
+    texto = texto.strip()
+    if not texto:
+        return None, None
     try:
-        marcar_compra_retirada(compra_id, "logistica")
+        valor = float(texto)
+    except ValueError:
+        return "La cantidad de cajones retirados tiene que ser un número.", None
+    if valor < 0:
+        return "La cantidad de cajones retirados no puede ser negativa.", None
+    return None, valor
+
+
+@app.post("/logistica/retiro/{tipo_retiro}/{compra_id}/retirar")
+def retirar_compra_ruta(
+    request: Request, tipo_retiro: str, compra_id: int, cantidad_cajones_retirada: str = Form("")
+):
+    error, valor = _validar_cantidad_cajones_retirada(cantidad_cajones_retirada)
+    if error:
+        return _renderizar_pantalla_logistica_retiro(request, tipo_retiro, error=error, status_code=400)
+
+    try:
+        marcar_compra_retirada(compra_id, "logistica", valor)
     except Exception as error_db:
         return _renderizar_pantalla_logistica_retiro(
             request, tipo_retiro, error=f"No se pudo marcar como retirada: {error_db}", status_code=500

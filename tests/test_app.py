@@ -1,6 +1,6 @@
 import base64
 import io
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pypdfium2 as pdfium
@@ -1910,6 +1910,10 @@ def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
     assert 'href="/compras/2/foto"' not in respuesta.text
     assert 'href="/compras/1/editar"' in respuesta.text
     assert 'href="/compras/2/editar"' in respuesta.text
+    # El botón Detalle aparece siempre, al lado de Editar, sin importar la foto.
+    assert respuesta.text.count(">Detalle<") == 2
+    assert 'href="/compras/1/detalle"' in respuesta.text
+    assert 'href="/compras/2/detalle"' in respuesta.text
 
 
 def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
@@ -2543,6 +2547,34 @@ COMPRA_DE_PRUEBA = {
     "estado_retiro": "pendiente",
 }
 
+COMPRA_DETALLE_DE_PRUEBA = {
+    "id": 30,
+    "fecha_operacion": HOY_DE_PRUEBA,
+    "cargado_el": datetime(2026, 8, 16, 12, 15, tzinfo=timezone.utc),
+    "articulo_id": 5,
+    "articulo_nombre": "Mzn Red",
+    "unidad_compra": "kg",
+    "proveedor_id": 200,
+    "proveedor_nombre": "Saturno",
+    "proveedor_codigo_puesto": "N07P41",
+    "guia_id": 105,
+    "guia_punto": 2,
+    "cantidad_cajones": 10,
+    "contenido_por_cajon": 18,
+    "importe": 50000,
+    "sena": None,
+    "tipo_retiro": "Clark",
+    "foto_ruta": None,
+    "estado_retiro": "retirado",
+    "retiro_procesado_el": datetime(2026, 8, 16, 13, 0, tzinfo=timezone.utc),
+    "retiro_origen": "logistica",
+    "cantidad_cajones_retirada": None,
+    "estado": "recepcionado",
+    "procesada_el": datetime(2026, 8, 16, 14, 0, tzinfo=timezone.utc),
+    "cantidad_cajones_real": 10,
+    "contenido_por_cajon_real": 18,
+}
+
 
 def test_ver_editar_compra_muestra_datos_precargados():
     with (
@@ -2573,6 +2605,63 @@ def test_ver_editar_compra_inexistente_da_404():
 def test_ver_editar_compra_error_de_base_da_500():
     with patch("app.main.obtener_compra", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 500
+
+
+def test_ver_detalle_compra_muestra_toda_la_historia():
+    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    assert "N07P41" in respuesta.text
+    assert "Mzn Red" in respuesta.text
+    assert "105.2" in respuesta.text
+    assert "Retirado" in respuesta.text
+    assert "Logística (a mano)" in respuesta.text
+    assert "Recibido" in respuesta.text
+    assert "No hay foto guardada" in respuesta.text
+
+
+def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_retirada=8)
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "Diferencia contra lo comprado" in respuesta.text
+
+
+def test_ver_detalle_compra_marca_la_diferencia_de_recepcion():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=9)
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "Diferencia contra lo comprado" in respuesta.text
+
+
+def test_ver_detalle_compra_con_foto_muestra_la_imagen():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, foto_ruta="2026-08-16/n07p41-30-abcdef12.jpg")
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert 'src="/compras/30/foto"' in respuesta.text
+    assert "No hay foto guardada" not in respuesta.text
+
+
+def test_ver_detalle_compra_inexistente_da_404():
+    with patch("app.main.obtener_detalle_compra", return_value=None):
+        respuesta = cliente.get("/compras/999/detalle")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_detalle_compra_error_de_base_da_500():
+    with patch("app.main.obtener_detalle_compra", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 500
 
@@ -6215,7 +6304,49 @@ def test_retirar_compra_marca_retirada_y_redirige():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/logistica/retiro/Clark"
-    mock_marcar.assert_called_once_with(1, "logistica")
+    mock_marcar.assert_called_once_with(1, "logistica", None)
+
+
+def test_retirar_compra_con_cantidad_cajones_retirada_la_pasa_a_marcar_compra_retirada():
+    with patch("app.main.marcar_compra_retirada", return_value=None) as mock_marcar:
+        respuesta = cliente.post(
+            "/logistica/retiro/Clark/1/retirar",
+            data={"cantidad_cajones_retirada": "8.5"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(1, "logistica", 8.5)
+
+
+def test_retirar_compra_con_cantidad_no_numerica_da_error_sin_llamar_a_marcar():
+    with (
+        patch("app.main.marcar_compra_retirada", return_value=None) as mock_marcar,
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/logistica/retiro/Clark/1/retirar",
+            data={"cantidad_cajones_retirada": "no-es-un-numero"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "tiene que ser un número" in respuesta.text
+    mock_marcar.assert_not_called()
+
+
+def test_retirar_compra_con_cantidad_negativa_da_error_sin_llamar_a_marcar():
+    with (
+        patch("app.main.marcar_compra_retirada", return_value=None) as mock_marcar,
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/logistica/retiro/Clark/1/retirar",
+            data={"cantidad_cajones_retirada": "-3"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser negativa" in respuesta.text
+    mock_marcar.assert_not_called()
 
 
 def test_cancelar_retiro_compra_marca_cancelada_y_redirige():

@@ -25,6 +25,7 @@ from app.db import (
     marcar_compra_cancelada,
     marcar_compra_no_ingresada,
     marcar_compra_retirada,
+    obtener_detalle_compra,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
@@ -562,7 +563,19 @@ def test_marcar_compra_retirada_guarda_origen():
     consulta, parametros = cursor.execute.call_args[0]
     assert "estado_retiro = 'retirado'" in consulta
     assert "retiro_procesado_el = now()" in consulta
-    assert parametros == ("logistica", 30)
+    assert "cantidad_cajones_retirada = %s" in consulta
+    assert parametros == ("logistica", None, 30)
+    conexion.commit.assert_called_once()
+
+
+def test_marcar_compra_retirada_guarda_cantidad_cajones_retirada():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_compra_retirada(30, "logistica", 8.5)
+
+    _, parametros = cursor.execute.call_args[0]
+    assert parametros == ("logistica", 8.5, 30)
     conexion.commit.assert_called_once()
 
 
@@ -576,6 +589,52 @@ def test_marcar_compra_cancelada_guarda_origen():
     assert "estado_retiro = 'cancelado'" in consulta
     assert parametros == ("logistica", 30)
     conexion.commit.assert_called_once()
+
+
+def test_obtener_detalle_compra_devuelve_la_fila_mapeada():
+    fila = (
+        30, date(2026, 8, 16), "2026-08-16 09:15:00",
+        5, "Tomate", "cajon",
+        2, "Don José", "N07P41",
+        105, 2,
+        10.0, 20.0, 50000.0, 5000.0, "Clark", None,
+        "retirado", "2026-08-16 10:00:00", "logistica", 9.0,
+        "recepcionado", "2026-08-16 11:00:00",
+        9.0, 19.5,
+    )
+    conexion, cursor = _conexion_falsa(filas_fetchone=[fila])
+    cursor.description = [
+        ("id",), ("fecha_operacion",), ("cargado_el",),
+        ("articulo_id",), ("articulo_nombre",), ("unidad_compra",),
+        ("proveedor_id",), ("proveedor_nombre",), ("proveedor_codigo_puesto",),
+        ("guia_id",), ("guia_punto",),
+        ("cantidad_cajones",), ("contenido_por_cajon",), ("importe",), ("sena",), ("tipo_retiro",), ("foto_ruta",),
+        ("estado_retiro",), ("retiro_procesado_el",), ("retiro_origen",), ("cantidad_cajones_retirada",),
+        ("estado",), ("procesada_el",),
+        ("cantidad_cajones_real",), ("contenido_por_cajon_real",),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_detalle_compra(30)
+
+    assert resultado["articulo_nombre"] == "Tomate"
+    assert resultado["proveedor_nombre"] == "Don José"
+    assert resultado["cantidad_cajones_retirada"] == 9.0
+    assert resultado["cantidad_cajones_real"] == 9.0
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "WHERE c.id = %s" in consulta
+    assert parametros == (30,)
+    conexion.close.assert_called_once()
+
+
+def test_obtener_detalle_compra_devuelve_none_si_no_existe():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_detalle_compra(999)
+
+    assert resultado is None
+    conexion.close.assert_called_once()
 
 
 def test_eliminar_compras_del_dia_por_proveedor_devuelve_borradas_y_protegidas():

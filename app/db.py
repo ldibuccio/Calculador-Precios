@@ -886,6 +886,45 @@ def obtener_compra(compra_id: int) -> dict | None:
         conexion.close()
 
 
+def obtener_detalle_compra(compra_id: int) -> dict | None:
+    """Devuelve una compra con toda su historia, para la pantalla de Detalle (solo lectura).
+
+    A diferencia de obtener_compra (que trae lo justo para precargar el
+    formulario de edición), esto trae todo lo que hay guardado de las
+    tres etapas de la compra: lo cargado por el comprador, el retiro en
+    Logística y la recepción en Depósito — más cargado_el (cuándo se
+    cargó la compra, existe desde el diseño original) y el punto de
+    guía, para poder mostrar "105.2".
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, c.cargado_el,
+                       c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra,
+                       c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.guia_id, c.guia_punto,
+                       c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro, c.foto_ruta,
+                       c.estado_retiro, c.retiro_procesado_el, c.retiro_origen, c.cantidad_cajones_retirada,
+                       c.estado, c.procesada_el,
+                       c.cantidad_cajones_real, c.contenido_por_cajon_real
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
 def crear_compra(
     fecha_operacion,
     articulo_id: int,
@@ -1288,18 +1327,27 @@ def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
         conexion.close()
 
 
-def marcar_compra_retirada(compra_id: int, origen: str) -> None:
-    """Marca una compra como retirada del puesto (ver Logística, /logistica/retiro)."""
+def marcar_compra_retirada(compra_id: int, origen: str, cantidad_cajones_retirada: float | None = None) -> None:
+    """Marca una compra como retirada del puesto (ver Logística, /logistica/retiro).
+
+    cantidad_cajones_retirada es un dato aparte, opcional, que anota
+    quien retira — nunca pisa cantidad_cajones (lo que cargó el
+    comprador) ni cantidad_cajones_real (lo que cuenta Depósito al
+    recepcionar). Es solo registro: no entra en ningún cálculo (costeo,
+    precios, Recepción). None (no se anotó nada) se interpreta como "se
+    retiró todo lo cargado" — no hace falta completarlo para eso.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE compras
-                SET estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = %s
+                SET estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = %s,
+                    cantidad_cajones_retirada = %s
                 WHERE id = %s
                 """,
-                (origen, compra_id),
+                (origen, cantidad_cajones_retirada, compra_id),
             )
         conexion.commit()
     finally:
