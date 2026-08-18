@@ -1639,6 +1639,12 @@ def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
 def listar_compras_sin_precio() -> list[dict]:
     """Compras (de cualquier fecha) con importe todavía vacío, para completarlo desde /compras/pendientes.
 
+    Solo las que todavía pueden llegar a venderse: estado en (pendiente,
+    recepcionado) y estado_retiro en (pendiente, retirado). Rechazada,
+    no_ingresado o con el retiro cancelado significan que esa mercadería
+    nunca se va a vender — no tiene sentido perseguirle el costo, así que
+    quedan afuera aunque el importe siga en NULL.
+
     NOTA para cuando el motor de costeo empiece a leer compras de la base
     (hoy no lo hace): las consultas de costeo tienen que excluir las filas
     con importe IS NULL, son compras sin precio todavía.
@@ -1661,12 +1667,37 @@ def listar_compras_sin_precio() -> list[dict]:
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.importe IS NULL
+                  AND c.estado IN ('pendiente', 'recepcionado')
+                  AND c.estado_retiro IN ('pendiente', 'retirado')
                 ORDER BY c.fecha_operacion, p.codigo_puesto, c.cargado_el
                 """
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def contar_compras_sin_precio() -> int:
+    """Cuántas compras sin precio de compra cargado hay pendientes de completar (mismo filtro que
+    listar_compras_sin_precio, sin traer las filas) — para el cartel de aviso de /comercial, que se
+    calcula en cada entrada a esa pantalla y solo necesita el número.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM compras c
+                WHERE c.importe IS NULL
+                  AND c.estado IN ('pendiente', 'recepcionado')
+                  AND c.estado_retiro IN ('pendiente', 'retirado')
+                """
+            )
+            (cantidad,) = cursor.fetchone()
+        return cantidad
     finally:
         conexion.close()
 

@@ -6792,6 +6792,43 @@ def test_ver_comercial_muestra_los_tres_accesos():
     # Negociar precios y Lista de Precios ya no están sueltos acá — viven
     # ordenados adentro de la botonera de Precios.
     assert 'href="/negociar"' not in respuesta.text
+
+
+def test_ver_comercial_con_compras_sin_precio_muestra_el_cartel():
+    with patch("app.main.contar_compras_sin_precio", return_value=4):
+        respuesta = cliente.get("/comercial")
+
+    assert respuesta.status_code == 200
+    assert "Hay 4 compras sin precio de compra cargado" in respuesta.text
+    assert 'href="/compras/pendientes"' in respuesta.text
+    # Arriba de los tres botones, no mezclado ni después.
+    assert respuesta.text.index("Hay 4 compras") < respuesta.text.index('href="/precios"')
+
+
+def test_ver_comercial_con_una_sola_compra_sin_precio_usa_singular():
+    with patch("app.main.contar_compras_sin_precio", return_value=1):
+        respuesta = cliente.get("/comercial")
+
+    assert "Hay 1 compra sin precio de compra cargado" in respuesta.text
+
+
+def test_ver_comercial_sin_compras_sin_precio_no_muestra_cartel():
+    with patch("app.main.contar_compras_sin_precio", return_value=0):
+        respuesta = cliente.get("/comercial")
+
+    assert respuesta.status_code == 200
+    assert "sin precio de compra cargado" not in respuesta.text
+
+
+def test_ver_comercial_error_al_contar_no_rompe_la_pantalla():
+    # El cartel es un aviso, no algo crítico: si la consulta del conteo
+    # falla, la pantalla sigue funcionando (sin cartel), nunca un 500.
+    with patch("app.main.contar_compras_sin_precio", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/comercial")
+
+    assert respuesta.status_code == 200
+    assert "sin precio de compra cargado" not in respuesta.text
+    assert 'href="/precios"' in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
 

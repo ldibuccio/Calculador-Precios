@@ -11,6 +11,7 @@ from app.db import (
     compra_tiene_deshacer_recepcion_bloqueado,
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
+    contar_compras_sin_precio,
     corregir_recepcion_compra,
     crear_cliente,
     crear_compra,
@@ -448,6 +449,33 @@ def test_listar_compras_sin_precio_usa_el_real_si_existe():
     consulta = cursor.execute.call_args[0][0]
     assert "COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones" in consulta
     assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon" in consulta
+
+
+def test_listar_compras_sin_precio_excluye_rechazada_no_ingresada_y_retiro_cancelado():
+    # Esa mercadería nunca se va a vender -- no tiene sentido perseguirle
+    # el costo aunque el importe siga en NULL.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_sin_precio()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "c.estado IN ('pendiente', 'recepcionado')" in consulta
+    assert "c.estado_retiro IN ('pendiente', 'retirado')" in consulta
+
+
+def test_contar_compras_sin_precio_mismo_filtro_que_listar_devuelve_el_numero():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(4,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_compras_sin_precio()
+
+    assert resultado == 4
+    consulta = cursor.execute.call_args[0][0]
+    assert "SELECT COUNT(*)" in consulta
+    assert "c.importe IS NULL" in consulta
+    assert "c.estado IN ('pendiente', 'recepcionado')" in consulta
+    assert "c.estado_retiro IN ('pendiente', 'retirado')" in consulta
 
 
 def test_listar_compras_pendientes_recepcion_filtra_por_estado_y_guia():

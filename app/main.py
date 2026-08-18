@@ -34,6 +34,7 @@ from app.db import (
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_articulos,
+    contar_compras_sin_precio,
     corregir_recepcion_compra,
     crear_articulo,
     crear_cliente,
@@ -4068,8 +4069,18 @@ def limpiar_fotos_viejas_ruta(request: Request):
 
 @app.get("/comercial")
 def ver_comercial(request: Request):
-    """Hub del área Comercial: junta los accesos a Precios, Clientes y Fichas Logísticas."""
-    return templates.TemplateResponse(request, "comercial.html", {})
+    """Hub del área Comercial: junta los accesos a Precios, Clientes y Fichas Logísticas.
+
+    El cartel de "compras sin precio" es un aviso, no algo crítico para
+    poder navegar — si la consulta del conteo falla, se pisa en 0 (sin
+    cartel) en vez de romper toda la pantalla por algo accesorio.
+    """
+    try:
+        compras_sin_precio = contar_compras_sin_precio()
+    except Exception:
+        compras_sin_precio = 0
+
+    return templates.TemplateResponse(request, "comercial.html", {"compras_sin_precio": compras_sin_precio})
 
 
 @app.get("/logistica")
