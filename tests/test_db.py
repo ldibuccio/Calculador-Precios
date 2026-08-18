@@ -492,10 +492,10 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     conexion.commit.assert_called_once()
 
 
-def test_recepcionar_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
-    # Unidad/cubeta se sigue contando en total (no se "pesa" bulto a
-    # bulto) — mismo criterio que antes, contenido_por_cajon_real se
-    # sigue derivando como promedio.
+def test_recepcionar_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva_el_total():
+    # Depósito cuenta UN cajón (no toda la carga junta) — mismo criterio
+    # que kilo: valor_real es directamente contenido_por_cajon_real, y
+    # cantidad_fraccion_real (el total) se deriva acá (cajones × valor_real).
     conexion, cursor = _conexion_falsa([("unidad",), ("pendiente",)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -503,9 +503,9 @@ def test_recepcionar_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
 
     _, parametros_update = cursor.execute.call_args_list[1].args
     cajones, contenido, kilos, fraccion, compra_id = parametros_update
-    assert contenido == 11.8  # 118 / 10
+    assert contenido == 118  # tomado directo, sin dividir
     assert kilos is None
-    assert fraccion == 118
+    assert fraccion == 1180  # 10 × 118, derivado
 
 
 def test_recepcionar_compra_ya_retirada_no_pisa_el_auto_retiro():
@@ -555,17 +555,19 @@ def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
     conexion.commit.assert_called_once()
 
 
-def test_corregir_recepcion_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
+def test_corregir_recepcion_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva_el_total():
+    # Ej. la Palta con "3u" mal cargado: la corrección es 80 por cajón
+    # (lo que Depósito mira), no 2400 en total.
     conexion, cursor = _conexion_falsa([("recepcionado", "unidad")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=2400)
+        corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=80)
 
     _, parametros_update = cursor.execute.call_args_list[1].args
     cajones, contenido, kilos, fraccion, compra_id = parametros_update
-    assert contenido == 80  # 2400 / 30
+    assert contenido == 80  # tomado directo, sin dividir
     assert kilos is None
-    assert fraccion == 2400
+    assert fraccion == 2400  # 30 × 80, derivado
 
 
 def test_corregir_recepcion_compra_bloqueada_si_no_esta_recepcionada():

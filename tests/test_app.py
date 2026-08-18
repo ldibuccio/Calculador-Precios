@@ -2709,7 +2709,7 @@ def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     assert 'value="18"' in respuesta.text
 
 
-def test_ver_corregir_recepcion_compra_por_unidad_precarga_el_total():
+def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total():
     compra = dict(
         COMPRA_DETALLE_DE_PRUEBA,
         unidad_compra="unidad",
@@ -2721,10 +2721,11 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_el_total():
         respuesta = cliente.get("/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
-    # Por unidad/cubeta: precarga con cantidad_fraccion_real (el TOTAL), no
-    # con el promedio por cajón (contenido_por_cajon_real).
+    # Por unidad/cubeta también precarga con contenido_por_cajon_real (lo
+    # que Depósito mira, un cajón por vez) -- nunca con el total
+    # (cantidad_fraccion_real).
     assert 'id="total-real"' in respuesta.text
-    assert 'value="90"' in respuesta.text
+    assert 'value="3"' in respuesta.text
 
 
 def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formulario():
@@ -3431,12 +3432,12 @@ def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
     assert "Mango" in respuesta.text
     assert "Frutilla" in respuesta.text
     assert "40 cajones × 20k" in respuesta.text
-    # Etiquetas según unidad_compra de cada artículo. Kilos pide por
-    # cajón/bulto (Depósito pesa un bulto, no toda la carga junta);
-    # unidad/cubeta se siguen contando en total.
+    # Etiquetas según unidad_compra de cada artículo. Las tres piden por
+    # cajón/bulto (Depósito mira un bulto por vez -- lo pesa o lo cuenta --
+    # nunca toda la carga junta).
     assert "Kilos por cajón/bulto (real)" in respuesta.text
-    assert "Unidades reales" in respuesta.text
-    assert "Cubetas reales" in respuesta.text
+    assert "Unidades por cajón/bulto (real)" in respuesta.text
+    assert "Cubetas por cajón/bulto (real)" in respuesta.text
 
 
 def test_ver_recepcion_prellena_los_inputs_con_el_estimado():
@@ -3449,10 +3450,14 @@ def test_ver_recepcion_prellena_los_inputs_con_el_estimado():
     assert respuesta.status_code == 200
     assert 'id="cajones-real-1"' in respuesta.text
     assert 'value="40"' in respuesta.text
-    # El input de kilos precarga con el contenido por cajón estimado (20),
-    # no con el total (800) — ahora pide kilos de UN bulto, no de toda la carga.
+    # El input real precarga siempre con el contenido por cajón estimado
+    # (nunca con el total): 20 para Tomate Cherry (kilo), 12 para Mango
+    # (unidad) y Frutilla (cubeta) -- las tres piden por cajón/bulto.
     assert 'id="total-real-1"' in respuesta.text
+    assert 'id="total-real-2"' in respuesta.text
+    assert 'id="total-real-3"' in respuesta.text
     assert 'value="20"' in respuesta.text
+    assert 'value="12"' in respuesta.text
 
 
 def test_ver_recepcion_muestra_el_proveedor_grande_y_la_guia_chica():

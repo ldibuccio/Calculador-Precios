@@ -4225,11 +4225,10 @@ def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None
 def _validar_valor_real_recepcion(texto: str) -> tuple[str | None, float | None]:
     """Valida el valor real cargado en Recepción: obligatorio, número positivo.
 
-    Según la unidad de compra del artículo, este valor significa cosas
-    distintas (ver recepcionar_compra en app/db.py): kilos de UN bulto
-    pesado, o cantidad total de unidades/cubetas contadas. La validación
-    en sí (obligatorio, número, mayor a cero) es la misma para ambos
-    casos, por eso el mensaje queda genérico.
+    Siempre es por cajón/bulto (ver _derivar_valores_reales en app/db.py):
+    kilos, unidades o cubetas de UN bulto — nunca el total de toda la
+    carga. La validación en sí (obligatorio, número, mayor a cero) es la
+    misma para los tres casos, por eso el mensaje queda genérico.
     """
     texto = texto.strip()
     if not texto:

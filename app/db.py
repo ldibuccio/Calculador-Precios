@@ -1186,26 +1186,23 @@ def _auto_retirar_si_corresponde(cursor, compra_id: int) -> str | None:
 def _derivar_valores_reales(
     unidad_compra: str | None, cantidad_cajones_real: float, valor_real: float
 ) -> tuple[float | None, float | None, float | None]:
-    """A partir del valor real cargado en Depósito, arma (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real).
+    """A partir de lo que Depósito mira en UN cajón/bulto, arma (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real).
 
-    El significado de valor_real depende de la unidad de compra del
-    artículo (usado tanto para recepcionar por primera vez como para
-    corregir una recepción ya hecha, ver recepcionar_compra y
-    corregir_recepcion_compra):
+    valor_real es SIEMPRE por cajón/bulto — nunca el total de toda la
+    carga junta — sea kilos, unidades o cubetas: Depósito mira un bulto
+    por vez (lo pesa o lo cuenta), no suma de cabeza toda la carga (usado
+    tanto para recepcionar por primera vez como para corregir una
+    recepción ya hecha, ver recepcionar_compra y corregir_recepcion_compra).
 
-    - Por kilo: Depósito pesa UN bulto/cajón en la balanza, no toda la
-      carga junta — valor_real es directamente contenido_por_cajon_real
-      (kilos de ese bulto), y cantidad_kilos_real se deriva como
-      cantidad_cajones_real × valor_real.
-    - Por unidad/cubeta: se sigue contando el total (no tiene sentido
-      "pesar" bulto a bulto algo que se cuenta) — valor_real es
-      cantidad_fraccion_real directo, y contenido_por_cajon_real se
-      deriva como promedio (valor_real / cantidad_cajones_real).
+    contenido_por_cajon_real es directamente valor_real. El total (kilos
+    o fracción según la unidad) se deriva multiplicando por
+    cantidad_cajones_real — nunca al revés, para no terminar promediando
+    un total mal cargado en un número por cajón que nadie escribió.
     """
+    total = cantidad_cajones_real * valor_real
     if unidad_compra == "kilo":
-        return valor_real, cantidad_cajones_real * valor_real, None
-    contenido_por_cajon_real = valor_real / cantidad_cajones_real if cantidad_cajones_real else None
-    return contenido_por_cajon_real, None, valor_real
+        return valor_real, total, None
+    return valor_real, None, total
 
 
 def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> str | None:
