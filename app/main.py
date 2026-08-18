@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -137,10 +138,22 @@ ORDEN_GRUPOS_DISPONIBLES = ["fruta", "hortaliza", "pesada"]
 
 NOMBRE_EMPRESA_ENV_VAR = "NOMBRE_EMPRESA"
 # Mismo código para varias empresas (cada una con su propia base): el
-# nombre que se ve en /inicio sale de esta variable de entorno, para no
-# tener que bifurcar el código por empresa. Frutamax es el valor de
-# siempre — si la variable no está seteada, no cambia nada para ese deploy.
+# nombre que se ve en /inicio, en la barrita y en los archivos exportados
+# sale de esta variable de entorno, para no tener que bifurcar el código
+# por empresa. Frutamax es el valor de siempre — si la variable no está
+# seteada, no cambia nada para ese deploy.
 NOMBRE_EMPRESA = os.environ.get(NOMBRE_EMPRESA_ENV_VAR, "Frutamax")
+
+
+def _nombre_empresa_para_archivo() -> str:
+    """El nombre de la empresa apto para nombres de archivo: sin acentos ni caracteres raros.
+
+    "Palmalá" -> "Palmala": los acentos en un header Content-Disposition
+    dependen de cómo cada navegador/celular los interprete — mejor no
+    arriesgar el nombre del archivo por una tilde.
+    """
+    sin_acentos = unicodedata.normalize("NFKD", NOMBRE_EMPRESA).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^A-Za-z0-9]+", "_", sin_acentos).strip("_") or "Empresa"
 
 
 def _hoy_argentina():
@@ -1537,7 +1550,7 @@ def _renglones_iniciales_desde_fichas(fichas: list[dict]) -> list[dict]:
 
 def _nombre_archivo_disponibles(fecha_desde: date, version: int) -> str:
     mes = MESES_ABREVIADOS[fecha_desde.month]
-    base = f"Disponibles_Frutamax_{fecha_desde.day}_{mes}_{fecha_desde.year}"
+    base = f"Disponibles_{_nombre_empresa_para_archivo()}_{fecha_desde.day}_{mes}_{fecha_desde.year}"
     if version > 1:
         base += f"_v{version}"
     return f"{base}.xlsx"
@@ -1739,7 +1752,7 @@ async def guardar_y_exportar_disponible_excel(request: Request):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo generar el Excel: {error_db}") from error_db
 
-    excel_bytes = generar_excel_disponibles(fecha_desde, fecha_hasta, renglones)
+    excel_bytes = generar_excel_disponibles(fecha_desde, fecha_hasta, renglones, NOMBRE_EMPRESA)
     nombre_archivo = _nombre_archivo_disponibles(fecha_desde, version)
 
     return Response(
@@ -3375,8 +3388,10 @@ def _validar_cliente_y_fecha_para_exportar(cliente_id_texto: str, fecha_texto: s
 
 
 def _nombre_archivo_exportacion(cliente_nombre: str, fecha, extension: str) -> str:
+    # Con más de una empresa mandándole listas al mismo cliente, el nombre
+    # del archivo tiene que decir de cuál es — igual que el encabezado.
     base = re.sub(r"[^A-Za-z0-9]+", "_", cliente_nombre).strip("_") or "cliente"
-    return f"Lista_Precios_{base}_{fecha.isoformat()}.{extension}"
+    return f"Lista_Precios_{_nombre_empresa_para_archivo()}_{base}_{fecha.isoformat()}.{extension}"
 
 
 @app.get("/precios/consultar/exportar-pdf")
@@ -3389,7 +3404,7 @@ def exportar_precios_pdf(cliente_id: str = "", fecha: str = ""):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy)
+    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy, NOMBRE_EMPRESA)
     nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "pdf")
 
     return Response(
@@ -3409,7 +3424,7 @@ def exportar_precios_excel(cliente_id: str = "", fecha: str = ""):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    excel_bytes = generar_excel_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy)
+    excel_bytes = generar_excel_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy, NOMBRE_EMPRESA)
     nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "xlsx")
 
     return Response(
@@ -3437,11 +3452,11 @@ def _respuesta_listado_generado(cliente: dict, cambios: list[dict], tipo: str) -
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     if tipo == "pdf":
-        archivo_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, es_hoy)
+        archivo_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, es_hoy, NOMBRE_EMPRESA)
         media_type = "application/pdf"
         extension = "pdf"
     else:
-        archivo_bytes = generar_excel_lista_precios(cliente["nombre"], hoy, filas, es_hoy)
+        archivo_bytes = generar_excel_lista_precios(cliente["nombre"], hoy, filas, es_hoy, NOMBRE_EMPRESA)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         extension = "xlsx"
 

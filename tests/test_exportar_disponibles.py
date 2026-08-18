@@ -17,7 +17,7 @@ def _cargar_excel(excel_bytes: bytes):
 
 
 def test_generar_excel_disponibles_hoja_y_titulo():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -26,8 +26,18 @@ def test_generar_excel_disponibles_hoja_y_titulo():
     assert "A1:C1" in [str(rango) for rango in hoja.merged_cells.ranges]
 
 
+def test_generar_excel_disponibles_titulo_usa_el_nombre_de_empresa_recibido():
+    # Mismo código para varias empresas: el título sale del parámetro, en
+    # mayúsculas — nada de "Frutamax" fijo adentro del módulo.
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Palmalá")
+    libro = _cargar_excel(excel_bytes)
+    hoja = libro.active
+
+    assert hoja["A1"].value == "PALMALÁ - Disponibilidad de Stock"
+
+
 def test_generar_excel_disponibles_fecha_un_solo_dia():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -36,7 +46,7 @@ def test_generar_excel_disponibles_fecha_un_solo_dia():
 
 
 def test_generar_excel_disponibles_fecha_rango_de_dos_dias():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 15), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 15), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -44,7 +54,7 @@ def test_generar_excel_disponibles_fecha_rango_de_dos_dias():
 
 
 def test_generar_excel_disponibles_filas_vacias_y_encabezado():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -59,7 +69,7 @@ def test_generar_excel_disponibles_filas_vacias_y_encabezado():
 
 
 def test_generar_excel_disponibles_datos_desde_fila_7_en_el_orden_dado():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -72,7 +82,7 @@ def test_generar_excel_disponibles_datos_desde_fila_7_en_el_orden_dado():
 
 
 def test_generar_excel_disponibles_codigo_vacio_deja_la_celda_vacia():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -81,7 +91,7 @@ def test_generar_excel_disponibles_codigo_vacio_deja_la_celda_vacia():
 
 
 def test_generar_excel_disponibles_cantidad_cero_se_escribe_no_se_omite():
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA)
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 

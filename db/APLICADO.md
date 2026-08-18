@@ -1,0 +1,47 @@
+# Registro de migraciones aplicadas por base
+
+Cada cambio de base se corre a mano en el editor SQL de **cada** Supabase, y se
+anota acá **en el mismo commit** que el código que depende de él. Regla de
+trabajo: no se mergea código que dependa de una migración hasta que las dos
+bases estén marcadas.
+
+- ✅ = corrida y confirmada en esa base.
+- — = no corresponde correrla en esa base (con el motivo).
+
+| Archivo | Frutamax | Palmalá |
+|---|---|---|
+| `schema.sql` | ✅ (histórico) | — reemplazado por `esquema_completo.sql` |
+| `seed_datos_iniciales.sql` | ✅ (histórico) | — datos de Frutamax; el catálogo se copia con `scripts/copiar_catalogo_empresa.py` |
+| `rediseno_proveedores_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `migracion_clientes_final.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `permitir_importe_null.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_unidad_compra.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_merma.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_conversion_articulos.sql` | ✅ (histórico) | — tabla luego fusionada en fichas; no se crea |
+| `cargar_conversiones_dia.sql` | ✅ (histórico) | — datos de Frutamax |
+| `cargar_conversiones_dia_3nuevos.sql` | ✅ (histórico) | — datos de Frutamax |
+| `fusionar_conversion_en_fichas.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `abrir_conceptos_clientes_parametros_historial.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_envase_variable.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_grupo_articulos.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_foto_ruta_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_precios_venta_historial.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_foto_ruta_precios_venta_historial.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_guia_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_recepcion_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `actualizar_tipo_retiro_carro_pases.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_retiro_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_no_ingresado_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_cantidad_cajones_retirada_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_disponibles.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
+| `agregar_ingreso_directo_compras.sql` | ✅ 2026-08-18 | — consolidado en `esquema_completo.sql` |
+| `esquema_completo.sql` | — sus tablas ya existen | ⬜ pendiente (correr al crear el proyecto) |
+
+## Pasos manuales que NO son SQL (por base)
+
+| Paso | Frutamax | Palmalá |
+|---|---|---|
+| Bucket de Storage `comandas` (privado) | ✅ | ⬜ pendiente |
+| Copia inicial del catálogo (`scripts/copiar_catalogo_empresa.py`) | — es el origen | ⬜ pendiente |
+| Revisión a mano de parámetros de clientes y costos de envase copiados | — | ⬜ pendiente |
+| Verificación de esquema (`verificar_esquema.sql` en las dos bases, comparar) | ⬜ pendiente | ⬜ pendiente |

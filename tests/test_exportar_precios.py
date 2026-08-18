@@ -41,18 +41,28 @@ def _texto_sin_leyenda(pdf_bytes: bytes) -> str:
 
 
 def test_generar_pdf_incluye_encabezado_y_pie():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
-    assert "Lista de Precios" in texto
+    # El título lleva la empresa: el mismo cliente puede recibir listas de
+    # más de una y tiene que poder distinguirlas.
+    assert "Lista de Precios — Frutamax" in texto
     assert "Cliente: Día" in texto
     assert "Vigencia: 16/08/2026 · Precios + IVA" in texto
     assert "Nuevo precio indica los productos cuyo precio fue actualizado." in texto
     assert "Todos los precios están expresados en pesos y no incluyen IVA." in texto
 
 
+def test_generar_pdf_titulo_usa_el_nombre_de_empresa_recibido():
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmalá")
+    texto = _texto_del_pdf(pdf_bytes)
+
+    assert "Lista de Precios — Palmalá" in texto
+    assert "Frutamax" not in texto
+
+
 def test_generar_pdf_secciones_en_el_orden_fruta_hortaliza_pesada_sin_clasificar():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     posiciones = [texto.index(titulo) for titulo in ("FRUTA", "HORTALIZA", "PESADA", "SIN CLASIFICAR")]
@@ -60,7 +70,7 @@ def test_generar_pdf_secciones_en_el_orden_fruta_hortaliza_pesada_sin_clasificar
 
 
 def test_generar_pdf_articulo_sin_grupo_cae_en_sin_clasificar():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     bloque_sin_clasificar = texto[texto.index("SIN CLASIFICAR") :]
@@ -68,7 +78,7 @@ def test_generar_pdf_articulo_sin_grupo_cae_en_sin_clasificar():
 
 
 def test_generar_pdf_precios_formateados_con_signo_pesos_y_separador_de_miles():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     assert "$ 1.200" in texto
@@ -76,7 +86,7 @@ def test_generar_pdf_precios_formateados_con_signo_pesos_y_separador_de_miles():
 
 
 def test_generar_pdf_unidad_segun_la_ficha():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     assert "por kilo" in texto
@@ -85,7 +95,7 @@ def test_generar_pdf_unidad_segun_la_ficha():
 
 
 def test_generar_pdf_hoy_muestra_badge_nuevo_precio_solo_en_los_nuevos():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_sin_leyenda(pdf_bytes)
 
     # Solo Manzana Red y Tomate Cherry vinieron con es_nuevo=True.
@@ -97,7 +107,7 @@ def test_generar_pdf_fecha_pasada_no_resalta_nada_aunque_venga_es_nuevo():
     # pasada), TODOS los precios van en negro — el badge no debe aparecer
     # aunque las filas traigan es_nuevo=True (eso pasaría si vigente_desde
     # coincidiera con la fecha exportada, pero esa fecha no es HOY).
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 1, 15), FILAS_DE_PRUEBA, es_hoy=False)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 1, 15), FILAS_DE_PRUEBA, es_hoy=False, nombre_empresa="Frutamax")
     texto = _texto_sin_leyenda(pdf_bytes)
 
     assert "Nuevo precio" not in texto
@@ -106,7 +116,7 @@ def test_generar_pdf_fecha_pasada_no_resalta_nada_aunque_venga_es_nuevo():
 def test_generar_pdf_badge_nuevo_precio_va_en_su_propia_columna_a_la_derecha():
     # El badge va en una columna aparte, después de Precio y Unidad — no
     # debajo del producto ni partiendo la fila Precio/Unidad.
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     bloque_fruta = texto[texto.index("FRUTA") : texto.index("HORTALIZA")]
@@ -118,21 +128,21 @@ def test_generar_pdf_badge_nuevo_precio_va_en_su_propia_columna_a_la_derecha():
 
 
 def test_generar_pdf_badge_nuevo_precio_tiene_puntito():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     assert "• Nuevo precio" in texto
 
 
 def test_generar_pdf_leyenda_tiene_puntito_rojo():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     assert "• Nuevo precio indica los productos cuyo precio fue actualizado." in texto
 
 
 def test_generar_pdf_cada_grupo_empieza_en_su_propia_pagina():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     paginas = _textos_por_pagina(pdf_bytes)
 
     assert len(paginas) == 4  # fruta, hortaliza, pesada, sin clasificar
@@ -143,7 +153,7 @@ def test_generar_pdf_cada_grupo_empieza_en_su_propia_pagina():
 
 
 def test_generar_pdf_repite_encabezado_en_cada_pagina():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     paginas = _textos_por_pagina(pdf_bytes)
 
     assert len(paginas) > 1  # si no hay más de una página, esto no prueba nada
@@ -155,7 +165,7 @@ def test_generar_pdf_repite_encabezado_en_cada_pagina():
 
 
 def test_generar_pdf_sin_filas_no_rompe():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), [], es_hoy=True)
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), [], es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
     assert "Lista de Precios" in texto
@@ -170,12 +180,21 @@ def _cargar_excel(excel_bytes: bytes):
 
 
 def test_generar_excel_incluye_encabezado_y_secciones():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
     valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
-    assert "Lista de Precios" in valores
+    assert "Lista de Precios — Frutamax" in valores
+
+
+def test_generar_excel_titulo_usa_el_nombre_de_empresa_recibido():
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmalá")
+    libro = _cargar_excel(excel_bytes)
+    hoja = libro.active
+
+    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
+    assert "Lista de Precios — Palmalá" in valores
     assert "FRUTA" in valores
     assert "HORTALIZA" in valores
     assert "PESADA" in valores
@@ -198,7 +217,7 @@ def _nombres_con_precio_resaltado_en_rojo(hoja):
 
 
 def test_generar_excel_precio_nuevo_resaltado_solo_si_es_hoy():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -209,7 +228,7 @@ def test_generar_excel_precio_nuevo_resaltado_solo_si_es_hoy():
 
 
 def test_generar_excel_fecha_pasada_no_resalta_nada():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 1, 15), FILAS_DE_PRUEBA, es_hoy=False)
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 1, 15), FILAS_DE_PRUEBA, es_hoy=False, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -219,7 +238,7 @@ def test_generar_excel_fecha_pasada_no_resalta_nada():
 def test_generar_excel_precio_guardado_como_numero_no_como_texto():
     # Guardar el precio como número (con number_format de moneda) en vez de
     # como texto "$1.200" deja la planilla usable (sumar, filtrar, ordenar).
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
@@ -228,7 +247,7 @@ def test_generar_excel_precio_guardado_como_numero_no_como_texto():
 
 
 def test_generar_excel_agrega_columna_precio_anterior_antes_del_precio():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 

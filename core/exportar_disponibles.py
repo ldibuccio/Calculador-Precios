@@ -24,12 +24,14 @@ def _texto_fecha(fecha_desde: date, fecha_hasta: date) -> str:
     return f"Fecha: {texto_desde} al {fecha_hasta.strftime('%d/%m/%Y')}"
 
 
-def generar_excel_disponibles(fecha_desde: date, fecha_hasta: date, filas: list[dict]) -> bytes:
+def generar_excel_disponibles(fecha_desde: date, fecha_hasta: date, filas: list[dict], nombre_empresa: str) -> bytes:
     """Arma el Excel de Disponibles, mismo layout que el archivo real que se manda hoy a mano:
 
-    A1 (combinada A1:C1): título. A2 (combinada A2:C2): "Fecha: ...". Filas 3-5 vacías. Fila 6:
-    encabezado Código/Producto/Stock. Datos desde la fila 7, en el orden en que vienen "filas" —
-    ya no se reordena acá.
+    A1 (combinada A1:C1): título "{EMPRESA} - Disponibilidad de Stock" (el nombre viene como
+    parámetro y se escribe en mayúsculas — mismo código para varias empresas, este módulo no lee
+    variables de entorno, eso lo resuelve app/main.py). A2 (combinada A2:C2): "Fecha: ...".
+    Filas 3-5 vacías. Fila 6: encabezado Código/Producto/Stock. Datos desde la fila 7, en el
+    orden en que vienen "filas" — ya no se reordena acá.
 
     filas: [{"codigo": str | None, "nombre": str, "cantidad": float}, ...]. codigo vacío deja la
     celda vacía (ej. Frutilla). cantidad se escribe siempre, incluso si es 0.
@@ -39,7 +41,7 @@ def generar_excel_disponibles(fecha_desde: date, fecha_hasta: date, filas: list[
     hoja.title = "Stock Actualizado"
 
     hoja.merge_cells("A1:C1")
-    hoja["A1"] = "FRUTAMAX - Disponibilidad de Stock"
+    hoja["A1"] = f"{nombre_empresa.upper()} - Disponibilidad de Stock"
     hoja["A1"].font = Font(bold=True, size=14)
 
     hoja.merge_cells("A2:C2")

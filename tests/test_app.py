@@ -5676,7 +5676,9 @@ def test_exportar_precios_pdf_devuelve_archivo_adjunto():
     assert respuesta.status_code == 200
     assert respuesta.headers["content-type"] == "application/pdf"
     assert "attachment" in respuesta.headers["content-disposition"]
-    assert "Lista_Precios_D" in respuesta.headers["content-disposition"]
+    # Nombre de la empresa en el archivo: el cliente puede recibir listas
+    # de más de una empresa y tiene que poder distinguirlas sin abrirlas.
+    assert "Lista_Precios_Frutamax_D" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"%PDF")
 
 
@@ -6788,6 +6790,33 @@ def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
     assert respuesta.status_code == 200
     for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "sistema"):
         assert SECTORES[sector]["icono"] in respuesta.text
+
+
+def test_barra_navegacion_muestra_el_nombre_de_la_empresa():
+    # Con dos empresas corriendo el mismo sistema, el cartelito de la
+    # esquina dice siempre en cuál estás parado. Default: Frutamax.
+    respuesta = cliente.get("/comercial")
+
+    assert respuesta.status_code == 200
+    assert 'class="barra-empresa">Frutamax</span>' in respuesta.text
+
+
+def test_nombre_empresa_para_archivo_saca_acentos_y_caracteres_raros():
+    from app.main import _nombre_empresa_para_archivo
+
+    with patch("app.main.NOMBRE_EMPRESA", "Palmalá"):
+        assert _nombre_empresa_para_archivo() == "Palmala"
+    with patch("app.main.NOMBRE_EMPRESA", "Frutamax"):
+        assert _nombre_empresa_para_archivo() == "Frutamax"
+
+
+def test_nombre_archivo_disponibles_usa_el_nombre_de_empresa():
+    from app.main import _nombre_archivo_disponibles
+
+    with patch("app.main.NOMBRE_EMPRESA", "Palmalá"):
+        assert _nombre_archivo_disponibles(date(2026, 8, 14), 1) == "Disponibles_Palmala_14_Ago_2026.xlsx"
+    # Default intacto: para Frutamax el nombre es exactamente el de siempre.
+    assert _nombre_archivo_disponibles(date(2026, 8, 14), 1) == "Disponibles_Frutamax_14_Ago_2026.xlsx"
 
 
 def test_ver_comercial_muestra_los_tres_accesos():

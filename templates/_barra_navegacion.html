@@ -6,6 +6,7 @@
   </div>
   <div class="barra-titulo">{{ barra_titulo }}</div>
   <div class="barra-espaciador" aria-hidden="true"></div>
+  <span class="barra-empresa">{{ NOMBRE_EMPRESA }}</span>
 </header>
 <style>
   /* Barrita de navegación compartida por todas las pantallas (menos
@@ -64,5 +65,19 @@
        perfecto: queda un poco corrido, pero legible. */
     width: 2.7rem;
     flex-shrink: 0;
+  }
+  .barra-empresa {
+    /* Con dos empresas corriendo el mismo sistema en dos URLs idénticas,
+       el error más fácil es cargar datos en la empresa equivocada. Este
+       cartelito chico en la esquina dice siempre en cuál estás parado,
+       sin mover el layout (posición absoluta sobre la barra sticky). */
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: #9ca3af;
+    letter-spacing: 0.03em;
+    pointer-events: none;
   }
 </style>

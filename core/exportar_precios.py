@@ -84,13 +84,17 @@ OFFSET_LEYENDA = 38 * mm
 ALTURA_ENCABEZADO = 46 * mm  # topMargin: deja aire entre la leyenda y el cuerpo
 
 
-def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str):
+def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str, nombre_empresa: str):
     """Título, Cliente, Vigencia, filete verde y leyenda — directo en el canvas, en TODAS las páginas.
 
     Va en el canvas (no como Paragraph en el flujo normal) para que se
     repita en cada página, incluso si una sección se corta y sigue en la
     siguiente — un flowable normal solo aparece una vez, en el lugar donde
     cae dentro del flujo.
+
+    El título lleva el nombre de la empresa ("Lista de Precios — Frutamax"):
+    el mismo cliente puede recibir listas de más de una empresa, sin el
+    nombre no puede distinguirlas.
     """
     ancho_pagina, alto_pagina = A4
     x = documento.leftMargin
@@ -99,7 +103,7 @@ def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str
 
     canvas.setFillColor(colors.black)
     canvas.setFont("Helvetica-Bold", 22)
-    canvas.drawString(x, alto_pagina - OFFSET_TITULO, "Lista de Precios")
+    canvas.drawString(x, alto_pagina - OFFSET_TITULO, f"Lista de Precios — {nombre_empresa}")
 
     canvas.setFont("Helvetica", 10)
     canvas.drawString(x, alto_pagina - OFFSET_CLIENTE, f"Cliente: {cliente_nombre}")
@@ -127,7 +131,9 @@ def _dibujar_encabezado(canvas, documento, cliente_nombre: str, fecha_texto: str
     canvas.restoreState()
 
 
-def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool) -> bytes:
+def generar_pdf_lista_precios(
+    cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool, nombre_empresa: str
+) -> bytes:
     """Arma el PDF de la Lista de Precios de un cliente a una fecha, con el formato ya definido.
 
     filas: [{"articulo_nombre", "grupo", "precio", "unidad", "es_nuevo"}, ...]. es_hoy indica si la
@@ -152,7 +158,7 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
     ancho_util = documento.width
 
     def _dibujar_encabezado_pagina(canvas, documento):
-        _dibujar_encabezado(canvas, documento, cliente_nombre, fecha_texto)
+        _dibujar_encabezado(canvas, documento, cliente_nombre, fecha_texto, nombre_empresa)
 
     estilo_ayuda = ParagraphStyle(
         "ayuda", fontName="Helvetica-Oblique", fontSize=9, textColor=GRIS_TEXTO_AYUDA, spaceBefore=16
@@ -251,12 +257,17 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
     return buffer.getvalue()
 
 
-def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool) -> bytes:
+def generar_excel_lista_precios(
+    cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool, nombre_empresa: str
+) -> bytes:
     """Arma el Excel de la Lista de Precios de un cliente a una fecha, mismas secciones que el PDF.
 
     A diferencia del PDF, tiene una columna de más: "Precio anterior",
     antes de "Precio" — fila["precio_anterior"] (o None si el artículo
     nunca tuvo un precio previo cargado, mostrado como "—").
+
+    El título lleva el nombre de la empresa, mismo motivo que el PDF (el
+    cliente puede recibir listas de más de una empresa).
     """
     libro = Workbook()
     hoja = libro.active
@@ -272,7 +283,7 @@ def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[di
     fuente_precio_nuevo = Font(bold=True, color=ROJO_PRECIO_NUEVO_HEX)
 
     fila_actual = 1
-    hoja.cell(row=fila_actual, column=1, value="Lista de Precios")
+    hoja.cell(row=fila_actual, column=1, value=f"Lista de Precios — {nombre_empresa}")
     for columna in range(1, 5):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde
