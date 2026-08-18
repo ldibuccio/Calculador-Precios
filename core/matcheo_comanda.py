@@ -11,6 +11,8 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
+from core.lector_comandas import TEXTOS_PLACEHOLDER_LECTOR
+
 UMBRAL_SIMILITUD_PROVEEDOR = 0.75
 UMBRAL_SIMILITUD_ARTICULO = 0.7
 
@@ -214,7 +216,11 @@ def adivinar_articulo(
     3. El nombre real del artículo en el catálogo — exacto o parecido.
     """
     texto_normalizado = normalizar_texto(texto_leido)
-    if not texto_normalizado:
+    # Un placeholder del lector ("completar artículo", etc.) no es texto de
+    # comanda: no hay nada que adivinar. Se chequea acá y no solo al guardar
+    # el aprendizaje, para que un aprendizaje envenenado que haya quedado en
+    # alguna base tampoco pueda sugerir nada.
+    if not texto_normalizado or texto_normalizado in TEXTOS_PLACEHOLDER_LECTOR:
         return None
 
     if texto_normalizado in aprendizaje:

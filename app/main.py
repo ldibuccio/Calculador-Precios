@@ -93,6 +93,7 @@ from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
+    TEXTOS_PLACEHOLDER_LECTOR,
     extraer_comanda,
     extraer_listado_consolidado,
     extraer_listado_precios_de_imagenes,
@@ -2531,8 +2532,14 @@ async def confirmar_compra_foto(request: Request):
                 valores["tipo_retiro"],
                 foto_ruta,
             )
-            if texto_leido.strip():
-                aprender_articulo(proveedor_id, normalizar_texto(texto_leido), valores["articulo_id"])
+            # Solo se aprende de texto REALMENTE leído de la comanda: ni de
+            # renglones agregados a mano (texto vacío) ni de los placeholders
+            # que el lector devuelve cuando no pudo leer el artículo — si no,
+            # "completar articulo" queda asociado a un artículo cualquiera y
+            # envenena las sugerencias futuras de ese proveedor.
+            texto_aprendible = normalizar_texto(texto_leido)
+            if texto_aprendible and texto_aprendible not in TEXTOS_PLACEHOLDER_LECTOR:
+                aprender_articulo(proveedor_id, texto_aprendible, valores["articulo_id"])
     except Exception as error_db:
         return templates.TemplateResponse(
             request,

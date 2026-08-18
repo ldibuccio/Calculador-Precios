@@ -1,3 +1,4 @@
+from core.lector_comandas import TEXTOS_PLACEHOLDER_LECTOR
 from core.matcheo_comanda import (
     adivinar_articulo,
     adivinar_proveedor,
@@ -283,6 +284,22 @@ def test_adivinar_articulo_texto_vacio_da_none():
 
 def test_adivinar_articulo_completar_articulo_no_matchea_nada():
     resultado = adivinar_articulo("completar artículo", {}, ARTICULOS_DE_PRUEBA, [])
+    assert resultado is None
+
+
+def test_adivinar_articulo_ignora_aprendizaje_envenenado_con_placeholders():
+    # Caso real: en bases donde el bug del guardado ya dejó aprendido
+    # "completar articulo" -> un artículo cualquiera, esa fila NO puede
+    # sugerir nada — aunque todavía no se haya limpiado la tabla.
+    for placeholder in TEXTOS_PLACEHOLDER_LECTOR:
+        aprendizaje_envenenado = {placeholder: ARTICULOS_DE_PRUEBA[0]["id"]}
+        resultado = adivinar_articulo(placeholder, aprendizaje_envenenado, ARTICULOS_DE_PRUEBA, [])
+        assert resultado is None, placeholder
+
+    # Y con acento también: "completar artículo" normaliza a la misma forma.
+    resultado = adivinar_articulo(
+        "completar artículo", {"completar articulo": ARTICULOS_DE_PRUEBA[0]["id"]}, ARTICULOS_DE_PRUEBA, []
+    )
     assert resultado is None
 
 

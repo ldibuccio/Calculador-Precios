@@ -4256,6 +4256,41 @@ def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
+def test_confirmar_compra_foto_no_aprende_de_los_placeholders_del_lector():
+    # Bug real: cuando la IA no pudo leer el artículo, texto_leido llega como
+    # "completar artículo" (el placeholder que le ordena el prompt, no texto
+    # de la comanda). Al completar el renglón a mano, la compra se guarda
+    # igual, pero NO se aprende nada: no hay texto de comanda que asociar.
+    datos = {
+        "codigo_puesto": "N07P41",
+        "nombre": "Saturno",
+        "cantidad_renglones": "1",
+        "item_0_texto_leido": "completar artículo",
+        "item_0_articulo_id": "5",
+        "item_0_cantidad_cajones": "10",
+        "item_0_contenido_por_cajon": "18",
+        "item_0_importe": "5000",
+        "item_0_sena": "",
+        "item_0_tipo_retiro": "Clark",
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.aprender_articulo") as mock_aprender,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once()
+    mock_aprender.assert_not_called()
+
+
 def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igual():
     # El botón verde "Guardar" tiene que guardar exactamente lo mismo que
     # "Agregar Artículos" (misma llamada a crear_compra/aprender_articulo),

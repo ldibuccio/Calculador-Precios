@@ -179,6 +179,20 @@ Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
 comillas invertidas (backticks) ni bloques de código markdown.
 """
 
+# Los textos que los prompts de arriba le ordenan a la IA devolver cuando NO
+# pudo leer un campo, ya normalizados (minúsculas, sin acentos — la forma en
+# que los deja normalizar_texto). NO son texto leído de ninguna comanda: no
+# se aprende de ellos y tampoco sirven para sugerir un artículo. Si algún
+# día se agrega un placeholder nuevo a los prompts, va también acá.
+TEXTOS_PLACEHOLDER_LECTOR = frozenset(
+    {
+        "completar articulo",
+        "completar cantidad",
+        "completar importe",
+        "completar proveedor",
+    }
+)
+
 
 def _detectar_media_type(imagen: bytes) -> str:
     """Detecta el media_type de una imagen (JPEG o PNG) a partir de su firma de bytes."""
