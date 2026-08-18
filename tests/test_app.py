@@ -4800,6 +4800,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "precio_sugerido": 900.0,
         "precio_vigente": 950.0,  # vigente >= sugerido -> ✓
         "utilidad_aproximada": 0.30,  # por encima del objetivo, no entra al resumen
+        "compras_sin_precio_excluidas": 0,
     },
     {
         "articulo_nombre": "Mango",
@@ -4810,6 +4811,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "precio_sugerido": 800.0,
         "precio_vigente": 700.0,  # vigente < sugerido -> 🔴
         "utilidad_aproximada": 0.10,  # bajo el objetivo (0.20) -> resumen
+        "compras_sin_precio_excluidas": 0,
     },
     {
         "articulo_nombre": "Palta",
@@ -4820,6 +4822,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "precio_sugerido": 1300.0,
         "precio_vigente": 800.0,
         "utilidad_aproximada": -0.05,  # peor utilidad -> primero en el resumen
+        "compras_sin_precio_excluidas": 0,
     },
 ]
 
@@ -5001,6 +5004,54 @@ def test_ver_negociar_sin_articulos_no_muestra_el_buscador():
     assert respuesta.status_code == 200
     assert 'id="buscar-todos-articulos"' not in respuesta.text
     assert "No hay artículos para mostrar." in respuesta.text
+
+
+def test_ver_negociar_con_precio_de_compra_sin_cerrar_en_fresco_muestra_advertencia():
+    # Un artículo fresco (compra dentro de las últimas 48 hs) con alguna
+    # compra sin precio de compra cargado todavía -> el costo puede estar
+    # incompleto, se avisa con nombre y todo.
+    articulos = [dict(a) for a in ARTICULOS_NEGOCIAR_DE_PRUEBA]
+    articulos[0]["compras_sin_precio_excluidas"] = 1  # Tomate Cherry, fresco
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'class="aviso aviso-advertencia"' in respuesta.text
+    assert "Hay artículos sin precio de compra cargado en las últimas 48 horas" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text.split('class="aviso aviso-advertencia"')[1][:300]
+    assert 'href="/compras/pendientes"' in respuesta.text
+
+
+def test_ver_negociar_precio_de_compra_sin_cerrar_en_no_fresco_no_muestra_advertencia():
+    # Mismo caso pero en Palta, que no es fresca -- no cuenta para el aviso:
+    # la ventana de 48 hs de la que se están sacando los datos no la incluye.
+    articulos = [dict(a) for a in ARTICULOS_NEGOCIAR_DE_PRUEBA]
+    articulos[2]["compras_sin_precio_excluidas"] = 1  # Palta, fresco=False
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'class="aviso aviso-advertencia"' not in respuesta.text
+
+
+def test_ver_negociar_sin_precios_de_compra_sin_cerrar_no_muestra_advertencia():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'class="aviso aviso-advertencia"' not in respuesta.text
 
 
 def test_ver_negociar_sin_fichas_muestra_aviso_y_link_para_cargarlas():
@@ -5800,6 +5851,7 @@ ARTICULOS_NEGOCIACION_DE_PRUEBA = [
         "precio_sugerido": 420.0,
         "precio_vigente": 500.0,  # vigente >= sugerido -> ✓
         "utilidad_aproximada": 0.30,
+        "compras_sin_precio_excluidas": 0,
     },
 ]
 

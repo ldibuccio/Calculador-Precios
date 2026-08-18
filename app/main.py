@@ -3051,6 +3051,15 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
     )
     grupos = agrupar_para_negociar(articulos, utilidad_objetivo_cliente)
 
+    # Artículos frescos (compra dentro de las últimas 48 hs, la ventana que
+    # alimenta este cuadro) que tienen alguna compra sin precio de compra
+    # cargado todavía: el costo/margen de ESE artículo puede estar
+    # calculado con datos incompletos. Se avisa con nombre y todo para que
+    # se sepa a cuáles no conviene creerles el número a ciegas.
+    articulos_con_precio_sin_cerrar = sorted(
+        {a["articulo_nombre"] for a in articulos if a["fresco"] and a["compras_sin_precio_excluidas"] > 0}
+    )
+
     return {
         "cliente_nombre": cliente["nombre"],
         "fecha_referencia": momento_referencia.strftime("%d/%m/%Y %H:%M"),
@@ -3059,6 +3068,7 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         "bajo_objetivo": grupos["bajo_objetivo"],
         "todos": grupos["todos"],
         "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
+        "articulos_con_precio_sin_cerrar": articulos_con_precio_sin_cerrar,
         # Para explicar por qué no hay nada, en vez de mostrar la
         # pantalla vacía sin avisar (ver templates/_cuadro_negociacion.html):
         # sin ninguna ficha, calcular_listado_para_negociar_precios

@@ -19,6 +19,12 @@
   <a href="/clientes/{{ cliente_id }}/editar">Cargar utilidad objetivo</a>.
 </div>
 {% endif %}
+{% if articulos_con_precio_sin_cerrar %}
+<div class="aviso aviso-advertencia">
+  ⚠️ Hay artículos sin precio de compra cargado en las últimas 48 horas — el costo y el margen de esos artículos puede no ser exacto: <strong>{{ articulos_con_precio_sin_cerrar|join(", ") }}</strong>.
+  <a href="/compras/pendientes">Cargar precios pendientes</a>.
+</div>
+{% endif %}
 
 <h2>Bajas (frescos que bajaron de costo)</h2>
 {% if bajas %}
