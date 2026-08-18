@@ -42,6 +42,6 @@ bases estén marcadas.
 | Paso | Frutamax | Palmala |
 |---|---|---|
 | Bucket de Storage `comandas` (privado) | ✅ | ⬜ pendiente |
-| Copia inicial del catálogo (`scripts/copiar_catalogo_empresa.py`) | — es el origen | ⬜ pendiente |
+| Copia inicial del catálogo (`scripts/copiar_catalogo_empresa.py`, o a mano por el navegador con `db/generar_inserts_catalogo.sql`) | — es el origen | ⬜ pendiente |
 | Revisión a mano de parámetros de clientes y costos de envase copiados | — | ⬜ pendiente |
 | Verificación de esquema (`verificar_esquema.sql` en las dos bases, comparar) | ⬜ pendiente | ⬜ pendiente |
