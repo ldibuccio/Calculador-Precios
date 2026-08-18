@@ -222,6 +222,41 @@
     color: #222;
   }
   .panel-negociacion h2:first-of-type { margin-top: 0; }
+  /* Recuadro de Simulación: precio hipotético para el artículo elegido
+     arriba, sin que tenga nada que ver con el "Precio nuevo" que se va a
+     guardar — un borde propio alcanza para distinguirlo, sin otra
+     tarjeta con su propia sombra adentro de "Cargar precio nuevo". */
+  .recuadro-simulacion {
+    margin-top: 1.1rem;
+    padding: 0.85rem;
+    border: 1px dashed #93c5fd;
+    border-radius: 8px;
+    background: #eff6ff;
+  }
+  .recuadro-simulacion h2 {
+    margin: 0 0 0.35rem;
+    color: #1d4ed8;
+  }
+  #simulacion-articulo-nombre { color: #1d4ed8; }
+  .fila-simulacion {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+  }
+  .campo-simulacion { flex: 1 1 60%; min-width: 9rem; }
+  .campo-simulacion label { margin-top: 0; }
+  .resultado-simulacion {
+    flex: 1 1 30%;
+    min-width: 7rem;
+    text-align: right;
+  }
+  .resultado-simulacion .ayuda { display: block; margin: 0 0 0.15rem; }
+  .resultado-simulacion span:last-child {
+    display: block;
+    font-size: 1.3rem;
+    font-weight: 700;
+  }
 </style>
 </head>
 <body>
@@ -315,6 +350,25 @@
       <button type="button" class="boton" onclick="cargarOtroPrecio()">Cargar otro Precio</button>
     </div>
 
+    <div id="recuadro-simulacion" class="recuadro-simulacion" style="display:none;">
+      <h2>Simulación<span id="simulacion-articulo-nombre"></span></h2>
+      <p class="ayuda vacio" id="simulacion-sin-costo" style="display:none;">
+        Este artículo no tiene costo reciente cargado — no se puede simular la rentabilidad.
+      </p>
+      <div id="simulacion-con-costo" style="display:none;">
+        <div class="fila-simulacion">
+          <div class="campo-simulacion">
+            <label for="precio_simulado">Precio a simular</label>
+            <input type="number" step="0.01" min="0.01" id="precio_simulado" placeholder="Precio a simular" oninput="actualizarSimulacion()">
+          </div>
+          <div class="resultado-simulacion">
+            <span class="ayuda">Rentabilidad</span>
+            <span id="simulacion-resultado">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="lista-pendientes-carga" style="display:none;">
       <h2 style="margin-top:1.1rem;">Cargados en esta sesión (<span id="contador-pendientes">0</span>)</h2>
       <div id="filas-pendientes-carga"></div>
@@ -348,7 +402,13 @@
   <script>
     const CLIENTE_ID = {{ cliente_id }};
     const ARTICULOS_LISTA = [
-      {% for a in articulos_cliente %}{ id: {{ a.articulo_id }}, nombre: "{{ a.articulo_nombre }}", precioVigente: {{ a.precio_vigente if a.precio_vigente is not none else "null" }} },{% endfor %}
+      {% for a in articulos_cliente %}{
+        id: {{ a.articulo_id }},
+        nombre: "{{ a.articulo_nombre }}",
+        precioVigente: {{ a.precio_vigente if a.precio_vigente is not none else "null" }},
+        costoTotalUnidadVenta: {{ a.costo_total_unidad_venta if a.costo_total_unidad_venta is not none else "null" }},
+        denominadorTasas: {{ a.denominador_tasas if a.denominador_tasas is not none else "null" }},
+      },{% endfor %}
     ];
 
     let pendientes = [];
@@ -414,6 +474,46 @@
       campoPrecio.value = "";
       campoPrecio.focus();
       actualizarVisibilidadBotonTerminar();
+      mostrarRecuadroSimulacion();
+    }
+
+    // Simulación: precio hipotético para el artículo elegido arriba, sin
+    // relación con "Precio nuevo" (eso es lo que se va a guardar; esto es
+    // solo para probar números antes de decidir). Todo el cálculo es en
+    // el navegador con lo que ya trae ARTICULOS_LISTA (costoTotalUnidadVenta
+    // y denominadorTasas) — misma fórmula que utilidad_real_multi_concepto
+    // en core/motor_costeo.py, sin volver a pedirle nada al servidor.
+    function mostrarRecuadroSimulacion() {
+      document.getElementById("recuadro-simulacion").style.display = "block";
+      document.getElementById("simulacion-articulo-nombre").textContent = " — " + articuloElegido.nombre;
+
+      const tieneCosto = articuloElegido.costoTotalUnidadVenta !== null && articuloElegido.denominadorTasas !== null;
+      document.getElementById("simulacion-sin-costo").style.display = tieneCosto ? "none" : "block";
+      document.getElementById("simulacion-con-costo").style.display = tieneCosto ? "block" : "none";
+
+      document.getElementById("precio_simulado").value = "";
+      actualizarSimulacion();
+    }
+
+    function ocultarRecuadroSimulacion() {
+      document.getElementById("recuadro-simulacion").style.display = "none";
+    }
+
+    function actualizarSimulacion() {
+      const resultado = document.getElementById("simulacion-resultado");
+      const campoPrecio = document.getElementById("precio_simulado");
+      const precio = parseFloat(campoPrecio.value);
+
+      if (!articuloElegido || articuloElegido.costoTotalUnidadVenta === null || !campoPrecio.value || isNaN(precio) || precio <= 0) {
+        resultado.textContent = "—";
+        resultado.className = "";
+        return;
+      }
+
+      const entra = precio * articuloElegido.denominadorTasas;
+      const utilidad = (entra - articuloElegido.costoTotalUnidadVenta) / articuloElegido.costoTotalUnidadVenta;
+      resultado.textContent = (utilidad * 100).toFixed(1).replace(".", ",") + "%";
+      resultado.className = utilidad < 0 ? "utilidad-negativa" : "";
     }
 
     function actualizarVisibilidadBotonTerminar() {
@@ -454,6 +554,7 @@
       document.getElementById("articulo_texto").value = "";
       document.getElementById("precio_nuevo").value = "";
       document.getElementById("info-articulo-elegido").style.display = "none";
+      ocultarRecuadroSimulacion();
     }
 
     function renderizarPendientesCarga() {

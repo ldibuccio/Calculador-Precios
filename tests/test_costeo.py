@@ -355,6 +355,22 @@ def test_negociacion_articulo_fresco_con_costo_anterior_y_variacion():
     assert a["precio_vigente"] == 250
 
 
+def test_negociacion_expone_costo_total_y_denominador_para_simulacion():
+    # Sin envase (envase_id None): costo_total_unidad_venta = costo_actual.
+    # Denominador = 1 - 0.23 (una sola tasa que resta, ninguna que suma) —
+    # igual para TODOS los artículos del cliente, no solo para A.
+    resultado, _, _ = _calcular_negociacion()
+    por_id = {a["articulo_id"]: a for a in resultado}
+
+    a = por_id[1]
+    assert a["costo_total_unidad_venta"] == 200
+    assert a["denominador_tasas"] == pytest.approx(0.77)
+
+    b = por_id[2]
+    assert b["costo_total_unidad_venta"] == 50
+    assert b["denominador_tasas"] == pytest.approx(0.77)
+
+
 def test_negociacion_costo_anterior_se_descarta_a_mas_de_20_dias():
     resultado, _, _ = _calcular_negociacion()
     por_id = {a["articulo_id"]: a for a in resultado}

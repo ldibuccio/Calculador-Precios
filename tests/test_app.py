@@ -5970,8 +5970,8 @@ def test_ver_cargar_precios_embebe_el_catalogo_con_precio_vigente():
     assert respuesta.status_code == 200
     assert 'id="articulo_texto"' in respuesta.text
     assert "actualizarListaArticulos" in respuesta.text
-    assert '{ id: 1, nombre: "Tomate Cherry", precioVigente: 500.0 }' in respuesta.text
-    assert '{ id: 2, nombre: "Mango", precioVigente: 350.0 }' in respuesta.text
+    assert 'id: 1,\n        nombre: "Tomate Cherry",\n        precioVigente: 500.0,' in respuesta.text
+    assert 'id: 2,\n        nombre: "Mango",\n        precioVigente: 350.0,' in respuesta.text
 
 
 def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
@@ -5984,7 +5984,28 @@ def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert '{ id: 1, nombre: "Tomate Cherry", precioVigente: null }' in respuesta.text
+    assert 'id: 1,\n        nombre: "Tomate Cherry",\n        precioVigente: null,' in respuesta.text
+
+
+def test_ver_cargar_precios_embebe_costo_y_denominador_para_simulacion():
+    # Tomate Cherry (articulo_id 1) tiene costo reciente -> se embeben los
+    # dos números que necesita "Simulación" para calcular sin servidor.
+    # Mango (2) no aparece en calcular_listado_para_negociar_precios (sin
+    # compra reciente) -> tiene que quedar en null, no romper nada.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIACION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'costoTotalUnidadVenta: 280.0,\n        denominadorTasas: 1.0,' in respuesta.text
+    assert (
+        'id: 2,\n        nombre: "Mango",\n        precioVigente: 350.0,\n        '
+        'costoTotalUnidadVenta: null,\n        denominadorTasas: null,'
+    ) in respuesta.text
 
 
 def test_ver_cargar_precios_incluye_boton_guardar_y_generar_listado():
@@ -6043,6 +6064,7 @@ def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
 
 ARTICULOS_NEGOCIACION_DE_PRUEBA = [
     {
+        "articulo_id": 1,
         "articulo_nombre": "Tomate Cherry",
         "fresco": True,
         "variacion": "bajo",
@@ -6052,6 +6074,8 @@ ARTICULOS_NEGOCIACION_DE_PRUEBA = [
         "precio_vigente": 500.0,  # vigente >= sugerido -> ✓
         "utilidad_aproximada": 0.30,
         "compras_sin_precio_excluidas": 0,
+        "costo_total_unidad_venta": 280.0,
+        "denominador_tasas": 1.0,
     },
 ]
 
@@ -6082,6 +6106,22 @@ def test_ver_cargar_precios_incluye_boton_y_panel_de_negociacion():
     # cerrar el panel.
     assert 'querySelector(".barra-navegacion").style.pointerEvents = "none"' in respuesta.text
     assert 'querySelector(".barra-navegacion").style.pointerEvents = ""' in respuesta.text
+
+
+def test_ver_cargar_precios_incluye_el_recuadro_de_simulacion():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+    ):
+        respuesta = cliente.get("/precios/cargar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'id="recuadro-simulacion"' in respuesta.text
+    assert 'id="precio_simulado"' in respuesta.text
+    assert 'id="simulacion-resultado"' in respuesta.text
+    assert "function actualizarSimulacion()" in respuesta.text
 
 
 def test_ver_cargar_precios_panel_de_negociacion_no_usa_pendientes_sin_guardar():

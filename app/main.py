@@ -3510,11 +3510,26 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
+    # Datos que necesita el recuadro "Simulación" (ver precios_cargar.html)
+    # para calcular la rentabilidad de un precio cualquiera sin volver a
+    # pedirle nada al servidor — solo existen para los artículos con costo
+    # reciente (los mismos que ya trae contexto_negociacion["todos"]).
+    simulacion_por_articulo = {
+        articulo["articulo_id"]: {
+            "costo_total_unidad_venta": articulo["costo_total_unidad_venta"],
+            "denominador_tasas": articulo["denominador_tasas"],
+        }
+        for articulo in contexto_negociacion["todos"]
+        if articulo["costo_total_unidad_venta"] is not None
+    }
     articulos_cliente = [
         {
             "articulo_id": ficha["articulo_id"],
             "articulo_nombre": ficha["articulo_nombre"],
             "precio_vigente": precio_por_articulo.get(ficha["articulo_id"]),
+            **simulacion_por_articulo.get(
+                ficha["articulo_id"], {"costo_total_unidad_venta": None, "denominador_tasas": None}
+            ),
         }
         for ficha in fichas
     ]
