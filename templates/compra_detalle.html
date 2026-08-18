@@ -78,6 +78,29 @@
     margin-top: 0.5rem;
   }
   .vacio { color: #888; font-style: italic; font-size: 0.9rem; }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .boton-secundario {
+    display: block;
+    width: 100%;
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: #fff;
+    color: #444;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -92,6 +115,10 @@
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Detalle" %}
   {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
 
   <div class="tarjeta tarjeta-encabezado">
     <p class="proveedor">{{ compra.proveedor_nombre }}</p>
@@ -200,6 +227,9 @@
         {{ diferencia_contenido_recepcion|kilos }}{{ compra.unidad_compra|sufijo_unidad }} por cajón
       {% endif %}
     </div>
+    {% endif %}
+    {% if compra.estado == "recepcionado" %}
+    <a class="boton-secundario" href="/compras/{{ compra.id }}/corregir-recepcion">Corregir recepción</a>
     {% endif %}
   </div>
 

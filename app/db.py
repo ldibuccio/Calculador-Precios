@@ -909,7 +909,7 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                        c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro, c.foto_ruta,
                        c.estado_retiro, c.retiro_procesado_el, c.retiro_origen, c.cantidad_cajones_retirada,
                        c.estado, c.procesada_el,
-                       c.cantidad_cajones_real, c.contenido_por_cajon_real
+                       c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -1183,24 +1183,37 @@ def _auto_retirar_si_corresponde(cursor, compra_id: int) -> str | None:
     return None
 
 
-def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> str | None:
-    """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
+def _derivar_valores_reales(
+    unidad_compra: str | None, cantidad_cajones_real: float, valor_real: float
+) -> tuple[float | None, float | None, float | None]:
+    """A partir del valor real cargado en Depósito, arma (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real).
 
     El significado de valor_real depende de la unidad de compra del
-    artículo:
+    artículo (usado tanto para recepcionar por primera vez como para
+    corregir una recepción ya hecha, ver recepcionar_compra y
+    corregir_recepcion_compra):
 
     - Por kilo: Depósito pesa UN bulto/cajón en la balanza, no toda la
       carga junta — valor_real es directamente contenido_por_cajon_real
-      (kilos de ese bulto), y cantidad_kilos_real se deriva acá adentro
-      como cantidad_cajones_real × valor_real.
+      (kilos de ese bulto), y cantidad_kilos_real se deriva como
+      cantidad_cajones_real × valor_real.
     - Por unidad/cubeta: se sigue contando el total (no tiene sentido
       "pesar" bulto a bulto algo que se cuenta) — valor_real es
       cantidad_fraccion_real directo, y contenido_por_cajon_real se
-      deriva como promedio (valor_real / cantidad_cajones_real), igual
-      que antes.
+      deriva como promedio (valor_real / cantidad_cajones_real).
+    """
+    if unidad_compra == "kilo":
+        return valor_real, cantidad_cajones_real * valor_real, None
+    contenido_por_cajon_real = valor_real / cantidad_cajones_real if cantidad_cajones_real else None
+    return contenido_por_cajon_real, None, valor_real
 
-    El estimado (cantidad_cajones/contenido_por_cajon/etc., sin "_real")
-    nunca se toca.
+
+def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> str | None:
+    """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
+
+    Ver _derivar_valores_reales para el significado de valor_real según la
+    unidad de compra del artículo. El estimado (cantidad_cajones/
+    contenido_por_cajon/etc., sin "_real") nunca se toca.
 
     Además marca la compra como retirada (ver _auto_retirar_si_corresponde)
     si todavía no lo estaba. Devuelve el aviso de esa función (o None).
@@ -1220,14 +1233,9 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real:
             fila = cursor.fetchone()
             unidad_compra = fila[0] if fila else None
 
-            if unidad_compra == "kilo":
-                contenido_por_cajon_real = valor_real
-                cantidad_kilos_real = cantidad_cajones_real * valor_real
-                cantidad_fraccion_real = None
-            else:
-                cantidad_fraccion_real = valor_real
-                contenido_por_cajon_real = valor_real / cantidad_cajones_real if cantidad_cajones_real else None
-                cantidad_kilos_real = None
+            contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
+                unidad_compra, cantidad_cajones_real, valor_real
+            )
 
             cursor.execute(
                 """
@@ -1246,6 +1254,55 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real:
             aviso = _auto_retirar_si_corresponde(cursor, compra_id)
         conexion.commit()
         return aviso
+    finally:
+        conexion.close()
+
+
+def corregir_recepcion_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> None:
+    """Corrige los valores reales de una compra YA recepcionada (ej. error de tipeo al recepcionar en Depósito).
+
+    Mismo significado de valor_real que recepcionar_compra (ver
+    _derivar_valores_reales), y misma cuenta para derivar los otros
+    campos. A diferencia de recepcionar_compra, esto NO cambia el estado
+    (sigue "recepcionado") ni toca procesada_el ni el retiro — es una
+    corrección del número ya cargado, no una recepción nueva. Bloqueada
+    (ValueError) si la compra no está recepcionada: no hay valores reales
+    que corregir en una que nunca se pesó/contó de verdad.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.estado, a.unidad_compra
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            estado, unidad_compra = fila if fila else (None, None)
+
+            if estado != "recepcionado":
+                raise ValueError("Esta compra no está recepcionada, no hay valores reales para corregir.")
+
+            contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
+                unidad_compra, cantidad_cajones_real, valor_real
+            )
+
+            cursor.execute(
+                """
+                UPDATE compras
+                SET cantidad_cajones_real = %s,
+                    contenido_por_cajon_real = %s,
+                    cantidad_kilos_real = %s,
+                    cantidad_fraccion_real = %s
+                WHERE id = %s
+                """,
+                (cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real, compra_id),
+            )
+        conexion.commit()
     finally:
         conexion.close()
 

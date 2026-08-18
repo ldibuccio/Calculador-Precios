@@ -34,6 +34,7 @@ from app.db import (
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_articulos,
+    corregir_recepcion_compra,
     crear_articulo,
     crear_cliente,
     crear_compra,
@@ -2892,8 +2893,12 @@ def ver_foto_compra(compra_id: int):
 
 
 @app.get("/compras/{compra_id}/detalle")
-def ver_detalle_compra(request: Request, compra_id: int):
-    """Historia completa de una compra: carga, retiro y recepción. Solo lectura, no se edita nada acá."""
+def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = None):
+    """Historia completa de una compra: carga, retiro y recepción. Solo lectura, no se edita nada acá.
+
+    aviso viene de /compras/{id}/corregir-recepcion tras guardar una
+    corrección — la edición en sí vive en esa otra pantalla.
+    """
     try:
         compra = obtener_detalle_compra(compra_id)
     except Exception as error_db:
@@ -2924,8 +2929,69 @@ def ver_detalle_compra(request: Request, compra_id: int):
             "diferencia_cajones_retirados": diferencia_cajones_retirados,
             "diferencia_cajones_recepcion": diferencia_cajones_recepcion,
             "diferencia_contenido_recepcion": diferencia_contenido_recepcion,
+            "aviso": aviso,
         },
     )
+
+
+def _renderizar_pantalla_corregir_recepcion(
+    request: Request, compra_id: int, *, error: str | None = None, status_code: int = 200
+):
+    try:
+        compra = obtener_detalle_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    return templates.TemplateResponse(
+        request,
+        "compra_corregir_recepcion.html",
+        {"compra": compra, "error": error},
+        status_code=status_code,
+    )
+
+
+@app.get("/compras/{compra_id}/corregir-recepcion")
+def ver_corregir_recepcion_compra(request: Request, compra_id: int):
+    """Formulario para corregir los valores reales de una compra ya recepcionada (ej. error de tipeo en Depósito).
+
+    Bloqueada la corrección en sí en corregir_recepcion_compra, pero la
+    pantalla se muestra igual (con un aviso) si alguien llega acá con una
+    compra que no está recepcionada — mismo criterio que el resto de la
+    app: nunca una pantalla en blanco sin explicar por qué.
+    """
+    return _renderizar_pantalla_corregir_recepcion(request, compra_id)
+
+
+@app.post("/compras/{compra_id}/corregir-recepcion")
+def corregir_recepcion_compra_ruta(
+    request: Request,
+    compra_id: int,
+    cantidad_cajones_real: str = Form(""),
+    cantidad_total_real: str = Form(""),
+):
+    error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
+    if not error:
+        error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
+
+    if error:
+        return _renderizar_pantalla_corregir_recepcion(request, compra_id, error=error, status_code=400)
+
+    try:
+        corregir_recepcion_compra(compra_id, cajones_valor, valor_real)
+    except ValueError as error_bloqueo:
+        return _renderizar_pantalla_corregir_recepcion(
+            request, compra_id, error=str(error_bloqueo), status_code=400
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_corregir_recepcion(
+            request, compra_id, error=f"No se pudo guardar la corrección: {error_db}", status_code=500
+        )
+
+    parametros = urlencode({"aviso": "Se corrigió la recepción de esta compra."})
+    return RedirectResponse(url=f"/compras/{compra_id}/detalle?{parametros}", status_code=303)
 
 
 @app.get("/compras/pendientes")

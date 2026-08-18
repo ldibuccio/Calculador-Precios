@@ -11,6 +11,7 @@ from app.db import (
     compra_tiene_deshacer_recepcion_bloqueado,
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
+    corregir_recepcion_compra,
     crear_cliente,
     crear_compra,
     deshacer_no_ingresado_compra,
@@ -531,6 +532,57 @@ def test_recepcionar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
     conexion.commit.assert_called_once()
 
 
+def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
+    # 2 fetchone: SELECT estado + unidad_compra, y el UPDATE.
+    conexion, cursor = _conexion_falsa([("recepcionado", "kilo")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=25)
+
+    assert cursor.execute.call_count == 2
+    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    assert "cantidad_cajones_real = %s" in consulta_update
+    assert "contenido_por_cajon_real = %s" in consulta_update
+    # A diferencia de recepcionar_compra, NO toca estado ni procesada_el.
+    assert "estado" not in consulta_update
+    assert "procesada_el" not in consulta_update
+    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    assert cajones == 30
+    assert contenido == 25
+    assert kilos == 750  # 30 × 25
+    assert fraccion is None
+    assert compra_id == 30
+    conexion.commit.assert_called_once()
+
+
+def test_corregir_recepcion_compra_articulo_por_unidad_guarda_cantidad_fraccion_real():
+    conexion, cursor = _conexion_falsa([("recepcionado", "unidad")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=2400)
+
+    _, parametros_update = cursor.execute.call_args_list[1].args
+    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    assert contenido == 80  # 2400 / 30
+    assert kilos is None
+    assert fraccion == 2400
+
+
+def test_corregir_recepcion_compra_bloqueada_si_no_esta_recepcionada():
+    conexion, cursor = _conexion_falsa([("pendiente", "unidad")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=2400)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert "no está recepcionada" in str(error)
+
+    # Solo el SELECT — nunca llega a ejecutar el UPDATE ni a hacer commit.
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
+
+
 def test_rechazar_compra_marca_estado_y_no_toca_los_reales():
     conexion, cursor = _conexion_falsa([("pendiente",)])  # SELECT estado_retiro (auto-retiro)
 
@@ -741,7 +793,7 @@ def test_obtener_detalle_compra_devuelve_la_fila_mapeada():
         10.0, 20.0, 50000.0, 5000.0, "Clark", None,
         "retirado", "2026-08-16 10:00:00", "logistica", 9.0,
         "recepcionado", "2026-08-16 11:00:00",
-        9.0, 19.5,
+        9.0, 19.5, None,
     )
     conexion, cursor = _conexion_falsa(filas_fetchone=[fila])
     cursor.description = [
@@ -752,7 +804,7 @@ def test_obtener_detalle_compra_devuelve_la_fila_mapeada():
         ("cantidad_cajones",), ("contenido_por_cajon",), ("importe",), ("sena",), ("tipo_retiro",), ("foto_ruta",),
         ("estado_retiro",), ("retiro_procesado_el",), ("retiro_origen",), ("cantidad_cajones_retirada",),
         ("estado",), ("procesada_el",),
-        ("cantidad_cajones_real",), ("contenido_por_cajon_real",),
+        ("cantidad_cajones_real",), ("contenido_por_cajon_real",), ("cantidad_fraccion_real",),
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):

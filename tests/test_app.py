@@ -2574,6 +2574,7 @@ COMPRA_DETALLE_DE_PRUEBA = {
     "procesada_el": datetime(2026, 8, 16, 14, 0, tzinfo=timezone.utc),
     "cantidad_cajones_real": 10,
     "contenido_por_cajon_real": 18,
+    "cantidad_fraccion_real": None,
 }
 
 
@@ -2665,6 +2666,148 @@ def test_ver_detalle_compra_error_de_base_da_500():
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 500
+
+
+def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
+    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert 'href="/compras/30/corregir-recepcion"' in respuesta.text
+
+
+def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert 'href="/compras/30/corregir-recepcion"' not in respuesta.text
+
+
+def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
+    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+        respuesta = cliente.get("/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra.")
+
+    assert respuesta.status_code == 200
+    assert '<div class="aviso">Se corrigió la recepción de esta compra.</div>' in respuesta.text
+
+
+def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    assert "Mzn Red" in respuesta.text
+    assert 'action="/compras/30/corregir-recepcion"' in respuesta.text
+    assert 'id="cajones-real"' in respuesta.text
+    assert 'value="10"' in respuesta.text
+    # Por kilo: precarga con contenido_por_cajon_real (kilos de UN bulto).
+    assert 'id="total-real"' in respuesta.text
+    assert 'value="18"' in respuesta.text
+
+
+def test_ver_corregir_recepcion_compra_por_unidad_precarga_el_total():
+    compra = dict(
+        COMPRA_DETALLE_DE_PRUEBA,
+        unidad_compra="unidad",
+        cantidad_cajones_real=30,
+        contenido_por_cajon_real=3,
+        cantidad_fraccion_real=90,
+    )
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 200
+    # Por unidad/cubeta: precarga con cantidad_fraccion_real (el TOTAL), no
+    # con el promedio por cajón (contenido_por_cajon_real).
+    assert 'id="total-real"' in respuesta.text
+    assert 'value="90"' in respuesta.text
+
+
+def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formulario():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 200
+    assert "no hay valores reales para corregir" in respuesta.text
+    assert "<form" not in respuesta.text
+
+
+def test_ver_corregir_recepcion_compra_inexistente_da_404():
+    with patch("app.main.obtener_detalle_compra", return_value=None):
+        respuesta = cliente.get("/compras/999/corregir-recepcion")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_corregir_recepcion_compra_error_de_base_da_500():
+    with patch("app.main.obtener_detalle_compra", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 500
+
+
+def test_corregir_recepcion_compra_ruta_guarda_y_redirige():
+    with patch("app.main.corregir_recepcion_compra", return_value=None) as mock_corregir:
+        respuesta = cliente.post(
+            "/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "30", "cantidad_total_real": "2400"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra."
+    mock_corregir.assert_called_once_with(30, 30.0, 2400.0)
+
+
+def test_corregir_recepcion_compra_ruta_sin_datos_muestra_error_sin_guardar():
+    with (
+        patch("app.main.corregir_recepcion_compra") as mock_corregir,
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "", "cantidad_total_real": "2400"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "La cantidad de cajones real es obligatoria." in respuesta.text
+    mock_corregir.assert_not_called()
+
+
+def test_corregir_recepcion_compra_ruta_bloqueada_da_400():
+    with (
+        patch(
+            "app.main.corregir_recepcion_compra",
+            side_effect=ValueError("Esta compra no está recepcionada, no hay valores reales para corregir."),
+        ),
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "30", "cantidad_total_real": "2400"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no hay valores reales para corregir" in respuesta.text
+
+
+def test_corregir_recepcion_compra_ruta_error_de_base_da_500():
+    with (
+        patch("app.main.corregir_recepcion_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "30", "cantidad_total_real": "2400"},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar la corrección" in respuesta.text
 
 
 def test_editar_compra_exitosa_redirige_a_compras():
