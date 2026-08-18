@@ -54,10 +54,10 @@ def test_generar_pdf_incluye_encabezado_y_pie():
 
 
 def test_generar_pdf_titulo_usa_el_nombre_de_empresa_recibido():
-    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmalá")
+    pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmala")
     texto = _texto_del_pdf(pdf_bytes)
 
-    assert "Lista de Precios — Palmalá" in texto
+    assert "Lista de Precios — Palmala" in texto
     assert "Frutamax" not in texto
 
 
@@ -189,12 +189,12 @@ def test_generar_excel_incluye_encabezado_y_secciones():
 
 
 def test_generar_excel_titulo_usa_el_nombre_de_empresa_recibido():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmalá")
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmala")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
     valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
-    assert "Lista de Precios — Palmalá" in valores
+    assert "Lista de Precios — Palmala" in valores
     assert "FRUTA" in valores
     assert "HORTALIZA" in valores
     assert "PESADA" in valores

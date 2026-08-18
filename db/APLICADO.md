@@ -8,7 +8,7 @@ bases estén marcadas.
 - ✅ = corrida y confirmada en esa base.
 - — = no corresponde correrla en esa base (con el motivo).
 
-| Archivo | Frutamax | Palmalá |
+| Archivo | Frutamax | Palmala |
 |---|---|---|
 | `schema.sql` | ✅ (histórico) | — reemplazado por `esquema_completo.sql` |
 | `seed_datos_iniciales.sql` | ✅ (histórico) | — datos de Frutamax; el catálogo se copia con `scripts/copiar_catalogo_empresa.py` |
@@ -39,7 +39,7 @@ bases estén marcadas.
 
 ## Pasos manuales que NO son SQL (por base)
 
-| Paso | Frutamax | Palmalá |
+| Paso | Frutamax | Palmala |
 |---|---|---|
 | Bucket de Storage `comandas` (privado) | ✅ | ⬜ pendiente |
 | Copia inicial del catálogo (`scripts/copiar_catalogo_empresa.py`) | — es el origen | ⬜ pendiente |

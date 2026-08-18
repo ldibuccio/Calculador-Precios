@@ -148,7 +148,7 @@ NOMBRE_EMPRESA = os.environ.get(NOMBRE_EMPRESA_ENV_VAR, "Frutamax")
 def _nombre_empresa_para_archivo() -> str:
     """El nombre de la empresa apto para nombres de archivo: sin acentos ni caracteres raros.
 
-    "Palmalá" -> "Palmala": los acentos en un header Content-Disposition
+    "Verdulería Sur" -> "Verduleria_Sur": los acentos en un header Content-Disposition
     dependen de cómo cada navegador/celular los interprete — mejor no
     arriesgar el nombre del archivo por una tilde.
     """

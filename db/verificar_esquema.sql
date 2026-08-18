@@ -1,5 +1,5 @@
 -- ============================================================================
--- Verificación de esquema entre dos bases (ej. Frutamax vs. Palmalá)
+-- Verificación de esquema entre dos bases (ej. Frutamax vs. Palmala)
 --
 -- CONSULTA 1 (la corta): correrla en el editor SQL de CADA Supabase y
 -- comparar las dos salidas. Devuelve UNA fila por tabla viva (13 filas),

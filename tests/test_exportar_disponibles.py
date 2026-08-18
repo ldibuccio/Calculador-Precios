@@ -29,11 +29,11 @@ def test_generar_excel_disponibles_hoja_y_titulo():
 def test_generar_excel_disponibles_titulo_usa_el_nombre_de_empresa_recibido():
     # Mismo código para varias empresas: el título sale del parámetro, en
     # mayúsculas — nada de "Frutamax" fijo adentro del módulo.
-    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Palmalá")
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Palmala")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
-    assert hoja["A1"].value == "PALMALÁ - Disponibilidad de Stock"
+    assert hoja["A1"].value == "PALMALA - Disponibilidad de Stock"
 
 
 def test_generar_excel_disponibles_fecha_un_solo_dia():

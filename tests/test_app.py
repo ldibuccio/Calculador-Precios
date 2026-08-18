@@ -6804,8 +6804,8 @@ def test_barra_navegacion_muestra_el_nombre_de_la_empresa():
 def test_nombre_empresa_para_archivo_saca_acentos_y_caracteres_raros():
     from app.main import _nombre_empresa_para_archivo
 
-    with patch("app.main.NOMBRE_EMPRESA", "Palmalá"):
-        assert _nombre_empresa_para_archivo() == "Palmala"
+    with patch("app.main.NOMBRE_EMPRESA", "Verdulería Sur"):
+        assert _nombre_empresa_para_archivo() == "Verduleria_Sur"
     with patch("app.main.NOMBRE_EMPRESA", "Frutamax"):
         assert _nombre_empresa_para_archivo() == "Frutamax"
 
@@ -6813,7 +6813,7 @@ def test_nombre_empresa_para_archivo_saca_acentos_y_caracteres_raros():
 def test_nombre_archivo_disponibles_usa_el_nombre_de_empresa():
     from app.main import _nombre_archivo_disponibles
 
-    with patch("app.main.NOMBRE_EMPRESA", "Palmalá"):
+    with patch("app.main.NOMBRE_EMPRESA", "Palmala"):
         assert _nombre_archivo_disponibles(date(2026, 8, 14), 1) == "Disponibles_Palmala_14_Ago_2026.xlsx"
     # Default intacto: para Frutamax el nombre es exactamente el de siempre.
     assert _nombre_archivo_disponibles(date(2026, 8, 14), 1) == "Disponibles_Frutamax_14_Ago_2026.xlsx"

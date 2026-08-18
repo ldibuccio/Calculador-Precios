@@ -4,7 +4,7 @@
 -- Crea de cero, en una base VACÍA, el estado FINAL de las 13 tablas que el
 -- código usa hoy — el mismo estado al que llegó la base de Frutamax después
 -- de toda la historia de migraciones de esta carpeta. Pensado para el alta
--- de una empresa nueva (ej. Palmalá): correr este único archivo reemplaza
+-- de una empresa nueva (ej. Palmala): correr este único archivo reemplaza
 -- correr schema.sql + todas las migraciones en orden, cosa que NO funciona
 -- (schema.sql crea el diseño viejo, varias migraciones son destructivas o
 -- cargan datos de Frutamax).
