@@ -7,7 +7,7 @@ import pypdfium2 as pdfium
 from core.exportar_precios import LEYENDA_PRECIO_NUEVO, generar_excel_lista_precios, generar_pdf_lista_precios
 
 FILAS_DE_PRUEBA = [
-    {"articulo_nombre": "Mango", "grupo": "fruta", "precio": 350.0, "unidad": "unidad", "es_nuevo": False},
+    {"articulo_nombre": "Mango", "grupo": "fruta", "precio": 350.0, "precio_anterior": 300.0, "unidad": "unidad", "es_nuevo": False},
     {"articulo_nombre": "Manzana Red", "grupo": "fruta", "precio": 890.0, "unidad": "kilo", "es_nuevo": True},
     {"articulo_nombre": "Morrón Rojo", "grupo": "hortaliza", "precio": 1200.0, "unidad": "kilo", "es_nuevo": False},
     {"articulo_nombre": "Tomate Cherry", "grupo": "hortaliza", "precio": 500.0, "unidad": "kilo", "es_nuevo": True},
@@ -187,12 +187,13 @@ def test_generar_excel_incluye_encabezado_y_secciones():
 def _nombres_con_precio_resaltado_en_rojo(hoja):
     from core.exportar_precios import ROJO_FONDO_CLARO_HEX
 
+    # Columna 2 (índice 2, 0-based) es "Precio" -- la 1 es "Precio anterior".
     return [
         fila[0].value
         for fila in hoja.iter_rows()
-        if fila[1].fill
-        and fila[1].fill.start_color
-        and fila[1].fill.start_color.rgb == f"00{ROJO_FONDO_CLARO_HEX}"
+        if fila[2].fill
+        and fila[2].fill.start_color
+        and fila[2].fill.start_color.rgb == f"00{ROJO_FONDO_CLARO_HEX}"
     ]
 
 
@@ -222,5 +223,24 @@ def test_generar_excel_precio_guardado_como_numero_no_como_texto():
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
-    valores_precio = [fila[1].value for fila in hoja.iter_rows() if fila[0].value == "Mango"]
+    valores_precio = [fila[2].value for fila in hoja.iter_rows() if fila[0].value == "Mango"]
     assert valores_precio == [350.0]
+
+
+def test_generar_excel_agrega_columna_precio_anterior_antes_del_precio():
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True)
+    libro = _cargar_excel(excel_bytes)
+    hoja = libro.active
+
+    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
+    assert "Precio anterior" in valores
+
+    # Mango tiene precio_anterior cargado (300.0) -> se guarda como número,
+    # en la columna 2 (0-based), antes de "Precio" (columna 3).
+    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango")
+    assert fila_mango[1].value == 300.0
+    assert fila_mango[2].value == 350.0
+
+    # Manzana Red no tiene precio_anterior -> "—", no se rompe ni queda vacío.
+    fila_manzana = next(fila for fila in hoja.iter_rows() if fila[0].value == "Manzana Red")
+    assert fila_manzana[1].value == "—"

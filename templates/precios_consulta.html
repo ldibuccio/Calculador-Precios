@@ -156,6 +156,16 @@
     <p class="vacio">Elegí un cliente para ver sus precios.</p>
   </div>
   {% else %}
+  {% if filas %}
+  <div class="tarjeta">
+    <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton" href="/precios/consultar/exportar-pdf?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar PDF</a>
+      <a class="boton" href="/precios/consultar/exportar-excel?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar Excel</a>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="tarjeta">
     <a class="boton boton-secundario" href="/precios/cargar?cliente_id={{ cliente_id }}">Cargar precios de este cliente</a>
   </div>
@@ -176,16 +186,6 @@
     </p>
     {% endif %}
   </div>
-
-  {% if filas %}
-  <div class="tarjeta">
-    <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
-    <div id="opciones-exportar" style="display: none;">
-      <a class="boton" href="/precios/consultar/exportar-pdf?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar PDF</a>
-      <a class="boton" href="/precios/consultar/exportar-excel?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Exportar Excel</a>
-    </div>
-  </div>
-  {% endif %}
   {% endif %}
 
   {% if cliente_id %}

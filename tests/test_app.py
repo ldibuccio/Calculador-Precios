@@ -3,6 +3,7 @@ import io
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
+import openpyxl
 import pypdfium2 as pdfium
 import pytest
 from fastapi.testclient import TestClient
@@ -5587,6 +5588,20 @@ def test_ver_precios_consultar_con_resultados_muestra_boton_exportar():
     assert "/precios/consultar/exportar-excel?cliente_id=1&fecha=" in respuesta.text
 
 
+def test_ver_precios_consultar_boton_exportar_va_arriba_del_boton_cargar_precios():
+    # El botón Exportar tiene que quedar justo debajo de "Ver" (el submit
+    # del formulario de arriba), antes de "Cargar precios de este cliente"
+    # y antes del listado — no al final de la pantalla.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/precios/consultar?cliente_id=1")
+
+    assert respuesta.text.index('id="boton-exportar"') < respuesta.text.index("Cargar precios de este cliente")
+
+
 def test_ver_precios_consultar_sin_resultados_no_muestra_boton_exportar():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -5643,6 +5658,7 @@ def test_exportar_precios_pdf_devuelve_archivo_adjunto():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-pdf?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
@@ -5663,6 +5679,7 @@ def test_exportar_precios_pdf_hoy_resalta_el_que_cambio_hoy():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-pdf?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
@@ -5680,6 +5697,7 @@ def test_exportar_precios_pdf_fecha_pasada_no_resalta_nada():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(date(2026, 1, 15)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-15")
 
@@ -5697,6 +5715,7 @@ def test_exportar_precios_pdf_separa_por_grupo():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-01")
 
@@ -5725,6 +5744,7 @@ def test_exportar_precios_pdf_usa_nombre_cliente_de_la_ficha_no_el_interno():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-01")
 
@@ -5765,6 +5785,7 @@ def test_exportar_precios_excel_devuelve_archivo_adjunto():
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-excel?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
@@ -5772,6 +5793,34 @@ def test_exportar_precios_excel_devuelve_archivo_adjunto():
     assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+
+def test_exportar_precios_excel_incluye_columna_precio_anterior():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
+        ),
+        # Mango (articulo_id 2) tenía $300 antes; Tomate Cherry (1) nunca
+        # tuvo un precio previo cargado.
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[{"articulo_id": 2, "precio": 300.0}]),
+    ):
+        respuesta = cliente.get(f"/precios/consultar/exportar-excel?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
+
+    libro = openpyxl.load_workbook(io.BytesIO(respuesta.content))
+    hoja = libro.active
+    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
+    assert "Precio anterior" in valores
+
+    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango")
+    assert fila_mango[1].value == 300.0
+
+    fila_cherry = next(fila for fila in hoja.iter_rows() if fila[0].value == "Tomate Cherry")
+    assert fila_cherry[1].value == "—"
 
 
 def test_exportar_precios_excel_cliente_inexistente_da_404():
@@ -5796,6 +5845,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo(
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=precios_tras_guardar),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -5829,6 +5879,7 @@ def test_guardar_y_exportar_precios_cargar_manual_excel_guarda_y_devuelve_archiv
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -5854,6 +5905,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_usa_nombre_cliente_de_la_f
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(date(2026, 1, 1)),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente"),
     ):
         respuesta = cliente.post(
@@ -6540,6 +6592,7 @@ def test_guardar_y_exportar_precios_cargar_foto_pdf_guarda_y_devuelve_archivo():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=precios_tras_guardar),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -6576,6 +6629,7 @@ def test_guardar_y_exportar_precios_cargar_foto_excel_sube_el_archivo_y_devuelve
             "app.main.listar_precios_vigentes_por_cliente",
             return_value=_precios_vigentes_exportacion(HOY_DE_PRUEBA),
         ),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.subir_archivo_comanda", return_value="2026-08-16/dia-123-abc.jpg") as mock_subir,
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):

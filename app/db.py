@@ -771,6 +771,40 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
         conexion.close()
 
 
+def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
+    """El precio que tenía cada artículo ANTES del que hoy está vigente (para la columna "Precio anterior"
+    de la Lista de Precios en Excel — ver core.exportar_precios).
+
+    Mismo criterio de "vigente" que listar_precios_vigentes_por_cliente,
+    pero un escalón atrás: de las filas de precios_venta_historial con
+    vigente_desde <= fecha_referencia, la vigente es la de vigente_desde
+    más reciente (fila #1) — esto devuelve la fila #2, la que regía justo
+    antes de esa. Un artículo con una sola fila cargada (nunca cambió de
+    precio) o sin ninguna simplemente no aparece — no hay "anterior" que
+    mostrar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT articulo_id, precio FROM (
+                    SELECT articulo_id, precio,
+                           ROW_NUMBER() OVER (PARTITION BY articulo_id ORDER BY vigente_desde DESC) AS orden
+                    FROM precios_venta_historial
+                    WHERE cliente_id = %s AND vigente_desde <= %s
+                ) filas_ordenadas
+                WHERE orden = 2
+                """,
+                (cliente_id, fecha_referencia),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
 def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str | None = None) -> None:
     """Agrega a precios_venta_historial SOLO las filas de precio que realmente cambiaron.
 

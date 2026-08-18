@@ -252,7 +252,12 @@ def generar_pdf_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict
 
 
 def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool) -> bytes:
-    """Arma el Excel de la Lista de Precios de un cliente a una fecha, mismas secciones y columnas que el PDF."""
+    """Arma el Excel de la Lista de Precios de un cliente a una fecha, mismas secciones que el PDF.
+
+    A diferencia del PDF, tiene una columna de más: "Precio anterior",
+    antes de "Precio" — fila["precio_anterior"] (o None si el artículo
+    nunca tuvo un precio previo cargado, mostrado como "—").
+    """
     libro = Workbook()
     hoja = libro.active
     hoja.title = "Lista de Precios"
@@ -268,7 +273,7 @@ def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[di
 
     fila_actual = 1
     hoja.cell(row=fila_actual, column=1, value="Lista de Precios")
-    for columna in range(1, 4):
+    for columna in range(1, 5):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde
         if columna == 1:
@@ -292,7 +297,7 @@ def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[di
         hoja.cell(row=fila_actual, column=1, value=titulo).font = fuente_seccion
         fila_actual += 1
 
-        for columna, encabezado in enumerate(("Producto", "Precio", "Unidad"), start=1):
+        for columna, encabezado in enumerate(("Producto", "Precio anterior", "Precio", "Unidad"), start=1):
             celda = hoja.cell(row=fila_actual, column=columna, value=encabezado)
             celda.font = fuente_encabezado_tabla
             celda.fill = relleno_verde
@@ -303,13 +308,20 @@ def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[di
 
             hoja.cell(row=fila_actual, column=1, value=fila["articulo_nombre"])
 
-            celda_precio = hoja.cell(row=fila_actual, column=2, value=float(fila["precio"]))
+            precio_anterior = fila.get("precio_anterior")
+            if precio_anterior is not None:
+                celda_precio_anterior = hoja.cell(row=fila_actual, column=2, value=float(precio_anterior))
+                celda_precio_anterior.number_format = '"$"#,##0'
+            else:
+                hoja.cell(row=fila_actual, column=2, value="—")
+
+            celda_precio = hoja.cell(row=fila_actual, column=3, value=float(fila["precio"]))
             celda_precio.number_format = '"$"#,##0'
             if es_nueva:
                 celda_precio.font = fuente_precio_nuevo
                 celda_precio.fill = relleno_rojo_claro
 
-            celda_unidad = hoja.cell(row=fila_actual, column=3, value=_texto_unidad(fila.get("unidad")))
+            celda_unidad = hoja.cell(row=fila_actual, column=4, value=_texto_unidad(fila.get("unidad")))
             if es_nueva:
                 celda_unidad.fill = relleno_rojo_claro
 
@@ -323,6 +335,7 @@ def generar_excel_lista_precios(cliente_nombre: str, fecha: date, filas: list[di
     hoja.column_dimensions[get_column_letter(1)].width = 32
     hoja.column_dimensions[get_column_letter(2)].width = 14
     hoja.column_dimensions[get_column_letter(3)].width = 14
+    hoja.column_dimensions[get_column_letter(4)].width = 14
 
     buffer = BytesIO()
     libro.save(buffer)

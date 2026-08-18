@@ -64,6 +64,7 @@ from app.db import (
     listar_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
+    listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
     listar_todas_las_conversiones,
@@ -3307,10 +3308,13 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
     (fichas para nombre/unidad, precios vigentes, catálogo para el grupo)
     — no calcula nada nuevo. es_hoy determina si corresponde resaltar
     "precio nuevo": solo cuando se exporta la fecha de HOY, nunca para una
-    fecha pasada.
+    fecha pasada. precio_anterior (ver listar_precios_anteriores_por_cliente)
+    solo lo usa la columna "Precio anterior" del Excel (el PDF no la
+    muestra) — un artículo sin precio anterior cargado queda en None.
     """
     fichas = listar_fichas_por_cliente(cliente_id)
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
+    precios_anteriores = listar_precios_anteriores_por_cliente(cliente_id, fecha_consulta)
     articulos_existentes = listar_articulos()
 
     # La lista exportada es para mandarle al cliente — usa el nombre que el
@@ -3322,6 +3326,7 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
     }
     unidad_por_articulo = {ficha["articulo_id"]: ficha.get("unidad_venta") for ficha in fichas}
     grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
+    precio_anterior_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_anteriores}
 
     hoy = _hoy_argentina()
     es_hoy = fecha_consulta == hoy
@@ -3331,6 +3336,7 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
             "articulo_nombre": nombre_por_articulo.get(precio["articulo_id"], f"Artículo #{precio['articulo_id']}"),
             "grupo": grupo_por_articulo.get(precio["articulo_id"]),
             "precio": precio["precio"],
+            "precio_anterior": precio_anterior_por_articulo.get(precio["articulo_id"]),
             "unidad": unidad_por_articulo.get(precio["articulo_id"]),
             "es_nuevo": es_hoy and precio.get("vigente_desde") == hoy,
         }

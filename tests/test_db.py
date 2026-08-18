@@ -31,6 +31,7 @@ from app.db import (
     listar_conceptos_editables_por_cliente,
     listar_detalle_disponible,
     listar_fotos_para_limpiar,
+    listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     marcar_compra_cancelada,
     marcar_compra_no_ingresada,
@@ -1060,6 +1061,22 @@ def test_listar_precios_vigentes_por_cliente_trae_vigente_desde():
     ]
     consulta = cursor.execute.call_args[0][0]
     assert "vigente_desde" in consulta
+
+
+def test_listar_precios_anteriores_por_cliente_trae_la_fila_previa_a_la_vigente():
+    # Para la columna "Precio anterior" del Excel: la fila #2 (orden = 2 en
+    # el ROW_NUMBER, la que regía justo antes de la vigente), no la #1.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[(2, 350.0)])
+    cursor.description = [("articulo_id",), ("precio",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_precios_anteriores_por_cliente(1, date(2026, 8, 16))
+
+    assert resultado == [{"articulo_id": 2, "precio": 350.0}]
+    consulta, parametros = cursor.execute.call_args[0]
+    assert "ROW_NUMBER()" in consulta
+    assert "WHERE orden = 2" in consulta
+    assert parametros == (1, date(2026, 8, 16))
 
 
 def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viejo():
