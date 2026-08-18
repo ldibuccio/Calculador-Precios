@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingresar Mercadería</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .campo-fijo {
+    margin-top: 0.25rem;
+    padding: 0.65rem;
+    background: #f0f0f0;
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form select, form input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+  .ayuda.unidad-compra {
+    display: none;
+  }
+  .ayuda.unidad-compra.visible {
+    display: block;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+  }
+  .boton-exito { background: #16a34a; }
+  .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #2563eb;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.3rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  th {
+    color: #666;
+    font-weight: 600;
+  }
+  .vacio { color: #888; font-style: italic; }
+  .tabla-scroll { overflow-x: auto; }
+  button[disabled] { opacity: 0.5; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Ingresar Mercadería" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <label>Proveedor</label>
+    <div class="campo-fijo">{{ proveedor.nombre }} ({{ proveedor.codigo_puesto }})</div>
+    <a class="volver" href="/deposito/ingresar">Cambiar proveedor</a>
+  </div>
+
+  <div class="tarjeta">
+    <form method="post" action="/deposito/ingresar" id="form-ingresar">
+      <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
+
+      <label for="articulo_id">Artículo *</label>
+      <select id="articulo_id" name="articulo_id" required onchange="actualizarContenidoPorCajon(this)">
+        <option value="" {% if not compra %}selected disabled{% endif %}>Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}"
+                data-unidad-compra="{{ a.unidad_compra or '' }}"
+                data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"
+                {% if compra and compra.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <p id="ayuda-unidad-compra" class="ayuda unidad-compra"></p>
+
+      <label for="cantidad_cajones">Cantidad de cajones/cajas *</label>
+      <input type="number" id="cantidad_cajones" name="cantidad_cajones" min="0" step="0.01" required
+             value="{% if compra and compra.cantidad_cajones is not none %}{{ compra.cantidad_cajones }}{% endif %}">
+
+      <label for="contenido_por_cajon">Contenido por cajón *</label>
+      <input type="number" id="contenido_por_cajon" name="contenido_por_cajon" min="0" step="0.01" required
+             value="{% if compra and compra.contenido_por_cajon is not none %}{{ compra.contenido_por_cajon }}{% endif %}">
+      <p class="ayuda">Lo que ves y contás/pesás vos ahora — no hay estimado previo, esto ya es el dato real.</p>
+
+      <label for="tipo_retiro">Retiro *</label>
+      <select id="tipo_retiro" name="tipo_retiro" required>
+        <option value="Clark" {% if not compra or not compra.tipo_retiro or compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
+        <option value="Carro" {% if compra and compra.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
+        <option value="Pases" {% if compra and compra.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
+      </select>
+      <p class="ayuda">Cómo llegó al depósito — queda como dato en el Detalle, aunque esta compra ya nace retirada.</p>
+
+      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
+      <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar otro artículo</button>
+    </form>
+    <a class="boton boton-secundario" href="/deposito">Volver a Depósito</a>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Cargado hoy para este proveedor ({{ renglones_hoy|length }})</h2>
+    {% if renglones_hoy %}
+    <div class="tabla-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Artículo</th>
+            <th>Cajones</th>
+            <th>Contenido</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in renglones_hoy %}
+          <tr>
+            <td>{{ r.articulo_nombre }}</td>
+            <td>{{ r.cantidad_cajones|numero }}</td>
+            <td>{{ r.contenido_por_cajon|kilos }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="vacio">Todavía no cargaste ningún artículo de este proveedor.</p>
+    {% endif %}
+  </div>
+
+  <script>
+    const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
+
+    function actualizarContenidoPorCajon(select) {
+      const opcion = select.selectedOptions[0];
+      const ayuda = document.getElementById("ayuda-unidad-compra");
+      const contenidoInput = document.getElementById("contenido_por_cajon");
+      const unidadCompra = opcion ? opcion.dataset.unidadCompra : "";
+
+      if (!opcion || !unidadCompra) {
+        ayuda.classList.remove("visible");
+        ayuda.textContent = "";
+        return;
+      }
+
+      ayuda.textContent = "Este artículo se compra por: " + NOMBRES_UNIDAD_COMPRA[unidadCompra];
+      ayuda.classList.add("visible");
+
+      const contenidoReferencia = opcion.dataset.contenidoReferencia;
+      if (contenidoReferencia) {
+        contenidoInput.value = contenidoReferencia;
+      }
+    }
+
+    // Evita que, al no ver ningún cambio en pantalla mientras guarda, se
+    // apriete varias veces y termine cargando lo mismo repetido. OJO: en
+    // Safari/iOS, deshabilitar el botón DURANTE el evento submit cancela el
+    // envío del formulario — por eso el disabled se aplica en un
+    // setTimeout, después de que el navegador ya arrancó el envío.
+    (function () {
+      const form = document.getElementById("form-ingresar");
+      if (!form) {
+        return;
+      }
+      let botonClickeado = null;
+      const botones = [
+        { elemento: document.getElementById("boton-agregar-articulo"), texto: "Agregando..." },
+        { elemento: document.getElementById("boton-terminar-carga"), texto: "Guardando..." },
+      ].filter(function (b) { return b.elemento; });
+
+      botones.forEach(function (b) {
+        b.elemento.addEventListener("click", function () {
+          botonClickeado = b;
+        });
+      });
+
+      form.addEventListener("submit", function () {
+        if (botonClickeado) {
+          botonClickeado.elemento.textContent = botonClickeado.texto;
+        }
+        setTimeout(function () {
+          botones.forEach(function (b) {
+            b.elemento.disabled = true;
+          });
+        }, 0);
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -269,6 +269,60 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
     assert parametros_insert[-2:] == (105, 3)  # guia_id, guia_punto
 
 
+def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
+    # /deposito/ingresar: la mercadería ya está en el depósito cuando se
+    # carga -- nace de una recepcionada/retirada, con las cantidades
+    # reales iguales a las cargadas (no hay estimado previo).
+    conexion, cursor = _conexion_falsa(
+        [
+            (105,),  # SELECT id de guias_compra
+            (0,),  # SELECT COUNT(*) de compras con esa guía
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 8, 16), 5, 200, 40, 20, 800, None, None, None, "Clark",
+            ingreso_directo_deposito=True,
+        )
+
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
+    assert "INSERT INTO compras" in consulta_insert
+    assert "'recepcionado', 'retirado'" in consulta_insert
+    assert "cantidad_cajones_real" in consulta_insert
+    assert "contenido_por_cajon_real" in consulta_insert
+    assert "cantidad_kilos_real" in consulta_insert
+    assert "cantidad_fraccion_real" in consulta_insert
+    assert "procesada_el" in consulta_insert
+    assert "retiro_procesado_el" in consulta_insert
+    assert "'ingreso_directo'" in consulta_insert
+    # Las cantidades reales (los últimos 4 parámetros posicionales antes de
+    # guia_id/guia_punto) son iguales a las cargadas: cantidad_cajones=40,
+    # contenido_por_cajon=20, cantidad_kilos=800, cantidad_fraccion=None.
+    assert parametros_insert[-6:] == (105, 1, 40, 20, 800, None)
+    conexion.commit.assert_called_once()
+
+
+def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():
+    # Default False: comportamiento intacto para los 4 flujos del
+    # comprador (manual, foto, múltiples fotos, listado) -- no se les
+    # tocó ni un carácter.
+    conexion, cursor = _conexion_falsa(
+        [
+            (105,),
+            (0,),
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(date(2026, 8, 16), 5, 200, 40, 20, 800, None, 45000.0, None, "Clark")
+
+    consulta_insert, _ = cursor.execute.call_args_list[3].args
+    assert "'pendiente', 'pendiente'" in consulta_insert
+    assert "cantidad_cajones_real" not in consulta_insert
+    assert "ingreso_directo" not in consulta_insert
+
+
 def test_compra_tiene_cantidad_bloqueada():
     assert compra_tiene_cantidad_bloqueada("recepcionado", "pendiente") is True
     assert compra_tiene_cantidad_bloqueada("pendiente", "retirado") is True

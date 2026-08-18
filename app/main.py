@@ -115,9 +115,10 @@ ESTADOS_RECEPCION_LABELS = {
 }
 ORIGENES_RETIRO_LABELS = {
     None: None,
-    "logistica": "Logística (a mano)",
-    "deposito": "Depósito (automático)",
+    "logistica": "Retirado por Logística",
+    "deposito": "Retiro automático (recepcionado en Depósito)",
     "migracion": "Migración",
+    "ingreso_directo": "Ingreso directo en Depósito",
 }
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -4235,9 +4236,242 @@ def deshacer_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: i
 
 
 @app.get("/deposito")
-def ver_deposito(request: Request):
-    """Hub del área Depósito: por ahora, Recepción es la única pantalla real."""
-    return templates.TemplateResponse(request, "deposito.html", {})
+def ver_deposito(request: Request, aviso: str | None = None):
+    """Hub del área Depósito: Recepción, Retirar e Ingresar Mercadería."""
+    return templates.TemplateResponse(request, "deposito.html", {"aviso": aviso})
+
+
+AVISO_INGRESO_DIRECTO_SIN_PRECIO = "Ingresada sin precio. El comprador tiene que cargar el costo."
+
+
+@app.get("/deposito/ingresar")
+def ver_ingresar_mercaderia(
+    request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None
+):
+    """Ingreso directo de mercadería que ya está en el depósito, sin pasar por Logística ni Recepción.
+
+    Mismo patrón de dos pasos que /compras/nueva (elegir o cargar
+    proveedor, después sumar artículos uno a la vez) — pero pantalla
+    propia, sin campo de precio: eso lo carga el comprador después (ver
+    ingresar_mercaderia).
+    """
+    if proveedor_id is None:
+        try:
+            proveedores = listar_proveedores()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+        return templates.TemplateResponse(
+            request,
+            "deposito_ingresar_proveedor.html",
+            {"proveedores": proveedores, "error": error},
+        )
+
+    try:
+        proveedor = obtener_proveedor(proveedor_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if proveedor is None:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+
+    try:
+        articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_ingresar.html",
+        {
+            "articulos": articulos,
+            "compra": None,
+            "proveedor": proveedor,
+            "renglones_hoy": renglones_hoy,
+            "error": error,
+            "aviso": aviso,
+        },
+    )
+
+
+@app.post("/deposito/ingresar/proveedor")
+def elegir_proveedor_ingreso_directo(request: Request, codigo_puesto: str = Form(""), nombre: str = Form("")):
+    """Confirma o crea el proveedor para /deposito/ingresar — mismo mecanismo que /compras/nueva/proveedor
+    (obtener_o_crear_proveedor_por_codigo): la mercadería que entra fuera de hora puede venir justo de
+    un proveedor que nunca se compró, así que Depósito tiene que poder cargarlo, no solo elegir uno
+    existente.
+    """
+    error, codigo_valor = _validar_codigo_puesto(codigo_puesto)
+
+    nombre_valor = nombre
+    if not error:
+        error, nombre_valor = _validar_nombre(nombre)
+
+    if error:
+        try:
+            proveedores = listar_proveedores()
+        except Exception:
+            proveedores = []
+        return templates.TemplateResponse(
+            request,
+            "deposito_ingresar_proveedor.html",
+            {"proveedores": proveedores, "error": error},
+            status_code=400,
+        )
+
+    try:
+        proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+    except Exception as error_db:
+        try:
+            proveedores = listar_proveedores()
+        except Exception:
+            proveedores = []
+        return templates.TemplateResponse(
+            request,
+            "deposito_ingresar_proveedor.html",
+            {"proveedores": proveedores, "error": f"No se pudo guardar el proveedor: {error_db}"},
+            status_code=500,
+        )
+
+    return RedirectResponse(url=f"/deposito/ingresar?proveedor_id={proveedor_id}", status_code=303)
+
+
+@app.post("/deposito/ingresar")
+def ingresar_mercaderia(
+    request: Request,
+    proveedor_id: int = Form(...),
+    accion: str = Form("agregar"),
+    articulo_id: str = Form(""),
+    cantidad_cajones: str = Form(""),
+    contenido_por_cajon: str = Form(""),
+    tipo_retiro: str = Form("Clark"),
+):
+    """Agrega un artículo ya recibido en Depósito, sin pasar por Logística ni por Recepción.
+
+    Mismos validadores que agregar_compra (_validar_compra_nueva_form),
+    pasando importe/sena vacíos siempre — esta pantalla no tiene esos
+    campos. crear_compra hace el resto con ingreso_directo_deposito=True:
+    la compra nace 'recepcionado'/'retirado', con las cantidades reales
+    iguales a las cargadas (no hay estimado previo).
+    """
+    renglon_vacio = not any(campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon))
+    if accion == "terminar" and renglon_vacio:
+        return RedirectResponse(url="/deposito", status_code=303)
+
+    try:
+        proveedor = obtener_proveedor(proveedor_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if proveedor is None:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+
+    error, valores = _validar_compra_nueva_form(articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro)
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(valores["articulo_id"])
+        except Exception as error_db:
+            articulos = listar_articulos()
+            renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+            compra = {
+                "id": None,
+                "articulo_id": valores["articulo_id"],
+                "cantidad_cajones": cantidad_cajones,
+                "contenido_por_cajon": contenido_por_cajon,
+                "tipo_retiro": tipo_retiro,
+            }
+            return templates.TemplateResponse(
+                request,
+                "deposito_ingresar.html",
+                {
+                    "articulos": articulos,
+                    "compra": compra,
+                    "proveedor": proveedor,
+                    "renglones_hoy": renglones_hoy,
+                    "error": f"No se pudo leer el artículo: {error_db}",
+                },
+                status_code=500,
+            )
+
+        if articulo is None:
+            error = "El artículo elegido no es válido."
+        elif not articulo["unidad_compra"]:
+            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
+
+    if error:
+        articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+        compra = {
+            "id": None,
+            "articulo_id": valores["articulo_id"],
+            "cantidad_cajones": cantidad_cajones,
+            "contenido_por_cajon": contenido_por_cajon,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "deposito_ingresar.html",
+            {
+                "articulos": articulos,
+                "compra": compra,
+                "proveedor": proveedor,
+                "renglones_hoy": renglones_hoy,
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
+    if articulo["unidad_compra"] == "kilo":
+        cantidad_kilos, cantidad_fraccion = total, None
+    else:
+        cantidad_kilos, cantidad_fraccion = None, total
+
+    try:
+        crear_compra(
+            _hoy_argentina(),
+            valores["articulo_id"],
+            proveedor_id,
+            valores["cantidad_cajones"],
+            valores["contenido_por_cajon"],
+            cantidad_kilos,
+            cantidad_fraccion,
+            None,
+            None,
+            valores["tipo_retiro"],
+            ingreso_directo_deposito=True,
+        )
+    except Exception as error_db:
+        articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+        compra = {
+            "id": None,
+            "articulo_id": valores["articulo_id"],
+            "cantidad_cajones": cantidad_cajones,
+            "contenido_por_cajon": contenido_por_cajon,
+            "tipo_retiro": tipo_retiro,
+        }
+        return templates.TemplateResponse(
+            request,
+            "deposito_ingresar.html",
+            {
+                "articulos": articulos,
+                "compra": compra,
+                "proveedor": proveedor,
+                "renglones_hoy": renglones_hoy,
+                "error": f"No se pudo guardar la compra: {error_db}",
+            },
+            status_code=500,
+        )
+
+    parametros = urlencode({"aviso": AVISO_INGRESO_DIRECTO_SIN_PRECIO})
+    if accion == "terminar":
+        return RedirectResponse(url=f"/deposito?{parametros}", status_code=303)
+
+    return RedirectResponse(url=f"/deposito/ingresar?proveedor_id={proveedor_id}&{parametros}", status_code=303)
 
 
 def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None]:

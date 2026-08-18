@@ -35,6 +35,14 @@
     box-sizing: border-box;
   }
   .boton:first-child { margin-top: 0; }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
 </style>
 </head>
 <body>
@@ -42,9 +50,14 @@
   {% set barra_titulo = "Depósito" %}
   {% include "_barra_navegacion.html" %}
 
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
   <div class="tarjeta">
     <a class="boton" href="/deposito/recepcion">Recepción</a>
     <a class="boton" href="/logistica/retiro/Pases?origen=deposito">Retirar Mercadería</a>
+    <a class="boton" href="/deposito/ingresar">Ingresar Mercadería</a>
   </div>
 </body>
 </html>

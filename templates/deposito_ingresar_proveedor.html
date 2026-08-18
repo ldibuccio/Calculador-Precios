@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingresar Mercadería</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+    text-transform: uppercase;
+  }
+  form input#nombre {
+    text-transform: none;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+  }
+  .boton-exito { background: #16a34a; }
+  .boton-peligro { background: #dc2626; }
+  .buscador-proveedor {
+    position: relative;
+  }
+  .lista-proveedores {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 45vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  }
+  .lista-proveedores.visible {
+    display: block;
+  }
+  .opcion-proveedor {
+    padding: 0.75rem 0.65rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .opcion-proveedor:last-child {
+    border-bottom: none;
+  }
+  .opcion-proveedor:active {
+    background: #f0f5ff;
+  }
+  .opcion-proveedor span {
+    color: #666;
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Ingresar Mercadería" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <p class="ayuda">Elegí o cargá el proveedor de esta mercadería. Después vas a poder sumarle varios artículos sin repetirlo.</p>
+    <form method="post" action="/deposito/ingresar/proveedor" onsubmit="normalizarCodigoPuesto()" id="form-confirmar-proveedor">
+      {% include "_buscador_proveedor.html" %}
+
+      <button type="submit" class="boton-exito" id="boton-confirmar-proveedor">Confirmar proveedor</button>
+    </form>
+    <a href="/deposito" class="boton boton-peligro" id="boton-cancelar">Cancelar</a>
+  </div>
+
+  <script>
+    // Buscador combinado: al enfocar cualquiera de los dos campos se ve la
+    // lista completa de proveedores conocidos (nombre + código, para
+    // distinguir homónimos); escribir la filtra; elegir un resultado
+    // completa los dos campos juntos. Si lo que se tipea no matchea nada,
+    // se puede usar igual — es la forma de cargar un proveedor nuevo (ej.
+    // mercadería que llega fuera de hora, de alguien que nunca se compró).
+    const PROVEEDORES_LISTA = [
+      {% for p in proveedores %}{ codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+    ];
+
+    function normalizarBusquedaProveedor(texto) {
+      return (texto || "").trim().toLowerCase();
+    }
+
+    function actualizarListaProveedores(campo) {
+      const input = document.getElementById(campo);
+      const contenedor = document.getElementById("lista-" + campo);
+      if (!input || !contenedor) {
+        return;
+      }
+      const filtro = normalizarBusquedaProveedor(input.value);
+      const coincidencias = PROVEEDORES_LISTA.filter(function (p) {
+        if (!filtro) {
+          return true;
+        }
+        return p.nombre.toLowerCase().indexOf(filtro) !== -1 || p.codigo.toLowerCase().indexOf(filtro) !== -1;
+      });
+
+      contenedor.innerHTML = "";
+      if (coincidencias.length === 0) {
+        contenedor.classList.remove("visible");
+        return;
+      }
+      coincidencias.forEach(function (p) {
+        const opcion = document.createElement("div");
+        opcion.className = "opcion-proveedor";
+        const nombreEl = document.createElement("strong");
+        nombreEl.textContent = p.nombre;
+        const codigoEl = document.createElement("span");
+        codigoEl.textContent = " (" + p.codigo + ")";
+        opcion.appendChild(nombreEl);
+        opcion.appendChild(codigoEl);
+        // preventDefault en mousedown evita que el input pierda el foco (y
+        // con eso, que la lista se cierre) ANTES de que llegue a
+        // dispararse el click de selección.
+        opcion.addEventListener("mousedown", function (evento) {
+          evento.preventDefault();
+        });
+        opcion.addEventListener("click", function () {
+          elegirProveedor(p.codigo, p.nombre);
+        });
+        contenedor.appendChild(opcion);
+      });
+      contenedor.classList.add("visible");
+    }
+
+    function ocultarListaProveedores(campo) {
+      const contenedor = document.getElementById("lista-" + campo);
+      if (contenedor) {
+        contenedor.classList.remove("visible");
+      }
+    }
+
+    // Si el nombre es ambiguo (varios proveedores lo comparten), la lista
+    // filtrada ya muestra todas las coincidencias con su código al lado —
+    // el usuario elige la correcta a simple vista, no hace falta adivinar.
+    function elegirProveedor(codigo, nombre) {
+      const campoCodigo = document.getElementById("codigo_puesto");
+      const campoNombre = document.getElementById("nombre");
+      if (campoCodigo) {
+        campoCodigo.value = codigo;
+      }
+      if (campoNombre) {
+        campoNombre.value = nombre;
+      }
+      ocultarListaProveedores("codigo_puesto");
+      ocultarListaProveedores("nombre");
+    }
+
+    function normalizarCodigoPuesto() {
+      const campo = document.getElementById("codigo_puesto");
+      campo.value = campo.value.trim().toUpperCase();
+    }
+
+    const formConfirmarProveedor = document.getElementById("form-confirmar-proveedor");
+    if (formConfirmarProveedor) {
+      formConfirmarProveedor.addEventListener("submit", function () {
+        const boton = document.getElementById("boton-confirmar-proveedor");
+        if (boton) {
+          boton.textContent = "Confirmando...";
+          setTimeout(function () {
+            boton.disabled = true;
+          }, 0);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

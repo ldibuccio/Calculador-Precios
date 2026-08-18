@@ -972,6 +972,7 @@ def crear_compra(
     sena: float | None,
     tipo_retiro: str,
     foto_ruta: str | None = None,
+    ingreso_directo_deposito: bool = False,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
 
@@ -987,7 +988,9 @@ def crear_compra(
     ".3") es la cantidad de compras que ya tiene esa guía más uno — se
     graba una sola vez acá, nunca se recalcula después, así que borrar un
     renglón más adelante no renumera a los demás. Todo en la misma
-    transacción que el INSERT de la compra.
+    transacción que el INSERT de la compra. Igual con o sin
+    ingreso_directo_deposito: la guía es la misma cuenta, no importa por
+    dónde entró la mercadería.
 
     estado arranca en 'pendiente' (queda a la espera de Recepción en
     Depósito) — se escribe acá explícitamente, a propósito SIN default a
@@ -998,6 +1001,20 @@ def crear_compra(
     Logística, que retira del puesto en el Mercado ANTES de que la
     mercadería llegue al depósito — ver listar_compras_pendientes_retiro),
     mismo criterio sin default de columna.
+
+    ingreso_directo_deposito=True (ver /deposito/ingresar): la mercadería
+    ya está físicamente en el depósito cuando se carga — alguien del
+    depósito la tiene en la mano, ya pesada/contada, sin haber pasado por
+    Logística ni por Recepción como pasos separados. En ese caso la
+    compra nace directamente 'recepcionado'/'retirado' (con procesada_el
+    y retiro_procesado_el en ese mismo instante, retiro_origen
+    'ingreso_directo' — nunca 'deposito', que significa otra cosa: auto-
+    retiro de algo que sí pasó por el puesto del Mercado), y las
+    columnas _real quedan iguales a cantidad_cajones/contenido_por_cajon:
+    no hay estimado previo, quien la carga la está viendo y pesando.
+    importe/sena típicamente van None acá (el precio lo carga el
+    comprador después), pero la función no lo fuerza — eso lo decide
+    quien llama.
     """
     conexion = obtener_conexion()
     try:
@@ -1020,30 +1037,63 @@ def crear_compra(
             (cantidad_existente,) = cursor.fetchone()
             guia_punto = cantidad_existente + 1
 
-            cursor.execute(
-                """
-                INSERT INTO compras
-                    (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                     cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
-                     guia_id, guia_punto, estado, estado_retiro)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
-                """,
-                (
-                    fecha_operacion,
-                    articulo_id,
-                    proveedor_id,
-                    cantidad_cajones,
-                    contenido_por_cajon,
-                    cantidad_kilos,
-                    cantidad_fraccion,
-                    importe,
-                    sena,
-                    tipo_retiro,
-                    foto_ruta,
-                    guia_id,
-                    guia_punto,
-                ),
-            )
+            if ingreso_directo_deposito:
+                cursor.execute(
+                    """
+                    INSERT INTO compras
+                        (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                         cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                         guia_id, guia_punto, estado, estado_retiro,
+                         cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
+                         procesada_el, retiro_procesado_el, retiro_origen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            'recepcionado', 'retirado', %s, %s, %s, %s, now(), now(), 'ingreso_directo')
+                    """,
+                    (
+                        fecha_operacion,
+                        articulo_id,
+                        proveedor_id,
+                        cantidad_cajones,
+                        contenido_por_cajon,
+                        cantidad_kilos,
+                        cantidad_fraccion,
+                        importe,
+                        sena,
+                        tipo_retiro,
+                        foto_ruta,
+                        guia_id,
+                        guia_punto,
+                        cantidad_cajones,
+                        contenido_por_cajon,
+                        cantidad_kilos,
+                        cantidad_fraccion,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO compras
+                        (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                         cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                         guia_id, guia_punto, estado, estado_retiro)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
+                    """,
+                    (
+                        fecha_operacion,
+                        articulo_id,
+                        proveedor_id,
+                        cantidad_cajones,
+                        contenido_por_cajon,
+                        cantidad_kilos,
+                        cantidad_fraccion,
+                        importe,
+                        sena,
+                        tipo_retiro,
+                        foto_ruta,
+                        guia_id,
+                        guia_punto,
+                    ),
+                )
         conexion.commit()
     finally:
         conexion.close()
