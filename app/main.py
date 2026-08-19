@@ -3729,13 +3729,14 @@ def ver_resultado_negociacion(request: Request):
     depurado, cuando exista el módulo Depósito con los kilos pesados — esta
     de acá usa el costo estimado, por eso vive en Precios.
 
-    REGLA FIJA para cuando se construya (pedida el 19/08/2026): la
-    mercadería que NO ingresó al depósito (compras con estado
-    'no_ingresado') NO puede entrar en ningún cálculo de costos — no hay
-    mercadería real detrás. Es el mismo criterio que ya aplica
-    listar_compras_para_costeo (que también excluye rechazadas y
-    canceladas): construir la Rutina B sobre esa función o sobre uno de
-    sus derivados, nunca sobre una consulta nueva sin estos filtros.
+    REGLA FIJA para cuando se construya (pedida el 19/08/2026): para
+    excluir compras de los cálculos de costos manda SOLO el veredicto de
+    Depósito — quedan afuera las 'no_ingresado' y las 'rechazado' (no hay
+    mercadería real detrás), y lo que diga Logística NO cuenta (un retiro
+    cancelado no saca la compra del cálculo). Es el mismo criterio que ya
+    aplica listar_compras_para_costeo: construir la Rutina B sobre esa
+    función o sobre uno de sus derivados, nunca sobre una consulta nueva
+    sin estos filtros.
     """
     return _renderizar_en_construccion(
         request, "Resultado Negociación", volver_url="/precios", volver_texto="Volver a Precios", sector="comercial"

@@ -704,12 +704,13 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
     y la utilidad aproximada usen el real en cuanto existe, sin tocar
     ninguna fórmula ahí.
 
-    Excluye las compras rechazadas (estado = 'rechazado'): no se
-    recibieron, no tienen que ensuciar el costo promedio. Excluye también
-    las que nunca ingresaron al depósito (estado = 'no_ingresado'): mismo
-    motivo, no hay mercadería real detrás de esa compra. Y las canceladas
-    en Logística (estado_retiro = 'cancelado'): una compra cancelada
-    nunca se retiró del puesto, o sea nunca se compró de verdad.
+    Para excluir compras del costeo manda SOLO el veredicto de Depósito
+    (regla fija pedida el 19/08/2026): se excluyen las rechazadas
+    (estado = 'rechazado') y las que nunca ingresaron al depósito
+    (estado = 'no_ingresado') — no hay mercadería real detrás. Lo que
+    diga Logística NO cuenta: un retiro cancelado (estado_retiro =
+    'cancelado') no saca la compra del cálculo, porque el retiro no es
+    el dato real — el dato real es lo que Depósito recibió o no recibió.
     """
     conexion = obtener_conexion()
     try:
@@ -726,7 +727,6 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                 WHERE c.fecha_operacion BETWEEN %s AND %s
                   AND c.estado IS DISTINCT FROM 'rechazado'
                   AND c.estado IS DISTINCT FROM 'no_ingresado'
-                  AND c.estado_retiro IS DISTINCT FROM 'cancelado'
                 ORDER BY a.nombre
                 """,
                 (fecha_desde, fecha_hasta),

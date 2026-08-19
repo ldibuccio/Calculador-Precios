@@ -511,8 +511,10 @@ def test_listar_compras_para_costeo_usa_el_real_si_existe_y_excluye_rechazadas()
     assert "estado IS DISTINCT FROM 'rechazado'" in consulta
     # Una compra que nunca ingresó al depósito tampoco es mercadería real.
     assert "estado IS DISTINCT FROM 'no_ingresado'" in consulta
-    # Una compra cancelada en Logística nunca se retiró del puesto: tampoco es una compra real.
-    assert "estado_retiro IS DISTINCT FROM 'cancelado'" in consulta
+    # Para el costeo manda SOLO el veredicto de Depósito: lo que diga
+    # Logística no cuenta — un retiro cancelado NO saca la compra del
+    # cálculo (regla fija del 19/08/2026).
+    assert "estado_retiro" not in consulta
 
 
 def test_listar_compras_sin_precio_usa_el_real_si_existe():
