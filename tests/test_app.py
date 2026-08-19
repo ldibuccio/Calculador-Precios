@@ -6774,7 +6774,7 @@ def test_ver_resultado_negociacion_muestra_en_construccion_y_vuelve_a_precios():
     assert 'href="/precios"' in respuesta.text
 
 
-def test_ver_inicio_muestra_las_6_areas():
+def test_ver_inicio_muestra_las_8_areas():
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
@@ -6784,6 +6784,8 @@ def test_ver_inicio_muestra_las_6_areas():
     assert 'href="/logistica"' in respuesta.text
     assert 'href="/deposito"' in respuesta.text
     assert 'href="/gerencia"' in respuesta.text
+    assert 'href="/facturacion"' in respuesta.text
+    assert 'href="/puesto"' in respuesta.text
     assert 'href="/sistema"' in respuesta.text
 
 
@@ -6816,6 +6818,18 @@ def test_ver_inicio_deposito_y_logistica_ya_no_dicen_proximamente():
     assert "Gerencia (Próximamente)" in respuesta.text
 
 
+def test_ver_inicio_facturacion_y_puesto_son_proximamente():
+    # Marcadores de lugar, sin funcionalidad todavía: mismo tratamiento
+    # atenuado que Gerencia.
+    respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    assert '<a class="boton-area boton-proximamente" href="/facturacion">' in respuesta.text
+    assert "Facturación (Próximamente)" in respuesta.text
+    assert '<a class="boton-area boton-proximamente" href="/puesto">' in respuesta.text
+    assert "Puesto (Próximamente)" in respuesta.text
+
+
 def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
     # Regresión: el mismo ícono que representa a cada sector en la barrita
     # de arriba tiene que estar en su tarjeta de la home, para un lenguaje
@@ -6823,7 +6837,7 @@ def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
-    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "sistema"):
+    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "facturacion", "puesto", "sistema"):
         assert SECTORES[sector]["icono"] in respuesta.text
 
 
@@ -7675,6 +7689,16 @@ def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
     assert "Gerencia" in respuesta.text
     assert "En construcción" in respuesta.text
     assert 'href="/inicio"' in respuesta.text
+
+
+def test_ver_facturacion_y_puesto_muestran_en_construccion_y_vuelven_a_inicio():
+    for url, titulo in (("/facturacion", "Facturación"), ("/puesto", "Puesto")):
+        respuesta = cliente.get(url)
+
+        assert respuesta.status_code == 200, url
+        assert titulo in respuesta.text
+        assert "En construcción" in respuesta.text
+        assert 'href="/inicio"' in respuesta.text
 
 
 def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():

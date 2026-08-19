@@ -326,6 +326,24 @@ SECTORES = {
             "</svg>"
         ),
     },
+    "facturacion": {
+        "nombre": "Facturación",
+        "url": "/facturacion",
+        "icono": (
+            '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">'
+            '<path stroke-linecap="round" stroke-linejoin="round" d="M9 14.25l6-6m4.5-3.493V21.75l-3.75-1.5-3.75 1.5-3.75-1.5-3.75 1.5V4.757c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0c1.1.128 1.907 1.077 1.907 2.185ZM9.75 9h.008v.008H9.75V9Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm4.125 4.5h.008v.008h-.008V13.5Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>'
+            "</svg>"
+        ),
+    },
+    "puesto": {
+        "nombre": "Puesto",
+        "url": "/puesto",
+        "icono": (
+            '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">'
+            '<path stroke-linecap="round" stroke-linejoin="round" d="M13.5 21v-7.5a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 .75.75V21m-4.5 0H2.36m11.14 0H18m0 0h3.64m-1.39 0V9.349M3.75 21V9.349m0 0a3.001 3.001 0 0 0 3.75-.615A2.993 2.993 0 0 0 9.75 9.75c.896 0 1.7-.393 2.25-1.016a2.993 2.993 0 0 0 2.25 1.016c.896 0 1.7-.393 2.25-1.015a3.001 3.001 0 0 0 3.75.614m-16.5 0a3.004 3.004 0 0 1-.621-4.72l1.189-1.19A1.5 1.5 0 0 1 5.378 3h13.243a1.5 1.5 0 0 1 1.06.44l1.19 1.189a3 3 0 0 1-.621 4.72M6.75 18h3.75a.75.75 0 0 0 .75-.75V13.5a.75.75 0 0 0-.75-.75H6.75a.75.75 0 0 0-.75.75v3.75c0 .414.336.75.75.75Z"/>'
+            "</svg>"
+        ),
+    },
     "sistema": {
         "nombre": "Sistema",
         "url": "/sistema",
@@ -4676,6 +4694,20 @@ def deshacer_no_ingreso_compra_ruta(request: Request, compra_id: int):
 def ver_gerencia(request: Request):
     return _renderizar_en_construccion(
         request, "Gerencia", volver_url="/inicio", volver_texto="Volver a Inicio", sector="gerencia"
+    )
+
+
+@app.get("/facturacion")
+def ver_facturacion(request: Request):
+    return _renderizar_en_construccion(
+        request, "Facturación", volver_url="/inicio", volver_texto="Volver a Inicio", sector="facturacion"
+    )
+
+
+@app.get("/puesto")
+def ver_puesto(request: Request):
+    return _renderizar_en_construccion(
+        request, "Puesto", volver_url="/inicio", volver_texto="Volver a Inicio", sector="puesto"
     )
 
 
