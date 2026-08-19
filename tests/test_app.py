@@ -4481,12 +4481,24 @@ def _datos_confirmar_foto(descartar_item_1=True, codigo_puesto="N07P41", nombre=
     return datos
 
 
+RENGLON_KIWI_ESPERADO = {
+    "articulo_id": 5,
+    "cantidad_cajones": 10.0,
+    "contenido_por_cajon": 18.0,
+    "cantidad_kilos": 180.0,
+    "cantidad_fraccion": None,
+    "importe": 5000.0,
+    "sena": None,
+    "tipo_retiro": "Clark",
+}
+
+
 def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo") as mock_aprender,
     ):
         respuesta = cliente.post(
@@ -4499,8 +4511,9 @@ def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
     # Sin foto_preview en el form (estos datos de prueba no la mandan), no
-    # hay nada que subir a Storage: foto_ruta queda en None.
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
+    # hay nada que subir a Storage: foto_ruta queda en None. Y sin
+    # carga_token (form viejo), viaja None: se guarda sin protección.
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None)
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
@@ -4525,7 +4538,7 @@ def test_confirmar_compra_foto_no_aprende_de_los_placeholders_del_lector():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo") as mock_aprender,
     ):
         respuesta = cliente.post(
@@ -4541,15 +4554,15 @@ def test_confirmar_compra_foto_no_aprende_de_los_placeholders_del_lector():
 
 def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igual():
     # El botón verde "Guardar" tiene que guardar exactamente lo mismo que
-    # "Agregar Artículos" (misma llamada a crear_compra/aprender_articulo),
-    # la única diferencia es a dónde redirige después.
+    # "Agregar Artículos" (misma llamada a crear_compras_de_comanda/
+    # aprender_articulo), la única diferencia es a dónde redirige después.
     datos = _datos_confirmar_foto()
     datos["accion"] = "guardar"
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo") as mock_aprender,
     ):
         respuesta = cliente.post(
@@ -4561,7 +4574,7 @@ def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igu
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None)
     mock_aprender.assert_called_once_with(200, "kiwi", 5)
 
 
@@ -4597,7 +4610,7 @@ def test_confirmar_compra_foto_sube_la_foto_una_vez_y_guarda_la_ruta_en_todos_lo
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
         patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-123-abcdef12.jpg") as mock_subir,
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
     ):
         respuesta = cliente.post(
@@ -4610,9 +4623,12 @@ def test_confirmar_compra_foto_sube_la_foto_una_vez_y_guarda_la_ruta_en_todos_lo
     # Se sube UNA sola vez (no una vez por renglón), con los bytes ya
     # decodificados del data URI y el código de puesto como base del nombre.
     mock_subir.assert_called_once_with(b"hello", "N07P41")
-    assert mock_crear.call_count == 2
-    for llamada in mock_crear.call_args_list:
-        assert llamada.args[-1] == "2026-08-06/n07p41-123-abcdef12.jpg"
+    # UNA sola llamada con los DOS renglones (todo-o-nada por comanda) y la
+    # misma foto_ruta para toda la comanda.
+    mock_crear.assert_called_once()
+    _, _, renglones_guardados, foto_ruta_guardada, _ = mock_crear.call_args.args
+    assert len(renglones_guardados) == 2
+    assert foto_ruta_guardada == "2026-08-06/n07p41-123-abcdef12.jpg"
 
 
 def test_confirmar_compra_foto_si_falla_la_subida_guarda_la_compra_igual_sin_foto():
@@ -4621,7 +4637,7 @@ def test_confirmar_compra_foto_si_falla_la_subida_guarda_la_compra_igual_sin_fot
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
         patch("app.main.subir_foto_comanda", side_effect=RuntimeError("Supabase Storage rechazó la subida (403)")),
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
     ):
         respuesta = cliente.post(
@@ -4633,13 +4649,13 @@ def test_confirmar_compra_foto_si_falla_la_subida_guarda_la_compra_igual_sin_fot
     # NO es un error de "no se pudo guardar la compra": la foto es un
     # extra, la falla de Storage nunca puede bloquear la carga.
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, None)
 
 
 def test_confirmar_compra_foto_codigo_puesto_invalido_muestra_error():
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda") as mock_crear,
     ):
         respuesta = cliente.post(
             "/compras/nueva/foto/confirmar",
@@ -4655,7 +4671,7 @@ def test_confirmar_compra_foto_renglon_invalido_muestra_error_con_numero():
     datos = _datos_confirmar_foto(descartar_item_1=False)
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda") as mock_crear,
     ):
         respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
 
@@ -4673,7 +4689,7 @@ def test_confirmar_compra_foto_error_incluye_sugerencia_de_proveedor_para_reinte
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
-        patch("app.main.crear_compra"),
+        patch("app.main.crear_compras_de_comanda"),
     ):
         respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
 
@@ -4688,7 +4704,7 @@ def test_confirmar_compra_foto_conserva_el_retiro_ya_elegido_al_reintentar():
     datos = _datos_confirmar_foto(descartar_item_1=False)
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.crear_compra"),
+        patch("app.main.crear_compras_de_comanda"),
     ):
         respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
 
@@ -4701,7 +4717,7 @@ def test_confirmar_compra_foto_todo_descartado_muestra_error():
     datos["item_0_descartar"] = "on"
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda") as mock_crear,
     ):
         respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
 
@@ -4720,6 +4736,112 @@ def test_confirmar_compra_foto_error_de_base_muestra_mensaje_claro():
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar la compra" in respuesta.text
+
+
+def test_confirmar_compra_foto_con_token_pasa_el_token_al_guardado():
+    datos = _datos_confirmar_foto()
+    datos["carga_token"] = "token123"
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.comanda_ya_guardada", return_value=False) as mock_ya_guardada,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
+        patch("app.main.aprender_articulo"),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_ya_guardada.assert_called_once_with("token123")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], None, "token123")
+
+
+def test_confirmar_compra_foto_reintento_con_token_ya_usado_no_guarda_de_nuevo():
+    # El corte de internet real: el server guardó y commiteó, pero el
+    # teléfono nunca vio la respuesta y manda lo mismo otra vez. No se
+    # guarda ni se sube nada de nuevo — se responde igual que el guardado
+    # original, así la pantalla avanza a la comanda siguiente sin duplicar.
+    datos = _datos_confirmar_foto(foto_preview=FOTO_PREVIEW_DE_PRUEBA)
+    datos["carga_token"] = "token123"
+    datos["accion"] = "guardar"
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.comanda_ya_guardada", return_value=True),
+        patch("app.main.subir_foto_comanda") as mock_subir,
+        patch("app.main.crear_compras_de_comanda") as mock_crear,
+        patch("app.main.aprender_articulo") as mock_aprender,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/buscar"
+    mock_subir.assert_not_called()
+    mock_crear.assert_not_called()
+    mock_aprender.assert_not_called()
+
+
+def test_confirmar_compra_foto_si_falla_el_aprendizaje_la_comanda_queda_guardada_igual():
+    # El aprendizaje es un extra: la comanda ya está commiteada cuando se
+    # aprende — reportar "no se pudo guardar" acá sería mentira (y antes
+    # pasaba exactamente eso).
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
+        patch("app.main.aprender_articulo", side_effect=Exception("se cortó la conexión")),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto/confirmar",
+            data=_datos_confirmar_foto(),
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once()
+
+
+def test_confirmar_compra_foto_conserva_el_token_al_reintentar_por_error():
+    # Si un renglón falla la validación, el form se re-muestra: el token
+    # tiene que seguir viajando para que el guardado siguiente quede
+    # protegido igual.
+    datos = _datos_confirmar_foto(descartar_item_1=False)
+    datos["carga_token"] = "token123"
+    with patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA):
+        respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
+
+    assert respuesta.status_code == 400
+    assert 'name="carga_token" value="token123"' in respuesta.text
+
+
+def test_leer_foto_comanda_multiple_incluye_un_token_de_carga_en_el_fragmento():
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/fotos/leer",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    datos = respuesta.json()
+    assert 'name="carga_token" value="' in datos["html"]
+    # El token no puede salir vacío: es la protección anti-duplicado.
+    assert 'name="carga_token" value=""' not in datos["html"]
 
 
 def _imagen_de_prueba() -> bytes:
@@ -4811,7 +4933,7 @@ def test_confirmar_compra_foto_conserva_la_foto_al_reintentar_por_error():
     datos["foto_preview"] = "data:image/jpeg;base64,ABC123"
     with (
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.crear_compra"),
+        patch("app.main.crear_compras_de_comanda"),
     ):
         respuesta = cliente.post("/compras/nueva/foto/confirmar", data=datos)
 
@@ -5192,7 +5314,7 @@ def test_confirmar_compra_foto_con_foto_ruta_ya_subida_no_vuelve_a_subir():
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
         patch("app.main.subir_foto_comanda") as mock_subir,
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
     ):
         respuesta = cliente.post(
@@ -5204,7 +5326,7 @@ def test_confirmar_compra_foto_con_foto_ruta_ya_subida_no_vuelve_a_subir():
     assert respuesta.status_code == 303
     mock_subir.assert_not_called()
     mock_crear.assert_called_once_with(
-        HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 5000.0, None, "Clark", "2026-08-15/listado-abc123.jpg"
+        HOY_DE_PRUEBA, 200, [RENGLON_KIWI_ESPERADO], "2026-08-15/listado-abc123.jpg", None
     )
 
 
@@ -5217,7 +5339,7 @@ def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
         patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-123-abcdef12.jpg") as mock_subir,
-        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
     ):
         respuesta = cliente.post(
@@ -5228,7 +5350,8 @@ def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
 
     assert respuesta.status_code == 303
     mock_subir.assert_called_once_with(b"hello", "N07P41")
-    assert mock_crear.call_args.args[-1] == "2026-08-06/n07p41-123-abcdef12.jpg"
+    # foto_ruta es el anteúltimo argumento (el último es carga_token).
+    assert mock_crear.call_args.args[-2] == "2026-08-06/n07p41-123-abcdef12.jpg"
 
 
 # --- /negociar: cuadro para negociar precios (Bajas / Subas / Resumen bajo objetivo), por cliente elegido ---

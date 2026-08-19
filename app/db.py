@@ -1144,108 +1144,231 @@ def crear_compra(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO guias_compra (fecha_operacion, proveedor_id)
-                VALUES (%s, %s)
-                ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING
-                """,
-                (fecha_operacion, proveedor_id),
+            _insertar_compra_con_guia(
+                cursor,
+                fecha_operacion,
+                articulo_id,
+                proveedor_id,
+                cantidad_cajones,
+                contenido_por_cajon,
+                cantidad_kilos,
+                cantidad_fraccion,
+                importe,
+                sena,
+                tipo_retiro,
+                foto_ruta,
+                ingreso_directo_deposito=ingreso_directo_deposito,
             )
-            cursor.execute(
-                "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
-                (fecha_operacion, proveedor_id),
-            )
-            (guia_id,) = cursor.fetchone()
+        conexion.commit()
+    finally:
+        conexion.close()
 
-            cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
-            (cantidad_existente,) = cursor.fetchone()
-            guia_punto = cantidad_existente + 1
 
-            if ingreso_directo_deposito:
-                cursor.execute(
-                    """
-                    INSERT INTO compras
-                        (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                         cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
-                         guia_id, guia_punto, estado, estado_retiro,
-                         cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
-                         procesada_el, retiro_procesado_el, retiro_origen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            'recepcionado', 'retirado', %s, %s, %s, %s, now(), now(), 'ingreso_directo')
-                    """,
-                    (
-                        fecha_operacion,
-                        articulo_id,
-                        proveedor_id,
-                        cantidad_cajones,
-                        contenido_por_cajon,
-                        cantidad_kilos,
-                        cantidad_fraccion,
-                        importe,
-                        sena,
-                        tipo_retiro,
-                        foto_ruta,
-                        guia_id,
-                        guia_punto,
-                        cantidad_cajones,
-                        contenido_por_cajon,
-                        cantidad_kilos,
-                        cantidad_fraccion,
-                    ),
-                )
-            elif tipo_retiro in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO:
-                cursor.execute(
-                    """
-                    INSERT INTO compras
-                        (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                         cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
-                         guia_id, guia_punto, estado, estado_retiro, retiro_procesado_el, retiro_origen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
-                    """,
-                    (
-                        fecha_operacion,
-                        articulo_id,
-                        proveedor_id,
-                        cantidad_cajones,
-                        contenido_por_cajon,
-                        cantidad_kilos,
-                        cantidad_fraccion,
-                        importe,
-                        sena,
-                        tipo_retiro,
-                        foto_ruta,
-                        guia_id,
-                        guia_punto,
-                        ORIGEN_RETIRO_AUTOMATICO_POR_TIPO[tipo_retiro],
-                    ),
-                )
-            else:
-                cursor.execute(
-                    """
-                    INSERT INTO compras
-                        (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                         cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
-                         guia_id, guia_punto, estado, estado_retiro)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
-                    """,
-                    (
-                        fecha_operacion,
-                        articulo_id,
-                        proveedor_id,
-                        cantidad_cajones,
-                        contenido_por_cajon,
-                        cantidad_kilos,
-                        cantidad_fraccion,
-                        importe,
-                        sena,
-                        tipo_retiro,
-                        foto_ruta,
-                        guia_id,
-                        guia_punto,
-                    ),
+def _insertar_compra_con_guia(
+    cursor,
+    fecha_operacion,
+    articulo_id: int,
+    proveedor_id: int,
+    cantidad_cajones: float,
+    contenido_por_cajon: float,
+    cantidad_kilos: float | None,
+    cantidad_fraccion: float | None,
+    importe: float | None,
+    sena: float | None,
+    tipo_retiro: str,
+    foto_ruta: str | None,
+    ingreso_directo_deposito: bool = False,
+    carga_token: str | None = None,
+) -> None:
+    """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear.
+
+    Es el cuerpo de crear_compra (ver su docstring para el significado de
+    cada campo y de las tres ramas), separado para que
+    crear_compras_de_comanda pueda insertar varios renglones en UNA sola
+    transacción: quien llama decide cuándo commitear.
+
+    carga_token solo viene en compras que salen de una comanda leída por
+    foto (ver crear_compras_de_comanda); en la carga manual y en el
+    ingreso directo va None.
+    """
+    cursor.execute(
+        """
+        INSERT INTO guias_compra (fecha_operacion, proveedor_id)
+        VALUES (%s, %s)
+        ON CONFLICT (fecha_operacion, proveedor_id) DO NOTHING
+        """,
+        (fecha_operacion, proveedor_id),
+    )
+    cursor.execute(
+        "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
+        (fecha_operacion, proveedor_id),
+    )
+    (guia_id,) = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
+    (cantidad_existente,) = cursor.fetchone()
+    guia_punto = cantidad_existente + 1
+
+    if ingreso_directo_deposito:
+        cursor.execute(
+            """
+            INSERT INTO compras
+                (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                 guia_id, guia_punto, estado, estado_retiro,
+                 cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
+                 procesada_el, retiro_procesado_el, retiro_origen)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    'recepcionado', 'retirado', %s, %s, %s, %s, now(), now(), 'ingreso_directo')
+            """,
+            (
+                fecha_operacion,
+                articulo_id,
+                proveedor_id,
+                cantidad_cajones,
+                contenido_por_cajon,
+                cantidad_kilos,
+                cantidad_fraccion,
+                importe,
+                sena,
+                tipo_retiro,
+                foto_ruta,
+                guia_id,
+                guia_punto,
+                cantidad_cajones,
+                contenido_por_cajon,
+                cantidad_kilos,
+                cantidad_fraccion,
+            ),
+        )
+    elif tipo_retiro in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO:
+        cursor.execute(
+            """
+            INSERT INTO compras
+                (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                 guia_id, guia_punto, carga_token, estado, estado_retiro, retiro_procesado_el, retiro_origen)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
+            """,
+            (
+                fecha_operacion,
+                articulo_id,
+                proveedor_id,
+                cantidad_cajones,
+                contenido_por_cajon,
+                cantidad_kilos,
+                cantidad_fraccion,
+                importe,
+                sena,
+                tipo_retiro,
+                foto_ruta,
+                guia_id,
+                guia_punto,
+                carga_token,
+                ORIGEN_RETIRO_AUTOMATICO_POR_TIPO[tipo_retiro],
+            ),
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT INTO compras
+                (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                 guia_id, guia_punto, carga_token, estado, estado_retiro)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
+            """,
+            (
+                fecha_operacion,
+                articulo_id,
+                proveedor_id,
+                cantidad_cajones,
+                contenido_por_cajon,
+                cantidad_kilos,
+                cantidad_fraccion,
+                importe,
+                sena,
+                tipo_retiro,
+                foto_ruta,
+                guia_id,
+                guia_punto,
+                carga_token,
+            ),
+        )
+
+
+def comanda_ya_guardada(carga_token: str) -> bool:
+    """True si ya hay compras guardadas con este token de carga.
+
+    Chequeo rápido para detectar el reintento de un guardado cuya
+    respuesta se perdió (el server guardó y commiteó, pero el teléfono se
+    quedó sin internet antes de ver la respuesta y vuelve a mandar lo
+    mismo). Ver crear_compras_de_comanda, que además re-chequea adentro
+    de su transacción.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM compras WHERE carga_token = %s LIMIT 1", (carga_token,))
+            return cursor.fetchone() is not None
+    finally:
+        conexion.close()
+
+
+def crear_compras_de_comanda(
+    fecha_operacion,
+    proveedor_id: int,
+    renglones: list[dict],
+    foto_ruta: str | None,
+    carga_token: str | None,
+) -> bool:
+    """Guarda TODOS los renglones de una comanda en UNA sola transacción: o entran todos, o ninguno.
+
+    Antes cada renglón se guardaba con su propia conexión y su propio
+    commit: si se cortaba internet a mitad de una comanda de 5 renglones,
+    quedaban 3 guardados y 2 perdidos, y nadie se enteraba. Acá un error
+    en cualquier renglón deja la base exactamente como estaba (ni compras
+    ni guías nuevas quedan a medias).
+
+    carga_token es un token único por comanda que genera el server al
+    armar la pantalla de revisión y viaja escondido en el form: todos los
+    renglones se guardan con él. Si al guardar ya existen compras con ese
+    token, este guardado es el REINTENTO de uno que ya entró (el teléfono
+    nunca vio la respuesta) — no se inserta nada y se devuelve False para
+    que quien llama responda como si fuera el guardado original, sin
+    duplicar. None = sin protección (forms viejos ya abiertos): se
+    inserta normal, como siempre.
+
+    Cada renglón es un dict con articulo_id, cantidad_cajones,
+    contenido_por_cajon, cantidad_kilos, cantidad_fraccion, importe, sena
+    y tipo_retiro (mismo significado que en crear_compra). Devuelve True
+    si guardó.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if carga_token is not None:
+                cursor.execute("SELECT 1 FROM compras WHERE carga_token = %s LIMIT 1", (carga_token,))
+                if cursor.fetchone() is not None:
+                    return False
+
+            for renglon in renglones:
+                _insertar_compra_con_guia(
+                    cursor,
+                    fecha_operacion,
+                    renglon["articulo_id"],
+                    proveedor_id,
+                    renglon["cantidad_cajones"],
+                    renglon["contenido_por_cajon"],
+                    renglon["cantidad_kilos"],
+                    renglon["cantidad_fraccion"],
+                    renglon["importe"],
+                    renglon["sena"],
+                    renglon["tipo_retiro"],
+                    foto_ruta,
+                    carga_token=carga_token,
                 )
         conexion.commit()
+        return True
     finally:
         conexion.close()
 

@@ -13,6 +13,7 @@ import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -31,6 +32,7 @@ from app.db import (
     buscar_compras,
     buscar_retiros,
     cerrar_disponible_generado,
+    comanda_ya_guardada,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_deshacer_recepcion_bloqueado,
     compra_tiene_deshacer_retiro_bloqueado,
@@ -41,6 +43,7 @@ from app.db import (
     crear_articulo,
     crear_cliente,
     crear_compra,
+    crear_compras_de_comanda,
     crear_envase,
     crear_ficha,
     desactivar_articulo,
@@ -2243,6 +2246,7 @@ async def subir_foto_compra(request: Request, foto: UploadFile = File(...)):
             "renglones": sugerencias["renglones"],
             "foto_preview": foto_preview,
             "error": None,
+            "carga_token": uuid4().hex,
         },
     )
 
@@ -2296,6 +2300,10 @@ async def leer_foto_comanda_multiple(foto: UploadFile = File(...)):
             "nombre_sugerido": sugerencias["nombre_sugerido"],
             "renglones": renglones,
             "foto_preview": foto_preview,
+            # Token único por comanda: viaja escondido en el form y protege
+            # contra guardados duplicados si el teléfono reintenta después
+            # de un corte de internet (ver crear_compras_de_comanda).
+            "carga_token": uuid4().hex,
         }
     )
     return JSONResponse({"ok": True, "html": html, "cantidad_renglones": len(renglones)})
@@ -2380,6 +2388,10 @@ async def leer_listado_consolidado(foto: UploadFile = File(...)):
                 "nombre_sugerido": sugerencias["nombre_sugerido"],
                 "renglones": renglones_sugeridos,
                 "foto_preview": foto_preview,
+                # Un token por grupo: cada proveedor de la planilla se
+                # guarda por separado, así que cada guardado tiene su
+                # propia protección anti-duplicado.
+                "carga_token": uuid4().hex,
             }
         )
         grupos_respuesta.append({"html": html, "cantidad_renglones": len(renglones_sugeridos)})
@@ -2422,6 +2434,10 @@ async def confirmar_compra_foto(request: Request):
     # subir nada. En comanda única y múltiples fotos este campo no existe
     # nunca, así que ahí el comportamiento no cambia.
     foto_ruta_ya_subida_texto = str(form.get("foto_ruta_ya_subida", "")).strip()
+    # Token único por comanda, generado por el server al armar la pantalla
+    # de revisión (ver crear_compras_de_comanda). Vacío en forms viejos que
+    # quedaron abiertos de antes de este cambio: se guarda sin protección.
+    carga_token = str(form.get("carga_token", "")).strip() or None
     accion = str(form.get("accion", "agregar_articulos"))
     try:
         cantidad_renglones = int(form.get("cantidad_renglones", "0") or "0")
@@ -2513,6 +2529,7 @@ async def confirmar_compra_foto(request: Request):
                 "renglones": renglones_para_mostrar,
                 "foto_preview": foto_preview_texto,
                 "error": error,
+                "carga_token": carga_token,
             },
             status_code=400,
         )
@@ -2520,62 +2537,87 @@ async def confirmar_compra_foto(request: Request):
     try:
         proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
 
-        # Subir la foto es un extra, nunca puede tirar abajo el guardado de
-        # la compra: si falla (sin conexión, credencial mala, lo que sea),
-        # se loguea completo acá y se sigue con foto_ruta = None para todos
-        # los renglones — mejor una compra guardada sin foto que ninguna
-        # compra guardada. Se sube UNA sola vez (una comanda = una foto =
-        # varios renglones), no una vez por renglón.
-        #
-        # Si foto_ruta_ya_subida vino con valor (listado consolidado, a
-        # partir del segundo grupo guardado), se usa directo y no se sube
-        # nada de nuevo — la foto de la planilla ya está en Storage,
-        # compartida por todos sus proveedores.
-        if foto_ruta_ya_subida_texto:
-            foto_ruta = foto_ruta_ya_subida_texto
-        else:
-            foto_ruta = None
-            bytes_foto = _bytes_desde_data_uri(foto_preview_texto)
-            if bytes_foto:
-                try:
-                    foto_ruta = subir_foto_comanda(bytes_foto, codigo_valor)
-                except Exception:
-                    logger.exception(
-                        "No se pudo subir la foto de la comanda a Supabase Storage (proveedor %s) "
-                        "— se guarda la compra igual, sin foto",
-                        codigo_valor,
-                    )
-                    foto_ruta = None
+        # Reintento de un guardado que YA entró: el server guardó y
+        # commiteó, pero el teléfono se quedó sin internet antes de ver la
+        # respuesta y mandó lo mismo de nuevo. No se guarda ni se sube
+        # nada otra vez — se responde igual que el guardado original, así
+        # la pantalla avanza a la comanda siguiente sin duplicar.
+        ya_guardada = carga_token is not None and comanda_ya_guardada(carga_token)
 
-        hoy = _hoy_argentina()
-        for texto_leido, valores, articulo in renglones_a_guardar:
-            total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-            if articulo["unidad_compra"] == "kilo":
-                cantidad_kilos, cantidad_fraccion = total, None
+        if not ya_guardada:
+            # Subir la foto es un extra, nunca puede tirar abajo el guardado de
+            # la compra: si falla (sin conexión, credencial mala, lo que sea),
+            # se loguea completo acá y se sigue con foto_ruta = None para todos
+            # los renglones — mejor una compra guardada sin foto que ninguna
+            # compra guardada. Se sube UNA sola vez (una comanda = una foto =
+            # varios renglones), no una vez por renglón.
+            #
+            # Si foto_ruta_ya_subida vino con valor (listado consolidado, a
+            # partir del segundo grupo guardado), se usa directo y no se sube
+            # nada de nuevo — la foto de la planilla ya está en Storage,
+            # compartida por todos sus proveedores.
+            if foto_ruta_ya_subida_texto:
+                foto_ruta = foto_ruta_ya_subida_texto
             else:
-                cantidad_kilos, cantidad_fraccion = None, total
+                foto_ruta = None
+                bytes_foto = _bytes_desde_data_uri(foto_preview_texto)
+                if bytes_foto:
+                    try:
+                        foto_ruta = subir_foto_comanda(bytes_foto, codigo_valor)
+                    except Exception:
+                        logger.exception(
+                            "No se pudo subir la foto de la comanda a Supabase Storage (proveedor %s) "
+                            "— se guarda la compra igual, sin foto",
+                            codigo_valor,
+                        )
+                        foto_ruta = None
 
-            crear_compra(
-                hoy,
-                valores["articulo_id"],
-                proveedor_id,
-                valores["cantidad_cajones"],
-                valores["contenido_por_cajon"],
-                cantidad_kilos,
-                cantidad_fraccion,
-                valores["importe"],
-                valores["sena"],
-                valores["tipo_retiro"],
-                foto_ruta,
-            )
-            # Solo se aprende de texto REALMENTE leído de la comanda: ni de
-            # renglones agregados a mano (texto vacío) ni de los placeholders
-            # que el lector devuelve cuando no pudo leer el artículo — si no,
-            # "completar articulo" queda asociado a un artículo cualquiera y
-            # envenena las sugerencias futuras de ese proveedor.
-            texto_aprendible = normalizar_texto(texto_leido)
-            if texto_aprendible and texto_aprendible not in TEXTOS_PLACEHOLDER_LECTOR:
-                aprender_articulo(proveedor_id, texto_aprendible, valores["articulo_id"])
+            hoy = _hoy_argentina()
+            renglones_comanda = []
+            for texto_leido, valores, articulo in renglones_a_guardar:
+                total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
+                if articulo["unidad_compra"] == "kilo":
+                    cantidad_kilos, cantidad_fraccion = total, None
+                else:
+                    cantidad_kilos, cantidad_fraccion = None, total
+                renglones_comanda.append(
+                    {
+                        "articulo_id": valores["articulo_id"],
+                        "cantidad_cajones": valores["cantidad_cajones"],
+                        "contenido_por_cajon": valores["contenido_por_cajon"],
+                        "cantidad_kilos": cantidad_kilos,
+                        "cantidad_fraccion": cantidad_fraccion,
+                        "importe": valores["importe"],
+                        "sena": valores["sena"],
+                        "tipo_retiro": valores["tipo_retiro"],
+                    }
+                )
+
+            # Todos los renglones de la comanda en UNA transacción: si algo
+            # falla a mitad de camino (corte de internet incluido), no queda
+            # nada guardado a medias — se reintenta la comanda entera.
+            crear_compras_de_comanda(hoy, proveedor_id, renglones_comanda, foto_ruta, carga_token)
+
+            for texto_leido, valores, _ in renglones_a_guardar:
+                # Solo se aprende de texto REALMENTE leído de la comanda: ni de
+                # renglones agregados a mano (texto vacío) ni de los placeholders
+                # que el lector devuelve cuando no pudo leer el artículo — si no,
+                # "completar articulo" queda asociado a un artículo cualquiera y
+                # envenena las sugerencias futuras de ese proveedor.
+                #
+                # Y el aprendizaje va DESPUÉS del guardado y nunca lo pisa: la
+                # comanda ya está commiteada — si esto falla se loguea y listo,
+                # reportar acá "no se pudo guardar" sería mentira.
+                texto_aprendible = normalizar_texto(texto_leido)
+                if texto_aprendible and texto_aprendible not in TEXTOS_PLACEHOLDER_LECTOR:
+                    try:
+                        aprender_articulo(proveedor_id, texto_aprendible, valores["articulo_id"])
+                    except Exception:
+                        logger.exception(
+                            "No se pudo guardar el aprendizaje de '%s' (proveedor %s) — la comanda quedó guardada igual",
+                            texto_aprendible,
+                            proveedor_id,
+                        )
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
@@ -2588,6 +2630,7 @@ async def confirmar_compra_foto(request: Request):
                 "renglones": renglones_para_mostrar,
                 "foto_preview": foto_preview_texto,
                 "error": f"No se pudo guardar la compra: {error_db}",
+                "carga_token": carga_token,
             },
             status_code=500,
         )

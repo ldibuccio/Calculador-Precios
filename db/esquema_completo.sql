@@ -197,6 +197,7 @@ create table compras (
     cantidad_cajones_retirada  numeric,
     cantidad_cajones_rechazada numeric,
     motivo_rechazo             text,
+    carga_token                text,
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
     constraint compras_cantidad_cargada_check check (cantidad_kilos is not null or cantidad_fraccion is not null)
 );
@@ -212,6 +213,9 @@ comment on column compras.foto_ruta is 'Ruta de la foto de la comanda en el buck
 comment on column compras.cantidad_cajones_retirada is 'Cajones que Logística anotó como efectivamente retirados del puesto (opcional). Registro aparte: nunca pisa cantidad_cajones ni cantidad_cajones_real, y no entra en ningún cálculo.';
 comment on column compras.cantidad_cajones_rechazada is 'Bultos devueltos al proveedor en un rechazo parcial de Recepción. Solo registro: la cantidad aceptada ya queda en cantidad_cajones_real y es la que usa todo el costeo. No entra en ningún cálculo.';
 comment on column compras.motivo_rechazo is 'Motivo del rechazo parcial (texto libre, opcional).';
+comment on column compras.carga_token is 'Token único por comanda leída por foto, generado por el server al armar la pantalla de revisión. Todos los renglones de una misma comanda comparten el token: si el teléfono reintenta un guardado cuya respuesta se perdió (corte de internet), el server lo reconoce y no duplica nada. NULL en compras cargadas a mano o anteriores a este cambio.';
+
+create index compras_carga_token_idx on compras (carga_token);
 comment on column compras.contenido_por_cajon_real is 'Contenido por cajón real. Lo tipea Depósito directo (pesa/cuenta un bulto, no toda la carga).';
 
 -- ----------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from app.db import (
     buscar_compras,
     buscar_retiros,
     cerrar_disponible_generado,
+    comanda_ya_guardada,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_deshacer_recepcion_bloqueado,
     compra_tiene_deshacer_retiro_bloqueado,
@@ -17,6 +18,7 @@ from app.db import (
     corregir_recepcion_compra,
     crear_cliente,
     crear_compra,
+    crear_compras_de_comanda,
     deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
     crear_envase,
@@ -272,7 +274,8 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
     assert "guia_id" in consulta_insert
     assert "guia_punto" in consulta_insert
     assert "'pendiente'" in consulta_insert
-    assert parametros_insert[-2:] == (105, 1)  # guia_id, guia_punto
+    # guia_id, guia_punto, carga_token (None: carga manual, sin token)
+    assert parametros_insert[-3:] == (105, 1, None)
     conexion.commit.assert_called_once()
 
 
@@ -292,7 +295,107 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
         )
 
     _, parametros_insert = cursor.execute.call_args_list[3].args
-    assert parametros_insert[-2:] == (105, 3)  # guia_id, guia_punto
+    assert parametros_insert[-3:] == (105, 3, None)  # guia_id, guia_punto, carga_token
+
+
+def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit():
+    # Dos renglones de la misma comanda: todo en UNA conexión y UN commit
+    # (todo-o-nada) — antes cada renglón commiteaba por su cuenta y un corte
+    # de internet dejaba la comanda guardada a medias.
+    conexion, cursor = _conexion_falsa(
+        [
+            None,  # SELECT 1 por carga_token: no existe, se guarda normal
+            (105,), (0,),  # guía y punto del renglón 1
+            (105,), (1,),  # guía y punto del renglón 2
+        ]
+    )
+    renglones = [
+        {
+            "articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
+            "cantidad_kilos": 180, "cantidad_fraccion": None,
+            "importe": 5000.0, "sena": None, "tipo_retiro": "Clark",
+        },
+        {
+            "articulo_id": 6, "cantidad_cajones": 3, "contenido_por_cajon": 12,
+            "cantidad_kilos": None, "cantidad_fraccion": 36,
+            "importe": None, "sena": None, "tipo_retiro": "Clark",
+        },
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardo = crear_compras_de_comanda(
+            date(2026, 8, 19), 200, renglones, "2026-08-19/n07p41-1.jpg", "token123"
+        )
+
+    assert guardo is True
+    conexion.commit.assert_called_once()
+    inserts_compras = [
+        llamada for llamada in cursor.execute.call_args_list if "INSERT INTO compras" in llamada.args[0]
+    ]
+    assert len(inserts_compras) == 2
+    # Todos los renglones llevan el mismo carga_token (último parámetro de
+    # la rama normal) y la misma foto.
+    for llamada in inserts_compras:
+        assert llamada.args[1][-1] == "token123"
+        assert "2026-08-19/n07p41-1.jpg" in llamada.args[1]
+
+
+def test_crear_compras_de_comanda_con_token_ya_usado_no_inserta_nada():
+    # El reintento de un guardado que YA entró (el teléfono nunca vio la
+    # respuesta): no se inserta nada y se devuelve False, para responder
+    # como si fuera el guardado original sin duplicar la comanda.
+    conexion, cursor = _conexion_falsa([(1,)])  # SELECT 1 por carga_token: ya existe
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardo = crear_compras_de_comanda(
+            date(2026, 8, 19), 200,
+            [{"articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
+              "cantidad_kilos": 180, "cantidad_fraccion": None,
+              "importe": 5000.0, "sena": None, "tipo_retiro": "Clark"}],
+            None, "token123",
+        )
+
+    assert guardo is False
+    assert cursor.execute.call_count == 1  # solo el SELECT del token
+    conexion.commit.assert_not_called()
+
+
+def test_crear_compras_de_comanda_sin_token_guarda_sin_chequear():
+    # Forms viejos que quedaron abiertos de antes del cambio: sin token no
+    # hay chequeo anti-duplicado, se guarda directo (como siempre).
+    conexion, cursor = _conexion_falsa([(105,), (0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardo = crear_compras_de_comanda(
+            date(2026, 8, 19), 200,
+            [{"articulo_id": 5, "cantidad_cajones": 10, "contenido_por_cajon": 18,
+              "cantidad_kilos": 180, "cantidad_fraccion": None,
+              "importe": 5000.0, "sena": None, "tipo_retiro": "Clark"}],
+            None, None,
+        )
+
+    assert guardo is True
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert not any("carga_token = %s" in consulta and "SELECT" in consulta for consulta in consultas)
+    conexion.commit.assert_called_once()
+
+
+def test_comanda_ya_guardada_consulta_por_el_token():
+    conexion, cursor = _conexion_falsa([(1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert comanda_ya_guardada("token123") is True
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SELECT 1 FROM compras WHERE carga_token = %s" in consulta
+    assert parametros == ("token123",)
+
+
+def test_comanda_ya_guardada_devuelve_false_si_no_existe():
+    conexion, cursor = _conexion_falsa([None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert comanda_ya_guardada("token123") is False
 
 
 def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():

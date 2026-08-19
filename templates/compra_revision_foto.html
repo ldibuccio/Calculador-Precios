@@ -205,6 +205,9 @@
   <form method="post" action="/compras/nueva/foto/confirmar" id="form-confirmar-foto">
     <input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
     <input type="hidden" name="foto_preview" value="{{ foto_preview }}">
+    <!-- Token único por comanda: si el guardado se reintenta (corte de
+         internet), el server lo reconoce y no duplica nada. -->
+    <input type="hidden" name="carga_token" value="{{ carga_token or "" }}">
 
     {% include "_fragmento_proveedor_comanda.html" %}
 
