@@ -8519,3 +8519,40 @@ def test_consultar_retiros_ofrece_cooperativa_en_el_filtro_de_tipo():
 
     assert 'value="Cooperativa"' in respuesta.text
     assert 'value="Carro"' in respuesta.text
+
+
+def test_editar_compra_muestra_ver_foto_si_la_compra_tiene_foto():
+    compra = {
+        "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
+        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": "2026/x.jpg",
+        "estado": None, "estado_retiro": "pendiente",
+    }
+    with (
+        patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert 'href="/compras/30/foto"' in respuesta.text
+    assert "Ver foto de la comanda" in respuesta.text
+
+
+def test_editar_compra_sin_foto_no_muestra_el_boton():
+    compra = {
+        "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
+        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": None,
+        "estado": None, "estado_retiro": "pendiente",
+    }
+    with (
+        patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert "Ver foto de la comanda" not in respuesta.text
