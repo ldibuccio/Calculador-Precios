@@ -221,6 +221,18 @@ def test_agregar_articulo_con_grupo_valido_lo_guarda():
     mock_crear.assert_called_once_with("Kiwi", "kilo", None, "fruta")
 
 
+def test_agregar_articulo_con_grupo_hoja_lo_guarda():
+    with patch("app.main.crear_articulo") as mock_crear:
+        respuesta = cliente.post(
+            "/articulos/nuevo",
+            data={"nombre": "Rúcula", "unidad_compra": "unidad", "contenido_referencia": "", "grupo": "hoja"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("Rúcula", "unidad", None, "hoja")
+
+
 def test_agregar_articulo_con_grupo_pesada_lo_guarda():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(

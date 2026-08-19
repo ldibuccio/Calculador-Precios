@@ -103,7 +103,7 @@ from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
-GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "pesada"}
+GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "hoja", "pesada"}
 TIPOS_RETIRO_VALIDOS = {"Clark", "Carro", "Pases"}
 
 # Textos legibles para la pantalla de Detalle de una compra (ver ver_detalle_compra).
@@ -135,7 +135,7 @@ MESES_ABREVIADOS = {
 # vez que se arma uno para un cliente, sin ningún Disponible previo). Los
 # renglones tipeados a mano (sin articulo_id, sin grupo) van al final. De
 # ahí en más el orden queda fijo en disponibles_detalle.orden.
-ORDEN_GRUPOS_DISPONIBLES = ["fruta", "hortaliza", "pesada"]
+ORDEN_GRUPOS_DISPONIBLES = ["fruta", "hortaliza", "hoja", "pesada"]
 
 NOMBRE_EMPRESA_ENV_VAR = "NOMBRE_EMPRESA"
 # Mismo código para varias empresas (cada una con su propia base): el
@@ -535,7 +535,7 @@ def _validar_grupo(valor: str) -> tuple[str | None, str | None]:
     if not valor:
         return None, None
     if valor not in GRUPOS_ARTICULO_VALIDOS:
-        return "Elegí un grupo válido (fruta, hortaliza o pesada).", None
+        return "Elegí un grupo válido (fruta, hortaliza, hoja o pesada).", None
     return None, valor
 
 
@@ -1542,7 +1542,7 @@ def ver_armar_listado_compras(request: Request):
 
 
 def _orden_grupo_disponible(grupo: str | None) -> int:
-    """Posición del grupo en la precarga desde fichas_logistica (fruta, hortaliza, pesada, el resto al final)."""
+    """Posición del grupo en la precarga desde fichas_logistica (fruta, hortaliza, hoja, pesada, el resto al final)."""
     try:
         return ORDEN_GRUPOS_DISPONIBLES.index(grupo)
     except ValueError:
@@ -1552,7 +1552,7 @@ def _orden_grupo_disponible(grupo: str | None) -> int:
 def _renglones_iniciales_desde_fichas(fichas: list[dict]) -> list[dict]:
     """Primera vez que se arma un Disponible para un cliente (nunca tuvo uno): un renglón por cada
     ficha que ya tenga codigo_cliente o nombre_cliente cargado (las que no, se agregan a mano cuando
-    hagan falta, desde "Agregar desde el catálogo"), en orden fruta/hortaliza/pesada/sin clasificar,
+    hagan falta, desde "Agregar desde el catálogo"), en orden fruta/hortaliza/hoja/pesada/sin clasificar,
     cantidad en 0 (no hay nada previo que sugerir)."""
     fichas_con_alias = [f for f in fichas if f.get("codigo_cliente") or f.get("nombre_cliente")]
     fichas_ordenadas = sorted(fichas_con_alias, key=lambda f: (_orden_grupo_disponible(f.get("articulo_grupo")), f["articulo_nombre"]))

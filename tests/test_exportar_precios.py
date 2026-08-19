@@ -11,6 +11,7 @@ FILAS_DE_PRUEBA = [
     {"articulo_nombre": "Manzana Red", "grupo": "fruta", "precio": 890.0, "unidad": "kilo", "es_nuevo": True},
     {"articulo_nombre": "Morrón Rojo", "grupo": "hortaliza", "precio": 1200.0, "unidad": "kilo", "es_nuevo": False},
     {"articulo_nombre": "Tomate Cherry", "grupo": "hortaliza", "precio": 500.0, "unidad": "kilo", "es_nuevo": True},
+    {"articulo_nombre": "Rúcula", "grupo": "hoja", "precio": 700.0, "unidad": "unidad", "es_nuevo": False},
     {"articulo_nombre": "Cubeta X", "grupo": "pesada", "precio": 15000.0, "unidad": "cubeta", "es_nuevo": False},
     {"articulo_nombre": "Articulo Raro", "grupo": None, "precio": 100.0, "unidad": None, "es_nuevo": False},
 ]
@@ -61,11 +62,11 @@ def test_generar_pdf_titulo_usa_el_nombre_de_empresa_recibido():
     assert "Frutamax" not in texto
 
 
-def test_generar_pdf_secciones_en_el_orden_fruta_hortaliza_pesada_sin_clasificar():
+def test_generar_pdf_secciones_en_el_orden_fruta_hortaliza_hoja_pesada_sin_clasificar():
     pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     texto = _texto_del_pdf(pdf_bytes)
 
-    posiciones = [texto.index(titulo) for titulo in ("FRUTA", "HORTALIZA", "PESADA", "SIN CLASIFICAR")]
+    posiciones = [texto.index(titulo) for titulo in ("FRUTA", "HORTALIZA", "HOJA", "PESADA", "SIN CLASIFICAR")]
     assert posiciones == sorted(posiciones)
 
 
@@ -145,11 +146,12 @@ def test_generar_pdf_cada_grupo_empieza_en_su_propia_pagina():
     pdf_bytes = generar_pdf_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     paginas = _textos_por_pagina(pdf_bytes)
 
-    assert len(paginas) == 4  # fruta, hortaliza, pesada, sin clasificar
+    assert len(paginas) == 5  # fruta, hortaliza, hoja, pesada, sin clasificar
     assert "FRUTA" in paginas[0] and "HORTALIZA" not in paginas[0]
     assert "HORTALIZA" in paginas[1] and "FRUTA" not in paginas[1] and "PESADA" not in paginas[1]
-    assert "PESADA" in paginas[2] and "HORTALIZA" not in paginas[2]
-    assert "SIN CLASIFICAR" in paginas[3]
+    assert "HOJA" in paginas[2] and "HORTALIZA" not in paginas[2] and "PESADA" not in paginas[2]
+    assert "PESADA" in paginas[3] and "HOJA" not in paginas[3]
+    assert "SIN CLASIFICAR" in paginas[4]
 
 
 def test_generar_pdf_repite_encabezado_en_cada_pagina():

@@ -32,12 +32,13 @@ VERDE_ENCABEZADO_HEX = "2E8C57"  # equivalente aproximado de (0.18, 0.55, 0.34) 
 ROJO_PRECIO_NUEVO_HEX = "CC1A1A"
 ROJO_FONDO_CLARO_HEX = "FCE4E4"
 
-# Orden fijo de las secciones — "pesada" se suma a fruta/hortaliza; lo que
-# no tiene ninguno de los 3 grupos válidos cae en "Sin clasificar", al
-# final, para que se note en vez de perderse.
+# Orden fijo de las secciones. Lo que no tiene ninguno de los grupos
+# válidos cae en "Sin clasificar", al final, para que se note en vez de
+# perderse.
 ORDEN_GRUPOS = [
     ("fruta", "FRUTA"),
     ("hortaliza", "HORTALIZA"),
+    ("hoja", "HOJA"),
     ("pesada", "PESADA"),
     (None, "SIN CLASIFICAR"),
 ]
@@ -58,10 +59,10 @@ def _formatear_moneda(valor) -> str:
 
 
 def _agrupar_y_ordenar_filas(filas: list[dict]) -> dict:
-    """Agrupa las filas por grupo (fruta/hortaliza/pesada/sin clasificar) y ordena cada sección por nombre."""
-    grupos: dict = {"fruta": [], "hortaliza": [], "pesada": [], None: []}
+    """Agrupa las filas por grupo (fruta/hortaliza/hoja/pesada/sin clasificar) y ordena cada sección por nombre."""
+    grupos: dict = {clave: [] for clave, _ in ORDEN_GRUPOS}
     for fila in filas:
-        clave = fila.get("grupo") if fila.get("grupo") in ("fruta", "hortaliza", "pesada") else None
+        clave = fila.get("grupo") if fila.get("grupo") in grupos else None
         grupos[clave].append(fila)
     for lista_filas in grupos.values():
         lista_filas.sort(key=lambda f: f["articulo_nombre"])
