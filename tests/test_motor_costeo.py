@@ -318,7 +318,7 @@ def test_tomate_redondo_envase_chico():
     )
     assert resultado_costo == pytest.approx(2431.01, abs=0.01)
     assert resultado_precio == pytest.approx(2885.55, abs=0.01)
-    assert resultado_utilidad == pytest.approx(0.7277, abs=0.0001)
+    assert resultado_utilidad == pytest.approx(0.7784, abs=0.0001)
 
 
 def test_mandarina_envase_grande():
@@ -343,7 +343,7 @@ def test_mandarina_envase_grande():
     )
     assert resultado_costo == pytest.approx(656.99, abs=0.01)
     assert resultado_precio == pytest.approx(763.94, abs=0.01)
-    assert resultado_utilidad == pytest.approx(0.3699, abs=0.0001)
+    assert resultado_utilidad == pytest.approx(0.4544, abs=0.0001)
 
 
 def test_manzana_granny_sin_envase():
@@ -488,8 +488,9 @@ def test_utilidad_real_multi_concepto_morron_rojo():
         tasas_restan=[0.23],
     )
 
-    assert resultado == pytest.approx(0.254815, abs=0.000001)
-    assert round(resultado * 100, 2) == 25.48
+    # Utilidad solo sobre la mercadería: (27104 - 1600 - 20000) / 20000.
+    assert resultado == pytest.approx(0.2752, abs=0.000001)
+    assert round(resultado * 100, 2) == 27.52
 
 
 def test_utilidad_real_multi_concepto_precio_vigente_por_debajo_del_costo_da_negativa():
@@ -504,7 +505,7 @@ def test_utilidad_real_multi_concepto_precio_vigente_por_debajo_del_costo_da_neg
     )
 
     assert resultado < 0
-    assert resultado == pytest.approx(-0.465278, abs=0.000001)
+    assert resultado == pytest.approx(-0.5025, abs=0.000001)
 
 
 def test_utilidad_real_multi_concepto_con_tasa_que_suma():
@@ -573,10 +574,9 @@ def test_costo_objetivo_multi_concepto_ida_y_vuelta_exacta_con_precio_sugerido_y
         )
         assert utilidad_de_vuelta == pytest.approx(caso["utilidad"]), caso
 
-        # Contra precio_sugerido (que aplica la utilidad solo a la
-        # mercadería, no al envase): sin envase coincide exacto; con
-        # envase, el precio que sugeriría con este costo queda apenas por
-        # debajo del vigente — nunca por arriba.
+        # Y contra precio_sugerido también, exacto: las tres funciones
+        # usan la misma regla (la utilidad se gana solo sobre la
+        # mercadería, el envase se recupera sin margen).
         precio_de_vuelta = precio_sugerido_multi_concepto(
             costo_producto=costo_objetivo,
             costo_envase=caso["envase"],
@@ -584,10 +584,7 @@ def test_costo_objetivo_multi_concepto_ida_y_vuelta_exacta_con_precio_sugerido_y
             tasas_restan=caso["restan"],
             utilidad=caso["utilidad"],
         )
-        if caso["envase"] == 0 or caso["utilidad"] == 0:
-            assert precio_de_vuelta == pytest.approx(caso["precio"]), caso
-        else:
-            assert precio_de_vuelta < caso["precio"], caso
+        assert precio_de_vuelta == pytest.approx(caso["precio"]), caso
 
 
 def test_costo_objetivo_multi_concepto_ejemplo_manzana_el_objetivo_por_unidad_no_cambia_con_el_kilaje():

@@ -224,9 +224,9 @@
   <script>
     // Recalcula el objetivo del bulto al editar el kilaje, 100% en el
     // navegador — la MISMA cuenta que el servidor (ver core/motor_costeo.py
-    // costo_objetivo_multi_concepto): objetivo_unidad = entra / (1 +
-    // utilidad) - envase (el envase se resta después de dividir, porque la
-    // utilidad del sistema se mide sobre mercadería + envase);
+    // costo_objetivo_multi_concepto): objetivo_unidad = (entra - envase) /
+    // (1 + utilidad). La utilidad se gana solo sobre la mercadería: el
+    // envase se recupera del precio sin margen, y recién después se divide.
     // objetivo_bulto = objetivo_unidad * kilos. Para envase variable, el
     // corte es el contenido de la ficha (umbral): hasta ahí es descartable
     // (sin envase), más es caja chica.
@@ -254,7 +254,7 @@
           return;
         }
         var envase = (umbral !== null && kilos <= umbral) ? 0 : envaseUnidad;
-        var objetivoUnidad = entra / (1 + utilidad) - envase;
+        var objetivoUnidad = (entra - envase) / (1 + utilidad);
         bulto.textContent = formatearMoneda(objetivoUnidad * kilos);
         unidad.textContent = "= " + formatearMoneda(objetivoUnidad) + "/" + sufijo;
       });

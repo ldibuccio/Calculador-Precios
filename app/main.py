@@ -3625,11 +3625,12 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
     # reciente (los mismos que ya trae contexto_negociacion["todos"]).
     simulacion_por_articulo = {
         articulo["articulo_id"]: {
-            "costo_total_unidad_venta": articulo["costo_total_unidad_venta"],
+            "costo_producto_unidad_venta": articulo["costo_actual"],
+            "costo_envase_unidad_venta": articulo["costo_envase_unidad_venta"],
             "denominador_tasas": articulo["denominador_tasas"],
         }
         for articulo in contexto_negociacion["todos"]
-        if articulo["costo_total_unidad_venta"] is not None
+        if articulo["costo_actual"] is not None
     }
     articulos_cliente = [
         {
@@ -3637,7 +3638,8 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
             "articulo_nombre": ficha["articulo_nombre"],
             "precio_vigente": precio_por_articulo.get(ficha["articulo_id"]),
             **simulacion_por_articulo.get(
-                ficha["articulo_id"], {"costo_total_unidad_venta": None, "denominador_tasas": None}
+                ficha["articulo_id"],
+                {"costo_producto_unidad_venta": None, "costo_envase_unidad_venta": None, "denominador_tasas": None},
             ),
         }
         for ficha in fichas

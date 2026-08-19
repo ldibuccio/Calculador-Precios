@@ -406,7 +406,8 @@
         id: {{ a.articulo_id }},
         nombre: "{{ a.articulo_nombre }}",
         precioVigente: {{ a.precio_vigente if a.precio_vigente is not none else "null" }},
-        costoTotalUnidadVenta: {{ a.costo_total_unidad_venta if a.costo_total_unidad_venta is not none else "null" }},
+        costoProductoUnidadVenta: {{ a.costo_producto_unidad_venta if a.costo_producto_unidad_venta is not none else "null" }},
+        costoEnvaseUnidadVenta: {{ a.costo_envase_unidad_venta if a.costo_envase_unidad_venta is not none else "null" }},
         denominadorTasas: {{ a.denominador_tasas if a.denominador_tasas is not none else "null" }},
       },{% endfor %}
     ];
@@ -480,14 +481,15 @@
     // Simulación: precio hipotético para el artículo elegido arriba, sin
     // relación con "Precio nuevo" (eso es lo que se va a guardar; esto es
     // solo para probar números antes de decidir). Todo el cálculo es en
-    // el navegador con lo que ya trae ARTICULOS_LISTA (costoTotalUnidadVenta
-    // y denominadorTasas) — misma fórmula que utilidad_real_multi_concepto
-    // en core/motor_costeo.py, sin volver a pedirle nada al servidor.
+    // el navegador con lo que ya trae ARTICULOS_LISTA (costoProductoUnidadVenta,
+    // costoEnvaseUnidadVenta y denominadorTasas) — misma fórmula que
+    // utilidad_real_multi_concepto en core/motor_costeo.py: la utilidad se
+    // gana solo sobre la mercadería, el envase se recupera sin margen.
     function mostrarRecuadroSimulacion() {
       document.getElementById("recuadro-simulacion").style.display = "block";
       document.getElementById("simulacion-articulo-nombre").textContent = " — " + articuloElegido.nombre;
 
-      const tieneCosto = articuloElegido.costoTotalUnidadVenta !== null && articuloElegido.denominadorTasas !== null;
+      const tieneCosto = articuloElegido.costoProductoUnidadVenta !== null && articuloElegido.denominadorTasas !== null;
       document.getElementById("simulacion-sin-costo").style.display = tieneCosto ? "none" : "block";
       document.getElementById("simulacion-con-costo").style.display = tieneCosto ? "block" : "none";
 
@@ -504,14 +506,15 @@
       const campoPrecio = document.getElementById("precio_simulado");
       const precio = parseFloat(campoPrecio.value);
 
-      if (!articuloElegido || articuloElegido.costoTotalUnidadVenta === null || !campoPrecio.value || isNaN(precio) || precio <= 0) {
+      if (!articuloElegido || articuloElegido.costoProductoUnidadVenta === null || !campoPrecio.value || isNaN(precio) || precio <= 0) {
         resultado.textContent = "—";
         resultado.className = "";
         return;
       }
 
       const entra = precio * articuloElegido.denominadorTasas;
-      const utilidad = (entra - articuloElegido.costoTotalUnidadVenta) / articuloElegido.costoTotalUnidadVenta;
+      const utilidad = (entra - articuloElegido.costoEnvaseUnidadVenta - articuloElegido.costoProductoUnidadVenta)
+        / articuloElegido.costoProductoUnidadVenta;
       resultado.textContent = (utilidad * 100).toFixed(1).replace(".", ",") + "%";
       resultado.className = utilidad < 0 ? "utilidad-negativa" : "";
     }

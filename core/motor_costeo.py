@@ -216,24 +216,20 @@ def costo_objetivo_multi_concepto(
     tasas_restan: list[float],
     utilidad: float,
 ) -> float:
-    """A cuánto comprar COMO MÁXIMO para llegar a la utilidad objetivo — la inversa exacta de utilidad_real_multi_concepto.
+    """A cuánto comprar COMO MÁXIMO para llegar a la utilidad objetivo — la inversa exacta de las otras dos.
 
-    En vez de partir del costo para calcular el precio, se parte del
-    precio_vigente ya cargado y se despeja el costo de mercadería que deja
-    exactamente la utilidad objetivo:
+    La utilidad se gana SOLO sobre la mercadería (regla de negocio, ver
+    utilidad_real_multi_concepto): al precio vigente se le aplican las
+    tasas, se le recupera el envase, y lo que queda dividido por
+    (1 + utilidad) es el costo máximo de mercadería:
 
-        costo_objetivo = precio_vigente * (1 + suma(tasas_suman) - suma(tasas_restan))
-                          / (1 + utilidad) - costo_envase
+        costo_objetivo = (precio_vigente * (1 + suma(tasas_suman) - suma(tasas_restan))
+                          - costo_envase) / (1 + utilidad)
 
-    El envase se resta DESPUÉS de dividir (no antes) a propósito: la
-    utilidad que muestra todo el sistema (utilidad_real_multi_concepto, la
-    de Márgenes por Artículo) se mide sobre el costo total, mercadería MÁS
-    envase. Con este despeje, comprar exactamente a costo_objetivo deja esa
-    utilidad clavada en la objetivo — fijado por test. (Restar el envase
-    antes de dividir invertiría precio_sugerido_multi_concepto, que aplica
-    la utilidad solo a la mercadería: comprando a ese otro objetivo, la
-    utilidad medida quedaría un poco POR DEBAJO de la objetivo y el
-    artículo nunca saldría de la lista de "bajo objetivo".)
+    Garantía de ida y vuelta (fijada por test): comprando exactamente a
+    costo_objetivo, precio_sugerido_multi_concepto devuelve el
+    precio_vigente y utilidad_real_multi_concepto devuelve la utilidad
+    objetivo, clavados los dos — las tres funciones usan la misma regla.
 
     precio_vigente y costo_envase van por unidad de venta (kilo/unidad/
     cubeta), y el resultado también: costo máximo por unidad de venta.
@@ -256,7 +252,7 @@ def costo_objetivo_multi_concepto(
             f"({suma_tasas_restan}) = {denominador}: no puede ser cero ni negativo"
         )
 
-    return precio_vigente * denominador / (1 + utilidad) - costo_envase
+    return (precio_vigente * denominador - costo_envase) / (1 + utilidad)
 
 
 def utilidad_real(
@@ -267,11 +263,11 @@ def utilidad_real(
     cantidad_envases: float,
     descuento: float,
 ) -> float:
-    costo_total = costo_bulto + costo_envase * cantidad_envases
-    if costo_total == 0:
-        raise ValueError("el costo total no puede ser cero")
+    """Versión vieja de un solo descuento — misma regla que utilidad_real_multi_concepto: la utilidad se mide SOLO sobre la mercadería."""
+    if costo_bulto == 0:
+        raise ValueError("el costo de la mercadería no puede ser cero")
     ingreso_neto = precio_dia * (1 - descuento) * kg_bulto
-    return (ingreso_neto - costo_total) / costo_total
+    return (ingreso_neto - costo_envase * cantidad_envases - costo_bulto) / costo_bulto
 
 
 def utilidad_real_multi_concepto(
@@ -281,27 +277,31 @@ def utilidad_real_multi_concepto(
     tasas_suman: list[float],
     tasas_restan: list[float],
 ) -> float:
-    """Utilidad que deja el precio vigente hoy, con listas abiertas de conceptos — la inversa de precio_sugerido_multi_concepto.
+    """Utilidad que deja el precio vigente hoy, con listas abiertas de conceptos — la inversa exacta de precio_sugerido_multi_concepto.
+
+    REGLA DE NEGOCIO (19/08/2026): la utilidad se gana SOLO sobre la
+    mercadería — nunca sobre el envase ni ningún otro insumo. El envase es
+    un costo que se recupera tal cual (pasa de largo), no una base sobre la
+    que se margina. Es el mismo criterio que ya aplicaba
+    precio_sugerido_multi_concepto (utilidad solo sobre costo_producto);
+    esta función medía antes la utilidad sobre mercadería + envase y estaba
+    MAL — quedaron las dos coherentes.
 
     Mismas listas de tasas que precio_sugerido_multi_concepto, aplicadas al
-    revés: en vez de partir del costo para despejar el precio, acá se parte
-    del precio_vigente ya cargado, se le aplican las tasas del cliente, y se
-    compara contra el costo total (mercadería + envase, sin separar la
-    utilidad objetivo — acá la utilidad es lo que se está midiendo, no un
-    dato de entrada):
+    revés: se parte del precio_vigente ya cargado, se le aplican las tasas
+    del cliente, se recupera el envase, y lo que queda contra la mercadería
+    es la utilidad:
 
-        costo_total = costo_producto + costo_envase
         entra = precio_vigente * (1 + suma(tasas_suman) - suma(tasas_restan))
-        utilidad = (entra - costo_total) / costo_total
+        utilidad = (entra - costo_envase - costo_producto) / costo_producto
 
     costo_producto, costo_envase y precio_vigente tienen que estar
     expresados en la MISMA unidad entre sí (los tres por kilo, o los tres
     por bulto/caja completa) — el resultado da igual en cualquiera de los
     dos casos, porque es un cociente: la unidad se cancela.
     """
-    costo_total = costo_producto + costo_envase
-    if costo_total == 0:
-        raise ValueError("el costo total no puede ser cero")
+    if costo_producto == 0:
+        raise ValueError("el costo de la mercadería no puede ser cero")
 
     entra = precio_vigente * (1 + sum(tasas_suman) - sum(tasas_restan))
-    return (entra - costo_total) / costo_total
+    return (entra - costo_envase - costo_producto) / costo_producto

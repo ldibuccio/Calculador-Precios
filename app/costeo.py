@@ -266,10 +266,10 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     costo_anterior (o None), variacion ("subio"/"bajo"/"igual"/None),
     fecha_ultima_compra, precio_vigente (o None), precio_sugerido (o None),
     utilidad_aproximada (o None), compras_sin_precio_excluidas,
-    costo_total_unidad_venta (costo_actual + envase, o None sin costo_actual)
-    y denominador_tasas — los dos que necesita "Simulación" en
-    /precios/cargar para calcular la rentabilidad de un precio cualquiera
-    sin volver a pedirle nada al servidor.
+    costo_envase_unidad_venta (el envase por unidad de venta, o None sin
+    costo_actual) y denominador_tasas — junto con costo_actual, lo que
+    necesita "Simulación" en /precios/cargar para calcular la rentabilidad
+    de un precio cualquiera sin volver a pedirle nada al servidor.
     """
     if momento_referencia is None:
         momento_referencia = datetime.now(ARGENTINA)
@@ -305,7 +305,8 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     # cada fila para que quien negocie a mano (ver /precios/cargar,
     # "Simulación") pueda simular cualquier precio sin volver a pedirle
     # nada al servidor: utilidad = (precio_simulado × denominador_tasas -
-    # costo_total_unidad_venta) / costo_total_unidad_venta.
+    # costo_envase_unidad_venta - costo_actual) / costo_actual — la
+    # utilidad se gana solo sobre la mercadería, nunca sobre el envase.
     denominador_tasas = 1 + sum(tasas_suman) - sum(tasas_restan)
 
     compras_por_articulo: dict[int, list[dict]] = {}
@@ -397,7 +398,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                 tasas_restan=tasas_restan,
             )
 
-        costo_total_unidad_venta = costo_actual + costo_envase_por_unidad if costo_actual is not None else None
+        costo_envase_unidad_venta = costo_envase_por_unidad if costo_actual is not None else None
 
         resultado.append(
             {
@@ -413,7 +414,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                 "precio_sugerido": precio_sugerido_valor,
                 "utilidad_aproximada": utilidad_aproximada,
                 "compras_sin_precio_excluidas": sin_precio,
-                "costo_total_unidad_venta": costo_total_unidad_venta,
+                "costo_envase_unidad_venta": costo_envase_unidad_venta,
                 "denominador_tasas": denominador_tasas,
             }
         )

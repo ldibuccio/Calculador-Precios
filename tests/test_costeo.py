@@ -358,19 +358,20 @@ def test_negociacion_articulo_fresco_con_costo_anterior_y_variacion():
     assert a["precio_vigente"] == 250
 
 
-def test_negociacion_expone_costo_total_y_denominador_para_simulacion():
-    # Sin envase (envase_id None): costo_total_unidad_venta = costo_actual.
-    # Denominador = 1 - 0.23 (una sola tasa que resta, ninguna que suma) —
-    # igual para TODOS los artículos del cliente, no solo para A.
+def test_negociacion_expone_envase_y_denominador_para_simulacion():
+    # Sin envase (envase_id None): costo_envase_unidad_venta = 0. El costo
+    # de mercadería ya viaja en costo_actual. Denominador = 1 - 0.23 (una
+    # sola tasa que resta, ninguna que suma) — igual para TODOS los
+    # artículos del cliente, no solo para A.
     resultado, _, _ = _calcular_negociacion()
     por_id = {a["articulo_id"]: a for a in resultado}
 
     a = por_id[1]
-    assert a["costo_total_unidad_venta"] == 200
+    assert a["costo_envase_unidad_venta"] == 0.0
     assert a["denominador_tasas"] == pytest.approx(0.77)
 
     b = por_id[2]
-    assert b["costo_total_unidad_venta"] == 50
+    assert b["costo_envase_unidad_venta"] == 0.0
     assert b["denominador_tasas"] == pytest.approx(0.77)
 
 
@@ -694,7 +695,9 @@ def test_precio_sugerido_sin_costo_actual_es_none():
 
 def test_utilidad_aproximada_morron_rojo():
     # Caso del enunciado: precio vigente 4400/kg, costo 2500/kg, 8 kg,
-    # caja grande 1600, descuento 0.23, sin tasas que suman -> ~25,48%.
+    # caja grande 1600, descuento 0.23, sin tasas que suman -> 27,52%
+    # (la utilidad se gana solo sobre la mercadería, el envase se recupera
+    # sin margen: (27104 - 1600 - 20000) / 20000).
     compras = [
         {
             "articulo_id": 29,
@@ -717,8 +720,8 @@ def test_utilidad_aproximada_morron_rojo():
     morron = resultado[0]
     assert morron["costo_actual"] == 2500
     assert morron["precio_vigente"] == 4400
-    assert morron["utilidad_aproximada"] == pytest.approx(0.254815, abs=0.000001)
-    assert round(morron["utilidad_aproximada"] * 100, 2) == 25.48
+    assert morron["utilidad_aproximada"] == pytest.approx(0.2752, abs=0.000001)
+    assert round(morron["utilidad_aproximada"] * 100, 2) == 27.52
 
 
 def test_utilidad_aproximada_sin_precio_vigente_es_none():
@@ -844,7 +847,7 @@ def test_desglose_morron_rojo_expone_los_valores_intermedios():
 
 def test_desglose_utilidad_aproximada_morron_rojo():
     # Caso del enunciado: precio vigente 4400/kg, costo 2500/kg, 8 kg,
-    # caja grande 1600, descuento 0.23, sin tasas que suman -> ~25,48%.
+    # caja grande 1600, descuento 0.23, sin tasas que suman -> 27,52%.
     # costo_actual = 2500 con importe=20000, cantidad_cajones=10,
     # contenido_por_cajon=8 -> 20000*10/(10*8) = 2500.
     compras = [
@@ -873,9 +876,10 @@ def test_desglose_utilidad_aproximada_morron_rojo():
     # precio_vigente_bulto = 4400*8 = 35200; entra = 35200*0.77 = 27104.
     assert resultado["precio_vigente_bulto"] == pytest.approx(35200)
     assert resultado["entra_bulto"] == pytest.approx(27104)
-    # utilidad = (27104-21600)/21600 ≈ 0,254815 (~25,48%).
-    assert resultado["utilidad_aproximada"] == pytest.approx(0.254815, abs=0.000001)
-    assert round(resultado["utilidad_aproximada"] * 100, 2) == 25.48
+    # utilidad = (27104 - 1600 - 20000) / 20000 = 0,2752 — solo sobre la
+    # mercadería, el envase se recupera sin margen.
+    assert resultado["utilidad_aproximada"] == pytest.approx(0.2752, abs=0.000001)
+    assert round(resultado["utilidad_aproximada"] * 100, 2) == 27.52
 
 
 def test_desglose_articulo_sin_ficha_devuelve_none():
@@ -1126,13 +1130,13 @@ def test_objetivos_de_compra_formula_despejada_con_envase_y_tasas():
 
     # A mano: denominador = 1 + 0.105 - 0.26 = 0.845; entra = 900 × 0.845 =
     # 760.5; envase por kilo = 650/16 = 40.625; objetivo por kilo =
-    # 760.5 / 1.2 - 40.625 = 593.125 (el envase se resta DESPUÉS de
-    # dividir: la utilidad del sistema se mide sobre mercadería + envase);
-    # por bulto de 18 kg = 10676.25.
+    # (760.5 - 40.625) / 1.2 = 599.895833... — primero se recupera el
+    # envase (sin margen) y la utilidad se gana solo sobre la mercadería;
+    # por bulto de 18 kg = 10798.125.
     assert manzana["entra_por_unidad"] == pytest.approx(760.5)
     assert manzana["envase_por_unidad"] == pytest.approx(40.625)
-    assert manzana["objetivo_por_unidad"] == pytest.approx(593.125)
-    assert manzana["objetivo_bulto_ultima"] == pytest.approx(10676.25)
+    assert manzana["objetivo_por_unidad"] == pytest.approx(599.895833, abs=0.0001)
+    assert manzana["objetivo_bulto_ultima"] == pytest.approx(10798.125, abs=0.001)
 
     # Ida y vuelta contra el motor: comprando al objetivo, la utilidad da
     # exactamente la objetivo.

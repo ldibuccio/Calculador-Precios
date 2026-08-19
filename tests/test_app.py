@@ -6092,10 +6092,13 @@ def test_ver_cargar_precios_embebe_costo_y_denominador_para_simulacion():
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert 'costoTotalUnidadVenta: 280.0,\n        denominadorTasas: 1.0,' in respuesta.text
+    assert (
+        'costoProductoUnidadVenta: 280.0,\n        costoEnvaseUnidadVenta: 0.0,\n        denominadorTasas: 1.0,'
+        in respuesta.text
+    )
     assert (
         'id: 2,\n        nombre: "Mango",\n        precioVigente: 350.0,\n        '
-        'costoTotalUnidadVenta: null,\n        denominadorTasas: null,'
+        'costoProductoUnidadVenta: null,\n        costoEnvaseUnidadVenta: null,\n        denominadorTasas: null,'
     ) in respuesta.text
 
 
@@ -6165,7 +6168,7 @@ ARTICULOS_NEGOCIACION_DE_PRUEBA = [
         "precio_vigente": 500.0,  # vigente >= sugerido -> ✓
         "utilidad_aproximada": 0.30,
         "compras_sin_precio_excluidas": 0,
-        "costo_total_unidad_venta": 280.0,
+        "costo_envase_unidad_venta": 0.0,
         "denominador_tasas": 1.0,
     },
 ]
@@ -8238,8 +8241,8 @@ OBJETIVOS_DE_PRUEBA = {
             "envase_por_unidad": 40.625,
             "umbral_envase": None,
             "envase_variable": False,
-            "objetivo_por_unidad": 593.125,
-            "objetivo_bulto_ultima": 10676.25,
+            "objetivo_por_unidad": 599.8958,
+            "objetivo_bulto_ultima": 10798.125,
         }
     ],
     "sin_precio_vigente": [{"articulo_nombre": "Pera", "fecha_ultima_compra": date(2026, 8, 10)}],
@@ -8271,7 +8274,7 @@ def test_ver_objetivo_de_compra_con_cliente_muestra_los_articulos_bajo_objetivo(
     assert "20.0%" in respuesta.text
     # Última compra y objetivo inicial (con el kilaje de esa compra).
     assert "$20.000" in respuesta.text
-    assert "$10.676" in respuesta.text
+    assert "$10.798" in respuesta.text
     # Los números que necesita el recálculo en vivo viajan en data-attrs, y
     # el input de kilos viene precargado con el contenido de la última compra.
     assert 'data-entra="760.5"' in respuesta.text
