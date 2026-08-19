@@ -195,6 +195,8 @@ create table compras (
     retiro_procesado_el        timestamptz,
     retiro_origen              text check (retiro_origen in ('logistica', 'deposito', 'migracion', 'ingreso_directo', 'automatico_carro', 'automatico_cooperativa')),
     cantidad_cajones_retirada  numeric,
+    cantidad_cajones_rechazada numeric,
+    motivo_rechazo             text,
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
     constraint compras_cantidad_cargada_check check (cantidad_kilos is not null or cantidad_fraccion is not null)
 );
@@ -208,6 +210,8 @@ comment on column compras.guia_id is 'Guía de esta compra (proveedor+día). NUL
 comment on column compras.guia_punto is 'Punto dentro de la guía (105.1, 105.2, ...). Se fija una sola vez al cargar, no se renumera si se borra otro renglón.';
 comment on column compras.foto_ruta is 'Ruta de la foto de la comanda en el bucket privado "comandas" de Supabase Storage (NULL si la compra se cargó sin foto, o si la subida falló). Los renglones de una misma comanda comparten la misma ruta.';
 comment on column compras.cantidad_cajones_retirada is 'Cajones que Logística anotó como efectivamente retirados del puesto (opcional). Registro aparte: nunca pisa cantidad_cajones ni cantidad_cajones_real, y no entra en ningún cálculo.';
+comment on column compras.cantidad_cajones_rechazada is 'Bultos devueltos al proveedor en un rechazo parcial de Recepción. Solo registro: la cantidad aceptada ya queda en cantidad_cajones_real y es la que usa todo el costeo. No entra en ningún cálculo.';
+comment on column compras.motivo_rechazo is 'Motivo del rechazo parcial (texto libre, opcional).';
 comment on column compras.contenido_por_cajon_real is 'Contenido por cajón real. Lo tipea Depósito directo (pesa/cuenta un bulto, no toda la carga).';
 
 -- ----------------------------------------------------------------------------

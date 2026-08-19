@@ -97,6 +97,7 @@
   }
   .boton-exito { background: #16a34a; color: #fff; }
   .boton-peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
+  .boton-advertencia { background: #fff; color: #b45309; border: 1px solid #d97706; }
   .boton-neutro { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
   /* Confirmación en dos pasos, en el lugar: nada de confirm() nativo —
@@ -108,6 +109,13 @@
     font-weight: 600;
     margin: 0 0 0.6rem;
   }
+  .quedan-aceptados {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: #166534;
+    margin: 0 0 0.6rem;
+  }
+  .quedan-aceptados.invalido { color: #dc2626; }
   /* Tarjeta efímera: lo que se acaba de procesar, atenuada, con Deshacer
      si corresponde, unos segundos hasta que se esconde sola. */
   .tarjeta-efimera {
@@ -230,6 +238,7 @@
         <div class="acciones-renglon" id="acciones-{{ c.id }}">
           <button type="button" class="boton-exito" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
           <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazar por calidad</button>
+          <button type="button" class="boton-advertencia" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazo-parcial')">Rechazo parcial</button>
           <button type="button" class="boton-neutro" onclick="mostrarConfirmacion('{{ c.id }}', 'no-ingreso')">No ingresó</button>
         </div>
 
@@ -249,6 +258,39 @@
             </form>
             <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'rechazar')">No</button>
           </div>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-rechazo-parcial-{{ c.id }}">
+          <p class="texto-confirmacion">Rechazo parcial de {{ c.articulo_nombre }}: los bultos rechazados se devuelven al proveedor, y se recibe el resto. No se puede deshacer.</p>
+          <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazo-parcial" class="campo-real">
+            <label for="llegados-{{ c.id }}">Bultos llegados</label>
+            <input type="number" id="llegados-{{ c.id }}" name="cantidad_cajones_llegados" min="0" step="0.01"
+                   value="{{ c.cantidad_cajones }}" oninput="actualizarAceptados('{{ c.id }}')">
+
+            <label for="rechazados-{{ c.id }}">Bultos rechazados</label>
+            <input type="number" id="rechazados-{{ c.id }}" name="cantidad_cajones_rechazada" min="0" step="0.01"
+                   oninput="actualizarAceptados('{{ c.id }}')">
+
+            <p class="quedan-aceptados" id="quedan-{{ c.id }}">Completá los bultos rechazados.</p>
+
+            {% if c.unidad_compra == "kilo" %}
+            <label for="total-parcial-{{ c.id }}">Kilos por cajón/bulto (real)</label>
+            {% elif c.unidad_compra == "cubeta" %}
+            <label for="total-parcial-{{ c.id }}">Cubetas por cajón/bulto (real)</label>
+            {% else %}
+            <label for="total-parcial-{{ c.id }}">Unidades por cajón/bulto (real)</label>
+            {% endif %}
+            <input type="number" id="total-parcial-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
+                   value="{{ c.contenido_por_cajon }}">
+
+            <label for="motivo-{{ c.id }}">Motivo (opcional)</label>
+            <input type="text" id="motivo-{{ c.id }}" name="motivo_rechazo" placeholder="Ej: podrido, golpeado">
+
+            <div class="acciones-renglon">
+              <button type="submit" class="boton-advertencia">Guardar rechazo parcial</button>
+              <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'rechazo-parcial')">Cancelar</button>
+            </div>
+          </form>
         </div>
 
         <div class="confirmacion" id="confirmacion-no-ingreso-{{ c.id }}">
@@ -281,6 +323,34 @@
     function ocultarConfirmacion(compraId, accion) {
       document.getElementById('confirmacion-' + accion + '-' + compraId).classList.remove('visible');
       document.getElementById('acciones-' + compraId).style.display = 'flex';
+    }
+
+    // Cuenta en vivo del rechazo parcial: aceptados = llegados − rechazados.
+    // Mismo redondeo que el server no hace falta acá — es solo una guía
+    // visual antes de guardar (el server valida de verdad).
+    function actualizarAceptados(compraId) {
+      var llegados = parseFloat(document.getElementById('llegados-' + compraId).value);
+      var rechazados = parseFloat(document.getElementById('rechazados-' + compraId).value);
+      var texto = document.getElementById('quedan-' + compraId);
+
+      if (isNaN(llegados) || isNaN(rechazados)) {
+        texto.textContent = 'Completá los bultos rechazados.';
+        texto.classList.remove('invalido');
+        return;
+      }
+      if (rechazados <= 0) {
+        texto.textContent = 'Si no rechazás nada, usá Recibir.';
+        texto.classList.add('invalido');
+        return;
+      }
+      if (rechazados >= llegados) {
+        texto.textContent = 'Si rechazás todo, usá Rechazar por calidad.';
+        texto.classList.add('invalido');
+        return;
+      }
+      var aceptados = Math.round((llegados - rechazados) * 100) / 100;
+      texto.textContent = 'Quedan ' + aceptados.toLocaleString('es-AR') + ' bultos aceptados.';
+      texto.classList.remove('invalido');
     }
 
     function alternarProcesadosHoy() {

@@ -3047,16 +3047,38 @@ def corregir_recepcion_compra_ruta(
     compra_id: int,
     cantidad_cajones_real: str = Form(""),
     cantidad_total_real: str = Form(""),
+    cantidad_cajones_rechazada: str = Form(""),
+    motivo_rechazo: str = Form(""),
 ):
     error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
     if not error:
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
 
+    # El rechazo parcial es opcional acá: vacío = sin rechazo (y borra uno
+    # mal cargado). Los cajones reales de arriba ya son los ACEPTADOS, así
+    # que no hay tope que validar contra ellos.
+    cajones_rechazados = None
+    texto_rechazada = cantidad_cajones_rechazada.strip()
+    if not error and texto_rechazada:
+        try:
+            cajones_rechazados = float(texto_rechazada)
+        except ValueError:
+            error = "La cantidad de bultos rechazados tiene que ser un número."
+        else:
+            if cajones_rechazados <= 0:
+                error = "La cantidad de bultos rechazados tiene que ser mayor a cero (o dejala vacía si no hubo rechazo)."
+
     if error:
         return _renderizar_pantalla_corregir_recepcion(request, compra_id, error=error, status_code=400)
 
     try:
-        corregir_recepcion_compra(compra_id, cajones_valor, valor_real)
+        corregir_recepcion_compra(
+            compra_id,
+            cajones_valor,
+            valor_real,
+            cantidad_cajones_rechazada=cajones_rechazados,
+            motivo_rechazo=(motivo_rechazo.strip() or None) if cajones_rechazados is not None else None,
+        )
     except ValueError as error_bloqueo:
         return _renderizar_pantalla_corregir_recepcion(
             request, compra_id, error=str(error_bloqueo), status_code=400
@@ -4827,6 +4849,42 @@ def _validar_valor_real_recepcion(texto: str) -> tuple[str | None, float | None]
     return None, valor
 
 
+def _validar_rechazo_parcial(
+    cantidad_cajones_llegados: str, cantidad_cajones_rechazada: str
+) -> tuple[str | None, float | None, float | None]:
+    """Valida el rechazo parcial de Recepción: (error, bultos aceptados, bultos rechazados).
+
+    Los bultos aceptados (llegados − rechazados) son lo que se guarda en
+    cantidad_cajones_real — el rechazado se devuelve al proveedor y se le
+    paga solo lo recibido. Rechazar 0 no es un rechazo parcial (es una
+    recepción normal), y rechazar todo tampoco (es el botón "Rechazar por
+    calidad"): acá siempre tiene que quedar algo en el medio.
+    """
+    texto_llegados = cantidad_cajones_llegados.strip()
+    if not texto_llegados:
+        return "La cantidad de bultos llegados es obligatoria.", None, None
+    try:
+        llegados = float(texto_llegados)
+    except ValueError:
+        return "La cantidad de bultos llegados tiene que ser un número.", None, None
+    if llegados <= 0:
+        return "La cantidad de bultos llegados tiene que ser mayor a cero.", None, None
+
+    texto_rechazada = cantidad_cajones_rechazada.strip()
+    if not texto_rechazada:
+        return "La cantidad de bultos rechazados es obligatoria.", None, None
+    try:
+        rechazados = float(texto_rechazada)
+    except ValueError:
+        return "La cantidad de bultos rechazados tiene que ser un número.", None, None
+    if rechazados <= 0:
+        return "La cantidad de bultos rechazados tiene que ser mayor a cero. Si no rechazás nada, usá Recibir.", None, None
+    if rechazados >= llegados:
+        return "Los bultos rechazados tienen que ser menos que los llegados. Si rechazás todo, usá Rechazar por calidad.", None, None
+
+    return None, llegados - rechazados, rechazados
+
+
 def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
     """Agrupa las compras pendientes de Recepción por guía, en el orden en que ya vienen (por guia_id, guia_punto).
 
@@ -4938,6 +4996,48 @@ def rechazar_compra_ruta(request: Request, compra_id: int):
     except Exception as error_db:
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo rechazar la compra: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)
+
+
+@app.post("/deposito/recepcion/{compra_id}/rechazo-parcial")
+def rechazo_parcial_compra_ruta(
+    request: Request,
+    compra_id: int,
+    cantidad_cajones_llegados: str = Form(""),
+    cantidad_cajones_rechazada: str = Form(""),
+    cantidad_total_real: str = Form(""),
+    motivo_rechazo: str = Form(""),
+):
+    """Llegó la carga pero Depósito devuelve parte al proveedor (ej. 2 de 10 por calidad).
+
+    Es una recepción normal por los bultos aceptados (llegados −
+    rechazados): como el importe es por bulto, el total a pagar y el
+    costeo salen solos de cantidad_cajones_real — ninguna cuenta cambia.
+    Lo único nuevo es el registro de cuántos bultos se devolvieron y por
+    qué (ver recepcionar_compra).
+    """
+    error, cajones_aceptados, cajones_rechazados = _validar_rechazo_parcial(
+        cantidad_cajones_llegados, cantidad_cajones_rechazada
+    )
+    if not error:
+        error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
+
+    if error:
+        return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
+
+    try:
+        aviso_retiro = recepcionar_compra(
+            compra_id,
+            cajones_aceptados,
+            valor_real,
+            cantidad_cajones_rechazada=cajones_rechazados,
+            motivo_rechazo=motivo_rechazo.strip() or None,
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo guardar el rechazo parcial: {error_db}", status_code=500
         )
 
     return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)

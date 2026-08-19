@@ -217,6 +217,12 @@
       <span class="valor">{{ compra.contenido_por_cajon_real|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</span>
     </div>
     {% endif %}
+    {% if compra.cantidad_cajones_rechazada is not none %}
+    <div class="diferencia">
+      Rechazo parcial: {{ compra.cantidad_cajones_rechazada|numero }} bultos devueltos al proveedor{% if compra.motivo_rechazo %} — {{ compra.motivo_rechazo }}{% endif %}.
+      Los cajones reales de arriba son los aceptados.
+    </div>
+    {% endif %}
     {% if (diferencia_cajones_recepcion and diferencia_cajones_recepcion != 0) or (diferencia_contenido_recepcion and diferencia_contenido_recepcion != 0) %}
     <div class="diferencia">
       Diferencia contra lo comprado:

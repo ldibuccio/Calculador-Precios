@@ -1051,7 +1051,8 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                        c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro, c.foto_ruta,
                        c.estado_retiro, c.retiro_procesado_el, c.retiro_origen, c.cantidad_cajones_retirada,
                        c.estado, c.procesada_el,
-                       c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real
+                       c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real,
+                       c.cantidad_cajones_rechazada, c.motivo_rechazo
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -1482,12 +1483,24 @@ def _derivar_valores_reales(
     return valor_real, None, total
 
 
-def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> str | None:
+def recepcionar_compra(
+    compra_id: int,
+    cantidad_cajones_real: float,
+    valor_real: float,
+    cantidad_cajones_rechazada: float | None = None,
+    motivo_rechazo: str | None = None,
+) -> str | None:
     """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
 
     Ver _derivar_valores_reales para el significado de valor_real según la
     unidad de compra del artículo. El estimado (cantidad_cajones/
     contenido_por_cajon/etc., sin "_real") nunca se toca.
+
+    Rechazo parcial: si Depósito devolvió parte de la carga al proveedor,
+    cantidad_cajones_rechazada es cuántos bultos devolvió (y motivo_rechazo
+    por qué). Es SOLO registro: cantidad_cajones_real ya viene con los
+    bultos aceptados (llegados − rechazados) y es la que usa todo el
+    costeo — como el importe es por bulto, ninguna cuenta cambia.
 
     Además marca la compra como retirada (ver _auto_retirar_si_corresponde)
     si todavía no lo estaba. Devuelve el aviso de esa función (o None).
@@ -1519,10 +1532,20 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real:
                     contenido_por_cajon_real = %s,
                     cantidad_kilos_real = %s,
                     cantidad_fraccion_real = %s,
+                    cantidad_cajones_rechazada = %s,
+                    motivo_rechazo = %s,
                     procesada_el = now()
                 WHERE id = %s
                 """,
-                (cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real, compra_id),
+                (
+                    cantidad_cajones_real,
+                    contenido_por_cajon_real,
+                    cantidad_kilos_real,
+                    cantidad_fraccion_real,
+                    cantidad_cajones_rechazada,
+                    motivo_rechazo,
+                    compra_id,
+                ),
             )
 
             aviso = _auto_retirar_si_corresponde(cursor, compra_id)
@@ -1532,16 +1555,24 @@ def recepcionar_compra(compra_id: int, cantidad_cajones_real: float, valor_real:
         conexion.close()
 
 
-def corregir_recepcion_compra(compra_id: int, cantidad_cajones_real: float, valor_real: float) -> None:
+def corregir_recepcion_compra(
+    compra_id: int,
+    cantidad_cajones_real: float,
+    valor_real: float,
+    cantidad_cajones_rechazada: float | None = None,
+    motivo_rechazo: str | None = None,
+) -> None:
     """Corrige los valores reales de una compra YA recepcionada (ej. error de tipeo al recepcionar en Depósito).
 
     Mismo significado de valor_real que recepcionar_compra (ver
     _derivar_valores_reales), y misma cuenta para derivar los otros
-    campos. A diferencia de recepcionar_compra, esto NO cambia el estado
-    (sigue "recepcionado") ni toca procesada_el ni el retiro — es una
-    corrección del número ya cargado, no una recepción nueva. Bloqueada
-    (ValueError) si la compra no está recepcionada: no hay valores reales
-    que corregir en una que nunca se pesó/contó de verdad.
+    campos. También corrige el rechazo parcial (bultos devueltos y
+    motivo): lo que venga acá pisa lo guardado — None borra un rechazo
+    mal cargado. A diferencia de recepcionar_compra, esto NO cambia el
+    estado (sigue "recepcionado") ni toca procesada_el ni el retiro — es
+    una corrección del número ya cargado, no una recepción nueva.
+    Bloqueada (ValueError) si la compra no está recepcionada: no hay
+    valores reales que corregir en una que nunca se pesó/contó de verdad.
     """
     conexion = obtener_conexion()
     try:
@@ -1571,10 +1602,20 @@ def corregir_recepcion_compra(compra_id: int, cantidad_cajones_real: float, valo
                 SET cantidad_cajones_real = %s,
                     contenido_por_cajon_real = %s,
                     cantidad_kilos_real = %s,
-                    cantidad_fraccion_real = %s
+                    cantidad_fraccion_real = %s,
+                    cantidad_cajones_rechazada = %s,
+                    motivo_rechazo = %s
                 WHERE id = %s
                 """,
-                (cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real, compra_id),
+                (
+                    cantidad_cajones_real,
+                    contenido_por_cajon_real,
+                    cantidad_kilos_real,
+                    cantidad_fraccion_real,
+                    cantidad_cajones_rechazada,
+                    motivo_rechazo,
+                    compra_id,
+                ),
             )
         conexion.commit()
     finally:

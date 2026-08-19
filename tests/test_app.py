@@ -2588,6 +2588,8 @@ COMPRA_DETALLE_DE_PRUEBA = {
     "cantidad_cajones_real": 10,
     "contenido_por_cajon_real": 18,
     "cantidad_fraccion_real": None,
+    "cantidad_cajones_rechazada": None,
+    "motivo_rechazo": None,
 }
 
 
@@ -2709,6 +2711,24 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
     assert 'href="/compras/30/corregir-recepcion"' not in respuesta.text
 
 
+def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=8, cantidad_cajones_rechazada=2, motivo_rechazo="podrido")
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "Rechazo parcial: 2 bultos devueltos al proveedor — podrido" in respuesta.text
+    assert "los aceptados" in respuesta.text
+
+
+def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
+    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "Rechazo parcial" not in respuesta.text
+
+
 def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
     with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
         respuesta = cliente.get("/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra.")
@@ -2786,7 +2806,55 @@ def test_corregir_recepcion_compra_ruta_guarda_y_redirige():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra."
-    mock_corregir.assert_called_once_with(30, 30.0, 2400.0)
+    mock_corregir.assert_called_once_with(30, 30.0, 2400.0, cantidad_cajones_rechazada=None, motivo_rechazo=None)
+
+
+def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargados():
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=8, cantidad_cajones_rechazada=2, motivo_rechazo="podrido")
+    with patch("app.main.obtener_detalle_compra", return_value=compra):
+        respuesta = cliente.get("/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 200
+    assert 'name="cantidad_cajones_rechazada"' in respuesta.text
+    assert 'value="2"' in respuesta.text
+    assert 'name="motivo_rechazo"' in respuesta.text
+    assert 'value="podrido"' in respuesta.text
+
+
+def test_corregir_recepcion_compra_ruta_corrige_el_rechazo_parcial():
+    with patch("app.main.corregir_recepcion_compra", return_value=None) as mock_corregir:
+        respuesta = cliente.post(
+            "/compras/30/corregir-recepcion",
+            data={
+                "cantidad_cajones_real": "7",
+                "cantidad_total_real": "18",
+                "cantidad_cajones_rechazada": "3",
+                "motivo_rechazo": "golpeado",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_corregir.assert_called_once_with(30, 7.0, 18.0, cantidad_cajones_rechazada=3.0, motivo_rechazo="golpeado")
+
+
+def test_corregir_recepcion_compra_ruta_con_rechazo_invalido_da_400():
+    with (
+        patch("app.main.corregir_recepcion_compra") as mock_corregir,
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/corregir-recepcion",
+            data={
+                "cantidad_cajones_real": "7",
+                "cantidad_total_real": "18",
+                "cantidad_cajones_rechazada": "abc",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "La cantidad de bultos rechazados tiene que ser un número." in respuesta.text
+    mock_corregir.assert_not_called()
 
 
 def test_corregir_recepcion_compra_ruta_sin_datos_muestra_error_sin_guardar():
@@ -3671,6 +3739,143 @@ def test_rechazar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion?procesado=2&aviso=Esta+compra+figuraba+cancelada+en+Log%C3%ADstica."
+
+
+def test_ver_recepcion_muestra_el_boton_y_el_panel_de_rechazo_parcial():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Rechazo parcial" in respuesta.text
+    primera = COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA[0]
+    assert f'action="/deposito/recepcion/{primera["id"]}/rechazo-parcial"' in respuesta.text
+    assert 'name="cantidad_cajones_llegados"' in respuesta.text
+    assert 'name="cantidad_cajones_rechazada"' in respuesta.text
+    assert 'name="motivo_rechazo"' in respuesta.text
+
+
+def test_rechazo_parcial_guarda_los_aceptados_y_el_registro():
+    # Llegaron 10, rechaza 2: recepcionar_compra recibe 8 aceptados (los
+    # que usa todo el costeo — importe por bulto, ninguna cuenta cambia)
+    # más el registro del rechazo.
+    with patch("app.main.recepcionar_compra", return_value=None) as mock_recepcionar:
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/rechazo-parcial",
+            data={
+                "cantidad_cajones_llegados": "10",
+                "cantidad_cajones_rechazada": "2",
+                "cantidad_total_real": "18",
+                "motivo_rechazo": "podrido",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1"
+    mock_recepcionar.assert_called_once_with(
+        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo="podrido"
+    )
+
+
+def test_rechazo_parcial_sin_motivo_guarda_none():
+    with patch("app.main.recepcionar_compra", return_value=None) as mock_recepcionar:
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/rechazo-parcial",
+            data={
+                "cantidad_cajones_llegados": "10",
+                "cantidad_cajones_rechazada": "2",
+                "cantidad_total_real": "18",
+                "motivo_rechazo": "   ",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_recepcionar.assert_called_once_with(
+        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo=None
+    )
+
+
+def test_rechazo_parcial_que_rechaza_todo_da_error_y_manda_al_otro_boton():
+    with (
+        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/rechazo-parcial",
+            data={
+                "cantidad_cajones_llegados": "10",
+                "cantidad_cajones_rechazada": "10",
+                "cantidad_total_real": "18",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Si rechazás todo, usá Rechazar por calidad." in respuesta.text
+    mock_recepcionar.assert_not_called()
+
+
+def test_rechazo_parcial_de_cero_bultos_da_error_y_manda_a_recibir():
+    with (
+        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/rechazo-parcial",
+            data={
+                "cantidad_cajones_llegados": "10",
+                "cantidad_cajones_rechazada": "0",
+                "cantidad_total_real": "18",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Si no rechazás nada, usá Recibir." in respuesta.text
+    mock_recepcionar.assert_not_called()
+
+
+def test_rechazo_parcial_sin_rechazados_da_error_sin_guardar():
+    with (
+        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/rechazo-parcial",
+            data={
+                "cantidad_cajones_llegados": "10",
+                "cantidad_cajones_rechazada": "",
+                "cantidad_total_real": "18",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "La cantidad de bultos rechazados es obligatoria." in respuesta.text
+    mock_recepcionar.assert_not_called()
+
+
+def test_rechazo_parcial_error_de_base_muestra_mensaje():
+    with (
+        patch("app.main.recepcionar_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/rechazo-parcial",
+            data={
+                "cantidad_cajones_llegados": "10",
+                "cantidad_cajones_rechazada": "2",
+                "cantidad_total_real": "18",
+            },
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo guardar el rechazo parcial" in respuesta.text
 
 
 def test_ver_recepcion_muestra_el_aviso_cuando_viene_en_la_url():

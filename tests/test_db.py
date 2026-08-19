@@ -593,11 +593,14 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     consulta_update, parametros_update = cursor.execute.call_args_list[1].args
     assert "estado = 'recepcionado'" in consulta_update
     assert "procesada_el = now()" in consulta_update
-    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
     assert cajones == 38
     assert contenido == 20  # tomado directo, sin dividir
     assert kilos == 760  # 38 × 20, derivado
     assert fraccion is None
+    # Recepción normal: sin rechazo parcial (y borra cualquier resto viejo).
+    assert rechazada is None
+    assert motivo is None
     assert compra_id == 30
     assert aviso is None
     # Se auto-retira: UPDATE final con estado_retiro = 'retirado', origen 'deposito'.
@@ -618,7 +621,7 @@ def test_recepcionar_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva
         recepcionar_compra(31, cantidad_cajones_real=10, valor_real=118)
 
     _, parametros_update = cursor.execute.call_args_list[1].args
-    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
     assert contenido == 118  # tomado directo, sin dividir
     assert kilos is None
     assert fraccion == 1180  # 10 × 118, derivado
@@ -662,11 +665,13 @@ def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
     # A diferencia de recepcionar_compra, NO toca estado ni procesada_el.
     assert "estado" not in consulta_update
     assert "procesada_el" not in consulta_update
-    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
     assert cajones == 30
     assert contenido == 25
     assert kilos == 750  # 30 × 25
     assert fraccion is None
+    assert rechazada is None
+    assert motivo is None
     assert compra_id == 30
     conexion.commit.assert_called_once()
 
@@ -680,7 +685,7 @@ def test_corregir_recepcion_compra_articulo_por_unidad_toma_unidades_por_cajon_y
         corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=80)
 
     _, parametros_update = cursor.execute.call_args_list[1].args
-    cajones, contenido, kilos, fraccion, compra_id = parametros_update
+    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
     assert contenido == 80  # tomado directo, sin dividir
     assert kilos is None
     assert fraccion == 2400  # 30 × 80, derivado
@@ -699,6 +704,47 @@ def test_corregir_recepcion_compra_bloqueada_si_no_esta_recepcionada():
     # Solo el SELECT — nunca llega a ejecutar el UPDATE ni a hacer commit.
     assert cursor.execute.call_count == 1
     conexion.commit.assert_not_called()
+
+
+def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
+    # Llegaron 10 y se rechazaron 2: la ruta ya manda los 8 aceptados como
+    # cantidad_cajones_real (es la que usa todo el costeo, sin cuentas
+    # nuevas) y el rechazo queda como registro aparte.
+    conexion, cursor = _conexion_falsa([("kilo",), ("pendiente",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra(
+            30, cantidad_cajones_real=8, valor_real=20,
+            cantidad_cajones_rechazada=2, motivo_rechazo="podrido",
+        )
+
+    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    assert "cantidad_cajones_rechazada = %s" in consulta_update
+    assert "motivo_rechazo = %s" in consulta_update
+    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    assert cajones == 8  # los aceptados, no los llegados
+    assert kilos == 160  # 8 × 20: el total real sale de los aceptados
+    assert rechazada == 2
+    assert motivo == "podrido"
+    conexion.commit.assert_called_once()
+
+
+def test_corregir_recepcion_compra_corrige_el_rechazo_parcial():
+    conexion, cursor = _conexion_falsa([("recepcionado", "kilo")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        corregir_recepcion_compra(
+            30, cantidad_cajones_real=7, valor_real=25,
+            cantidad_cajones_rechazada=3, motivo_rechazo="golpeado",
+        )
+
+    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    assert "cantidad_cajones_rechazada = %s" in consulta_update
+    assert "motivo_rechazo = %s" in consulta_update
+    cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
+    assert cajones == 7
+    assert rechazada == 3
+    assert motivo == "golpeado"
 
 
 def test_rechazar_compra_marca_estado_y_no_toca_los_reales():
