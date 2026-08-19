@@ -3311,15 +3311,46 @@ def test_eliminar_compra_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
-def test_eliminar_compra_ya_recepcionada_da_400_con_el_mensaje():
-    with patch(
-        "app.main.eliminar_compra",
-        side_effect=ValueError("Esta compra ya fue recepcionada, no se puede eliminar."),
+def test_eliminar_compra_ya_recepcionada_muestra_cartel_en_buscar_compras():
+    # Nada de JSON crudo: el rechazo vuelve a la pantalla de Buscar Compras
+    # con el mensaje como cartel legible.
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
+        patch(
+            "app.main.eliminar_compra",
+            side_effect=ValueError("Esta compra ya fue recepcionada, no se puede eliminar."),
+        ),
     ):
         respuesta = cliente.post("/compras/30/eliminar")
 
     assert respuesta.status_code == 400
     assert "Esta compra ya fue recepcionada, no se puede eliminar." in respuesta.text
+    assert '<div class="aviso">' in respuesta.text
+
+
+def test_eliminar_compra_no_ingresada_muestra_cartel_y_conserva_filtros():
+    # Una compra marcada "No ingresó" por Depósito queda fija: el comprador
+    # no la puede borrar desde Buscar Compras. El intento vuelve a la misma
+    # búsqueda (los filtros viajan en el form) con el cartel.
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA) as mock_buscar,
+        patch(
+            "app.main.eliminar_compra",
+            side_effect=ValueError('Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'),
+        ),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/eliminar",
+            data={"fecha_desde": "2026-08-10", "fecha_hasta": "2026-08-12", "proveedor_id": "", "articulo_id": ""},
+        )
+
+    assert respuesta.status_code == 400
+    assert "quedó registrada como &#34;No ingresó&#34; en Depósito" in respuesta.text
+    mock_buscar.assert_called_once_with(date(2026, 8, 10), date(2026, 8, 12), None, None)
 
 
 def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
@@ -3392,7 +3423,7 @@ def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicis
     mock_borrar_foto.assert_not_called()
     assert "Se eliminaron 1 de 2 compras" in respuesta.text
     assert "1 no se pudieron eliminar" in respuesta.text
-    assert "ya fueron retiradas o recepcionadas" in respuesta.text
+    assert "ya fueron retiradas, recepcionadas o marcadas &#34;No ingresó&#34;" in respuesta.text
     # Identifica el renglón fallido por artículo+proveedor, no por id ni con
     # el texto crudo de Postgres. (El "31" en la fila de la tabla es el
     # value del checkbox, no el mensaje de error — no cuenta como fuga.)

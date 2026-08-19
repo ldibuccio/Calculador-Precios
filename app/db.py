@@ -1764,16 +1764,17 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
 
 
 def eliminar_compra(compra_id: int) -> str | None:
-    """Borra una compra (borrado real), salvo que ya haya sido recepcionada o retirada.
+    """Borra una compra (borrado real), salvo que ya haya pasado por Depósito o por el retiro.
 
-    Una compra recepcionada tiene kilaje real pesado, y una retirada ya
-    salió del puesto — borrar cualquiera de las dos las perdería para
-    siempre, así que se rechaza acá con un ValueError (el mensaje es el
-    que se le muestra al usuario tal cual). Por ahora esto no tiene
-    excepción: cuando exista el sistema de permisos, un gerente podrá
-    forzarlo con su acceso, pero eso no se resuelve en esta función.
-    'pendiente', 'rechazado'/'cancelado' y 'no_ingresado' se siguen
-    pudiendo borrar sin restricción.
+    Una compra recepcionada tiene kilaje real pesado, una retirada ya
+    salió del puesto, y una marcada "No ingresó" es un registro de
+    Depósito que tiene que quedar fijo (el comprador no puede hacerlo
+    desaparecer borrando la compra) — borrar cualquiera de las tres se
+    rechaza acá con un ValueError (el mensaje es el que se le muestra al
+    usuario tal cual). Por ahora esto no tiene excepción: cuando exista
+    el sistema de permisos, un gerente podrá forzarlo con su acceso,
+    pero eso no se resuelve en esta función. 'pendiente' y
+    'rechazado'/'cancelado' se siguen pudiendo borrar sin restricción.
 
     Una misma foto de comanda (foto_ruta) puede estar compartida por varios
     renglones/compras. Devuelve el foto_ruta que hay que borrar del Storage
@@ -1791,6 +1792,13 @@ def eliminar_compra(compra_id: int) -> str | None:
 
             if estado == "recepcionado":
                 raise ValueError("Esta compra ya fue recepcionada, no se puede eliminar.")
+            if estado == "no_ingresado":
+                # Antes que el chequeo de retiro: para el usuario el dato
+                # importante es que Depósito la marcó "No ingresó", no si
+                # además estaba retirada.
+                raise ValueError(
+                    'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
+                )
             if estado_retiro == "retirado":
                 raise ValueError("Esta compra ya fue retirada, no se puede eliminar.")
 
@@ -1881,11 +1889,11 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
     guardado al apretar "Agregar artículo" (esa acción guarda cada renglón
     al toque, no queda nada pendiente del lado del cliente).
 
-    Ya no es un DELETE ciego de todo el lote: las compras ya recepcionadas
-    o retiradas quedan afuera del borrado (mismo criterio que
-    eliminar_compra) — nunca en silencio, quien llama tiene que avisar
-    con los números que devuelve esta función, no dar por hecho que se
-    borró todo.
+    Ya no es un DELETE ciego de todo el lote: las compras ya recepcionadas,
+    retiradas o marcadas "No ingresó" quedan afuera del borrado (mismo
+    criterio que eliminar_compra) — nunca en silencio, quien llama tiene
+    que avisar con los números que devuelve esta función, no dar por
+    hecho que se borró todo.
 
     Devuelve {"borradas": int, "protegidas": int}.
     """
@@ -1903,6 +1911,7 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
                 DELETE FROM compras
                 WHERE fecha_operacion = %s AND proveedor_id = %s
                   AND estado IS DISTINCT FROM 'recepcionado'
+                  AND estado IS DISTINCT FROM 'no_ingresado'
                   AND estado_retiro IS DISTINCT FROM 'retirado'
                 """,
                 (fecha_operacion, proveedor_id),

@@ -2839,11 +2839,24 @@ def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
 
 
 @app.post("/compras/{compra_id}/eliminar")
-def eliminar_compra_ruta(compra_id: int):
+async def eliminar_compra_ruta(request: Request, compra_id: int):
+    # Los filtros activos viajan como campos ocultos del form de la fila,
+    # para que un rechazo del borrado vuelva a la MISMA búsqueda con un
+    # cartel legible — nunca una página de error cruda.
+    form = await request.form()
+    fecha_desde = str(form.get("fecha_desde", ""))
+    fecha_hasta = str(form.get("fecha_hasta", ""))
+    proveedor_id = str(form.get("proveedor_id", ""))
+    articulo_id = str(form.get("articulo_id", ""))
+
     try:
         _eliminar_compra_y_su_foto_si_corresponde(compra_id)
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        # Compra que no se puede borrar (recepcionada, retirada o "No
+        # ingresó"): la regla y el mensaje vienen de eliminar_compra.
+        return _renderizar_pantalla_buscar_compras(
+            request, fecha_desde, fecha_hasta, proveedor_id, articulo_id, aviso=str(error), status_code=400
+        )
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
@@ -2893,11 +2906,13 @@ async def eliminar_varias_compras_ruta(request: Request):
         aviso = f"Se eliminaron {cantidad_borradas} compras."
     else:
         # Mensaje pensado para un usuario no técnico: sin ids ni jerga de
-        # base de datos. La causa más probable es que ya fueron retiradas o
-        # recepcionadas (bloqueado en eliminar_compra), se explica en criollo.
+        # base de datos. La causa más probable es que ya fueron retiradas,
+        # recepcionadas o marcadas "No ingresó" (bloqueado en
+        # eliminar_compra), se explica en criollo.
         aviso = (
             f"Se eliminaron {cantidad_borradas} de {len(ids)} compras. "
-            f"{len(etiquetas_fallidas)} no se pudieron eliminar (ya fueron retiradas o recepcionadas): "
+            f"{len(etiquetas_fallidas)} no se pudieron eliminar (ya fueron retiradas, recepcionadas "
+            f'o marcadas "No ingresó"): '
             f"{', '.join(etiquetas_fallidas)}."
         )
 

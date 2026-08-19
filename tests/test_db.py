@@ -204,6 +204,27 @@ def test_eliminar_compra_recepcionada_no_se_borra():
     conexion.close.assert_called_once()
 
 
+def test_eliminar_compra_no_ingresada_no_se_borra():
+    # Regla fija: "No ingresó" es un registro de Depósito — el comprador no
+    # lo puede hacer desaparecer borrando la compra. Y el mensaje habla de
+    # eso, aunque la compra además estuviera retirada.
+    conexion, cursor = _conexion_falsa(
+        [
+            ("2026-08-13/n07p41-123-abcdef12.jpg", "no_ingresado", "retirado"),  # SELECT foto_ruta, estado, estado_retiro
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            eliminar_compra(30)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert str(error) == 'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
+
+    assert cursor.execute.call_count == 1
+    conexion.commit.assert_not_called()
+
+
 def test_eliminar_compra_retirada_no_se_borra():
     conexion, cursor = _conexion_falsa(
         [
