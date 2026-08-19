@@ -36,6 +36,25 @@ def test_generar_excel_disponibles_titulo_usa_el_nombre_de_empresa_recibido():
     assert hoja["A1"].value == "PALMALA - Disponibilidad de Stock"
 
 
+def test_generar_excel_disponibles_formato_encabezado_azul_y_bordes():
+    # Estética pedida (calcada del archivo que se manda por mail): banda azul
+    # oscuro con letra blanca en el encabezado, fecha en negrita y bordes
+    # finos en toda la tabla — encabezado y datos.
+    excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
+    libro = _cargar_excel(excel_bytes)
+    hoja = libro.active
+
+    assert hoja["A2"].font.bold
+    for columna in ("A", "B", "C"):
+        celda_encabezado = hoja[f"{columna}6"]
+        assert celda_encabezado.fill.start_color.rgb == "001F4E79"
+        assert celda_encabezado.font.bold and celda_encabezado.font.color.rgb == "00FFFFFF"
+        assert celda_encabezado.border.top.style == "thin"
+        # Y cada celda de datos con su borde (3 filas de prueba: 7 a 9).
+        for fila in (7, 8, 9):
+            assert hoja[f"{columna}{fila}"].border.bottom.style == "thin", f"{columna}{fila}"
+
+
 def test_generar_excel_disponibles_fecha_un_solo_dia():
     excel_bytes = generar_excel_disponibles(date(2026, 8, 14), date(2026, 8, 14), FILAS_DE_PRUEBA, "Frutamax")
     libro = _cargar_excel(excel_bytes)
