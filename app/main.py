@@ -2598,7 +2598,9 @@ async def confirmar_compra_foto(request: Request):
 
 def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, precio_bloqueado: bool) -> str:
     """Arma el aviso de qué no se puede editar (cantidad, precio, o ambos) y por qué, para Editar Compra."""
-    razon_cantidad = "ya fue recepcionada" if estado == "recepcionado" else "ya fue retirada"
+    # Solo Depósito bloquea la cantidad (regla 19/08/2026): si está
+    # bloqueada sola (sin el precio), la única causa posible es recepcionada.
+    razon_cantidad = "ya fue recepcionada"
     razon_precio = "fue rechazada por calidad" if estado == "rechazado" else "nunca ingresó al depósito"
 
     if cantidad_bloqueada and precio_bloqueado:
@@ -2623,7 +2625,7 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    cantidad_bloqueada = compra_tiene_cantidad_bloqueada(compra["estado"], compra["estado_retiro"])
+    cantidad_bloqueada = compra_tiene_cantidad_bloqueada(compra["estado"])
     precio_bloqueado = compra_tiene_precio_bloqueado(compra["estado"])
     if (cantidad_bloqueada or precio_bloqueado) and not error:
         error = _armar_aviso_bloqueo_edicion(compra["estado"], cantidad_bloqueada, precio_bloqueado)
@@ -2787,7 +2789,7 @@ def editar_compra(
     # guarda. Si algo cambió de verdad en la base entre que se abrió la
     # pantalla y se mandó el POST, actualizar_cantidad_compra/
     # actualizar_precio_compra lo vuelven a chequear solas y frenan igual.
-    cantidad_bloqueada = compra_tiene_cantidad_bloqueada(compra_actual["estado"], compra_actual["estado_retiro"])
+    cantidad_bloqueada = compra_tiene_cantidad_bloqueada(compra_actual["estado"])
     precio_bloqueado = compra_tiene_precio_bloqueado(compra_actual["estado"])
 
     try:

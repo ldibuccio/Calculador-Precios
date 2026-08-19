@@ -349,14 +349,14 @@ def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():
 
 
 def test_compra_tiene_cantidad_bloqueada():
-    assert compra_tiene_cantidad_bloqueada("recepcionado", "pendiente") is True
-    assert compra_tiene_cantidad_bloqueada("pendiente", "retirado") is True
-    # Rechazada o nunca ingresada al depósito: esa historia ya terminó, se
-    # bloquea también la cantidad (junto con el precio, quedan cerradas del todo).
-    assert compra_tiene_cantidad_bloqueada("rechazado", "cancelado") is True
-    assert compra_tiene_cantidad_bloqueada("no_ingresado", "cancelado") is True
-    assert compra_tiene_cantidad_bloqueada("pendiente", "pendiente") is False
-    assert compra_tiene_cantidad_bloqueada(None, None) is False
+    # SOLO Depósito bloquea (regla 19/08/2026): recepcionada, rechazada o
+    # nunca ingresada. El retiro de Logística NO bloquea nada — hasta que
+    # la mercadería entra a Depósito, el comprador puede corregir su compra.
+    assert compra_tiene_cantidad_bloqueada("recepcionado") is True
+    assert compra_tiene_cantidad_bloqueada("rechazado") is True
+    assert compra_tiene_cantidad_bloqueada("no_ingresado") is True
+    assert compra_tiene_cantidad_bloqueada("pendiente") is False
+    assert compra_tiene_cantidad_bloqueada(None) is False
 
 
 def test_compra_tiene_precio_bloqueado():
@@ -369,7 +369,7 @@ def test_compra_tiene_precio_bloqueado():
 
 
 def test_actualizar_cantidad_compra_pisa_los_valores():
-    conexion, cursor = _conexion_falsa([(None, None)])  # SELECT estado, estado_retiro: compra sin procesar
+    conexion, cursor = _conexion_falsa([(None, None, None)])  # SELECT estado, estado_retiro, retiro_origen
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
@@ -383,7 +383,7 @@ def test_actualizar_cantidad_compra_pisa_los_valores():
 
 
 def test_actualizar_cantidad_compra_recepcionada_no_se_edita():
-    conexion, cursor = _conexion_falsa([("recepcionado", "retirado")])  # SELECT estado, estado_retiro
+    conexion, cursor = _conexion_falsa([("recepcionado", "retirado", "logistica")])  # SELECT estado, estado_retiro, retiro_origen
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
@@ -396,22 +396,27 @@ def test_actualizar_cantidad_compra_recepcionada_no_se_edita():
     conexion.commit.assert_not_called()
 
 
-def test_actualizar_cantidad_compra_retirada_no_se_edita():
-    conexion, cursor = _conexion_falsa([("pendiente", "retirado")])  # SELECT estado, estado_retiro
+def test_actualizar_cantidad_compra_retirada_por_logistica_SI_se_edita():
+    # Regla 19/08/2026: el retiro de Logística NO bloquea la edición — solo
+    # Depósito bloquea. Un proveedor puede llamar para cancelar cantidad
+    # antes de que la mercadería entre al depósito.
+    conexion, cursor = _conexion_falsa([("pendiente", "retirado", "logistica")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        try:
-            actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
-            assert False, "tenía que lanzar ValueError"
-        except ValueError as error:
-            assert str(error) == "Esta compra ya fue retirada, no se puede editar la cantidad."
+        actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
+
+    consulta_update = cursor.execute.call_args_list[1].args[0]
+    assert "UPDATE compras" in consulta_update
+    # El retiro que Logística ya marcó no se toca al editar.
+    assert "estado_retiro" not in consulta_update
+    conexion.commit.assert_called_once()
 
 
 def test_actualizar_cantidad_compra_rechazada_no_se_edita_aunque_nunca_se_haya_retirado():
     # Rechazada en Depósito, con el retiro cancelado antes en Logística
     # (así que el auto-retiro nunca la marcó 'retirado'): esa historia ya
     # terminó y no entra al costeo, se bloquea igual.
-    conexion, cursor = _conexion_falsa([("rechazado", "cancelado")])
+    conexion, cursor = _conexion_falsa([("rechazado", "cancelado", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
@@ -424,7 +429,7 @@ def test_actualizar_cantidad_compra_rechazada_no_se_edita_aunque_nunca_se_haya_r
 
 
 def test_actualizar_cantidad_compra_no_ingresada_no_se_edita():
-    conexion, cursor = _conexion_falsa([("no_ingresado", "retirado")])
+    conexion, cursor = _conexion_falsa([("no_ingresado", "retirado", "logistica")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
@@ -1478,7 +1483,7 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
 def test_actualizar_cantidad_a_cooperativa_marca_el_retiro_en_el_mismo_update():
     # Cambiar el tipo a Cooperativa en Editar Compra no puede dejar la
     # compra pendiente de retiro: no existe pantalla que la muestre.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente")])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Cooperativa")
@@ -1489,7 +1494,7 @@ def test_actualizar_cantidad_a_cooperativa_marca_el_retiro_en_el_mismo_update():
 
 
 def test_actualizar_cantidad_con_tipo_comun_no_toca_el_retiro():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente")])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark")
@@ -1497,3 +1502,18 @@ def test_actualizar_cantidad_con_tipo_comun_no_toca_el_retiro():
     consulta_update = cursor.execute.call_args_list[-1].args[0]
     assert "estado_retiro" not in consulta_update
     assert "retiro_origen" not in consulta_update
+
+
+def test_actualizar_cantidad_de_cooperativa_a_tipo_real_vuelve_el_retiro_a_pendiente():
+    # Volver de Cooperativa a un tipo real (Carro/Clark/Pases) tiene que
+    # devolver la compra a la cola de Logística — si no, queda "retirada"
+    # por una cooperativa que ya no la va a buscar.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "retirado", "cooperativa")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Carro")
+
+    consulta_update = cursor.execute.call_args_list[1].args[0]
+    assert "estado_retiro = 'pendiente'" in consulta_update
+    assert "retiro_origen = NULL" in consulta_update
+    conexion.commit.assert_called_once()

@@ -1240,21 +1240,24 @@ def crear_compra(
         conexion.close()
 
 
-def compra_tiene_cantidad_bloqueada(estado: str | None, estado_retiro: str | None) -> bool:
+def compra_tiene_cantidad_bloqueada(estado: str | None) -> bool:
     """True si el artículo/cantidad/tipo de retiro de la compra ya no se pueden editar.
 
     Única definición de esta regla en todo el código — la usan la
     pantalla de Editar Compra (para mostrar el aviso y atenuar los
     campos) y actualizar_cantidad_compra (para bloquear el guardado de
-    verdad). Recepcionada o retirada: cambiar la cantidad después de eso
-    modificaría un costo que ya se pudo haber usado para negociar
-    precios con el cliente. Rechazada o nunca ingresada al depósito:
-    esa historia ya terminó y esa mercadería no entra al costeo, así
-    que tampoco tiene sentido tocarle la cantidad (junto con
-    compra_tiene_precio_bloqueado, que bloquea el precio en estos
-    mismos dos casos, quedan totalmente cerradas).
+    verdad).
+
+    REGLA (19/08/2026): SOLO Depósito bloquea. Recepcionada: la cantidad
+    real ya se pesó/contó, cambiar el estimado después modificaría un
+    costo que ya se pudo haber usado para negociar precios. Rechazada o
+    nunca ingresada: esa historia ya terminó. El RETIRO de Logística NO
+    bloquea nada: hasta que la mercadería entra a Depósito, el comprador
+    tiene que poder corregir su compra (un proveedor que llama para
+    cancelar cantidad, un cambio de tipo de retiro, etc.) — Logística no
+    le traba la edición a nadie.
     """
-    return estado in ("recepcionado", "rechazado", "no_ingresado") or estado_retiro == "retirado"
+    return estado in ("recepcionado", "rechazado", "no_ingresado")
 
 
 def compra_tiene_precio_bloqueado(estado: str | None) -> bool:
@@ -1283,39 +1286,55 @@ def actualizar_cantidad_compra(
 ) -> None:
     """Actualiza artículo/cantidad/tipo de retiro de una compra existente. No toca importe ni seña.
 
-    Bloqueada (ValueError) si la compra ya fue recepcionada o retirada,
-    o si fue rechazada por calidad o nunca ingresó al depósito (ver
-    compra_tiene_cantidad_bloqueada) — independiente del bloqueo de
-    precio, que vive aparte en actualizar_precio_compra.
+    Bloqueada (ValueError) SOLO si la compra ya pasó por Depósito
+    (recepcionada, rechazada por calidad o nunca ingresada — ver
+    compra_tiene_cantidad_bloqueada). El retiro de Logística NO bloquea:
+    hasta que entra a Depósito, el comprador puede corregir su compra.
+    Independiente del bloqueo de precio (actualizar_precio_compra).
 
-    Si el tipo de retiro nuevo es 'Cooperativa' y la compra estaba
-    pendiente de retiro, se marca retirada en el mismo UPDATE (mismo
-    criterio que crear_compra): las compras Cooperativa nunca quedan
-    pendientes en Logística — no existe una pantalla que las muestre.
+    Transiciones de retiro al cambiar el tipo (las compras Cooperativa
+    nunca quedan pendientes en Logística — no existe pantalla que las
+    muestre — y al revés, volver de Cooperativa a un tipo real tiene que
+    devolverla a la cola de Logística):
+    - a 'Cooperativa' con retiro pendiente: se marca retirada
+      ('cooperativa') en el mismo UPDATE, como en crear_compra.
+    - de 'Cooperativa' (retiro_origen 'cooperativa') a otro tipo: el
+      retiro vuelve a pendiente, sin cicatriz (como deshacer_retiro).
+    - cualquier otro caso: el retiro no se toca.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
+            cursor.execute("SELECT estado, estado_retiro, retiro_origen FROM compras WHERE id = %s", (compra_id,))
             fila = cursor.fetchone()
-            estado, estado_retiro = fila if fila else (None, None)
+            estado, estado_retiro, retiro_origen = fila if fila else (None, None, None)
 
-            if compra_tiene_cantidad_bloqueada(estado, estado_retiro):
+            if compra_tiene_cantidad_bloqueada(estado):
                 if estado == "recepcionado":
                     raise ValueError("Esta compra ya fue recepcionada, no se puede editar la cantidad.")
                 if estado == "rechazado":
                     raise ValueError("Esta compra fue rechazada por calidad, no se puede editar la cantidad.")
-                if estado == "no_ingresado":
-                    raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar la cantidad.")
-                raise ValueError("Esta compra ya fue retirada, no se puede editar la cantidad.")
+                raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar la cantidad.")
 
-            if tipo_retiro == "Cooperativa":
+            if tipo_retiro == "Cooperativa" and estado_retiro == "pendiente":
                 cursor.execute(
                     """
                     UPDATE compras
                     SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
                         cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s,
                         estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = 'cooperativa'
+                    WHERE id = %s
+                    """,
+                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
+                )
+            elif tipo_retiro != "Cooperativa" and retiro_origen == "cooperativa":
+                cursor.execute(
+                    """
+                    UPDATE compras
+                    SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
+                        cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s,
+                        estado_retiro = 'pendiente', retiro_procesado_el = NULL,
+                        retiro_origen = NULL, cantidad_cajones_retirada = NULL
                     WHERE id = %s
                     """,
                     (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
