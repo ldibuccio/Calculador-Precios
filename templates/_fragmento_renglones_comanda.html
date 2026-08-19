@@ -45,6 +45,7 @@
         <option value="Clark" {% if not r.tipo_retiro or r.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
         <option value="Carro" {% if r.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
         <option value="Pases" {% if r.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
+        <option value="Cooperativa" {% if r.tipo_retiro == "Cooperativa" %}selected{% endif %}>Cooperativa</option>
       </select>
       {% if loop.first and renglones|length > 1 %}
       <div class="campo-descartar">

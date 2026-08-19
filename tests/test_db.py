@@ -1455,3 +1455,45 @@ def test_listar_envases_con_costo_trae_vigente_desde_y_cuantas_fichas_lo_usan():
     assert "activo = true" in consulta
     # Catálogo compartido: nada de filtrar por cliente.
     assert "cliente_id" not in consulta
+
+
+# --- tipo_retiro Cooperativa: nace con el retiro hecho ---
+
+
+def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
+    # La Cooperativa es un tercero: se asume que retira. La compra nace con
+    # estado_retiro 'retirado' y retiro_origen 'cooperativa', pero la
+    # recepción en Depósito sigue pendiente y sin valores reales.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])  # guia_id, punto
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa")
+
+    consulta_insert = cursor.execute.call_args_list[-1].args[0]
+    assert "'pendiente', 'retirado', now(), 'cooperativa'" in consulta_insert
+    assert "cantidad_cajones_real" not in consulta_insert  # sin valores reales: los pone Depósito
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_cantidad_a_cooperativa_marca_el_retiro_en_el_mismo_update():
+    # Cambiar el tipo a Cooperativa en Editar Compra no puede dejar la
+    # compra pendiente de retiro: no existe pantalla que la muestre.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Cooperativa")
+
+    consulta_update = cursor.execute.call_args_list[-1].args[0]
+    assert "estado_retiro = 'retirado'" in consulta_update
+    assert "retiro_origen = 'cooperativa'" in consulta_update
+
+
+def test_actualizar_cantidad_con_tipo_comun_no_toca_el_retiro():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark")
+
+    consulta_update = cursor.execute.call_args_list[-1].args[0]
+    assert "estado_retiro" not in consulta_update
+    assert "retiro_origen" not in consulta_update

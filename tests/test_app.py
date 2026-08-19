@@ -8411,3 +8411,33 @@ def test_ver_comercial_tiene_el_boton_envases():
     assert respuesta.status_code == 200
     assert 'href="/envases"' in respuesta.text
     assert "Envases" in respuesta.text
+
+
+# --- tipo_retiro Cooperativa ---
+
+
+def test_form_de_compra_manual_ofrece_cooperativa():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert 'value="Cooperativa"' in respuesta.text
+
+
+def test_logistica_no_tiene_boton_cooperativa():
+    # Las compras Cooperativa nacen retiradas: no hay nada que procesar en
+    # Logística, así que no existe pantalla ni botón para ese tipo.
+    respuesta = cliente.get("/logistica")
+
+    assert respuesta.status_code == 200
+    assert "Cooperativa" not in respuesta.text
+
+
+def test_detalle_tiene_etiqueta_para_el_origen_cooperativa():
+    from app.main import ORIGENES_RETIRO_LABELS
+
+    assert ORIGENES_RETIRO_LABELS["cooperativa"] == "Retiro a cargo de la Cooperativa (automático)"

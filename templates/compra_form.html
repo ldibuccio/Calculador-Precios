@@ -179,6 +179,7 @@
         <option value="Clark" {% if not compra or not compra.tipo_retiro or compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
         <option value="Carro" {% if compra and compra.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
         <option value="Pases" {% if compra and compra.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
+        <option value="Cooperativa" {% if compra and compra.tipo_retiro == "Cooperativa" %}selected{% endif %}>Cooperativa</option>
       </select>
 
       {% if modo == "nueva" %}

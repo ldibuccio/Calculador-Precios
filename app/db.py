@@ -1123,6 +1123,14 @@ def crear_compra(
     importe/sena típicamente van None acá (el precio lo carga el
     comprador después), pero la función no lo fuerza — eso lo decide
     quien llama.
+
+    tipo_retiro 'Cooperativa': la Cooperativa es un tercero al que se le
+    pasa la distribución para que vaya a buscar — no hay control sobre esa
+    gente, se ASUME que retira. La compra nace con el retiro ya hecho
+    (estado_retiro 'retirado', retiro_procesado_el ahora, retiro_origen
+    'cooperativa') y nunca aparece pendiente en Logística. La recepción en
+    Depósito sigue siendo la normal (estado 'pendiente'), sin valores
+    reales: eso lo completa Depósito cuando la mercadería llega.
     """
     conexion = obtener_conexion()
     try:
@@ -1175,6 +1183,31 @@ def crear_compra(
                         contenido_por_cajon,
                         cantidad_kilos,
                         cantidad_fraccion,
+                    ),
+                )
+            elif tipo_retiro == "Cooperativa":
+                cursor.execute(
+                    """
+                    INSERT INTO compras
+                        (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
+                         cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                         guia_id, guia_punto, estado, estado_retiro, retiro_procesado_el, retiro_origen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), 'cooperativa')
+                    """,
+                    (
+                        fecha_operacion,
+                        articulo_id,
+                        proveedor_id,
+                        cantidad_cajones,
+                        contenido_por_cajon,
+                        cantidad_kilos,
+                        cantidad_fraccion,
+                        importe,
+                        sena,
+                        tipo_retiro,
+                        foto_ruta,
+                        guia_id,
+                        guia_punto,
                     ),
                 )
             else:
@@ -1254,6 +1287,11 @@ def actualizar_cantidad_compra(
     o si fue rechazada por calidad o nunca ingresó al depósito (ver
     compra_tiene_cantidad_bloqueada) — independiente del bloqueo de
     precio, que vive aparte en actualizar_precio_compra.
+
+    Si el tipo de retiro nuevo es 'Cooperativa' y la compra estaba
+    pendiente de retiro, se marca retirada en el mismo UPDATE (mismo
+    criterio que crear_compra): las compras Cooperativa nunca quedan
+    pendientes en Logística — no existe una pantalla que las muestre.
     """
     conexion = obtener_conexion()
     try:
@@ -1271,15 +1309,27 @@ def actualizar_cantidad_compra(
                     raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar la cantidad.")
                 raise ValueError("Esta compra ya fue retirada, no se puede editar la cantidad.")
 
-            cursor.execute(
-                """
-                UPDATE compras
-                SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
-                    cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s
-                WHERE id = %s
-                """,
-                (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
-            )
+            if tipo_retiro == "Cooperativa":
+                cursor.execute(
+                    """
+                    UPDATE compras
+                    SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
+                        cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s,
+                        estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = 'cooperativa'
+                    WHERE id = %s
+                    """,
+                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE compras
+                    SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
+                        cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s
+                    WHERE id = %s
+                    """,
+                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
+                )
         conexion.commit()
     finally:
         conexion.close()

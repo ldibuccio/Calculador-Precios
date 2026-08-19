@@ -108,7 +108,7 @@ from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto,
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "hoja", "pesada"}
-TIPOS_RETIRO_VALIDOS = {"Clark", "Carro", "Pases"}
+TIPOS_RETIRO_VALIDOS = {"Clark", "Carro", "Pases", "Cooperativa"}
 
 # Textos legibles para la pantalla de Detalle de una compra (ver ver_detalle_compra).
 ESTADOS_RETIRO_LABELS = {None: "Sin datos", "pendiente": "Pendiente", "retirado": "Retirado", "cancelado": "Cancelado"}
@@ -125,6 +125,7 @@ ORIGENES_RETIRO_LABELS = {
     "deposito": "Retiro automático (recepcionado en Depósito)",
     "migracion": "Migración",
     "ingreso_directo": "Ingreso directo en Depósito",
+    "cooperativa": "Retiro a cargo de la Cooperativa (automático)",
 }
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
