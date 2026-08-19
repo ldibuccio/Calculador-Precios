@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Objetivo de Compra</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  form.selector label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form.selector select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .ayuda {
+    color: #666;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .vacio {
+    color: #888;
+    font-style: italic;
+    background: #fff;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .encabezado-articulo {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .nombre-articulo {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 0;
+  }
+  .utilidad-actual {
+    font-size: 0.95rem;
+    font-weight: 700;
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .utilidad-actual.negativa { background: #fef2f2; color: #dc2626; }
+  .dato {
+    color: #666;
+    font-size: 0.85rem;
+    margin: 0.35rem 0 0;
+  }
+  .fila-kilos {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+  .fila-kilos label {
+    font-size: 0.9rem;
+    color: #444;
+    flex: 1;
+  }
+  .input-kilos {
+    width: 6.5rem;
+    padding: 0.6rem;
+    font-size: 1.4rem;
+    font-weight: 700;
+    text-align: center;
+    border: 2px solid #2563eb;
+    border-radius: 10px;
+    box-sizing: border-box;
+  }
+  .objetivo {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    text-align: center;
+  }
+  .objetivo .etiqueta {
+    display: block;
+    font-size: 0.8rem;
+    color: #166534;
+    margin-bottom: 0.15rem;
+  }
+  .objetivo-bulto {
+    font-size: 1.7rem;
+    font-weight: 800;
+    color: #166534;
+  }
+  .objetivo-unidad {
+    display: block;
+    font-size: 0.85rem;
+    color: #4d7c5f;
+    margin-top: 0.15rem;
+  }
+  .lista-aparte { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; color: #713f12; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Objetivo de Compra" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form class="selector" method="get" action="/compras/objetivo">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  {% if not cliente_id %}
+  <p class="vacio">Elegí un cliente para ver a cuánto tenés que comprar cada artículo.</p>
+  {% elif utilidad_objetivo is none %}
+  <div class="aviso">
+    {{ cliente.nombre }} no tiene una utilidad objetivo vigente cargada. Cargala en Clientes para poder calcular los objetivos.
+  </div>
+  {% else %}
+
+  <p class="ayuda">
+    Utilidad objetivo de {{ cliente.nombre }}: <strong>{{ "%.1f"|format(utilidad_objetivo * 100) }}%</strong>.
+    Artículos por debajo, de peor a mejor. Si en el puesto te ofrecen otro bulto, tocá los kilos:
+    el objetivo se recalcula solo.
+  </p>
+
+  {% if not articulos %}
+  <p class="vacio">Ningún artículo por debajo del objetivo. Nada que negociar.</p>
+  {% endif %}
+
+  {% for fila in articulos %}
+  {% set sufijo = {"kilo": "kg", "unidad": "un", "cubeta": "cub"}[fila.unidad_venta] %}
+  <div class="tarjeta tarjeta-articulo"
+       data-entra="{{ fila.entra_por_unidad }}"
+       data-utilidad="{{ utilidad_objetivo }}"
+       data-envase-unidad="{{ fila.envase_por_unidad }}"
+       data-umbral="{{ fila.umbral_envase if fila.umbral_envase is not none else '' }}"
+       data-sufijo="{{ sufijo }}">
+    <div class="encabezado-articulo">
+      <p class="nombre-articulo">{{ fila.articulo_nombre }}</p>
+      <span class="utilidad-actual {% if fila.utilidad_actual < 0 %}negativa{% endif %}">
+        {{ "%.1f"|format(fila.utilidad_actual * 100) }}%
+      </span>
+    </div>
+    <p class="dato">
+      Últ. compra: <strong>{{ fila.precio_bulto_ultima|moneda }}</strong>
+      × {{ fila.contenido_ultima|kilos }} {{ sufijo }}
+      ({{ fila.fecha_ultima_compra.strftime("%d/%m") }})
+      — Venta vigente: {{ fila.precio_vigente|moneda }}/{{ sufijo }}
+    </p>
+    <div class="fila-kilos">
+      <label>{% if fila.unidad_venta == "kilo" %}Kilos por cajón{% elif fila.unidad_venta == "unidad" %}Unidades por bulto{% else %}Cubetas por bulto{% endif %}</label>
+      <input class="input-kilos" type="text" inputmode="decimal" value="{{ fila.contenido_ultima|kilos }}">
+    </div>
+    <div class="objetivo">
+      <span class="etiqueta">Comprar el bulto a menos de</span>
+      <span class="objetivo-bulto">{{ fila.objetivo_bulto_ultima|moneda }}</span>
+      <span class="objetivo-unidad">= {{ fila.objetivo_por_unidad|moneda }}/{{ sufijo }}</span>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if sin_precio_vigente %}
+  <div class="aviso">
+    Sin precio de venta cargado (no se puede calcular el objetivo):
+    <ul class="lista-aparte">
+      {% for fila in sin_precio_vigente %}
+      <li>{{ fila.articulo_nombre }} (últ. compra {{ fila.fecha_ultima_compra.strftime("%d/%m") }})</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if sin_ficha %}
+  <div class="aviso">
+    Sin ficha logística para {{ cliente.nombre }} (no se puede calcular el objetivo):
+    <ul class="lista-aparte">
+      {% for nombre in sin_ficha %}
+      <li>{{ nombre }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <script>
+    // Recalcula el objetivo del bulto al editar el kilaje, 100% en el
+    // navegador — la MISMA cuenta que el servidor (ver core/motor_costeo.py
+    // costo_objetivo_multi_concepto): objetivo_unidad = entra / (1 +
+    // utilidad) - envase (el envase se resta después de dividir, porque la
+    // utilidad del sistema se mide sobre mercadería + envase);
+    // objetivo_bulto = objetivo_unidad * kilos. Para envase variable, el
+    // corte es el contenido de la ficha (umbral): hasta ahí es descartable
+    // (sin envase), más es caja chica.
+    function formatearMoneda(valor) {
+      var entero = Math.round(valor);
+      var texto = Math.abs(entero).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+      return "$" + (entero < 0 ? "-" : "") + texto;
+    }
+
+    document.querySelectorAll(".tarjeta-articulo").forEach(function (tarjeta) {
+      var entra = parseFloat(tarjeta.dataset.entra);
+      var utilidad = parseFloat(tarjeta.dataset.utilidad);
+      var envaseUnidad = parseFloat(tarjeta.dataset.envaseUnidad);
+      var umbral = tarjeta.dataset.umbral === "" ? null : parseFloat(tarjeta.dataset.umbral);
+      var sufijo = tarjeta.dataset.sufijo;
+      var input = tarjeta.querySelector(".input-kilos");
+      var bulto = tarjeta.querySelector(".objetivo-bulto");
+      var unidad = tarjeta.querySelector(".objetivo-unidad");
+
+      input.addEventListener("input", function () {
+        var kilos = parseFloat(input.value.replace(",", "."));
+        if (!isFinite(kilos) || kilos <= 0) {
+          bulto.textContent = "—";
+          unidad.textContent = "";
+          return;
+        }
+        var envase = (umbral !== null && kilos <= umbral) ? 0 : envaseUnidad;
+        var objetivoUnidad = entra / (1 + utilidad) - envase;
+        bulto.textContent = formatearMoneda(objetivoUnidad * kilos);
+        unidad.textContent = "= " + formatearMoneda(objetivoUnidad) + "/" + sufijo;
+      });
+    });
+  </script>
+  {% endif %}
+</body>
+</html>

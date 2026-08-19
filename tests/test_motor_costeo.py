@@ -14,6 +14,7 @@ from core.motor_costeo import (
     calcular_kilo_promedio_ponderado_cajon,
     calcular_promedio_ponderado,
     calcular_utilidad_combinada_ponderada_cherry,
+    costo_objetivo_multi_concepto,
     costo_por_kilo,
     costo_por_kilo_base,
     precio_sugerido,
@@ -535,4 +536,87 @@ def test_utilidad_real_multi_concepto_costo_total_cero_da_error():
             costo_envase=0,
             tasas_suman=[],
             tasas_restan=[],
+        )
+
+
+# --- costo_objetivo_multi_concepto: la inversa de precio_sugerido (Objetivo de Compra) ---
+
+
+def test_costo_objetivo_multi_concepto_ida_y_vuelta_exacta_con_precio_sugerido_y_utilidad_real():
+    # La garantía central de Objetivo de Compra: comprando exactamente al
+    # objetivo, la Rutina A devuelve el precio vigente y la utilidad
+    # objetivo, clavados. Casos con y sin envase, con y sin tasas.
+    casos = [
+        {"precio": 900.0, "envase": 40.625, "suman": [0.105], "restan": [0.23, 0.03], "utilidad": 0.20},
+        {"precio": 1200.0, "envase": 0.0, "suman": [], "restan": [], "utilidad": 0.35},
+        {"precio": 500.0, "envase": 10.0, "suman": [0.02], "restan": [0.40], "utilidad": 0.0},
+        {"precio": 4400.0, "envase": 200.0, "suman": [], "restan": [0.23], "utilidad": 0.18},
+    ]
+    for caso in casos:
+        costo_objetivo = costo_objetivo_multi_concepto(
+            precio_vigente=caso["precio"],
+            costo_envase=caso["envase"],
+            tasas_suman=caso["suman"],
+            tasas_restan=caso["restan"],
+            utilidad=caso["utilidad"],
+        )
+
+        # La garantía fuerte: comprando al objetivo, la utilidad que mide
+        # todo el sistema (la de Márgenes por Artículo) da la objetivo
+        # clavada.
+        utilidad_de_vuelta = utilidad_real_multi_concepto(
+            precio_vigente=caso["precio"],
+            costo_producto=costo_objetivo,
+            costo_envase=caso["envase"],
+            tasas_suman=caso["suman"],
+            tasas_restan=caso["restan"],
+        )
+        assert utilidad_de_vuelta == pytest.approx(caso["utilidad"]), caso
+
+        # Contra precio_sugerido (que aplica la utilidad solo a la
+        # mercadería, no al envase): sin envase coincide exacto; con
+        # envase, el precio que sugeriría con este costo queda apenas por
+        # debajo del vigente — nunca por arriba.
+        precio_de_vuelta = precio_sugerido_multi_concepto(
+            costo_producto=costo_objetivo,
+            costo_envase=caso["envase"],
+            tasas_suman=caso["suman"],
+            tasas_restan=caso["restan"],
+            utilidad=caso["utilidad"],
+        )
+        if caso["envase"] == 0 or caso["utilidad"] == 0:
+            assert precio_de_vuelta == pytest.approx(caso["precio"]), caso
+        else:
+            assert precio_de_vuelta < caso["precio"], caso
+
+
+def test_costo_objetivo_multi_concepto_ejemplo_manzana_el_objetivo_por_unidad_no_cambia_con_el_kilaje():
+    # El ejemplo del pedido: objetivo $15.000 para el cajón de 18 kg. Si en
+    # el Mercado ofrecen cajones de 20 kg, el objetivo por kilo es EL MISMO
+    # y el del bulto pasa a $16.666,67 — la cuenta es por unidad de venta,
+    # el kilaje solo multiplica.
+    objetivo_por_kilo = costo_objetivo_multi_concepto(
+        precio_vigente=1000.0, costo_envase=0.0, tasas_suman=[], tasas_restan=[], utilidad=0.2
+    )
+
+    assert objetivo_por_kilo == pytest.approx(833.3333, abs=0.01)
+    assert objetivo_por_kilo * 18 == pytest.approx(15000.0)
+    assert objetivo_por_kilo * 20 == pytest.approx(16666.67, abs=0.01)
+
+
+def test_costo_objetivo_multi_concepto_puede_dar_negativo_si_el_precio_no_cubre_ni_el_envase():
+    resultado = costo_objetivo_multi_concepto(
+        precio_vigente=10.0, costo_envase=100.0, tasas_suman=[], tasas_restan=[], utilidad=0.2
+    )
+    assert resultado < 0
+
+
+def test_costo_objetivo_multi_concepto_valida_utilidad_y_denominador():
+    with pytest.raises(ValueError):
+        costo_objetivo_multi_concepto(
+            precio_vigente=100.0, costo_envase=0.0, tasas_suman=[], tasas_restan=[], utilidad=-1
+        )
+    with pytest.raises(ValueError):
+        costo_objetivo_multi_concepto(
+            precio_vigente=100.0, costo_envase=0.0, tasas_suman=[], tasas_restan=[1.0], utilidad=0.2
         )

@@ -1,4 +1,6 @@
 from datetime import date, datetime
+
+from core.motor_costeo import utilidad_real_multi_concepto as calcular_utilidad_real_para_test
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -10,6 +12,7 @@ from app.costeo import (
     agrupar_para_negociar,
     calcular_costo_por_unidad_venta_reciente,
     calcular_listado_para_negociar_precios,
+    calcular_objetivos_de_compra,
     calcular_precio_sugerido_desglosado,
 )
 
@@ -1023,3 +1026,144 @@ def test_agrupar_todos_no_depende_de_la_utilidad_objetivo_del_cliente():
     resultado = agrupar_para_negociar(ARTICULOS_PARA_AGRUPAR, utilidad_objetivo=None)
 
     assert len(resultado["todos"]) == 6
+
+
+# --- calcular_objetivos_de_compra: la Rutina A al revés (Objetivo de Compra) ---
+
+FICHAS_OBJETIVO = [
+    {"articulo_id": 1, "articulo_nombre": "Manzana Roja", "unidad_venta": "kilo",
+     "contenido_caja": Decimal("16"), "envase_variable": False, "envase_id": 7, "envase_nombre": "Caja Grande"},
+    {"articulo_id": 2, "articulo_nombre": "Kiwi", "unidad_venta": "kilo",
+     "contenido_caja": None, "envase_variable": False, "envase_id": None, "envase_nombre": None},
+    {"articulo_id": 3, "articulo_nombre": "Banana", "unidad_venta": "kilo",
+     "contenido_caja": None, "envase_variable": False, "envase_id": None, "envase_nombre": None},
+    {"articulo_id": 4, "articulo_nombre": "Pera", "unidad_venta": "kilo",
+     "contenido_caja": None, "envase_variable": False, "envase_id": None, "envase_nombre": None},
+]
+
+COMPRAS_OBJETIVO = [
+    # Manzana: tres compras — la ÚLTIMA es la del 10/08 cargada a las 11
+    # ($20.000 × 18 kg). La del mismo día a las 9 y la del 09/08 tienen
+    # importes absurdos a propósito: si el cálculo las tomara, se nota.
+    {"articulo_id": 1, "articulo_nombre": "Manzana Roja", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 11, 0), "cantidad_cajones": Decimal("10"),
+     "contenido_por_cajon": Decimal("18"), "cantidad_kilos": Decimal("180"), "importe": Decimal("20000")},
+    {"articulo_id": 1, "articulo_nombre": "Manzana Roja", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 9, 0), "cantidad_cajones": Decimal("1"),
+     "contenido_por_cajon": Decimal("18"), "cantidad_kilos": Decimal("18"), "importe": Decimal("99999")},
+    {"articulo_id": 1, "articulo_nombre": "Manzana Roja", "fecha_operacion": date(2026, 8, 9),
+     "cargado_el": datetime(2026, 8, 9, 10, 0), "cantidad_cajones": Decimal("1"),
+     "contenido_por_cajon": Decimal("18"), "cantidad_kilos": Decimal("18"), "importe": Decimal("77777")},
+    # Kiwi: utilidad actual por ARRIBA del objetivo — no tiene que aparecer.
+    {"articulo_id": 2, "articulo_nombre": "Kiwi", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 8, 0), "cantidad_cajones": Decimal("5"),
+     "contenido_por_cajon": Decimal("10"), "cantidad_kilos": Decimal("50"), "importe": Decimal("9000")},
+    # Banana: bajo objetivo pero mejor que Manzana — va DESPUÉS de Manzana.
+    {"articulo_id": 3, "articulo_nombre": "Banana", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 8, 0), "cantidad_cajones": Decimal("5"),
+     "contenido_por_cajon": Decimal("10"), "cantidad_kilos": Decimal("50"), "importe": Decimal("10000")},
+    # Pera: con ficha y compra reciente pero SIN precio vigente.
+    {"articulo_id": 4, "articulo_nombre": "Pera", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 8, 0), "cantidad_cajones": Decimal("2"),
+     "contenido_por_cajon": Decimal("12"), "cantidad_kilos": Decimal("24"), "importe": Decimal("5000")},
+    # Morrón: compra reciente con precio pero SIN ficha del cliente.
+    {"articulo_id": 9, "articulo_nombre": "Morrón Rojo", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 8, 0), "cantidad_cajones": Decimal("2"),
+     "contenido_por_cajon": Decimal("10"), "cantidad_kilos": Decimal("20"), "importe": Decimal("6000")},
+    # Manzana otra vez pero SIN precio: no puede ser "la última" (no hay
+    # precio real pagado ahí).
+    {"articulo_id": 1, "articulo_nombre": "Manzana Roja", "fecha_operacion": date(2026, 8, 10),
+     "cargado_el": datetime(2026, 8, 10, 12, 0), "cantidad_cajones": Decimal("1"),
+     "contenido_por_cajon": Decimal("18"), "cantidad_kilos": Decimal("18"), "importe": None},
+]
+
+CONCEPTOS_OBJETIVO = {"tasas_suman": [0.105], "tasas_restan": [0.23, 0.03], "utilidad": 0.2}
+PRECIOS_OBJETIVO = [
+    {"articulo_id": 1, "precio": Decimal("900")},
+    {"articulo_id": 2, "precio": Decimal("2000")},
+    {"articulo_id": 3, "precio": Decimal("1300")},
+]
+ENVASES_OBJETIVO = [{"envase_id": 7, "costo": Decimal("650")}]
+
+
+def _calcular_objetivos_con_mocks(compras=None, fichas=None, conceptos=None, precios=None, envases=None):
+    with (
+        patch("app.costeo.listar_compras_para_costeo", return_value=compras or COMPRAS_OBJETIVO) as mock_compras,
+        patch("app.costeo.listar_fichas_por_cliente", return_value=fichas or FICHAS_OBJETIVO),
+        patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos or CONCEPTOS_OBJETIVO),
+        patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=precios or PRECIOS_OBJETIVO),
+        patch("app.costeo.listar_costos_envases_vigentes", return_value=envases or ENVASES_OBJETIVO),
+    ):
+        resultado = calcular_objetivos_de_compra(CLIENTE_ID_DE_PRUEBA, MOMENTO_DE_PRUEBA)
+    return resultado, mock_compras
+
+
+def test_objetivos_de_compra_solo_bajo_objetivo_ordenados_de_peor_a_mejor():
+    resultado, _ = _calcular_objetivos_con_mocks()
+
+    nombres = [fila["articulo_nombre"] for fila in resultado["articulos"]]
+    # Kiwi queda afuera (utilidad actual arriba del objetivo); Manzana está
+    # peor que Banana, así que va primera.
+    assert nombres == ["Manzana Roja", "Banana"]
+    assert resultado["articulos"][0]["utilidad_actual"] < resultado["articulos"][1]["utilidad_actual"]
+    assert resultado["utilidad_objetivo"] == 0.2
+
+
+def test_objetivos_de_compra_usa_la_ultima_compra_con_precio_y_desempatada_por_hora():
+    resultado, _ = _calcular_objetivos_con_mocks()
+
+    manzana = resultado["articulos"][0]
+    # La última con precio es la de las 11 ($20.000 × 18 kg) — ni las
+    # anteriores con importes absurdos, ni la más nueva sin precio.
+    assert manzana["precio_bulto_ultima"] == 20000.0
+    assert manzana["contenido_ultima"] == 18.0
+    assert manzana["fecha_ultima_compra"] == date(2026, 8, 10)
+
+
+def test_objetivos_de_compra_formula_despejada_con_envase_y_tasas():
+    resultado, _ = _calcular_objetivos_con_mocks()
+    manzana = resultado["articulos"][0]
+
+    # A mano: denominador = 1 + 0.105 - 0.26 = 0.845; entra = 900 × 0.845 =
+    # 760.5; envase por kilo = 650/16 = 40.625; objetivo por kilo =
+    # 760.5 / 1.2 - 40.625 = 593.125 (el envase se resta DESPUÉS de
+    # dividir: la utilidad del sistema se mide sobre mercadería + envase);
+    # por bulto de 18 kg = 10676.25.
+    assert manzana["entra_por_unidad"] == pytest.approx(760.5)
+    assert manzana["envase_por_unidad"] == pytest.approx(40.625)
+    assert manzana["objetivo_por_unidad"] == pytest.approx(593.125)
+    assert manzana["objetivo_bulto_ultima"] == pytest.approx(10676.25)
+
+    # Ida y vuelta contra el motor: comprando al objetivo, la utilidad da
+    # exactamente la objetivo.
+    utilidad_de_vuelta = calcular_utilidad_real_para_test(
+        precio_vigente=900.0,
+        costo_producto=manzana["objetivo_por_unidad"],
+        costo_envase=40.625,
+        tasas_suman=[0.105],
+        tasas_restan=[0.23, 0.03],
+    )
+    assert utilidad_de_vuelta == pytest.approx(0.2)
+
+
+def test_objetivos_de_compra_sin_precio_vigente_y_sin_ficha_se_reportan_aparte():
+    resultado, _ = _calcular_objetivos_con_mocks()
+
+    assert [f["articulo_nombre"] for f in resultado["sin_precio_vigente"]] == ["Pera"]
+    assert resultado["sin_ficha"] == ["Morrón Rojo"]
+
+
+def test_objetivos_de_compra_pide_solo_los_ultimos_15_dias():
+    _, mock_compras = _calcular_objetivos_con_mocks()
+
+    # Mismo criterio de obsolescencia que el listado de negociación: la
+    # ventana que se le pide a la base es [hoy - 15 días, hoy].
+    mock_compras.assert_called_once_with(date(2026, 7, 26), date(2026, 8, 10))
+
+
+def test_objetivos_de_compra_cliente_sin_utilidad_objetivo_no_calcula_nada():
+    conceptos = {"tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": None}
+    resultado, _ = _calcular_objetivos_con_mocks(conceptos=conceptos)
+
+    assert resultado["articulos"] == []
+    assert resultado["utilidad_objetivo"] is None

@@ -21,6 +21,7 @@ from app.db import (
 )
 from core.motor_costeo import (
     SIN_ENVASE,
+    costo_objetivo_multi_concepto as calcular_costo_objetivo,
     precio_sugerido_multi_concepto as calcular_precio_sugerido,
     utilidad_real_multi_concepto as calcular_utilidad_real,
 )
@@ -461,6 +462,169 @@ def agrupar_para_negociar(articulos: list[dict], utilidad_objetivo: float | None
     )
 
     return {"bajas": bajas, "subas": subas, "bajo_objetivo": bajo_objetivo, "todos": todos}
+
+
+def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime | None = None) -> dict:
+    """Objetivo de Compra: a cuánto comprar como máximo cada artículo para llegar a la utilidad objetivo del cliente.
+
+    La Rutina A al revés: en vez de partir del costo para sugerir el precio
+    de venta, parte del precio de venta VIGENTE y despeja el costo máximo de
+    compra (ver core.motor_costeo.costo_objetivo_multi_concepto). Para que
+    el comprador vaya al Mercado sabiendo su techo por artículo.
+
+    Reglas:
+    - Aparecen solo los artículos con ficha del cliente cuya utilidad ACTUAL
+      está por debajo de la utilidad objetivo, ordenados de peor a mejor.
+    - La utilidad actual se calcula sobre la ÚLTIMA compra con precio
+      cargado (el último precio real pagado, no el promedio de 48 hs):
+      la de fecha_operacion más reciente, desempatada por cargado_el.
+    - Sin ninguna compra con precio en los últimos LIMITE_APARICION_DIAS
+      (15) días, el artículo no aparece — mismo criterio de obsolescencia
+      que calcular_listado_para_negociar_precios.
+    - El envase por unidad de venta usa SIEMPRE el contenido de la ficha
+      (1 envase cada contenido_ficha unidades) — la misma convención que la
+      Rutina A (_envases_por_unidad_ponderado con envase fijo), y es lo que
+      hace que el objetivo POR UNIDAD no dependa del kilaje del bulto. Para
+      envase variable (mango/cherry), el corte es por bulto: kilaje <=
+      contenido de ficha es descartable (sin envase), más es caja chica —
+      para la utilidad actual se decide con el kilaje de la última compra,
+      y la pantalla repite la misma regla en vivo cuando se edita el kilaje
+      (por eso cada fila lleva umbral_envase y envase_por_unidad).
+
+    Devuelve un dict con:
+      - "articulos": filas bajo objetivo, de peor a mejor utilidad actual,
+        cada una con: articulo_id, articulo_nombre, unidad_venta,
+        fecha_ultima_compra, precio_bulto_ultima, contenido_ultima,
+        utilidad_actual, precio_vigente, entra_por_unidad (precio_vigente ×
+        denominador de tasas), envase_por_unidad (costo del envase por
+        unidad de venta según ficha), umbral_envase (contenido de ficha, o
+        None), envase_variable, objetivo_por_unidad y objetivo_bulto_ultima
+        (con el kilaje de la última compra, el valor inicial del input).
+      - "sin_precio_vigente": artículos con compra reciente y ficha pero sin
+        precio de venta cargado (no hay de dónde despejar) — nunca se
+        saltean en silencio.
+      - "sin_ficha": artículos con compra reciente pero sin ficha del
+        cliente (sin unidad de venta ni envase).
+      - "utilidad_objetivo": la vigente del cliente (None si falta — en ese
+        caso "articulos" viene vacío y la pantalla avisa).
+    """
+    if momento_referencia is None:
+        momento_referencia = datetime.now(ARGENTINA)
+
+    hoy = momento_referencia.date()
+    fecha_desde = hoy - timedelta(days=LIMITE_APARICION_DIAS)
+
+    compras = listar_compras_para_costeo(fecha_desde, hoy)
+    fichas = listar_fichas_por_cliente(cliente_id)
+    conceptos_cliente = listar_conceptos_vigentes_por_cliente(cliente_id, hoy)
+    utilidad_objetivo = conceptos_cliente["utilidad"]
+    denominador_tasas = 1 + sum(conceptos_cliente["tasas_suman"]) - sum(conceptos_cliente["tasas_restan"])
+
+    precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
+    precio_vigente_por_articulo = {p["articulo_id"]: float(p["precio"]) for p in precios_vigentes}
+
+    costos_envases = listar_costos_envases_vigentes(hoy)
+    costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
+
+    compras_con_precio_por_articulo: dict[int, list[dict]] = {}
+    nombres_por_articulo: dict[int, str] = {}
+    for compra in compras:
+        if compra["importe"] is None:
+            continue
+        articulo_id = compra["articulo_id"]
+        nombres_por_articulo[articulo_id] = compra["articulo_nombre"]
+        compras_con_precio_por_articulo.setdefault(articulo_id, []).append(compra)
+
+    articulos_con_ficha = {ficha["articulo_id"] for ficha in fichas}
+    sin_ficha = sorted(
+        nombres_por_articulo[articulo_id]
+        for articulo_id in compras_con_precio_por_articulo
+        if articulo_id not in articulos_con_ficha
+    )
+
+    articulos = []
+    sin_precio_vigente = []
+    for ficha in fichas:
+        articulo_id = ficha["articulo_id"]
+        compras_articulo = compras_con_precio_por_articulo.get(articulo_id)
+        if not compras_articulo:
+            continue
+
+        ultima = max(compras_articulo, key=lambda c: (c["fecha_operacion"], c["cargado_el"]))
+        precio_bulto_ultima = float(ultima["importe"])
+        contenido_ultima = float(ultima["contenido_por_cajon"])
+        costo_ultima_por_unidad = precio_bulto_ultima / contenido_ultima if contenido_ultima else None
+        if costo_ultima_por_unidad is None:
+            continue
+
+        precio_vigente = precio_vigente_por_articulo.get(articulo_id)
+        if precio_vigente is None:
+            sin_precio_vigente.append(
+                {"articulo_nombre": ficha["articulo_nombre"], "fecha_ultima_compra": ultima["fecha_operacion"]}
+            )
+            continue
+
+        if utilidad_objetivo is None:
+            continue
+
+        # Envase por la convención de la ficha (igual que la Rutina A):
+        # 1 envase cada contenido_ficha unidades. Variable: el corte por
+        # bulto se decide con el kilaje correspondiente.
+        contenido_ficha = float(ficha["contenido_caja"]) if ficha["contenido_caja"] else None
+        costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
+        envase_por_unidad = (costo_envase / contenido_ficha) if contenido_ficha else 0.0
+
+        def _envase_para_kilaje(kilaje: float) -> float:
+            if ficha["envase_variable"] and contenido_ficha and kilaje <= contenido_ficha:
+                return 0.0
+            return envase_por_unidad
+
+        utilidad_actual = calcular_utilidad_real(
+            precio_vigente=precio_vigente,
+            costo_producto=costo_ultima_por_unidad,
+            costo_envase=_envase_para_kilaje(contenido_ultima),
+            tasas_suman=conceptos_cliente["tasas_suman"],
+            tasas_restan=conceptos_cliente["tasas_restan"],
+        )
+        if utilidad_actual >= utilidad_objetivo:
+            continue
+
+        objetivo_por_unidad = calcular_costo_objetivo(
+            precio_vigente=precio_vigente,
+            costo_envase=_envase_para_kilaje(contenido_ultima),
+            tasas_suman=conceptos_cliente["tasas_suman"],
+            tasas_restan=conceptos_cliente["tasas_restan"],
+            utilidad=utilidad_objetivo,
+        )
+
+        articulos.append(
+            {
+                "articulo_id": articulo_id,
+                "articulo_nombre": ficha["articulo_nombre"],
+                "unidad_venta": ficha["unidad_venta"],
+                "fecha_ultima_compra": ultima["fecha_operacion"],
+                "precio_bulto_ultima": precio_bulto_ultima,
+                "contenido_ultima": contenido_ultima,
+                "utilidad_actual": utilidad_actual,
+                "precio_vigente": precio_vigente,
+                "entra_por_unidad": precio_vigente * denominador_tasas,
+                "envase_por_unidad": envase_por_unidad,
+                "umbral_envase": contenido_ficha if ficha["envase_variable"] else None,
+                "envase_variable": ficha["envase_variable"],
+                "objetivo_por_unidad": objetivo_por_unidad,
+                "objetivo_bulto_ultima": objetivo_por_unidad * contenido_ultima,
+            }
+        )
+
+    articulos.sort(key=lambda fila: fila["utilidad_actual"])
+    sin_precio_vigente.sort(key=lambda fila: fila["articulo_nombre"])
+
+    return {
+        "articulos": articulos,
+        "sin_precio_vigente": sin_precio_vigente,
+        "sin_ficha": sin_ficha,
+        "utilidad_objetivo": utilidad_objetivo,
+    }
 
 
 def _normalizar_nombre(nombre: str) -> str:

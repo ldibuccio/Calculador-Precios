@@ -721,7 +721,7 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
                        COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
-                       c.importe
+                       c.importe, c.cargado_el
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 WHERE c.fecha_operacion BETWEEN %s AND %s

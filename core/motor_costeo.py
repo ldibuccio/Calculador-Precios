@@ -209,6 +209,56 @@ def precio_sugerido_multi_concepto(
     return (costo_producto * (1 + utilidad) + costo_envase) / denominador
 
 
+def costo_objetivo_multi_concepto(
+    precio_vigente: float,
+    costo_envase: float,
+    tasas_suman: list[float],
+    tasas_restan: list[float],
+    utilidad: float,
+) -> float:
+    """A cuánto comprar COMO MÁXIMO para llegar a la utilidad objetivo — la inversa exacta de utilidad_real_multi_concepto.
+
+    En vez de partir del costo para calcular el precio, se parte del
+    precio_vigente ya cargado y se despeja el costo de mercadería que deja
+    exactamente la utilidad objetivo:
+
+        costo_objetivo = precio_vigente * (1 + suma(tasas_suman) - suma(tasas_restan))
+                          / (1 + utilidad) - costo_envase
+
+    El envase se resta DESPUÉS de dividir (no antes) a propósito: la
+    utilidad que muestra todo el sistema (utilidad_real_multi_concepto, la
+    de Márgenes por Artículo) se mide sobre el costo total, mercadería MÁS
+    envase. Con este despeje, comprar exactamente a costo_objetivo deja esa
+    utilidad clavada en la objetivo — fijado por test. (Restar el envase
+    antes de dividir invertiría precio_sugerido_multi_concepto, que aplica
+    la utilidad solo a la mercadería: comprando a ese otro objetivo, la
+    utilidad medida quedaría un poco POR DEBAJO de la objetivo y el
+    artículo nunca saldría de la lista de "bajo objetivo".)
+
+    precio_vigente y costo_envase van por unidad de venta (kilo/unidad/
+    cubeta), y el resultado también: costo máximo por unidad de venta.
+    Quien llama lo multiplica por el contenido del bulto para tener el
+    objetivo por bulto.
+
+    Puede dar negativo (precio vigente tan bajo que ni el envase se cubre):
+    se devuelve tal cual, que quien muestre decida cómo avisarlo.
+    """
+    if utilidad == -1:
+        raise ValueError("utilidad no puede ser -1 (dividiría por cero)")
+
+    suma_tasas_suman = sum(tasas_suman)
+    suma_tasas_restan = sum(tasas_restan)
+
+    denominador = 1 + suma_tasas_suman - suma_tasas_restan
+    if denominador <= 0:
+        raise ValueError(
+            f"1 + suma de tasas que suman ({suma_tasas_suman}) - suma de tasas que restan "
+            f"({suma_tasas_restan}) = {denominador}: no puede ser cero ni negativo"
+        )
+
+    return precio_vigente * denominador / (1 + utilidad) - costo_envase
+
+
 def utilidad_real(
     precio_dia: float,
     kg_bulto: float,

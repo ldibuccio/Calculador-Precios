@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
 
-from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios
+from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios, calcular_objetivos_de_compra
 from app.db import (
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -3210,6 +3210,47 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         "sin_fichas": len(fichas_cliente) == 0,
         "sin_articulos_recientes": len(fichas_cliente) > 0 and len(articulos) == 0,
     }
+
+
+@app.get("/compras/objetivo")
+def ver_objetivo_de_compra(request: Request, cliente_id: int | None = None):
+    """Objetivo de Compra: el techo de compra por artículo para llegar a la utilidad objetivo del cliente.
+
+    Mismo patrón de selector que /negociar: sin cliente_id, solo el
+    selector; al elegir uno se recarga con ?cliente_id=N y se calcula.
+    El recálculo al editar el kilaje es 100%% del lado del navegador (los
+    números de cada tarjeta viajan en atributos data-), sin volver al server.
+    """
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if cliente_id is None:
+        return templates.TemplateResponse(request, "objetivo_compra.html", {"clientes": clientes, "cliente_id": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        objetivos = calcular_objetivos_de_compra(cliente_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al calcular los objetivos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "objetivo_compra.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
+            "cliente": cliente,
+            "articulos": objetivos["articulos"],
+            "sin_precio_vigente": objetivos["sin_precio_vigente"],
+            "sin_ficha": objetivos["sin_ficha"],
+            "utilidad_objetivo": objetivos["utilidad_objetivo"],
+        },
+    )
 
 
 @app.get("/negociar")

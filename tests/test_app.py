@@ -8219,3 +8219,93 @@ def test_guardar_y_exportar_disponible_excel_error_de_base_da_500():
 
     assert respuesta.status_code == 500
     assert "No se pudo generar el Excel" in respuesta.text
+
+
+# --- /compras/objetivo: Objetivo de Compra (la Rutina A al revés) ---
+
+OBJETIVOS_DE_PRUEBA = {
+    "articulos": [
+        {
+            "articulo_id": 1,
+            "articulo_nombre": "Manzana Roja",
+            "unidad_venta": "kilo",
+            "fecha_ultima_compra": date(2026, 8, 10),
+            "precio_bulto_ultima": 20000.0,
+            "contenido_ultima": 18.0,
+            "utilidad_actual": -0.34,
+            "precio_vigente": 900.0,
+            "entra_por_unidad": 760.5,
+            "envase_por_unidad": 40.625,
+            "umbral_envase": None,
+            "envase_variable": False,
+            "objetivo_por_unidad": 593.125,
+            "objetivo_bulto_ultima": 10676.25,
+        }
+    ],
+    "sin_precio_vigente": [{"articulo_nombre": "Pera", "fecha_ultima_compra": date(2026, 8, 10)}],
+    "sin_ficha": ["Morrón Rojo"],
+    "utilidad_objetivo": 0.2,
+}
+
+
+def test_ver_objetivo_de_compra_sin_cliente_muestra_solo_el_selector():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/objetivo")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente" in respuesta.text
+    assert "Manzana" not in respuesta.text
+
+
+def test_ver_objetivo_de_compra_con_cliente_muestra_los_articulos_bajo_objetivo():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_objetivos_de_compra", return_value=OBJETIVOS_DE_PRUEBA) as mock_objetivos,
+    ):
+        respuesta = cliente.get("/compras/objetivo?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    mock_objetivos.assert_called_once_with(1)
+    assert "Manzana Roja" in respuesta.text
+    # La utilidad objetivo del cliente, arriba de todo.
+    assert "20.0%" in respuesta.text
+    # Última compra y objetivo inicial (con el kilaje de esa compra).
+    assert "$20.000" in respuesta.text
+    assert "$10.676" in respuesta.text
+    # Los números que necesita el recálculo en vivo viajan en data-attrs, y
+    # el input de kilos viene precargado con el contenido de la última compra.
+    assert 'data-entra="760.5"' in respuesta.text
+    assert 'data-envase-unidad="40.625"' in respuesta.text
+    assert 'class="input-kilos"' in respuesta.text
+    assert 'value="18"' in respuesta.text
+    # Las listas aparte, nunca en silencio.
+    assert "Pera" in respuesta.text
+    assert "Morrón Rojo" in respuesta.text
+
+
+def test_ver_objetivo_de_compra_cliente_sin_utilidad_objetivo_avisa():
+    objetivos = {"articulos": [], "sin_precio_vigente": [], "sin_ficha": [], "utilidad_objetivo": None}
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_objetivos_de_compra", return_value=objetivos),
+    ):
+        respuesta = cliente.get("/compras/objetivo?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "no tiene una utilidad objetivo vigente" in respuesta.text
+
+
+def test_ver_objetivo_de_compra_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/compras/objetivo?cliente_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_compras_tiene_el_boton_objetivo_de_compra():
+    with patch("app.main.contar_compras_sin_precio", return_value=0):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'href="/compras/objetivo"' in respuesta.text
+    assert "Objetivo de Compra" in respuesta.text
