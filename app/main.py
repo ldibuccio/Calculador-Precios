@@ -1349,8 +1349,19 @@ def _validar_compra_nueva_form(
 
 @app.get("/compras")
 def ver_compras(request: Request):
-    """Botonera de entrada al módulo de compras — sin datos de base, solo los dos grupos de acciones."""
-    return templates.TemplateResponse(request, "compras.html", {})
+    """Botonera de entrada al módulo de compras.
+
+    El cartel de "compras sin precio" es el mismo aviso que en /comercial:
+    el comprador tiene pendiente cargar precios. Es un aviso, no algo
+    crítico para poder navegar — si la consulta del conteo falla, se pisa
+    en 0 (sin cartel) en vez de romper toda la pantalla por algo accesorio.
+    """
+    try:
+        compras_sin_precio = contar_compras_sin_precio()
+    except Exception:
+        compras_sin_precio = 0
+
+    return templates.TemplateResponse(request, "compras.html", {"compras_sin_precio": compras_sin_precio})
 
 
 def _renderizar_en_construccion(

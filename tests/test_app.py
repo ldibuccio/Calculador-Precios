@@ -6964,6 +6964,36 @@ def test_ver_comercial_error_al_contar_no_rompe_la_pantalla():
     assert 'href="/inicio"' in respuesta.text
 
 
+def test_ver_compras_con_compras_sin_precio_muestra_el_cartel():
+    # Mismo cartel que en /comercial, arriba de todo: el comprador tiene
+    # pendiente cargar precios y lo ve apenas entra a su módulo.
+    with patch("app.main.contar_compras_sin_precio", return_value=4):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "Hay 4 compras sin precio de compra cargado" in respuesta.text
+    assert 'href="/compras/pendientes"' in respuesta.text
+    # Arriba de los botones de carga, no mezclado ni después.
+    assert respuesta.text.index("Hay 4 compras") < respuesta.text.index('href="/compras/nueva/manual"')
+
+
+def test_ver_compras_sin_compras_sin_precio_no_muestra_cartel():
+    with patch("app.main.contar_compras_sin_precio", return_value=0):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "sin precio de compra cargado" not in respuesta.text
+
+
+def test_ver_compras_error_al_contar_no_rompe_la_pantalla():
+    with patch("app.main.contar_compras_sin_precio", side_effect=Exception("no se pudo conectar")):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "sin precio de compra cargado" not in respuesta.text
+    assert 'href="/compras/nueva/manual"' in respuesta.text
+
+
 def test_ver_logistica_muestra_los_tres_botones_de_retiro():
     respuesta = cliente.get("/logistica")
 
