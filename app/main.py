@@ -64,9 +64,9 @@ from app.db import (
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_detalle_disponible,
-    listar_envases_con_costo_por_cliente,
-    listar_envases_por_cliente,
-    listar_historial_costos_envases_por_cliente,
+    listar_envases,
+    listar_envases_con_costo,
+    listar_historial_costos_envases,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
     listar_precios_anteriores_por_cliente,
@@ -1074,7 +1074,7 @@ def ver_fichas(request: Request, cliente_id: int | None = None, error: str | Non
 def ver_nueva_ficha(request: Request, cliente_id: int, error: str | None = None):
     try:
         articulos = listar_articulos_sin_ficha(cliente_id)
-        envases = listar_envases_por_cliente(cliente_id)
+        envases = listar_envases()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -1131,7 +1131,7 @@ def agregar_ficha(
 
     if error:
         articulos = listar_articulos_sin_ficha(cliente_id)
-        envases = listar_envases_por_cliente(cliente_id)
+        envases = listar_envases()
         return templates.TemplateResponse(
             request,
             "ficha_form.html",
@@ -1159,7 +1159,7 @@ def agregar_ficha(
         )
     except Exception as error_db:
         articulos = listar_articulos_sin_ficha(cliente_id)
-        envases = listar_envases_por_cliente(cliente_id)
+        envases = listar_envases()
         return templates.TemplateResponse(
             request,
             "ficha_form.html",
@@ -1188,7 +1188,7 @@ def ver_editar_ficha(request: Request, ficha_id: int, error: str | None = None):
         raise HTTPException(status_code=404, detail="Ficha no encontrada")
 
     try:
-        envases = listar_envases_por_cliente(ficha["cliente_id"])
+        envases = listar_envases()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -1234,7 +1234,7 @@ def editar_ficha(
     codigo_cliente_valor = codigo_cliente.strip() or None
 
     if error:
-        envases = listar_envases_por_cliente(cliente_id)
+        envases = listar_envases()
         ficha = {
             "id": ficha_id,
             "cliente_id": cliente_id,
@@ -1264,7 +1264,7 @@ def editar_ficha(
             codigo_cliente_valor,
         )
     except Exception as error_db:
-        envases = listar_envases_por_cliente(cliente_id)
+        envases = listar_envases()
         ficha = {
             "id": ficha_id,
             "cliente_id": cliente_id,
@@ -4219,29 +4219,16 @@ def _validar_costo_envase(texto: str) -> tuple[str | None, float | None]:
 
 
 def _renderizar_pantalla_envases(
-    request: Request, cliente_id: int | None, aviso: str | None = None, error: str | None = None, status_code: int = 200
+    request: Request, aviso: str | None = None, error: str | None = None, status_code: int = 200
 ):
-    """La pantalla de Envases por cliente: costo vigente, historial completo y las acciones de cambio.
+    """La pantalla de Envases: el catálogo COMPLETO (los envases son compartidos entre clientes).
 
     Reutilizada por el GET y por los POST que fallan la validación (para
-    volver a mostrar la misma pantalla con el error, sin perder el cliente
-    elegido).
+    volver a mostrar la misma pantalla con el error).
     """
     try:
-        clientes = listar_clientes()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    if cliente_id is None:
-        return templates.TemplateResponse(request, "envases.html", {"clientes": clientes, "cliente_id": None})
-
-    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
-    if cliente is None:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    try:
-        envases = listar_envases_con_costo_por_cliente(cliente_id, _hoy_argentina())
-        historial_filas = listar_historial_costos_envases_por_cliente(cliente_id)
+        envases = listar_envases_con_costo(_hoy_argentina())
+        historial_filas = listar_historial_costos_envases()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4253,9 +4240,6 @@ def _renderizar_pantalla_envases(
         request,
         "envases.html",
         {
-            "clientes": clientes,
-            "cliente_id": cliente_id,
-            "cliente": cliente,
             "envases": envases,
             "historial_por_envase": historial_por_envase,
             "aviso": aviso,
@@ -4266,35 +4250,35 @@ def _renderizar_pantalla_envases(
 
 
 @app.get("/envases")
-def ver_envases(request: Request, cliente_id: int | None = None, aviso: str | None = None):
-    return _renderizar_pantalla_envases(request, cliente_id, aviso=aviso)
+def ver_envases(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_envases(request, aviso=aviso)
 
 
 @app.post("/envases/nuevo")
-def agregar_envase(request: Request, cliente_id: int = Form(...), nombre: str = Form(""), costo: str = Form("")):
+def agregar_envase(request: Request, nombre: str = Form(""), costo: str = Form("")):
     error, nombre_valor = _validar_nombre(nombre)
     if not error:
         error, costo_valor = _validar_costo_envase(costo)
     if error:
-        return _renderizar_pantalla_envases(request, cliente_id, error=error, status_code=400)
+        return _renderizar_pantalla_envases(request, error=error, status_code=400)
 
     try:
-        crear_envase(cliente_id, nombre_valor, costo_valor)
+        crear_envase(nombre_valor, costo_valor)
     except ValueError as error_negocio:
-        # Nombre repetido para este cliente (ver crear_envase).
-        return _renderizar_pantalla_envases(request, cliente_id, error=str(error_negocio), status_code=400)
+        # Nombre repetido (el nombre es único global — ver crear_envase).
+        return _renderizar_pantalla_envases(request, error=str(error_negocio), status_code=400)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo crear el envase: {error_db}") from error_db
 
-    parametros = urlencode({"cliente_id": cliente_id, "aviso": f"Envase {nombre_valor} creado, con costo vigente desde hoy."})
+    parametros = urlencode({"aviso": f"Envase {nombre_valor} creado, con costo vigente desde hoy."})
     return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
 
 
 @app.post("/envases/{envase_id}/costo")
-def cambiar_costo_envase(request: Request, envase_id: int, cliente_id: int = Form(...), costo: str = Form("")):
+def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")):
     error, costo_valor = _validar_costo_envase(costo)
     if error:
-        return _renderizar_pantalla_envases(request, cliente_id, error=error, status_code=400)
+        return _renderizar_pantalla_envases(request, error=error, status_code=400)
 
     try:
         # Regla de oro del historial: registrar_costo_envase INSERTA una
@@ -4304,14 +4288,12 @@ def cambiar_costo_envase(request: Request, envase_id: int, cliente_id: int = For
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo registrar el costo: {error_db}") from error_db
 
-    parametros = urlencode(
-        {"cliente_id": cliente_id, "aviso": "Costo nuevo registrado, vigente desde hoy. El historial anterior se conserva."}
-    )
+    parametros = urlencode({"aviso": "Costo nuevo registrado, vigente desde hoy. El historial anterior se conserva."})
     return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
 
 
 @app.post("/envases/{envase_id}/baja")
-def dar_de_baja_envase(request: Request, envase_id: int, cliente_id: int = Form(...)):
+def dar_de_baja_envase(request: Request, envase_id: int):
     """Baja de un envase: fila nueva con costo 0 vigente desde hoy — mismo criterio de historial, nada se borra."""
     try:
         registrar_costo_envase(envase_id, 0)
@@ -4319,7 +4301,7 @@ def dar_de_baja_envase(request: Request, envase_id: int, cliente_id: int = Form(
         raise HTTPException(status_code=500, detail=f"No se pudo dar de baja el envase: {error_db}") from error_db
 
     parametros = urlencode(
-        {"cliente_id": cliente_id, "aviso": "Envase dado de baja: costo $0 desde hoy. El historial y los cálculos pasados se conservan."}
+        {"aviso": "Envase dado de baja: costo $0 desde hoy. El historial y los cálculos pasados se conservan."}
     )
     return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
 

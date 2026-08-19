@@ -100,19 +100,18 @@ def _listar_parametros_para_revisar(conexion) -> list[str]:
 
         cursor.execute(
             """
-            SELECT c.nombre, e.nombre, h.costo, h.vigente_desde
+            SELECT e.nombre, h.costo, h.vigente_desde
             FROM envases_costo_historial h
             JOIN envases e ON e.id = h.envase_id
-            JOIN clientes c ON c.id = e.cliente_id
             WHERE h.vigente_desde = (
                 SELECT MAX(h2.vigente_desde) FROM envases_costo_historial h2
                 WHERE h2.envase_id = h.envase_id AND h2.vigente_desde <= CURRENT_DATE
             )
-            ORDER BY c.nombre, e.nombre
+            ORDER BY e.nombre
             """
         )
-        for nombre_cliente, nombre_envase, costo, vigente_desde in cursor.fetchall():
-            lineas.append(f"  {nombre_cliente} | envase {nombre_envase} = ${costo} (vigente desde {vigente_desde})")
+        for nombre_envase, costo, vigente_desde in cursor.fetchall():
+            lineas.append(f"  envase {nombre_envase} = ${costo} (vigente desde {vigente_desde})")
     return lineas
 
 

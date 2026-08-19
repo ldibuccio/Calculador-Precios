@@ -35,7 +35,8 @@ bases estén marcadas.
 | `agregar_cantidad_cajones_retirada_compras.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
 | `agregar_disponibles.sql` | ✅ (histórico) | — consolidado en `esquema_completo.sql` |
 | `agregar_ingreso_directo_compras.sql` | ✅ 2026-08-18 | — consolidado en `esquema_completo.sql` |
-| `esquema_completo.sql` | — sus tablas ya existen | ⬜ pendiente (correr al crear el proyecto) |
+| `esquema_completo.sql` | — sus tablas ya existen | ⬜ pendiente (correr al crear el proyecto; ya trae envases sin cliente) |
+| `envases_sin_cliente.sql` | ⬜ pendiente (correr DESPUÉS del deploy) | ⬜ pendiente (solo si la base se creó con el esquema viejo) |
 
 ## Pasos manuales que NO son SQL (por base)
 

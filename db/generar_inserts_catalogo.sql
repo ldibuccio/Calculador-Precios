@@ -93,9 +93,9 @@ from clientes;
 -- CONSULTA 4 — envases
 -- ----------------------------------------------------------------------------
 select case when count(*) = 0 then '-- envases: vacia, nada para copiar' else
-    'INSERT INTO envases (id, cliente_id, nombre, activo, creado_en, actualizado_en) OVERRIDING SYSTEM VALUE VALUES'
+    'INSERT INTO envases (id, nombre, activo, creado_en, actualizado_en) OVERRIDING SYSTEM VALUE VALUES'
     || E'\n' || string_agg(
-        format('(%L, %L, %L, %L, %L, %L)', id, cliente_id, nombre, activo, creado_en, actualizado_en),
+        format('(%L, %L, %L, %L, %L)', id, nombre, activo, creado_en, actualizado_en),
         E',\n' order by id)
     || ';'
 end as sql_para_pegar_en_destino

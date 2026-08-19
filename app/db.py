@@ -461,15 +461,16 @@ def listar_articulos_sin_ficha(cliente_id: int) -> list[dict]:
         conexion.close()
 
 
-def listar_envases_por_cliente(cliente_id: int) -> list[dict]:
-    """Envases activos de un cliente."""
+def listar_envases() -> list[dict]:
+    """El catálogo completo de envases activos — los envases son compartidos, no pertenecen a ningún cliente.
+
+    Un envase exclusivo de un cliente (ej. caja impresa con su marca) se
+    distingue por el NOMBRE, no por una columna (ver db/envases_sin_cliente.sql).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, nombre FROM envases WHERE cliente_id = %s AND activo = true ORDER BY nombre",
-                (cliente_id,),
-            )
+            cursor.execute("SELECT id, nombre FROM envases WHERE activo = true ORDER BY nombre")
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
@@ -477,12 +478,13 @@ def listar_envases_por_cliente(cliente_id: int) -> list[dict]:
         conexion.close()
 
 
-def listar_envases_con_costo_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
-    """Envases activos de un cliente con su costo VIGENTE a una fecha, desde cuándo rige, y cuántas fichas lo usan.
+def listar_envases_con_costo(fecha_referencia) -> list[dict]:
+    """El catálogo completo de envases activos con su costo VIGENTE a una fecha, desde cuándo rige, y cuántas fichas lo usan.
 
-    costo/vigente_desde vienen NULL si el envase todavía no tiene ningún
-    costo cargado con vigencia alcanzada — se muestra como "sin costo", no
-    se inventa un cero.
+    fichas_que_lo_usan cuenta las fichas de TODOS los clientes: un cambio
+    de costo impacta el precio sugerido de todos ellos. costo/vigente_desde
+    vienen NULL si el envase todavía no tiene ningún costo cargado con
+    vigencia alcanzada — se muestra como "sin costo", no se inventa un cero.
     """
     conexion = obtener_conexion()
     try:
@@ -499,10 +501,10 @@ def listar_envases_con_costo_por_cliente(cliente_id: int, fecha_referencia) -> l
                     ORDER BY vigente_desde DESC
                     LIMIT 1
                 ) h ON true
-                WHERE e.cliente_id = %s AND e.activo = true
+                WHERE e.activo = true
                 ORDER BY e.nombre
                 """,
-                (fecha_referencia, cliente_id),
+                (fecha_referencia,),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -511,8 +513,8 @@ def listar_envases_con_costo_por_cliente(cliente_id: int, fecha_referencia) -> l
         conexion.close()
 
 
-def listar_historial_costos_envases_por_cliente(cliente_id: int) -> list[dict]:
-    """Todo el historial de costos de los envases activos de un cliente (del más nuevo al más viejo), para mostrar la evolución."""
+def listar_historial_costos_envases() -> list[dict]:
+    """Todo el historial de costos de los envases activos (del más nuevo al más viejo), para mostrar la evolución."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -521,10 +523,9 @@ def listar_historial_costos_envases_por_cliente(cliente_id: int) -> list[dict]:
                 SELECT h.envase_id, h.costo, h.vigente_desde
                 FROM envases_costo_historial h
                 JOIN envases e ON e.id = h.envase_id
-                WHERE e.cliente_id = %s AND e.activo = true
+                WHERE e.activo = true
                 ORDER BY h.envase_id, h.vigente_desde DESC
-                """,
-                (cliente_id,),
+                """
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -533,27 +534,20 @@ def listar_historial_costos_envases_por_cliente(cliente_id: int) -> list[dict]:
         conexion.close()
 
 
-def crear_envase(cliente_id: int, nombre: str, costo: float) -> None:
-    """Crea un envase para un cliente con su costo inicial vigente desde hoy — todo en una transacción.
+def crear_envase(nombre: str, costo: float) -> None:
+    """Crea un envase (del catálogo compartido) con su costo inicial vigente desde hoy — todo en una transacción.
 
-    Nombre repetido para el mismo cliente: ValueError con mensaje para
-    mostrar tal cual (chequeado acá y además garantizado por el UNIQUE de
-    la tabla).
+    Nombre repetido: ValueError con mensaje para mostrar tal cual (chequeado
+    acá y además garantizado por el UNIQUE global de la tabla).
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT 1 FROM envases WHERE cliente_id = %s AND nombre = %s",
-                (cliente_id, nombre),
-            )
+            cursor.execute("SELECT 1 FROM envases WHERE nombre = %s", (nombre,))
             if cursor.fetchone():
-                raise ValueError("Ya existe un envase con ese nombre para este cliente.")
+                raise ValueError("Ya existe un envase con ese nombre.")
 
-            cursor.execute(
-                "INSERT INTO envases (cliente_id, nombre) VALUES (%s, %s) RETURNING id",
-                (cliente_id, nombre),
-            )
+            cursor.execute("INSERT INTO envases (nombre) VALUES (%s) RETURNING id", (nombre,))
             (envase_id,) = cursor.fetchone()
             cursor.execute(
                 "INSERT INTO envases_costo_historial (envase_id, costo, vigente_desde) VALUES (%s, %s, CURRENT_DATE)",
@@ -962,8 +956,8 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
 def listar_costos_envases_vigentes(fecha_referencia) -> list[dict]:
     """Costo vigente de cada envase, a una fecha dada (mismo patrón "vigente" que el resto).
 
-    No filtra por cliente: envases ya está por cliente (envases.cliente_id),
-    así que envase_id alcanza para saber a quién pertenece.
+    Los envases son un catálogo compartido (no pertenecen a ningún
+    cliente): envase_id alcanza para identificar cada uno.
     """
     conexion = obtener_conexion()
     try:

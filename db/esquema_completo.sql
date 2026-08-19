@@ -108,15 +108,13 @@ comment on column clientes_parametros_historial.tipo is 'Qué hace el concepto c
 -- ----------------------------------------------------------------------------
 create table envases (
     id              bigint generated always as identity primary key,
-    cliente_id      bigint not null references clientes (id),
-    nombre          text not null,
+    nombre          text not null unique,
     activo          boolean not null default true,
     creado_en       timestamptz not null default now(),
-    actualizado_en  timestamptz not null default now(),
-    unique (cliente_id, nombre)
+    actualizado_en  timestamptz not null default now()
 );
 
-comment on table envases is 'Envases que usa cada cliente (ej. Caja Chica Dia, Caja Grande Dia), con su costo.';
+comment on table envases is 'Catálogo único de envases, compartido entre todos los clientes: cada ficha logística elige el que corresponda. Un envase exclusivo de un cliente se distingue por el nombre (ver envases_sin_cliente.sql).';
 
 create table envases_costo_historial (
     id              bigint generated always as identity primary key,
