@@ -183,10 +183,8 @@
 
       <label for="tipo_retiro">Retiro *</label>
       <select id="tipo_retiro" name="tipo_retiro" required class="{{ 'campo-bloqueado' if cantidad_bloqueada }}">
-        <option value="Clark" {% if not compra or not compra.tipo_retiro or compra.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
-        <option value="Carro" {% if compra and compra.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
-        <option value="Pases" {% if compra and compra.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
-        <option value="Cooperativa" {% if compra and compra.tipo_retiro == "Cooperativa" %}selected{% endif %}>Cooperativa</option>
+        {% set tipo_retiro_elegido = compra.tipo_retiro if compra else None %}
+        {% include "_opciones_tipo_retiro.html" %}
       </select>
 
       {% if modo == "nueva" %}

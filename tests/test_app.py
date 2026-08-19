@@ -20,6 +20,7 @@ from app.main import (
     _formatear_moneda,
     _formatear_numero,
     _generar_preview_foto,
+    _tipo_retiro_default_desde_env,
     _sufijo_unidad,
     app,
     templates,
@@ -7820,6 +7821,101 @@ def test_ver_ingresar_mercaderia_con_proveedor_tipo_retiro_clark_por_default():
 
     assert respuesta.status_code == 200
     assert '<option value="Clark" selected>Clark</option>' in respuesta.text
+
+
+# --- TIPO_RETIRO_DEFAULT: tipo de logística preseleccionado por empresa ---
+
+
+def test_tipo_retiro_default_sin_variable_es_clark():
+    # Frutamax no setea la variable: nada cambia para ese deploy.
+    with patch.dict("os.environ", {}, clear=True):
+        assert _tipo_retiro_default_desde_env() == "Clark"
+
+
+def test_tipo_retiro_default_toma_el_valor_de_la_variable():
+    with patch.dict("os.environ", {"TIPO_RETIRO_DEFAULT": "Pases"}):
+        assert _tipo_retiro_default_desde_env() == "Pases"
+
+
+def test_tipo_retiro_default_invalido_cae_a_clark():
+    # Un valor mal escrito no puede romper las pantallas de carga.
+    with patch.dict("os.environ", {"TIPO_RETIRO_DEFAULT": "Camion"}):
+        assert _tipo_retiro_default_desde_env() == "Clark"
+
+
+def test_form_de_compra_manual_preselecciona_el_default_de_la_empresa():
+    with (
+        patch.dict("app.main.templates.env.globals", {"TIPO_RETIRO_DEFAULT": "Pases"}),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert '<option value="Pases" selected>Pases</option>' in respuesta.text
+    assert '<option value="Clark" selected>' not in respuesta.text
+
+
+def test_ingreso_directo_preselecciona_el_default_de_la_empresa():
+    with (
+        patch.dict("app.main.templates.env.globals", {"TIPO_RETIRO_DEFAULT": "Pases"}),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/ingresar?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert '<option value="Pases" selected>Pases</option>' in respuesta.text
+
+
+def test_editar_compra_conserva_el_retiro_guardado_aunque_cambie_el_default():
+    # El default de la empresa es solo para compras NUEVAS: una compra que
+    # ya tiene su tipo guardado lo conserva, nunca se lo pisa el default.
+    compra = dict(COMPRA_DE_PRUEBA, tipo_retiro="Carro")
+    with (
+        patch.dict("app.main.templates.env.globals", {"TIPO_RETIRO_DEFAULT": "Pases"}),
+        patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    assert '<option value="Carro" selected>Carro</option>' in respuesta.text
+    assert '<option value="Pases" selected>' not in respuesta.text
+
+
+def test_renglones_de_comanda_leida_preseleccionan_el_default_de_la_empresa():
+    with (
+        patch.dict("app.main.templates.env.globals", {"TIPO_RETIRO_DEFAULT": "Pases"}),
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/fotos/leer",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert '<option value="Pases" selected>Pases</option>' in respuesta.json()["html"]
+
+
+def test_renglon_en_blanco_de_multiples_fotos_arranca_en_el_default_de_la_empresa():
+    # El JS de "agregar renglón" tiene que usar el mismo default que los
+    # selects (antes tenía "Clark" hardcodeado).
+    with (
+        patch.dict("app.main.templates.env.globals", {"TIPO_RETIRO_DEFAULT": "Pases"}),
+        patch("app.main.listar_proveedores", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/nueva/fotos")
+
+    assert respuesta.status_code == 200
+    assert ': "Pases";' in respuesta.text
+    assert ': "Clark";' not in respuesta.text
 
 
 def test_ver_ingresar_mercaderia_con_proveedor_muestra_cargado_hoy():

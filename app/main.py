@@ -155,6 +155,27 @@ NOMBRE_EMPRESA_ENV_VAR = "NOMBRE_EMPRESA"
 # seteada, no cambia nada para ese deploy.
 NOMBRE_EMPRESA = os.environ.get(NOMBRE_EMPRESA_ENV_VAR, "Frutamax")
 
+TIPO_RETIRO_DEFAULT_ENV_VAR = "TIPO_RETIRO_DEFAULT"
+
+
+def _tipo_retiro_default_desde_env() -> str:
+    """El tipo de logística preseleccionado en las pantallas de carga, por empresa (variable de entorno).
+
+    Mismo mecanismo que NOMBRE_EMPRESA: Frutamax no la setea y queda
+    Clark (no cambia nada para ese deploy); Palmala la setea en Pases.
+    Un valor que no sea uno de los cuatro tipos válidos cae a Clark en
+    vez de romper las pantallas.
+
+    Es SOLO la preselección de los <select> de carga: el DEFAULT de la
+    columna tipo_retiro en la base nunca aplica, porque el código manda
+    el valor explícito en todos los INSERT (ver _insertar_compra_con_guia).
+    """
+    valor = os.environ.get(TIPO_RETIRO_DEFAULT_ENV_VAR, "Clark").strip()
+    return valor if valor in TIPOS_RETIRO_VALIDOS else "Clark"
+
+
+TIPO_RETIRO_DEFAULT = _tipo_retiro_default_desde_env()
+
 
 def _nombre_empresa_para_archivo() -> str:
     """El nombre de la empresa apto para nombres de archivo: sin acentos ni caracteres raros.
@@ -369,6 +390,7 @@ SECTORES = {
 templates.env.globals["SECTORES"] = SECTORES
 templates.env.globals["ICONO_INICIO"] = _ICONO_INICIO
 templates.env.globals["NOMBRE_EMPRESA"] = NOMBRE_EMPRESA
+templates.env.globals["TIPO_RETIRO_DEFAULT"] = TIPO_RETIRO_DEFAULT
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:

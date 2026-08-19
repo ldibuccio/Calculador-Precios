@@ -42,10 +42,8 @@
       <label for="item_{{ loop.index0 }}_tipo_retiro">Retiro *</label>
       <select id="item_{{ loop.index0 }}_tipo_retiro" name="item_{{ loop.index0 }}_tipo_retiro" required
               {% if loop.first %}onchange="aplicarRetiroATodosSiCorresponde()"{% endif %}>
-        <option value="Clark" {% if not r.tipo_retiro or r.tipo_retiro == "Clark" %}selected{% endif %}>Clark</option>
-        <option value="Carro" {% if r.tipo_retiro == "Carro" %}selected{% endif %}>Carro</option>
-        <option value="Pases" {% if r.tipo_retiro == "Pases" %}selected{% endif %}>Pases</option>
-        <option value="Cooperativa" {% if r.tipo_retiro == "Cooperativa" %}selected{% endif %}>Cooperativa</option>
+        {% set tipo_retiro_elegido = r.tipo_retiro %}
+        {% include "_opciones_tipo_retiro.html" %}
       </select>
       {% if loop.first and renglones|length > 1 %}
       <div class="campo-descartar">

@@ -1,0 +1,9 @@
+{# Opciones del select de tipo de logística, con la preselección en UN solo
+   lugar. Quien incluye setea antes tipo_retiro_elegido (el valor ya guardado
+   en la compra o el renglón, si existe); vacío o None cae en
+   TIPO_RETIRO_DEFAULT — el default por empresa, variable de entorno
+   TIPO_RETIRO_DEFAULT leída al arrancar (ver app/main.py). #}
+{% set tipo_retiro_activo = tipo_retiro_elegido or TIPO_RETIRO_DEFAULT %}
+{% for t in ("Clark", "Carro", "Pases", "Cooperativa") %}
+        <option value="{{ t }}" {% if tipo_retiro_activo == t %}selected{% endif %}>{{ t }}</option>
+{% endfor %}
