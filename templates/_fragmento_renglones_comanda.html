@@ -56,7 +56,7 @@
       <div class="campo-descartar">
         <input type="checkbox" id="item_{{ loop.index0 }}_descartar" name="item_{{ loop.index0 }}_descartar"
                onchange="alternarDescarte({{ loop.index0 }}, this)" {% if r.descartado %}checked{% endif %}>
-        <label for="item_{{ loop.index0 }}_descartar">No cargar este renglón</label>
+        <label for="item_{{ loop.index0 }}_descartar">No cargar este artículo</label>
       </div>
     </div>
     {% endfor %}
