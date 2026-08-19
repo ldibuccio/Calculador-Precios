@@ -40,7 +40,7 @@ bases estén marcadas.
 | `agregar_tipo_retiro_cooperativa.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 | `agregar_retiros_automaticos.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 | `agregar_rechazo_parcial.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
-| `agregar_carga_token.sql` | ⬜ pendiente (correr ANTES de mergear) | ⬜ pendiente (correr ANTES de mergear) |
+| `agregar_carga_token.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 
 ## Pasos manuales que NO son SQL (por base)
 
