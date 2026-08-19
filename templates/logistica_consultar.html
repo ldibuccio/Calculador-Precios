@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultar Retiros</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  form label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form input, form select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .fila-fechas { display: flex; gap: 0.75rem; }
+  .fila-fechas > div { flex: 1; }
+  button.boton-buscar {
+    margin-top: 1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.9rem; margin: 0 0 0.75rem; }
+  .tabla-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.45rem 0.5rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  th { background: #eee; font-weight: 600; }
+  td.numero { text-align: right; font-weight: 600; }
+  .estado-pendiente { color: #b45309; font-weight: 600; }
+  .estado-retirado { color: #16a34a; font-weight: 600; }
+  .estado-cancelado { color: #dc2626; font-weight: 600; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .total {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .total .numero-grande {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #1d4ed8;
+  }
+  .total .desglose { font-size: 0.9rem; color: #1e40af; margin: 0.25rem 0 0; }
+  .total .nota { font-size: 0.8rem; color: #64748b; margin: 0.35rem 0 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "logistica" %}
+  {% set barra_titulo = "Consultar Retiros" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form method="get" action="/logistica/consultar">
+      <div class="fila-fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <label for="proveedor_id">Proveedor (opcional)</label>
+      <select id="proveedor_id" name="proveedor_id">
+        <option value="">Todos</option>
+        {% for p in proveedores %}
+        <option value="{{ p.id }}" {% if proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        {% endfor %}
+      </select>
+      <label for="articulo_id">Artículo (opcional)</label>
+      <select id="articulo_id" name="articulo_id">
+        <option value="">Todos</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="tipo">Tipo de logística</label>
+      <select id="tipo" name="tipo">
+        <option value="">Todos</option>
+        {% for t in ("Clark", "Carro", "Pases", "Cooperativa") %}
+        <option value="{{ t }}" {% if tipo == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <label for="estado">Estado</label>
+      <select id="estado" name="estado">
+        <option value="">Todos</option>
+        <option value="pendiente" {% if estado == "pendiente" %}selected{% endif %}>Pendiente</option>
+        <option value="retirado" {% if estado == "retirado" %}selected{% endif %}>Retirado</option>
+        <option value="cancelado" {% if estado == "cancelado" %}selected{% endif %}>Cancelado</option>
+      </select>
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+  </div>
+
+  {% if error_fecha %}
+  <div class="error">{{ error_fecha }}</div>
+  {% endif %}
+
+  <!-- El total, ANTES de la tabla: es lo más importante de la pantalla
+       (se usa para liquidarle al carrero/cooperativa). Por fila: la
+       cantidad ANOTADA al retirar si existe; si no, la que cargó el
+       comprador (con asterisco acá y en la tabla). -->
+  <div class="total">
+    <span class="numero-grande">Total: {{ total_bultos|numero }} bultos</span>
+    <p class="desglose">{{ total_anotados|numero }} anotados al retirar + {{ total_del_comprador|numero }}* de la carga del comprador</p>
+    <p class="nota">* sin cantidad anotada al retirar: se usa lo que cargó el comprador</p>
+  </div>
+
+  <div class="tarjeta">
+    <p class="ayuda">{{ retiros|length }} renglon{{ "es" if retiros|length != 1 else "" }}</p>
+    {% if retiros %}
+    <div class="tabla-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Hora ret.</th>
+            <th>Proveedor</th>
+            <th>Artículo</th>
+            <th>Bultos</th>
+            <th>Tipo</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in retiros %}
+          <tr>
+            <td>{{ r.fecha_operacion.strftime("%d/%m") }}</td>
+            <td>{% if r.retiro_procesado_el %}{{ r.retiro_procesado_el|hora }}{% else %}—{% endif %}</td>
+            <td>{{ r.proveedor_nombre }}</td>
+            <td>{{ r.articulo_nombre }}</td>
+            <td class="numero">{{ r.bultos|numero }}{% if not r.usa_anotada %}*{% endif %}</td>
+            <td>{{ r.tipo_retiro }}</td>
+            <td>
+              {% if r.estado_retiro == "retirado" %}<span class="estado-retirado">Retirado</span>
+              {% elif r.estado_retiro == "cancelado" %}<span class="estado-cancelado">Cancelado</span>
+              {% else %}<span class="estado-pendiente">Pendiente</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="vacio">No se encontraron retiros con estos filtros.</p>
+    {% endif %}
+  </div>
+</body>
+</html>

@@ -193,7 +193,7 @@ create table compras (
     foto_ruta                  text,
     estado_retiro              text check (estado_retiro in ('pendiente', 'retirado', 'cancelado')),
     retiro_procesado_el        timestamptz,
-    retiro_origen              text check (retiro_origen in ('logistica', 'deposito', 'migracion', 'ingreso_directo', 'cooperativa')),
+    retiro_origen              text check (retiro_origen in ('logistica', 'deposito', 'migracion', 'ingreso_directo', 'automatico_carro', 'automatico_cooperativa')),
     cantidad_cajones_retirada  numeric,
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
     constraint compras_cantidad_cargada_check check (cantidad_kilos is not null or cantidad_fraccion is not null)

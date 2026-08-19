@@ -1068,6 +1068,13 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
         conexion.close()
 
 
+# Tipos de retiro que los maneja un tercero que nunca entra al sistema: nadie
+# tilda nunca esas compras en Logística, así que nacen con el retiro hecho.
+# El valor es el retiro_origen con el que se marcan (prefijo automatico_: lo
+# marcó el sistema, no una persona).
+ORIGEN_RETIRO_AUTOMATICO_POR_TIPO = {"Carro": "automatico_carro", "Cooperativa": "automatico_cooperativa"}
+
+
 def crear_compra(
     fecha_operacion,
     articulo_id: int,
@@ -1124,13 +1131,14 @@ def crear_compra(
     comprador después), pero la función no lo fuerza — eso lo decide
     quien llama.
 
-    tipo_retiro 'Cooperativa': la Cooperativa es un tercero al que se le
-    pasa la distribución para que vaya a buscar — no hay control sobre esa
-    gente, se ASUME que retira. La compra nace con el retiro ya hecho
-    (estado_retiro 'retirado', retiro_procesado_el ahora, retiro_origen
-    'cooperativa') y nunca aparece pendiente en Logística. La recepción en
-    Depósito sigue siendo la normal (estado 'pendiente'), sin valores
-    reales: eso lo completa Depósito cuando la mercadería llega.
+    tipo_retiro 'Carro' o 'Cooperativa' (ver ORIGEN_RETIRO_AUTOMATICO_POR_
+    TIPO): los maneja un tercero que nunca entra al sistema — se le pasa la
+    distribución para que vaya a buscar y se ASUME que retira. La compra
+    nace con el retiro ya hecho (estado_retiro 'retirado',
+    retiro_procesado_el ahora, retiro_origen automatico_carro/
+    automatico_cooperativa) y nunca aparece pendiente en Logística. La
+    recepción en Depósito sigue siendo la normal (estado 'pendiente'), sin
+    valores reales: eso lo completa Depósito cuando la mercadería llega.
     """
     conexion = obtener_conexion()
     try:
@@ -1185,14 +1193,14 @@ def crear_compra(
                         cantidad_fraccion,
                     ),
                 )
-            elif tipo_retiro == "Cooperativa":
+            elif tipo_retiro in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO:
                 cursor.execute(
                     """
                     INSERT INTO compras
                         (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
                          cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
                          guia_id, guia_punto, estado, estado_retiro, retiro_procesado_el, retiro_origen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), 'cooperativa')
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
                     """,
                     (
                         fecha_operacion,
@@ -1208,6 +1216,7 @@ def crear_compra(
                         foto_ruta,
                         guia_id,
                         guia_punto,
+                        ORIGEN_RETIRO_AUTOMATICO_POR_TIPO[tipo_retiro],
                     ),
                 )
             else:
@@ -1292,13 +1301,14 @@ def actualizar_cantidad_compra(
     hasta que entra a Depósito, el comprador puede corregir su compra.
     Independiente del bloqueo de precio (actualizar_precio_compra).
 
-    Transiciones de retiro al cambiar el tipo (las compras Cooperativa
-    nunca quedan pendientes en Logística — no existe pantalla que las
-    muestre — y al revés, volver de Cooperativa a un tipo real tiene que
-    devolverla a la cola de Logística):
-    - a 'Cooperativa' con retiro pendiente: se marca retirada
-      ('cooperativa') en el mismo UPDATE, como en crear_compra.
-    - de 'Cooperativa' (retiro_origen 'cooperativa') a otro tipo: el
+    Transiciones de retiro al cambiar el tipo (las compras de tipos
+    automáticos — Carro/Cooperativa, ver ORIGEN_RETIRO_AUTOMATICO_POR_TIPO
+    — nunca quedan pendientes en Logística, no existe pantalla que las
+    muestre; y al revés, volver de un tipo automático a Clark/Pases tiene
+    que devolverla a la cola de Logística):
+    - a un tipo automático con retiro pendiente: se marca retirada en el
+      mismo UPDATE, como en crear_compra.
+    - de un tipo automático (retiro_origen automatico_*) a otro tipo: el
       retiro vuelve a pendiente, sin cicatriz (como deshacer_retiro).
     - cualquier otro caso: el retiro no se toca.
     """
@@ -1316,18 +1326,24 @@ def actualizar_cantidad_compra(
                     raise ValueError("Esta compra fue rechazada por calidad, no se puede editar la cantidad.")
                 raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar la cantidad.")
 
-            if tipo_retiro == "Cooperativa" and estado_retiro == "pendiente":
+            if tipo_retiro in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO and estado_retiro == "pendiente":
                 cursor.execute(
                     """
                     UPDATE compras
                     SET articulo_id = %s, cantidad_cajones = %s, contenido_por_cajon = %s,
                         cantidad_kilos = %s, cantidad_fraccion = %s, tipo_retiro = %s,
-                        estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = 'cooperativa'
+                        estado_retiro = 'retirado', retiro_procesado_el = now(), retiro_origen = %s
                     WHERE id = %s
                     """,
-                    (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
+                    (
+                        articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion,
+                        tipo_retiro, ORIGEN_RETIRO_AUTOMATICO_POR_TIPO[tipo_retiro], compra_id,
+                    ),
                 )
-            elif tipo_retiro != "Cooperativa" and retiro_origen == "cooperativa":
+            elif (
+                tipo_retiro not in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO
+                and retiro_origen in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO.values()
+            ):
                 cursor.execute(
                     """
                     UPDATE compras
@@ -1682,6 +1698,69 @@ def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
                 ORDER BY c.procesada_el DESC
                 """,
                 (fecha,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def buscar_retiros(
+    fecha_desde,
+    fecha_hasta,
+    proveedor_id: int | None = None,
+    articulo_id: int | None = None,
+    tipo_retiro: str | None = None,
+    estado_retiro: str | None = None,
+) -> list[dict]:
+    """El histórico de Logística (ver /logistica/consultar): retiros entre dos fechas, con filtros opcionales.
+
+    estado_retiro: 'pendiente' incluye también las filas con estado NULL
+    (compras de antes de que existiera Retiro) — mismo criterio que
+    listar_compras_pendientes_retiro: lo raro se muestra, no desaparece.
+    'retirado'/'cancelado' filtran exacto. None trae todo.
+
+    Cada fila trae cantidad_cajones (lo que cargó el comprador) y
+    cantidad_cajones_retirada (lo anotado al retirar, si se anotó): el
+    total de bultos para liquidar al carrero/cooperativa lo arma quien
+    llama con COALESCE de esos dos — acá se devuelven separados para poder
+    mostrar de dónde sale cada número.
+    """
+    condiciones = ["c.fecha_operacion BETWEEN %s AND %s"]
+    parametros: list = [fecha_desde, fecha_hasta]
+
+    if proveedor_id is not None:
+        condiciones.append("c.proveedor_id = %s")
+        parametros.append(proveedor_id)
+    if articulo_id is not None:
+        condiciones.append("c.articulo_id = %s")
+        parametros.append(articulo_id)
+    if tipo_retiro is not None:
+        condiciones.append("c.tipo_retiro = %s")
+        parametros.append(tipo_retiro)
+    if estado_retiro == "pendiente":
+        condiciones.append("c.estado_retiro IS DISTINCT FROM 'retirado' AND c.estado_retiro IS DISTINCT FROM 'cancelado'")
+    elif estado_retiro is not None:
+        condiciones.append("c.estado_retiro = %s")
+        parametros.append(estado_retiro)
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT c.id, c.fecha_operacion, c.retiro_procesado_el, c.tipo_retiro, c.estado_retiro,
+                       c.cantidad_cajones, c.cantidad_cajones_retirada,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       a.nombre AS articulo_nombre
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE {" AND ".join(condiciones)}
+                ORDER BY c.fecha_operacion DESC, p.nombre, a.nombre
+                """,
+                parametros,
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()

@@ -7,6 +7,7 @@ from app.db import (
     actualizar_cliente,
     actualizar_precio_compra,
     buscar_compras,
+    buscar_retiros,
     cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_deshacer_recepcion_bloqueado,
@@ -287,7 +288,7 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(
-            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Carro"
+            date(2026, 8, 16), 6, 200, 10, 12, None, 120, None, None, "Clark"
         )
 
     _, parametros_insert = cursor.execute.call_args_list[3].args
@@ -1474,8 +1475,9 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa")
 
-    consulta_insert = cursor.execute.call_args_list[-1].args[0]
-    assert "'pendiente', 'retirado', now(), 'cooperativa'" in consulta_insert
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[-1].args
+    assert "'pendiente', 'retirado', now(), %s" in consulta_insert
+    assert parametros_insert[-1] == "automatico_cooperativa"
     assert "cantidad_cajones_real" not in consulta_insert  # sin valores reales: los pone Depósito
     conexion.commit.assert_called_once()
 
@@ -1488,9 +1490,10 @@ def test_actualizar_cantidad_a_cooperativa_marca_el_retiro_en_el_mismo_update():
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Cooperativa")
 
-    consulta_update = cursor.execute.call_args_list[-1].args[0]
+    consulta_update, parametros_update = cursor.execute.call_args_list[-1].args
     assert "estado_retiro = 'retirado'" in consulta_update
-    assert "retiro_origen = 'cooperativa'" in consulta_update
+    assert "retiro_origen = %s" in consulta_update
+    assert "automatico_cooperativa" in parametros_update
 
 
 def test_actualizar_cantidad_con_tipo_comun_no_toca_el_retiro():
@@ -1508,12 +1511,68 @@ def test_actualizar_cantidad_de_cooperativa_a_tipo_real_vuelve_el_retiro_a_pendi
     # Volver de Cooperativa a un tipo real (Carro/Clark/Pases) tiene que
     # devolver la compra a la cola de Logística — si no, queda "retirada"
     # por una cooperativa que ya no la va a buscar.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "retirado", "cooperativa")])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "retirado", "automatico_cooperativa")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Carro")
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark")
 
     consulta_update = cursor.execute.call_args_list[1].args[0]
     assert "estado_retiro = 'pendiente'" in consulta_update
     assert "retiro_origen = NULL" in consulta_update
     conexion.commit.assert_called_once()
+
+
+def test_crear_compra_carro_nace_retirada_con_origen_automatico():
+    # Carro lo maneja un tercero que nunca entra al sistema: nadie tilda
+    # nunca esas compras — nacen con el retiro hecho, igual que Cooperativa.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro")
+
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[-1].args
+    assert "'pendiente', 'retirado', now(), %s" in consulta_insert
+    assert parametros_insert[-1] == "automatico_carro"
+    conexion.commit.assert_called_once()
+
+
+def test_crear_compra_clark_sigue_naciendo_pendiente_de_retiro():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark")
+
+    consulta_insert = cursor.execute.call_args_list[-1].args[0]
+    assert "'pendiente', 'pendiente'" in consulta_insert
+    assert "retiro_origen" not in consulta_insert
+
+
+def test_buscar_retiros_arma_los_filtros_y_trae_las_dos_cantidades():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_retiros(date(2026, 8, 18), date(2026, 8, 19), proveedor_id=7, articulo_id=5, tipo_retiro="Carro", estado_retiro="retirado")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "c.fecha_operacion BETWEEN %s AND %s" in consulta
+    assert "c.proveedor_id = %s" in consulta
+    assert "c.articulo_id = %s" in consulta
+    assert "c.tipo_retiro = %s" in consulta
+    assert "c.estado_retiro = %s" in consulta
+    # Las dos cantidades por separado: el total de bultos se arma afuera y
+    # se muestra de dónde sale cada número.
+    assert "c.cantidad_cajones" in consulta and "c.cantidad_cajones_retirada" in consulta
+    assert parametros == [date(2026, 8, 18), date(2026, 8, 19), 7, 5, "Carro", "retirado"]
+
+
+def test_buscar_retiros_pendiente_incluye_los_estados_nulos():
+    # Mismo criterio que la pantalla de retiro: una fila con estado NULL
+    # (compra de antes de que existiera Retiro) se muestra, no desaparece.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_retiros(date(2026, 8, 18), date(2026, 8, 19), estado_retiro="pendiente")
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "IS DISTINCT FROM 'retirado'" in consulta
+    assert "IS DISTINCT FROM 'cancelado'" in consulta

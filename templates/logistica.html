@@ -43,11 +43,15 @@
   {% set barra_titulo = "Logística" %}
   {% include "_barra_navegacion.html" %}
 
+  <!-- Solo Clark tiene botón de retiro: es el único que entra por acá a
+       tildar. Los tipos automáticos (ver ORIGEN_RETIRO_AUTOMATICO_POR_TIPO)
+       nacen retirados solos — los maneja un tercero que no usa el sistema —
+       y Pases lo retira la gente de Depósito desde su propio botón
+       "Retirar Mercadería". Las rutas de retiro sin botón siguen vivas. -->
   <div class="tarjeta">
     <h2>Retiro de mercadería</h2>
     <a class="boton" href="/logistica/retiro/Clark">Clark</a>
-    <a class="boton" href="/logistica/retiro/Carro">Carro</a>
-    <a class="boton" href="/logistica/retiro/Pases">Pases</a>
+    <a class="boton" href="/logistica/consultar">Consultar Retiros</a>
   </div>
 </body>
 </html>

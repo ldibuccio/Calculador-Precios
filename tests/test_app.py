@@ -6997,14 +6997,19 @@ def test_ver_compras_error_al_contar_no_rompe_la_pantalla():
     assert 'href="/compras/nueva/manual"' in respuesta.text
 
 
-def test_ver_logistica_muestra_los_tres_botones_de_retiro():
+def test_ver_logistica_muestra_solo_clark_y_consultar():
+    # Clark es el único que entra a tildar. Carro y Cooperativa nacen
+    # retirados solos, y Pases lo retira Depósito desde su propio botón —
+    # ninguno de los tres lleva botón acá (las rutas siguen vivas).
     respuesta = cliente.get("/logistica")
 
     assert respuesta.status_code == 200
     assert "Logística" in respuesta.text
     assert 'href="/logistica/retiro/Clark"' in respuesta.text
-    assert 'href="/logistica/retiro/Carro"' in respuesta.text
-    assert 'href="/logistica/retiro/Pases"' in respuesta.text
+    assert 'href="/logistica/consultar"' in respuesta.text
+    assert 'href="/logistica/retiro/Carro"' not in respuesta.text
+    assert 'href="/logistica/retiro/Pases"' not in respuesta.text
+    assert "Cooperativa" not in respuesta.text
     assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
@@ -8440,4 +8445,77 @@ def test_logistica_no_tiene_boton_cooperativa():
 def test_detalle_tiene_etiqueta_para_el_origen_cooperativa():
     from app.main import ORIGENES_RETIRO_LABELS
 
-    assert ORIGENES_RETIRO_LABELS["cooperativa"] == "Retiro a cargo de la Cooperativa (automático)"
+    assert ORIGENES_RETIRO_LABELS["automatico_cooperativa"] == "Retiro a cargo de la Cooperativa (automático)"
+    assert ORIGENES_RETIRO_LABELS["automatico_carro"] == "Retiro a cargo del Carrero (automático)"
+
+
+# --- /logistica/consultar: el histórico de retiros ---
+
+RETIROS_DE_PRUEBA = [
+    {"id": 1, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": datetime(2026, 8, 16, 7, 30),
+     "tipo_retiro": "Carro", "estado_retiro": "retirado", "cantidad_cajones": 10.0,
+     "cantidad_cajones_retirada": None, "proveedor_nombre": "Saturno",
+     "proveedor_codigo_puesto": "N07P41", "articulo_nombre": "Kiwi"},
+    {"id": 2, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": datetime(2026, 8, 16, 8, 15),
+     "tipo_retiro": "Clark", "estado_retiro": "retirado", "cantidad_cajones": 8.0,
+     "cantidad_cajones_retirada": 7.0, "proveedor_nombre": "Saturno",
+     "proveedor_codigo_puesto": "N07P41", "articulo_nombre": "Mango"},
+    {"id": 3, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": None,
+     "tipo_retiro": "Clark", "estado_retiro": "pendiente", "cantidad_cajones": 5.0,
+     "cantidad_cajones_retirada": None, "proveedor_nombre": "Crefu",
+     "proveedor_codigo_puesto": "N03P12", "articulo_nombre": "Palta"},
+]
+
+
+def test_consultar_retiros_default_48hs_y_total_desglosado():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=RETIROS_DE_PRUEBA) as mock_buscar,
+    ):
+        respuesta = cliente.get("/logistica/consultar")
+
+    assert respuesta.status_code == 200
+    mock_buscar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None, None, None)
+    # El total para liquidar al carrero/cooperativa, desglosado: lo anotado
+    # al retirar (7) + lo tomado de la carga del comprador (10 + 5).
+    assert "Total: 22 bultos" in respuesta.text
+    assert "7 anotados al retirar + 15* de la carga del comprador" in respuesta.text
+    assert "se usa lo que cargó el comprador" in respuesta.text
+    # En la tabla: con asterisco lo que viene de la carga, sin asterisco lo anotado.
+    assert "10*" in respuesta.text
+    assert "5*" in respuesta.text
+    assert "7*" not in respuesta.text
+    # Pendiente: sin hora de retiro.
+    assert "Pendiente" in respuesta.text
+
+
+def test_consultar_retiros_pasa_los_filtros_a_la_consulta():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=[]) as mock_buscar,
+    ):
+        respuesta = cliente.get(
+            "/logistica/consultar?fecha_desde=2026-08-10&fecha_hasta=2026-08-12"
+            "&proveedor_id=7&articulo_id=5&tipo=Cooperativa&estado=pendiente"
+        )
+
+    assert respuesta.status_code == 200
+    mock_buscar.assert_called_once_with(date(2026, 8, 10), date(2026, 8, 12), 7, 5, "Cooperativa", "pendiente")
+    assert "No se encontraron retiros" in respuesta.text
+
+
+def test_consultar_retiros_ofrece_cooperativa_en_el_filtro_de_tipo():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=[]),
+    ):
+        respuesta = cliente.get("/logistica/consultar")
+
+    assert 'value="Cooperativa"' in respuesta.text
+    assert 'value="Carro"' in respuesta.text

@@ -29,6 +29,7 @@ from app.db import (
     actualizar_precio_compra,
     aprender_articulo,
     buscar_compras,
+    buscar_retiros,
     cerrar_disponible_generado,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_deshacer_recepcion_bloqueado,
@@ -125,7 +126,8 @@ ORIGENES_RETIRO_LABELS = {
     "deposito": "Retiro automático (recepcionado en Depósito)",
     "migracion": "Migración",
     "ingreso_directo": "Ingreso directo en Depósito",
-    "cooperativa": "Retiro a cargo de la Cooperativa (automático)",
+    "automatico_carro": "Retiro a cargo del Carrero (automático)",
+    "automatico_cooperativa": "Retiro a cargo de la Cooperativa (automático)",
 }
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -4311,8 +4313,100 @@ def dar_de_baja_envase(request: Request, envase_id: int):
 
 @app.get("/logistica")
 def ver_logistica(request: Request):
-    """Hub del área Logística: retiro de mercadería en el Mercado Central, uno por tipo de retiro."""
+    """Hub del área Logística: el retiro de Clark (el único que se tilda acá) y el histórico Consultar Retiros."""
     return templates.TemplateResponse(request, "logistica.html", {})
+
+
+ESTADOS_FILTRO_RETIRO_VALIDOS = {"pendiente", "retirado", "cancelado"}
+
+
+@app.get("/logistica/consultar")
+def ver_consultar_retiros(
+    request: Request,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    proveedor_id: str | None = None,
+    articulo_id: str | None = None,
+    tipo: str | None = None,
+    estado: str | None = None,
+):
+    """Consultar Retiros: el histórico de Logística, análogo a Buscar Compras.
+
+    Con "estado = pendiente" sale el listado de lo que falta retirar (para
+    mandárselo a alguien). El total de bultos de abajo es lo más importante
+    de la pantalla: se usa para liquidarle al carrero o a la cooperativa —
+    por fila usa la cantidad ANOTADA al retirar si existe, y si no la que
+    cargó el comprador (marcada con asterisco, para ver de dónde sale cada
+    número; las de Carro/Cooperativa son siempre asterisco, nadie anota).
+    """
+    proveedor_id_valor = _id_opcional_desde_query(proveedor_id)
+    articulo_id_valor = _id_opcional_desde_query(articulo_id)
+    tipo_valor = tipo if tipo in TIPOS_RETIRO_VALIDOS else None
+    estado_valor = estado if estado in ESTADOS_FILTRO_RETIRO_VALIDOS else None
+
+    hoy = _hoy_argentina()
+    fecha_desde_valor = hoy - timedelta(days=1)
+    fecha_hasta_valor = hoy
+    error_fecha = None
+    if fecha_desde:
+        try:
+            fecha_desde_valor = date.fromisoformat(fecha_desde)
+        except ValueError:
+            error_fecha = "La fecha desde no es válida."
+    if fecha_hasta:
+        try:
+            fecha_hasta_valor = date.fromisoformat(fecha_hasta)
+        except ValueError:
+            error_fecha = "La fecha hasta no es válida."
+    if error_fecha is None and fecha_desde_valor > fecha_hasta_valor:
+        error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
+
+    try:
+        proveedores = listar_proveedores()
+        articulos = listar_articulos()
+        retiros = buscar_retiros(
+            fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor, tipo_valor, estado_valor
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # El total para liquidar: por fila, lo anotado al retirar si existe, si
+    # no lo que cargó el comprador. Se desglosa para que se vea cuánto del
+    # total es dato anotado y cuánto viene de la carga.
+    total_bultos = 0.0
+    total_anotados = 0.0
+    total_del_comprador = 0.0
+    filas = []
+    for retiro in retiros:
+        anotada = retiro["cantidad_cajones_retirada"]
+        bultos = float(anotada) if anotada is not None else float(retiro["cantidad_cajones"])
+        usa_anotada = anotada is not None
+        total_bultos += bultos
+        if usa_anotada:
+            total_anotados += bultos
+        else:
+            total_del_comprador += bultos
+        filas.append({**retiro, "bultos": bultos, "usa_anotada": usa_anotada})
+
+    return templates.TemplateResponse(
+        request,
+        "logistica_consultar.html",
+        {
+            "retiros": filas,
+            "proveedores": proveedores,
+            "articulos": articulos,
+            "fecha_desde": fecha_desde_valor.isoformat(),
+            "fecha_hasta": fecha_hasta_valor.isoformat(),
+            "proveedor_id": proveedor_id_valor,
+            "articulo_id": articulo_id_valor,
+            "tipo": tipo_valor,
+            "estado": estado_valor,
+            "error_fecha": error_fecha,
+            "total_bultos": total_bultos,
+            "total_anotados": total_anotados,
+            "total_del_comprador": total_del_comprador,
+        },
+    )
 
 
 ORIGENES_RETIRO_VALIDOS = {"logistica", "deposito"}
