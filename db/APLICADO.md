@@ -37,7 +37,7 @@ bases estén marcadas.
 | `agregar_ingreso_directo_compras.sql` | ✅ 2026-08-18 | — consolidado en `esquema_completo.sql` |
 | `esquema_completo.sql` | — sus tablas ya existen | ⬜ pendiente (correr al crear el proyecto; ya trae envases sin cliente) |
 | `envases_sin_cliente.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
-| `agregar_tipo_retiro_cooperativa.sql` | ⬜ pendiente (correr ANTES del merge) | ⬜ pendiente (correr ANTES del merge) |
+| `agregar_tipo_retiro_cooperativa.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 
 ## Pasos manuales que NO son SQL (por base)
 
