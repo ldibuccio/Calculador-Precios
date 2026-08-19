@@ -8312,3 +8312,112 @@ def test_ver_compras_tiene_el_boton_objetivo_de_compra():
     assert respuesta.status_code == 200
     assert 'href="/compras/objetivo"' in respuesta.text
     assert "Objetivo de Compra" in respuesta.text
+
+
+# --- /envases: costos de envase por cliente, con historial ---
+
+ENVASES_CON_COSTO_DE_PRUEBA = [
+    {"id": 7, "nombre": "Caja Chica Día", "costo": 650.0, "vigente_desde": date(2026, 8, 1), "fichas_que_lo_usan": 3},
+    {"id": 8, "nombre": "Caja Grande Día", "costo": None, "vigente_desde": None, "fichas_que_lo_usan": 0},
+]
+HISTORIAL_ENVASES_DE_PRUEBA = [
+    {"envase_id": 7, "costo": 650.0, "vigente_desde": date(2026, 8, 1)},
+    {"envase_id": 7, "costo": 500.0, "vigente_desde": date(2026, 7, 1)},
+]
+
+
+def _patches_envases():
+    return (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_envases_con_costo_por_cliente", return_value=ENVASES_CON_COSTO_DE_PRUEBA),
+        patch("app.main.listar_historial_costos_envases_por_cliente", return_value=HISTORIAL_ENVASES_DE_PRUEBA),
+    )
+
+
+def test_ver_envases_sin_cliente_muestra_solo_el_selector():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA):
+        respuesta = cliente.get("/envases")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente" in respuesta.text
+    assert "Caja Chica" not in respuesta.text
+
+
+def test_ver_envases_muestra_costo_vigente_historial_y_advertencia():
+    parches = _patches_envases()
+    with parches[0], parches[1], parches[2]:
+        respuesta = cliente.get("/envases?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Caja Chica Día" in respuesta.text
+    assert "$650" in respuesta.text
+    assert "Vigente desde el 01/08/2026" in respuesta.text
+    assert "lo usan 3 artículos" in respuesta.text
+    # Envase sin costo cargado: se dice, no se inventa un cero.
+    assert "Sin costo" in respuesta.text
+    # El historial completo, para ver la evolución.
+    assert "$500" in respuesta.text
+    assert "01/07/2026" in respuesta.text
+    # La advertencia pedida antes de dejar cambiar un costo.
+    assert "cambia el precio sugerido de TODOS los artículos" in respuesta.text
+    # La regla de oro, explicada en la pantalla.
+    assert "nunca pisan el historial" in respuesta.text
+
+
+def test_cambiar_costo_envase_registra_fila_nueva_y_vuelve_con_aviso():
+    with patch("app.main.registrar_costo_envase") as mock_registrar:
+        respuesta = cliente.post("/envases/7/costo", data={"cliente_id": "1", "costo": "800"}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_registrar.assert_called_once_with(7, 800.0)
+    assert "/envases?cliente_id=1" in respuesta.headers["location"]
+    assert "vigente+desde+hoy" in respuesta.headers["location"]
+
+
+def test_cambiar_costo_envase_invalido_muestra_error_sin_registrar():
+    parches = _patches_envases()
+    with parches[0], parches[1], parches[2], patch("app.main.registrar_costo_envase") as mock_registrar:
+        respuesta = cliente.post("/envases/7/costo", data={"cliente_id": "1", "costo": "-5"})
+
+    assert respuesta.status_code == 400
+    assert "El costo tiene que ser mayor a cero." in respuesta.text
+    mock_registrar.assert_not_called()
+
+
+def test_dar_de_baja_envase_registra_costo_cero_desde_hoy():
+    with patch("app.main.registrar_costo_envase") as mock_registrar:
+        respuesta = cliente.post("/envases/7/baja", data={"cliente_id": "1"}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_registrar.assert_called_once_with(7, 0)
+
+
+def test_agregar_envase_crea_y_vuelve_con_aviso():
+    with patch("app.main.crear_envase") as mock_crear:
+        respuesta = cliente.post(
+            "/envases/nuevo", data={"cliente_id": "1", "nombre": "Caja Nueva", "costo": "700"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, "Caja Nueva", 700.0)
+
+
+def test_agregar_envase_con_nombre_repetido_muestra_el_error():
+    parches = _patches_envases()
+    with (
+        parches[0], parches[1], parches[2],
+        patch("app.main.crear_envase", side_effect=ValueError("Ya existe un envase con ese nombre para este cliente.")),
+    ):
+        respuesta = cliente.post("/envases/nuevo", data={"cliente_id": "1", "nombre": "Caja Chica Día", "costo": "700"})
+
+    assert respuesta.status_code == 400
+    assert "Ya existe un envase con ese nombre" in respuesta.text
+
+
+def test_ver_comercial_tiene_el_boton_envases():
+    with patch("app.main.contar_compras_sin_precio", return_value=0):
+        respuesta = cliente.get("/comercial")
+
+    assert respuesta.status_code == 200
+    assert 'href="/envases"' in respuesta.text
+    assert "Envases" in respuesta.text

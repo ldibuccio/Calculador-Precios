@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envases</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  form.selector label, .formulario label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+    margin-top: 0.5rem;
+  }
+  form.selector select, .formulario input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .ayuda {
+    color: #666;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .vacio {
+    color: #888;
+    font-style: italic;
+    background: #fff;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .encabezado-envase {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .nombre-envase {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin: 0;
+  }
+  .costo-vigente {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #166534;
+    white-space: nowrap;
+  }
+  .costo-vigente.sin-costo { color: #dc2626; }
+  .dato {
+    color: #666;
+    font-size: 0.85rem;
+    margin: 0.35rem 0 0;
+  }
+  .fila-cambio {
+    display: flex;
+    align-items: stretch;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .fila-cambio input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.7rem;
+    font-size: 1.1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-sizing: border-box;
+  }
+  .boton {
+    padding: 0.7rem 0.9rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+  }
+  .boton-baja {
+    background: transparent;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.6rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .boton-agregar {
+    width: 100%;
+    margin-top: 0.9rem;
+    padding: 0.8rem;
+    font-size: 1rem;
+  }
+  details { margin-top: 0.6rem; }
+  summary {
+    font-size: 0.9rem;
+    color: #2563eb;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.3rem 0;
+  }
+  table.historial {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.4rem;
+  }
+  table.historial td {
+    padding: 0.35rem 0.4rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.85rem;
+  }
+  table.historial td:last-child { text-align: right; font-weight: 600; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.25rem; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Envases" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form class="selector" method="get" action="/envases">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  {% if not cliente_id %}
+  <p class="vacio">Elegí un cliente para ver sus envases y costos.</p>
+  {% else %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <p class="ayuda">
+    Los cambios de costo nunca pisan el historial: cada costo nuevo rige desde hoy y
+    los cálculos pasados siguen usando el costo que regía en su momento.
+  </p>
+
+  {% if not envases %}
+  <p class="vacio">{{ cliente.nombre }} no tiene envases cargados todavía.</p>
+  {% endif %}
+
+  {% for envase in envases %}
+  <div class="tarjeta">
+    <div class="encabezado-envase">
+      <p class="nombre-envase">{{ envase.nombre }}</p>
+      {% if envase.costo is not none %}
+      <span class="costo-vigente">{{ envase.costo|moneda }}</span>
+      {% else %}
+      <span class="costo-vigente sin-costo">Sin costo</span>
+      {% endif %}
+    </div>
+    <p class="dato">
+      {% if envase.vigente_desde %}Vigente desde el {{ envase.vigente_desde.strftime("%d/%m/%Y") }} — {% endif %}
+      {% if envase.fichas_que_lo_usan %}lo usan {{ envase.fichas_que_lo_usan }} artículo{{ "s" if envase.fichas_que_lo_usan != 1 else "" }}{% else %}ninguna ficha lo usa todavía{% endif %}
+    </p>
+
+    <!-- El confirm() es el aviso pedido: cambiar el costo afecta el precio
+         sugerido de todos los artículos que usan este envase. -->
+    <form class="fila-cambio" method="post" action="/envases/{{ envase.id }}/costo"
+          onsubmit="return confirm('Ojo: el costo nuevo cambia el precio sugerido de TODOS los artículos que usan {{ envase.nombre }}{% if envase.fichas_que_lo_usan %} ({{ envase.fichas_que_lo_usan }} artículo{{ "s" if envase.fichas_que_lo_usan != 1 else "" }}){% endif %}. Rige desde hoy y el historial anterior se conserva. ¿Registrar?');">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <input type="text" inputmode="decimal" name="costo" placeholder="Costo nuevo $" required>
+      <button type="submit" class="boton">Cambiar costo</button>
+    </form>
+
+    {% set historial = historial_por_envase.get(envase.id, []) %}
+    {% if historial %}
+    <details>
+      <summary>Ver historial ({{ historial|length }})</summary>
+      <table class="historial">
+        {% for fila in historial %}
+        <tr>
+          <td>desde el {{ fila.vigente_desde.strftime("%d/%m/%Y") }}</td>
+          <td>{{ fila.costo|moneda }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endif %}
+
+    <form method="post" action="/envases/{{ envase.id }}/baja"
+          onsubmit="return confirm('¿Dar de baja {{ envase.nombre }}? Queda con costo $0 desde hoy — el historial y los cálculos pasados se conservan.');">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <button type="submit" class="boton-baja">Dar de baja (costo $0 desde hoy)</button>
+    </form>
+  </div>
+  {% endfor %}
+
+  <div class="tarjeta formulario">
+    <h2>Agregar envase</h2>
+    <form method="post" action="/envases/nuevo">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <label for="nombre">Nombre *</label>
+      <input type="text" id="nombre" name="nombre" placeholder="Ej: Caja Chica {{ cliente.nombre }}" required>
+      <label for="costo">Costo inicial $ *</label>
+      <input type="text" inputmode="decimal" id="costo" name="costo" required>
+      <button type="submit" class="boton boton-agregar">Agregar envase</button>
+    </form>
+  </div>
+
+  {% endif %}
+</body>
+</html>

@@ -40,6 +40,7 @@ from app.db import (
     crear_articulo,
     crear_cliente,
     crear_compra,
+    crear_envase,
     crear_ficha,
     desactivar_articulo,
     desactivar_cliente,
@@ -63,7 +64,9 @@ from app.db import (
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_detalle_disponible,
+    listar_envases_con_costo_por_cliente,
     listar_envases_por_cliente,
+    listar_historial_costos_envases_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
     listar_precios_anteriores_por_cliente,
@@ -85,6 +88,7 @@ from app.db import (
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
+    registrar_costo_envase,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
@@ -4200,6 +4204,124 @@ def ver_comercial(request: Request):
         compras_sin_precio = 0
 
     return templates.TemplateResponse(request, "comercial.html", {"compras_sin_precio": compras_sin_precio})
+
+
+def _validar_costo_envase(texto: str) -> tuple[str | None, float | None]:
+    """Valida el costo de un envase: número positivo (la baja usa 0, pero por su propio botón)."""
+    texto = texto.strip().replace(",", ".")
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "El costo tiene que ser un número.", None
+    if valor <= 0:
+        return "El costo tiene que ser mayor a cero.", None
+    return None, valor
+
+
+def _renderizar_pantalla_envases(
+    request: Request, cliente_id: int | None, aviso: str | None = None, error: str | None = None, status_code: int = 200
+):
+    """La pantalla de Envases por cliente: costo vigente, historial completo y las acciones de cambio.
+
+    Reutilizada por el GET y por los POST que fallan la validación (para
+    volver a mostrar la misma pantalla con el error, sin perder el cliente
+    elegido).
+    """
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if cliente_id is None:
+        return templates.TemplateResponse(request, "envases.html", {"clientes": clientes, "cliente_id": None})
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        envases = listar_envases_con_costo_por_cliente(cliente_id, _hoy_argentina())
+        historial_filas = listar_historial_costos_envases_por_cliente(cliente_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    historial_por_envase: dict[int, list[dict]] = {}
+    for fila in historial_filas:
+        historial_por_envase.setdefault(fila["envase_id"], []).append(fila)
+
+    return templates.TemplateResponse(
+        request,
+        "envases.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
+            "cliente": cliente,
+            "envases": envases,
+            "historial_por_envase": historial_por_envase,
+            "aviso": aviso,
+            "error": error,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/envases")
+def ver_envases(request: Request, cliente_id: int | None = None, aviso: str | None = None):
+    return _renderizar_pantalla_envases(request, cliente_id, aviso=aviso)
+
+
+@app.post("/envases/nuevo")
+def agregar_envase(request: Request, cliente_id: int = Form(...), nombre: str = Form(""), costo: str = Form("")):
+    error, nombre_valor = _validar_nombre(nombre)
+    if not error:
+        error, costo_valor = _validar_costo_envase(costo)
+    if error:
+        return _renderizar_pantalla_envases(request, cliente_id, error=error, status_code=400)
+
+    try:
+        crear_envase(cliente_id, nombre_valor, costo_valor)
+    except ValueError as error_negocio:
+        # Nombre repetido para este cliente (ver crear_envase).
+        return _renderizar_pantalla_envases(request, cliente_id, error=str(error_negocio), status_code=400)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo crear el envase: {error_db}") from error_db
+
+    parametros = urlencode({"cliente_id": cliente_id, "aviso": f"Envase {nombre_valor} creado, con costo vigente desde hoy."})
+    return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
+
+
+@app.post("/envases/{envase_id}/costo")
+def cambiar_costo_envase(request: Request, envase_id: int, cliente_id: int = Form(...), costo: str = Form("")):
+    error, costo_valor = _validar_costo_envase(costo)
+    if error:
+        return _renderizar_pantalla_envases(request, cliente_id, error=error, status_code=400)
+
+    try:
+        # Regla de oro del historial: registrar_costo_envase INSERTA una
+        # fila nueva vigente desde hoy, nunca pisa las anteriores — los
+        # cálculos pasados no cambian.
+        registrar_costo_envase(envase_id, costo_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo registrar el costo: {error_db}") from error_db
+
+    parametros = urlencode(
+        {"cliente_id": cliente_id, "aviso": "Costo nuevo registrado, vigente desde hoy. El historial anterior se conserva."}
+    )
+    return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
+
+
+@app.post("/envases/{envase_id}/baja")
+def dar_de_baja_envase(request: Request, envase_id: int, cliente_id: int = Form(...)):
+    """Baja de un envase: fila nueva con costo 0 vigente desde hoy — mismo criterio de historial, nada se borra."""
+    try:
+        registrar_costo_envase(envase_id, 0)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo dar de baja el envase: {error_db}") from error_db
+
+    parametros = urlencode(
+        {"cliente_id": cliente_id, "aviso": "Envase dado de baja: costo $0 desde hoy. El historial y los cálculos pasados se conservan."}
+    )
+    return RedirectResponse(url=f"/envases?{parametros}", status_code=303)
 
 
 @app.get("/logistica")

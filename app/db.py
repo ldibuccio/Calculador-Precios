@@ -477,6 +477,120 @@ def listar_envases_por_cliente(cliente_id: int) -> list[dict]:
         conexion.close()
 
 
+def listar_envases_con_costo_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
+    """Envases activos de un cliente con su costo VIGENTE a una fecha, desde cuándo rige, y cuántas fichas lo usan.
+
+    costo/vigente_desde vienen NULL si el envase todavía no tiene ningún
+    costo cargado con vigencia alcanzada — se muestra como "sin costo", no
+    se inventa un cero.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT e.id, e.nombre, h.costo, h.vigente_desde,
+                       (SELECT COUNT(*) FROM fichas_logistica f WHERE f.envase_id = e.id) AS fichas_que_lo_usan
+                FROM envases e
+                LEFT JOIN LATERAL (
+                    SELECT costo, vigente_desde
+                    FROM envases_costo_historial
+                    WHERE envase_id = e.id AND vigente_desde <= %s
+                    ORDER BY vigente_desde DESC
+                    LIMIT 1
+                ) h ON true
+                WHERE e.cliente_id = %s AND e.activo = true
+                ORDER BY e.nombre
+                """,
+                (fecha_referencia, cliente_id),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_historial_costos_envases_por_cliente(cliente_id: int) -> list[dict]:
+    """Todo el historial de costos de los envases activos de un cliente (del más nuevo al más viejo), para mostrar la evolución."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT h.envase_id, h.costo, h.vigente_desde
+                FROM envases_costo_historial h
+                JOIN envases e ON e.id = h.envase_id
+                WHERE e.cliente_id = %s AND e.activo = true
+                ORDER BY h.envase_id, h.vigente_desde DESC
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def crear_envase(cliente_id: int, nombre: str, costo: float) -> None:
+    """Crea un envase para un cliente con su costo inicial vigente desde hoy — todo en una transacción.
+
+    Nombre repetido para el mismo cliente: ValueError con mensaje para
+    mostrar tal cual (chequeado acá y además garantizado por el UNIQUE de
+    la tabla).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM envases WHERE cliente_id = %s AND nombre = %s",
+                (cliente_id, nombre),
+            )
+            if cursor.fetchone():
+                raise ValueError("Ya existe un envase con ese nombre para este cliente.")
+
+            cursor.execute(
+                "INSERT INTO envases (cliente_id, nombre) VALUES (%s, %s) RETURNING id",
+                (cliente_id, nombre),
+            )
+            (envase_id,) = cursor.fetchone()
+            cursor.execute(
+                "INSERT INTO envases_costo_historial (envase_id, costo, vigente_desde) VALUES (%s, %s, CURRENT_DATE)",
+                (envase_id, costo),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def registrar_costo_envase(envase_id: int, costo: float) -> None:
+    """Registra un costo nuevo para un envase, vigente desde hoy — la regla de oro del historial.
+
+    NUNCA pisa filas anteriores: inserta una fila nueva en
+    envases_costo_historial (mismo criterio que los precios de venta y los
+    parámetros de cliente) — así los cálculos pasados siguen usando el
+    costo que regía en su momento. La única excepción es cambiar dos veces
+    el MISMO día: ahí se actualiza la fila de hoy (ON CONFLICT), igual que
+    en precios_venta_historial. La baja de un envase es esto mismo con
+    costo 0.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO envases_costo_historial (envase_id, costo, vigente_desde)
+                VALUES (%s, %s, CURRENT_DATE)
+                ON CONFLICT (envase_id, vigente_desde) DO UPDATE SET costo = EXCLUDED.costo
+                """,
+                (envase_id, costo),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def crear_ficha(
     articulo_id: int,
     cliente_id: int,

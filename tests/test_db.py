@@ -1,4 +1,5 @@
 from datetime import date
+import pytest
 from unittest.mock import MagicMock, patch
 
 from app.db import (
@@ -17,6 +18,9 @@ from app.db import (
     crear_compra,
     deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
+    crear_envase,
+    listar_envases_con_costo_por_cliente,
+    registrar_costo_envase,
     eliminar_compra,
     eliminar_compras_del_dia_por_proveedor,
     guardar_disponible,
@@ -1390,3 +1394,62 @@ def test_cerrar_disponible_generado_ya_cerrado_lanza_error():
             assert "ya fue generado" in str(error)
 
     conexion.commit.assert_not_called()
+
+
+# --- Envases: alta, cambio de costo con historial, listado con costo vigente ---
+
+
+def test_registrar_costo_envase_inserta_fila_nueva_sin_pisar_el_historial():
+    # La regla de oro: SIEMPRE una fila nueva vigente desde hoy — nunca un
+    # UPDATE de filas viejas (los cálculos pasados no cambian). La única
+    # excepción es el mismo día (ON CONFLICT), igual que en precios.
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        registrar_costo_envase(7, 800.0)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO envases_costo_historial" in consulta
+    assert "CURRENT_DATE" in consulta
+    assert "ON CONFLICT (envase_id, vigente_desde) DO UPDATE" in consulta
+    assert not consulta.strip().startswith("UPDATE")
+    assert parametros == (7, 800.0)
+    conexion.commit.assert_called_once()
+
+
+def test_crear_envase_crea_con_costo_inicial_desde_hoy_en_una_transaccion():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None, (33,)])  # no existe; RETURNING id
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_envase(1, "Caja Nueva", 700.0)
+
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert any("INSERT INTO envases " in consulta for consulta in consultas)
+    assert any("INSERT INTO envases_costo_historial" in consulta and "CURRENT_DATE" in consulta for consulta in consultas)
+    assert cursor.execute.call_args_list[-1].args[1] == (33, 700.0)
+    conexion.commit.assert_called_once()
+
+
+def test_crear_envase_rechaza_nombre_repetido_para_el_cliente():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])  # ya existe
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as salida:
+            crear_envase(1, "Caja Chica Día", 700.0)
+
+    assert "Ya existe un envase con ese nombre" in str(salida.value)
+    conexion.commit.assert_not_called()
+
+
+def test_listar_envases_con_costo_trae_vigente_desde_y_cuantas_fichas_lo_usan():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_envases_con_costo_por_cliente(1, date(2026, 8, 19))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Costo VIGENTE a la fecha (la fila más nueva ya alcanzada), no cualquier fila.
+    assert "vigente_desde <= %s" in consulta
+    assert "ORDER BY vigente_desde DESC" in consulta
+    assert "fichas_logistica" in consulta
+    assert "activo = true" in consulta
