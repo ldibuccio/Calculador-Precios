@@ -45,7 +45,7 @@ bases estén marcadas.
 | `agregar_resultado_sena.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_proveedores_puesto.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_ajustes_vacios.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
-| `agregar_indices_rendimiento.sql` | ⬜ pendiente (aditivo: el código anda igual sin él, correr cuando se pueda) | ⬜ pendiente (ídem) |
+| `agregar_indices_rendimiento.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 
 ## Pasos manuales que NO son SQL (por base)
 
