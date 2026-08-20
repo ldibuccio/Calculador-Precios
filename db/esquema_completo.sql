@@ -390,4 +390,35 @@ comment on column ajustes_vacios.motivo is 'Motivo obligatorio, escrito a mano. 
 comment on column ajustes_vacios.stock_sistema is 'Stock del sistema (recibidos − devueltos + ajustes, SIN este ajuste) en el instante de guardar — misma foto que en devoluciones y conteos.';
 comment on column ajustes_vacios.anulado_el is 'NULL = ajuste vigente. Igual que los demás movimientos: anular deja el registro visible, nunca se borra.';
 
+-- ----------------------------------------------------------------------------
+-- 12. ÍNDICES DE RENDIMIENTO
+-- Ver db/agregar_indices_rendimiento.sql para la justificación de cada uno
+-- (solo índices que responden a consultas reales y frecuentes del código).
+-- ----------------------------------------------------------------------------
+
+create index compras_fecha_proveedor_idx
+    on compras (fecha_operacion, proveedor_id);
+create index compras_sin_precio_idx
+    on compras (fecha_operacion) where importe is null;
+create index compras_pendientes_recepcion_idx
+    on compras (guia_id, guia_punto) where estado = 'pendiente' and guia_id is not null;
+create index compras_procesada_el_idx
+    on compras (procesada_el) where procesada_el is not null;
+create index compras_retiro_procesado_el_idx
+    on compras (retiro_procesado_el) where retiro_procesado_el is not null;
+create index compras_pendientes_retiro_idx
+    on compras (tipo_retiro)
+    where estado_retiro is distinct from 'retirado' and estado_retiro is distinct from 'cancelado';
+create index compras_foto_ruta_idx
+    on compras (foto_ruta, fecha_operacion) where foto_ruta is not null;
+create index vacios_recibidos_stock_idx
+    on vacios_recibidos (proveedor_id, tipo_envase_id) include (cantidad)
+    where anulado_el is null;
+create index vacios_devueltos_stock_idx
+    on vacios_devueltos (proveedor_id, tipo_envase_id) include (cantidad)
+    where anulado_el is null;
+create index ajustes_vacios_stock_idx
+    on ajustes_vacios (proveedor_id, tipo_envase_id) include (cantidad)
+    where anulado_el is null;
+
 commit;

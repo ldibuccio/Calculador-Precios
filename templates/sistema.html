@@ -80,7 +80,6 @@
   <div class="mensaje">{{ mensaje }}</div>
   {% endif %}
 
-  {% if uso_storage is not none or cantidad_fotos_para_limpiar is not none %}
   <div class="tarjeta">
     <h2>Fotos de comandas</h2>
     {% if uso_storage is not none %}
@@ -89,7 +88,19 @@
       · {{ uso_storage.bytes_totales|tamano }}
     </p>
     {% endif %}
-    {% if cantidad_fotos_para_limpiar is not none %}
+    {% if cantidad_fotos_para_limpiar is none %}
+    <!-- El conteo se hace bajo demanda: recorre todas las compras con
+         foto, y no vale la pena pagarlo en cada visita a esta pantalla. -->
+    <form method="post" action="/sistema/revisar-fotos-viejas">
+      <button type="submit" class="boton boton-secundario" style="margin-top: 0;">
+        Revisar fotos de más de 3 años
+      </button>
+    </form>
+    {% else %}
+    <p class="espacio-storage">
+      {{ cantidad_fotos_para_limpiar }} foto{% if cantidad_fotos_para_limpiar != 1 %}s{% endif %}
+      de más de 3 años para limpiar.
+    </p>
     <form method="post" action="/sistema/limpiar-fotos-viejas" id="form-limpiar-fotos-viejas">
       <button type="submit" class="boton boton-secundario" id="boton-limpiar-fotos-viejas"
               data-cantidad="{{ cantidad_fotos_para_limpiar }}" style="margin-top: 0;">
@@ -98,7 +109,6 @@
     </form>
     {% endif %}
   </div>
-  {% endif %}
 
   <a class="volver" href="/compras">Volver a compras</a>
 

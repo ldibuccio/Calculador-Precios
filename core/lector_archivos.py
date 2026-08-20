@@ -10,9 +10,68 @@ import io
 
 import openpyxl
 import pypdfium2 as pdfium
+from PIL import Image
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas as canvas_pdf
 
 ESCALA_RENDER_PDF = 2.0  # 72 * 2 ≈ 144 DPI: legible sin generar imágenes gigantes.
 CALIDAD_JPEG_PDF = 85
+
+# Para el PDF que se GUARDA en Storage: mismo criterio que las fotos de
+# comandas (máx 1000px de lado, JPEG calidad 60) — alcanza para releerlo
+# a ojo, y baja un escaneo de varios MB a ~100-150 KB por página.
+LADO_MAXIMO_PDF_GUARDADO = 1000
+CALIDAD_JPEG_PDF_GUARDADO = 60
+
+
+def comprimir_pdf(bytes_pdf: bytes) -> bytes:
+    """Rearma el PDF con cada página como imagen comprimida, para guardarlo chico en Storage.
+
+    Un PDF escaneado trae cada página como foto en alta resolución: acá se
+    renderiza cada página, se achica y comprime como las fotos de comandas,
+    y se arma un PDF nuevo con esas imágenes. Se pierde el texto
+    seleccionable (si lo había) — no importa: este archivo se guarda solo
+    como respaldo visual de dónde salió cada precio, la lectura con IA ya
+    se hizo con el original.
+
+    Si algo falla, o si el resultado no achica nada, devuelve el original:
+    comprimir es una mejora, nunca un motivo para perder el archivo.
+    """
+    try:
+        documento = pdfium.PdfDocument(bytes_pdf)
+        try:
+            buffer_pdf = io.BytesIO()
+            lienzo = None
+            for pagina in documento:
+                bitmap = pagina.render(scale=ESCALA_RENDER_PDF)
+                try:
+                    imagen = bitmap.to_pil().convert("RGB")
+                finally:
+                    bitmap.close()
+                pagina.close()
+                imagen.thumbnail((LADO_MAXIMO_PDF_GUARDADO, LADO_MAXIMO_PDF_GUARDADO))
+                buffer_jpeg = io.BytesIO()
+                imagen.save(buffer_jpeg, format="JPEG", quality=CALIDAD_JPEG_PDF_GUARDADO)
+                buffer_jpeg.seek(0)
+
+                # Página del PDF nuevo del tamaño exacto de la imagen (en
+                # puntos, a ~144 DPI: la mitad de los píxeles).
+                ancho_pt, alto_pt = imagen.width / 2, imagen.height / 2
+                if lienzo is None:
+                    lienzo = canvas_pdf.Canvas(buffer_pdf, pagesize=(ancho_pt, alto_pt))
+                else:
+                    lienzo.setPageSize((ancho_pt, alto_pt))
+                lienzo.drawImage(ImageReader(buffer_jpeg), 0, 0, width=ancho_pt, height=alto_pt)
+                lienzo.showPage()
+            if lienzo is None:
+                return bytes_pdf
+            lienzo.save()
+        finally:
+            documento.close()
+        bytes_comprimidos = buffer_pdf.getvalue()
+        return bytes_comprimidos if len(bytes_comprimidos) < len(bytes_pdf) else bytes_pdf
+    except Exception:
+        return bytes_pdf
 
 
 def imagenes_desde_pdf(bytes_pdf: bytes) -> list[bytes]:

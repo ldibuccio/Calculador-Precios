@@ -745,18 +745,8 @@ def obtener_proveedor(proveedor_id: int) -> dict | None:
         conexion.close()
 
 
-def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, articulo_id: int | None = None) -> list[dict]:
-    """Busca compras por rango de fechas (obligatorio) y, opcionalmente, por proveedor y/o artículo.
-
-    Base de la pantalla Buscar Compras y del export a PDF/Excel — WHERE
-    dinámico según qué filtros opcionales vinieron.
-
-    Cantidad/contenido/kilos/fracción vienen con el valor REAL (pesado por
-    Depósito al recepcionar) si ya existe, si no el estimado que cargó el
-    comprador — ver recepcionar_compra. Quien llama sigue leyendo
-    "cantidad_cajones" etc. como si fuera la única columna, sin saber nada
-    de esta sustitución.
-    """
+def _condiciones_buscar_compras(fecha_desde, fecha_hasta, proveedor_id, articulo_id) -> tuple[list[str], list]:
+    """El WHERE dinámico de Buscar Compras, compartido entre la búsqueda y su contador."""
     condiciones = ["c.fecha_operacion BETWEEN %s AND %s"]
     parametros: list = [fecha_desde, fecha_hasta]
     if proveedor_id is not None:
@@ -765,6 +755,52 @@ def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, ar
     if articulo_id is not None:
         condiciones.append("c.articulo_id = %s")
         parametros.append(articulo_id)
+    return condiciones, parametros
+
+
+def contar_compras_buscadas(
+    fecha_desde, fecha_hasta, proveedor_id: int | None = None, articulo_id: int | None = None
+) -> int:
+    """Cuántas compras matchean los filtros de Buscar Compras — para el aviso "primeras N de M"."""
+    condiciones, parametros = _condiciones_buscar_compras(fecha_desde, fecha_hasta, proveedor_id, articulo_id)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM compras c WHERE {' AND '.join(condiciones)}", parametros)
+            (total,) = cursor.fetchone()
+        return int(total)
+    finally:
+        conexion.close()
+
+
+def buscar_compras(
+    fecha_desde,
+    fecha_hasta,
+    proveedor_id: int | None = None,
+    articulo_id: int | None = None,
+    limite: int | None = None,
+) -> list[dict]:
+    """Busca compras por rango de fechas (obligatorio) y, opcionalmente, por proveedor y/o artículo.
+
+    Base de la pantalla Buscar Compras y del export a PDF/Excel — WHERE
+    dinámico según qué filtros opcionales vinieron.
+
+    limite: tope de filas para la PANTALLA (un rango ancho no puede tirar
+    miles de filas al celular; el aviso lo arma la ruta con
+    contar_compras_buscadas). Los exports pasan None: un archivo
+    incompleto en silencio sería peor que uno pesado.
+
+    Cantidad/contenido/kilos/fracción vienen con el valor REAL (pesado por
+    Depósito al recepcionar) si ya existe, si no el estimado que cargó el
+    comprador — ver recepcionar_compra. Quien llama sigue leyendo
+    "cantidad_cajones" etc. como si fuera la única columna, sin saber nada
+    de esta sustitución.
+    """
+    condiciones, parametros = _condiciones_buscar_compras(fecha_desde, fecha_hasta, proveedor_id, articulo_id)
+    tope_sql = ""
+    if limite is not None:
+        tope_sql = "LIMIT %s"
+        parametros = parametros + [limite]
 
     conexion = obtener_conexion()
     try:
@@ -784,6 +820,7 @@ def buscar_compras(fecha_desde, fecha_hasta, proveedor_id: int | None = None, ar
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE {" AND ".join(condiciones)}
                 ORDER BY c.fecha_operacion DESC, p.codigo_puesto, c.cargado_el
+                {tope_sql}
                 """,
                 parametros,
             )
@@ -1858,10 +1895,10 @@ def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')
-                  AND c.procesada_el::date = %s
+                  AND c.procesada_el >= %s AND c.procesada_el < %s::date + 1
                 ORDER BY c.procesada_el DESC
                 """,
-                (fecha,),
+                (fecha, fecha),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -1870,27 +1907,10 @@ def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
         conexion.close()
 
 
-def buscar_retiros(
-    fecha_desde,
-    fecha_hasta,
-    proveedor_id: int | None = None,
-    articulo_id: int | None = None,
-    tipo_retiro: str | None = None,
-    estado_retiro: str | None = None,
-) -> list[dict]:
-    """El histórico de Logística (ver /logistica/consultar): retiros entre dos fechas, con filtros opcionales.
-
-    estado_retiro: 'pendiente' incluye también las filas con estado NULL
-    (compras de antes de que existiera Retiro) — mismo criterio que
-    listar_compras_pendientes_retiro: lo raro se muestra, no desaparece.
-    'retirado'/'cancelado' filtran exacto. None trae todo.
-
-    Cada fila trae cantidad_cajones (lo que cargó el comprador) y
-    cantidad_cajones_retirada (lo anotado al retirar, si se anotó): el
-    total de bultos para liquidar al carrero/cooperativa lo arma quien
-    llama con COALESCE de esos dos — acá se devuelven separados para poder
-    mostrar de dónde sale cada número.
-    """
+def _condiciones_buscar_retiros(
+    fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo_retiro, estado_retiro
+) -> tuple[list[str], list]:
+    """El WHERE dinámico de Consultar Retiros, compartido entre la búsqueda y su contador."""
     condiciones = ["c.fecha_operacion BETWEEN %s AND %s"]
     parametros: list = [fecha_desde, fecha_hasta]
 
@@ -1908,6 +1928,63 @@ def buscar_retiros(
     elif estado_retiro is not None:
         condiciones.append("c.estado_retiro = %s")
         parametros.append(estado_retiro)
+    return condiciones, parametros
+
+
+def contar_retiros_buscados(
+    fecha_desde,
+    fecha_hasta,
+    proveedor_id: int | None = None,
+    articulo_id: int | None = None,
+    tipo_retiro: str | None = None,
+    estado_retiro: str | None = None,
+) -> int:
+    """Cuántos retiros matchean los filtros de Consultar Retiros — para el aviso "primeras N de M"."""
+    condiciones, parametros = _condiciones_buscar_retiros(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo_retiro, estado_retiro
+    )
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM compras c WHERE {' AND '.join(condiciones)}", parametros)
+            (total,) = cursor.fetchone()
+        return int(total)
+    finally:
+        conexion.close()
+
+
+def buscar_retiros(
+    fecha_desde,
+    fecha_hasta,
+    proveedor_id: int | None = None,
+    articulo_id: int | None = None,
+    tipo_retiro: str | None = None,
+    estado_retiro: str | None = None,
+    limite: int | None = None,
+) -> list[dict]:
+    """El histórico de Logística (ver /logistica/consultar): retiros entre dos fechas, con filtros opcionales.
+
+    estado_retiro: 'pendiente' incluye también las filas con estado NULL
+    (compras de antes de que existiera Retiro) — mismo criterio que
+    listar_compras_pendientes_retiro: lo raro se muestra, no desaparece.
+    'retirado'/'cancelado' filtran exacto. None trae todo.
+
+    limite: tope de filas para la pantalla (mismo criterio que
+    buscar_compras); el export pasa None.
+
+    Cada fila trae cantidad_cajones (lo que cargó el comprador) y
+    cantidad_cajones_retirada (lo anotado al retirar, si se anotó): el
+    total de bultos para liquidar al carrero/cooperativa lo arma quien
+    llama con COALESCE de esos dos — acá se devuelven separados para poder
+    mostrar de dónde sale cada número.
+    """
+    condiciones, parametros = _condiciones_buscar_retiros(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo_retiro, estado_retiro
+    )
+    tope_sql = ""
+    if limite is not None:
+        tope_sql = "LIMIT %s"
+        parametros = parametros + [limite]
 
     conexion = obtener_conexion()
     try:
@@ -1923,6 +2000,7 @@ def buscar_retiros(
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE {" AND ".join(condiciones)}
                 ORDER BY c.fecha_operacion DESC, p.nombre, a.nombre
+                {tope_sql}
                 """,
                 parametros,
             )
@@ -2094,10 +2172,10 @@ def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.tipo_retiro = %s
                   AND c.estado_retiro IN ('retirado', 'cancelado')
-                  AND c.retiro_procesado_el::date = %s
+                  AND c.retiro_procesado_el >= %s AND c.retiro_procesado_el < %s::date + 1
                 ORDER BY c.retiro_procesado_el DESC
                 """,
-                (tipo_retiro, fecha),
+                (tipo_retiro, fecha, fecha),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -2269,20 +2347,23 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     nuevo. En la práctica todos los renglones de una misma foto comparten
     la misma fecha_operacion (se cargan juntos y esa fecha no se puede
     editar después), pero este chequeo se hace igual por las dudas.
+
+    "Ninguna compra reciente la usa" se expresa como MAX(fecha_operacion)
+    por foto — una sola pasada. La versión anterior (NOT EXISTS
+    correlacionado) recorría compras una vez POR CADA compra con foto:
+    costo cuadrático que además corría en cada carga de /sistema.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT DISTINCT foto_ruta FROM compras c1
-                WHERE c1.foto_ruta IS NOT NULL AND c1.fecha_operacion < %s
-                  AND NOT EXISTS (
-                    SELECT 1 FROM compras c2
-                    WHERE c2.foto_ruta = c1.foto_ruta AND c2.fecha_operacion >= %s
-                  )
+                SELECT foto_ruta FROM compras
+                WHERE foto_ruta IS NOT NULL
+                GROUP BY foto_ruta
+                HAVING MAX(fecha_operacion) < %s
                 """,
-                (fecha_corte, fecha_corte),
+                (fecha_corte,),
             )
             filas = cursor.fetchall()
         return [fila[0] for fila in filas]
@@ -2723,7 +2804,7 @@ def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.creado_en::date BETWEEN %s AND %s
+                WHERE v.creado_en >= %s AND v.creado_en < %s::date + 1
                 ORDER BY v.creado_en DESC
                 """,
                 (fecha_desde, fecha_hasta),
@@ -2753,7 +2834,7 @@ def listar_vacios_devueltos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 FROM vacios_devueltos v
                 JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.creado_en::date BETWEEN %s AND %s
+                WHERE v.creado_en >= %s AND v.creado_en < %s::date + 1
                 ORDER BY v.creado_en DESC
                 """,
                 (fecha_desde, fecha_hasta),
@@ -2875,7 +2956,7 @@ def listar_ajustes_vacios_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 FROM ajustes_vacios a
                 JOIN proveedores_puesto p ON p.id = a.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = a.tipo_envase_id
-                WHERE a.creado_en::date BETWEEN %s AND %s
+                WHERE a.creado_en >= %s AND a.creado_en < %s::date + 1
                 ORDER BY a.creado_en DESC
                 """,
                 (fecha_desde, fecha_hasta),
@@ -2944,10 +3025,10 @@ def listar_conteos_vacios_de_fecha(fecha) -> list[dict]:
                 FROM conteos_vacios c
                 JOIN proveedores_puesto p ON p.id = c.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
-                WHERE c.creado_en::date = %s
+                WHERE c.creado_en >= %s AND c.creado_en < %s::date + 1
                 ORDER BY c.creado_en DESC
                 """,
-                (fecha,),
+                (fecha, fecha),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()

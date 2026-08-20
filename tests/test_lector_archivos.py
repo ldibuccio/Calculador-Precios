@@ -4,7 +4,7 @@ import openpyxl
 import pypdfium2 as pdfium
 import pytest
 
-from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
+from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 
 
 def _pdf_de_prueba(cantidad_paginas: int = 1) -> bytes:
@@ -30,6 +30,55 @@ def _excel_de_prueba(hojas: dict[str, list[list]]) -> bytes:
     buffer = io.BytesIO()
     libro.save(buffer)
     return buffer.getvalue()
+
+
+# --- comprimir_pdf ---
+
+
+def test_comprimir_pdf_achica_un_escaneo_y_conserva_las_paginas():
+    # Un "escaneo": PDF de una página con una foto grande adentro. El
+    # comprimido tiene que pesar bastante menos, seguir siendo un PDF
+    # válido y conservar la cantidad de páginas.
+    from PIL import Image
+
+    imagen = Image.new("RGB", (2400, 3200))
+    for x in range(0, 2400, 7):
+        for y in range(0, 3200, 11):
+            imagen.putpixel((x, y), ((x * 7) % 256, (y * 5) % 256, (x + y) % 256))
+    buffer_jpeg = io.BytesIO()
+    imagen.save(buffer_jpeg, format="JPEG", quality=95)
+
+    documento = pdfium.PdfDocument.new()
+    objeto_imagen = pdfium.PdfImage.new(documento)
+    objeto_imagen.load_jpeg(io.BytesIO(buffer_jpeg.getvalue()))
+    objeto_imagen.set_matrix(pdfium.PdfMatrix().scale(600, 800))
+    pagina = documento.new_page(600, 800)
+    pagina.insert_obj(objeto_imagen)
+    pagina.gen_content()
+    buffer_pdf = io.BytesIO()
+    documento.save(buffer_pdf)
+    documento.close()
+    original = buffer_pdf.getvalue()
+
+    comprimido = comprimir_pdf(original)
+
+    assert comprimido.startswith(b"%PDF")
+    assert len(comprimido) < len(original) / 2
+    relectura = pdfium.PdfDocument(comprimido)
+    assert len(relectura) == 1
+    relectura.close()
+
+
+def test_comprimir_pdf_invalido_devuelve_el_original_sin_romper():
+    # Comprimir es una mejora, nunca un motivo para perder el archivo.
+    assert comprimir_pdf(b"esto no es un PDF") == b"esto no es un PDF"
+
+
+def test_comprimir_pdf_que_no_achica_devuelve_el_original():
+    # Un PDF ya chiquito (páginas vacías) rearmado como imágenes pesa MÁS:
+    # en ese caso se guarda el original.
+    original = _pdf_de_prueba(cantidad_paginas=2)
+    assert comprimir_pdf(original) == original
 
 
 # --- imagenes_desde_pdf ---

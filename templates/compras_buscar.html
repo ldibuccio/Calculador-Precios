@@ -206,6 +206,10 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
+  {% if aviso_tope %}
+  <div class="aviso">{{ aviso_tope }}</div>
+  {% endif %}
+
   <div class="tarjeta">
     <p class="ayuda">{{ compras|length }} compra{{ "s" if compras|length != 1 else "" }} encontrada{{ "s" if compras|length != 1 else "" }}</p>
     {% if compras %}

@@ -25,6 +25,8 @@ from app.db import (
     actualizar_precio_compra,
     buscar_compras,
     buscar_retiros,
+    contar_compras_buscadas,
+    contar_retiros_buscados,
     cerrar_disponible_generado,
     comanda_ya_guardada,
     compra_tiene_cantidad_bloqueada,
@@ -999,6 +1001,44 @@ def test_deshacer_retiro_compra_bloqueado_si_ya_paso_por_deposito():
     conexion.commit.assert_not_called()
 
 
+def test_buscar_compras_con_limite_agrega_limit_al_final():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_compras(date(2026, 8, 1), date(2026, 8, 6), limite=501)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "LIMIT %s" in consulta
+    assert parametros[-1] == 501
+
+
+def test_contar_compras_buscadas_usa_los_mismos_filtros_que_la_busqueda():
+    conexion, cursor = _conexion_falsa([(1234,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        total = contar_compras_buscadas(date(2026, 8, 1), date(2026, 8, 6), proveedor_id=7, articulo_id=5)
+
+    assert total == 1234
+    consulta, parametros = cursor.execute.call_args.args
+    assert "COUNT(*)" in consulta
+    assert "c.fecha_operacion BETWEEN %s AND %s" in consulta
+    assert "c.proveedor_id = %s" in consulta
+    assert "c.articulo_id = %s" in consulta
+    assert parametros == [date(2026, 8, 1), date(2026, 8, 6), 7, 5]
+
+
+def test_contar_retiros_buscados_incluye_el_criterio_de_pendiente():
+    conexion, cursor = _conexion_falsa([(88,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        total = contar_retiros_buscados(date(2026, 8, 1), date(2026, 8, 6), estado_retiro="pendiente")
+
+    assert total == 88
+    consulta = cursor.execute.call_args.args[0]
+    assert "COUNT(*)" in consulta
+    assert "IS DISTINCT FROM 'retirado'" in consulta
+
+
 def test_listar_compras_procesadas_hoy_retiro_filtra_por_tipo_y_fecha():
     conexion, cursor = _conexion_falsa(filas_fetchall=[])
 
@@ -1008,9 +1048,12 @@ def test_listar_compras_procesadas_hoy_retiro_filtra_por_tipo_y_fecha():
     consulta, parametros = cursor.execute.call_args[0]
     assert "c.tipo_retiro = %s" in consulta
     assert "estado_retiro IN ('retirado', 'cancelado')" in consulta
-    assert "retiro_procesado_el::date = %s" in consulta
+    # Rango sargable (>= fecha AND < fecha+1) en vez de ::date, para
+    # que la consulta pueda usar el índice de retiro_procesado_el.
+    assert "c.retiro_procesado_el >= %s AND c.retiro_procesado_el < %s::date + 1" in consulta
+    assert "::date =" not in consulta
     assert "ORDER BY c.retiro_procesado_el DESC" in consulta
-    assert parametros == ("Clark", date(2026, 8, 17))
+    assert parametros == ("Clark", date(2026, 8, 17), date(2026, 8, 17))
 
 
 def test_compra_tiene_deshacer_recepcion_bloqueado():
@@ -1063,9 +1106,11 @@ def test_listar_compras_procesadas_hoy_recepcion_filtra_por_estado_y_fecha():
 
     consulta, parametros = cursor.execute.call_args[0]
     assert "c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')" in consulta
-    assert "c.procesada_el::date = %s" in consulta
+    # Rango sargable en vez de ::date (mismo criterio que Retiro).
+    assert "c.procesada_el >= %s AND c.procesada_el < %s::date + 1" in consulta
+    assert "::date =" not in consulta
     assert "ORDER BY c.procesada_el DESC" in consulta
-    assert parametros == (date(2026, 8, 17),)
+    assert parametros == (date(2026, 8, 17), date(2026, 8, 17))
 
 
 def test_obtener_detalle_compra_devuelve_la_fila_mapeada():
@@ -1162,13 +1207,13 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     assert resultado == ["2020-01-01/a.jpg", "2020-02-02/b.jpg"]
     cursor.execute.assert_called_once()
     consulta, parametros = cursor.execute.call_args[0]
-    # La misma fecha de corte se usa dos veces: para filtrar lo viejo y
-    # para chequear que no quede ningún renglón dentro del período a
-    # conservar con ese mismo foto_ruta (NOT EXISTS).
-    assert parametros == (date(2023, 8, 15), date(2023, 8, 15))
-    assert "NOT EXISTS" in consulta
-    assert "fecha_operacion < %s" in consulta
-    assert "fecha_operacion >= %s" in consulta
+    # Una sola pasada: el candidato es la foto cuyo renglón MÁS NUEVO ya
+    # quedó fuera del período a conservar. La versión con NOT EXISTS
+    # correlacionado era cuadrática.
+    assert parametros == (date(2023, 8, 15),)
+    assert "GROUP BY foto_ruta" in consulta
+    assert "HAVING MAX(fecha_operacion) < %s" in consulta
+    assert "NOT EXISTS" not in consulta
 
 
 def test_listar_fotos_para_limpiar_vacio_da_lista_vacia():
@@ -1887,7 +1932,7 @@ def test_listar_ajustes_vacios_por_rango_incluye_los_anulados_marcados():
     assert "anulado_el IS NULL" not in consulta
     assert "a.anulado_el" in consulta
     assert "a.motivo" in consulta
-    assert "BETWEEN %s AND %s" in consulta
+    assert "a.creado_en >= %s AND a.creado_en < %s::date + 1" in consulta
     assert parametros == (date(2026, 8, 12), date(2026, 8, 19))
 
 

@@ -148,15 +148,23 @@
   <div class="error">{{ error_fecha }}</div>
   {% endif %}
 
+  {% if aviso_tope %}
+  <div class="error">{{ aviso_tope }}</div>
+  {% endif %}
+
   <!-- El total, ANTES de la tabla: es lo más importante de la pantalla
        (se usa para liquidarle al carrero/cooperativa). Por fila: la
        cantidad ANOTADA al retirar si existe; si no, la que cargó el
-       comprador (con asterisco acá y en la tabla). -->
+       comprador (con asterisco acá y en la tabla). Con la lista cortada
+       por el tope NO se muestra: un total parcial para liquidar es un
+       número falso con plata de por medio. -->
+  {% if not aviso_tope %}
   <div class="total">
     <span class="numero-grande">Total: {{ total_bultos|numero }} bultos</span>
     <p class="desglose">{{ total_anotados|numero }} anotados al retirar + {{ total_del_comprador|numero }}* de la carga del comprador</p>
     <p class="nota">* sin cantidad anotada al retirar: se usa lo que cargó el comprador</p>
   </div>
+  {% endif %}
 
   <div class="tarjeta">
     <p class="ayuda">{{ retiros|length }} renglon{{ "es" if retiros|length != 1 else "" }}</p>

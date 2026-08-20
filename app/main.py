@@ -36,6 +36,8 @@ from app.db import (
     aprender_articulo,
     buscar_compras,
     buscar_retiros,
+    contar_compras_buscadas,
+    contar_retiros_buscados,
     cerrar_disponible_generado,
     cerrar_sena,
     comanda_ya_guardada,
@@ -129,7 +131,7 @@ from core.exportar_compras import generar_excel_listado_compras, generar_pdf_lis
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
 from core.precios_venta import calcular_cambios_de_precios
-from core.lector_archivos import imagenes_desde_pdf, texto_desde_excel
+from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
     TEXTOS_PLACEHOLDER_LECTOR,
     extraer_comanda,
@@ -205,6 +207,12 @@ def _tipo_retiro_default_desde_env() -> str:
 
 
 TIPO_RETIRO_DEFAULT = _tipo_retiro_default_desde_env()
+
+# Tope de filas de las pantallas de búsqueda (Buscar Compras, Consultar
+# Retiros): un rango ancho no puede tirar miles de filas de HTML al
+# celular. Los exports PDF/Excel NO lo usan: un archivo cortado en
+# silencio sería peor que uno pesado.
+TOPE_FILAS_BUSQUEDA = 500
 
 CLAVE_CONTROL_PUESTO_ENV_VAR = "CLAVE_CONTROL_PUESTO"
 COOKIE_ACCESO_CONTROL = "acceso_control_puesto"
@@ -1559,7 +1567,23 @@ def _renderizar_pantalla_buscar_compras(
     try:
         proveedores = listar_proveedores()
         articulos = listar_articulos()
-        compras = buscar_compras(fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor)
+        # Tope para la pantalla: un rango ancho no puede tirar miles de
+        # filas al celular. Se pide una de más para saber si hubo corte;
+        # el total real (para el aviso) se cuenta solo en ese caso.
+        compras = buscar_compras(
+            fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor,
+            limite=TOPE_FILAS_BUSQUEDA + 1,
+        )
+        aviso_tope = None
+        if len(compras) > TOPE_FILAS_BUSQUEDA:
+            total = contar_compras_buscadas(
+                fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor
+            )
+            compras = compras[:TOPE_FILAS_BUSQUEDA]
+            aviso_tope = (
+                f"Se muestran las primeras {TOPE_FILAS_BUSQUEDA} compras de {total}: "
+                "achicá el rango de fechas o filtrá por proveedor o artículo para ver el resto."
+            )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -1589,6 +1613,7 @@ def _renderizar_pantalla_buscar_compras(
             "error_fecha": error_fecha,
             "compras": compras,
             "aviso": aviso,
+            "aviso_tope": aviso_tope,
         },
         status_code=status_code,
     )
@@ -4177,7 +4202,12 @@ async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archi
     if tipo_archivo == "foto":
         archivo_preview = _generar_preview_foto(bytes_archivo)
     else:
-        archivo_preview = _generar_data_uri_generico(bytes_archivo, MIME_POR_TIPO_ARCHIVO_PRECIOS[tipo_archivo])
+        # El PDF que viaja al form (y de ahí a Storage al confirmar) va
+        # COMPRIMIDO: un escaneo de varios MB se guarda como imágenes de
+        # ~100-150 KB por página. La lectura con IA ya se hizo arriba con
+        # el original. El Excel queda tal cual (ya pesa poco).
+        bytes_para_guardar = comprimir_pdf(bytes_archivo) if tipo_archivo == "pdf" else bytes_archivo
+        archivo_preview = _generar_data_uri_generico(bytes_para_guardar, MIME_POR_TIPO_ARCHIVO_PRECIOS[tipo_archivo])
 
     articulos_para_select = (
         [
@@ -4325,20 +4355,25 @@ def _fecha_de_corte_limpieza_fotos():
         return hoy.replace(month=2, day=28, year=hoy.year - 3)
 
 
-def _renderizar_pantalla_sistema(request: Request, *, mensaje: str | None = None, error: str | None = None, status_code: int = 200):
-    # El indicador de espacio y el botón de limpieza son informativos, no
-    # bloqueantes: si fallan, la pantalla se muestra igual, sin esos datos
-    # (uso_storage/cantidad_fotos_para_limpiar quedan en None y la
-    # plantilla no los muestra).
+def _renderizar_pantalla_sistema(
+    request: Request,
+    *,
+    mensaje: str | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+    cantidad_fotos_para_limpiar: int | None = None,
+):
+    # El indicador de espacio es informativo, no bloqueante: si falla, la
+    # pantalla se muestra igual (uso_storage queda None y la plantilla no
+    # lo muestra). El conteo de fotos para limpiar NO se calcula acá: es
+    # una consulta que recorre todas las compras con foto, y no puede
+    # correr en cada visita a esta pantalla por un numerito informativo —
+    # se calcula bajo demanda con el botón "Revisar" (ver
+    # revisar_fotos_viejas_ruta), y llega ya calculado por parámetro.
     try:
         uso_storage = obtener_uso_storage_bucket(BUCKET_COMANDAS)
     except Exception:
         uso_storage = None
-
-    try:
-        cantidad_fotos_para_limpiar = len(listar_fotos_para_limpiar(_fecha_de_corte_limpieza_fotos()))
-    except Exception:
-        cantidad_fotos_para_limpiar = None
 
     return templates.TemplateResponse(
         request,
@@ -4356,6 +4391,18 @@ def _renderizar_pantalla_sistema(request: Request, *, mensaje: str | None = None
 @app.get("/sistema")
 def ver_sistema(request: Request):
     return _renderizar_pantalla_sistema(request)
+
+
+@app.post("/sistema/revisar-fotos-viejas")
+def revisar_fotos_viejas_ruta(request: Request):
+    """Cuenta bajo demanda cuántas fotos de más de 3 años hay para limpiar, y lo muestra con el botón de borrar."""
+    try:
+        cantidad = len(listar_fotos_para_limpiar(_fecha_de_corte_limpieza_fotos()))
+    except Exception as error_db:
+        return _renderizar_pantalla_sistema(
+            request, error=f"No se pudo revisar las fotos viejas: {error_db}", status_code=500
+        )
+    return _renderizar_pantalla_sistema(request, cantidad_fotos_para_limpiar=cantidad)
 
 
 @app.post("/sistema/limpiar-fotos-viejas")
@@ -4565,9 +4612,23 @@ def ver_consultar_retiros(
     try:
         proveedores = listar_proveedores()
         articulos = listar_articulos()
+        # Mismo tope que Buscar Compras. OJO: si la lista se corta, los
+        # totales de bultos NO se muestran — un total parcial usado para
+        # liquidarle al carrero sería un número falso con plata de por medio.
         retiros = buscar_retiros(
-            fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor, tipo_valor, estado_valor
+            fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor, tipo_valor, estado_valor,
+            limite=TOPE_FILAS_BUSQUEDA + 1,
         )
+        aviso_tope = None
+        if len(retiros) > TOPE_FILAS_BUSQUEDA:
+            total = contar_retiros_buscados(
+                fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor, tipo_valor, estado_valor
+            )
+            retiros = retiros[:TOPE_FILAS_BUSQUEDA]
+            aviso_tope = (
+                f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} retiros de {total}, y por eso los totales "
+                "de bultos no se calculan (saldrían incompletos): achicá el rango o filtrá para ver todo."
+            )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4606,6 +4667,7 @@ def ver_consultar_retiros(
             "total_bultos": total_bultos,
             "total_anotados": total_anotados,
             "total_del_comprador": total_del_comprador,
+            "aviso_tope": aviso_tope,
         },
     )
 

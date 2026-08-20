@@ -21,6 +21,7 @@ from app.main import (
     _formatear_numero,
     _generar_preview_foto,
     _tipo_retiro_default_desde_env,
+    TOPE_FILAS_BUSQUEDA,
     _sufijo_unidad,
     app,
     templates,
@@ -1361,15 +1362,32 @@ def test_ver_sistema_si_falla_el_uso_de_storage_no_muestra_el_indicador_ni_rompe
     assert 'id="boton-limpiar-fotos-viejas"' not in respuesta.text
 
 
-def test_ver_sistema_muestra_el_boton_de_limpieza_con_la_cantidad_real():
+def test_ver_sistema_no_cuenta_las_fotos_viejas_solo_ofrece_revisarlas():
+    # El conteo recorre todas las compras con foto: NO puede correr en
+    # cada visita a /sistema por un numerito informativo — es bajo demanda.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
+        patch("app.main.listar_fotos_para_limpiar") as mock_listar,
+    ):
+        respuesta = cliente.get("/sistema")
+
+    assert respuesta.status_code == 200
+    mock_listar.assert_not_called()
+    assert 'action="/sistema/revisar-fotos-viejas"' in respuesta.text
+    assert 'id="boton-limpiar-fotos-viejas"' not in respuesta.text
+
+
+def test_revisar_fotos_viejas_cuenta_bajo_demanda_y_ofrece_limpiar():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}),
         patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/x.jpg", "2020-02-02/y.jpg"]),
     ):
-        respuesta = cliente.get("/sistema")
+        respuesta = cliente.post("/sistema/revisar-fotos-viejas")
 
     assert respuesta.status_code == 200
+    assert "2 fotos" in respuesta.text
     assert 'action="/sistema/limpiar-fotos-viejas"' in respuesta.text
     assert 'id="boton-limpiar-fotos-viejas"' in respuesta.text
     assert 'data-cantidad="2"' in respuesta.text
@@ -1669,9 +1687,45 @@ def test_ver_buscar_compras_sin_filtros_usa_las_ultimas_48hs():
         respuesta = cliente.get("/compras/buscar")
 
     assert respuesta.status_code == 200
-    mock_buscar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None)
+    mock_buscar.assert_called_once_with(
+        HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None, limite=TOPE_FILAS_BUSQUEDA + 1
+    )
     assert f'value="{(HOY_DE_PRUEBA - timedelta(days=1)).isoformat()}"' in respuesta.text
     assert f'value="{HOY_DE_PRUEBA.isoformat()}"' in respuesta.text
+
+
+def test_buscar_compras_cortada_por_el_tope_avisa_con_el_total():
+    # Un rango ancho no puede tirar miles de filas al celular: se cortan
+    # en el tope y el aviso dice cuántas había en total.
+    muchas = [dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], id=i) for i in range(TOPE_FILAS_BUSQUEDA + 1)]
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=muchas),
+        patch("app.main.contar_compras_buscadas", return_value=1234) as mock_contar,
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.status_code == 200
+    assert f"Se muestran las primeras {TOPE_FILAS_BUSQUEDA} compras de 1234" in respuesta.text
+    mock_contar.assert_called_once()
+
+
+def test_buscar_compras_sin_corte_no_cuenta_ni_avisa():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+        patch("app.main.contar_compras_buscadas") as mock_contar,
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.status_code == 200
+    assert "Se muestran las primeras" not in respuesta.text
+    # El conteo extra solo se paga cuando de verdad hubo corte.
+    mock_contar.assert_not_called()
 
 
 def test_ver_buscar_compras_con_filtros_de_fecha_proveedor_y_articulo():
@@ -1685,7 +1739,7 @@ def test_ver_buscar_compras_con_filtros_de_fecha_proveedor_y_articulo():
         )
 
     assert respuesta.status_code == 200
-    mock_buscar.assert_called_once_with(date(2026, 8, 1), date(2026, 8, 6), 200, 5)
+    mock_buscar.assert_called_once_with(date(2026, 8, 1), date(2026, 8, 6), 200, 5, limite=TOPE_FILAS_BUSQUEDA + 1)
     # Los buscadores combinados quedan precargados con el nombre elegido.
     assert 'value="Saturno"' in respuesta.text
     assert 'value="Kiwi"' in respuesta.text
@@ -1776,7 +1830,9 @@ def test_ver_buscar_compras_fecha_invalida_muestra_error_y_usa_default():
 
     assert respuesta.status_code == 200
     assert "La fecha desde no es válida." in respuesta.text
-    mock_buscar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None)
+    mock_buscar.assert_called_once_with(
+        HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None, limite=TOPE_FILAS_BUSQUEDA + 1
+    )
 
 
 def test_ver_buscar_compras_fecha_desde_posterior_a_hasta_muestra_error():
@@ -1825,6 +1881,8 @@ def test_exportar_listado_compras_pdf_devuelve_archivo_adjunto():
     assert "attachment" in respuesta.headers["content-disposition"]
     assert "Listado_Compras_2026-08-01_a_2026-08-06" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"%PDF")
+    # El export va SIN tope: un archivo cortado en silencio sería peor
+    # que uno pesado.
     mock_buscar.assert_called_once_with(date(2026, 8, 1), date(2026, 8, 6), 200, 5)
 
 
@@ -3516,7 +3574,7 @@ def test_eliminar_compra_no_ingresada_muestra_cartel_y_conserva_filtros():
 
     assert respuesta.status_code == 400
     assert "quedó registrada como &#34;No ingresó&#34; en Depósito" in respuesta.text
-    mock_buscar.assert_called_once_with(date(2026, 8, 10), date(2026, 8, 12), None, None)
+    mock_buscar.assert_called_once_with(date(2026, 8, 10), date(2026, 8, 12), None, None, limite=TOPE_FILAS_BUSQUEDA + 1)
 
 
 def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
@@ -9035,6 +9093,25 @@ RETIROS_DE_PRUEBA = [
 ]
 
 
+def test_consultar_retiros_cortada_por_el_tope_avisa_y_oculta_los_totales():
+    # Con la lista cortada, el total de bultos NO se muestra: un total
+    # parcial usado para liquidarle al carrero sería un número falso.
+    muchos = [dict(RETIROS_DE_PRUEBA[0], id=i) for i in range(TOPE_FILAS_BUSQUEDA + 1)]
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=muchos),
+        patch("app.main.contar_retiros_buscados", return_value=2000) as mock_contar,
+    ):
+        respuesta = cliente.get("/logistica/consultar")
+
+    assert respuesta.status_code == 200
+    assert f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} retiros de 2000" in respuesta.text
+    assert "Total:" not in respuesta.text
+    mock_contar.assert_called_once()
+
+
 def test_consultar_retiros_default_48hs_y_total_desglosado():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -9045,7 +9122,9 @@ def test_consultar_retiros_default_48hs_y_total_desglosado():
         respuesta = cliente.get("/logistica/consultar")
 
     assert respuesta.status_code == 200
-    mock_buscar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None, None, None)
+    mock_buscar.assert_called_once_with(
+        HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None, None, None, limite=TOPE_FILAS_BUSQUEDA + 1
+    )
     # El total para liquidar al carrero/cooperativa, desglosado: lo anotado
     # al retirar (7) + lo tomado de la carga del comprador (10 + 5).
     assert "Total: 22 bultos" in respuesta.text
@@ -9072,7 +9151,9 @@ def test_consultar_retiros_pasa_los_filtros_a_la_consulta():
         )
 
     assert respuesta.status_code == 200
-    mock_buscar.assert_called_once_with(date(2026, 8, 10), date(2026, 8, 12), 7, 5, "Cooperativa", "pendiente")
+    mock_buscar.assert_called_once_with(
+        date(2026, 8, 10), date(2026, 8, 12), 7, 5, "Cooperativa", "pendiente", limite=TOPE_FILAS_BUSQUEDA + 1
+    )
     assert "No se encontraron retiros" in respuesta.text
 
 
