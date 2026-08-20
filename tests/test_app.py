@@ -8408,14 +8408,16 @@ def test_barra_navegacion_tiene_boton_de_volver_atras():
     assert 'aria-label="Volver atrás"' in respuesta.text
 
 
-def test_el_titulo_de_la_barra_no_se_recorta_con_puntos_suspensivos():
-    # 1.2rem calibrado a ojo sobre capturas a 390px: "Pendientes de Pago"
-    # llena una línea justa; los muy largos bajan a dos líneas, pero nunca
-    # se cortan con "…".
+def test_el_titulo_de_la_barra_se_autoajusta_y_no_se_recorta():
+    # Cada pantalla tiene un nombre de largo distinto: el script busca el
+    # tamaño más grande al que entra en una línea ("Compras" grande, los
+    # largos más chicos o a dos líneas), y nada se corta con "…". El
+    # 1.2rem del CSS es solo el arranque/fallback sin JS.
     respuesta = cliente.get("/compras")
 
     assert "text-overflow" not in respuesta.text
     assert "font-size: 1.2rem" in respuesta.text
+    assert "function ajustarTitulo()" in respuesta.text
 
 
 def test_barra_navegacion_en_comercial_usa_icono_distinto_de_compras():
@@ -9739,6 +9741,23 @@ AJUSTES_VACIOS_DE_PRUEBA = [
      "anulado_el": datetime(2026, 8, 19, 9, 0, tzinfo=timezone.utc),
      "proveedor_nombre": "Don Pepe", "tipo_nombre": "cajón madera"},
 ]
+
+
+def test_ver_movimientos_pone_las_salidas_antes_que_las_entradas():
+    # Las salidas son pocas (un camión cada tanto) y abajo se perderían
+    # entre montones de entradas: van primero.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=[]),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos")
+
+    assert respuesta.status_code == 200
+    assert respuesta.text.index("Salidas (devueltos al proveedor)") < respuesta.text.index(
+        "Entradas (recibidos de clientes)"
+    )
 
 
 def test_ver_movimientos_muestra_los_ajustes_claramente_distintos():

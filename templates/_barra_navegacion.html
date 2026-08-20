@@ -59,16 +59,22 @@
   }
   .barra-titulo {
     flex: 1;
+    /* min-width 0 es OBLIGATORIO para el auto-ajuste: sin esto, un flex
+       item se niega a achicarse por debajo de su contenido y el título
+       en nowrap ESTIRA la barra fuera de la pantalla en vez de
+       desbordar adentro — y el script nunca detecta que no entra. */
+    min-width: 0;
     text-align: center;
-    /* Punto medio pedido a ojo sobre capturas reales: que el título llene
-       más o menos el ancho que dejan los tres botones, SIN recorte con
-       "…" — si un título largo no entra en una línea, baja a dos, pero
-       se lee entero en cualquier celular. */
+    /* 1.2rem es solo el arranque (y lo que queda si no hay JS): el
+       script de abajo agranda o achica cada título para que llene el
+       ancho que dejan los tres botones — "Compras" grande, un título
+       largo más chico, y ninguno recortado con "…". */
     font-size: 1.2rem;
     font-weight: 800;
     line-height: 1.15;
     padding: 0 0.4rem;
   }
+  .barra-titulo.ajustado-nowrap { white-space: nowrap; }
   .barra-empresa {
     /* Con dos empresas corriendo el mismo sistema en dos URLs idénticas,
        el error más fácil es cargar datos en la empresa equivocada. Este
@@ -84,3 +90,28 @@
     pointer-events: none;
   }
 </style>
+<script>
+  // Auto-ajuste del título: cada pantalla tiene un nombre de largo
+  // distinto y el mismo espacio — un tamaño fijo deja "Compras" enano o
+  // corta los largos. Acá se busca el tamaño MÁS GRANDE (hasta 2rem) al
+  // que el título entra en una línea; si ni al mínimo entra, baja a dos
+  // líneas pero nunca se recorta. Sin JS queda el 1.2rem del CSS.
+  (function () {
+    const titulo = document.querySelector(".barra-titulo");
+    if (!titulo) return;
+    function ajustarTitulo() {
+      titulo.classList.add("ajustado-nowrap");
+      let tam = 2.0;
+      titulo.style.fontSize = tam + "rem";
+      while (tam > 1.05 && titulo.scrollWidth > titulo.clientWidth) {
+        tam -= 0.05;
+        titulo.style.fontSize = tam + "rem";
+      }
+      if (titulo.scrollWidth > titulo.clientWidth) {
+        titulo.classList.remove("ajustado-nowrap");
+      }
+    }
+    ajustarTitulo();
+    window.addEventListener("resize", ajustarTitulo);
+  })();
+</script>

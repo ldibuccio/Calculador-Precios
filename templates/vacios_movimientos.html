@@ -132,31 +132,9 @@
 
   <p class="ayuda">Para corregir un movimiento viejo mal cargado: anulalo acá (queda el registro, tachado) y cargalo de nuevo bien desde Recibir o Devolver. El stock excluye lo anulado.</p>
 
-  <div class="tarjeta">
-    <h2>Entradas (recibidos de clientes)</h2>
-    {% if recibidos %}
-      {% for r in recibidos %}
-      <div class="renglon {% if r.anulado_el %}anulado{% endif %}">
-        <div class="detalle">
-          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }}
-          <div class="extra">Trajo {{ r.cliente_nombre }} — {{ r.creado_en|fecha_hora }}</div>
-          {% if r.anulado_el %}<span class="marca-anulado">Anulado el {{ r.anulado_el|fecha_hora }}</span>{% endif %}
-        </div>
-        {% if not r.anulado_el %}
-        <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/anular"
-              onsubmit="return confirm('¿Anular esta entrada de {{ r.cantidad }} cajones de {{ r.cliente_nombre }}?');">
-          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
-          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
-          <button type="submit" class="boton-anular">Anular</button>
-        </form>
-        {% endif %}
-      </div>
-      {% endfor %}
-    {% else %}
-    <p class="vacio">Sin entradas en este rango.</p>
-    {% endif %}
-  </div>
-
+  <!-- Salidas ANTES que Entradas a propósito: hay muchas menos (un camión
+       cada tanto contra clientes todo el día) y abajo se perderían entre
+       montones de entradas. -->
   <div class="tarjeta">
     <h2>Salidas (devueltos al proveedor)</h2>
     {% if devueltos %}
@@ -179,6 +157,31 @@
       {% endfor %}
     {% else %}
     <p class="vacio">Sin salidas en este rango.</p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Entradas (recibidos de clientes)</h2>
+    {% if recibidos %}
+      {% for r in recibidos %}
+      <div class="renglon {% if r.anulado_el %}anulado{% endif %}">
+        <div class="detalle">
+          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }}
+          <div class="extra">Trajo {{ r.cliente_nombre }} — {{ r.creado_en|fecha_hora }}</div>
+          {% if r.anulado_el %}<span class="marca-anulado">Anulado el {{ r.anulado_el|fecha_hora }}</span>{% endif %}
+        </div>
+        {% if not r.anulado_el %}
+        <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/anular"
+              onsubmit="return confirm('¿Anular esta entrada de {{ r.cantidad }} cajones de {{ r.cliente_nombre }}?');">
+          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+          <button type="submit" class="boton-anular">Anular</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin entradas en este rango.</p>
     {% endif %}
   </div>
 
