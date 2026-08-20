@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clientes del Puesto</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
+  form.alta label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form.alta input {
+    width: 100%;
+    padding: 0.75rem;
+    margin-bottom: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+  }
+  form.alta button {
+    width: 100%;
+    padding: 0.85rem;
+    background: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .renglon {
+    padding: 0.6rem 0;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.95rem;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .renglon form { margin: 0; }
+  .boton-baja {
+    padding: 0.55rem 0.85rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Clientes del Puesto" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Cargar cliente</h2>
+    <p class="ayuda">Normalmente los crea el empleado al tipear el nombre en Recibir — acá es solo por si querés adelantarte. Un nombre que ya existe (aunque cambie mayúsculas o acentos) reusa el cliente, no crea otro.</p>
+    <form class="alta" method="post" action="/puesto/envases/clientes/nuevo">
+      <label for="nombre">Nombre *</label>
+      <input type="text" id="nombre" name="nombre" required placeholder="Nombre del cliente">
+      <button type="submit">Cargar</button>
+    </form>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Clientes ({{ clientes|length }})</h2>
+    <p class="ayuda">Dar de baja lo saca de las sugerencias de Recibir; sus movimientos quedan. Si vuelve a aparecer, tipear su nombre lo reactiva solo.</p>
+    {% if clientes %}
+      {% for c in clientes %}
+      <div class="renglon">
+        <strong>{{ c.nombre }}</strong>
+        <form method="post" action="/puesto/envases/clientes/{{ c.id }}/baja"
+              onsubmit="return confirm('¿Dar de baja a {{ c.nombre }}? Sus movimientos quedan.');">
+          <button type="submit" class="boton-baja">Dar de baja</button>
+        </form>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no hay clientes cargados.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+</body>
+</html>

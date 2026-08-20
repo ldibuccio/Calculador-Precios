@@ -9128,10 +9128,11 @@ def test_ver_envases_puesto_separa_vacios_del_resto():
     assert respuesta.status_code == 200
     assert 'href="/puesto/envases/vacios"' in respuesta.text
     assert 'href="/puesto/envases/stock"' in respuesta.text
+    assert 'href="/puesto/envases/cotejo"' in respuesta.text
+    assert 'href="/puesto/envases/pendientes"' in respuesta.text
+    assert 'href="/puesto/envases/movimientos"' in respuesta.text
     assert 'href="/puesto/envases/tipos"' in respuesta.text
-    # Cotejo y Pendientes de Pago: tanda 2, marcados Próximamente.
-    assert "Cotejo (Próximamente)" in respuesta.text
-    assert "Pendientes de Pago (Próximamente)" in respuesta.text
+    assert 'href="/puesto/envases/clientes"' in respuesta.text
 
 
 def test_ver_vacios_muestra_las_tres_pantallas_del_empleado():
@@ -9140,7 +9141,7 @@ def test_ver_vacios_muestra_las_tres_pantallas_del_empleado():
     assert respuesta.status_code == 200
     assert 'href="/puesto/envases/vacios/recibir"' in respuesta.text
     assert 'href="/puesto/envases/vacios/devolver"' in respuesta.text
-    assert "Stock Físico (Próximamente)" in respuesta.text
+    assert 'href="/puesto/envases/vacios/stock-fisico"' in respuesta.text
     # El hub del empleado NO linkea al stock del sistema.
     assert 'href="/puesto/envases/stock"' not in respuesta.text
 
@@ -9385,8 +9386,195 @@ def test_dar_de_baja_tipo_envase_puesto_redirige():
     mock_baja.assert_called_once_with(3)
 
 
-def test_pantallas_tanda_2_de_vacios_muestran_proximamente():
-    for url in ("/puesto/envases/vacios/stock-fisico", "/puesto/envases/cotejo", "/puesto/envases/pendientes"):
-        respuesta = cliente.get(url)
-        assert respuesta.status_code == 200, url
-        assert "En construcción" in respuesta.text, url
+# --- Vacíos tanda 2: Stock Físico, Cotejo, Pendientes de Pago, Movimientos, Clientes ---
+
+
+def test_ver_stock_fisico_no_muestra_ningun_numero_del_sistema():
+    # El control cruzado depende de esto: la pantalla del empleado no puede
+    # traer el stock del sistema ni escondido en el HTML.
+    contados = [
+        {"id": 1, "cantidad": 38, "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
+         "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41", "tipo_nombre": "cajón plástico negro"},
+    ]
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_conteos_vacios_de_fecha", return_value=contados) as mock_contados,
+    ):
+        respuesta = cliente.get("/puesto/envases/vacios/stock-fisico")
+
+    assert respuesta.status_code == 200
+    assert "Cajones contados" in respuesta.text
+    assert "38 × cajón plástico negro" in respuesta.text
+    # La fuente de datos es la función que NO trae stock_sistema.
+    mock_contados.assert_called_once()
+    assert "stock_sistema" not in respuesta.text
+
+
+def test_cargar_stock_fisico_guarda_el_conteo_sin_devolver_el_stock():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_conteo_vacios") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/stock-fisico",
+            data={"proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "0"},
+            follow_redirects=False,
+        )
+
+    # Contar 0 es válido: contó y no hay ninguno.
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/puesto/envases/vacios/stock-fisico?aviso=")
+    # El aviso repite lo contado, jamás el número del sistema.
+    assert "Conteo+guardado%3A+0" in location
+    mock_crear.assert_called_once_with(200, 1, 0)
+
+
+def test_cargar_stock_fisico_con_cantidad_negativa_da_error():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_conteos_vacios_de_fecha", return_value=[]),
+        patch("app.main.crear_conteo_vacios") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/stock-fisico",
+            data={"proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "-3"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser negativa" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_ver_cotejo_compara_contra_la_foto_del_conteo():
+    conteos = [
+        {"id": 1, "cantidad": 35, "stock_sistema": 40,
+         "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
+         "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41", "tipo_nombre": "cajón plástico negro"},
+        {"id": 2, "cantidad": 8, "stock_sistema": 8,
+         "creado_en": datetime(2026, 8, 19, 14, 5, tzinfo=timezone.utc),
+         "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02", "tipo_nombre": "cajón madera"},
+    ]
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=conteos):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    # Diferencia -5, resaltada; la tarjeta con diferencia lleva borde.
+    assert "-5" in respuesta.text
+    assert "con-diferencia" in respuesta.text
+    assert "diferencia-cero" in respuesta.text
+
+
+def test_ver_pendientes_de_pago_lista_y_permite_marcar_pagada():
+    pendientes = [
+        {"id": 5, "cantidad": 12, "creado_en": datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "tipo_nombre": "cajón plástico negro"},
+    ]
+    pagadas = [
+        {"id": 4, "cantidad": 3, "creado_en": datetime(2026, 8, 18, 10, 0, tzinfo=timezone.utc),
+         "sena_pagada_el": datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Marta", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "tipo_nombre": "torito"},
+    ]
+    with (
+        patch("app.main.listar_senas_pendientes", return_value=pendientes),
+        patch("app.main.listar_senas_pagadas", return_value=pagadas),
+    ):
+        respuesta = cliente.get("/puesto/envases/pendientes")
+
+    assert respuesta.status_code == 200
+    assert "Juan Pérez" in respuesta.text
+    assert 'action="/puesto/envases/pendientes/5/pagar"' in respuesta.text
+    # Confirmación en dos toques, no confirm() nativo.
+    assert "Sí, pagó" in respuesta.text
+    # Historial de pagadas plegado.
+    assert "<details>" in respuesta.text
+    assert "Marta" in respuesta.text
+
+
+def test_pagar_sena_marca_y_redirige():
+    with patch("app.main.marcar_sena_pagada") as mock_pagar:
+        respuesta = cliente.post("/puesto/envases/pendientes/5/pagar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases/pendientes"
+    mock_pagar.assert_called_once_with(5)
+
+
+def test_ver_movimientos_usa_los_ultimos_7_dias_por_defecto():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=[]) as mock_recibidos,
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]) as mock_devueltos,
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos")
+
+    assert respuesta.status_code == 200
+    mock_recibidos.assert_called_once_with(date(2026, 8, 12), date(2026, 8, 19))
+    mock_devueltos.assert_called_once_with(date(2026, 8, 12), date(2026, 8, 19))
+
+
+def test_ver_movimientos_permite_anular_de_cualquier_fecha_conservando_filtros():
+    recibidos = [
+        {"id": 9, "cantidad": 12, "creado_en": datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
+         "anulado_el": None, "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
+         "codigo_puesto": "N07P41", "tipo_nombre": "cajón plástico negro"},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=recibidos),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos?fecha_desde=2026-08-09&fecha_hasta=2026-08-11")
+
+    assert respuesta.status_code == 200
+    assert 'action="/puesto/envases/movimientos/recibidos/9/anular"' in respuesta.text
+    # Los filtros viajan ocultos para volver al mismo rango tras anular.
+    assert 'name="fecha_desde" value="2026-08-09"' in respuesta.text
+
+
+def test_anular_desde_movimientos_redirige_al_mismo_rango():
+    with patch("app.main.anular_vacio_recibido") as mock_anular:
+        respuesta = cliente.post(
+            "/puesto/envases/movimientos/recibidos/9/anular",
+            data={"fecha_desde": "2026-08-09", "fecha_hasta": "2026-08-11"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/puesto/envases/movimientos?")
+    assert "fecha_desde=2026-08-09" in location
+    mock_anular.assert_called_once_with(9)
+
+
+def test_ver_clientes_puesto_lista_con_alta_y_baja():
+    with patch("app.main.listar_clientes_puesto", return_value=CLIENTES_PUESTO_DE_PRUEBA):
+        respuesta = cliente.get("/puesto/envases/clientes")
+
+    assert respuesta.status_code == 200
+    assert "Juan Pérez" in respuesta.text
+    assert 'action="/puesto/envases/clientes/nuevo"' in respuesta.text
+    assert 'action="/puesto/envases/clientes/10/baja"' in respuesta.text
+
+
+def test_crear_cliente_puesto_desde_la_pantalla_normaliza():
+    with patch("app.main.obtener_o_crear_cliente_puesto", return_value=12) as mock_crear:
+        respuesta = cliente.post(
+            "/puesto/envases/clientes/nuevo",
+            data={"nombre": "  DOÑA   Rosa "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("DOÑA Rosa", "dona rosa")
+
+
+def test_dar_de_baja_cliente_puesto_redirige():
+    with patch("app.main.desactivar_cliente_puesto") as mock_baja:
+        respuesta = cliente.post("/puesto/envases/clientes/10/baja", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases/clientes"
+    mock_baja.assert_called_once_with(10)

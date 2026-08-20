@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimientos de Vacíos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
+  form.filtros label {
+    display: block;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form.filtros input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-bottom: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .fila-fechas { display: flex; gap: 0.75rem; }
+  .fila-fechas > div { flex: 1; }
+  .boton-buscar {
+    width: 100%;
+    padding: 0.75rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .renglon {
+    padding: 0.7rem 0;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .renglon .detalle { font-size: 0.92rem; }
+  .renglon .detalle .extra { color: #666; font-size: 0.85rem; }
+  .renglon.anulado .detalle { text-decoration: line-through; color: #999; }
+  .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 600; }
+  .boton-anular {
+    padding: 0.6rem 0.9rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .renglon form { margin: 0; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Movimientos" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/puesto/envases/movimientos">
+      <div class="fila-fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+  </div>
+
+  <p class="ayuda">Para corregir un movimiento viejo mal cargado: anulalo acá (queda el registro, tachado) y cargalo de nuevo bien desde Recibir o Devolver. El stock excluye lo anulado.</p>
+
+  <div class="tarjeta">
+    <h2>Entradas (recibidos de clientes)</h2>
+    {% if recibidos %}
+      {% for r in recibidos %}
+      <div class="renglon {% if r.anulado_el %}anulado{% endif %}">
+        <div class="detalle">
+          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }} ({{ r.codigo_puesto }})
+          <div class="extra">Trajo {{ r.cliente_nombre }} — {{ r.creado_en|fecha_hora }}</div>
+          {% if r.anulado_el %}<span class="marca-anulado">Anulado el {{ r.anulado_el|fecha_hora }}</span>{% endif %}
+        </div>
+        {% if not r.anulado_el %}
+        <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/anular"
+              onsubmit="return confirm('¿Anular esta entrada de {{ r.cantidad }} cajones de {{ r.cliente_nombre }}?');">
+          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+          <button type="submit" class="boton-anular">Anular</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin entradas en este rango.</p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Salidas (devueltos al proveedor)</h2>
+    {% if devueltos %}
+      {% for d in devueltos %}
+      <div class="renglon {% if d.anulado_el %}anulado{% endif %}">
+        <div class="detalle">
+          {{ d.cantidad }} × {{ d.tipo_nombre }} a {{ d.proveedor_nombre }} ({{ d.codigo_puesto }})
+          <div class="extra">{{ d.creado_en|fecha_hora }} — el sistema decía {{ d.stock_sistema }}</div>
+          {% if d.anulado_el %}<span class="marca-anulado">Anulado el {{ d.anulado_el|fecha_hora }}</span>{% endif %}
+        </div>
+        {% if not d.anulado_el %}
+        <form method="post" action="/puesto/envases/movimientos/devueltos/{{ d.id }}/anular"
+              onsubmit="return confirm('¿Anular esta devolución de {{ d.cantidad }} cajones a {{ d.proveedor_nombre }}?');">
+          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+          <button type="submit" class="boton-anular">Anular</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin salidas en este rango.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+</body>
+</html>

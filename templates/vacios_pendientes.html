@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pendientes de Pago</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
+  .renglon {
+    padding: 0.85rem 0;
+    border-top: 1px solid #eee;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .cliente { font-weight: 700; font-size: 1rem; margin: 0 0 0.15rem; }
+  .detalle { color: #555; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .acciones { display: flex; gap: 0.5rem; }
+  .acciones form { flex: 1; margin: 0; }
+  .acciones button { width: 100%; }
+  button {
+    padding: 0.75rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-pagar { background: #16a34a; color: #fff; }
+  .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  /* Confirmación en dos toques en el lugar, como en Recepción. */
+  .confirmacion { display: none; }
+  .confirmacion.visible { display: flex; gap: 0.5rem; }
+  .confirmacion form { flex: 1; margin: 0; }
+  .confirmacion button { width: 100%; }
+  details summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #444;
+  }
+  .renglon-pagada {
+    padding: 0.6rem 0;
+    border-top: 1px solid #eee;
+    font-size: 0.88rem;
+    color: #555;
+  }
+  .fecha-pago { color: #16a34a; font-weight: 600; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Pendientes de Pago" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Señas pendientes ({{ pendientes|length }})</h2>
+    <p class="ayuda">Clientes que trajeron cajones y todavía no cobraron la seña. Al marcar "Pagó", queda registrado cuándo.</p>
+    {% if pendientes %}
+      {% for p in pendientes %}
+      <div class="renglon">
+        <p class="cliente">{{ p.cliente_nombre }}</p>
+        <p class="detalle">{{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }} ({{ p.codigo_puesto }}) — trajo el {{ p.creado_en|fecha_hora }}</p>
+        <div class="acciones" id="acciones-{{ p.id }}">
+          <button type="button" class="boton-pagar" onclick="mostrarConfirmacion('{{ p.id }}')">Pagó la seña</button>
+        </div>
+        <div class="confirmacion" id="confirmacion-{{ p.id }}">
+          <form method="post" action="/puesto/envases/pendientes/{{ p.id }}/pagar">
+            <button type="submit" class="boton-pagar">Sí, pagó</button>
+          </form>
+          <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ p.id }}')">No</button>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">No hay señas pendientes de pagar.</p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <details>
+      <summary>Pagadas ({{ pagadas|length }} últimas)</summary>
+      {% if pagadas %}
+        {% for p in pagadas %}
+        <div class="renglon-pagada">
+          {{ p.cliente_nombre }} — {{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }}
+          <span class="fecha-pago">· pagada el {{ p.sena_pagada_el|fecha_hora }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+      <p class="vacio">Todavía no se pagó ninguna seña.</p>
+      {% endif %}
+    </details>
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+
+  <script>
+    function mostrarConfirmacion(id) {
+      document.getElementById('acciones-' + id).style.display = 'none';
+      document.getElementById('confirmacion-' + id).classList.add('visible');
+    }
+    function ocultarConfirmacion(id) {
+      document.getElementById('confirmacion-' + id).classList.remove('visible');
+      document.getElementById('acciones-' + id).style.display = 'flex';
+    }
+  </script>
+</body>
+</html>

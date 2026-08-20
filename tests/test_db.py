@@ -5,9 +5,14 @@ from unittest.mock import MagicMock, patch
 from app.db import (
     actualizar_cantidad_compra,
     anular_vacio_recibido,
+    crear_conteo_vacios,
     crear_tipo_envase_puesto,
     crear_vacio_devuelto,
+    listar_conteos_vacios_de_fecha,
+    listar_senas_pendientes,
     listar_tipos_envase_puesto,
+    listar_ultimos_conteos_vacios,
+    marcar_sena_pagada,
     obtener_o_crear_cliente_puesto,
     stock_vacios,
     actualizar_cliente,
@@ -1845,3 +1850,68 @@ def test_stock_vacios_excluye_anulados_y_calcula_la_diferencia():
     # Los movimientos anulados no cuentan para el stock.
     assert consulta.count("anulado_el IS NULL") == 2
     assert filas[0]["stock"] == 20  # 50 recibidos − 30 devueltos
+
+
+def test_crear_conteo_vacios_graba_la_foto_del_stock_y_no_la_devuelve():
+    # El stock del sistema al momento de contar queda en la fila, pero la
+    # función NO lo retorna: el empleado nunca puede verlo (control cruzado).
+    conexion, cursor = _conexion_falsa([(40,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = crear_conteo_vacios(200, 1, 35)
+
+    assert resultado is None
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO conteos_vacios" in consulta_insert
+    assert parametros_insert == (200, 1, 35, 40)
+    conexion.commit.assert_called_once()
+
+
+def test_listar_conteos_vacios_de_fecha_no_trae_el_stock_del_sistema():
+    # Esta lista va a la pantalla del empleado: stock_sistema no puede
+    # viajar ni escondido en su HTML.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_conteos_vacios_de_fecha(date(2026, 8, 19))
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "stock_sistema" not in consulta
+
+
+def test_listar_ultimos_conteos_vacios_toma_el_ultimo_por_proveedor_y_tipo():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ultimos_conteos_vacios()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "DISTINCT ON (c.proveedor_id, c.tipo_envase_id)" in consulta
+    assert "c.creado_en DESC" in consulta
+    assert "stock_sistema" in consulta
+
+
+def test_marcar_sena_pagada_solo_toca_vigentes_sin_pagar():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_sena_pagada(5)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET sena_pagada_el = now()" in consulta
+    # Ni pisa una fecha de pago existente ni "paga" un movimiento anulado.
+    assert "sena_pagada_el IS NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert parametros == (5,)
+    conexion.commit.assert_called_once()
+
+
+def test_listar_senas_pendientes_excluye_pagadas_y_anuladas():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_senas_pendientes()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "v.sena_pagada_el IS NULL" in consulta
+    assert "v.anulado_el IS NULL" in consulta

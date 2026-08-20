@@ -46,6 +46,7 @@ from app.db import (
     crear_cliente,
     crear_compra,
     crear_compras_de_comanda,
+    crear_conteo_vacios,
     crear_envase,
     crear_ficha,
     crear_tipo_envase_puesto,
@@ -53,6 +54,7 @@ from app.db import (
     crear_vacio_recibido,
     desactivar_articulo,
     desactivar_cliente,
+    desactivar_cliente_puesto,
     desactivar_tipo_envase_puesto,
     deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
@@ -74,6 +76,7 @@ from app.db import (
     listar_compras_procesadas_hoy_retiro,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
+    listar_conteos_vacios_de_fecha,
     listar_detalle_disponible,
     listar_envases,
     listar_envases_con_costo,
@@ -83,12 +86,18 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
+    listar_senas_pagadas,
+    listar_senas_pendientes,
     listar_tipos_envase_puesto,
     listar_todas_las_conversiones,
+    listar_ultimos_conteos_vacios,
     listar_vacios_devueltos_de_fecha,
+    listar_vacios_devueltos_por_rango,
     listar_vacios_recibidos_de_fecha,
+    listar_vacios_recibidos_por_rango,
     marcar_compra_cancelada,
     marcar_compra_no_ingresada,
+    marcar_sena_pagada,
     marcar_compra_retirada,
     obtener_articulo,
     obtener_borrador_disponible,
@@ -5513,32 +5522,257 @@ def dar_de_baja_tipo_envase_puesto_ruta(request: Request, tipo_id: int):
     return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
 
 
-@app.get("/puesto/envases/vacios/stock-fisico")
-def ver_stock_fisico_vacios(request: Request):
-    """Tanda 2: el conteo físico del empleado (sin ver el stock del sistema)."""
-    return _renderizar_en_construccion(
-        request, "Stock Físico", volver_url="/puesto/envases/vacios", volver_texto="Volver a Vacíos", sector="puesto"
+def _renderizar_pantalla_stock_fisico(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        tipos, proveedores = _tipos_envase_y_proveedores()
+        # listar_conteos_vacios_de_fecha NO trae stock_sistema, a propósito:
+        # esta pantalla la ve el empleado y el número del sistema no puede
+        # viajar ni escondido en su HTML (control cruzado).
+        contados_hoy = listar_conteos_vacios_de_fecha(_hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_stock_fisico.html",
+        {
+            "tipos": tipos,
+            "proveedores": proveedores,
+            "contados_hoy": contados_hoy,
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
     )
+
+
+@app.get("/puesto/envases/vacios/stock-fisico")
+def ver_stock_fisico_vacios(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_stock_fisico(request, aviso=aviso)
+
+
+@app.post("/puesto/envases/vacios/stock-fisico")
+def cargar_stock_fisico_ruta(
+    request: Request,
+    proveedor_id: str = Form(""),
+    tipo_envase_id: str = Form(""),
+    cantidad: str = Form(""),
+):
+    """El empleado carga lo que CONTÓ. Se acepta 0 (contó y no hay ninguno). Si se equivoca, carga de nuevo: vale el último."""
+    texto_cantidad = cantidad.strip()
+    error = None
+    cantidad_valor = None
+    if not texto_cantidad:
+        error = "La cantidad contada es obligatoria."
+    else:
+        try:
+            cantidad_valor = int(texto_cantidad)
+        except ValueError:
+            error = "La cantidad contada tiene que ser un número entero."
+        else:
+            if cantidad_valor < 0:
+                error = "La cantidad contada no puede ser negativa."
+
+    tipo_elegido = None
+    if not error:
+        try:
+            tipos, _ = _tipos_envase_y_proveedores()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        tipo_elegido = next(
+            (
+                t
+                for t in tipos
+                if str(t["id"]) == tipo_envase_id.strip() and str(t["proveedor_id"]) == proveedor_id.strip()
+            ),
+            None,
+        )
+        if tipo_elegido is None:
+            error = "Elegí un proveedor y un tipo de envase válidos."
+
+    if error:
+        return _renderizar_pantalla_stock_fisico(request, error=error, status_code=400)
+
+    try:
+        crear_conteo_vacios(tipo_elegido["proveedor_id"], tipo_elegido["id"], cantidad_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_stock_fisico(
+            request, error=f"No se pudo guardar el conteo: {error_db}", status_code=500
+        )
+
+    # El aviso repite SOLO lo contado — jamás el stock del sistema.
+    aviso = f"Conteo guardado: {cantidad_valor} × {tipo_elegido['nombre']} de {tipo_elegido['proveedor_nombre']}."
+    return RedirectResponse(url=f"/puesto/envases/vacios/stock-fisico?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 @app.get("/puesto/envases/cotejo")
 def ver_cotejo_vacios(request: Request):
-    """Tanda 2: stock del sistema contra el último conteo físico."""
-    return _renderizar_en_construccion(
-        request, "Cotejo", volver_url="/puesto/envases", volver_texto="Volver a Envases Puesto", sector="puesto"
+    """Cotejo (cajera): el último conteo físico por proveedor+tipo contra la foto del stock del sistema de ese instante."""
+    try:
+        conteos = listar_ultimos_conteos_vacios()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    filas = []
+    for conteo in conteos:
+        filas.append(dict(conteo, diferencia=conteo["cantidad"] - conteo["stock_sistema"]))
+
+    return templates.TemplateResponse(request, "vacios_cotejo.html", {"filas": filas})
+
+
+def _renderizar_pantalla_pendientes_pago(request: Request, *, error=None, status_code: int = 200):
+    try:
+        pendientes = listar_senas_pendientes()
+        pagadas = listar_senas_pagadas()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_pendientes.html",
+        {"pendientes": pendientes, "pagadas": pagadas, "error": error},
+        status_code=status_code,
     )
 
 
 @app.get("/puesto/envases/pendientes")
 def ver_pendientes_pago_vacios(request: Request):
-    """Tanda 2: señas pendientes de pagar a los clientes del puesto."""
-    return _renderizar_en_construccion(
+    """Señas pendientes de pagar a los clientes del puesto (cajera), con el historial de pagadas plegado."""
+    return _renderizar_pantalla_pendientes_pago(request)
+
+
+@app.post("/puesto/envases/pendientes/{movimiento_id}/pagar")
+def pagar_sena_ruta(request: Request, movimiento_id: int):
+    try:
+        marcar_sena_pagada(movimiento_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_pendientes_pago(
+            request, error=f"No se pudo marcar la seña como pagada: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/pendientes", status_code=303)
+
+
+def _rango_fechas_movimientos(fecha_desde: str | None, fecha_hasta: str | None):
+    """Rango de la pantalla Movimientos: lo pedido, o los últimos 7 días. Fechas mal escritas caen al default."""
+    hoy = _hoy_argentina()
+    try:
+        desde = date.fromisoformat(fecha_desde) if fecha_desde else hoy - timedelta(days=7)
+    except ValueError:
+        desde = hoy - timedelta(days=7)
+    try:
+        hasta = date.fromisoformat(fecha_hasta) if fecha_hasta else hoy
+    except ValueError:
+        hasta = hoy
+    return desde, hasta
+
+
+@app.get("/puesto/envases/movimientos")
+def ver_movimientos_vacios(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None):
+    """Movimientos de cualquier fecha (cajera), para corregir errores viejos: anular deja registro, nunca borra.
+
+    El empleado solo puede anular lo de HOY desde sus pantallas; acá la
+    cajera llega a cualquier fecha. Corregir = anular el movimiento
+    equivocado y cargarlo de nuevo bien desde Recibir/Devolver.
+    """
+    desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
+    try:
+        recibidos = listar_vacios_recibidos_por_rango(desde, hasta)
+        devueltos = listar_vacios_devueltos_por_rango(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
         request,
-        "Pendientes de Pago",
-        volver_url="/puesto/envases",
-        volver_texto="Volver a Envases Puesto",
-        sector="puesto",
+        "vacios_movimientos.html",
+        {
+            "recibidos": recibidos,
+            "devueltos": devueltos,
+            "fecha_desde": desde.isoformat(),
+            "fecha_hasta": hasta.isoformat(),
+        },
     )
+
+
+def _url_movimientos(fecha_desde: str, fecha_hasta: str) -> str:
+    return f"/puesto/envases/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}"
+
+
+@app.post("/puesto/envases/movimientos/recibidos/{movimiento_id}/anular")
+def anular_recibido_desde_movimientos_ruta(
+    request: Request, movimiento_id: int, fecha_desde: str = Form(""), fecha_hasta: str = Form("")
+):
+    try:
+        anular_vacio_recibido(movimiento_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
+    return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
+
+
+@app.post("/puesto/envases/movimientos/devueltos/{movimiento_id}/anular")
+def anular_devuelto_desde_movimientos_ruta(
+    request: Request, movimiento_id: int, fecha_desde: str = Form(""), fecha_hasta: str = Form("")
+):
+    try:
+        anular_vacio_devuelto(movimiento_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
+    return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
+
+
+def _renderizar_pantalla_clientes_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        clientes = listar_clientes_puesto()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_clientes.html",
+        {"clientes": clientes, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/clientes")
+def ver_clientes_puesto(request: Request, aviso: str | None = None):
+    """Clientes del puesto (cajera): lista, alta a mano y baja lógica.
+
+    El alta normal la hace el empleado tipeando el nombre en Recibir; acá
+    la cajera puede además dar de baja a uno para que deje de sugerirse
+    (si vuelve a aparecer, tipear su nombre lo reactiva solo).
+    """
+    return _renderizar_pantalla_clientes_puesto(request, aviso=aviso)
+
+
+@app.post("/puesto/envases/clientes/nuevo")
+def crear_cliente_puesto_ruta(request: Request, nombre: str = Form("")):
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    nombre_normalizado = normalizar_texto(nombre_limpio)
+    if not nombre_normalizado:
+        return _renderizar_pantalla_clientes_puesto(
+            request, error="El nombre del cliente es obligatorio.", status_code=400
+        )
+
+    try:
+        obtener_o_crear_cliente_puesto(nombre_limpio, nombre_normalizado)
+    except Exception as error_db:
+        return _renderizar_pantalla_clientes_puesto(
+            request, error=f"No se pudo crear el cliente: {error_db}", status_code=500
+        )
+
+    parametros = urlencode({"aviso": f"Cliente '{nombre_limpio}' cargado."})
+    return RedirectResponse(url=f"/puesto/envases/clientes?{parametros}", status_code=303)
+
+
+@app.post("/puesto/envases/clientes/{cliente_id}/baja")
+def dar_de_baja_cliente_puesto_ruta(request: Request, cliente_id: int):
+    try:
+        desactivar_cliente_puesto(cliente_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_clientes_puesto(
+            request, error=f"No se pudo dar de baja el cliente: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/clientes", status_code=303)
 
 
 if __name__ == "__main__":

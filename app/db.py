@@ -2696,8 +2696,8 @@ def crear_vacio_devuelto(proveedor_id: int, tipo_envase_id: int, cantidad: int) 
         conexion.close()
 
 
-def listar_vacios_recibidos_de_fecha(fecha) -> list[dict]:
-    """Entradas de un día (anuladas incluidas, marcadas), para la lista "Recibido hoy" de la pantalla Recibir."""
+def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+    """Entradas de un rango de fechas (anuladas incluidas, marcadas): "Recibido hoy" y la pantalla Movimientos."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -2711,10 +2711,10 @@ def listar_vacios_recibidos_de_fecha(fecha) -> list[dict]:
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.creado_en::date = %s
+                WHERE v.creado_en::date BETWEEN %s AND %s
                 ORDER BY v.creado_en DESC
                 """,
-                (fecha,),
+                (fecha_desde, fecha_hasta),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
@@ -2723,8 +2723,13 @@ def listar_vacios_recibidos_de_fecha(fecha) -> list[dict]:
         conexion.close()
 
 
-def listar_vacios_devueltos_de_fecha(fecha) -> list[dict]:
-    """Salidas de un día (anuladas incluidas, marcadas), para la lista "Devuelto hoy" de la pantalla Devolver."""
+def listar_vacios_recibidos_de_fecha(fecha) -> list[dict]:
+    """Entradas de UN día, para la lista "Recibido hoy" de la pantalla Recibir."""
+    return listar_vacios_recibidos_por_rango(fecha, fecha)
+
+
+def listar_vacios_devueltos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+    """Salidas de un rango de fechas (anuladas incluidas, marcadas): "Devuelto hoy" y la pantalla Movimientos."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -2736,16 +2741,21 @@ def listar_vacios_devueltos_de_fecha(fecha) -> list[dict]:
                 FROM vacios_devueltos v
                 JOIN proveedores p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.creado_en::date = %s
+                WHERE v.creado_en::date BETWEEN %s AND %s
                 ORDER BY v.creado_en DESC
                 """,
-                (fecha,),
+                (fecha_desde, fecha_hasta),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
     finally:
         conexion.close()
+
+
+def listar_vacios_devueltos_de_fecha(fecha) -> list[dict]:
+    """Salidas de UN día, para la lista "Devuelto hoy" de la pantalla Devolver."""
+    return listar_vacios_devueltos_por_rango(fecha, fecha)
 
 
 def anular_vacio_recibido(movimiento_id: int) -> None:
@@ -2807,5 +2817,172 @@ def stock_vacios() -> list[dict]:
         for fila in resultado:
             fila["stock"] = int(fila["recibidos"]) - int(fila["devueltos"])
         return resultado
+    finally:
+        conexion.close()
+
+
+def crear_conteo_vacios(proveedor_id: int, tipo_envase_id: int, cantidad: int) -> None:
+    """Conteo físico del empleado. El stock del sistema se graba acá, del lado del server — NUNCA se le devuelve.
+
+    A propósito no retorna nada: la pantalla de Stock Físico no puede
+    mostrar el número del sistema (si el empleado lo ve, transcribe en
+    vez de contar — se pierde el control cruzado). El Cotejo compara
+    después contra esta foto exacta. Si el empleado se equivoca, carga el
+    conteo de nuevo: en el Cotejo vale el último por proveedor+tipo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            stock_sistema = _stock_vacios_actual(cursor, proveedor_id, tipo_envase_id)
+            cursor.execute(
+                """
+                INSERT INTO conteos_vacios (proveedor_id, tipo_envase_id, cantidad, stock_sistema)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (proveedor_id, tipo_envase_id, cantidad, stock_sistema),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_conteos_vacios_de_fecha(fecha) -> list[dict]:
+    """Conteos de un día para la lista "Contado hoy" del empleado.
+
+    SIN stock_sistema en el SELECT, a propósito: esta lista la ve el
+    empleado, y el número del sistema no puede viajar ni escondido en el
+    HTML de su pantalla.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.cantidad, c.creado_en,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.nombre AS tipo_nombre
+                FROM conteos_vacios c
+                JOIN proveedores p ON p.id = c.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
+                WHERE c.creado_en::date = %s
+                ORDER BY c.creado_en DESC
+                """,
+                (fecha,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_ultimos_conteos_vacios() -> list[dict]:
+    """El ÚLTIMO conteo por proveedor+tipo, con su foto del stock del sistema, para el Cotejo (cajera)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (c.proveedor_id, c.tipo_envase_id)
+                       c.id, c.cantidad, c.stock_sistema, c.creado_en,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.nombre AS tipo_nombre
+                FROM conteos_vacios c
+                JOIN proveedores p ON p.id = c.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
+                ORDER BY c.proveedor_id, c.tipo_envase_id, c.creado_en DESC
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        resultado = [dict(zip(columnas, fila)) for fila in filas]
+        resultado.sort(key=lambda fila: (fila["proveedor_nombre"], fila["tipo_nombre"]))
+        return resultado
+    finally:
+        conexion.close()
+
+
+def listar_senas_pendientes() -> list[dict]:
+    """Entradas vigentes con la seña sin pagar, para la pantalla Pendientes de Pago (cajera). Más viejas primero."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT v.id, v.cantidad, v.creado_en,
+                       c.nombre AS cliente_nombre,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.nombre AS tipo_nombre
+                FROM vacios_recibidos v
+                JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
+                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
+                WHERE v.sena_pagada_el IS NULL AND v.anulado_el IS NULL
+                ORDER BY v.creado_en
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_senas_pagadas(limite: int = 50) -> list[dict]:
+    """Últimas señas pagadas (para consultar el historial plegado de Pendientes de Pago)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT v.id, v.cantidad, v.creado_en, v.sena_pagada_el,
+                       c.nombre AS cliente_nombre,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.nombre AS tipo_nombre
+                FROM vacios_recibidos v
+                JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
+                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
+                WHERE v.sena_pagada_el IS NOT NULL AND v.anulado_el IS NULL
+                ORDER BY v.sena_pagada_el DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def marcar_sena_pagada(movimiento_id: int) -> None:
+    """La cajera le pagó la seña al cliente: queda registrado cuándo. Solo entradas vigentes y sin pagar."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE vacios_recibidos SET sena_pagada_el = now()
+                WHERE id = %s AND sena_pagada_el IS NULL AND anulado_el IS NULL
+                """,
+                (movimiento_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def desactivar_cliente_puesto(cliente_id: int) -> None:
+    """Baja lógica de un cliente del puesto: deja de sugerirse al tipear; sus movimientos quedan.
+
+    Si vuelve a aparecer por el puesto, obtener_o_crear_cliente_puesto lo
+    reactiva solo al tipear su nombre.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE clientes_puesto SET activo = false WHERE id = %s", (cliente_id,))
+        conexion.commit()
     finally:
         conexion.close()
