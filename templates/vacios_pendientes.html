@@ -49,25 +49,52 @@
     cursor: pointer;
   }
   .boton-pagar { background: #16a34a; color: #fff; }
+  .boton-vale { background: #7c3aed; color: #fff; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  /* "Anular seña" va a propósito SEPARADO de los dos botones grandes, más
+     chico y abajo a la derecha: la pantalla se usa apurada y la mano va a
+     "Pagó" — un rojo grande al lado sería un accidente esperando turno. */
+  .fila-anular { text-align: right; margin-top: 0.55rem; }
+  .boton-anular-sena {
+    padding: 0.4rem 0.7rem;
+    background: none;
+    color: #b91c1c;
+    border: none;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+  }
   /* Confirmación en dos toques en el lugar, como en Recepción. */
   .confirmacion { display: none; }
   .confirmacion.visible { display: flex; gap: 0.5rem; }
   .confirmacion form { flex: 1; margin: 0; }
   .confirmacion button { width: 100%; }
+  .confirmacion .boton-anular-confirmar { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
   details summary {
     cursor: pointer;
     font-weight: 600;
     font-size: 0.95rem;
     color: #444;
   }
-  .renglon-pagada {
+  .renglon-resuelta {
     padding: 0.6rem 0;
     border-top: 1px solid #eee;
     font-size: 0.88rem;
     color: #555;
   }
-  .fecha-pago { color: #16a34a; font-weight: 600; }
+  .etiqueta-cierre {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-right: 0.35rem;
+  }
+  .cierre-pagada { background: #dcfce7; color: #166534; }
+  .cierre-vale { background: #ede9fe; color: #5b21b6; }
+  .cierre-anulada { background: #fee2e2; color: #991b1b; }
+  .fecha-cierre { color: #888; }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -90,40 +117,64 @@
 
   <div class="tarjeta">
     <h2>Señas pendientes ({{ pendientes|length }})</h2>
-    <p class="ayuda">Clientes que trajeron cajones y todavía no cobraron la seña. Al marcar "Pagó", queda registrado cuándo.</p>
+    <p class="ayuda">Cada pendiente se cierra de una de tres formas: se pagó, se hizo vale, o se anuló (no se paga). Queda registrado cuál fue y cuándo. Anular la seña no toca los cajones del stock.</p>
     {% if pendientes %}
       {% for p in pendientes %}
       <div class="renglon">
         <p class="cliente">{{ p.cliente_nombre }}</p>
         <p class="detalle">{{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }} ({{ p.codigo_puesto }}) — trajo el {{ p.creado_en|fecha_hora }}</p>
+
         <div class="acciones" id="acciones-{{ p.id }}">
-          <button type="button" class="boton-pagar" onclick="mostrarConfirmacion('{{ p.id }}')">Pagó la seña</button>
+          <button type="button" class="boton-pagar" onclick="mostrarConfirmacion('{{ p.id }}', 'pagar')">Pagó la seña</button>
+          <button type="button" class="boton-vale" onclick="mostrarConfirmacion('{{ p.id }}', 'vale')">Se hizo vale</button>
         </div>
-        <div class="confirmacion" id="confirmacion-{{ p.id }}">
+
+        <div class="confirmacion" id="confirmacion-pagar-{{ p.id }}">
           <form method="post" action="/puesto/envases/pendientes/{{ p.id }}/pagar">
             <button type="submit" class="boton-pagar">Sí, pagó</button>
           </form>
-          <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ p.id }}')">No</button>
+          <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ p.id }}', 'pagar')">No</button>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-vale-{{ p.id }}">
+          <form method="post" action="/puesto/envases/pendientes/{{ p.id }}/vale">
+            <button type="submit" class="boton-vale">Sí, se hizo vale</button>
+          </form>
+          <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ p.id }}', 'vale')">No</button>
+        </div>
+
+        <div class="fila-anular" id="fila-anular-{{ p.id }}">
+          <button type="button" class="boton-anular-sena" onclick="mostrarConfirmacionAnular('{{ p.id }}')">Anular seña</button>
+        </div>
+
+        <div class="confirmacion" id="confirmacion-anular-{{ p.id }}">
+          <form method="post" action="/puesto/envases/pendientes/{{ p.id }}/anular-sena">
+            <button type="submit" class="boton-anular-confirmar">Sí, anular la seña</button>
+          </form>
+          <button type="button" class="boton-secundario" onclick="ocultarConfirmacionAnular('{{ p.id }}')">No</button>
         </div>
       </div>
       {% endfor %}
     {% else %}
-    <p class="vacio">No hay señas pendientes de pagar.</p>
+    <p class="vacio">No hay señas pendientes.</p>
     {% endif %}
   </div>
 
   <div class="tarjeta">
     <details>
-      <summary>Pagadas ({{ pagadas|length }} últimas)</summary>
-      {% if pagadas %}
-        {% for p in pagadas %}
-        <div class="renglon-pagada">
-          {{ p.cliente_nombre }} — {{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }}
-          <span class="fecha-pago">· pagada el {{ p.sena_pagada_el|fecha_hora }}</span>
+      <summary>Resueltas ({{ resueltas|length }} últimas)</summary>
+      {% if resueltas %}
+        {% for r in resueltas %}
+        <div class="renglon-resuelta">
+          {% if r.cierre == "pagada" %}<span class="etiqueta-cierre cierre-pagada">Pagada</span>
+          {% elif r.cierre == "vale" %}<span class="etiqueta-cierre cierre-vale">Vale</span>
+          {% else %}<span class="etiqueta-cierre cierre-anulada">Anulada</span>{% endif %}
+          {{ r.cliente_nombre }} — {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }}
+          <span class="fecha-cierre">· {{ r.cerrada_el|fecha_hora }}</span>
         </div>
         {% endfor %}
       {% else %}
-      <p class="vacio">Todavía no se pagó ninguna seña.</p>
+      <p class="vacio">Todavía no se resolvió ninguna seña.</p>
       {% endif %}
     </details>
   </div>
@@ -131,13 +182,21 @@
   <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
 
   <script>
-    function mostrarConfirmacion(id) {
+    function mostrarConfirmacion(id, accion) {
       document.getElementById('acciones-' + id).style.display = 'none';
-      document.getElementById('confirmacion-' + id).classList.add('visible');
+      document.getElementById('fila-anular-' + id).style.display = 'none';
+      document.getElementById('confirmacion-' + accion + '-' + id).classList.add('visible');
     }
-    function ocultarConfirmacion(id) {
-      document.getElementById('confirmacion-' + id).classList.remove('visible');
+    function ocultarConfirmacion(id, accion) {
+      document.getElementById('confirmacion-' + accion + '-' + id).classList.remove('visible');
       document.getElementById('acciones-' + id).style.display = 'flex';
+      document.getElementById('fila-anular-' + id).style.display = 'block';
+    }
+    function mostrarConfirmacionAnular(id) {
+      mostrarConfirmacion(id, 'anular');
+    }
+    function ocultarConfirmacionAnular(id) {
+      ocultarConfirmacion(id, 'anular');
     }
   </script>
 </body>

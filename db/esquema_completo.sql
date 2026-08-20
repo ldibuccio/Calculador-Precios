@@ -323,11 +323,17 @@ create table vacios_recibidos (
     cantidad           integer not null check (cantidad > 0),
     creado_en          timestamptz not null default now(),
     sena_pagada_el     timestamptz,
-    anulado_el         timestamptz
+    anulado_el         timestamptz,
+    sena_vale_el       timestamptz,
+    sena_anulada_el    timestamptz,
+    constraint vacios_recibidos_un_solo_cierre_de_sena
+        check (num_nonnulls(sena_pagada_el, sena_vale_el, sena_anulada_el) <= 1)
 );
 
-comment on table vacios_recibidos is 'Entrada: un cliente trae cajones vacíos al puesto. La seña se le devuelve después (ver sena_pagada_el).';
-comment on column vacios_recibidos.sena_pagada_el is 'NULL = seña pendiente de pagar al cliente; con fecha = cuándo la cajera la pagó.';
+comment on table vacios_recibidos is 'Entrada: un cliente trae cajones vacíos al puesto. La seña se le devuelve después (ver sena_pagada_el/sena_vale_el/sena_anulada_el).';
+comment on column vacios_recibidos.sena_pagada_el is 'La seña se le pagó al cliente (fecha). Uno de los tres cierres posibles del pendiente de pago; los otros dos son sena_vale_el y sena_anulada_el. NULL en los tres = seña pendiente.';
+comment on column vacios_recibidos.sena_vale_el is 'El pendiente se cerró con un vale (fecha). Por ahora es solo el dato "se cerró con vale" — sin numeración, cobro ni vencimiento.';
+comment on column vacios_recibidos.sena_anulada_el is 'La seña se anuló: no se paga, decidido (fecha). NO anula el movimiento — los cajones entraron y siguen en el stock; para una entrada errónea está el Anular de Movimientos.';
 comment on column vacios_recibidos.anulado_el is 'NULL = movimiento vigente. Los movimientos nunca se borran físicamente: anular deja el registro visible como corrección y el stock lo excluye.';
 
 create table vacios_devueltos (

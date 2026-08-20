@@ -5,14 +5,15 @@ from unittest.mock import MagicMock, patch
 from app.db import (
     actualizar_cantidad_compra,
     anular_vacio_recibido,
+    cerrar_sena,
     crear_conteo_vacios,
     crear_tipo_envase_puesto,
     crear_vacio_devuelto,
     listar_conteos_vacios_de_fecha,
     listar_senas_pendientes,
+    listar_senas_resueltas,
     listar_tipos_envase_puesto,
     listar_ultimos_conteos_vacios,
-    marcar_sena_pagada,
     obtener_o_crear_cliente_puesto,
     stock_vacios,
     actualizar_cliente,
@@ -1891,27 +1892,57 @@ def test_listar_ultimos_conteos_vacios_toma_el_ultimo_por_proveedor_y_tipo():
     assert "stock_sistema" in consulta
 
 
-def test_marcar_sena_pagada_solo_toca_vigentes_sin_pagar():
+def test_cerrar_sena_escribe_la_columna_del_cierre_elegido():
+    # Los tres cierres, cada uno con su columna de fecha: qué pasó lo dice
+    # la columna, cuándo lo dice la fecha.
+    for cierre, columna in (("pagada", "sena_pagada_el"), ("vale", "sena_vale_el"), ("anulada", "sena_anulada_el")):
+        conexion, cursor = _conexion_falsa()
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            cerrar_sena(5, cierre)
+
+        consulta, parametros = cursor.execute.call_args.args
+        assert f"SET {columna} = now()" in consulta
+        # Solo pendientes vigentes: no pisa un cierre anterior (las TRES en
+        # NULL) ni "cierra" un movimiento anulado.
+        assert "sena_pagada_el IS NULL AND sena_vale_el IS NULL AND sena_anulada_el IS NULL" in consulta
+        assert "anulado_el IS NULL" in consulta
+        assert parametros == (5,)
+        conexion.commit.assert_called_once()
+
+
+def test_cerrar_sena_con_cierre_desconocido_lanza_error_sin_tocar_la_base():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        marcar_sena_pagada(5)
+        with pytest.raises(ValueError):
+            cerrar_sena(5, "regalada")
 
-    consulta, parametros = cursor.execute.call_args.args
-    assert "SET sena_pagada_el = now()" in consulta
-    # Ni pisa una fecha de pago existente ni "paga" un movimiento anulado.
-    assert "sena_pagada_el IS NULL" in consulta
-    assert "anulado_el IS NULL" in consulta
-    assert parametros == (5,)
-    conexion.commit.assert_called_once()
+    cursor.execute.assert_not_called()
 
 
-def test_listar_senas_pendientes_excluye_pagadas_y_anuladas():
+def test_listar_senas_pendientes_exige_los_tres_cierres_en_null():
     conexion, cursor = _conexion_falsa(filas_fetchall=[])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         listar_senas_pendientes()
 
     consulta = cursor.execute.call_args[0][0]
-    assert "v.sena_pagada_el IS NULL" in consulta
+    assert "v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL" in consulta
     assert "v.anulado_el IS NULL" in consulta
+
+
+def test_listar_senas_resueltas_trae_el_tipo_de_cierre_y_su_fecha():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_senas_resueltas()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "'pagada'" in consulta
+    assert "'vale'" in consulta
+    assert "'anulada'" in consulta
+    assert "AS cierre" in consulta
+    assert "AS cerrada_el" in consulta
+    # Ordenado por la fecha del cierre, el más reciente primero.
+    assert "ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC" in consulta

@@ -2903,7 +2903,11 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
 
 
 def listar_senas_pendientes() -> list[dict]:
-    """Entradas vigentes con la seña sin pagar, para la pantalla Pendientes de Pago (cajera). Más viejas primero."""
+    """Entradas vigentes con la seña sin resolver, para la pantalla Pendientes de Pago (cajera). Más viejas primero.
+
+    Pendiente = los TRES cierres en NULL (ni pagada, ni vale, ni anulada)
+    y el movimiento vigente (no anulado).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -2917,7 +2921,8 @@ def listar_senas_pendientes() -> list[dict]:
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.sena_pagada_el IS NULL AND v.anulado_el IS NULL
+                WHERE v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL
+                  AND v.anulado_el IS NULL
                 ORDER BY v.creado_en
                 """
             )
@@ -2928,14 +2933,25 @@ def listar_senas_pendientes() -> list[dict]:
         conexion.close()
 
 
-def listar_senas_pagadas(limite: int = 50) -> list[dict]:
-    """Últimas señas pagadas (para consultar el historial plegado de Pendientes de Pago)."""
+def listar_senas_resueltas(limite: int = 50) -> list[dict]:
+    """Últimas señas cerradas — pagadas, con vale o anuladas — para el historial plegado de Pendientes de Pago.
+
+    Cada fila trae cierre ('pagada'/'vale'/'anulada') y cerrada_el (la
+    fecha del cierre que corresponda), para que el historial distinga los
+    tres tipos de un vistazo.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT v.id, v.cantidad, v.creado_en, v.sena_pagada_el,
+                SELECT v.id, v.cantidad, v.creado_en,
+                       CASE
+                           WHEN v.sena_pagada_el IS NOT NULL THEN 'pagada'
+                           WHEN v.sena_vale_el IS NOT NULL THEN 'vale'
+                           ELSE 'anulada'
+                       END AS cierre,
+                       COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre, p.codigo_puesto,
                        t.nombre AS tipo_nombre
@@ -2943,8 +2959,9 @@ def listar_senas_pagadas(limite: int = 50) -> list[dict]:
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.sena_pagada_el IS NOT NULL AND v.anulado_el IS NULL
-                ORDER BY v.sena_pagada_el DESC
+                WHERE num_nonnulls(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) = 1
+                  AND v.anulado_el IS NULL
+                ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC
                 LIMIT %s
                 """,
                 (limite,),
@@ -2956,15 +2973,33 @@ def listar_senas_pagadas(limite: int = 50) -> list[dict]:
         conexion.close()
 
 
-def marcar_sena_pagada(movimiento_id: int) -> None:
-    """La cajera le pagó la seña al cliente: queda registrado cuándo. Solo entradas vigentes y sin pagar."""
+# Los tres cierres posibles de un pendiente de pago, con la columna de fecha
+# que escribe cada uno (patrón fecha-como-estado; el CHECK de la tabla
+# garantiza que nunca haya dos a la vez).
+CIERRES_SENA = {"pagada": "sena_pagada_el", "vale": "sena_vale_el", "anulada": "sena_anulada_el"}
+
+
+def cerrar_sena(movimiento_id: int, cierre: str) -> None:
+    """Cierra un pendiente de pago: 'pagada' (se le pagó al cliente), 'vale' (se hizo vale) o 'anulada' (no se paga).
+
+    Queda registrado QUÉ pasó (la columna) y CUÁNDO (la fecha). Solo
+    sobre entradas vigentes y todavía pendientes: no pisa un cierre
+    anterior ni "cierra" un movimiento anulado. 'anulada' cierra LA SEÑA,
+    no el movimiento — los cajones siguen en el stock.
+    """
+    columna = CIERRES_SENA.get(cierre)
+    if columna is None:
+        raise ValueError(f"Cierre de seña desconocido: {cierre}")
+
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
-                UPDATE vacios_recibidos SET sena_pagada_el = now()
-                WHERE id = %s AND sena_pagada_el IS NULL AND anulado_el IS NULL
+                f"""
+                UPDATE vacios_recibidos SET {columna} = now()
+                WHERE id = %s
+                  AND sena_pagada_el IS NULL AND sena_vale_el IS NULL AND sena_anulada_el IS NULL
+                  AND anulado_el IS NULL
                 """,
                 (movimiento_id,),
             )

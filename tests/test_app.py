@@ -9465,41 +9465,73 @@ def test_ver_cotejo_compara_contra_la_foto_del_conteo():
     assert "diferencia-cero" in respuesta.text
 
 
-def test_ver_pendientes_de_pago_lista_y_permite_marcar_pagada():
+def test_ver_pendientes_de_pago_ofrece_los_tres_cierres():
     pendientes = [
         {"id": 5, "cantidad": 12, "creado_en": datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc),
          "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
          "tipo_nombre": "cajón plástico negro"},
     ]
-    pagadas = [
-        {"id": 4, "cantidad": 3, "creado_en": datetime(2026, 8, 18, 10, 0, tzinfo=timezone.utc),
-         "sena_pagada_el": datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc),
-         "cliente_nombre": "Marta", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
-         "tipo_nombre": "torito"},
-    ]
     with (
         patch("app.main.listar_senas_pendientes", return_value=pendientes),
-        patch("app.main.listar_senas_pagadas", return_value=pagadas),
+        patch("app.main.listar_senas_resueltas", return_value=[]),
     ):
         respuesta = cliente.get("/puesto/envases/pendientes")
 
     assert respuesta.status_code == 200
     assert "Juan Pérez" in respuesta.text
     assert 'action="/puesto/envases/pendientes/5/pagar"' in respuesta.text
-    # Confirmación en dos toques, no confirm() nativo.
+    assert 'action="/puesto/envases/pendientes/5/vale"' in respuesta.text
+    assert 'action="/puesto/envases/pendientes/5/anular-sena"' in respuesta.text
+    # Los tres con confirmación en dos toques.
     assert "Sí, pagó" in respuesta.text
-    # Historial de pagadas plegado.
+    assert "Sí, se hizo vale" in respuesta.text
+    assert "Sí, anular la seña" in respuesta.text
+    # "Anular seña" va separado y chico (clase propia), no como tercer botón
+    # grande al lado de "Pagó" — la pantalla se usa apurada.
+    assert 'class="boton-anular-sena"' in respuesta.text
+    assert 'class="fila-anular"' in respuesta.text
+
+
+def test_ver_pendientes_el_historial_distingue_los_tres_cierres():
+    resueltas = [
+        {"id": 4, "cantidad": 3, "creado_en": datetime(2026, 8, 18, 10, 0, tzinfo=timezone.utc),
+         "cierre": "pagada", "cerrada_el": datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Marta", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "tipo_nombre": "torito"},
+        {"id": 3, "cantidad": 5, "creado_en": datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc),
+         "cierre": "vale", "cerrada_el": datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "tipo_nombre": "torito"},
+        {"id": 2, "cantidad": 7, "creado_en": datetime(2026, 8, 16, 10, 0, tzinfo=timezone.utc),
+         "cierre": "anulada", "cerrada_el": datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Pedro", "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02",
+         "tipo_nombre": "cajón madera"},
+    ]
+    with (
+        patch("app.main.listar_senas_pendientes", return_value=[]),
+        patch("app.main.listar_senas_resueltas", return_value=resueltas),
+    ):
+        respuesta = cliente.get("/puesto/envases/pendientes")
+
+    assert respuesta.status_code == 200
     assert "<details>" in respuesta.text
-    assert "Marta" in respuesta.text
+    assert 'class="etiqueta-cierre cierre-pagada">Pagada<' in respuesta.text
+    assert 'class="etiqueta-cierre cierre-vale">Vale<' in respuesta.text
+    assert 'class="etiqueta-cierre cierre-anulada">Anulada<' in respuesta.text
 
 
-def test_pagar_sena_marca_y_redirige():
-    with patch("app.main.marcar_sena_pagada") as mock_pagar:
-        respuesta = cliente.post("/puesto/envases/pendientes/5/pagar", follow_redirects=False)
+def test_los_tres_cierres_de_sena_llaman_a_cerrar_sena_y_redirigen():
+    for url, cierre in (
+        ("/puesto/envases/pendientes/5/pagar", "pagada"),
+        ("/puesto/envases/pendientes/5/vale", "vale"),
+        ("/puesto/envases/pendientes/5/anular-sena", "anulada"),
+    ):
+        with patch("app.main.cerrar_sena") as mock_cerrar:
+            respuesta = cliente.post(url, follow_redirects=False)
 
-    assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/puesto/envases/pendientes"
-    mock_pagar.assert_called_once_with(5)
+        assert respuesta.status_code == 303, url
+        assert respuesta.headers["location"] == "/puesto/envases/pendientes"
+        mock_cerrar.assert_called_once_with(5, cierre)
 
 
 def test_ver_movimientos_usa_los_ultimos_7_dias_por_defecto():

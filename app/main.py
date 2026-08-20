@@ -34,6 +34,7 @@ from app.db import (
     buscar_compras,
     buscar_retiros,
     cerrar_disponible_generado,
+    cerrar_sena,
     comanda_ya_guardada,
     compra_tiene_cantidad_bloqueada,
     compra_tiene_deshacer_recepcion_bloqueado,
@@ -86,8 +87,8 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
-    listar_senas_pagadas,
     listar_senas_pendientes,
+    listar_senas_resueltas,
     listar_tipos_envase_puesto,
     listar_todas_las_conversiones,
     listar_ultimos_conteos_vacios,
@@ -97,7 +98,6 @@ from app.db import (
     listar_vacios_recibidos_por_rango,
     marcar_compra_cancelada,
     marcar_compra_no_ingresada,
-    marcar_sena_pagada,
     marcar_compra_retirada,
     obtener_articulo,
     obtener_borrador_disponible,
@@ -5623,33 +5623,50 @@ def ver_cotejo_vacios(request: Request):
 def _renderizar_pantalla_pendientes_pago(request: Request, *, error=None, status_code: int = 200):
     try:
         pendientes = listar_senas_pendientes()
-        pagadas = listar_senas_pagadas()
+        resueltas = listar_senas_resueltas()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
         "vacios_pendientes.html",
-        {"pendientes": pendientes, "pagadas": pagadas, "error": error},
+        {"pendientes": pendientes, "resueltas": resueltas, "error": error},
         status_code=status_code,
     )
 
 
 @app.get("/puesto/envases/pendientes")
 def ver_pendientes_pago_vacios(request: Request):
-    """Señas pendientes de pagar a los clientes del puesto (cajera), con el historial de pagadas plegado."""
+    """Señas pendientes de resolver (cajera): pagar, cerrar con vale o anular, con el historial plegado."""
     return _renderizar_pantalla_pendientes_pago(request)
+
+
+def _cerrar_sena_y_redirigir(request: Request, movimiento_id: int, cierre: str):
+    """Los tres cierres comparten el mismo camino: cerrar_sena registra cuál fue y cuándo."""
+    try:
+        cerrar_sena(movimiento_id, cierre)
+    except Exception as error_db:
+        return _renderizar_pantalla_pendientes_pago(
+            request, error=f"No se pudo cerrar la seña: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/pendientes", status_code=303)
 
 
 @app.post("/puesto/envases/pendientes/{movimiento_id}/pagar")
 def pagar_sena_ruta(request: Request, movimiento_id: int):
-    try:
-        marcar_sena_pagada(movimiento_id)
-    except Exception as error_db:
-        return _renderizar_pantalla_pendientes_pago(
-            request, error=f"No se pudo marcar la seña como pagada: {error_db}", status_code=500
-        )
-    return RedirectResponse(url="/puesto/envases/pendientes", status_code=303)
+    return _cerrar_sena_y_redirigir(request, movimiento_id, "pagada")
+
+
+@app.post("/puesto/envases/pendientes/{movimiento_id}/vale")
+def vale_sena_ruta(request: Request, movimiento_id: int):
+    """El pendiente se cierra con un vale. Por ahora es solo el dato — sin numeración, cobro ni vencimiento."""
+    return _cerrar_sena_y_redirigir(request, movimiento_id, "vale")
+
+
+@app.post("/puesto/envases/pendientes/{movimiento_id}/anular-sena")
+def anular_sena_ruta(request: Request, movimiento_id: int):
+    """Anula LA SEÑA (no se paga, decidido) — no toca el movimiento ni el stock."""
+    return _cerrar_sena_y_redirigir(request, movimiento_id, "anulada")
 
 
 def _rango_fechas_movimientos(fecha_desde: str | None, fecha_hasta: str | None):
