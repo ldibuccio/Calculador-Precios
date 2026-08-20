@@ -75,6 +75,28 @@
     white-space: nowrap;
   }
   .renglon form { margin: 0; }
+  /* Los ajustes NO son movimientos reales, son correcciones: se muestran
+     aparte y con otra cara (fondo amarillo, pill, cantidad con signo) para
+     que jamás se confundan con una entrada o salida al auditar. */
+  .tarjeta-ajustes {
+    background: #fefce8;
+    border: 2px solid #facc15;
+  }
+  .pill-ajuste {
+    display: inline-block;
+    background: #facc15;
+    color: #713f12;
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    margin-right: 0.35rem;
+  }
+  .renglon.ajuste { border-top: 1px solid #fde68a; }
+  .renglon.ajuste .cantidad-ajuste { font-weight: 800; font-size: 1.05rem; }
+  .renglon.ajuste .motivo-ajuste { font-style: italic; color: #713f12; }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -156,6 +178,34 @@
       {% endfor %}
     {% else %}
     <p class="vacio">Sin salidas en este rango.</p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta tarjeta-ajustes">
+    <h2>Ajustes (correcciones de stock)</h2>
+    {% if ajustes %}
+      {% for a in ajustes %}
+      <div class="renglon ajuste {% if a.anulado_el %}anulado{% endif %}">
+        <div class="detalle">
+          <span class="pill-ajuste">Ajuste</span>
+          <span class="cantidad-ajuste">{% if a.cantidad > 0 %}+{% endif %}{{ a.cantidad }}</span>
+          × {{ a.tipo_nombre }} de {{ a.proveedor_nombre }}
+          <div class="extra motivo-ajuste">Motivo: {{ a.motivo }}</div>
+          <div class="extra">{{ a.creado_en|fecha_hora }} — el sistema decía {{ a.stock_sistema }}</div>
+          {% if a.anulado_el %}<span class="marca-anulado">Anulado el {{ a.anulado_el|fecha_hora }}</span>{% endif %}
+        </div>
+        {% if not a.anulado_el %}
+        <form method="post" action="/puesto/envases/movimientos/ajustes/{{ a.id }}/anular"
+              onsubmit="return confirm('¿Anular este ajuste de {% if a.cantidad > 0 %}+{% endif %}{{ a.cantidad }} cajones?');">
+          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+          <button type="submit" class="boton-anular">Anular</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin ajustes en este rango.</p>
     {% endif %}
   </div>
 

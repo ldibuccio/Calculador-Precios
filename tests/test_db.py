@@ -4,11 +4,14 @@ from unittest.mock import MagicMock, patch
 
 from app.db import (
     actualizar_cantidad_compra,
+    anular_ajuste_vacios,
     anular_vacio_recibido,
     cerrar_sena,
+    crear_ajuste_vacios,
     crear_conteo_vacios,
     crear_tipo_envase_puesto,
     crear_vacio_devuelto,
+    listar_ajustes_vacios_por_rango,
     listar_conteos_vacios_de_fecha,
     listar_senas_pendientes,
     listar_senas_resueltas,
@@ -17,6 +20,7 @@ from app.db import (
     obtener_o_crear_cliente_puesto,
     obtener_o_crear_proveedor_puesto,
     stock_vacios,
+    stock_vacios_de_tipo,
     actualizar_cliente,
     actualizar_precio_compra,
     buscar_compras,
@@ -1837,21 +1841,80 @@ def test_anular_vacio_recibido_es_baja_logica_no_delete():
 def test_stock_vacios_excluye_anulados_y_calcula_la_diferencia():
     conexion, cursor = _conexion_falsa(
         filas_fetchall=[
-            (200, "Saturno", "N07P41", 1, "cajón negro", 50, 30),
+            (200, "Saturno", 1, "cajón negro", 50, 30, -5),
         ]
     )
     cursor.description = [
-        ("proveedor_id",), ("proveedor_nombre",), ("codigo_puesto",),
-        ("tipo_envase_id",), ("tipo_nombre",), ("recibidos",), ("devueltos",),
+        ("proveedor_id",), ("proveedor_nombre",),
+        ("tipo_envase_id",), ("tipo_nombre",), ("recibidos",), ("devueltos",), ("ajustes",),
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_vacios()
 
     consulta = cursor.execute.call_args[0][0]
-    # Los movimientos anulados no cuentan para el stock.
-    assert consulta.count("anulado_el IS NULL") == 2
-    assert filas[0]["stock"] == 20  # 50 recibidos − 30 devueltos
+    # Los movimientos anulados no cuentan para el stock (recibidos,
+    # devueltos NI ajustes).
+    assert consulta.count("anulado_el IS NULL") == 3
+    assert filas[0]["stock"] == 15  # 50 recibidos − 30 devueltos + (-5) ajustes
+
+
+def test_crear_ajuste_vacios_graba_la_foto_del_stock_y_devuelve_el_resultante():
+    # El sistema decía 40: esa foto queda GRABADA en la fila (SIN el
+    # ajuste), y la función devuelve 40 + (-5) = 35 para el aviso.
+    conexion, cursor = _conexion_falsa([(40,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock_nuevo = crear_ajuste_vacios(200, 1, -5, "Se rompieron dos")
+
+    assert stock_nuevo == 35
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO ajustes_vacios" in consulta_insert
+    assert "stock_sistema" in consulta_insert
+    assert parametros_insert == (200, 1, -5, "Se rompieron dos", 40)
+    conexion.commit.assert_called_once()
+
+
+def test_listar_ajustes_vacios_por_rango_incluye_los_anulados_marcados():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ajustes_vacios_por_rango(date(2026, 8, 12), date(2026, 8, 19))
+
+    consulta, parametros = cursor.execute.call_args.args
+    # Los anulados VIAJAN (con su anulado_el) para verse tachados en
+    # Movimientos: no se filtran.
+    assert "anulado_el IS NULL" not in consulta
+    assert "a.anulado_el" in consulta
+    assert "a.motivo" in consulta
+    assert "BETWEEN %s AND %s" in consulta
+    assert parametros == (date(2026, 8, 12), date(2026, 8, 19))
+
+
+def test_anular_ajuste_vacios_es_baja_logica_no_delete():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_ajuste_vacios(30)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE ajustes_vacios SET anulado_el = now()" in consulta
+    assert "DELETE" not in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert parametros == (30,)
+
+
+def test_stock_vacios_de_tipo_suma_los_ajustes_y_excluye_anulados():
+    conexion, cursor = _conexion_falsa([(62,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock = stock_vacios_de_tipo(200, 1)
+
+    assert stock == 62
+    consulta, parametros = cursor.execute.call_args.args
+    assert "FROM ajustes_vacios" in consulta
+    assert consulta.count("anulado_el IS NULL") == 3
+    assert parametros == (200, 1, 200, 1, 200, 1)
 
 
 def test_crear_conteo_vacios_graba_la_foto_del_stock_y_no_la_devuelve():

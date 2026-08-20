@@ -28,6 +28,7 @@ from app.db import (
     actualizar_ficha,
     actualizar_importe_compra,
     actualizar_precio_compra,
+    anular_ajuste_vacios,
     anular_vacio_devuelto,
     anular_vacio_recibido,
     aprender_articulo,
@@ -46,6 +47,7 @@ from app.db import (
     crear_articulo,
     crear_cliente,
     crear_compra,
+    crear_ajuste_vacios,
     crear_compras_de_comanda,
     crear_conteo_vacios,
     crear_envase,
@@ -66,6 +68,7 @@ from app.db import (
     guardar_disponible,
     guardar_precios_cliente,
     limpiar_foto_ruta_de_compras,
+    listar_ajustes_vacios_por_rango,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_sin_ficha,
@@ -117,6 +120,7 @@ from app.db import (
     rechazar_compra,
     registrar_costo_envase,
     stock_vacios,
+    stock_vacios_de_tipo,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
@@ -5617,7 +5621,21 @@ def ver_cotejo_vacios(request: Request):
 
     filas = []
     for conteo in conteos:
-        filas.append(dict(conteo, diferencia=conteo["cantidad"] - conteo["stock_sistema"]))
+        fila = dict(conteo, diferencia=conteo["cantidad"] - conteo["stock_sistema"])
+        # Con diferencia, botón directo a la pantalla de ajuste, precargada
+        # con este conteo (la cantidad final se calcula ahí contra el stock
+        # ACTUAL, no contra esta foto — ver ver_ajustar_stock_vacios).
+        if fila["diferencia"] != 0:
+            fila["query_ajuste"] = urlencode(
+                {
+                    "proveedor_id": conteo["proveedor_id"],
+                    "tipo_envase_id": conteo["tipo_envase_id"],
+                    "contado": conteo["cantidad"],
+                    "stock_conteo": conteo["stock_sistema"],
+                    "fecha_conteo": conteo["creado_en"].date().isoformat(),
+                }
+            )
+        filas.append(fila)
 
     return templates.TemplateResponse(request, "vacios_cotejo.html", {"filas": filas})
 
@@ -5697,6 +5715,7 @@ def ver_movimientos_vacios(request: Request, fecha_desde: str | None = None, fec
     try:
         recibidos = listar_vacios_recibidos_por_rango(desde, hasta)
         devueltos = listar_vacios_devueltos_por_rango(desde, hasta)
+        ajustes = listar_ajustes_vacios_por_rango(desde, hasta)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -5706,6 +5725,7 @@ def ver_movimientos_vacios(request: Request, fecha_desde: str | None = None, fec
         {
             "recibidos": recibidos,
             "devueltos": devueltos,
+            "ajustes": ajustes,
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
         },
@@ -5736,6 +5756,151 @@ def anular_devuelto_desde_movimientos_ruta(
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
     return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
+
+
+@app.post("/puesto/envases/movimientos/ajustes/{ajuste_id}/anular")
+def anular_ajuste_desde_movimientos_ruta(
+    request: Request, ajuste_id: int, fecha_desde: str = Form(""), fecha_hasta: str = Form("")
+):
+    """Anula un ajuste con el mismo mecanismo que los demás movimientos: registro visible, nunca DELETE."""
+    try:
+        anular_ajuste_vacios(ajuste_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el ajuste: {error_db}") from error_db
+    return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
+
+
+def _renderizar_pantalla_ajustar_vacios(
+    request: Request, *, precarga=None, error=None, aviso=None, status_code: int = 200
+):
+    try:
+        tipos, proveedores = _tipos_envase_y_proveedores()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_ajustar.html",
+        {
+            "tipos": tipos,
+            "proveedores": proveedores,
+            "precarga": precarga or {},
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/ajustar")
+def ver_ajustar_stock_vacios(
+    request: Request,
+    aviso: str | None = None,
+    proveedor_id: str | None = None,
+    tipo_envase_id: str | None = None,
+    contado: str | None = None,
+    stock_conteo: str | None = None,
+    fecha_conteo: str | None = None,
+):
+    """Ajuste de stock (cajera). Sin precarga: pantalla en blanco; con precarga (viene del Cotejo): calcula el ajuste.
+
+    La cantidad precargada es contado − stock ACTUAL (no la diferencia
+    congelada del cotejo): "ajustar a lo contado" tiene que dejar el
+    stock en lo contado, aunque hayan entrado movimientos después del
+    conteo. Si el stock cambió desde el conteo, la pantalla lo dice con
+    todos los números — el ajuste sugerido puede no coincidir con la
+    diferencia que se vio en el Cotejo, y eso hay que entenderlo ANTES
+    de guardar, no descubrirlo después.
+    """
+    precarga = {}
+    if proveedor_id and tipo_envase_id and contado is not None and contado.strip().lstrip("-").isdigit():
+        try:
+            contado_valor = int(contado)
+            stock_actual = stock_vacios_de_tipo(int(proveedor_id), int(tipo_envase_id))
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+        precarga = {
+            "proveedor_id": proveedor_id,
+            "tipo_envase_id": tipo_envase_id,
+            "cantidad": contado_valor - stock_actual,
+            "motivo": f"Ajuste a lo contado: conteo del {fecha_conteo or '?'} ({contado_valor} contados)",
+        }
+        # El aviso de "el stock se movió desde el conteo": solo si la foto
+        # del conteo (stock_conteo) difiere del stock actual.
+        if stock_conteo is not None and stock_conteo.strip().lstrip("-").isdigit() and int(stock_conteo) != stock_actual:
+            precarga["aviso_conteo"] = (
+                f"Ojo: el conteo fue del {fecha_conteo or '?'} con {contado_valor} contados y el sistema decía "
+                f"{int(stock_conteo)}. Desde entonces hubo movimientos: el stock actual es {stock_actual}, "
+                f"así que el ajuste sugerido para dejarlo en lo contado es "
+                f"{contado_valor - stock_actual:+d} (no la diferencia que viste en el Cotejo)."
+            )
+
+    return _renderizar_pantalla_ajustar_vacios(request, precarga=precarga, aviso=aviso)
+
+
+@app.post("/puesto/envases/ajustar")
+def ajustar_stock_vacios_ruta(
+    request: Request,
+    proveedor_id: str = Form(""),
+    tipo_envase_id: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+):
+    """Guarda un ajuste: cantidad con signo (nunca 0) y motivo OBLIGATORIO — sin motivo no se guarda."""
+    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    error = None
+    cantidad_valor = None
+
+    texto_cantidad = cantidad.strip()
+    if not texto_cantidad:
+        error = "La cantidad del ajuste es obligatoria."
+    else:
+        try:
+            cantidad_valor = int(texto_cantidad)
+        except ValueError:
+            error = "La cantidad del ajuste tiene que ser un número entero (positivo o negativo)."
+        else:
+            if cantidad_valor == 0:
+                error = "Un ajuste de 0 no ajusta nada."
+
+    if not error and not motivo_limpio:
+        error = "El motivo es obligatorio: sin motivo no se guarda el ajuste."
+
+    tipo_elegido = None
+    if not error:
+        try:
+            tipos, _ = _tipos_envase_y_proveedores()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        tipo_elegido = next(
+            (
+                t
+                for t in tipos
+                if str(t["id"]) == tipo_envase_id.strip() and str(t["proveedor_id"]) == proveedor_id.strip()
+            ),
+            None,
+        )
+        if tipo_elegido is None:
+            error = "Elegí un proveedor y un tipo de envase válidos."
+
+    if error:
+        return _renderizar_pantalla_ajustar_vacios(request, error=error, status_code=400)
+
+    try:
+        stock_nuevo = crear_ajuste_vacios(
+            tipo_elegido["proveedor_id"], tipo_elegido["id"], cantidad_valor, motivo_limpio
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_ajustar_vacios(
+            request, error=f"No se pudo guardar el ajuste: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Ajuste guardado: {cantidad_valor:+d} × {tipo_elegido['nombre']} de {tipo_elegido['proveedor_nombre']}. "
+        f"El stock quedó en {stock_nuevo}."
+    )
+    return RedirectResponse(url=f"/puesto/envases/ajustar?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 def _renderizar_pantalla_clientes_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):

@@ -38,6 +38,18 @@
   .diferencia-cero { color: #16a34a; }
   .diferencia-distinta { color: #dc2626; }
   .tarjeta.con-diferencia { border: 2px solid #fecaca; }
+  .boton-ajustar {
+    display: block;
+    margin-top: 0.75rem;
+    padding: 0.8rem;
+    background: #ea580c;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+  }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -77,6 +89,11 @@
           </span>
         </div>
       </div>
+      {% if f.query_ajuste %}
+      <!-- La cantidad final se calcula en la pantalla de ajuste contra el
+           stock ACTUAL (con aviso si cambió desde este conteo). -->
+      <a class="boton-ajustar" href="/puesto/envases/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      {% endif %}
     </div>
     {% endfor %}
   {% else %}

@@ -71,7 +71,7 @@
       {% for t in g.tipos %}
       <div class="fila-tipo">
         <span>{{ t.tipo_nombre }}
-          <span class="detalle-sumas">({{ t.recibidos }} recibidos − {{ t.devueltos }} devueltos)</span>
+          <span class="detalle-sumas">({{ t.recibidos }} recibidos − {{ t.devueltos }} devueltos{% if t.ajustes != 0 %} {% if t.ajustes > 0 %}+{% else %}−{% endif %} {{ t.ajustes|abs }} ajustes{% endif %})</span>
         </span>
         <span class="numero {% if t.stock < 0 %}negativo{% endif %}">{{ t.stock }}</span>
       </div>

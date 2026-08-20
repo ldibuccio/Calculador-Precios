@@ -2639,18 +2639,30 @@ def obtener_o_crear_cliente_puesto(nombre: str, nombre_normalizado: str) -> int:
 
 
 def _stock_vacios_actual(cursor, proveedor_id: int, tipo_envase_id: int) -> int:
-    """Stock del sistema para un proveedor+tipo: recibidos − devueltos, sin los movimientos anulados."""
+    """Stock del sistema para un proveedor+tipo: recibidos − devueltos + ajustes, sin los movimientos anulados."""
     cursor.execute(
         """
         SELECT COALESCE((SELECT SUM(cantidad) FROM vacios_recibidos
                          WHERE proveedor_id = %s AND tipo_envase_id = %s AND anulado_el IS NULL), 0)
              - COALESCE((SELECT SUM(cantidad) FROM vacios_devueltos
                          WHERE proveedor_id = %s AND tipo_envase_id = %s AND anulado_el IS NULL), 0)
+             + COALESCE((SELECT SUM(cantidad) FROM ajustes_vacios
+                         WHERE proveedor_id = %s AND tipo_envase_id = %s AND anulado_el IS NULL), 0)
         """,
-        (proveedor_id, tipo_envase_id, proveedor_id, tipo_envase_id),
+        (proveedor_id, tipo_envase_id) * 3,
     )
     (stock,) = cursor.fetchone()
     return int(stock)
+
+
+def stock_vacios_de_tipo(proveedor_id: int, tipo_envase_id: int) -> int:
+    """Stock actual del sistema para UN proveedor+tipo (para precargar el ajuste desde el Cotejo)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _stock_vacios_actual(cursor, proveedor_id, tipo_envase_id)
+    finally:
+        conexion.close()
 
 
 def crear_vacio_recibido(cliente_puesto_id: int, proveedor_id: int, tipo_envase_id: int, cantidad: int) -> None:
@@ -2787,7 +2799,7 @@ def anular_vacio_devuelto(movimiento_id: int) -> None:
 
 
 def stock_vacios() -> list[dict]:
-    """Stock del sistema por proveedor y tipo: recibidos − devueltos (sin anulados), calculado siempre.
+    """Stock del sistema por proveedor y tipo: recibidos − devueltos + ajustes (sin anulados), calculado siempre.
 
     Incluye tipos dados de baja que todavía tengan movimientos (su stock
     histórico no puede desaparecer de la pantalla por una baja del ABM).
@@ -2800,14 +2812,18 @@ def stock_vacios() -> list[dict]:
                 SELECT p.id AS proveedor_id, p.nombre AS proveedor_nombre,
                        t.id AS tipo_envase_id, t.nombre AS tipo_nombre,
                        COALESCE(r.total, 0) AS recibidos,
-                       COALESCE(d.total, 0) AS devueltos
+                       COALESCE(d.total, 0) AS devueltos,
+                       COALESCE(aj.total, 0) AS ajustes
                 FROM tipos_envase_puesto t
                 JOIN proveedores_puesto p ON p.id = t.proveedor_id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_recibidos
                            WHERE anulado_el IS NULL GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_devueltos
                            WHERE anulado_el IS NULL GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
+                LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM ajustes_vacios
+                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) aj ON aj.tipo_envase_id = t.id
                 WHERE t.activo OR COALESCE(r.total, 0) <> 0 OR COALESCE(d.total, 0) <> 0
+                   OR COALESCE(aj.total, 0) <> 0
                 ORDER BY p.nombre, t.id
                 """
             )
@@ -2815,8 +2831,72 @@ def stock_vacios() -> list[dict]:
             filas = cursor.fetchall()
         resultado = [dict(zip(columnas, fila)) for fila in filas]
         for fila in resultado:
-            fila["stock"] = int(fila["recibidos"]) - int(fila["devueltos"])
+            fila["stock"] = int(fila["recibidos"]) - int(fila["devueltos"]) + int(fila["ajustes"])
         return resultado
+    finally:
+        conexion.close()
+
+
+def crear_ajuste_vacios(proveedor_id: int, tipo_envase_id: int, cantidad: int, motivo: str) -> int:
+    """Ajuste de stock (cajera): cantidad con signo (nunca 0) y motivo obligatorio. Devuelve el stock RESULTANTE.
+
+    Es un movimiento más, NUNCA pisa el stock: fila nueva con la foto del
+    sistema del momento (stock_sistema, SIN este ajuste) — igual que
+    devoluciones y conteos. Sin ese rastro, cualquier faltante se taparía
+    con un ajuste y se acaba el control cruzado.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            stock_sistema = _stock_vacios_actual(cursor, proveedor_id, tipo_envase_id)
+            cursor.execute(
+                """
+                INSERT INTO ajustes_vacios (proveedor_id, tipo_envase_id, cantidad, motivo, stock_sistema)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (proveedor_id, tipo_envase_id, cantidad, motivo, stock_sistema),
+            )
+        conexion.commit()
+        return stock_sistema + cantidad
+    finally:
+        conexion.close()
+
+
+def listar_ajustes_vacios_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+    """Ajustes de un rango de fechas (anulados incluidos, marcados), para la pantalla Movimientos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.id, a.cantidad, a.motivo, a.stock_sistema, a.creado_en, a.anulado_el,
+                       p.nombre AS proveedor_nombre,
+                       t.nombre AS tipo_nombre
+                FROM ajustes_vacios a
+                JOIN proveedores_puesto p ON p.id = a.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = a.tipo_envase_id
+                WHERE a.creado_en::date BETWEEN %s AND %s
+                ORDER BY a.creado_en DESC
+                """,
+                (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def anular_ajuste_vacios(ajuste_id: int) -> None:
+    """Anula un ajuste (baja lógica): el registro queda visible como corrección, el stock lo excluye."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE ajustes_vacios SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (ajuste_id,),
+            )
+        conexion.commit()
     finally:
         conexion.close()
 
@@ -2884,7 +2964,8 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
             cursor.execute(
                 """
                 SELECT DISTINCT ON (c.proveedor_id, c.tipo_envase_id)
-                       c.id, c.cantidad, c.stock_sistema, c.creado_en,
+                       c.id, c.proveedor_id, c.tipo_envase_id,
+                       c.cantidad, c.stock_sistema, c.creado_en,
                        p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM conteos_vacios c

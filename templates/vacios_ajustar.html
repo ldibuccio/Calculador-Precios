@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ajustar Stock</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #14532d;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  /* El aviso del conteo desactualizado va en amarillo: hay que leerlo ANTES
+     de guardar, porque el ajuste sugerido no coincide con lo visto en el Cotejo. */
+  .aviso-conteo {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 1rem; }
+  form label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form input, form select {
+    width: 100%;
+    padding: 0.8rem;
+    margin-bottom: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .nota-campo { color: #888; font-size: 0.8rem; margin: -0.6rem 0 0.9rem; }
+  button[type="submit"] {
+    width: 100%;
+    padding: 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Ajustar Stock" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  {% if precarga.aviso_conteo %}
+  <div class="aviso-conteo">{{ precarga.aviso_conteo }}</div>
+  {% endif %}
+
+  <p class="ayuda">Corrección del stock del sistema: positivo suma, negativo resta. Queda registrado como un movimiento más — no pisa nada ni se borra.</p>
+
+  <div class="tarjeta">
+    {% if not tipos %}
+    <p class="vacio">Todavía no hay tipos de envase cargados. Se cargan desde Envases Puesto → Tipos de Envase.</p>
+    {% else %}
+    <form method="post" action="/puesto/envases/ajustar">
+      <label for="proveedor_id">Proveedor *</label>
+      <select id="proveedor_id" name="proveedor_id" required onchange="actualizarTipos()">
+        {% for p in proveedores %}
+        <option value="{{ p.id }}" {% if precarga.proveedor_id and p.id|string == precarga.proveedor_id|string %}selected{% endif %}>{{ p.nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="tipo_envase_id">Tipo de envase *</label>
+      <select id="tipo_envase_id" name="tipo_envase_id" required></select>
+
+      <label for="cantidad">Cantidad del ajuste (con signo) *</label>
+      <input type="number" id="cantidad" name="cantidad" step="1" required inputmode="numeric"
+             value="{{ precarga.cantidad if precarga.cantidad is defined else '' }}">
+      <p class="nota-campo">Ejemplo: 3 suma tres cajones, -3 resta tres. Cero no vale.</p>
+
+      <label for="motivo">Motivo (obligatorio) *</label>
+      <input type="text" id="motivo" name="motivo" required value="{{ precarga.motivo or '' }}"
+             placeholder="Por qué se ajusta — sin motivo no se guarda">
+
+      <button type="submit">Guardar Ajuste</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+
+  <script>
+    // Mismo mecanismo que Recibir/Devolver: tipos por proveedor. Con precarga
+    // (viene del Cotejo) se respeta el tipo precargado; sin ella, el primero.
+    const TIPOS_POR_PROVEEDOR = {};
+    {% for t in tipos %}
+    (TIPOS_POR_PROVEEDOR["{{ t.proveedor_id }}"] = TIPOS_POR_PROVEEDOR["{{ t.proveedor_id }}"] || []).push(
+      { id: "{{ t.id }}", nombre: "{{ t.nombre }}" }
+    );
+    {% endfor %}
+    const TIPO_PRECARGADO = "{{ precarga.tipo_envase_id or '' }}";
+
+    function actualizarTipos() {
+      const selectProveedor = document.getElementById("proveedor_id");
+      const selectTipo = document.getElementById("tipo_envase_id");
+      if (!selectProveedor || !selectTipo) return;
+      const tipos = TIPOS_POR_PROVEEDOR[selectProveedor.value] || [];
+      selectTipo.innerHTML = "";
+      tipos.forEach(function (tipo, indice) {
+        const opcion = document.createElement("option");
+        opcion.value = tipo.id;
+        opcion.textContent = tipo.nombre;
+        if (indice === 0) opcion.selected = true;
+        if (TIPO_PRECARGADO && tipo.id === TIPO_PRECARGADO) opcion.selected = true;
+        selectTipo.appendChild(opcion);
+      });
+    }
+
+    actualizarTipos();
+  </script>
+</body>
+</html>

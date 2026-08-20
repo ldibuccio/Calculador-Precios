@@ -9323,11 +9323,14 @@ def test_anular_vacio_devuelto_redirige_a_devolver():
 def test_ver_stock_vacios_agrupa_por_proveedor_y_marca_negativos():
     filas = [
         {"proveedor_id": 200, "proveedor_nombre": "Saturno",
-         "tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro", "recibidos": 50, "devueltos": 30, "stock": 20},
+         "tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro",
+         "recibidos": 50, "devueltos": 30, "ajustes": 0, "stock": 20},
         {"proveedor_id": 200, "proveedor_nombre": "Saturno",
-         "tipo_envase_id": 2, "tipo_nombre": "torito", "recibidos": 10, "devueltos": 15, "stock": -5},
+         "tipo_envase_id": 2, "tipo_nombre": "torito",
+         "recibidos": 10, "devueltos": 15, "ajustes": 0, "stock": -5},
         {"proveedor_id": 201, "proveedor_nombre": "Don Pepe",
-         "tipo_envase_id": 3, "tipo_nombre": "cajón madera", "recibidos": 8, "devueltos": 0, "stock": 8},
+         "tipo_envase_id": 3, "tipo_nombre": "cajón madera",
+         "recibidos": 8, "devueltos": 0, "ajustes": 0, "stock": 8},
     ]
     with patch("app.main.stock_vacios", return_value=filas):
         respuesta = cliente.get("/puesto/envases/stock")
@@ -9335,7 +9338,8 @@ def test_ver_stock_vacios_agrupa_por_proveedor_y_marca_negativos():
     assert respuesta.status_code == 200
     assert "Saturno" in respuesta.text
     assert "Don Pepe" in respuesta.text
-    assert "50 recibidos − 30 devueltos" in respuesta.text
+    # Con ajustes en 0 el desglose no los menciona.
+    assert "50 recibidos − 30 devueltos)" in respuesta.text
     # El negativo va marcado en rojo (clase negativo).
     assert 'class="numero negativo">-5<' in respuesta.text
     # Total del proveedor con más de un tipo: 20 + (-5) = 15.
@@ -9458,16 +9462,20 @@ def test_cargar_stock_fisico_con_cantidad_negativa_da_error():
     mock_crear.assert_not_called()
 
 
+CONTEOS_COTEJO_DE_PRUEBA = [
+    {"id": 1, "cantidad": 35, "stock_sistema": 40,
+     "proveedor_id": 200, "tipo_envase_id": 1,
+     "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
+     "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
+    {"id": 2, "cantidad": 8, "stock_sistema": 8,
+     "proveedor_id": 201, "tipo_envase_id": 3,
+     "creado_en": datetime(2026, 8, 19, 14, 5, tzinfo=timezone.utc),
+     "proveedor_nombre": "Don Pepe", "tipo_nombre": "cajón madera"},
+]
+
+
 def test_ver_cotejo_compara_contra_la_foto_del_conteo():
-    conteos = [
-        {"id": 1, "cantidad": 35, "stock_sistema": 40,
-         "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
-         "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
-        {"id": 2, "cantidad": 8, "stock_sistema": 8,
-         "creado_en": datetime(2026, 8, 19, 14, 5, tzinfo=timezone.utc),
-         "proveedor_nombre": "Don Pepe", "tipo_nombre": "cajón madera"},
-    ]
-    with patch("app.main.listar_ultimos_conteos_vacios", return_value=conteos):
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=CONTEOS_COTEJO_DE_PRUEBA):
         respuesta = cliente.get("/puesto/envases/cotejo")
 
     assert respuesta.status_code == 200
@@ -9475,6 +9483,22 @@ def test_ver_cotejo_compara_contra_la_foto_del_conteo():
     assert "-5" in respuesta.text
     assert "con-diferencia" in respuesta.text
     assert "diferencia-cero" in respuesta.text
+
+
+def test_ver_cotejo_ofrece_ajustar_a_lo_contado_solo_con_diferencia():
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=CONTEOS_COTEJO_DE_PRUEBA):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    # La fila con diferencia (Saturno, contado 35 vs sistema 40) lleva el
+    # botón con toda la precarga; la que dio igual, no.
+    assert respuesta.text.count("Ajustar a lo contado") == 1
+    assert "/puesto/envases/ajustar?" in respuesta.text
+    assert "proveedor_id=200" in respuesta.text
+    assert "tipo_envase_id=1" in respuesta.text
+    assert "contado=35" in respuesta.text
+    assert "stock_conteo=40" in respuesta.text
+    assert "fecha_conteo=2026-08-19" in respuesta.text
 
 
 def test_ver_pendientes_de_pago_ofrece_los_tres_cierres():
@@ -9551,12 +9575,14 @@ def test_ver_movimientos_usa_los_ultimos_7_dias_por_defecto():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
         patch("app.main.listar_vacios_recibidos_por_rango", return_value=[]) as mock_recibidos,
         patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]) as mock_devueltos,
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=[]) as mock_ajustes,
     ):
         respuesta = cliente.get("/puesto/envases/movimientos")
 
     assert respuesta.status_code == 200
     mock_recibidos.assert_called_once_with(date(2026, 8, 12), date(2026, 8, 19))
     mock_devueltos.assert_called_once_with(date(2026, 8, 12), date(2026, 8, 19))
+    mock_ajustes.assert_called_once_with(date(2026, 8, 12), date(2026, 8, 19))
 
 
 def test_ver_movimientos_permite_anular_de_cualquier_fecha_conservando_filtros():
@@ -9568,6 +9594,7 @@ def test_ver_movimientos_permite_anular_de_cualquier_fecha_conservando_filtros()
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
         patch("app.main.listar_vacios_recibidos_por_rango", return_value=recibidos),
         patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=[]),
     ):
         respuesta = cliente.get("/puesto/envases/movimientos?fecha_desde=2026-08-09&fecha_hasta=2026-08-11")
 
@@ -9590,6 +9617,207 @@ def test_anular_desde_movimientos_redirige_al_mismo_rango():
     assert location.startswith("/puesto/envases/movimientos?")
     assert "fecha_desde=2026-08-09" in location
     mock_anular.assert_called_once_with(9)
+
+
+# --- Vacíos: ajustes de stock (cajera) ---
+
+
+AJUSTES_VACIOS_DE_PRUEBA = [
+    {"id": 30, "cantidad": -5, "motivo": "Se rompieron dos y tres desaparecieron",
+     "stock_sistema": 40, "creado_en": datetime(2026, 8, 19, 15, 0, tzinfo=timezone.utc),
+     "anulado_el": None, "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
+    {"id": 31, "cantidad": 3, "motivo": "Conteo inicial mal cargado",
+     "stock_sistema": 10, "creado_en": datetime(2026, 8, 18, 11, 0, tzinfo=timezone.utc),
+     "anulado_el": datetime(2026, 8, 19, 9, 0, tzinfo=timezone.utc),
+     "proveedor_nombre": "Don Pepe", "tipo_nombre": "cajón madera"},
+]
+
+
+def test_ver_movimientos_muestra_los_ajustes_claramente_distintos():
+    # Pedido explícito: los ajustes (correcciones) no se pueden confundir con
+    # entradas/salidas reales al auditar — tarjeta y pill propias.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=[]),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=AJUSTES_VACIOS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos")
+
+    assert respuesta.status_code == 200
+    assert "tarjeta-ajustes" in respuesta.text
+    assert respuesta.text.count('class="pill-ajuste"') == 2
+    # Cantidad siempre con signo y el motivo a la vista.
+    assert "-5" in respuesta.text
+    assert "+3" in respuesta.text
+    assert "Se rompieron dos y tres desaparecieron" in respuesta.text
+    assert "el sistema decía 40" in respuesta.text
+    # Solo el activo ofrece Anular (con los filtros ocultos); el anulado queda marcado.
+    assert 'action="/puesto/envases/movimientos/ajustes/30/anular"' in respuesta.text
+    assert 'action="/puesto/envases/movimientos/ajustes/31/anular"' not in respuesta.text
+    assert "Anulado el" in respuesta.text
+
+
+def test_anular_ajuste_desde_movimientos_redirige_al_mismo_rango():
+    with patch("app.main.anular_ajuste_vacios") as mock_anular:
+        respuesta = cliente.post(
+            "/puesto/envases/movimientos/ajustes/30/anular",
+            data={"fecha_desde": "2026-08-09", "fecha_hasta": "2026-08-11"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/puesto/envases/movimientos?")
+    assert "fecha_desde=2026-08-09" in location
+    mock_anular.assert_called_once_with(30)
+
+
+def test_ver_ajustar_stock_en_blanco():
+    with patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA):
+        respuesta = cliente.get("/puesto/envases/ajustar")
+
+    assert respuesta.status_code == 200
+    assert 'action="/puesto/envases/ajustar"' in respuesta.text
+    # La cantidad admite negativos: number sin min.
+    assert 'name="cantidad"' in respuesta.text
+    assert 'min=' not in respuesta.text.split('name="cantidad"')[1].split(">")[0]
+    # El motivo es obligatorio también en el HTML.
+    assert 'id="motivo" name="motivo" required' in respuesta.text
+    # Sin precarga no hay cartel amarillo del conteo.
+    assert "aviso-conteo" not in respuesta.text.replace(".aviso-conteo", "")
+
+
+def test_ver_ajustar_stock_precarga_contra_el_stock_actual():
+    # Contado 35, stock actual 40 (igual a la foto del conteo): precarga -5
+    # y sin aviso, porque nada se movió desde el conteo.
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.stock_vacios_de_tipo", return_value=40) as mock_stock,
+    ):
+        respuesta = cliente.get(
+            "/puesto/envases/ajustar?proveedor_id=200&tipo_envase_id=1"
+            "&contado=35&stock_conteo=40&fecha_conteo=2026-08-19"
+        )
+
+    assert respuesta.status_code == 200
+    mock_stock.assert_called_once_with(200, 1)
+    assert 'value="-5"' in respuesta.text
+    assert "Ajuste a lo contado: conteo del 2026-08-19 (35 contados)" in respuesta.text
+    assert "Ojo: el conteo fue del" not in respuesta.text
+
+
+def test_ver_ajustar_stock_avisa_si_el_stock_cambio_desde_el_conteo():
+    # El caso del usuario: conteo viejo (35 contados, sistema decía 40),
+    # pero desde entonces hubo movimientos y el stock actual es 52. El
+    # ajuste sugerido es 35 − 52 = -17, NO la diferencia del Cotejo (-5),
+    # y la pantalla lo explica con todos los números.
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.stock_vacios_de_tipo", return_value=52),
+    ):
+        respuesta = cliente.get(
+            "/puesto/envases/ajustar?proveedor_id=200&tipo_envase_id=1"
+            "&contado=35&stock_conteo=40&fecha_conteo=2026-08-19"
+        )
+
+    assert respuesta.status_code == 200
+    assert 'value="-17"' in respuesta.text
+    assert "Ojo: el conteo fue del 2026-08-19 con 35 contados" in respuesta.text
+    assert "el sistema decía 40" in respuesta.text
+    assert "el stock actual es 52" in respuesta.text
+    assert "-17 (no la diferencia que viste en el Cotejo)" in respuesta.text
+
+
+def test_guardar_ajuste_negativo_con_motivo_redirige_con_el_stock_resultante():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_ajuste_vacios", return_value=15) as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/ajustar",
+            data={"proveedor_id": "200", "tipo_envase_id": "1",
+                  "cantidad": "-5", "motivo": "  Se rompieron   dos "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/puesto/envases/ajustar?")
+    assert "El+stock+qued%C3%B3+en+15" in location
+    mock_crear.assert_called_once_with(200, 1, -5, "Se rompieron dos")
+
+
+def test_guardar_ajuste_sin_motivo_no_guarda():
+    # La regla dura del usuario: sin motivo no se guarda, ni con espacios.
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_ajuste_vacios") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/ajustar",
+            data={"proveedor_id": "200", "tipo_envase_id": "1",
+                  "cantidad": "-5", "motivo": "   "},
+        )
+
+    assert respuesta.status_code == 400
+    assert "El motivo es obligatorio: sin motivo no se guarda el ajuste." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_guardar_ajuste_de_cero_rechazado():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_ajuste_vacios") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/ajustar",
+            data={"proveedor_id": "200", "tipo_envase_id": "1",
+                  "cantidad": "0", "motivo": "porque sí"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Un ajuste de 0 no ajusta nada." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_guardar_ajuste_con_par_proveedor_tipo_invalido_da_error():
+    # El tipo 3 es de Don Pepe (201), no de Saturno (200): la lista es cerrada.
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_ajuste_vacios") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/ajustar",
+            data={"proveedor_id": "200", "tipo_envase_id": "3",
+                  "cantidad": "4", "motivo": "prueba"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí un proveedor y un tipo de envase válidos." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_ver_stock_vacios_muestra_los_ajustes_en_el_desglose():
+    filas = [
+        {"proveedor_id": 200, "proveedor_nombre": "Saturno",
+         "tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro",
+         "recibidos": 50, "devueltos": 30, "ajustes": -5, "stock": 15},
+    ]
+    with patch("app.main.stock_vacios", return_value=filas):
+        respuesta = cliente.get("/puesto/envases/stock")
+
+    assert respuesta.status_code == 200
+    assert "50 recibidos − 30 devueltos − 5 ajustes" in respuesta.text
+    assert ">15</span>" in respuesta.text
+
+
+def test_hub_envases_puesto_tiene_el_boton_de_ajustar_stock():
+    respuesta = cliente.get("/puesto/envases")
+
+    assert respuesta.status_code == 200
+    assert 'href="/puesto/envases/ajustar"' in respuesta.text
+    assert "Ajustar Stock" in respuesta.text
 
 
 def test_ver_clientes_puesto_lista_con_alta_y_baja():
