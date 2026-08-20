@@ -9132,7 +9132,9 @@ def test_ver_envases_puesto_separa_vacios_del_resto():
     assert 'href="/puesto/envases/pendientes"' in respuesta.text
     assert 'href="/puesto/envases/movimientos"' in respuesta.text
     assert 'href="/puesto/envases/tipos"' in respuesta.text
-    assert 'href="/puesto/envases/clientes"' in respuesta.text
+    # Sin botón de Clientes del Puesto: los clientes se crean solos al
+    # tipear en Recibir — la ruta sigue viva, pero sin botón en el hub.
+    assert 'href="/puesto/envases/clientes"' not in respuesta.text
 
 
 def test_ver_vacios_muestra_las_tres_pantallas_del_empleado():
