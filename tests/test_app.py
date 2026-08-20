@@ -8343,13 +8343,13 @@ def test_barra_navegacion_tiene_boton_de_volver_atras():
 
 
 def test_el_titulo_de_la_barra_no_se_recorta_con_puntos_suspensivos():
-    # El título va en letra chica (1.05rem) y puede bajar a dos líneas,
-    # pero nunca se corta con "…" (antes los títulos largos no entraban
-    # en celular).
+    # 1.2rem calibrado a ojo sobre capturas a 390px: "Pendientes de Pago"
+    # llena una línea justa; los muy largos bajan a dos líneas, pero nunca
+    # se cortan con "…".
     respuesta = cliente.get("/compras")
 
     assert "text-overflow" not in respuesta.text
-    assert "font-size: 1.05rem" in respuesta.text
+    assert "font-size: 1.2rem" in respuesta.text
 
 
 def test_barra_navegacion_en_comercial_usa_icono_distinto_de_compras():
