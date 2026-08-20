@@ -7290,16 +7290,16 @@ def test_ver_inicio_deposito_y_logistica_ya_no_dicen_proximamente():
     assert "Gerencia (Próximamente)" in respuesta.text
 
 
-def test_ver_inicio_facturacion_y_puesto_son_proximamente():
-    # Marcadores de lugar, sin funcionalidad todavía: mismo tratamiento
-    # atenuado que Gerencia.
+def test_ver_inicio_facturacion_es_proximamente_y_puesto_ya_no():
+    # Facturación sigue siendo un marcador de lugar; Puesto ya es un módulo
+    # real (Envases Puesto / Vacíos) y va con botón pleno.
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
     assert '<a class="boton-area boton-proximamente" href="/facturacion">' in respuesta.text
     assert "Facturación (Próximamente)" in respuesta.text
-    assert '<a class="boton-area boton-proximamente" href="/puesto">' in respuesta.text
-    assert "Puesto (Próximamente)" in respuesta.text
+    assert '<a class="boton-area" href="/puesto">' in respuesta.text
+    assert "Puesto (Próximamente)" not in respuesta.text
 
 
 def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
