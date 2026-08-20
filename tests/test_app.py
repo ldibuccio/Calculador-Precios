@@ -7290,6 +7290,14 @@ def test_ver_inicio_deposito_y_logistica_ya_no_dicen_proximamente():
     assert "Gerencia (Próximamente)" in respuesta.text
 
 
+def test_ver_inicio_puesto_es_el_primer_boton():
+    # El Puesto es lo que más se usa en el día: va arriba de todo.
+    respuesta = cliente.get("/inicio")
+
+    assert respuesta.status_code == 200
+    assert respuesta.text.index('href="/puesto"') < respuesta.text.index('href="/compras"')
+
+
 def test_ver_inicio_facturacion_es_proximamente_y_puesto_ya_no():
     # Facturación sigue siendo un marcador de lugar; Puesto ya es un módulo
     # real (Envases Puesto / Vacíos) y va con botón pleno.
