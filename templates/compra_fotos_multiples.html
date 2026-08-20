@@ -763,7 +763,8 @@
 
     document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
       if (confirm("¿Seguro? Se pierde la foto que estás cargando ahora (las que ya guardaste quedan guardadas).")) {
-        window.location = "/compras/buscar";
+        // Cancelar = salir al hub; terminar de cargar sí va a Buscar.
+        window.location = "/compras";
       }
     });
 

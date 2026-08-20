@@ -716,7 +716,8 @@
 
     document.getElementById("boton-cancelar-multiple").addEventListener("click", function () {
       if (confirm("¿Seguro? Se pierde el proveedor que estás cargando ahora (los que ya guardaste quedan guardados).")) {
-        window.location = "/compras/buscar";
+        // Cancelar = salir al hub; terminar de cargar sí va a Buscar.
+        window.location = "/compras";
       }
     });
   </script>

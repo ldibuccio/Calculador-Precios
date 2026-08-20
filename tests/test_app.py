@@ -1710,6 +1710,35 @@ def test_ver_buscar_compras_muestra_contador_y_tabla():
     assert "SIN PRECIO" in respuesta.text
 
 
+def test_ver_buscar_compras_el_link_editar_lleva_los_filtros_activos():
+    # Para que Guardar/Volver de la edición vuelvan a ESTA búsqueda y no a
+    # la default de 48hs.
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/buscar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29&proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert "/editar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29&proveedor_id=200" in respuesta.text
+
+
+def test_pantallas_de_carga_multiple_cancelan_al_hub():
+    # Cancelar = salir al hub /compras; terminar de cargar sí va a Buscar
+    # (para revisar de un vistazo lo que la IA leyó).
+    with patch("app.main.listar_proveedores", return_value=[]):
+        multiples = cliente.get("/compras/nueva/fotos")
+        listado = cliente.get("/compras/nueva/listado")
+
+    for respuesta in (multiples, listado):
+        assert respuesta.status_code == 200
+        # El botón Cancelar va al hub...
+        assert 'window.location = "/compras";' in respuesta.text
+        # ...y el fin de la cola (terminaste todo) sigue yendo a Buscar.
+        assert 'window.location = "/compras/buscar";' in respuesta.text
+
+
 def test_ver_buscar_compras_sin_resultados_muestra_mensaje_y_no_boton_exportar():
     with (
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
@@ -1923,8 +1952,8 @@ def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
     assert respuesta.text.count("Ver foto") == 1
     assert 'href="/compras/1/foto"' in respuesta.text
     assert 'href="/compras/2/foto"' not in respuesta.text
-    assert 'href="/compras/1/editar"' in respuesta.text
-    assert 'href="/compras/2/editar"' in respuesta.text
+    assert 'href="/compras/1/editar?' in respuesta.text
+    assert 'href="/compras/2/editar?' in respuesta.text
     # El botón Detalle aparece siempre, al lado de Editar, sin importar la foto.
     assert respuesta.text.count(">Detalle<") == 2
     assert 'href="/compras/1/detalle"' in respuesta.text
@@ -2486,7 +2515,9 @@ def test_agregar_compra_error_de_base_muestra_mensaje_claro():
     assert "No se pudo guardar la compra" in respuesta.text
 
 
-def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_a_compras():
+def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_al_hub():
+    # Cancelar = salir: vuelve al hub /compras con el aviso, no a una
+    # búsqueda que nadie pidió (terminar de cargar sí va a Buscar).
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 0}) as mock_eliminar,
@@ -2499,10 +2530,8 @@ def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_a_compras():
 
     assert respuesta.status_code == 303
     location = respuesta.headers["location"]
-    assert location.startswith("/compras/buscar?")
-    assert f"fecha_desde={HOY_DE_PRUEBA.isoformat()}" in location
-    assert f"fecha_hasta={HOY_DE_PRUEBA.isoformat()}" in location
-    assert "proveedor_id=200" in location
+    assert location.startswith("/compras?")
+    assert "buscar" not in location
     assert "aviso=3+compras+canceladas." in location
     # Se borra TODO lo del proveedor en el día, no un renglón puntual: no
     # hace falta que el comprador haya cargado nada en el formulario para
@@ -3347,6 +3376,74 @@ def test_eliminar_compra_exitosa_redirige_a_compras():
     # Esta compra no tenía foto (eliminar_compra devolvió None): no hay
     # nada que borrar del Storage.
     mock_borrar_foto.assert_not_called()
+
+
+def test_eliminar_compra_exitosa_conserva_los_filtros_de_la_busqueda():
+    # Los filtros viajan como campos ocultos del form de la fila: al borrar
+    # se vuelve a la MISMA búsqueda, no a la default de 48hs.
+    with (
+        patch("app.main.eliminar_compra", return_value=None),
+        patch("app.main.borrar_foto_comanda"),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/eliminar",
+            data={"fecha_desde": "2026-07-28", "fecha_hasta": "2026-07-29", "proveedor_id": "7", "articulo_id": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/compras/buscar?")
+    assert "fecha_desde=2026-07-28" in location
+    assert "fecha_hasta=2026-07-29" in location
+    assert "proveedor_id=7" in location
+    # El filtro vacío no viaja (queda "Todos" en la búsqueda).
+    assert "articulo_id" not in location
+
+
+def test_editar_compra_exitosa_conserva_los_filtros_de_la_busqueda():
+    # Los filtros viajan en el query de la URL de editar (los pone el link
+    # "Editar" de Buscar): al guardar se vuelve a la MISMA búsqueda.
+    datos = {
+        "articulo_id": "5",
+        "cantidad_cajones": "10",
+        "contenido_por_cajon": "18",
+        "importe": "5000",
+        "sena": "",
+        "tipo_retiro": "Clark",
+    }
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.actualizar_cantidad_compra"),
+        patch("app.main.actualizar_precio_compra"),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29&proveedor_id=7&articulo_id=",
+            data=datos,
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/compras/buscar?")
+    assert "fecha_desde=2026-07-28" in location
+    assert "proveedor_id=7" in location
+
+
+def test_ver_editar_compra_con_filtros_los_lleva_en_el_form_y_en_volver():
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+    ):
+        respuesta = cliente.get("/compras/30/editar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29")
+
+    assert respuesta.status_code == 200
+    # El form postea a la misma URL con query (los filtros sobreviven al
+    # guardado y a los reintentos por error de validación).
+    assert 'action="/compras/30/editar?fecha_desde=2026-07-28&amp;fecha_hasta=2026-07-29"' in respuesta.text
+    # Y el botón Volver vuelve a esa misma búsqueda.
+    assert 'href="/compras/buscar?fecha_desde=2026-07-28&amp;fecha_hasta=2026-07-29"' in respuesta.text
 
 
 def test_eliminar_compra_con_foto_que_era_la_unica_referencia_la_borra_tambien_del_storage():
@@ -7315,6 +7412,27 @@ def test_ver_compras_sin_compras_sin_precio_no_muestra_cartel():
 
     assert respuesta.status_code == 200
     assert "sin precio de compra cargado" not in respuesta.text
+
+
+def test_ver_compras_muestra_el_aviso_cuando_viene_en_la_url():
+    # El aviso del Cancelar de la carga manual: cuántas se cancelaron y
+    # cuántas no se pudieron (ya recepcionadas) — no puede perderse por
+    # volver al hub en vez de a Buscar.
+    with patch("app.main.contar_compras_sin_precio", return_value=0):
+        respuesta = cliente.get(
+            "/compras?aviso=3+compras+canceladas.+2+no+se+pudieron+eliminar%3A+ya+fueron+retiradas+o+recepcionadas."
+        )
+
+    assert respuesta.status_code == 200
+    assert "3 compras canceladas. 2 no se pudieron eliminar: ya fueron retiradas o recepcionadas." in respuesta.text
+
+
+def test_ver_compras_sin_aviso_no_muestra_cartel_vacio():
+    with patch("app.main.contar_compras_sin_precio", return_value=0):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "canceladas" not in respuesta.text
 
 
 def test_ver_compras_error_al_contar_no_rompe_la_pantalla():

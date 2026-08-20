@@ -85,6 +85,10 @@
   {% set barra_titulo = "Compras" %}
   {% include "_barra_navegacion.html" %}
 
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
   {% if compras_sin_precio %}
   <a class="aviso" href="/compras/pendientes">
     Hay {{ compras_sin_precio }} {{ "compra" if compras_sin_precio == 1 else "compras" }} sin precio de compra cargado

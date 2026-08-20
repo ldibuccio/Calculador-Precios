@@ -1380,20 +1380,25 @@ def _validar_compra_nueva_form(
 
 
 @app.get("/compras")
-def ver_compras(request: Request):
+def ver_compras(request: Request, aviso: str | None = None):
     """Botonera de entrada al módulo de compras.
 
-    El cartel de "compras sin precio" es el mismo aviso que en /comercial:
-    el comprador tiene pendiente cargar precios. Es un aviso, no algo
-    crítico para poder navegar — si la consulta del conteo falla, se pisa
-    en 0 (sin cartel) en vez de romper toda la pantalla por algo accesorio.
+    aviso viene por la URL cuando otra pantalla redirige acá con algo
+    para contar (hoy: Cancelar en la carga manual, con cuántas compras se
+    cancelaron y cuántas no se pudieron). El cartel de "compras sin
+    precio" es el mismo aviso que en /comercial: el comprador tiene
+    pendiente cargar precios. Es un aviso, no algo crítico para poder
+    navegar — si la consulta del conteo falla, se pisa en 0 (sin cartel)
+    en vez de romper toda la pantalla por algo accesorio.
     """
     try:
         compras_sin_precio = contar_compras_sin_precio()
     except Exception:
         compras_sin_precio = 0
 
-    return templates.TemplateResponse(request, "compras.html", {"compras_sin_precio": compras_sin_precio})
+    return templates.TemplateResponse(
+        request, "compras.html", {"compras_sin_precio": compras_sin_precio, "aviso": aviso}
+    )
 
 
 def _renderizar_en_construccion(
@@ -2066,12 +2071,15 @@ def agregar_compra(
 
 @app.post("/compras/nueva/cancelar")
 def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
-    """Descarta TODA la carga de hoy de este proveedor (incluso lo ya guardado con "Agregar artículo") y va a Buscar Compras.
+    """Descarta TODA la carga de hoy de este proveedor (incluso lo ya guardado con "Agregar artículo") y vuelve al hub de Compras.
 
-    La confirmación la pide el navegador (confirm() antes de mandar el
-    POST); acá no queda nada más por decidir: si llegó el POST, se borra
-    lo que se pueda. No es silencioso: si algo quedó afuera (ya retirado o
-    recepcionado), Buscar Compras lo va a mostrar en el aviso.
+    Cancelar = quiero salir: se vuelve al hub /compras, no a una búsqueda
+    que nadie pidió (terminar de CARGAR sí va a Buscar, para revisar lo
+    cargado — cancelar no tiene nada que revisar). La confirmación la
+    pide el navegador (confirm() antes de mandar el POST); acá no queda
+    nada más por decidir: si llegó el POST, se borra lo que se pueda. No
+    es silencioso: el hub muestra el aviso de cuántas se cancelaron y
+    cuántas quedaron afuera (ya retiradas o recepcionadas).
     """
     hoy = _hoy_argentina()
     try:
@@ -2102,10 +2110,7 @@ def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
     else:
         aviso = f"{resultado['borradas']} compras canceladas."
 
-    query = urlencode(
-        {"fecha_desde": hoy.isoformat(), "fecha_hasta": hoy.isoformat(), "proveedor_id": proveedor_id, "aviso": aviso}
-    )
-    return RedirectResponse(url=f"/compras/buscar?{query}", status_code=303)
+    return RedirectResponse(url=f"/compras?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 def _numero_o_none(valor) -> float | None:
@@ -2899,7 +2904,14 @@ def editar_compra(
             status_code=500,
         )
 
-    return RedirectResponse(url="/compras/buscar", status_code=303)
+    # Los filtros de la búsqueda viajan en el query string de la URL de
+    # editar (los pone el link "Editar" de Buscar Compras, y el form
+    # postea a esa misma URL, así que sobreviven a los reintentos por
+    # error): al guardar se vuelve a la MISMA búsqueda que se estaba
+    # haciendo, no a la default de 48hs.
+    filtros_query = request.url.query
+    destino = f"/compras/buscar?{filtros_query}" if filtros_query else "/compras/buscar"
+    return RedirectResponse(url=destino, status_code=303)
 
 
 def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
@@ -2945,7 +2957,20 @@ async def eliminar_compra_ruta(request: Request, compra_id: int):
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la compra: {error}") from error
 
-    return RedirectResponse(url="/compras/buscar", status_code=303)
+    # Al borrar se vuelve a la MISMA búsqueda que se estaba haciendo (los
+    # filtros ya viajaban como campos ocultos para el caso de rechazo).
+    filtros = {
+        clave: valor
+        for clave, valor in (
+            ("fecha_desde", fecha_desde),
+            ("fecha_hasta", fecha_hasta),
+            ("proveedor_id", proveedor_id),
+            ("articulo_id", articulo_id),
+        )
+        if valor
+    }
+    destino = f"/compras/buscar?{urlencode(filtros)}" if filtros else "/compras/buscar"
+    return RedirectResponse(url=destino, status_code=303)
 
 
 @app.post("/compras/eliminar-varias")

@@ -141,7 +141,10 @@
     {% endif %}
     {% endif %}
 
-    <form method="post" action="{% if modo == 'nueva' %}/compras/nueva{% else %}/compras/{{ compra.id }}/editar{% endif %}" id="form-compra">
+    {# En modo editar, el query de la URL trae los filtros de Buscar: el form
+       postea a la misma URL (sobreviven a los errores) y Guardar/Volver
+       vuelven a esa misma búsqueda. #}
+    <form method="post" action="{% if modo == 'nueva' %}/compras/nueva{% else %}/compras/{{ compra.id }}/editar{% if request.url.query %}?{{ request.url.query }}{% endif %}{% endif %}" id="form-compra">
       {% if modo == "nueva" %}
       <input type="hidden" name="proveedor_id" value="{{ proveedor.id }}">
       {% endif %}
@@ -203,7 +206,7 @@
     </form>
     {% endif %}
     {% if modo == "editar" %}
-    <a class="boton boton-peligro" href="/compras/buscar" id="boton-volver" onclick="return confirmarVolver()">Volver</a>
+    <a class="boton boton-peligro" href="/compras/buscar{% if request.url.query %}?{{ request.url.query }}{% endif %}" id="boton-volver" onclick="return confirmarVolver()">Volver</a>
     {% endif %}
   </div>
 
