@@ -135,7 +135,7 @@
       <label for="proveedor_id">De qué proveedor son los cajones *</label>
       <select id="proveedor_id" name="proveedor_id" required onchange="actualizarTipos()">
         {% for p in proveedores %}
-        <option value="{{ p.id }}">{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        <option value="{{ p.id }}">{{ p.nombre }}</option>
         {% endfor %}
       </select>
 
@@ -156,7 +156,7 @@
       {% for r in recibidos_hoy %}
       <div class="renglon-hoy {% if r.anulado_el %}anulado{% endif %}">
         <div class="detalle">
-          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }} ({{ r.codigo_puesto }})
+          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }}
           — {{ r.creado_en|hora }}
           <div class="cliente">Trajo: {{ r.cliente_nombre }}</div>
           {% if r.anulado_el %}<span class="marca-anulado">Anulado</span>{% endif %}

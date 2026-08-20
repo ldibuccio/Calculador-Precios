@@ -2548,9 +2548,9 @@ def listar_tipos_envase_puesto() -> list[dict]:
             cursor.execute(
                 """
                 SELECT t.id, t.proveedor_id, t.nombre,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto
+                       p.nombre AS proveedor_nombre
                 FROM tipos_envase_puesto t
-                JOIN proveedores p ON p.id = t.proveedor_id
+                JOIN proveedores_puesto p ON p.id = t.proveedor_id
                 WHERE t.activo
                 ORDER BY p.nombre, t.id
                 """
@@ -2705,11 +2705,11 @@ def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 """
                 SELECT v.id, v.cantidad, v.creado_en, v.anulado_el,
                        c.nombre AS cliente_nombre,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM vacios_recibidos v
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
-                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
                 WHERE v.creado_en::date BETWEEN %s AND %s
                 ORDER BY v.creado_en DESC
@@ -2736,10 +2736,10 @@ def listar_vacios_devueltos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
             cursor.execute(
                 """
                 SELECT v.id, v.cantidad, v.stock_sistema, v.creado_en, v.anulado_el,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM vacios_devueltos v
-                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
                 WHERE v.creado_en::date BETWEEN %s AND %s
                 ORDER BY v.creado_en DESC
@@ -2797,12 +2797,12 @@ def stock_vacios() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT p.id AS proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto,
+                SELECT p.id AS proveedor_id, p.nombre AS proveedor_nombre,
                        t.id AS tipo_envase_id, t.nombre AS tipo_nombre,
                        COALESCE(r.total, 0) AS recibidos,
                        COALESCE(d.total, 0) AS devueltos
                 FROM tipos_envase_puesto t
-                JOIN proveedores p ON p.id = t.proveedor_id
+                JOIN proveedores_puesto p ON p.id = t.proveedor_id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_recibidos
                            WHERE anulado_el IS NULL GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_devueltos
@@ -2859,10 +2859,10 @@ def listar_conteos_vacios_de_fecha(fecha) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.cantidad, c.creado_en,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM conteos_vacios c
-                JOIN proveedores p ON p.id = c.proveedor_id
+                JOIN proveedores_puesto p ON p.id = c.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
                 WHERE c.creado_en::date = %s
                 ORDER BY c.creado_en DESC
@@ -2885,10 +2885,10 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
                 """
                 SELECT DISTINCT ON (c.proveedor_id, c.tipo_envase_id)
                        c.id, c.cantidad, c.stock_sistema, c.creado_en,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM conteos_vacios c
-                JOIN proveedores p ON p.id = c.proveedor_id
+                JOIN proveedores_puesto p ON p.id = c.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
                 ORDER BY c.proveedor_id, c.tipo_envase_id, c.creado_en DESC
                 """
@@ -2915,11 +2915,11 @@ def listar_senas_pendientes() -> list[dict]:
                 """
                 SELECT v.id, v.cantidad, v.creado_en,
                        c.nombre AS cliente_nombre,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM vacios_recibidos v
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
-                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
                 WHERE v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL
                   AND v.anulado_el IS NULL
@@ -2953,11 +2953,11 @@ def listar_senas_resueltas(limite: int = 50) -> list[dict]:
                        END AS cierre,
                        COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
                        c.nombre AS cliente_nombre,
-                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
                 FROM vacios_recibidos v
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
-                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
                 WHERE num_nonnulls(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) = 1
                   AND v.anulado_el IS NULL
@@ -3018,6 +3018,68 @@ def desactivar_cliente_puesto(cliente_id: int) -> None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute("UPDATE clientes_puesto SET activo = false WHERE id = %s", (cliente_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_proveedores_puesto() -> list[dict]:
+    """Proveedores del puesto activos, para los selects cerrados de Vacíos y el ABM de la cajera.
+
+    NO son los proveedores de Compras (tabla proveedores): circuito
+    aparte del otro lado del Mercado, tabla propia.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, nombre FROM proveedores_puesto WHERE activo ORDER BY nombre")
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def obtener_o_crear_proveedor_puesto(nombre: str, nombre_normalizado: str) -> int:
+    """Devuelve el id del proveedor del puesto con ese nombre, creándolo si no existe (ABM de la cajera).
+
+    Misma unificación por nombre_normalizado que clientes_puesto: el
+    mismo proveedor escrito de tres formas es UNO solo. Si existía dado
+    de baja, se reactiva. El empleado del fondo NUNCA llega acá: él solo
+    elige de listas cerradas — crear es de la cajera.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, activo FROM proveedores_puesto WHERE nombre_normalizado = %s",
+                (nombre_normalizado,),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                proveedor_id, activo = fila
+                if not activo:
+                    cursor.execute("UPDATE proveedores_puesto SET activo = true WHERE id = %s", (proveedor_id,))
+                    conexion.commit()
+                return proveedor_id
+
+            cursor.execute(
+                "INSERT INTO proveedores_puesto (nombre, nombre_normalizado) VALUES (%s, %s) RETURNING id",
+                (nombre, nombre_normalizado),
+            )
+            (proveedor_id,) = cursor.fetchone()
+        conexion.commit()
+        return proveedor_id
+    finally:
+        conexion.close()
+
+
+def desactivar_proveedor_puesto(proveedor_id: int) -> None:
+    """Baja lógica de un proveedor del puesto: sale de los selects; sus movimientos y stock histórico quedan."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE proveedores_puesto SET activo = false WHERE id = %s", (proveedor_id,))
         conexion.commit()
     finally:
         conexion.close()

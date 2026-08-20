@@ -15,6 +15,7 @@ from app.db import (
     listar_tipos_envase_puesto,
     listar_ultimos_conteos_vacios,
     obtener_o_crear_cliente_puesto,
+    obtener_o_crear_proveedor_puesto,
     stock_vacios,
     actualizar_cliente,
     actualizar_precio_compra,
@@ -1946,3 +1947,38 @@ def test_listar_senas_resueltas_trae_el_tipo_de_cierre_y_su_fecha():
     assert "AS cerrada_el" in consulta
     # Ordenado por la fecha del cierre, el más reciente primero.
     assert "ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC" in consulta
+
+
+def test_listar_tipos_envase_puesto_joinea_proveedores_del_puesto():
+    # Los tipos (y todo Vacíos) joinean proveedores_puesto, NUNCA la tabla
+    # proveedores de Compras: circuitos separados.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_tipos_envase_puesto()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "JOIN proveedores_puesto p" in consulta
+    assert "codigo_puesto" not in consulta
+
+
+def test_obtener_o_crear_proveedor_puesto_unifica_por_nombre_normalizado():
+    conexion, cursor = _conexion_falsa([(7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        proveedor_id = obtener_o_crear_proveedor_puesto("EL Cajónero", "el cajonero")
+
+    assert proveedor_id == 7
+    assert cursor.execute.call_count == 1  # solo el SELECT: reusa, no duplica
+
+
+def test_obtener_o_crear_proveedor_puesto_crea_si_no_existe():
+    conexion, cursor = _conexion_falsa([None, (9,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        proveedor_id = obtener_o_crear_proveedor_puesto("Nuevo", "nuevo")
+
+    assert proveedor_id == 9
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO proveedores_puesto" in consulta_insert
+    assert parametros_insert == ("Nuevo", "nuevo")

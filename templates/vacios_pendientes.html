@@ -122,7 +122,7 @@
       {% for p in pendientes %}
       <div class="renglon">
         <p class="cliente">{{ p.cliente_nombre }}</p>
-        <p class="detalle">{{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }} ({{ p.codigo_puesto }}) — trajo el {{ p.creado_en|fecha_hora }}</p>
+        <p class="detalle">{{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }} — trajo el {{ p.creado_en|fecha_hora }}</p>
 
         <div class="acciones" id="acciones-{{ p.id }}">
           <button type="button" class="boton-pagar" onclick="mostrarConfirmacion('{{ p.id }}', 'pagar')">Pagó la seña</button>

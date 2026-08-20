@@ -68,7 +68,6 @@
     {% for g in grupos %}
     <div class="tarjeta">
       <p class="proveedor">{{ g.proveedor_nombre }}</p>
-      <p class="puesto">Puesto {{ g.codigo_puesto }}</p>
       {% for t in g.tipos %}
       <div class="fila-tipo">
         <span>{{ t.tipo_nombre }}

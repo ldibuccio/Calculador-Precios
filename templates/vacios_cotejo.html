@@ -59,7 +59,7 @@
   {% if filas %}
     {% for f in filas %}
     <div class="tarjeta {% if f.diferencia != 0 %}con-diferencia{% endif %}">
-      <p class="encabezado">{{ f.proveedor_nombre }} ({{ f.codigo_puesto }}) — {{ f.tipo_nombre }}</p>
+      <p class="encabezado">{{ f.proveedor_nombre }} — {{ f.tipo_nombre }}</p>
       <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
       <div class="numeros">
         <div class="celda">

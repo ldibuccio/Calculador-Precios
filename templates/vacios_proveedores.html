@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tipos de Envase</title>
+<title>Proveedores del Puesto</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -38,13 +38,13 @@
     font-weight: 600;
   }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
-  form label {
+  form.alta label {
     display: block;
     font-size: 0.9rem;
     color: #444;
     margin-bottom: 0.25rem;
   }
-  form input, form select {
+  form.alta input {
     width: 100%;
     padding: 0.75rem;
     margin-bottom: 0.9rem;
@@ -52,9 +52,8 @@
     border-radius: 8px;
     font-size: 1rem;
     box-sizing: border-box;
-    background: #fff;
   }
-  button[type="submit"] {
+  form.alta button {
     width: 100%;
     padding: 0.85rem;
     background: #16a34a;
@@ -65,7 +64,7 @@
     font-weight: 700;
     cursor: pointer;
   }
-  .renglon-tipo {
+  .renglon {
     padding: 0.6rem 0;
     border-top: 1px solid #eee;
     display: flex;
@@ -74,9 +73,8 @@
     gap: 0.75rem;
     font-size: 0.95rem;
   }
-  .renglon-tipo:first-of-type { border-top: none; padding-top: 0; }
-  .renglon-tipo .puesto { color: #888; font-size: 0.82rem; }
-  .renglon-tipo form { margin: 0; }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .renglon form { margin: 0; }
   .boton-baja {
     padding: 0.55rem 0.85rem;
     background: #fff;
@@ -101,7 +99,7 @@
 </head>
 <body>
   {% set barra_sector = "puesto" %}
-  {% set barra_titulo = "Tipos de Envase" %}
+  {% set barra_titulo = "Proveedores del Puesto" %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -112,40 +110,36 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
+  <!-- Proveedores del circuito del PUESTO (dueños de los cajones), nada que
+       ver con los proveedores de Compras. El empleado del fondo no crea
+       nada: si llega un cajón de uno nuevo, se acerca y la cajera lo carga
+       acá — recién ahí (y con un tipo de envase cargado) le aparece en las
+       listas cerradas de Vacíos. -->
   <div class="tarjeta">
-    <h2>Cargar tipo de envase</h2>
-    <p class="ayuda">Un proveedor sin tipos cargados no aparece en Recibir ni en Devolver: cargarle su primer tipo acá es lo que lo habilita para Vacíos. Si el proveedor todavía no existe, cargalo primero en Proveedores del Puesto.</p>
-    <form method="post" action="/puesto/envases/tipos/nuevo">
-      <label for="proveedor_id">Proveedor *</label>
-      <select id="proveedor_id" name="proveedor_id" required>
-        {% for p in proveedores %}
-        <option value="{{ p.id }}">{{ p.nombre }}</option>
-        {% endfor %}
-      </select>
-
-      <label for="nombre">Nombre del tipo *</label>
-      <input type="text" id="nombre" name="nombre" required placeholder="Ej: cajón plástico negro">
-
+    <h2>Cargar proveedor</h2>
+    <p class="ayuda">Un nombre que ya existe (aunque cambie mayúsculas o acentos) reusa el proveedor, no crea otro. Después de cargarlo, dale su primer tipo en Tipos de Envase para que aparezca en Vacíos.</p>
+    <form class="alta" method="post" action="/puesto/envases/proveedores/nuevo">
+      <label for="nombre">Nombre *</label>
+      <input type="text" id="nombre" name="nombre" required placeholder="Nombre del proveedor">
       <button type="submit">Cargar</button>
     </form>
   </div>
 
   <div class="tarjeta">
-    <h2>Tipos cargados</h2>
-    {% if tipos %}
-      {% for t in tipos %}
-      <div class="renglon-tipo">
-        <div>
-          <strong>{{ t.nombre }}</strong> — {{ t.proveedor_nombre }}
-        </div>
-        <form method="post" action="/puesto/envases/tipos/{{ t.id }}/baja"
-              onsubmit="return confirm('¿Dar de baja \'{{ t.nombre }}\' de {{ t.proveedor_nombre }}? Los movimientos viejos quedan; solo deja de ofrecerse.');">
+    <h2>Proveedores ({{ proveedores|length }})</h2>
+    <p class="ayuda">Dar de baja lo saca de los selects de Vacíos; sus movimientos y su stock histórico quedan.</p>
+    {% if proveedores %}
+      {% for p in proveedores %}
+      <div class="renglon">
+        <strong>{{ p.nombre }}</strong>
+        <form method="post" action="/puesto/envases/proveedores/{{ p.id }}/baja"
+              onsubmit="return confirm('¿Dar de baja a {{ p.nombre }}? Sus movimientos y stock quedan.');">
           <button type="submit" class="boton-baja">Dar de baja</button>
         </form>
       </div>
       {% endfor %}
     {% else %}
-    <p class="vacio">Todavía no hay tipos de envase cargados.</p>
+    <p class="vacio">Todavía no hay proveedores del puesto cargados.</p>
     {% endif %}
   </div>
 

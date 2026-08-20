@@ -56,6 +56,7 @@ from app.db import (
     desactivar_articulo,
     desactivar_cliente,
     desactivar_cliente_puesto,
+    desactivar_proveedor_puesto,
     desactivar_tipo_envase_puesto,
     deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
@@ -87,6 +88,7 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
+    listar_proveedores_puesto,
     listar_senas_pendientes,
     listar_senas_resueltas,
     listar_tipos_envase_puesto,
@@ -107,6 +109,7 @@ from app.db import (
     obtener_ficha,
     obtener_o_crear_cliente_puesto,
     obtener_o_crear_proveedor_por_codigo,
+    obtener_o_crear_proveedor_puesto,
     obtener_proveedor,
     obtener_ultimo_disponible_cliente,
     obtener_uso_storage_bucket,
@@ -5234,20 +5237,19 @@ def _validar_cantidad_vacios(texto: str) -> tuple[str | None, int | None]:
 
 
 def _tipos_envase_y_proveedores():
-    """Tipos de envase activos + los proveedores derivados de ellos (solo proveedores CON tipos aparecen en Vacíos)."""
+    """Tipos de envase activos + los proveedores del puesto derivados de ellos.
+
+    Lista cerrada de verdad para el empleado: solo proveedores del puesto
+    (tabla proveedores_puesto — NUNCA los de Compras) y solo los que
+    tienen tipos cargados por la cajera.
+    """
     tipos = listar_tipos_envase_puesto()
     proveedores = []
     vistos = set()
     for tipo in tipos:
         if tipo["proveedor_id"] not in vistos:
             vistos.add(tipo["proveedor_id"])
-            proveedores.append(
-                {
-                    "id": tipo["proveedor_id"],
-                    "nombre": tipo["proveedor_nombre"],
-                    "codigo_puesto": tipo["codigo_puesto"],
-                }
-            )
+            proveedores.append({"id": tipo["proveedor_id"], "nombre": tipo["proveedor_nombre"]})
     return tipos, proveedores
 
 
@@ -5457,7 +5459,6 @@ def ver_stock_vacios(request: Request):
         if grupo is None:
             grupo = {
                 "proveedor_nombre": fila["proveedor_nombre"],
-                "codigo_puesto": fila["codigo_puesto"],
                 "tipos": [],
                 "total": 0,
             }
@@ -5472,7 +5473,8 @@ def ver_stock_vacios(request: Request):
 def _renderizar_pantalla_tipos_envase_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):
     try:
         tipos = listar_tipos_envase_puesto()
-        proveedores = listar_proveedores()
+        # Proveedores del PUESTO, nunca los de Compras: circuitos separados.
+        proveedores = listar_proveedores_puesto()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -5790,6 +5792,65 @@ def dar_de_baja_cliente_puesto_ruta(request: Request, cliente_id: int):
             request, error=f"No se pudo dar de baja el cliente: {error_db}", status_code=500
         )
     return RedirectResponse(url="/puesto/envases/clientes", status_code=303)
+
+
+def _renderizar_pantalla_proveedores_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        proveedores = listar_proveedores_puesto()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_proveedores.html",
+        {"proveedores": proveedores, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/proveedores")
+def ver_proveedores_puesto(request: Request, aviso: str | None = None):
+    """Proveedores del puesto (cajera): alta, baja lógica y listado.
+
+    El empleado del fondo NO crea proveedores: si llega un cajón de uno
+    que no está, se acerca a la cajera y ella lo carga acá — recién ahí
+    le aparece en las listas cerradas de Vacíos (después de cargarle al
+    menos un tipo de envase).
+    """
+    return _renderizar_pantalla_proveedores_puesto(request, aviso=aviso)
+
+
+@app.post("/puesto/envases/proveedores/nuevo")
+def crear_proveedor_puesto_ruta(request: Request, nombre: str = Form("")):
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    nombre_normalizado = normalizar_texto(nombre_limpio)
+    if not nombre_normalizado:
+        return _renderizar_pantalla_proveedores_puesto(
+            request, error="El nombre del proveedor es obligatorio.", status_code=400
+        )
+
+    try:
+        obtener_o_crear_proveedor_puesto(nombre_limpio, nombre_normalizado)
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_puesto(
+            request, error=f"No se pudo crear el proveedor: {error_db}", status_code=500
+        )
+
+    parametros = urlencode(
+        {"aviso": f"Proveedor '{nombre_limpio}' cargado. Para que aparezca en Vacíos, cargale un tipo de envase."}
+    )
+    return RedirectResponse(url=f"/puesto/envases/proveedores?{parametros}", status_code=303)
+
+
+@app.post("/puesto/envases/proveedores/{proveedor_id}/baja")
+def dar_de_baja_proveedor_puesto_ruta(request: Request, proveedor_id: int):
+    try:
+        desactivar_proveedor_puesto(proveedor_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_puesto(
+            request, error=f"No se pudo dar de baja el proveedor: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/proveedores", status_code=303)
 
 
 if __name__ == "__main__":

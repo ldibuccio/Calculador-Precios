@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Calculador de Precios — Esquema completo consolidado (para una BASE NUEVA)
 --
--- Crea de cero, en una base VACÍA, el estado FINAL de las 13 tablas que el
+-- Crea de cero, en una base VACÍA, el estado FINAL de las tablas que el
 -- código usa hoy — el mismo estado al que llegó la base de Frutamax después
 -- de toda la historia de migraciones de esta carpeta. Pensado para el alta
 -- de una empresa nueva (ej. Palmala): correr este único archivo reemplaza
@@ -293,16 +293,27 @@ comment on table aprendizaje_articulos is 'Aprende qué texto de una comanda (po
 --     del puesto del Mercado. Nada que ver con la tabla envases (esa es el
 --     costo del envase facturado al cliente de distribución).
 -- ----------------------------------------------------------------------------
+create table proveedores_puesto (
+    id                 bigint generated always as identity primary key,
+    nombre             text not null,
+    nombre_normalizado text not null unique,
+    activo             boolean not null default true,
+    creado_en          timestamptz not null default now()
+);
+
+comment on table proveedores_puesto is 'Proveedores del circuito del puesto (dueños de los cajones vacíos). NO son los proveedores de Compras (tabla proveedores): circuitos separados a propósito. Solo nombre; los carga la cajera, con unificación por nombre_normalizado.';
+comment on column proveedores_puesto.nombre_normalizado is 'nombre en minúsculas, sin acentos ni espacios de más. El UNIQUE evita el mismo proveedor escrito de tres formas.';
+
 create table tipos_envase_puesto (
     id            bigint generated always as identity primary key,
-    proveedor_id  bigint not null references proveedores (id),
+    proveedor_id  bigint not null references proveedores_puesto (id),
     nombre        text not null,
     activo        boolean not null default true,
     creado_en     timestamptz not null default now(),
     unique (proveedor_id, nombre)
 );
 
-comment on table tipos_envase_puesto is 'Tipos de cajón físico que maneja cada proveedor (los carga el dueño). Un proveedor sin tipos cargados no aparece en las pantallas de Vacíos.';
+comment on table tipos_envase_puesto is 'Tipos de cajón físico por proveedor del puesto (los carga la cajera). Un proveedor sin tipos cargados no aparece en las pantallas de Vacíos.';
 
 create table clientes_puesto (
     id                 bigint generated always as identity primary key,
@@ -318,7 +329,7 @@ comment on column clientes_puesto.nombre_normalizado is 'nombre en minúsculas, 
 create table vacios_recibidos (
     id                 bigint generated always as identity primary key,
     cliente_puesto_id  bigint not null references clientes_puesto (id),
-    proveedor_id       bigint not null references proveedores (id),
+    proveedor_id       bigint not null references proveedores_puesto (id),
     tipo_envase_id     bigint not null references tipos_envase_puesto (id),
     cantidad           integer not null check (cantidad > 0),
     creado_en          timestamptz not null default now(),
@@ -338,7 +349,7 @@ comment on column vacios_recibidos.anulado_el is 'NULL = movimiento vigente. Los
 
 create table vacios_devueltos (
     id              bigint generated always as identity primary key,
-    proveedor_id    bigint not null references proveedores (id),
+    proveedor_id    bigint not null references proveedores_puesto (id),
     tipo_envase_id  bigint not null references tipos_envase_puesto (id),
     cantidad        integer not null check (cantidad > 0),
     stock_sistema   integer not null,
@@ -346,13 +357,13 @@ create table vacios_devueltos (
     anulado_el      timestamptz
 );
 
-comment on table vacios_devueltos is 'Salida: el proveedor retira sus cajones con el camión.';
+comment on table vacios_devueltos is 'Salida: el proveedor del puesto retira sus cajones con el camión.';
 comment on column vacios_devueltos.stock_sistema is 'Stock del sistema (recibidos − devueltos, sin este movimiento) EN el instante de guardar. Si la devolución supera este número, esa diferencia queda registrada acá — no es solo un cartel que se cierra.';
 comment on column vacios_devueltos.anulado_el is 'NULL = movimiento vigente. Igual que en vacios_recibidos: anular, nunca borrar.';
 
 create table conteos_vacios (
     id              bigint generated always as identity primary key,
-    proveedor_id    bigint not null references proveedores (id),
+    proveedor_id    bigint not null references proveedores_puesto (id),
     tipo_envase_id  bigint not null references tipos_envase_puesto (id),
     cantidad        integer not null check (cantidad >= 0),
     stock_sistema   integer not null,

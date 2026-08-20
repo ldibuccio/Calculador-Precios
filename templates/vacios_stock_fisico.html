@@ -107,7 +107,7 @@
       <label for="proveedor_id">Proveedor *</label>
       <select id="proveedor_id" name="proveedor_id" required onchange="actualizarTipos()">
         {% for p in proveedores %}
-        <option value="{{ p.id }}">{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        <option value="{{ p.id }}">{{ p.nombre }}</option>
         {% endfor %}
       </select>
 
@@ -127,7 +127,7 @@
     {% if contados_hoy %}
       {% for c in contados_hoy %}
       <div class="renglon-hoy">
-        {{ c.cantidad }} × {{ c.tipo_nombre }} de {{ c.proveedor_nombre }} ({{ c.codigo_puesto }})
+        {{ c.cantidad }} × {{ c.tipo_nombre }} de {{ c.proveedor_nombre }}
         — {{ c.creado_en|hora }}
       </div>
       {% endfor %}

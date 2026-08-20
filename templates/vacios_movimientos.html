@@ -115,7 +115,7 @@
       {% for r in recibidos %}
       <div class="renglon {% if r.anulado_el %}anulado{% endif %}">
         <div class="detalle">
-          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }} ({{ r.codigo_puesto }})
+          {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }}
           <div class="extra">Trajo {{ r.cliente_nombre }} — {{ r.creado_en|fecha_hora }}</div>
           {% if r.anulado_el %}<span class="marca-anulado">Anulado el {{ r.anulado_el|fecha_hora }}</span>{% endif %}
         </div>
@@ -140,7 +140,7 @@
       {% for d in devueltos %}
       <div class="renglon {% if d.anulado_el %}anulado{% endif %}">
         <div class="detalle">
-          {{ d.cantidad }} × {{ d.tipo_nombre }} a {{ d.proveedor_nombre }} ({{ d.codigo_puesto }})
+          {{ d.cantidad }} × {{ d.tipo_nombre }} a {{ d.proveedor_nombre }}
           <div class="extra">{{ d.creado_en|fecha_hora }} — el sistema decía {{ d.stock_sistema }}</div>
           {% if d.anulado_el %}<span class="marca-anulado">Anulado el {{ d.anulado_el|fecha_hora }}</span>{% endif %}
         </div>

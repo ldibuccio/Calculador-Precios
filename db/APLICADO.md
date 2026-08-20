@@ -43,6 +43,7 @@ bases estén marcadas.
 | `agregar_carga_token.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 | `agregar_vacios_puesto.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 | `agregar_resultado_sena.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
+| `agregar_proveedores_puesto.sql` | ⬜ pendiente (correr con el código YA pusheado, mergear enseguida) | ⬜ pendiente (ídem) |
 
 ## Pasos manuales que NO son SQL (por base)
 

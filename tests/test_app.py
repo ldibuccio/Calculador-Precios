@@ -9156,9 +9156,11 @@ def test_ver_recibir_vacios_arma_el_form_con_lista_cerrada():
 
     assert respuesta.status_code == 200
     # Proveedores derivados de los tipos (lista cerrada): uno por proveedor.
+    # Sin código de puesto: son proveedores del PUESTO, no los de Compras.
     assert respuesta.text.count('value="200"') == 1
-    assert "Saturno (N07P41)" in respuesta.text
-    assert "Don Pepe (N01P02)" in respuesta.text
+    assert "Saturno" in respuesta.text
+    assert "Don Pepe" in respuesta.text
+    assert "N07P41" not in respuesta.text
     # Clientes conocidos como sugerencias al tipear.
     assert 'list="clientes-conocidos"' in respuesta.text
     assert "Juan Pérez" in respuesta.text
@@ -9318,11 +9320,11 @@ def test_anular_vacio_devuelto_redirige_a_devolver():
 
 def test_ver_stock_vacios_agrupa_por_proveedor_y_marca_negativos():
     filas = [
-        {"proveedor_id": 200, "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+        {"proveedor_id": 200, "proveedor_nombre": "Saturno",
          "tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro", "recibidos": 50, "devueltos": 30, "stock": 20},
-        {"proveedor_id": 200, "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+        {"proveedor_id": 200, "proveedor_nombre": "Saturno",
          "tipo_envase_id": 2, "tipo_nombre": "torito", "recibidos": 10, "devueltos": 15, "stock": -5},
-        {"proveedor_id": 201, "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02",
+        {"proveedor_id": 201, "proveedor_nombre": "Don Pepe",
          "tipo_envase_id": 3, "tipo_nombre": "cajón madera", "recibidos": 8, "devueltos": 0, "stock": 8},
     ]
     with patch("app.main.stock_vacios", return_value=filas):
@@ -9339,10 +9341,18 @@ def test_ver_stock_vacios_agrupa_por_proveedor_y_marca_negativos():
     assert ">15</span>" in respuesta.text
 
 
+PROVEEDORES_PUESTO_DE_PRUEBA = [
+    {"id": 200, "nombre": "Saturno"},
+    {"id": 201, "nombre": "Don Pepe"},
+]
+
+
 def test_ver_tipos_envase_puesto_lista_y_ofrece_alta():
+    # El select de proveedores es de proveedores_puesto (cajera), NUNCA los
+    # de Compras.
     with (
         patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
     ):
         respuesta = cliente.get("/puesto/envases/tipos")
 
@@ -9367,7 +9377,7 @@ def test_crear_tipo_envase_puesto_limpia_el_nombre_y_redirige():
 def test_crear_tipo_envase_puesto_sin_nombre_da_error():
     with (
         patch("app.main.listar_tipos_envase_puesto", return_value=[]),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
         patch("app.main.crear_tipo_envase_puesto") as mock_crear,
     ):
         respuesta = cliente.post("/puesto/envases/tipos/nuevo", data={"proveedor_id": "200", "nombre": "  "})
@@ -9394,7 +9404,7 @@ def test_ver_stock_fisico_no_muestra_ningun_numero_del_sistema():
     # traer el stock del sistema ni escondido en el HTML.
     contados = [
         {"id": 1, "cantidad": 38, "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
-         "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41", "tipo_nombre": "cajón plástico negro"},
+         "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
     ]
     with (
         patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
@@ -9450,10 +9460,10 @@ def test_ver_cotejo_compara_contra_la_foto_del_conteo():
     conteos = [
         {"id": 1, "cantidad": 35, "stock_sistema": 40,
          "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
-         "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41", "tipo_nombre": "cajón plástico negro"},
+         "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
         {"id": 2, "cantidad": 8, "stock_sistema": 8,
          "creado_en": datetime(2026, 8, 19, 14, 5, tzinfo=timezone.utc),
-         "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02", "tipo_nombre": "cajón madera"},
+         "proveedor_nombre": "Don Pepe", "tipo_nombre": "cajón madera"},
     ]
     with patch("app.main.listar_ultimos_conteos_vacios", return_value=conteos):
         respuesta = cliente.get("/puesto/envases/cotejo")
@@ -9468,7 +9478,7 @@ def test_ver_cotejo_compara_contra_la_foto_del_conteo():
 def test_ver_pendientes_de_pago_ofrece_los_tres_cierres():
     pendientes = [
         {"id": 5, "cantidad": 12, "creado_en": datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc),
-         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
          "tipo_nombre": "cajón plástico negro"},
     ]
     with (
@@ -9496,15 +9506,15 @@ def test_ver_pendientes_el_historial_distingue_los_tres_cierres():
     resueltas = [
         {"id": 4, "cantidad": 3, "creado_en": datetime(2026, 8, 18, 10, 0, tzinfo=timezone.utc),
          "cierre": "pagada", "cerrada_el": datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc),
-         "cliente_nombre": "Marta", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "cliente_nombre": "Marta", "proveedor_nombre": "Saturno",
          "tipo_nombre": "torito"},
         {"id": 3, "cantidad": 5, "creado_en": datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc),
          "cierre": "vale", "cerrada_el": datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc),
-         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
          "tipo_nombre": "torito"},
         {"id": 2, "cantidad": 7, "creado_en": datetime(2026, 8, 16, 10, 0, tzinfo=timezone.utc),
          "cierre": "anulada", "cerrada_el": datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
-         "cliente_nombre": "Pedro", "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02",
+         "cliente_nombre": "Pedro", "proveedor_nombre": "Don Pepe",
          "tipo_nombre": "cajón madera"},
     ]
     with (
@@ -9550,8 +9560,7 @@ def test_ver_movimientos_usa_los_ultimos_7_dias_por_defecto():
 def test_ver_movimientos_permite_anular_de_cualquier_fecha_conservando_filtros():
     recibidos = [
         {"id": 9, "cantidad": 12, "creado_en": datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
-         "anulado_el": None, "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
-         "codigo_puesto": "N07P41", "tipo_nombre": "cajón plástico negro"},
+         "anulado_el": None, "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
     ]
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
@@ -9610,3 +9619,55 @@ def test_dar_de_baja_cliente_puesto_redirige():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/puesto/envases/clientes"
     mock_baja.assert_called_once_with(10)
+
+
+def test_ver_proveedores_puesto_lista_con_alta_y_baja():
+    with patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA):
+        respuesta = cliente.get("/puesto/envases/proveedores")
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    assert 'action="/puesto/envases/proveedores/nuevo"' in respuesta.text
+    assert 'action="/puesto/envases/proveedores/200/baja"' in respuesta.text
+    # Ni rastro de los proveedores de Compras (circuitos separados).
+    assert "codigo_puesto" not in respuesta.text
+
+
+def test_crear_proveedor_puesto_normaliza_y_redirige():
+    with patch("app.main.obtener_o_crear_proveedor_puesto", return_value=7) as mock_crear:
+        respuesta = cliente.post(
+            "/puesto/envases/proveedores/nuevo",
+            data={"nombre": "  EL   Cajónero "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("EL Cajónero", "el cajonero")
+
+
+def test_crear_proveedor_puesto_sin_nombre_da_error():
+    with (
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+        patch("app.main.obtener_o_crear_proveedor_puesto") as mock_crear,
+    ):
+        respuesta = cliente.post("/puesto/envases/proveedores/nuevo", data={"nombre": "   "})
+
+    assert respuesta.status_code == 400
+    assert "El nombre del proveedor es obligatorio." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_dar_de_baja_proveedor_puesto_redirige():
+    with patch("app.main.desactivar_proveedor_puesto") as mock_baja:
+        respuesta = cliente.post("/puesto/envases/proveedores/200/baja", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases/proveedores"
+    mock_baja.assert_called_once_with(200)
+
+
+def test_hub_envases_puesto_tiene_proveedores_del_puesto():
+    respuesta = cliente.get("/puesto/envases")
+
+    assert respuesta.status_code == 200
+    assert 'href="/puesto/envases/proveedores"' in respuesta.text
