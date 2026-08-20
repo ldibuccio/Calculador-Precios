@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zona de Control</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.25rem 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    text-align: center;
+  }
+  .candado { font-size: 2.2rem; margin: 0 0 0.4rem; }
+  h1 { font-size: 1.1rem; margin: 0 0 0.35rem; }
+  .ayuda { color: #888; font-size: 0.88rem; margin: 0 0 1rem; }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  input[type="password"] {
+    width: 100%;
+    padding: 0.9rem;
+    margin-bottom: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1.15rem;
+    box-sizing: border-box;
+    text-align: center;
+    letter-spacing: 0.15em;
+  }
+  button[type="submit"] {
+    width: 100%;
+    padding: 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Zona de Control" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <p class="candado">🔒</p>
+    <h1>Esta pantalla pide clave</h1>
+    <p class="ayuda">Se pide una vez y vale para toda la zona de control durante la jornada. Con "Bloquear" se corta antes.</p>
+    <!-- autocomplete="one-time-code" a propósito: el navegador la trata como
+         un código de un solo uso y NO ofrece guardarla ni autocompletarla —
+         si el celular la recuerda solo, la traba desaparece. -->
+    <form method="post" action="/puesto/envases/clave" autocomplete="off">
+      <input type="hidden" name="volver" value="{{ volver }}">
+      <input type="password" name="clave" required autocomplete="one-time-code"
+             autofocus placeholder="Clave">
+      <button type="submit">Entrar</button>
+    </form>
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+</body>
+</html>

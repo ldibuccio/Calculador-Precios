@@ -5,6 +5,8 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 """
 
 import base64
+import hashlib
+import hmac
 import io
 import json
 import logging
@@ -203,6 +205,62 @@ def _tipo_retiro_default_desde_env() -> str:
 
 
 TIPO_RETIRO_DEFAULT = _tipo_retiro_default_desde_env()
+
+CLAVE_CONTROL_PUESTO_ENV_VAR = "CLAVE_CONTROL_PUESTO"
+COOKIE_ACCESO_CONTROL = "acceso_control_puesto"
+# Una clave por jornada: ni en cada pantalla (no la usarían) ni para
+# siempre (pantalla desbloqueada eterna). El botón Bloquear la corta antes.
+DURACION_ACCESO_CONTROL = 12 * 60 * 60
+
+
+def _clave_control_puesto() -> str | None:
+    """ÚNICA fuente de la clave de la zona de control del Puesto — todo el resto del código pasa por acá.
+
+    Hoy sale de Railway (variable de entorno, una por empresa). Cuando
+    exista el módulo de Contraseñas en Sistema, el origen se cambia SOLO
+    en esta función y nada más se toca. Se lee en cada request (no al
+    importar) a propósito: así un cambio de origen o de valor aplica sin
+    reiniciar nada más que lo que corresponda.
+
+    None = no hay clave configurada = no hay puerta (todo como siempre).
+    """
+    clave = os.environ.get(CLAVE_CONTROL_PUESTO_ENV_VAR, "").strip()
+    return clave or None
+
+
+def _firma_acceso_control(clave: str) -> str:
+    """Lo que viaja en la cookie: una firma derivada de la clave, nunca la clave.
+
+    Sin estado en el server ni en la base: la firma solo se puede fabricar
+    conociendo la clave, y si la clave se cambia en el origen, todas las
+    cookies viejas dejan de validar al instante (bloqueo remoto gratis).
+    """
+    return hmac.new(clave.encode(), b"acceso-control-puesto", hashlib.sha256).hexdigest()
+
+
+def _acceso_control_valido(request: Request) -> bool:
+    clave = _clave_control_puesto()
+    if clave is None:
+        return True
+    cookie = request.cookies.get(COOKIE_ACCESO_CONTROL, "")
+    return hmac.compare_digest(cookie, _firma_acceso_control(clave))
+
+
+def _destino_control_seguro(volver: str) -> str:
+    """El destino post-clave solo puede ser una pantalla de Envases Puesto (nada de redirigir a cualquier lado)."""
+    return volver if volver.startswith("/puesto/envases") else "/puesto/envases"
+
+
+def _pantalla_clave_control(request: Request, *, volver: str | None = None, error: str | None = None):
+    """La puerta de la zona de control: pide la clave y vuelve a la pantalla que se quería ver."""
+    if volver is None:
+        volver = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return templates.TemplateResponse(
+        request,
+        "clave_control_puesto.html",
+        {"volver": _destino_control_seguro(volver), "error": error},
+        status_code=401,
+    )
 
 
 def _nombre_empresa_para_archivo() -> str:
@@ -419,6 +477,9 @@ templates.env.globals["SECTORES"] = SECTORES
 templates.env.globals["ICONO_INICIO"] = _ICONO_INICIO
 templates.env.globals["NOMBRE_EMPRESA"] = NOMBRE_EMPRESA
 templates.env.globals["TIPO_RETIRO_DEFAULT"] = TIPO_RETIRO_DEFAULT
+# Callable a propósito (se evalúa en cada render, no al importar): el botón
+# Bloquear solo aparece si hay clave configurada.
+templates.env.globals["clave_control_activa"] = lambda: _clave_control_puesto() is not None
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -5220,6 +5281,37 @@ def ver_envases_puesto(request: Request):
     return templates.TemplateResponse(request, "puesto_envases.html", {})
 
 
+@app.post("/puesto/envases/clave")
+def ingresar_clave_control_ruta(request: Request, clave: str = Form(""), volver: str = Form("/puesto/envases")):
+    """Valida la clave de la zona de control y deja la cookie firmada: una vez por jornada, para toda la zona."""
+    destino = _destino_control_seguro(volver)
+    clave_real = _clave_control_puesto()
+    if clave_real is None:
+        # Sin clave configurada no hay puerta: nada que validar.
+        return RedirectResponse(url=destino, status_code=303)
+    if not hmac.compare_digest(clave.strip(), clave_real):
+        return _pantalla_clave_control(request, volver=destino, error="Clave incorrecta.")
+
+    respuesta = RedirectResponse(url=destino, status_code=303)
+    respuesta.set_cookie(
+        COOKIE_ACCESO_CONTROL,
+        _firma_acceso_control(clave_real),
+        max_age=DURACION_ACCESO_CONTROL,
+        httponly=True,
+        samesite="lax",
+        path="/puesto/envases",
+    )
+    return respuesta
+
+
+@app.post("/puesto/envases/bloquear")
+def bloquear_control_puesto_ruta(request: Request):
+    """Borra la cookie de acceso en el momento: para no dejar la zona de control abierta en un celular suelto."""
+    respuesta = RedirectResponse(url="/puesto/envases", status_code=303)
+    respuesta.delete_cookie(COOKIE_ACCESO_CONTROL, path="/puesto/envases")
+    return respuesta
+
+
 @app.get("/puesto/envases/vacios")
 def ver_vacios(request: Request):
     """Hub de Vacíos: las tres pantallas del empleado del fondo del puesto."""
@@ -5450,6 +5542,8 @@ def anular_vacio_devuelto_ruta(request: Request, movimiento_id: int):
 @app.get("/puesto/envases/stock")
 def ver_stock_vacios(request: Request):
     """Stock del sistema por proveedor y tipo (recibidos − devueltos). La ve la cajera, NO el empleado del fondo."""
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     try:
         filas = stock_vacios()
     except Exception as error_db:
@@ -5493,11 +5587,15 @@ def _renderizar_pantalla_tipos_envase_puesto(request: Request, *, error=None, av
 @app.get("/puesto/envases/tipos")
 def ver_tipos_envase_puesto(request: Request, aviso: str | None = None):
     """ABM de tipos de cajón por proveedor (lo carga el dueño). Un proveedor sin tipos no aparece en Vacíos."""
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     return _renderizar_pantalla_tipos_envase_puesto(request, aviso=aviso)
 
 
 @app.post("/puesto/envases/tipos/nuevo")
 def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form(""), nombre: str = Form("")):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
     nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
     if not nombre_limpio:
         return _renderizar_pantalla_tipos_envase_puesto(
@@ -5519,6 +5617,8 @@ def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form("")
 
 @app.post("/puesto/envases/tipos/{tipo_id}/baja")
 def dar_de_baja_tipo_envase_puesto_ruta(request: Request, tipo_id: int):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
     try:
         desactivar_tipo_envase_puesto(tipo_id)
     except Exception as error_db:
@@ -5614,6 +5714,8 @@ def cargar_stock_fisico_ruta(
 @app.get("/puesto/envases/cotejo")
 def ver_cotejo_vacios(request: Request):
     """Cotejo (cajera): el último conteo físico por proveedor+tipo contra la foto del stock del sistema de ese instante."""
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     try:
         conteos = listar_ultimos_conteos_vacios()
     except Exception as error_db:
@@ -5711,6 +5813,8 @@ def ver_movimientos_vacios(request: Request, fecha_desde: str | None = None, fec
     cajera llega a cualquier fecha. Corregir = anular el movimiento
     equivocado y cargarlo de nuevo bien desde Recibir/Devolver.
     """
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
     try:
         recibidos = listar_vacios_recibidos_por_rango(desde, hasta)
@@ -5740,6 +5844,8 @@ def _url_movimientos(fecha_desde: str, fecha_hasta: str) -> str:
 def anular_recibido_desde_movimientos_ruta(
     request: Request, movimiento_id: int, fecha_desde: str = Form(""), fecha_hasta: str = Form("")
 ):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
     try:
         anular_vacio_recibido(movimiento_id)
     except Exception as error_db:
@@ -5751,6 +5857,8 @@ def anular_recibido_desde_movimientos_ruta(
 def anular_devuelto_desde_movimientos_ruta(
     request: Request, movimiento_id: int, fecha_desde: str = Form(""), fecha_hasta: str = Form("")
 ):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
     try:
         anular_vacio_devuelto(movimiento_id)
     except Exception as error_db:
@@ -5763,6 +5871,8 @@ def anular_ajuste_desde_movimientos_ruta(
     request: Request, ajuste_id: int, fecha_desde: str = Form(""), fecha_hasta: str = Form("")
 ):
     """Anula un ajuste con el mismo mecanismo que los demás movimientos: registro visible, nunca DELETE."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
     try:
         anular_ajuste_vacios(ajuste_id)
     except Exception as error_db:
@@ -5812,6 +5922,8 @@ def ver_ajustar_stock_vacios(
     diferencia que se vio en el Cotejo, y eso hay que entenderlo ANTES
     de guardar, no descubrirlo después.
     """
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     precarga = {}
     if proveedor_id and tipo_envase_id and contado is not None and contado.strip().lstrip("-").isdigit():
         try:
@@ -5848,6 +5960,8 @@ def ajustar_stock_vacios_ruta(
     motivo: str = Form(""),
 ):
     """Guarda un ajuste: cantidad con signo (nunca 0) y motivo OBLIGATORIO — sin motivo no se guarda."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/ajustar", status_code=303)
     motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
     error = None
     cantidad_valor = None
@@ -5924,12 +6038,19 @@ def ver_clientes_puesto(request: Request, aviso: str | None = None):
     El alta normal la hace el empleado tipeando el nombre en Recibir; acá
     la cajera puede además dar de baja a uno para que deje de sugerirse
     (si vuelve a aparecer, tipear su nombre lo reactiva solo).
+
+    La pantalla pide clave, pero el alta automática al tipear en Recibir
+    NO: esa es la operación del día a día del empleado.
     """
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     return _renderizar_pantalla_clientes_puesto(request, aviso=aviso)
 
 
 @app.post("/puesto/envases/clientes/nuevo")
 def crear_cliente_puesto_ruta(request: Request, nombre: str = Form("")):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/clientes", status_code=303)
     nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
     nombre_normalizado = normalizar_texto(nombre_limpio)
     if not nombre_normalizado:
@@ -5950,6 +6071,8 @@ def crear_cliente_puesto_ruta(request: Request, nombre: str = Form("")):
 
 @app.post("/puesto/envases/clientes/{cliente_id}/baja")
 def dar_de_baja_cliente_puesto_ruta(request: Request, cliente_id: int):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/clientes", status_code=303)
     try:
         desactivar_cliente_puesto(cliente_id)
     except Exception as error_db:
@@ -5982,11 +6105,15 @@ def ver_proveedores_puesto(request: Request, aviso: str | None = None):
     le aparece en las listas cerradas de Vacíos (después de cargarle al
     menos un tipo de envase).
     """
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
     return _renderizar_pantalla_proveedores_puesto(request, aviso=aviso)
 
 
 @app.post("/puesto/envases/proveedores/nuevo")
 def crear_proveedor_puesto_ruta(request: Request, nombre: str = Form("")):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/proveedores", status_code=303)
     nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
     nombre_normalizado = normalizar_texto(nombre_limpio)
     if not nombre_normalizado:
@@ -6009,6 +6136,8 @@ def crear_proveedor_puesto_ruta(request: Request, nombre: str = Form("")):
 
 @app.post("/puesto/envases/proveedores/{proveedor_id}/baja")
 def dar_de_baja_proveedor_puesto_ruta(request: Request, proveedor_id: int):
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/proveedores", status_code=303)
     try:
         desactivar_proveedor_puesto(proveedor_id)
     except Exception as error_db:

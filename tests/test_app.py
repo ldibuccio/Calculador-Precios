@@ -9820,6 +9820,201 @@ def test_hub_envases_puesto_tiene_el_boton_de_ajustar_stock():
     assert "Ajustar Stock" in respuesta.text
 
 
+# --- Clave de la zona de control del Puesto ---
+
+
+def _con_clave_control(valor="1234"):
+    """La clave se lee SIEMPRE por _clave_control_puesto (un solo lugar): patchear ahí es patchear el origen."""
+    return patch("app.main._clave_control_puesto", return_value=valor)
+
+
+def _cliente_destrabado(clave="1234"):
+    """Un TestClient propio (la cookie no puede contaminar al cliente compartido) ya con la clave puesta."""
+    cliente_propio = TestClient(app)
+    respuesta = cliente_propio.post(
+        "/puesto/envases/clave", data={"clave": clave, "volver": "/puesto/envases"}, follow_redirects=False
+    )
+    assert respuesta.status_code == 303
+    return cliente_propio
+
+
+def test_sin_clave_configurada_no_hay_puerta():
+    # El comportamiento de siempre: sin la variable, todo abierto como hoy.
+    filas_stock = [
+        {"proveedor_id": 200, "proveedor_nombre": "Saturno",
+         "tipo_envase_id": 1, "tipo_nombre": "torito",
+         "recibidos": 5, "devueltos": 0, "ajustes": 0, "stock": 5},
+    ]
+    with patch("app.main.stock_vacios", return_value=filas_stock):
+        respuesta = cliente.get("/puesto/envases/stock")
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    # Sin clave tampoco hay botón Bloquear (no hay nada que bloquear).
+    assert "Bloquear" not in respuesta.text
+
+
+def test_con_clave_las_pantallas_de_control_piden_clave():
+    with _con_clave_control():
+        for url in (
+            "/puesto/envases/stock",
+            "/puesto/envases/cotejo",
+            "/puesto/envases/movimientos",
+            "/puesto/envases/ajustar",
+            "/puesto/envases/proveedores",
+            "/puesto/envases/tipos",
+            "/puesto/envases/clientes",
+        ):
+            respuesta = cliente.get(url)
+            assert respuesta.status_code == 401, url
+            assert 'action="/puesto/envases/clave"' in respuesta.text, url
+            assert f'name="volver" value="{url}"' in respuesta.text, url
+
+
+def test_la_pantalla_de_clave_no_deja_que_el_navegador_la_recuerde():
+    # Si el celular guarda o autocompleta la clave, la traba desaparece:
+    # el form va con autocomplete off y el campo como one-time-code.
+    with _con_clave_control():
+        respuesta = cliente.get("/puesto/envases/stock")
+
+    assert respuesta.status_code == 401
+    assert 'autocomplete="off"' in respuesta.text
+    assert 'autocomplete="one-time-code"' in respuesta.text
+    assert 'type="password"' in respuesta.text
+
+
+def test_el_volver_de_la_puerta_conserva_la_query():
+    # Venir del Cotejo con precarga y chocar la puerta no puede perder los
+    # parámetros: tras la clave se llega a la MISMA pantalla precargada.
+    with _con_clave_control():
+        respuesta = cliente.get("/puesto/envases/ajustar?proveedor_id=200&tipo_envase_id=1&contado=35")
+
+    assert respuesta.status_code == 401
+    assert 'value="/puesto/envases/ajustar?proveedor_id=200&amp;tipo_envase_id=1&amp;contado=35"' in respuesta.text
+
+
+def test_clave_correcta_desbloquea_toda_la_zona_una_sola_vez():
+    with _con_clave_control():
+        cliente_propio = TestClient(app)
+        respuesta = cliente_propio.post(
+            "/puesto/envases/clave",
+            data={"clave": "1234", "volver": "/puesto/envases/cotejo"},
+            follow_redirects=False,
+        )
+        assert respuesta.status_code == 303
+        assert respuesta.headers["location"] == "/puesto/envases/cotejo"
+        assert "acceso_control_puesto" in respuesta.headers.get("set-cookie", "")
+        # La clave NUNCA viaja en la cookie: solo la firma.
+        assert "1234" not in respuesta.headers.get("set-cookie", "")
+
+        # Con esa única clave, varias pantallas distintas sin repetirla.
+        with patch("app.main.listar_ultimos_conteos_vacios", return_value=[]):
+            assert cliente_propio.get("/puesto/envases/cotejo").status_code == 200
+        with patch("app.main.stock_vacios", return_value=[]):
+            respuesta_stock = cliente_propio.get("/puesto/envases/stock")
+        assert respuesta_stock.status_code == 200
+        # Destrabado, aparece el botón para volver a bloquear.
+        assert 'action="/puesto/envases/bloquear"' in respuesta_stock.text
+
+
+def test_clave_incorrecta_no_deja_cookie_y_avisa():
+    with _con_clave_control():
+        cliente_propio = TestClient(app)
+        respuesta = cliente_propio.post(
+            "/puesto/envases/clave", data={"clave": "9999", "volver": "/puesto/envases/stock"}
+        )
+
+    assert respuesta.status_code == 401
+    assert "Clave incorrecta." in respuesta.text
+    assert "acceso_control_puesto" not in respuesta.headers.get("set-cookie", "")
+
+
+def test_el_volver_no_puede_salir_de_envases_puesto():
+    # La puerta redirige solo adentro de la zona: un volver ajeno cae al hub.
+    with _con_clave_control():
+        respuesta = TestClient(app).post(
+            "/puesto/envases/clave",
+            data={"clave": "1234", "volver": "https://otro-lado.com/x"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases"
+
+
+def test_los_post_protegidos_sin_clave_no_ejecutan_nada():
+    with _con_clave_control(), patch("app.main.anular_ajuste_vacios") as mock_anular, patch(
+        "app.main.crear_ajuste_vacios"
+    ) as mock_crear, patch("app.main.obtener_o_crear_proveedor_puesto") as mock_proveedor:
+        r1 = cliente.post(
+            "/puesto/envases/movimientos/ajustes/30/anular",
+            data={"fecha_desde": "2026-08-09", "fecha_hasta": "2026-08-11"},
+            follow_redirects=False,
+        )
+        r2 = cliente.post(
+            "/puesto/envases/ajustar",
+            data={"proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "-5", "motivo": "x"},
+            follow_redirects=False,
+        )
+        r3 = cliente.post("/puesto/envases/proveedores/nuevo", data={"nombre": "Colado"}, follow_redirects=False)
+
+    assert r1.status_code == 303 and r2.status_code == 303 and r3.status_code == 303
+    mock_anular.assert_not_called()
+    mock_crear.assert_not_called()
+    mock_proveedor.assert_not_called()
+
+
+def test_bloquear_borra_la_cookie_y_vuelve_a_pedir_clave():
+    with _con_clave_control():
+        cliente_propio = _cliente_destrabado()
+        with patch("app.main.stock_vacios", return_value=[]):
+            assert cliente_propio.get("/puesto/envases/stock").status_code == 200
+
+        respuesta = cliente_propio.post("/puesto/envases/bloquear", follow_redirects=False)
+        assert respuesta.status_code == 303
+        assert respuesta.headers["location"] == "/puesto/envases"
+
+        # Bloqueado: la misma pantalla pide clave de nuevo.
+        assert cliente_propio.get("/puesto/envases/stock").status_code == 401
+
+
+def test_pendientes_y_pantallas_del_empleado_quedan_sin_clave():
+    # Pendientes de Pago se usa todo el día con el cliente adelante, y las
+    # pantallas del empleado son la operación: nada de clave ahí.
+    with _con_clave_control():
+        with (
+            patch("app.main.listar_senas_pendientes", return_value=[]),
+            patch("app.main.listar_senas_resueltas", return_value=[]),
+        ):
+            assert cliente.get("/puesto/envases/pendientes").status_code == 200
+        assert cliente.get("/puesto/envases/vacios").status_code == 200
+        with (
+            patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+            patch("app.main.listar_clientes_puesto", return_value=CLIENTES_PUESTO_DE_PRUEBA),
+            patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+        ):
+            assert cliente.get("/puesto/envases/vacios/recibir").status_code == 200
+
+
+def test_el_alta_automatica_de_cliente_al_recibir_no_pide_clave():
+    # El empleado tipea un nombre nuevo en Recibir y el cliente se crea
+    # solo: ese camino es operación, NO catálogo — sin puerta.
+    with _con_clave_control(), (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA)
+    ), patch("app.main.obtener_o_crear_cliente_puesto", return_value=10) as mock_cliente, patch(
+        "app.main.crear_vacio_recibido"
+    ) as mock_crear:
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/recibir",
+            data={"cliente_nombre": "Doña Rosa", "proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "4"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cliente.assert_called_once()
+    mock_crear.assert_called_once()
+
+
 def test_ver_clientes_puesto_lista_con_alta_y_baja():
     with patch("app.main.listar_clientes_puesto", return_value=CLIENTES_PUESTO_DE_PRUEBA):
         respuesta = cliente.get("/puesto/envases/clientes")

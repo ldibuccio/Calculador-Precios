@@ -1,0 +1,23 @@
+{# Botón para cerrar la zona de control en el momento (borra la cookie de
+   acceso), para no dejarla abierta en un celular suelto. Solo aparece si
+   hay clave configurada — sin clave no hay nada que bloquear. #}
+{% if clave_control_activa() %}
+<style>
+  .fila-bloquear { display: flex; justify-content: flex-end; margin: 0 0 0.75rem; }
+  .boton-bloquear {
+    padding: 0.55rem 0.9rem;
+    background: #fff;
+    color: #555;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+<div class="fila-bloquear">
+  <form method="post" action="/puesto/envases/bloquear">
+    <button type="submit" class="boton-bloquear">🔒 Bloquear</button>
+  </form>
+</div>
+{% endif %}
