@@ -44,7 +44,7 @@ bases estén marcadas.
 | `agregar_vacios_puesto.sql` | ✅ 2026-08-19 | ✅ 2026-08-19 |
 | `agregar_resultado_sena.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_proveedores_puesto.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
-| `agregar_ajustes_vacios.sql` | ⬜ pendiente (correr ANTES de mergear) | ⬜ pendiente (correr ANTES de mergear) |
+| `agregar_ajustes_vacios.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 
 ## Pasos manuales que NO son SQL (por base)
 
