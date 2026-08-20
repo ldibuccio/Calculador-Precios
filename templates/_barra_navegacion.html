@@ -64,7 +64,9 @@
        en nowrap ESTIRA la barra fuera de la pantalla en vez de
        desbordar adentro — y el script nunca detecta que no entra. */
     min-width: 0;
-    text-align: center;
+    /* A la izquierda, arrancando a continuación de los botones: centrado
+       quedaba un hueco raro entre la flecha y el nombre. */
+    text-align: left;
     /* 1.2rem es solo el arranque (y lo que queda si no hay JS): el
        script de abajo agranda o achica cada título para que llene el
        ancho que dejan los tres botones — "Compras" grande, un título
@@ -72,7 +74,7 @@
     font-size: 1.2rem;
     font-weight: 800;
     line-height: 1.15;
-    padding: 0 0.4rem;
+    padding: 0 0.4rem 0 0.6rem;
   }
   .barra-titulo.ajustado-nowrap { white-space: nowrap; }
   .barra-empresa {
