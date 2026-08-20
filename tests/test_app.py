@@ -8333,6 +8333,25 @@ def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():
     assert '<div class="barra-titulo">Compras</div>' in respuesta.text
 
 
+def test_barra_navegacion_tiene_boton_de_volver_atras():
+    # Tercer botón junto a la casita y al módulo: atrás del navegador.
+    respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'onclick="history.back()"' in respuesta.text
+    assert 'aria-label="Volver atrás"' in respuesta.text
+
+
+def test_el_titulo_de_la_barra_no_se_recorta_con_puntos_suspensivos():
+    # El título va en letra chica (1.05rem) y puede bajar a dos líneas,
+    # pero nunca se corta con "…" (antes los títulos largos no entraban
+    # en celular).
+    respuesta = cliente.get("/compras")
+
+    assert "text-overflow" not in respuesta.text
+    assert "font-size: 1.05rem" in respuesta.text
+
+
 def test_barra_navegacion_en_comercial_usa_icono_distinto_de_compras():
     # Regresión: Compras y Comercial arrancan las dos con "C" — se
     # distinguen con íconos distintos, no con la inicial.
