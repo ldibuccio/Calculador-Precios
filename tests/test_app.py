@@ -8314,14 +8314,13 @@ def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_ver_facturacion_y_puesto_muestran_en_construccion_y_vuelven_a_inicio():
-    for url, titulo in (("/facturacion", "Facturación"), ("/puesto", "Puesto")):
-        respuesta = cliente.get(url)
+def test_ver_facturacion_muestra_en_construccion_y_vuelve_a_inicio():
+    respuesta = cliente.get("/facturacion")
 
-        assert respuesta.status_code == 200, url
-        assert titulo in respuesta.text
-        assert "En construcción" in respuesta.text
-        assert 'href="/inicio"' in respuesta.text
+    assert respuesta.status_code == 200
+    assert "Facturación" in respuesta.text
+    assert "En construcción" in respuesta.text
+    assert 'href="/inicio"' in respuesta.text
 
 
 def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():
@@ -9098,3 +9097,296 @@ def test_editar_compra_sin_foto_no_muestra_el_boton():
 
     assert respuesta.status_code == 200
     assert "Ver foto de la comanda" not in respuesta.text
+
+
+# --- Vacíos (Envases Puesto): cajones de proveedores que entran y salen del puesto ---
+
+TIPOS_ENVASE_PUESTO_DE_PRUEBA = [
+    {"id": 1, "proveedor_id": 200, "nombre": "cajón plástico negro", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41"},
+    {"id": 2, "proveedor_id": 200, "nombre": "torito", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41"},
+    {"id": 3, "proveedor_id": 201, "nombre": "cajón madera", "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02"},
+]
+
+CLIENTES_PUESTO_DE_PRUEBA = [
+    {"id": 10, "nombre": "Juan Pérez"},
+    {"id": 11, "nombre": "Marta"},
+]
+
+
+def test_ver_puesto_es_un_hub_con_envases_puesto():
+    respuesta = cliente.get("/puesto")
+
+    assert respuesta.status_code == 200
+    assert "En construcción" not in respuesta.text
+    assert 'href="/puesto/envases"' in respuesta.text
+    assert "Envases Puesto" in respuesta.text
+
+
+def test_ver_envases_puesto_separa_vacios_del_resto():
+    respuesta = cliente.get("/puesto/envases")
+
+    assert respuesta.status_code == 200
+    assert 'href="/puesto/envases/vacios"' in respuesta.text
+    assert 'href="/puesto/envases/stock"' in respuesta.text
+    assert 'href="/puesto/envases/tipos"' in respuesta.text
+    # Cotejo y Pendientes de Pago: tanda 2, marcados Próximamente.
+    assert "Cotejo (Próximamente)" in respuesta.text
+    assert "Pendientes de Pago (Próximamente)" in respuesta.text
+
+
+def test_ver_vacios_muestra_las_tres_pantallas_del_empleado():
+    respuesta = cliente.get("/puesto/envases/vacios")
+
+    assert respuesta.status_code == 200
+    assert 'href="/puesto/envases/vacios/recibir"' in respuesta.text
+    assert 'href="/puesto/envases/vacios/devolver"' in respuesta.text
+    assert "Stock Físico (Próximamente)" in respuesta.text
+    # El hub del empleado NO linkea al stock del sistema.
+    assert 'href="/puesto/envases/stock"' not in respuesta.text
+
+
+def test_ver_recibir_vacios_arma_el_form_con_lista_cerrada():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_clientes_puesto", return_value=CLIENTES_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/vacios/recibir")
+
+    assert respuesta.status_code == 200
+    # Proveedores derivados de los tipos (lista cerrada): uno por proveedor.
+    assert respuesta.text.count('value="200"') == 1
+    assert "Saturno (N07P41)" in respuesta.text
+    assert "Don Pepe (N01P02)" in respuesta.text
+    # Clientes conocidos como sugerencias al tipear.
+    assert 'list="clientes-conocidos"' in respuesta.text
+    assert "Juan Pérez" in respuesta.text
+    # Tipos por proveedor para el JS que preselecciona el primero.
+    assert "TIPOS_POR_PROVEEDOR" in respuesta.text
+    assert "cajón plástico negro" in respuesta.text
+
+
+def test_ver_recibir_vacios_sin_tipos_explica_como_habilitar():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/vacios/recibir")
+
+    assert respuesta.status_code == 200
+    assert "Todavía no hay tipos de envase cargados" in respuesta.text
+
+
+def test_recibir_vacios_guarda_con_cliente_normalizado():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_cliente_puesto", return_value=10) as mock_cliente,
+        patch("app.main.crear_vacio_recibido") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/recibir",
+            data={
+                "cliente_nombre": "  JUAN   Pérez ",
+                "proveedor_id": "200",
+                "tipo_envase_id": "2",
+                "cantidad": "12",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].startswith("/puesto/envases/vacios/recibir?aviso=")
+    # El nombre se limpia (espacios) y se normaliza (minúsculas, sin acentos)
+    # para que "Juan", "juan " y "JUAN" sean EL MISMO cliente.
+    mock_cliente.assert_called_once_with("JUAN Pérez", "juan perez")
+    mock_crear.assert_called_once_with(10, 200, 2, 12)
+
+
+def test_recibir_vacios_rechaza_tipo_que_no_es_del_proveedor():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+        patch("app.main.crear_vacio_recibido") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/recibir",
+            data={
+                "cliente_nombre": "Juan",
+                "proveedor_id": "201",
+                "tipo_envase_id": "1",  # el tipo 1 es de Saturno, no de Don Pepe
+                "cantidad": "12",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí un proveedor y un tipo de envase válidos." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_recibir_vacios_sin_nombre_de_cliente_da_error():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+        patch("app.main.crear_vacio_recibido") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/recibir",
+            data={"cliente_nombre": "   ", "proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "12"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "El nombre del cliente es obligatorio." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_recibir_vacios_con_cantidad_invalida_da_error():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+        patch("app.main.crear_vacio_recibido") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/recibir",
+            data={"cliente_nombre": "Juan", "proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "0"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "mayor a cero" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_anular_vacio_recibido_redirige_a_recibir():
+    with patch("app.main.anular_vacio_recibido") as mock_anular:
+        respuesta = cliente.post("/puesto/envases/vacios/recibidos/5/anular", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases/vacios/recibir"
+    mock_anular.assert_called_once_with(5)
+
+
+def test_devolver_vacios_con_stock_suficiente_avisa_sin_advertencia():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_vacio_devuelto", return_value=40) as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/devolver",
+            data={"proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "30"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/puesto/envases/vacios/devolver?aviso=")
+    assert "Ojo" not in location
+    mock_crear.assert_called_once_with(200, 1, 30)
+
+
+def test_devolver_vacios_que_supera_el_stock_guarda_igual_y_lo_dice():
+    # Nunca se bloquea: el camión se lleva los cajones aunque el sistema
+    # esté atrasado. La diferencia queda grabada (stock_sistema en la
+    # fila) y el aviso lo dice.
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.crear_vacio_devuelto", return_value=40) as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/vacios/devolver",
+            data={"proveedor_id": "200", "tipo_envase_id": "1", "cantidad": "50"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert "seg%C3%BAn+el+sistema+hab%C3%ADa+40" in location
+    mock_crear.assert_called_once_with(200, 1, 50)
+
+
+def test_anular_vacio_devuelto_redirige_a_devolver():
+    with patch("app.main.anular_vacio_devuelto") as mock_anular:
+        respuesta = cliente.post("/puesto/envases/vacios/devueltos/7/anular", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases/vacios/devolver"
+    mock_anular.assert_called_once_with(7)
+
+
+def test_ver_stock_vacios_agrupa_por_proveedor_y_marca_negativos():
+    filas = [
+        {"proveedor_id": 200, "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro", "recibidos": 50, "devueltos": 30, "stock": 20},
+        {"proveedor_id": 200, "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41",
+         "tipo_envase_id": 2, "tipo_nombre": "torito", "recibidos": 10, "devueltos": 15, "stock": -5},
+        {"proveedor_id": 201, "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02",
+         "tipo_envase_id": 3, "tipo_nombre": "cajón madera", "recibidos": 8, "devueltos": 0, "stock": 8},
+    ]
+    with patch("app.main.stock_vacios", return_value=filas):
+        respuesta = cliente.get("/puesto/envases/stock")
+
+    assert respuesta.status_code == 200
+    assert "Saturno" in respuesta.text
+    assert "Don Pepe" in respuesta.text
+    assert "50 recibidos − 30 devueltos" in respuesta.text
+    # El negativo va marcado en rojo (clase negativo).
+    assert 'class="numero negativo">-5<' in respuesta.text
+    # Total del proveedor con más de un tipo: 20 + (-5) = 15.
+    assert ">Total</span>" in respuesta.text
+    assert ">15</span>" in respuesta.text
+
+
+def test_ver_tipos_envase_puesto_lista_y_ofrece_alta():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/puesto/envases/tipos")
+
+    assert respuesta.status_code == 200
+    assert 'action="/puesto/envases/tipos/nuevo"' in respuesta.text
+    assert "cajón plástico negro" in respuesta.text
+    assert 'action="/puesto/envases/tipos/1/baja"' in respuesta.text
+
+
+def test_crear_tipo_envase_puesto_limpia_el_nombre_y_redirige():
+    with patch("app.main.crear_tipo_envase_puesto") as mock_crear:
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/nuevo",
+            data={"proveedor_id": "200", "nombre": "  cajón   negro "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(200, "cajón negro")
+
+
+def test_crear_tipo_envase_puesto_sin_nombre_da_error():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.crear_tipo_envase_puesto") as mock_crear,
+    ):
+        respuesta = cliente.post("/puesto/envases/tipos/nuevo", data={"proveedor_id": "200", "nombre": "  "})
+
+    assert respuesta.status_code == 400
+    assert "El nombre del tipo de envase es obligatorio." in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_dar_de_baja_tipo_envase_puesto_redirige():
+    with patch("app.main.desactivar_tipo_envase_puesto") as mock_baja:
+        respuesta = cliente.post("/puesto/envases/tipos/3/baja", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/puesto/envases/tipos"
+    mock_baja.assert_called_once_with(3)
+
+
+def test_pantallas_tanda_2_de_vacios_muestran_proximamente():
+    for url in ("/puesto/envases/vacios/stock-fisico", "/puesto/envases/cotejo", "/puesto/envases/pendientes"):
+        respuesta = cliente.get(url)
+        assert respuesta.status_code == 200, url
+        assert "En construcción" in respuesta.text, url

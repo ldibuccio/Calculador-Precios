@@ -28,6 +28,8 @@ from app.db import (
     actualizar_ficha,
     actualizar_importe_compra,
     actualizar_precio_compra,
+    anular_vacio_devuelto,
+    anular_vacio_recibido,
     aprender_articulo,
     buscar_compras,
     buscar_retiros,
@@ -46,8 +48,12 @@ from app.db import (
     crear_compras_de_comanda,
     crear_envase,
     crear_ficha,
+    crear_tipo_envase_puesto,
+    crear_vacio_devuelto,
+    crear_vacio_recibido,
     desactivar_articulo,
     desactivar_cliente,
+    desactivar_tipo_envase_puesto,
     deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
     eliminar_compra,
@@ -60,6 +66,7 @@ from app.db import (
     listar_articulos,
     listar_articulos_sin_ficha,
     listar_clientes,
+    listar_clientes_puesto,
     listar_compras_pendientes_recepcion,
     listar_compras_pendientes_retiro,
     listar_compras_por_fecha_y_proveedor,
@@ -76,7 +83,10 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
+    listar_tipos_envase_puesto,
     listar_todas_las_conversiones,
+    listar_vacios_devueltos_de_fecha,
+    listar_vacios_recibidos_de_fecha,
     marcar_compra_cancelada,
     marcar_compra_no_ingresada,
     marcar_compra_retirada,
@@ -86,6 +96,7 @@ from app.db import (
     obtener_compra,
     obtener_detalle_compra,
     obtener_ficha,
+    obtener_o_crear_cliente_puesto,
     obtener_o_crear_proveedor_por_codigo,
     obtener_proveedor,
     obtener_ultimo_disponible_cliente,
@@ -93,6 +104,7 @@ from app.db import (
     recepcionar_compra,
     rechazar_compra,
     registrar_costo_envase,
+    stock_vacios,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
@@ -5175,8 +5187,357 @@ def ver_facturacion(request: Request):
 
 @app.get("/puesto")
 def ver_puesto(request: Request):
+    """Hub del módulo Puesto (la venta en el puesto del Mercado, aparte de la distribución)."""
+    return templates.TemplateResponse(request, "puesto.html", {})
+
+
+@app.get("/puesto/envases")
+def ver_envases_puesto(request: Request):
+    """Hub de Envases Puesto: cajones físicos de proveedores que entran y salen del puesto.
+
+    NADA que ver con /envases de Comercial (el costo del envase facturado
+    al cliente de distribución). Este hub es de la cajera/dueño; lo que
+    puede ver el empleado del fondo está un nivel más adentro, en
+    /puesto/envases/vacios — separación pensada para colgarle permisos
+    cuando haya login, sin inventar contraseñas ahora.
+    """
+    return templates.TemplateResponse(request, "puesto_envases.html", {})
+
+
+@app.get("/puesto/envases/vacios")
+def ver_vacios(request: Request):
+    """Hub de Vacíos: las tres pantallas del empleado del fondo del puesto."""
+    return templates.TemplateResponse(request, "vacios.html", {})
+
+
+def _validar_cantidad_vacios(texto: str) -> tuple[str | None, int | None]:
+    """Valida la cantidad de cajones de un movimiento de Vacíos: obligatoria, entero positivo."""
+    texto = texto.strip()
+    if not texto:
+        return "La cantidad de cajones es obligatoria.", None
+    try:
+        valor = int(texto)
+    except ValueError:
+        return "La cantidad de cajones tiene que ser un número entero.", None
+    if valor <= 0:
+        return "La cantidad de cajones tiene que ser mayor a cero.", None
+    return None, valor
+
+
+def _tipos_envase_y_proveedores():
+    """Tipos de envase activos + los proveedores derivados de ellos (solo proveedores CON tipos aparecen en Vacíos)."""
+    tipos = listar_tipos_envase_puesto()
+    proveedores = []
+    vistos = set()
+    for tipo in tipos:
+        if tipo["proveedor_id"] not in vistos:
+            vistos.add(tipo["proveedor_id"])
+            proveedores.append(
+                {
+                    "id": tipo["proveedor_id"],
+                    "nombre": tipo["proveedor_nombre"],
+                    "codigo_puesto": tipo["codigo_puesto"],
+                }
+            )
+    return tipos, proveedores
+
+
+def _renderizar_pantalla_recibir_vacios(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        tipos, proveedores = _tipos_envase_y_proveedores()
+        clientes = listar_clientes_puesto()
+        recibidos_hoy = listar_vacios_recibidos_de_fecha(_hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_recibir.html",
+        {
+            "tipos": tipos,
+            "proveedores": proveedores,
+            "clientes": clientes,
+            "recibidos_hoy": recibidos_hoy,
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/vacios/recibir")
+def ver_recibir_vacios(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_recibir_vacios(request, aviso=aviso)
+
+
+@app.post("/puesto/envases/vacios/recibir")
+def recibir_vacios_ruta(
+    request: Request,
+    cliente_nombre: str = Form(""),
+    proveedor_id: str = Form(""),
+    tipo_envase_id: str = Form(""),
+    cantidad: str = Form(""),
+):
+    """Entrada de vacíos: cliente (tipeado o elegido), proveedor de lista cerrada, tipo del proveedor, cantidad.
+
+    El cliente se crea con solo el nombre si no existe — pero por nombre
+    NORMALIZADO (ver obtener_o_crear_cliente_puesto): "Juan", "juan " y
+    "JUAN" terminan siendo el mismo cliente, nunca tres.
+    """
+    nombre_limpio = re.sub(r"\s+", " ", cliente_nombre).strip()
+    nombre_normalizado = normalizar_texto(nombre_limpio)
+    error = None
+    if not nombre_normalizado:
+        error = "El nombre del cliente es obligatorio."
+
+    cantidad_valor = None
+    if not error:
+        error, cantidad_valor = _validar_cantidad_vacios(cantidad)
+
+    tipo_elegido = None
+    if not error:
+        try:
+            tipos, _ = _tipos_envase_y_proveedores()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        # Lista cerrada de verdad: proveedor y tipo tienen que ser un par
+        # válido de los tipos cargados — no vale mandar cualquier id.
+        tipo_elegido = next(
+            (
+                t
+                for t in tipos
+                if str(t["id"]) == tipo_envase_id.strip() and str(t["proveedor_id"]) == proveedor_id.strip()
+            ),
+            None,
+        )
+        if tipo_elegido is None:
+            error = "Elegí un proveedor y un tipo de envase válidos."
+
+    if error:
+        return _renderizar_pantalla_recibir_vacios(request, error=error, status_code=400)
+
+    try:
+        cliente_id = obtener_o_crear_cliente_puesto(nombre_limpio, nombre_normalizado)
+        crear_vacio_recibido(cliente_id, tipo_elegido["proveedor_id"], tipo_elegido["id"], cantidad_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_recibir_vacios(
+            request, error=f"No se pudo guardar la entrada: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Recibidos {cantidad_valor} cajones ({tipo_elegido['nombre']}) de "
+        f"{tipo_elegido['proveedor_nombre']}, traídos por {nombre_limpio}."
+    )
+    return RedirectResponse(url=f"/puesto/envases/vacios/recibir?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.post("/puesto/envases/vacios/recibidos/{movimiento_id}/anular")
+def anular_vacio_recibido_ruta(request: Request, movimiento_id: int):
+    """Anula una entrada desde la lista "Recibido hoy" (error del momento). Baja lógica, nunca DELETE."""
+    try:
+        anular_vacio_recibido(movimiento_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_recibir_vacios(
+            request, error=f"No se pudo anular el movimiento: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/vacios/recibir", status_code=303)
+
+
+def _renderizar_pantalla_devolver_vacios(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        tipos, proveedores = _tipos_envase_y_proveedores()
+        devueltos_hoy = listar_vacios_devueltos_de_fecha(_hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_devolver.html",
+        {
+            "tipos": tipos,
+            "proveedores": proveedores,
+            "devueltos_hoy": devueltos_hoy,
+            "error": error,
+            "aviso": aviso,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/vacios/devolver")
+def ver_devolver_vacios(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_devolver_vacios(request, aviso=aviso)
+
+
+@app.post("/puesto/envases/vacios/devolver")
+def devolver_vacios_ruta(
+    request: Request,
+    proveedor_id: str = Form(""),
+    tipo_envase_id: str = Form(""),
+    cantidad: str = Form(""),
+):
+    """Salida de vacíos: el proveedor se lleva sus cajones. Nunca se bloquea por stock: se registra la realidad.
+
+    Si la cantidad supera lo que el sistema decía, la diferencia queda
+    GRABADA en el movimiento (stock_sistema) y el aviso lo dice — el
+    negativo después se ve en Stock del Sistema y en el Cotejo.
+    """
+    error, cantidad_valor = _validar_cantidad_vacios(cantidad)
+
+    tipo_elegido = None
+    if not error:
+        try:
+            tipos, _ = _tipos_envase_y_proveedores()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        tipo_elegido = next(
+            (
+                t
+                for t in tipos
+                if str(t["id"]) == tipo_envase_id.strip() and str(t["proveedor_id"]) == proveedor_id.strip()
+            ),
+            None,
+        )
+        if tipo_elegido is None:
+            error = "Elegí un proveedor y un tipo de envase válidos."
+
+    if error:
+        return _renderizar_pantalla_devolver_vacios(request, error=error, status_code=400)
+
+    try:
+        stock_sistema = crear_vacio_devuelto(tipo_elegido["proveedor_id"], tipo_elegido["id"], cantidad_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_devolver_vacios(
+            request, error=f"No se pudo guardar la devolución: {error_db}", status_code=500
+        )
+
+    aviso = f"Devueltos {cantidad_valor} cajones ({tipo_elegido['nombre']}) a {tipo_elegido['proveedor_nombre']}."
+    if cantidad_valor > stock_sistema:
+        aviso += (
+            f" Ojo: según el sistema había {stock_sistema} — la diferencia quedó registrada"
+            " para revisar en el Cotejo."
+        )
+    return RedirectResponse(url=f"/puesto/envases/vacios/devolver?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.post("/puesto/envases/vacios/devueltos/{movimiento_id}/anular")
+def anular_vacio_devuelto_ruta(request: Request, movimiento_id: int):
+    """Anula una salida desde la lista "Devuelto hoy". Baja lógica, nunca DELETE."""
+    try:
+        anular_vacio_devuelto(movimiento_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_devolver_vacios(
+            request, error=f"No se pudo anular el movimiento: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/vacios/devolver", status_code=303)
+
+
+@app.get("/puesto/envases/stock")
+def ver_stock_vacios(request: Request):
+    """Stock del sistema por proveedor y tipo (recibidos − devueltos). La ve la cajera, NO el empleado del fondo."""
+    try:
+        filas = stock_vacios()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # Agrupado por proveedor para mostrar: encabezado + una fila por tipo.
+    grupos: list[dict] = []
+    grupos_por_proveedor: dict[int, dict] = {}
+    for fila in filas:
+        grupo = grupos_por_proveedor.get(fila["proveedor_id"])
+        if grupo is None:
+            grupo = {
+                "proveedor_nombre": fila["proveedor_nombre"],
+                "codigo_puesto": fila["codigo_puesto"],
+                "tipos": [],
+                "total": 0,
+            }
+            grupos_por_proveedor[fila["proveedor_id"]] = grupo
+            grupos.append(grupo)
+        grupo["tipos"].append(fila)
+        grupo["total"] += fila["stock"]
+
+    return templates.TemplateResponse(request, "vacios_stock.html", {"grupos": grupos})
+
+
+def _renderizar_pantalla_tipos_envase_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        tipos = listar_tipos_envase_puesto()
+        proveedores = listar_proveedores()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_tipos.html",
+        {"tipos": tipos, "proveedores": proveedores, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/tipos")
+def ver_tipos_envase_puesto(request: Request, aviso: str | None = None):
+    """ABM de tipos de cajón por proveedor (lo carga el dueño). Un proveedor sin tipos no aparece en Vacíos."""
+    return _renderizar_pantalla_tipos_envase_puesto(request, aviso=aviso)
+
+
+@app.post("/puesto/envases/tipos/nuevo")
+def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form(""), nombre: str = Form("")):
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if not nombre_limpio:
+        return _renderizar_pantalla_tipos_envase_puesto(
+            request, error="El nombre del tipo de envase es obligatorio.", status_code=400
+        )
+    if not proveedor_id.strip().isdigit():
+        return _renderizar_pantalla_tipos_envase_puesto(request, error="Elegí un proveedor.", status_code=400)
+
+    try:
+        crear_tipo_envase_puesto(int(proveedor_id), nombre_limpio)
+    except Exception as error_db:
+        return _renderizar_pantalla_tipos_envase_puesto(
+            request, error=f"No se pudo crear el tipo de envase: {error_db}", status_code=500
+        )
+
+    parametros = urlencode({"aviso": f"Tipo de envase '{nombre_limpio}' cargado."})
+    return RedirectResponse(url=f"/puesto/envases/tipos?{parametros}", status_code=303)
+
+
+@app.post("/puesto/envases/tipos/{tipo_id}/baja")
+def dar_de_baja_tipo_envase_puesto_ruta(request: Request, tipo_id: int):
+    try:
+        desactivar_tipo_envase_puesto(tipo_id)
+    except Exception as error_db:
+        return _renderizar_pantalla_tipos_envase_puesto(
+            request, error=f"No se pudo dar de baja el tipo de envase: {error_db}", status_code=500
+        )
+    return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
+
+
+@app.get("/puesto/envases/vacios/stock-fisico")
+def ver_stock_fisico_vacios(request: Request):
+    """Tanda 2: el conteo físico del empleado (sin ver el stock del sistema)."""
     return _renderizar_en_construccion(
-        request, "Puesto", volver_url="/inicio", volver_texto="Volver a Inicio", sector="puesto"
+        request, "Stock Físico", volver_url="/puesto/envases/vacios", volver_texto="Volver a Vacíos", sector="puesto"
+    )
+
+
+@app.get("/puesto/envases/cotejo")
+def ver_cotejo_vacios(request: Request):
+    """Tanda 2: stock del sistema contra el último conteo físico."""
+    return _renderizar_en_construccion(
+        request, "Cotejo", volver_url="/puesto/envases", volver_texto="Volver a Envases Puesto", sector="puesto"
+    )
+
+
+@app.get("/puesto/envases/pendientes")
+def ver_pendientes_pago_vacios(request: Request):
+    """Tanda 2: señas pendientes de pagar a los clientes del puesto."""
+    return _renderizar_en_construccion(
+        request,
+        "Pendientes de Pago",
+        volver_url="/puesto/envases",
+        volver_texto="Volver a Envases Puesto",
+        sector="puesto",
     )
 
 

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envases Puesto</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .boton {
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    line-height: 1.25;
+    min-height: 3.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .grupo-botones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .grupo-botones .boton { flex: 1 1 calc(50% - 0.3rem); }
+  /* Naranja para consulta/control, mismo criterio de colores que Compras. */
+  .boton-naranja { background: #ea580c; }
+  .boton-proximamente { opacity: 0.6; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Envases Puesto" %}
+  {% include "_barra_navegacion.html" %}
+
+  <!-- Cajones físicos de proveedores que entran y salen del puesto — NADA
+       que ver con /envases de Comercial (costo del envase facturado). Lo
+       que puede ver el empleado del fondo está adentro de Vacíos; el resto
+       de este hub es de la cajera/dueño. -->
+  <div class="tarjeta">
+    <h2>Operación</h2>
+    <div class="grupo-botones">
+      <a class="boton" href="/puesto/envases/vacios">Vacíos</a>
+    </div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Control</h2>
+    <div class="grupo-botones">
+      <a class="boton boton-naranja" href="/puesto/envases/stock">Stock del Sistema</a>
+      <a class="boton boton-naranja boton-proximamente" href="/puesto/envases/cotejo">Cotejo (Próximamente)</a>
+      <a class="boton boton-naranja boton-proximamente" href="/puesto/envases/pendientes">Pendientes de Pago (Próximamente)</a>
+      <a class="boton boton-naranja" href="/puesto/envases/tipos">Tipos de Envase</a>
+    </div>
+  </div>
+
+  <a class="volver" href="/puesto" style="display:block;margin-top:0.75rem;text-align:center;color:#888;font-size:0.85rem;text-decoration:none;">Volver a Puesto</a>
+</body>
+</html>

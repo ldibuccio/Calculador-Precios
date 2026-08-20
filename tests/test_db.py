@@ -4,6 +4,12 @@ from unittest.mock import MagicMock, patch
 
 from app.db import (
     actualizar_cantidad_compra,
+    anular_vacio_recibido,
+    crear_tipo_envase_puesto,
+    crear_vacio_devuelto,
+    listar_tipos_envase_puesto,
+    obtener_o_crear_cliente_puesto,
+    stock_vacios,
     actualizar_cliente,
     actualizar_precio_compra,
     buscar_compras,
@@ -1725,3 +1731,117 @@ def test_buscar_retiros_pendiente_incluye_los_estados_nulos():
     consulta = cursor.execute.call_args.args[0]
     assert "IS DISTINCT FROM 'retirado'" in consulta
     assert "IS DISTINCT FROM 'cancelado'" in consulta
+
+
+# --- Vacíos (Envases Puesto) ---
+
+
+def test_listar_tipos_envase_puesto_solo_activos_ordenados_por_carga():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_tipos_envase_puesto()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "WHERE t.activo" in consulta
+    # Dentro de cada proveedor, por id (orden de carga): el primero cargado
+    # es el que Recibir preselecciona.
+    assert "ORDER BY p.nombre, t.id" in consulta
+
+
+def test_crear_tipo_envase_puesto_reactiva_si_existia_dado_de_baja():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_tipo_envase_puesto(200, "cajón negro")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "ON CONFLICT (proveedor_id, nombre) DO UPDATE SET activo = true" in consulta
+    assert parametros == (200, "cajón negro")
+    conexion.commit.assert_called_once()
+
+
+def test_obtener_o_crear_cliente_puesto_reusa_el_existente_por_nombre_normalizado():
+    conexion, cursor = _conexion_falsa([(10, True)])  # ya existe, activo
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cliente_id = obtener_o_crear_cliente_puesto("JUAN Pérez", "juan perez")
+
+    assert cliente_id == 10
+    # Solo el SELECT: ni INSERT ni UPDATE — "Juan", "juan " y "JUAN" son el mismo.
+    assert cursor.execute.call_count == 1
+
+
+def test_obtener_o_crear_cliente_puesto_reactiva_al_dado_de_baja():
+    conexion, cursor = _conexion_falsa([(10, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cliente_id = obtener_o_crear_cliente_puesto("Juan", "juan")
+
+    assert cliente_id == 10
+    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    assert "SET activo = true" in consulta_update
+    assert parametros_update == (10,)
+
+
+def test_obtener_o_crear_cliente_puesto_crea_si_no_existe():
+    conexion, cursor = _conexion_falsa([None, (33,)])  # no existe; INSERT RETURNING id
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cliente_id = obtener_o_crear_cliente_puesto("Marta", "marta")
+
+    assert cliente_id == 33
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO clientes_puesto" in consulta_insert
+    assert parametros_insert == ("Marta", "marta")
+    conexion.commit.assert_called_once()
+
+
+def test_crear_vacio_devuelto_graba_el_stock_del_sistema_en_la_fila():
+    # El sistema decía 40: ese número queda GRABADO en el movimiento (no es
+    # solo un cartel), y la función lo devuelve para que la ruta avise.
+    conexion, cursor = _conexion_falsa([(40,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock = crear_vacio_devuelto(200, 1, 50)
+
+    assert stock == 40
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO vacios_devueltos" in consulta_insert
+    assert "stock_sistema" in consulta_insert
+    assert parametros_insert == (200, 1, 50, 40)
+    conexion.commit.assert_called_once()
+
+
+def test_anular_vacio_recibido_es_baja_logica_no_delete():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_vacio_recibido(5)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE vacios_recibidos SET anulado_el = now()" in consulta
+    assert "DELETE" not in consulta
+    # Solo si estaba vigente: anular dos veces no pisa la fecha original.
+    assert "anulado_el IS NULL" in consulta
+    assert parametros == (5,)
+
+
+def test_stock_vacios_excluye_anulados_y_calcula_la_diferencia():
+    conexion, cursor = _conexion_falsa(
+        filas_fetchall=[
+            (200, "Saturno", "N07P41", 1, "cajón negro", 50, 30),
+        ]
+    )
+    cursor.description = [
+        ("proveedor_id",), ("proveedor_nombre",), ("codigo_puesto",),
+        ("tipo_envase_id",), ("tipo_nombre",), ("recibidos",), ("devueltos",),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        filas = stock_vacios()
+
+    consulta = cursor.execute.call_args[0][0]
+    # Los movimientos anulados no cuentan para el stock.
+    assert consulta.count("anulado_el IS NULL") == 2
+    assert filas[0]["stock"] == 20  # 50 recibidos − 30 devueltos

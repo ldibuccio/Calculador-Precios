@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tipos de Envase</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
+  form label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form input, form select {
+    width: 100%;
+    padding: 0.75rem;
+    margin-bottom: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button[type="submit"] {
+    width: 100%;
+    padding: 0.85rem;
+    background: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .renglon-tipo {
+    padding: 0.6rem 0;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.95rem;
+  }
+  .renglon-tipo:first-of-type { border-top: none; padding-top: 0; }
+  .renglon-tipo .puesto { color: #888; font-size: 0.82rem; }
+  .renglon-tipo form { margin: 0; }
+  .boton-baja {
+    padding: 0.55rem 0.85rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Tipos de Envase" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Cargar tipo de envase</h2>
+    <p class="ayuda">Un proveedor sin tipos cargados no aparece en Recibir ni en Devolver: cargarle su primer tipo acá es lo que lo habilita para Vacíos.</p>
+    <form method="post" action="/puesto/envases/tipos/nuevo">
+      <label for="proveedor_id">Proveedor *</label>
+      <select id="proveedor_id" name="proveedor_id" required>
+        {% for p in proveedores %}
+        <option value="{{ p.id }}">{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        {% endfor %}
+      </select>
+
+      <label for="nombre">Nombre del tipo *</label>
+      <input type="text" id="nombre" name="nombre" required placeholder="Ej: cajón plástico negro">
+
+      <button type="submit">Cargar</button>
+    </form>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Tipos cargados</h2>
+    {% if tipos %}
+      {% for t in tipos %}
+      <div class="renglon-tipo">
+        <div>
+          <strong>{{ t.nombre }}</strong> — {{ t.proveedor_nombre }}
+          <div class="puesto">Puesto {{ t.codigo_puesto }}</div>
+        </div>
+        <form method="post" action="/puesto/envases/tipos/{{ t.id }}/baja"
+              onsubmit="return confirm('¿Dar de baja \'{{ t.nombre }}\' de {{ t.proveedor_nombre }}? Los movimientos viejos quedan; solo deja de ofrecerse.');">
+          <button type="submit" class="boton-baja">Dar de baja</button>
+        </form>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no hay tipos de envase cargados.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+</body>
+</html>

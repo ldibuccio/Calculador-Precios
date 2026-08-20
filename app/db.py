@@ -2527,3 +2527,285 @@ def cerrar_disponible_generado(disponible_id: int, cliente_id: int, fecha_desde)
         return version
     finally:
         conexion.close()
+
+
+# ----------------------------------------------------------------------------
+# Vacíos (Envases Puesto): cajones físicos de proveedores que entran y salen
+# del puesto del Mercado. Nada que ver con la tabla envases (esa es el costo
+# del envase facturado al cliente de distribución).
+# ----------------------------------------------------------------------------
+
+
+def listar_tipos_envase_puesto() -> list[dict]:
+    """Tipos de cajón activos con su proveedor, para las pantallas de Vacíos y el ABM de tipos.
+
+    El orden dentro de cada proveedor es por id (orden de carga): el
+    PRIMERO cargado es el que viene preseleccionado en Recibir.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT t.id, t.proveedor_id, t.nombre,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto
+                FROM tipos_envase_puesto t
+                JOIN proveedores p ON p.id = t.proveedor_id
+                WHERE t.activo
+                ORDER BY p.nombre, t.id
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def crear_tipo_envase_puesto(proveedor_id: int, nombre: str) -> None:
+    """Alta de un tipo de cajón para un proveedor. Si existía dado de baja, lo reactiva (mismo nombre)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO tipos_envase_puesto (proveedor_id, nombre)
+                VALUES (%s, %s)
+                ON CONFLICT (proveedor_id, nombre) DO UPDATE SET activo = true
+                """,
+                (proveedor_id, nombre),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def desactivar_tipo_envase_puesto(tipo_id: int) -> None:
+    """Baja lógica de un tipo de cajón: deja de ofrecerse en las pantallas, los movimientos viejos quedan."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE tipos_envase_puesto SET activo = false WHERE id = %s", (tipo_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_clientes_puesto() -> list[dict]:
+    """Clientes del puesto activos, para el buscador de la pantalla Recibir."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, nombre FROM clientes_puesto WHERE activo ORDER BY nombre")
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def obtener_o_crear_cliente_puesto(nombre: str, nombre_normalizado: str) -> int:
+    """Devuelve el id del cliente del puesto con ese nombre, creándolo si no existe.
+
+    La identidad es nombre_normalizado (minúsculas, sin acentos ni
+    espacios de más — lo normaliza quien llama con normalizar_texto):
+    "Juan", "juan " y "JUAN" son EL MISMO cliente, nunca tres. Si existía
+    dado de baja, se reactiva — volvió a aparecer por el puesto.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, activo FROM clientes_puesto WHERE nombre_normalizado = %s",
+                (nombre_normalizado,),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                cliente_id, activo = fila
+                if not activo:
+                    cursor.execute("UPDATE clientes_puesto SET activo = true WHERE id = %s", (cliente_id,))
+                    conexion.commit()
+                return cliente_id
+
+            cursor.execute(
+                "INSERT INTO clientes_puesto (nombre, nombre_normalizado) VALUES (%s, %s) RETURNING id",
+                (nombre, nombre_normalizado),
+            )
+            (cliente_id,) = cursor.fetchone()
+        conexion.commit()
+        return cliente_id
+    finally:
+        conexion.close()
+
+
+def _stock_vacios_actual(cursor, proveedor_id: int, tipo_envase_id: int) -> int:
+    """Stock del sistema para un proveedor+tipo: recibidos − devueltos, sin los movimientos anulados."""
+    cursor.execute(
+        """
+        SELECT COALESCE((SELECT SUM(cantidad) FROM vacios_recibidos
+                         WHERE proveedor_id = %s AND tipo_envase_id = %s AND anulado_el IS NULL), 0)
+             - COALESCE((SELECT SUM(cantidad) FROM vacios_devueltos
+                         WHERE proveedor_id = %s AND tipo_envase_id = %s AND anulado_el IS NULL), 0)
+        """,
+        (proveedor_id, tipo_envase_id, proveedor_id, tipo_envase_id),
+    )
+    (stock,) = cursor.fetchone()
+    return int(stock)
+
+
+def crear_vacio_recibido(cliente_puesto_id: int, proveedor_id: int, tipo_envase_id: int, cantidad: int) -> None:
+    """Entrada: un cliente trae cajones vacíos. La seña queda pendiente de pagar (sena_pagada_el NULL)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO vacios_recibidos (cliente_puesto_id, proveedor_id, tipo_envase_id, cantidad)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (cliente_puesto_id, proveedor_id, tipo_envase_id, cantidad),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def crear_vacio_devuelto(proveedor_id: int, tipo_envase_id: int, cantidad: int) -> int:
+    """Salida: el proveedor retira cajones con el camión. Devuelve el stock del sistema ANTES del movimiento.
+
+    Ese stock queda GRABADO en la fila (stock_sistema, misma transacción):
+    si la devolución supera lo que el sistema decía, la diferencia es un
+    dato registrado para revisar después — no un cartel que se cierra.
+    Nunca se bloquea el guardado: el camión se lleva los cajones aunque
+    el sistema esté atrasado; el negativo se ve en Stock y en el Cotejo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            stock_sistema = _stock_vacios_actual(cursor, proveedor_id, tipo_envase_id)
+            cursor.execute(
+                """
+                INSERT INTO vacios_devueltos (proveedor_id, tipo_envase_id, cantidad, stock_sistema)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (proveedor_id, tipo_envase_id, cantidad, stock_sistema),
+            )
+        conexion.commit()
+        return stock_sistema
+    finally:
+        conexion.close()
+
+
+def listar_vacios_recibidos_de_fecha(fecha) -> list[dict]:
+    """Entradas de un día (anuladas incluidas, marcadas), para la lista "Recibido hoy" de la pantalla Recibir."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT v.id, v.cantidad, v.creado_en, v.anulado_el,
+                       c.nombre AS cliente_nombre,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.nombre AS tipo_nombre
+                FROM vacios_recibidos v
+                JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
+                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
+                WHERE v.creado_en::date = %s
+                ORDER BY v.creado_en DESC
+                """,
+                (fecha,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_vacios_devueltos_de_fecha(fecha) -> list[dict]:
+    """Salidas de un día (anuladas incluidas, marcadas), para la lista "Devuelto hoy" de la pantalla Devolver."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT v.id, v.cantidad, v.stock_sistema, v.creado_en, v.anulado_el,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.nombre AS tipo_nombre
+                FROM vacios_devueltos v
+                JOIN proveedores p ON p.id = v.proveedor_id
+                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
+                WHERE v.creado_en::date = %s
+                ORDER BY v.creado_en DESC
+                """,
+                (fecha,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def anular_vacio_recibido(movimiento_id: int) -> None:
+    """Anula una entrada (baja lógica): el registro queda visible como corrección, el stock lo excluye."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE vacios_recibidos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (movimiento_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def anular_vacio_devuelto(movimiento_id: int) -> None:
+    """Anula una salida (baja lógica), mismo criterio que anular_vacio_recibido."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE vacios_devueltos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (movimiento_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def stock_vacios() -> list[dict]:
+    """Stock del sistema por proveedor y tipo: recibidos − devueltos (sin anulados), calculado siempre.
+
+    Incluye tipos dados de baja que todavía tengan movimientos (su stock
+    histórico no puede desaparecer de la pantalla por una baja del ABM).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.id AS proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto,
+                       t.id AS tipo_envase_id, t.nombre AS tipo_nombre,
+                       COALESCE(r.total, 0) AS recibidos,
+                       COALESCE(d.total, 0) AS devueltos
+                FROM tipos_envase_puesto t
+                JOIN proveedores p ON p.id = t.proveedor_id
+                LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_recibidos
+                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
+                LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_devueltos
+                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
+                WHERE t.activo OR COALESCE(r.total, 0) <> 0 OR COALESCE(d.total, 0) <> 0
+                ORDER BY p.nombre, t.id
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        resultado = [dict(zip(columnas, fila)) for fila in filas]
+        for fila in resultado:
+            fila["stock"] = int(fila["recibidos"]) - int(fila["devueltos"])
+        return resultado
+    finally:
+        conexion.close()

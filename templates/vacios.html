@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vacíos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  /* Botones bien grandes: esta pantalla se usa parado en el fondo del puesto. */
+  .boton {
+    width: 100%;
+    padding: 1.1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    margin-bottom: 0.75rem;
+  }
+  .boton:last-child { margin-bottom: 0; }
+  .boton-verde { background: #16a34a; }
+  .boton-proximamente { opacity: 0.6; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Vacíos" %}
+  {% include "_barra_navegacion.html" %}
+
+  <!-- Las tres pantallas del empleado del fondo. Sin números de stock del
+       sistema en ninguna de ellas (el control cruzado depende de eso). -->
+  <div class="tarjeta">
+    <a class="boton boton-verde" href="/puesto/envases/vacios/recibir">Recibir Vacíos</a>
+    <a class="boton" href="/puesto/envases/vacios/devolver">Devolver al Proveedor</a>
+    <a class="boton boton-proximamente" href="/puesto/envases/vacios/stock-fisico">Stock Físico (Próximamente)</a>
+  </div>
+
+  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+</body>
+</html>

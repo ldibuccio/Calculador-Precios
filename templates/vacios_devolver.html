@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Devolver al Proveedor</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  /* El aviso puede traer la advertencia de "según el sistema había menos":
+     amarillo, no verde, para que se note. */
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  form label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form input, form select {
+    width: 100%;
+    padding: 0.8rem;
+    margin-bottom: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button[type="submit"] {
+    width: 100%;
+    padding: 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .renglon-hoy {
+    padding: 0.7rem 0;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .renglon-hoy:first-of-type { border-top: none; padding-top: 0; }
+  .renglon-hoy .detalle { font-size: 0.92rem; }
+  .renglon-hoy.anulado .detalle { text-decoration: line-through; color: #999; }
+  .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 600; }
+  .boton-anular {
+    padding: 0.6rem 0.9rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .renglon-hoy form { margin: 0; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "puesto" %}
+  {% set barra_titulo = "Devolver al Proveedor" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    {% if not tipos %}
+    <p class="vacio">Todavía no hay tipos de envase cargados. Se cargan desde Envases Puesto → Tipos de Envase.</p>
+    {% else %}
+    <form method="post" action="/puesto/envases/vacios/devolver">
+      <label for="proveedor_id">Proveedor que se lleva sus cajones *</label>
+      <select id="proveedor_id" name="proveedor_id" required onchange="actualizarTipos()">
+        {% for p in proveedores %}
+        <option value="{{ p.id }}">{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        {% endfor %}
+      </select>
+
+      <label for="tipo_envase_id">Tipo de envase *</label>
+      <select id="tipo_envase_id" name="tipo_envase_id" required></select>
+
+      <label for="cantidad">Cantidad de cajones *</label>
+      <input type="number" id="cantidad" name="cantidad" min="1" step="1" required inputmode="numeric">
+
+      <button type="submit">Devolver</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Devuelto hoy</h2>
+    {% if devueltos_hoy %}
+      {% for d in devueltos_hoy %}
+      <div class="renglon-hoy {% if d.anulado_el %}anulado{% endif %}">
+        <div class="detalle">
+          {{ d.cantidad }} × {{ d.tipo_nombre }} a {{ d.proveedor_nombre }} ({{ d.codigo_puesto }})
+          — {{ d.creado_en|hora }}
+          {% if d.anulado_el %}<span class="marca-anulado">Anulado</span>{% endif %}
+        </div>
+        {% if not d.anulado_el %}
+        <form method="post" action="/puesto/envases/vacios/devueltos/{{ d.id }}/anular"
+              onsubmit="return confirm('¿Anular esta devolución de {{ d.cantidad }} cajones?');">
+          <button type="submit" class="boton-anular">Anular</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no se devolvió nada hoy.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/puesto/envases/vacios">Volver a Vacíos</a>
+
+  <script>
+    // Mismo mecanismo que Recibir: tipos por proveedor, el primero preseleccionado.
+    const TIPOS_POR_PROVEEDOR = {};
+    {% for t in tipos %}
+    (TIPOS_POR_PROVEEDOR["{{ t.proveedor_id }}"] = TIPOS_POR_PROVEEDOR["{{ t.proveedor_id }}"] || []).push(
+      { id: "{{ t.id }}", nombre: "{{ t.nombre }}" }
+    );
+    {% endfor %}
+
+    function actualizarTipos() {
+      const selectProveedor = document.getElementById("proveedor_id");
+      const selectTipo = document.getElementById("tipo_envase_id");
+      if (!selectProveedor || !selectTipo) return;
+      const tipos = TIPOS_POR_PROVEEDOR[selectProveedor.value] || [];
+      selectTipo.innerHTML = "";
+      tipos.forEach(function (tipo, indice) {
+        const opcion = document.createElement("option");
+        opcion.value = tipo.id;
+        opcion.textContent = tipo.nombre;
+        if (indice === 0) opcion.selected = true;
+        selectTipo.appendChild(opcion);
+      });
+    }
+
+    actualizarTipos();
+  </script>
+</body>
+</html>
