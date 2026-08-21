@@ -148,6 +148,31 @@ create table fichas_logistica (
 comment on table fichas_logistica is 'Ficha de logistica por articulo y cliente: unidad de venta, que envase usa (fijo o variable), contenido solicitado, y el alias con el que ese cliente conoce al articulo (nombre_cliente/codigo_cliente).';
 comment on column fichas_logistica.envase_variable is 'Si es true, el envase de la ficha es solo referencia/default: se decide por compra. Si es false, el envase es fijo.';
 
+-- Bitácora append-only de fichas: foto completa en cada alta/edición/borrado,
+-- escrita por la app en la misma transacción. Nada la lee para calcular.
+create table fichas_logistica_historial (
+    id              bigint generated always as identity primary key,
+    ficha_id        bigint not null,  -- sin FK a propósito: la ficha puede ya no existir
+    cliente_id      bigint not null references clientes (id),
+    articulo_id     bigint not null references articulos (id),
+    envase_id       bigint references envases (id),
+    contenido_caja  numeric,
+    unidad_venta    text not null,
+    envase_variable boolean not null,
+    nombre_cliente  text,
+    codigo_cliente  text,
+    evento          text not null check (evento in ('foto_inicial', 'alta', 'edicion', 'borrado')),
+    registrado_en   timestamptz not null default now()
+);
+
+comment on table fichas_logistica_historial is
+    'Bitácora append-only de fichas_logistica: foto completa de la ficha en cada alta/edición/borrado, escrita por la app en la misma transacción. Nada la lee para calcular: es solo consulta humana. Un cambio hecho a mano en la base NO queda registrado acá.';
+comment on column fichas_logistica_historial.evento is
+    'foto_inicial = seed de la migración (estado al momento de crear la bitácora); alta/edicion = estado que quedó grabado tras el evento; borrado = estado final de lo que se borró.';
+
+create index idx_fichas_historial_cliente
+    on fichas_logistica_historial (cliente_id, registrado_en);
+
 -- ----------------------------------------------------------------------------
 -- 6. GUIAS_COMPRA — una guía por proveedor por día; el id ES el número de guía
 -- ----------------------------------------------------------------------------

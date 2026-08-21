@@ -412,17 +412,19 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
 
 
 def obtener_ficha(ficha_id: int) -> dict | None:
-    """Devuelve una ficha por id (con nombre del artículo, para mostrarlo fijo al editar), o None."""
+    """Devuelve una ficha por id (con nombres de artículo y cliente, para mostrarlos al editar), o None."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT fl.id, fl.cliente_id, fl.articulo_id, a.nombre AS articulo_nombre,
+                SELECT fl.id, fl.cliente_id, c.nombre AS cliente_nombre,
+                       fl.articulo_id, a.nombre AS articulo_nombre,
                        fl.envase_id, fl.contenido_caja, fl.unidad_venta, fl.envase_variable,
                        fl.nombre_cliente, fl.codigo_cliente
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
+                JOIN clientes c ON c.id = fl.cliente_id
                 WHERE fl.id = %s
                 """,
                 (ficha_id,),
@@ -609,6 +611,7 @@ def crear_ficha(
                     (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable,
                      nombre_cliente, codigo_cliente)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (
                     articulo_id,
@@ -621,9 +624,65 @@ def crear_ficha(
                     codigo_cliente,
                 ),
             )
+            (ficha_id,) = cursor.fetchone()
+            _registrar_foto_ficha(
+                cursor,
+                "alta",
+                ficha_id=ficha_id,
+                cliente_id=cliente_id,
+                articulo_id=articulo_id,
+                envase_id=envase_id,
+                contenido_caja=contenido_caja,
+                unidad_venta=unidad_venta,
+                envase_variable=envase_variable,
+                nombre_cliente=nombre_cliente,
+                codigo_cliente=codigo_cliente,
+            )
         conexion.commit()
     finally:
         conexion.close()
+
+
+def _registrar_foto_ficha(
+    cursor,
+    evento: str,
+    *,
+    ficha_id: int,
+    cliente_id: int,
+    articulo_id: int,
+    envase_id,
+    contenido_caja,
+    unidad_venta: str,
+    envase_variable: bool,
+    nombre_cliente,
+    codigo_cliente,
+) -> None:
+    """Deja la foto de una ficha en la bitácora (fichas_logistica_historial), en la transacción abierta.
+
+    Todo cambio de ficha pasa por acá para que la bitácora nunca quede
+    incompleta: si la escritura de la foto falla, el cambio tampoco se
+    confirma.
+    """
+    cursor.execute(
+        """
+        INSERT INTO fichas_logistica_historial
+            (ficha_id, cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta,
+             envase_variable, nombre_cliente, codigo_cliente, evento)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            ficha_id,
+            cliente_id,
+            articulo_id,
+            envase_id,
+            contenido_caja,
+            unidad_venta,
+            envase_variable,
+            nombre_cliente,
+            codigo_cliente,
+            evento,
+        ),
+    )
 
 
 def actualizar_ficha(
@@ -645,21 +704,166 @@ def actualizar_ficha(
                 SET envase_id = %s, contenido_caja = %s, unidad_venta = %s, envase_variable = %s,
                     nombre_cliente = %s, codigo_cliente = %s, actualizado_en = now()
                 WHERE id = %s
+                RETURNING cliente_id, articulo_id
                 """,
                 (envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente, ficha_id),
             )
+            fila = cursor.fetchone()
+            if fila is not None:
+                cliente_id, articulo_id = fila
+                _registrar_foto_ficha(
+                    cursor,
+                    "edicion",
+                    ficha_id=ficha_id,
+                    cliente_id=cliente_id,
+                    articulo_id=articulo_id,
+                    envase_id=envase_id,
+                    contenido_caja=contenido_caja,
+                    unidad_venta=unidad_venta,
+                    envase_variable=envase_variable,
+                    nombre_cliente=nombre_cliente,
+                    codigo_cliente=codigo_cliente,
+                )
         conexion.commit()
     finally:
         conexion.close()
 
 
 def eliminar_ficha(ficha_id: int) -> None:
-    """Borra una ficha de logística (borrado real: nada más referencia su id)."""
+    """Borra una ficha de logística (borrado real: nada más referencia su id). El estado final queda en la bitácora."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("DELETE FROM fichas_logistica WHERE id = %s", (ficha_id,))
+            cursor.execute(
+                """
+                DELETE FROM fichas_logistica WHERE id = %s
+                RETURNING cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta,
+                          envase_variable, nombre_cliente, codigo_cliente
+                """,
+                (ficha_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente = fila
+                _registrar_foto_ficha(
+                    cursor,
+                    "borrado",
+                    ficha_id=ficha_id,
+                    cliente_id=cliente_id,
+                    articulo_id=articulo_id,
+                    envase_id=envase_id,
+                    contenido_caja=contenido_caja,
+                    unidad_venta=unidad_venta,
+                    envase_variable=envase_variable,
+                    nombre_cliente=nombre_cliente,
+                    codigo_cliente=codigo_cliente,
+                )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def cambiar_articulo_de_ficha(ficha_id: int, articulo_nuevo_id: int) -> int | None:
+    """Cambia el artículo al que apunta una ficha: borrado + alta en UNA transacción, conservando el resto.
+
+    Conceptualmente no se "edita" el artículo (el unique articulo+cliente lo
+    dice): se cierra la ficha vieja y se abre una nueva con el mismo envase,
+    contenido, unidad y alias. En la bitácora quedan los dos eventos, así se
+    ve a qué artículo apuntaba antes.
+
+    Devuelve el id de la ficha nueva, o None si la ficha no existe. Si el
+    artículo nuevo ya tiene ficha para ese cliente, el unique de la tabla
+    corta todo (no se pierde nada: el DELETE se deshace con el rollback).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM fichas_logistica WHERE id = %s
+                RETURNING cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta,
+                          envase_variable, nombre_cliente, codigo_cliente
+                """,
+                (ficha_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            cliente_id, _articulo_viejo_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente = fila
+            _registrar_foto_ficha(
+                cursor,
+                "borrado",
+                ficha_id=ficha_id,
+                cliente_id=cliente_id,
+                articulo_id=_articulo_viejo_id,
+                envase_id=envase_id,
+                contenido_caja=contenido_caja,
+                unidad_venta=unidad_venta,
+                envase_variable=envase_variable,
+                nombre_cliente=nombre_cliente,
+                codigo_cliente=codigo_cliente,
+            )
+            cursor.execute(
+                """
+                INSERT INTO fichas_logistica
+                    (articulo_id, cliente_id, envase_id, contenido_caja, unidad_venta, envase_variable,
+                     nombre_cliente, codigo_cliente)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    articulo_nuevo_id,
+                    cliente_id,
+                    envase_id,
+                    contenido_caja,
+                    unidad_venta,
+                    envase_variable,
+                    nombre_cliente,
+                    codigo_cliente,
+                ),
+            )
+            (ficha_nueva_id,) = cursor.fetchone()
+            _registrar_foto_ficha(
+                cursor,
+                "alta",
+                ficha_id=ficha_nueva_id,
+                cliente_id=cliente_id,
+                articulo_id=articulo_nuevo_id,
+                envase_id=envase_id,
+                contenido_caja=contenido_caja,
+                unidad_venta=unidad_venta,
+                envase_variable=envase_variable,
+                nombre_cliente=nombre_cliente,
+                codigo_cliente=codigo_cliente,
+            )
+        conexion.commit()
+        return ficha_nueva_id
+    finally:
+        conexion.close()
+
+
+def listar_historial_fichas_por_cliente(cliente_id: int) -> list[dict]:
+    """La bitácora de fichas de un cliente, de lo más nuevo a lo más viejo, con nombres para mostrar."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT h.id, h.ficha_id, h.articulo_id, a.nombre AS articulo_nombre,
+                       h.envase_id, e.nombre AS envase_nombre,
+                       h.contenido_caja, h.unidad_venta, h.envase_variable,
+                       h.nombre_cliente, h.codigo_cliente, h.evento, h.registrado_en
+                FROM fichas_logistica_historial h
+                JOIN articulos a ON a.id = h.articulo_id
+                LEFT JOIN envases e ON e.id = h.envase_id
+                WHERE h.cliente_id = %s
+                ORDER BY h.registrado_en DESC, h.id DESC
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
     finally:
         conexion.close()
 

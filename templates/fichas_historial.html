@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Historial de fichas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .encabezado {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+  }
+  .encabezado .articulo { font-weight: 700; font-size: 1rem; }
+  .evento-pastilla {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: #e5e7eb;
+    color: #374151;
+    white-space: nowrap;
+  }
+  .evento-pastilla.alta { background: #dcfce7; color: #166534; }
+  .evento-pastilla.borrado { background: #fee2e2; color: #991b1b; }
+  .evento-pastilla.edicion { background: #dbeafe; color: #1e40af; }
+  .fecha { color: #666; font-size: 0.82rem; margin-bottom: 0.4rem; }
+  .detalle { color: #444; font-size: 0.88rem; line-height: 1.45; }
+  .vacio { color: #888; font-style: italic; font-size: 0.9rem; }
+  .nota {
+    color: #888;
+    font-size: 0.82rem;
+    margin: 0 0 0.75rem;
+  }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #2563eb;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Historial de fichas" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <h2>{{ cliente_nombre }}</h2>
+    <p class="nota">Cada alta, edición y borrado de una ficha, de lo más nuevo a lo más viejo.
+      Un cambio de artículo se ve como un borrado y un alta con la misma fecha.
+      "Foto inicial" es el estado que tenía la ficha cuando arrancó este historial.</p>
+    {% if not historial %}
+    <p class="vacio">Este cliente todavía no tiene movimientos de fichas registrados.</p>
+    {% endif %}
+  </div>
+
+  {% for h in historial %}
+  <div class="tarjeta">
+    <div class="encabezado">
+      <span class="articulo">{{ h.articulo_nombre }}</span>
+      <span class="evento-pastilla {{ h.evento }}">
+        {% if h.evento == "foto_inicial" %}Foto inicial
+        {% elif h.evento == "alta" %}Alta
+        {% elif h.evento == "edicion" %}Edición
+        {% else %}Borrado{% endif %}
+      </span>
+    </div>
+    <div class="fecha">{{ h.registrado_en|fecha_hora }}</div>
+    <div class="detalle">
+      Envase: {{ h.envase_nombre or "sin envase" }}{{ " (variable)" if h.envase_variable else "" }}
+      · Contenido: {{ h.contenido_caja|kilos if h.contenido_caja is not none else "-" }}
+      · Unidad: {{ h.unidad_venta }}
+      {% if h.nombre_cliente or h.codigo_cliente %}
+      <br>Alias del cliente: {{ h.nombre_cliente or "-" }}{% if h.codigo_cliente %} (código {{ h.codigo_cliente }}){% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <a class="volver" href="/fichas?cliente_id={{ cliente_id }}">Volver a fichas</a>
+</body>
+</html>

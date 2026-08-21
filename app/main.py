@@ -36,6 +36,7 @@ from app.db import (
     aprender_articulo,
     buscar_compras,
     buscar_retiros,
+    cambiar_articulo_de_ficha,
     contar_compras_buscadas,
     contar_retiros_buscados,
     cerrar_disponible_generado,
@@ -99,6 +100,7 @@ from app.db import (
     listar_envases,
     listar_envases_con_costo,
     listar_historial_costos_envases,
+    listar_historial_fichas_por_cliente,
     listar_fichas_por_cliente,
     listar_fotos_para_limpiar,
     listar_precios_anteriores_por_cliente,
@@ -1169,7 +1171,7 @@ def eliminar_cliente(cliente_id: int):
 
 
 @app.get("/fichas")
-def ver_fichas(request: Request, cliente_id: int | None = None, error: str | None = None):
+def ver_fichas(request: Request, cliente_id: int | None = None, error: str | None = None, aviso: str | None = None):
     try:
         clientes = listar_clientes()
     except Exception as error_db:
@@ -1200,7 +1202,31 @@ def ver_fichas(request: Request, cliente_id: int | None = None, error: str | Non
     return templates.TemplateResponse(
         request,
         "fichas.html",
-        {"clientes": clientes, "cliente_id": cliente_id, "fichas": fichas, "error": error},
+        {"clientes": clientes, "cliente_id": cliente_id, "fichas": fichas, "error": error, "aviso": aviso},
+    )
+
+
+@app.get("/fichas/historial")
+def ver_historial_fichas(request: Request, cliente_id: int):
+    """Bitácora de fichas de un cliente: cada alta, edición, borrado y cambio de artículo, de lo más nuevo a lo más viejo."""
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        historial = listar_historial_fichas_por_cliente(cliente_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "fichas_historial.html",
+        {"cliente_id": cliente_id, "cliente_nombre": cliente["nombre"], "historial": historial},
     )
 
 
@@ -1323,6 +1349,9 @@ def ver_editar_ficha(request: Request, ficha_id: int, error: str | None = None):
 
     try:
         envases = listar_envases()
+        # Para "Cambiar artículo": solo artículos SIN ficha de este cliente,
+        # así no se puede pisar una existente sin querer.
+        articulos_para_cambio = listar_articulos_sin_ficha(ficha["cliente_id"])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -1332,6 +1361,7 @@ def ver_editar_ficha(request: Request, ficha_id: int, error: str | None = None):
         {
             "cliente_id": ficha["cliente_id"],
             "articulos": [],
+            "articulos_para_cambio": articulos_para_cambio,
             "envases": envases,
             "modo": "editar",
             "ficha": ficha,
@@ -1435,6 +1465,40 @@ def eliminar_ficha_ruta(ficha_id: int, cliente_id: int = Form(...)):
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la ficha: {error}") from error
 
     return RedirectResponse(url=f"/fichas?cliente_id={cliente_id}", status_code=303)
+
+
+@app.post("/fichas/{ficha_id}/cambiar-articulo")
+def cambiar_articulo_de_ficha_ruta(ficha_id: int, cliente_id: int = Form(...), articulo_nuevo_id: str = Form("")):
+    """Cambia el artículo de una ficha conservando envase, contenido, unidad y alias (borrado + alta en una transacción).
+
+    Los precios ya negociados no cambian: quedan cargados por artículo en
+    precios_venta_historial. De acá en adelante se cotiza contra el
+    artículo nuevo. La pantalla solo ofrece artículos sin ficha del
+    cliente; si igual llega uno repetido (carrera entre dos pestañas), el
+    unique de la tabla corta todo y no se pierde nada.
+    """
+    try:
+        articulo_nuevo = int(articulo_nuevo_id)
+    except ValueError:
+        return RedirectResponse(
+            url=f"/fichas/{ficha_id}/editar?{urlencode({'error': 'Elegí el artículo nuevo.'})}", status_code=303
+        )
+
+    try:
+        ficha_nueva_id = cambiar_articulo_de_ficha(ficha_id, articulo_nuevo)
+    except Exception as error_db:
+        return RedirectResponse(
+            url=f"/fichas/{ficha_id}/editar?{urlencode({'error': f'No se pudo cambiar el artículo: {error_db}'})}",
+            status_code=303,
+        )
+
+    if ficha_nueva_id is None:
+        raise HTTPException(status_code=404, detail="Ficha no encontrada")
+
+    return RedirectResponse(
+        url=f"/fichas?{urlencode({'cliente_id': cliente_id, 'aviso': 'Listo: la ficha ahora apunta al artículo nuevo. El cambio quedó en el historial.'})}",
+        status_code=303,
+    )
 
 
 

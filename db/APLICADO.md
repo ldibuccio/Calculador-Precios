@@ -47,6 +47,7 @@ bases estén marcadas.
 | `agregar_ajustes_vacios.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_indices_rendimiento.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_fotos_guia.sql` | ✅ 2026-08-20 (verificado: 0 sin guía, 0 sin migrar, 36 fotos migradas) | ✅ 2026-08-20 (verificado: 0 / 0 / 19 fotos) |
+| `agregar_historial_fichas.sql` | ⬜ pendiente | ⬜ pendiente |
 
 ## Deuda pendiente de limpieza
 

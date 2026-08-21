@@ -88,6 +88,14 @@
     font-size: 0.9rem;
     text-decoration: none;
   }
+  .tarjeta h3 { font-size: 0.95rem; margin: 0 0 0.25rem; }
+  /* Ámbar y con borde, no azul: cambiar el artículo no es guardar de todos
+     los días, conviene que el ojo lo distinga. */
+  .boton-cambiar {
+    background: #fff;
+    color: #b45309;
+    border: 1px solid #d97706;
+  }
 </style>
 </head>
 <body>
@@ -160,5 +168,42 @@
     <a class="volver" href="/fichas?cliente_id={{ cliente_id }}">Volver a fichas</a>
     {% endif %}
   </div>
+
+  {% if modo == "editar" and articulos_para_cambio is defined %}
+  <div class="tarjeta">
+    <h3>Cambiar artículo</h3>
+    <p class="ayuda">La ficha pasa a apuntar a otro artículo conservando envase, contenido, unidad y alias.
+      Los precios ya negociados no cambian; de acá en adelante se cotiza contra el artículo nuevo.
+      El cambio queda registrado en el historial de fichas.</p>
+    {% if articulos_para_cambio %}
+    <form method="post" action="/fichas/{{ ficha.id }}/cambiar-articulo" id="form-cambiar-articulo">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <label for="articulo_nuevo_id">Artículo nuevo (solo los que todavía no tienen ficha de este cliente)</label>
+      <select id="articulo_nuevo_id" name="articulo_nuevo_id" required>
+        <option value="" selected disabled>Elegí el artículo nuevo...</option>
+        {% for a in articulos_para_cambio %}
+        <option value="{{ a.id }}">{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="boton-cambiar">Cambiar artículo</button>
+    </form>
+    <script>
+      document.getElementById("form-cambiar-articulo").addEventListener("submit", function (evento) {
+        const select = document.getElementById("articulo_nuevo_id");
+        const opcion = select.options[select.selectedIndex];
+        const nombreNuevo = opcion ? opcion.text : "";
+        const mensaje = "La ficha de {{ ficha.articulo_nombre }}" +
+          "{% if ficha.cliente_nombre %} de {{ ficha.cliente_nombre }}{% endif %}" +
+          " va a pasar a apuntar a " + nombreNuevo + "." +
+          " Los precios ya negociados no cambian; de acá en adelante se cotiza contra el artículo nuevo." +
+          " ¿Confirmar?";
+        if (!confirm(mensaje)) evento.preventDefault();
+      });
+    </script>
+    {% else %}
+    <p class="vacio">Todos los artículos activos ya tienen ficha para este cliente: no hay adónde cambiar.</p>
+    {% endif %}
+  </div>
+  {% endif %}
 </body>
 </html>

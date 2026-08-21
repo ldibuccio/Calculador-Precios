@@ -22,7 +22,12 @@ from app.db import (
     stock_vacios,
     stock_vacios_de_tipo,
     actualizar_cliente,
+    actualizar_ficha,
     actualizar_precio_compra,
+    cambiar_articulo_de_ficha,
+    crear_ficha,
+    eliminar_ficha,
+    listar_historial_fichas_por_cliente,
     buscar_compras,
     buscar_retiros,
     contar_compras_buscadas,
@@ -2239,3 +2244,108 @@ def test_obtener_o_crear_proveedor_puesto_crea_si_no_existe():
     consulta_insert, parametros_insert = cursor.execute.call_args_list[1].args
     assert "INSERT INTO proveedores_puesto" in consulta_insert
     assert parametros_insert == ("Nuevo", "nuevo")
+
+
+# ----------------------------------------------------------------------------
+# Bitácora de fichas: toda alta/edición/borrado deja su foto en la MISMA
+# transacción (un solo commit) — si la foto falla, el cambio tampoco entra.
+# ----------------------------------------------------------------------------
+
+
+def test_crear_ficha_deja_la_foto_de_alta_en_la_bitacora():
+    conexion, cursor = _conexion_falsa([(33,)])  # RETURNING id de la ficha nueva
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_ficha(5, 1, 100, 6, "kilo", False, "BERENJENA", "B01")
+
+    consulta_insert = cursor.execute.call_args_list[0].args[0]
+    assert "INSERT INTO fichas_logistica" in consulta_insert
+    assert "RETURNING id" in consulta_insert
+    consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO fichas_logistica_historial" in consulta_foto
+    assert parametros_foto == (33, 1, 5, 100, 6, "kilo", False, "BERENJENA", "B01", "alta")
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_ficha_deja_la_foto_de_edicion_en_la_bitacora():
+    conexion, cursor = _conexion_falsa([(1, 5)])  # RETURNING cliente_id, articulo_id
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_ficha(10, 100, 8, "kilo", True, "BERENJENA", None)
+
+    consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO fichas_logistica_historial" in consulta_foto
+    assert parametros_foto == (10, 1, 5, 100, 8, "kilo", True, "BERENJENA", None, "edicion")
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_ficha_inexistente_no_escribe_bitacora():
+    conexion, cursor = _conexion_falsa([None])  # el UPDATE no encontró la ficha
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_ficha(999, 100, 8, "kilo", True)
+
+    assert cursor.execute.call_count == 1  # solo el UPDATE, sin foto fantasma
+
+
+def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
+    conexion, cursor = _conexion_falsa([(1, 5, 100, 6, "kilo", False, "BERENJENA", None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_ficha(10)
+
+    consulta_delete = cursor.execute.call_args_list[0].args[0]
+    assert "DELETE FROM fichas_logistica WHERE id = %s" in consulta_delete
+    assert "RETURNING" in consulta_delete
+    consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO fichas_logistica_historial" in consulta_foto
+    assert parametros_foto == (10, 1, 5, 100, 6, "kilo", False, "BERENJENA", None, "borrado")
+    conexion.commit.assert_called_once()
+
+
+def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_conservando_todo():
+    conexion, cursor = _conexion_falsa(
+        [
+            (1, 4, 100, 6, "kilo", False, "BERENJENA", "B01"),  # DELETE RETURNING (ficha vieja)
+            (33,),  # RETURNING id de la ficha nueva
+        ]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        ficha_nueva_id = cambiar_articulo_de_ficha(10, 5)
+
+    assert ficha_nueva_id == 33
+    # 4 pasos en UNA transacción: delete + foto borrado + insert + foto alta.
+    assert cursor.execute.call_count == 4
+    _, parametros_borrado = cursor.execute.call_args_list[1].args
+    assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "BERENJENA", "B01", "borrado")
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[2].args
+    assert "INSERT INTO fichas_logistica" in consulta_insert
+    # La ficha nueva apunta al artículo nuevo y conserva envase, contenido,
+    # unidad y alias tal cual estaban.
+    assert parametros_insert == (5, 1, 100, 6, "kilo", False, "BERENJENA", "B01")
+    _, parametros_alta = cursor.execute.call_args_list[3].args
+    assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "BERENJENA", "B01", "alta")
+    conexion.commit.assert_called_once()
+
+
+def test_cambiar_articulo_de_ficha_inexistente_devuelve_none_sin_escribir():
+    conexion, cursor = _conexion_falsa([None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = cambiar_articulo_de_ficha(999, 5)
+
+    assert resultado is None
+    assert cursor.execute.call_count == 1
+
+
+def test_listar_historial_fichas_va_de_lo_mas_nuevo_a_lo_mas_viejo():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_historial_fichas_por_cliente(1)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "FROM fichas_logistica_historial h" in consulta
+    assert "ORDER BY h.registrado_en DESC, h.id DESC" in consulta
+    assert parametros == (1,)

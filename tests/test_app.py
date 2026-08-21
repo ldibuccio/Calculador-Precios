@@ -1073,6 +1073,7 @@ def test_agregar_ficha_error_de_base_muestra_mensaje_claro():
 FICHA_DE_PRUEBA = {
     "id": 10,
     "cliente_id": 1,
+    "cliente_nombre": "Día",
     "articulo_id": 5,
     "articulo_nombre": "Mango",
     "envase_id": 100,
@@ -1088,6 +1089,7 @@ def test_ver_editar_ficha_muestra_datos_precargados():
     with (
         patch("app.main.obtener_ficha", return_value=FICHA_DE_PRUEBA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
+        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
     ):
         respuesta = cliente.get("/fichas/10/editar")
 
@@ -1100,6 +1102,10 @@ def test_ver_editar_ficha_muestra_datos_precargados():
     assert 'value="MANGO"' in respuesta.text
     assert 'id="codigo_cliente" name="codigo_cliente"' in respuesta.text
     assert 'value="225863"' in respuesta.text
+    # Sección "Cambiar artículo": solo ofrece artículos SIN ficha del cliente.
+    assert 'action="/fichas/10/cambiar-articulo"' in respuesta.text
+    assert "Kiwi" in respuesta.text
+    assert "Los precios ya negociados no cambian" in respuesta.text
 
 
 def test_ver_editar_ficha_inexistente_da_404():
@@ -1234,6 +1240,145 @@ def test_eliminar_ficha_error_de_base_da_500():
         respuesta = cliente.post("/fichas/10/eliminar", data={"cliente_id": "1"})
 
     assert respuesta.status_code == 500
+
+
+def test_cambiar_articulo_de_ficha_redirige_a_fichas_con_aviso():
+    with patch("app.main.cambiar_articulo_de_ficha", return_value=33) as mock_cambiar:
+        respuesta = cliente.post(
+            "/fichas/10/cambiar-articulo",
+            data={"cliente_id": "1", "articulo_nuevo_id": "5"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    location = respuesta.headers["location"]
+    assert location.startswith("/fichas?")
+    assert "cliente_id=1" in location
+    assert "aviso=" in location
+    mock_cambiar.assert_called_once_with(10, 5)
+
+
+def test_cambiar_articulo_de_ficha_inexistente_da_404():
+    with patch("app.main.cambiar_articulo_de_ficha", return_value=None):
+        respuesta = cliente.post(
+            "/fichas/999/cambiar-articulo",
+            data={"cliente_id": "1", "articulo_nuevo_id": "5"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 404
+
+
+def test_cambiar_articulo_sin_elegir_articulo_vuelve_a_editar_con_error():
+    with patch("app.main.cambiar_articulo_de_ficha") as mock_cambiar:
+        respuesta = cliente.post(
+            "/fichas/10/cambiar-articulo",
+            data={"cliente_id": "1", "articulo_nuevo_id": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].startswith("/fichas/10/editar?error=")
+    mock_cambiar.assert_not_called()
+
+
+def test_cambiar_articulo_con_error_de_base_vuelve_a_editar_con_error():
+    # Cubre también la carrera del unique (dos pestañas): el error de la base
+    # se muestra en Editar, y el rollback dejó la ficha original intacta.
+    with patch("app.main.cambiar_articulo_de_ficha", side_effect=Exception("unique_violation")):
+        respuesta = cliente.post(
+            "/fichas/10/cambiar-articulo",
+            data={"cliente_id": "1", "articulo_nuevo_id": "5"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"].startswith("/fichas/10/editar?error=")
+
+
+HISTORIAL_FICHAS_DE_PRUEBA = [
+    {
+        "id": 3,
+        "ficha_id": 33,
+        "articulo_id": 5,
+        "articulo_nombre": "Berenjena Elegida",
+        "envase_id": 100,
+        "envase_nombre": "Caja Chica Día",
+        "contenido_caja": 6,
+        "unidad_venta": "kilo",
+        "envase_variable": False,
+        "nombre_cliente": "BERENJENA",
+        "codigo_cliente": None,
+        "evento": "alta",
+        "registrado_en": datetime(2026, 8, 21, 10, 30),
+    },
+    {
+        "id": 2,
+        "ficha_id": 10,
+        "articulo_id": 4,
+        "articulo_nombre": "Berenjena",
+        "envase_id": 100,
+        "envase_nombre": "Caja Chica Día",
+        "contenido_caja": 6,
+        "unidad_venta": "kilo",
+        "envase_variable": False,
+        "nombre_cliente": "BERENJENA",
+        "codigo_cliente": None,
+        "evento": "borrado",
+        "registrado_en": datetime(2026, 8, 21, 10, 30),
+    },
+    {
+        "id": 1,
+        "ficha_id": 10,
+        "articulo_id": 4,
+        "articulo_nombre": "Berenjena",
+        "envase_id": None,
+        "envase_nombre": None,
+        "contenido_caja": None,
+        "unidad_venta": "kilo",
+        "envase_variable": False,
+        "nombre_cliente": None,
+        "codigo_cliente": None,
+        "evento": "foto_inicial",
+        "registrado_en": datetime(2026, 8, 1, 9, 0),
+    },
+]
+
+
+def test_ver_historial_fichas_muestra_los_eventos():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_historial_fichas_por_cliente", return_value=HISTORIAL_FICHAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/fichas/historial?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # Un cambio de artículo se ve como borrado + alta: los dos artículos aparecen.
+    assert "Berenjena Elegida" in respuesta.text
+    assert "Alta" in respuesta.text
+    assert "Borrado" in respuesta.text
+    assert "Foto inicial" in respuesta.text
+    assert "Caja Chica Día" in respuesta.text
+    assert "sin envase" in respuesta.text
+
+
+def test_ver_historial_fichas_cliente_inexistente_da_404():
+    with patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR):
+        respuesta = cliente.get("/fichas/historial?cliente_id=999")
+
+    assert respuesta.status_code == 404
+
+
+def test_ver_fichas_muestra_el_aviso_del_redirect_y_el_link_al_historial():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/fichas?cliente_id=1&aviso=La+ficha+ahora+apunta+al+art%C3%ADculo+nuevo.")
+
+    assert respuesta.status_code == 200
+    assert "La ficha ahora apunta al artículo nuevo." in respuesta.text
+    assert 'href="/fichas/historial?cliente_id=1"' in respuesta.text
 
 
 def test_conversion_ya_no_existe_como_pantalla_propia():
