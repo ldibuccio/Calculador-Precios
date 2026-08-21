@@ -1106,6 +1106,11 @@ def test_ver_editar_ficha_muestra_datos_precargados():
     assert 'action="/fichas/10/cambiar-articulo"' in respuesta.text
     assert "Kiwi" in respuesta.text
     assert "Los precios ya negociados no cambian" in respuesta.text
+    # El alias que se va a conservar queda a la vista y editable, con el
+    # aviso: si el destino es otro producto, probablemente haya que cambiarlo.
+    assert 'id="cambio_nombre_cliente" name="nombre_cliente"' in respuesta.text
+    assert 'id="cambio_codigo_cliente" name="codigo_cliente"' in respuesta.text
+    assert "probablemente haya que cambiar este alias" in respuesta.text
 
 
 def test_ver_editar_ficha_inexistente_da_404():
@@ -1246,7 +1251,7 @@ def test_cambiar_articulo_de_ficha_redirige_a_fichas_con_aviso():
     with patch("app.main.cambiar_articulo_de_ficha", return_value=33) as mock_cambiar:
         respuesta = cliente.post(
             "/fichas/10/cambiar-articulo",
-            data={"cliente_id": "1", "articulo_nuevo_id": "5"},
+            data={"cliente_id": "1", "articulo_nuevo_id": "5", "nombre_cliente": "ANCO", "codigo_cliente": "90200"},
             follow_redirects=False,
         )
 
@@ -1255,7 +1260,20 @@ def test_cambiar_articulo_de_ficha_redirige_a_fichas_con_aviso():
     assert location.startswith("/fichas?")
     assert "cliente_id=1" in location
     assert "aviso=" in location
-    mock_cambiar.assert_called_once_with(10, 5)
+    # El alias editado en la pantalla viaja a la ficha nueva.
+    mock_cambiar.assert_called_once_with(10, 5, "ANCO", "90200")
+
+
+def test_cambiar_articulo_con_alias_vacio_lo_guarda_como_none():
+    with patch("app.main.cambiar_articulo_de_ficha", return_value=33) as mock_cambiar:
+        respuesta = cliente.post(
+            "/fichas/10/cambiar-articulo",
+            data={"cliente_id": "1", "articulo_nuevo_id": "5", "nombre_cliente": "  ", "codigo_cliente": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cambiar.assert_called_once_with(10, 5, None, None)
 
 
 def test_cambiar_articulo_de_ficha_inexistente_da_404():

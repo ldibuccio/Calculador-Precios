@@ -185,6 +185,18 @@
         <option value="{{ a.id }}">{{ a.nombre }}</option>
         {% endfor %}
       </select>
+
+      {# El alias se conserva del artículo viejo por default (el caso normal
+         es el mismo producto en otra presentación), pero queda a la vista y
+         editable: si el destino es OTRO producto, el alias viejo queda mal. #}
+      <label for="cambio_nombre_cliente">Nombre que usa el cliente (se conserva del artículo actual)</label>
+      <input type="text" id="cambio_nombre_cliente" name="nombre_cliente"
+             value="{% if ficha.nombre_cliente %}{{ ficha.nombre_cliente }}{% endif %}">
+      <label for="cambio_codigo_cliente">Código que usa el cliente (se conserva del artículo actual)</label>
+      <input type="text" id="cambio_codigo_cliente" name="codigo_cliente"
+             value="{% if ficha.codigo_cliente %}{{ ficha.codigo_cliente }}{% endif %}">
+      <p class="ayuda">Si el artículo nuevo es otro producto (no otra presentación del mismo), probablemente haya que cambiar este alias.</p>
+
       <button type="submit" class="boton-cambiar">Cambiar artículo</button>
     </form>
     <script>

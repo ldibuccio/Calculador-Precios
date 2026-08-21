@@ -1478,8 +1478,19 @@ def eliminar_ficha_ruta(ficha_id: int, cliente_id: int = Form(...)):
 
 
 @app.post("/fichas/{ficha_id}/cambiar-articulo")
-def cambiar_articulo_de_ficha_ruta(ficha_id: int, cliente_id: int = Form(...), articulo_nuevo_id: str = Form("")):
-    """Cambia el artículo de una ficha conservando envase, contenido, unidad y alias (borrado + alta en una transacción).
+def cambiar_articulo_de_ficha_ruta(
+    ficha_id: int,
+    cliente_id: int = Form(...),
+    articulo_nuevo_id: str = Form(""),
+    nombre_cliente: str = Form(""),
+    codigo_cliente: str = Form(""),
+):
+    """Cambia el artículo de una ficha conservando envase, contenido y unidad (borrado + alta en una transacción).
+
+    El alias del cliente viene del form: la pantalla lo precarga con el de
+    la ficha vieja (el caso normal es el mismo producto en otra
+    presentación) pero se puede editar antes de confirmar, porque si el
+    destino es otro producto el alias viejo quedaría mal.
 
     Los precios ya negociados no cambian: quedan cargados por artículo en
     precios_venta_historial. De acá en adelante se cotiza contra el
@@ -1495,7 +1506,9 @@ def cambiar_articulo_de_ficha_ruta(ficha_id: int, cliente_id: int = Form(...), a
         )
 
     try:
-        ficha_nueva_id = cambiar_articulo_de_ficha(ficha_id, articulo_nuevo)
+        ficha_nueva_id = cambiar_articulo_de_ficha(
+            ficha_id, articulo_nuevo, nombre_cliente.strip() or None, codigo_cliente.strip() or None
+        )
     except Exception as error_db:
         return RedirectResponse(
             url=f"/fichas/{ficha_id}/editar?{urlencode({'error': f'No se pudo cambiar el artículo: {error_db}'})}",

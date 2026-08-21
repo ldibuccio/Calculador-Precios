@@ -763,13 +763,21 @@ def eliminar_ficha(ficha_id: int) -> None:
         conexion.close()
 
 
-def cambiar_articulo_de_ficha(ficha_id: int, articulo_nuevo_id: int) -> int | None:
+def cambiar_articulo_de_ficha(
+    ficha_id: int,
+    articulo_nuevo_id: int,
+    nombre_cliente: str | None,
+    codigo_cliente: str | None,
+) -> int | None:
     """Cambia el artículo al que apunta una ficha: borrado + alta en UNA transacción, conservando el resto.
 
     Conceptualmente no se "edita" el artículo (el unique articulo+cliente lo
     dice): se cierra la ficha vieja y se abre una nueva con el mismo envase,
-    contenido, unidad y alias. En la bitácora quedan los dos eventos, así se
-    ve a qué artículo apuntaba antes.
+    contenido y unidad. El alias (nombre_cliente/codigo_cliente) viene de la
+    pantalla: precargado con el de la ficha vieja pero editable, porque si
+    el artículo destino es OTRO producto (no otra presentación del mismo),
+    el alias viejo quedaría mal. En la bitácora quedan los dos eventos, así
+    se ve a qué artículo (y con qué alias) apuntaba antes.
 
     Devuelve el id de la ficha nueva, o None si la ficha no existe. Si el
     artículo nuevo ya tiene ficha para ese cliente, el unique de la tabla
@@ -789,7 +797,7 @@ def cambiar_articulo_de_ficha(ficha_id: int, articulo_nuevo_id: int) -> int | No
             fila = cursor.fetchone()
             if fila is None:
                 return None
-            cliente_id, _articulo_viejo_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente = fila
+            cliente_id, _articulo_viejo_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_viejo, codigo_viejo = fila
             _registrar_foto_ficha(
                 cursor,
                 "borrado",
@@ -800,8 +808,8 @@ def cambiar_articulo_de_ficha(ficha_id: int, articulo_nuevo_id: int) -> int | No
                 contenido_caja=contenido_caja,
                 unidad_venta=unidad_venta,
                 envase_variable=envase_variable,
-                nombre_cliente=nombre_cliente,
-                codigo_cliente=codigo_cliente,
+                nombre_cliente=nombre_viejo,
+                codigo_cliente=codigo_viejo,
             )
             cursor.execute(
                 """

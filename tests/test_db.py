@@ -2305,29 +2305,33 @@ def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
     conexion.commit.assert_called_once()
 
 
-def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_conservando_todo():
+def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantalla():
     conexion, cursor = _conexion_falsa(
         [
-            (1, 4, 100, 6, "kilo", False, "BERENJENA", "B01"),  # DELETE RETURNING (ficha vieja)
+            (1, 4, 100, 6, "kilo", False, "ANANA", "90137"),  # DELETE RETURNING (ficha vieja)
             (33,),  # RETURNING id de la ficha nueva
         ]
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        ficha_nueva_id = cambiar_articulo_de_ficha(10, 5)
+        # El alias lo manda la pantalla (editable): acá el destino es otro
+        # producto y el usuario lo corrigió — la ficha nueva NO hereda
+        # "ANANA" a ciegas.
+        ficha_nueva_id = cambiar_articulo_de_ficha(10, 5, "ANCO", "90200")
 
     assert ficha_nueva_id == 33
     # 4 pasos en UNA transacción: delete + foto borrado + insert + foto alta.
     assert cursor.execute.call_count == 4
+    # La foto del borrado conserva el alias VIEJO (es el estado que se cerró).
     _, parametros_borrado = cursor.execute.call_args_list[1].args
-    assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "BERENJENA", "B01", "borrado")
+    assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "ANANA", "90137", "borrado")
     consulta_insert, parametros_insert = cursor.execute.call_args_list[2].args
     assert "INSERT INTO fichas_logistica" in consulta_insert
-    # La ficha nueva apunta al artículo nuevo y conserva envase, contenido,
-    # unidad y alias tal cual estaban.
-    assert parametros_insert == (5, 1, 100, 6, "kilo", False, "BERENJENA", "B01")
+    # La ficha nueva apunta al artículo nuevo, conserva envase/contenido/
+    # unidad, y lleva el alias que vino de la pantalla.
+    assert parametros_insert == (5, 1, 100, 6, "kilo", False, "ANCO", "90200")
     _, parametros_alta = cursor.execute.call_args_list[3].args
-    assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "BERENJENA", "B01", "alta")
+    assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "ANCO", "90200", "alta")
     conexion.commit.assert_called_once()
 
 
@@ -2335,7 +2339,7 @@ def test_cambiar_articulo_de_ficha_inexistente_devuelve_none_sin_escribir():
     conexion, cursor = _conexion_falsa([None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = cambiar_articulo_de_ficha(999, 5)
+        resultado = cambiar_articulo_de_ficha(999, 5, None, None)
 
     assert resultado is None
     assert cursor.execute.call_count == 1
