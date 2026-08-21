@@ -48,7 +48,7 @@ bases estén marcadas.
 | `agregar_indices_rendimiento.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_fotos_guia.sql` | ✅ 2026-08-20 (verificado: 0 sin guía, 0 sin migrar, 36 fotos migradas) | ✅ 2026-08-20 (verificado: 0 / 0 / 19 fotos) |
 | `agregar_historial_fichas.sql` | ✅ 2026-08-21 (verificado: 32 filas foto_inicial) | ✅ 2026-08-21 (verificado: 42 filas foto_inicial) |
-| `corregir_retiros_recepcionados.sql` (corrección de datos, no de esquema: retiros colgados de compras procesadas en Depósito antes del auto-retiro del 2026-08-19) | ⬜ pendiente | ⬜ pendiente |
+| `corregir_retiros_recepcionados.sql` (corrección de datos, no de esquema: retiros colgados de compras procesadas en Depósito antes del auto-retiro del 2026-08-19) | ✅ 2026-08-21 | ✅ 2026-08-21 (verificado: 0 filas colgadas) |
 
 ## Deuda pendiente de limpieza
 
