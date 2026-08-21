@@ -7677,14 +7677,14 @@ def test_ver_inicio_puesto_es_el_primer_boton():
     assert respuesta.text.index('href="/puesto"') < respuesta.text.index('href="/compras"')
 
 
-def test_ver_inicio_facturacion_es_proximamente_y_puesto_ya_no():
-    # Facturación sigue siendo un marcador de lugar; Puesto ya es un módulo
-    # real (Envases Puesto / Vacíos) y va con botón pleno.
+def test_ver_inicio_facturacion_y_puesto_son_modulos_plenos():
+    # Facturación ya es un módulo real (Ingresos a Depósito), igual que
+    # Puesto: los dos van con botón pleno, sin "Próximamente".
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
-    assert '<a class="boton-area boton-proximamente" href="/facturacion">' in respuesta.text
-    assert "Facturación (Próximamente)" in respuesta.text
+    assert '<a class="boton-area" href="/facturacion">' in respuesta.text
+    assert "Facturación (Próximamente)" not in respuesta.text
     assert '<a class="boton-area" href="/puesto">' in respuesta.text
     assert "Puesto (Próximamente)" not in respuesta.text
 
@@ -8721,13 +8721,162 @@ def test_ver_gerencia_es_un_hub_con_auditoria():
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_ver_facturacion_muestra_en_construccion_y_vuelve_a_inicio():
+def test_ver_facturacion_es_un_hub_con_ingresos_a_deposito():
     respuesta = cliente.get("/facturacion")
 
     assert respuesta.status_code == 200
     assert "Facturación" in respuesta.text
-    assert "En construcción" in respuesta.text
+    assert 'href="/facturacion/ingresos"' in respuesta.text
+    assert "Ingresos a Depósito" in respuesta.text
+    assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
+
+
+INGRESOS_DEPOSITO_DE_PRUEBA = [
+    # Saturno: una recepción normal, un rechazo parcial (8 aceptados, 2
+    # devueltos) y una recepcionada SIN precio cargado todavía.
+    {"id": 1, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 14, 30),
+     "guia_id": 105, "guia_punto": 1, "estado": "recepcionado",
+     "cantidad_cajones_real": 8.0, "contenido_por_cajon_real": 20.0,
+     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 5000.0,
+     "articulo_nombre": "Kiwi", "unidad_compra": "kilo",
+     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
+    {"id": 2, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 15, 0),
+     "guia_id": 105, "guia_punto": 2, "estado": "recepcionado",
+     "cantidad_cajones_real": 8.0, "contenido_por_cajon_real": 10.0,
+     "cantidad_cajones_rechazada": 2.0, "motivo_rechazo": "Podrido", "importe": 3000.0,
+     "articulo_nombre": "Mango", "unidad_compra": "unidad",
+     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
+    {"id": 3, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 15, 30),
+     "guia_id": 105, "guia_punto": 3, "estado": "recepcionado",
+     "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 6.0,
+     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": None,
+     "articulo_nombre": "Palta", "unidad_compra": "kilo",
+     "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
+    {"id": 4, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 16, 0),
+     "guia_id": 106, "guia_punto": 1, "estado": "recepcionado",
+     "cantidad_cajones_real": 10.0, "contenido_por_cajon_real": 16.0,
+     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 2000.0,
+     "articulo_nombre": "Limón", "unidad_compra": "kilo",
+     "proveedor_nombre": "Verdurin", "proveedor_codigo_puesto": "N03P12"},
+]
+
+
+def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
+    ):
+        respuesta = cliente.get("/facturacion/ingresos")
+
+    assert respuesta.status_code == 200
+    # Default: últimas 48hs y SOLO lo que hay que pagar (recepcionadas,
+    # rechazo parcial incluido — es una recepción por los bultos aceptados).
+    mock_buscar.assert_called_once_with(
+        HOY_DE_PRUEBA - timedelta(days=1), HOY_DE_PRUEBA, None, None, "recepcionado",
+        limite=TOPE_FILAS_BUSQUEDA + 1,
+    )
+    # Cantidades REALES (las de Depósito): 8 × 20k, no lo que cargó el comprador.
+    assert "8 × 20k" in respuesta.text
+    # El rechazo parcial se ve aparte, para explicar la diferencia: se
+    # facturan los 8 aceptados y se muestra que 2 se devolvieron.
+    assert "Rechazo parcial (2 rech.)" in respuesta.text
+    # Subtotal por proveedor (así se factura): 8×5000 + 8×3000 = 64000.
+    assert "Subtotal Saturno" in respuesta.text
+    assert "$64.000" in respuesta.text
+    assert "Subtotal Verdurin" in respuesta.text
+    assert "$20.000" in respuesta.text
+    # Total general al final: 64000 + 20000 (la sin precio no suma).
+    assert "Total general: $84.000" in respuesta.text
+    # La compra sin precio queda marcada: hay que completarla antes de facturar.
+    assert "Sin precio" in respuesta.text
+    assert "1 compra sin precio cargado" in respuesta.text
+    # Export con los mismos filtros.
+    assert "/facturacion/ingresos/exportar-pdf?" in respuesta.text
+    assert "/facturacion/ingresos/exportar-excel?" in respuesta.text
+
+
+def test_ver_ingresos_deposito_estado_todas_pasa_none_a_la_consulta():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_ingresos_deposito", return_value=[]) as mock_buscar,
+    ):
+        respuesta = cliente.get(
+            "/facturacion/ingresos?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&estado=todas&proveedor_id=7"
+        )
+
+    assert respuesta.status_code == 200
+    mock_buscar.assert_called_once_with(
+        date(2026, 8, 10), date(2026, 8, 12), 7, None, None, limite=TOPE_FILAS_BUSQUEDA + 1
+    )
+    assert "No se encontraron ingresos" in respuesta.text
+
+
+def test_ver_ingresos_deposito_cortada_por_el_tope_avisa_y_oculta_totales():
+    muchos = [dict(INGRESOS_DEPOSITO_DE_PRUEBA[0], id=i) for i in range(TOPE_FILAS_BUSQUEDA + 1)]
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_ingresos_deposito", return_value=muchos),
+        patch("app.main.contar_ingresos_deposito", return_value=1200) as mock_contar,
+    ):
+        respuesta = cliente.get("/facturacion/ingresos")
+
+    assert respuesta.status_code == 200
+    assert f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} ingresos de 1200" in respuesta.text
+    assert "Total general:" not in respuesta.text
+    mock_contar.assert_called_once()
+
+
+def test_exportar_ingresos_deposito_pdf_sin_tope_con_subtotales_y_marcas():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
+    ):
+        respuesta = cliente.get("/facturacion/ingresos/exportar-pdf?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "Ingresos_Deposito_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
+    # SIN tope: el export no pasa limite.
+    mock_buscar.assert_called_once_with(date(2026, 8, 17), date(2026, 8, 18), None, None, "recepcionado")
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Ingresos a Depósito" in texto
+    assert "Saturno (N07P41)" in texto
+    assert "Subtotal" in texto
+    assert "$64.000" in texto
+    assert "Total general: $84.000" in texto
+    assert "SIN PRECIO" in texto
+    # El texto puede quebrarse en dos renglones dentro de la columna: se
+    # compara con los espacios normalizados.
+    assert "Rechazo parcial (2 rech.)" in " ".join(texto.split())
+    assert "105.2" in texto  # número de guía y punto
+
+
+def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/facturacion/ingresos/exportar-excel?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "Ingresos_Deposito_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+
+def test_exportar_ingresos_deposito_pdf_fecha_invalida_da_400():
+    respuesta = cliente.get("/facturacion/ingresos/exportar-pdf?fecha_desde=no-es-fecha&fecha_hasta=2026-08-18")
+
+    assert respuesta.status_code == 400
 
 
 def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():

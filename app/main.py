@@ -35,9 +35,11 @@ from app.db import (
     anular_vacio_recibido,
     aprender_articulo,
     buscar_compras,
+    buscar_ingresos_deposito,
     buscar_retiros,
     cambiar_articulo_de_ficha,
     contar_compras_buscadas,
+    contar_ingresos_deposito,
     contar_retiros_buscados,
     cerrar_disponible_generado,
     cerrar_sena,
@@ -141,6 +143,7 @@ from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
+from core.exportar_ingresos import generar_excel_ingresos_deposito, generar_pdf_ingresos_deposito
 from core.exportar_retiros import generar_excel_listado_retiros, generar_pdf_listado_retiros
 from core.exportar_vacios import (
     generar_excel_movimientos_vacios,
@@ -5761,8 +5764,235 @@ def ver_auditoria(request: Request):
 
 @app.get("/facturacion")
 def ver_facturacion(request: Request):
-    return _renderizar_en_construccion(
-        request, "Facturación", volver_url="/inicio", volver_texto="Volver a Inicio", sector="facturacion"
+    """Hub de Facturación: por ahora, solo Ingresos a Depósito."""
+    return templates.TemplateResponse(request, "facturacion.html", {})
+
+
+ESTADOS_FILTRO_INGRESOS_VALIDOS = {"recepcionado", "rechazado", "no_ingresado", "todas"}
+
+ETIQUETAS_ESTADO_INGRESO = {
+    "recepcionado": "Recepcionada",
+    "rechazado": "Rechazo total",
+    "no_ingresado": "No ingresó",
+}
+
+
+def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
+    """Agrupa los ingresos por proveedor con su subtotal (así se factura), y arma el total general.
+
+    Por fila: total = cantidad_cajones_real × importe (el precio es por
+    bulto). Sin precio cargado no hay total — la fila queda marcada
+    (sin_precio) porque es lo que falta completar antes de facturar; una
+    rechazada total o no ingresada sin precio NO se marca (no se paga,
+    no hay nada que completar). Las cantidades son SIEMPRE las reales
+    que pesó/contó Depósito, nunca las del comprador.
+    """
+    grupos: list[dict] = []
+    grupos_por_proveedor: dict[str, dict] = {}
+    total_general = 0.0
+    cantidad_sin_precio = 0
+
+    for ingreso in ingresos:
+        clave = ingreso["proveedor_codigo_puesto"]
+        grupo = grupos_por_proveedor.get(clave)
+        if grupo is None:
+            grupo = {
+                "proveedor_nombre": ingreso["proveedor_nombre"],
+                "proveedor_codigo_puesto": clave,
+                "filas": [],
+                "subtotal": 0.0,
+                "sin_precio": 0,
+            }
+            grupos_por_proveedor[clave] = grupo
+            grupos.append(grupo)
+
+        cajones = float(ingreso["cantidad_cajones_real"]) if ingreso["cantidad_cajones_real"] is not None else None
+        importe = float(ingreso["importe"]) if ingreso["importe"] is not None else None
+        total = cajones * importe if cajones is not None and importe is not None else None
+        sin_precio = importe is None and ingreso["estado"] == "recepcionado"
+
+        if total is not None:
+            grupo["subtotal"] += total
+            total_general += total
+        if sin_precio:
+            grupo["sin_precio"] += 1
+            cantidad_sin_precio += 1
+
+        etiqueta = ETIQUETAS_ESTADO_INGRESO.get(ingreso["estado"], ingreso["estado"])
+        if ingreso["estado"] == "recepcionado" and ingreso["cantidad_cajones_rechazada"] is not None:
+            etiqueta = "Rechazo parcial"
+
+        grupo["filas"].append(
+            {**ingreso, "total": total, "sin_precio": sin_precio, "estado_etiqueta": etiqueta}
+        )
+
+    totales = {"total_general": total_general, "cantidad_sin_precio": cantidad_sin_precio}
+    return grupos, totales
+
+
+@app.get("/facturacion/ingresos")
+def ver_ingresos_deposito(
+    request: Request,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    proveedor_id: str | None = None,
+    articulo_id: str | None = None,
+    estado: str | None = None,
+):
+    """Ingresos a Depósito: lo que realmente entró, para cargarlo en facturación y pagarle a cada proveedor.
+
+    El rango filtra por el día de la RECEPCIÓN (procesada_el, default
+    últimas 48 hs). Por default muestra solo lo recepcionado (incluidos
+    los rechazos parciales: son recepciones y se pagan por los bultos
+    aceptados); "Rechazo total" y "No ingresó" no se pagan y quedan
+    detrás del filtro de estado, para control.
+    """
+    proveedor_id_valor = _id_opcional_desde_query(proveedor_id)
+    articulo_id_valor = _id_opcional_desde_query(articulo_id)
+    estado_valor = estado if estado in ESTADOS_FILTRO_INGRESOS_VALIDOS else "recepcionado"
+    estado_consulta = None if estado_valor == "todas" else estado_valor
+
+    hoy = _hoy_argentina()
+    fecha_desde_valor = hoy - timedelta(days=1)
+    fecha_hasta_valor = hoy
+    error_fecha = None
+    if fecha_desde:
+        try:
+            fecha_desde_valor = date.fromisoformat(fecha_desde)
+        except ValueError:
+            error_fecha = "La fecha desde no es válida."
+    if fecha_hasta:
+        try:
+            fecha_hasta_valor = date.fromisoformat(fecha_hasta)
+        except ValueError:
+            error_fecha = "La fecha hasta no es válida."
+    if error_fecha is None and fecha_desde_valor > fecha_hasta_valor:
+        error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
+
+    try:
+        proveedores = listar_proveedores()
+        articulos = listar_articulos()
+        # Mismo tope que Buscar Compras/Consultar Retiros: si la lista se
+        # corta, los totales NO se muestran (un total parcial para
+        # facturar sería un número falso con plata de por medio).
+        ingresos = buscar_ingresos_deposito(
+            fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor, estado_consulta,
+            limite=TOPE_FILAS_BUSQUEDA + 1,
+        )
+        aviso_tope = None
+        if len(ingresos) > TOPE_FILAS_BUSQUEDA:
+            total = contar_ingresos_deposito(
+                fecha_desde_valor, fecha_hasta_valor, proveedor_id_valor, articulo_id_valor, estado_consulta
+            )
+            ingresos = ingresos[:TOPE_FILAS_BUSQUEDA]
+            aviso_tope = (
+                f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} ingresos de {total}, y por eso los totales "
+                "no se calculan (saldrían incompletos): achicá el rango o filtrá para ver todo."
+            )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    grupos, totales = _grupos_ingresos_deposito(ingresos)
+
+    return templates.TemplateResponse(
+        request,
+        "facturacion_ingresos.html",
+        {
+            "proveedores": proveedores,
+            "articulos": articulos,
+            "fecha_desde": fecha_desde_valor.isoformat(),
+            "fecha_hasta": fecha_hasta_valor.isoformat(),
+            "proveedor_id": proveedor_id_valor,
+            "articulo_id": articulo_id_valor,
+            "estado": estado_valor,
+            "error_fecha": error_fecha,
+            "grupos": grupos,
+            "cantidad_ingresos": len(ingresos),
+            "aviso_tope": aviso_tope,
+            **totales,
+        },
+    )
+
+
+def _leer_filtros_exportar_ingresos(
+    fecha_desde_texto: str, fecha_hasta_texto: str, proveedor_id_texto: str, articulo_id_texto: str, estado_texto: str
+) -> tuple[date, date, int | None, int | None, str | None, list[str]]:
+    """Valida los filtros para exportar ingresos y arma los textos del subtítulo (mismo criterio que retiros)."""
+    try:
+        fecha_desde = date.fromisoformat(fecha_desde_texto)
+        fecha_hasta = date.fromisoformat(fecha_hasta_texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+
+    proveedor_id = _id_opcional_desde_query(proveedor_id_texto)
+    articulo_id = _id_opcional_desde_query(articulo_id_texto)
+    estado_valor = estado_texto if estado_texto in ESTADOS_FILTRO_INGRESOS_VALIDOS else "recepcionado"
+    estado_consulta = None if estado_valor == "todas" else estado_valor
+
+    filtros_texto = []
+    if proveedor_id is not None:
+        try:
+            nombre = next((p["nombre"] for p in listar_proveedores() if p["id"] == proveedor_id), None)
+        except Exception:
+            nombre = None
+        filtros_texto.append(f"proveedor {nombre or f'#{proveedor_id}'}")
+    if articulo_id is not None:
+        try:
+            nombre = next((a["nombre"] for a in listar_articulos() if a["id"] == articulo_id), None)
+        except Exception:
+            nombre = None
+        filtros_texto.append(f"artículo {nombre or f'#{articulo_id}'}")
+    if estado_valor == "todas":
+        filtros_texto.append("todos los estados")
+    elif estado_valor != "recepcionado":
+        filtros_texto.append(f"estado {ETIQUETAS_ESTADO_INGRESO[estado_valor]}")
+
+    return fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado_consulta, filtros_texto
+
+
+@app.get("/facturacion/ingresos/exportar-pdf")
+def exportar_ingresos_deposito_pdf(
+    fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "", estado: str = ""
+):
+    """Genera Ingresos a Depósito (mismos filtros que la pantalla) en PDF — SIN tope, aunque la pantalla corte."""
+    desde, hasta, proveedor_valor, articulo_valor, estado_consulta, filtros_texto = _leer_filtros_exportar_ingresos(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado
+    )
+    try:
+        ingresos = buscar_ingresos_deposito(desde, hasta, proveedor_valor, articulo_valor, estado_consulta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    grupos, totales = _grupos_ingresos_deposito(ingresos)
+    pdf_bytes = generar_pdf_ingresos_deposito(desde, hasta, filtros_texto, grupos, totales)
+    nombre_archivo = f"Ingresos_Deposito_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/facturacion/ingresos/exportar-excel")
+def exportar_ingresos_deposito_excel(
+    fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "", estado: str = ""
+):
+    """Genera Ingresos a Depósito (mismos filtros que la pantalla) en Excel — SIN tope, aunque la pantalla corte."""
+    desde, hasta, proveedor_valor, articulo_valor, estado_consulta, filtros_texto = _leer_filtros_exportar_ingresos(
+        fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado
+    )
+    try:
+        ingresos = buscar_ingresos_deposito(desde, hasta, proveedor_valor, articulo_valor, estado_consulta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    grupos, totales = _grupos_ingresos_deposito(ingresos)
+    excel_bytes = generar_excel_ingresos_deposito(desde, hasta, filtros_texto, grupos, totales)
+    nombre_archivo = f"Ingresos_Deposito_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
 
 

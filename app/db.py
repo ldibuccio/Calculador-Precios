@@ -2232,6 +2232,107 @@ def buscar_retiros(
         conexion.close()
 
 
+def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado):
+    """Las condiciones de Ingresos a Depósito (ver /facturacion/ingresos), compartidas entre buscar y contar.
+
+    El rango filtra por procesada_el (el día en que Depósito la procesó,
+    patrón sargable sobre el índice de procesada_el): el listado es de lo
+    que ENTRÓ, no de lo que se compró. Las pendientes quedan afuera solas
+    (procesada_el NULL).
+
+    estado: 'recepcionado' (lo que hay que pagar, incluye los rechazos
+    parciales — son recepciones), 'rechazado', 'no_ingresado', o None =
+    las tres (para controlar).
+    """
+    condiciones = ["c.procesada_el >= %s", "c.procesada_el < %s::date + 1"]
+    parametros: list = [fecha_desde, fecha_hasta]
+    if proveedor_id is not None:
+        condiciones.append("c.proveedor_id = %s")
+        parametros.append(proveedor_id)
+    if articulo_id is not None:
+        condiciones.append("c.articulo_id = %s")
+        parametros.append(articulo_id)
+    if estado is None:
+        condiciones.append("c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')")
+    else:
+        condiciones.append("c.estado = %s")
+        parametros.append(estado)
+    return condiciones, parametros
+
+
+def buscar_ingresos_deposito(
+    fecha_desde,
+    fecha_hasta,
+    proveedor_id: int | None = None,
+    articulo_id: int | None = None,
+    estado: str | None = "recepcionado",
+    limite: int | None = None,
+) -> list[dict]:
+    """Lo que realmente entró a la empresa (ver /facturacion/ingresos): recepciones entre dos fechas.
+
+    Trae SIEMPRE las columnas reales (cantidad_cajones_real,
+    contenido_por_cajon_real — lo que Depósito pesó/contó) y no las del
+    comprador: para facturar y pagarle al proveedor vale lo que entró.
+    El rechazo parcial viaja aparte (cantidad_cajones_rechazada, motivo)
+    para explicar por qué el número no coincide con lo comprado.
+
+    Ordenado por proveedor (y adentro por recepción): así quien llama
+    arma los subtotales por proveedor recorriendo una sola vez.
+
+    limite: tope de filas para la pantalla (mismo criterio que
+    buscar_compras/buscar_retiros); el export pasa None.
+    """
+    condiciones, parametros = _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado)
+    tope_sql = ""
+    if limite is not None:
+        tope_sql = "LIMIT %s"
+        parametros = parametros + [limite]
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT c.id, c.fecha_operacion, c.procesada_el, c.guia_id, c.guia_punto, c.estado,
+                       c.cantidad_cajones_real, c.contenido_por_cajon_real,
+                       c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe,
+                       a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE {" AND ".join(condiciones)}
+                ORDER BY p.nombre, p.codigo_puesto, c.procesada_el, c.id
+                {tope_sql}
+                """,
+                parametros,
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def contar_ingresos_deposito(
+    fecha_desde,
+    fecha_hasta,
+    proveedor_id: int | None = None,
+    articulo_id: int | None = None,
+    estado: str | None = "recepcionado",
+) -> int:
+    """Cuántos ingresos matchean los filtros de buscar_ingresos_deposito — para el aviso del tope."""
+    condiciones, parametros = _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) FROM compras c WHERE {' AND '.join(condiciones)}", parametros)
+            (total,) = cursor.fetchone()
+        return int(total)
+    finally:
+        conexion.close()
+
+
 def contar_compras_sin_precio_viejas(fecha_limite) -> dict:
     """Auditoría: compras que siguen sin precio con fecha_operacion de fecha_limite para atrás, y la más vieja.
 

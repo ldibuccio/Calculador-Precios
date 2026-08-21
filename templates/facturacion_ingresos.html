@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingresos a Depósito</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  form label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form input, form select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .fila-fechas { display: flex; gap: 0.75rem; }
+  .fila-fechas > div { flex: 1; }
+  button.boton-buscar, .boton-exportar {
+    display: block;
+    margin-top: 1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-exportar { margin-top: 0.6rem; }
+  .error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
+  .proveedor-encabezado {
+    font-weight: 700;
+    font-size: 1rem;
+    margin: 0 0 0.5rem;
+  }
+  .proveedor-encabezado .puesto { color: #888; font-weight: 400; font-size: 0.85rem; }
+  .tabla-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.45rem 0.4rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.83rem;
+    white-space: nowrap;
+  }
+  th { background: #eee; font-weight: 600; }
+  td.numero { text-align: right; font-weight: 600; }
+  tr.sin-precio td { background: #fef9c3; }
+  .marca-sin-precio { color: #991b1b; font-weight: 700; font-size: 0.78rem; }
+  .marca-estado { color: #991b1b; font-weight: 600; font-size: 0.78rem; }
+  .estado-ok { color: #666; font-size: 0.78rem; }
+  .fila-subtotal {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 0.55rem;
+    margin-top: 0.35rem;
+    border-top: 2px solid #ddd;
+    font-weight: 800;
+    font-size: 0.95rem;
+  }
+  .total {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .total .numero-grande {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #1d4ed8;
+  }
+  .total .aviso-sin-precio {
+    font-size: 0.9rem;
+    color: #991b1b;
+    font-weight: 700;
+    margin: 0.5rem 0 0;
+    padding-top: 0.5rem;
+    border-top: 1px solid #bfdbfe;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "facturacion" %}
+  {% set barra_titulo = "Ingresos a Depósito" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form method="get" action="/facturacion/ingresos">
+      <div class="fila-fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <label for="proveedor_id">Proveedor (opcional)</label>
+      <select id="proveedor_id" name="proveedor_id">
+        <option value="">Todos</option>
+        {% for p in proveedores %}
+        <option value="{{ p.id }}" {% if proveedor_id == p.id %}selected{% endif %}>{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+        {% endfor %}
+      </select>
+      <label for="articulo_id">Artículo (opcional)</label>
+      <select id="articulo_id" name="articulo_id">
+        <option value="">Todos</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="estado">Estado de recepción</label>
+      <select id="estado" name="estado">
+        <option value="recepcionado" {% if estado == "recepcionado" %}selected{% endif %}>A pagar (recepcionadas, con rechazo parcial incluido)</option>
+        <option value="rechazado" {% if estado == "rechazado" %}selected{% endif %}>Rechazo total (no se paga)</option>
+        <option value="no_ingresado" {% if estado == "no_ingresado" %}selected{% endif %}>No ingresó (no se paga)</option>
+        <option value="todas" {% if estado == "todas" %}selected{% endif %}>Todas (para controlar)</option>
+      </select>
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+    {% if grupos %}
+    <button type="button" class="boton-exportar" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton-exportar" href="/facturacion/ingresos/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&estado={{ estado }}">Exportar PDF</a>
+      <a class="boton-exportar" href="/facturacion/ingresos/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&estado={{ estado }}">Exportar Excel</a>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if error_fecha %}
+  <div class="error">{{ error_fecha }}</div>
+  {% endif %}
+
+  {% if aviso_tope %}
+  <div class="error">{{ aviso_tope }}</div>
+  {% endif %}
+
+  <p class="ayuda">Lo que realmente entró al depósito (cantidades REALES que pesó/contó Depósito, no las del comprador), agrupado por proveedor para facturar. Las fechas filtran por el día de la recepción.</p>
+
+  {% if grupos %}
+    {% for g in grupos %}
+    <div class="tarjeta">
+      <p class="proveedor-encabezado">{{ g.proveedor_nombre }} <span class="puesto">({{ g.proveedor_codigo_puesto }})</span></p>
+      <div class="tabla-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Recep.</th>
+              <th>Guía</th>
+              <th>Artículo</th>
+              <th>Cant. real</th>
+              <th>Precio</th>
+              <th>Total</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in g.filas %}
+            <tr {% if f.sin_precio %}class="sin-precio"{% endif %}>
+              <td>{% if f.procesada_el %}{{ f.procesada_el.strftime("%d/%m %H:%M") }}{% else %}—{% endif %}</td>
+              <td>{% if f.guia_id %}{{ f.guia_id }}.{{ f.guia_punto }}{% else %}—{% endif %}</td>
+              <td>{{ f.articulo_nombre }}</td>
+              <td>{% if f.cantidad_cajones_real is not none %}{{ f.cantidad_cajones_real|numero }} × {{ f.contenido_por_cajon_real|kilos }}{{ f.unidad_compra|sufijo_unidad }}{% else %}—{% endif %}</td>
+              <td>{% if f.sin_precio %}<span class="marca-sin-precio">Sin precio</span>{% elif f.importe is not none %}{{ f.importe|moneda }}{% else %}—{% endif %}</td>
+              <td class="numero">{% if f.total is not none %}{{ f.total|moneda }}{% else %}—{% endif %}</td>
+              <td>
+                {% if f.estado_etiqueta == "Recepcionada" %}<span class="estado-ok">Recepcionada</span>
+                {% else %}<span class="marca-estado">{{ f.estado_etiqueta }}{% if f.cantidad_cajones_rechazada is not none %} ({{ f.cantidad_cajones_rechazada|numero }} rech.){% endif %}</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="fila-subtotal">
+        <span>Subtotal {{ g.proveedor_nombre }}</span>
+        <span>{{ g.subtotal|moneda }}</span>
+      </div>
+    </div>
+    {% endfor %}
+
+    {# El total, AL FINAL (así se cruza contra la suma de los subtotales
+       de arriba, que es como se factura proveedor por proveedor). #}
+    {% if not aviso_tope %}
+    <div class="total">
+      <span class="numero-grande">Total general: {{ total_general|moneda }}</span>
+      {% if cantidad_sin_precio > 0 %}
+      <p class="aviso-sin-precio">Ojo: {{ cantidad_sin_precio }} compra{{ "s" if cantidad_sin_precio != 1 else "" }} sin precio cargado (en amarillo) — no suman al total, completalas antes de facturar.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% else %}
+  <div class="tarjeta">
+    <p class="vacio">No se encontraron ingresos con estos filtros.</p>
+  </div>
+  {% endif %}
+
+  <script>
+    // "Exportar" es un solo toque para desplegar las 2 opciones, en vez de
+    // navegar a una pantalla intermedia — mismo criterio que Buscar Compras.
+    function mostrarOpcionesExportar() {
+      const boton = document.getElementById("boton-exportar");
+      const opciones = document.getElementById("opciones-exportar");
+      if (boton && opciones) {
+        opciones.style.display = "block";
+        boton.style.display = "none";
+      }
+    }
+  </script>
+</body>
+</html>

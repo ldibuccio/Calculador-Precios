@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Facturación</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .boton {
+    width: 100%;
+    padding: 1.1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+  }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "facturacion" %}
+  {% set barra_titulo = "Facturación" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <a class="boton" href="/facturacion/ingresos">Ingresos a Depósito</a>
+  </div>
+
+  <a class="volver" href="/inicio">Volver a Inicio</a>
+</body>
+</html>

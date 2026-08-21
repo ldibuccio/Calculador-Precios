@@ -29,8 +29,10 @@ from app.db import (
     eliminar_ficha,
     listar_historial_fichas_por_cliente,
     buscar_compras,
+    buscar_ingresos_deposito,
     buscar_retiros,
     contar_compras_buscadas,
+    contar_ingresos_deposito,
     contar_retiros_buscados,
     cerrar_disponible_generado,
     comanda_ya_guardada,
@@ -2378,3 +2380,52 @@ def test_stock_vacios_a_fecha_filtra_las_tres_sumas_y_excluye_anulados_siempre()
     # a su anulación.
     assert consulta.count("anulado_el IS NULL") == 3
     assert "anulado_el <" not in consulta
+
+
+def test_buscar_ingresos_deposito_filtra_por_dia_de_recepcion_y_estado_default():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_ingresos_deposito(date(2026, 8, 17), date(2026, 8, 18))
+
+    consulta, parametros = cursor.execute.call_args.args
+    # El rango es por el día de la RECEPCIÓN (patrón sargable sobre
+    # procesada_el), no por la fecha de compra.
+    assert "c.procesada_el >= %s" in consulta
+    assert "c.procesada_el < %s::date + 1" in consulta
+    # Default: solo lo que hay que pagar (los rechazos parciales entran
+    # solos: son estado 'recepcionado').
+    assert "c.estado = %s" in consulta
+    assert parametros == [date(2026, 8, 17), date(2026, 8, 18), "recepcionado"]
+    # Cantidades REALES en el SELECT, nunca las del comprador.
+    assert "c.cantidad_cajones_real" in consulta
+    assert "c.cantidad_cajones," not in consulta
+    assert "c.cantidad_cajones_rechazada" in consulta
+    # Ordenado por proveedor, para armar los subtotales de una pasada.
+    assert "ORDER BY p.nombre" in consulta
+
+
+def test_buscar_ingresos_deposito_estado_none_trae_las_tres_procesadas():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_ingresos_deposito(date(2026, 8, 17), date(2026, 8, 18), proveedor_id=7, estado=None, limite=501)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')" in consulta
+    assert "c.proveedor_id = %s" in consulta
+    assert "LIMIT %s" in consulta
+    assert parametros == [date(2026, 8, 17), date(2026, 8, 18), 7, 501]
+
+
+def test_contar_ingresos_deposito_usa_las_mismas_condiciones():
+    conexion, cursor = _conexion_falsa([(42,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        total = contar_ingresos_deposito(date(2026, 8, 17), date(2026, 8, 18), articulo_id=5)
+
+    assert total == 42
+    consulta, parametros = cursor.execute.call_args.args
+    assert consulta.startswith("SELECT COUNT(*) FROM compras c WHERE ")
+    assert "c.articulo_id = %s" in consulta
+    assert parametros == [date(2026, 8, 17), date(2026, 8, 18), 5, "recepcionado"]
