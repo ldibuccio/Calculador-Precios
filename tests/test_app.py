@@ -9571,6 +9571,15 @@ def test_ver_vacios_muestra_las_tres_pantallas_del_empleado():
     assert 'href="/puesto/envases/stock"' not in respuesta.text
 
 
+def test_ver_vacios_muestra_el_aviso_del_redirect():
+    # La confirmación de Recibir/Devolver viaja por query string y se
+    # muestra en el hub, adonde vuelve el empleado después de guardar.
+    respuesta = cliente.get("/puesto/envases/vacios", params={"aviso": "Recibidos 12 cajones (Cajón manzana) de Saturno."})
+
+    assert respuesta.status_code == 200
+    assert "Recibidos 12 cajones (Cajón manzana) de Saturno." in respuesta.text
+
+
 def test_ver_recibir_vacios_arma_el_form_con_lista_cerrada():
     with (
         patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
@@ -9624,7 +9633,8 @@ def test_recibir_vacios_guarda_con_cliente_normalizado():
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"].startswith("/puesto/envases/vacios/recibir?aviso=")
+    # Después de guardar se vuelve al hub de Vacíos, con la confirmación ahí.
+    assert respuesta.headers["location"].startswith("/puesto/envases/vacios?aviso=")
     # El nombre se limpia (espacios) y se normaliza (minúsculas, sin acentos)
     # para que "Juan", "juan " y "JUAN" sean EL MISMO cliente.
     mock_cliente.assert_called_once_with("JUAN Pérez", "juan perez")
@@ -9709,7 +9719,8 @@ def test_devolver_vacios_con_stock_suficiente_avisa_sin_advertencia():
 
     assert respuesta.status_code == 303
     location = respuesta.headers["location"]
-    assert location.startswith("/puesto/envases/vacios/devolver?aviso=")
+    # Después de guardar se vuelve al hub de Vacíos, con la confirmación ahí.
+    assert location.startswith("/puesto/envases/vacios?aviso=")
     assert "Ojo" not in location
     mock_crear.assert_called_once_with(200, 1, 30)
 

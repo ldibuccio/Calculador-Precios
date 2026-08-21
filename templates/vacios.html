@@ -41,6 +41,14 @@
      contar no es un movimiento, y el color lo dice de una. */
   .boton-naranja { background: #ea580c; }
   .boton-proximamente { opacity: 0.6; }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -55,6 +63,10 @@
   {% set barra_sector = "puesto" %}
   {% set barra_titulo = "Vacíos" %}
   {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
 
   <!-- Las tres pantallas del empleado del fondo. Sin números de stock del
        sistema en ninguna de ellas (el control cruzado depende de eso). -->

@@ -5626,9 +5626,13 @@ def bloquear_control_puesto_ruta(request: Request):
 
 
 @app.get("/puesto/envases/vacios")
-def ver_vacios(request: Request):
-    """Hub de Vacíos: las tres pantallas del empleado del fondo del puesto."""
-    return templates.TemplateResponse(request, "vacios.html", {})
+def ver_vacios(request: Request, aviso: str | None = None):
+    """Hub de Vacíos: las tres pantallas del empleado del fondo del puesto.
+
+    "aviso" llega desde los redirects post-guardado de Recibir y Devolver:
+    la confirmación se muestra acá, adonde vuelve el empleado.
+    """
+    return templates.TemplateResponse(request, "vacios.html", {"aviso": aviso})
 
 
 def _validar_cantidad_vacios(texto: str) -> tuple[str | None, int | None]:
@@ -5748,7 +5752,7 @@ def recibir_vacios_ruta(
         f"Recibidos {cantidad_valor} cajones ({tipo_elegido['nombre']}) de "
         f"{tipo_elegido['proveedor_nombre']}, traídos por {nombre_limpio}."
     )
-    return RedirectResponse(url=f"/puesto/envases/vacios/recibir?{urlencode({'aviso': aviso})}", status_code=303)
+    return RedirectResponse(url=f"/puesto/envases/vacios?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 @app.post("/puesto/envases/vacios/recibidos/{movimiento_id}/anular")
@@ -5837,7 +5841,7 @@ def devolver_vacios_ruta(
             f" Ojo: según el sistema había {stock_sistema} — la diferencia quedó registrada"
             " para revisar en el Cotejo."
         )
-    return RedirectResponse(url=f"/puesto/envases/vacios/devolver?{urlencode({'aviso': aviso})}", status_code=303)
+    return RedirectResponse(url=f"/puesto/envases/vacios?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 @app.post("/puesto/envases/vacios/devueltos/{movimiento_id}/anular")
