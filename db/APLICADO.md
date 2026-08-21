@@ -46,7 +46,7 @@ bases estén marcadas.
 | `agregar_proveedores_puesto.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_ajustes_vacios.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_indices_rendimiento.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
-| `agregar_fotos_guia.sql` | ⬜ pendiente (OJO: no es aditivo puro — crea guías para compras históricas y les asigna guia_id; correr ANTES la consulta de lectura comentada en el archivo, y correr TODO antes de mergear) | ⬜ pendiente (ídem) |
+| `agregar_fotos_guia.sql` | ✅ 2026-08-20 (verificado: 0 sin guía, 0 sin migrar, 36 fotos migradas) | ✅ 2026-08-20 (verificado: 0 / 0 / 19 fotos) |
 
 ## Deuda pendiente de limpieza
 
