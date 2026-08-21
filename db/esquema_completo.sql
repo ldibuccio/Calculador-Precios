@@ -459,4 +459,65 @@ create index ajustes_vacios_stock_idx
     on ajustes_vacios (proveedor_id, tipo_envase_id) include (cantidad)
     where anulado_el is null;
 
+-- ----------------------------------------------------------------------------
+-- 13. PEDIDOS DE CLIENTES — el mail diario de Día (demanda, sin FK a compras)
+-- ----------------------------------------------------------------------------
+create table pedidos (
+    id                     bigint generated always as identity primary key,
+    cliente_id             bigint not null references clientes (id),
+    fecha_operacion        date not null,
+    origen                 text not null check (origen in ('texto', 'mail')),
+    texto_original         text,
+    recibido_el            timestamptz,
+    mail_message_id        text,
+    reemplaza_a_pedido_id  bigint references pedidos (id),
+    creado_en              timestamptz not null default now(),
+    anulado_el             timestamptz
+);
+
+comment on table pedidos is 'Cabecera del pedido diario de un cliente. Demanda pura: sin FK contra compras. Un pedido corregido es una fila nueva con reemplaza_a_pedido_id; el viejo se anula (anulado_el), nunca se pisa.';
+
+create unique index pedidos_mail_message_id_unico
+    on pedidos (mail_message_id) where mail_message_id is not null;
+create index pedidos_cliente_fecha_idx on pedidos (cliente_id, fecha_operacion);
+
+create table pedidos_sucursales (
+    id                      bigint generated always as identity primary key,
+    pedido_id               bigint not null references pedidos (id),
+    sucursal                text not null,
+    orden_compra            text,
+    total_bultos_declarado  numeric,
+    unique (pedido_id, sucursal)
+);
+
+comment on table pedidos_sucursales is 'Una fila por sucursal del pedido (VL/BZ/GR de Dia), con su orden de compra y el total de bultos declarado en el mail (control cruzado).';
+
+create table pedidos_renglones (
+    id                bigint generated always as identity primary key,
+    pedido_id         bigint not null references pedidos (id),
+    sucursal          text,
+    articulo_id       bigint references articulos (id),
+    texto_codigo      text,
+    texto_descripcion text,
+    cantidad          numeric not null default 0,
+    armado_el         timestamptz,
+    creado_en         timestamptz not null default now()
+);
+
+comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. articulo_id NULL = sin identificar, con el texto crudo conservado. armado_el: tilde de armado del deposito (etapa 2).';
+
+create index pedidos_renglones_pedido_idx on pedidos_renglones (pedido_id);
+create index pedidos_renglones_sin_identificar_idx
+    on pedidos_renglones (pedido_id) where articulo_id is null;
+
+create table fotos_pedido (
+    id         bigint generated always as identity primary key,
+    pedido_id  bigint not null references pedidos (id),
+    foto_ruta  text not null,
+    creado_en  timestamptz not null default now(),
+    unique (pedido_id, foto_ruta)
+);
+
+comment on table fotos_pedido is 'Capturas del mail original del pedido, como respaldo visual.';
+
 commit;

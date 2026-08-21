@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revisar Pedido</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .sub { color: #666; font-size: 0.88rem; margin: 0 0 0.25rem; }
+  .aviso {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .sucursal-resumen {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-top: 1px solid #eee;
+    font-size: 0.92rem;
+  }
+  .sucursal-resumen:first-of-type { border-top: none; }
+  .sucursal-resumen .oc { color: #666; font-size: 0.85rem; }
+  .descuadre { color: #991b1b; font-weight: 700; }
+  .cuadra { color: #166534; font-weight: 700; }
+  .renglon {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 0.7rem;
+    margin-bottom: 0.7rem;
+  }
+  .renglon.advertencia { border: 2px solid #f59e0b; background: #fffbeb; }
+  .renglon .crudo { font-weight: 700; font-size: 0.95rem; }
+  .renglon .cantidades { color: #444; font-size: 0.9rem; margin: 0.25rem 0 0.4rem; }
+  .marca {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    margin-bottom: 0.3rem;
+  }
+  .marca-sugerencia { background: #fef9c3; color: #713f12; }
+  .renglon select {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .opciones-renglon { margin-top: 0.4rem; font-size: 0.85rem; color: #444; }
+  .opciones-renglon label { display: block; margin-top: 0.25rem; }
+  button.guardar {
+    width: 100%;
+    padding: 0.9rem;
+    background: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Revisar Pedido" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <h2>{{ cliente_nombre }} — {{ fecha_mostrar }}</h2>
+    {% if empresa_bloque %}<p class="sub">Bloque leído: {{ empresa_bloque }}</p>{% endif %}
+    {% for s in sucursales %}
+    <div class="sucursal-resumen">
+      <span>{{ s.sucursal }} <span class="oc">{% if s.orden_compra %}OC {{ s.orden_compra }}{% else %}sin OC{% endif %}</span></span>
+      <span>{% if s.total_bultos_declarado is not none %}declara {{ s.total_bultos_declarado|numero }} bultos{% else %}sin total declarado{% endif %}</span>
+    </div>
+    {% endfor %}
+    <div id="control-cruzado"></div>
+  </div>
+
+  {% if pedido_vigente %}
+  <div class="aviso">Ya hay un pedido vigente para esta fecha (cargado {{ pedido_vigente.creado_en|fecha_hora }}). Al guardar, este lo REEMPLAZA: el anterior se anula y queda de registro.</div>
+  {% endif %}
+
+  <form method="post" action="/deposito/pedido/cargar/confirmar" id="form-confirmar">
+    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+    <input type="hidden" name="fecha" value="{{ fecha }}">
+    <input type="hidden" name="texto_original" value="{{ texto_original }}">
+    <input type="hidden" name="cantidad_sucursales" value="{{ sucursales|length }}">
+    {% for s in sucursales %}
+    <input type="hidden" name="sucursal_{{ loop.index0 }}_nombre" value="{{ s.sucursal }}">
+    <input type="hidden" name="sucursal_{{ loop.index0 }}_oc" value="{{ s.orden_compra or '' }}">
+    <input type="hidden" name="sucursal_{{ loop.index0 }}_total" value="{{ s.total_bultos_declarado if s.total_bultos_declarado is not none else '' }}">
+    {% endfor %}
+    <input type="hidden" name="cantidad_renglones" value="{{ renglones|length }}">
+
+    <div class="tarjeta">
+      <h2>Renglones ({{ renglones|length }})</h2>
+      <p class="sub">Los marcados van primero: revisalos sí o sí. Nada se pierde — lo que no asignes se guarda igual como "sin identificar".</p>
+
+      {% for r in renglones %}
+      <div class="renglon {% if r.advertencia %}advertencia{% endif %}">
+        {% if r.articulo_id is none %}<span class="marca">Sin match — asignar a mano</span>
+        {% elif r.match_por == "sugerencia" %}<span class="marca marca-sugerencia">Sugerencia — confirmar</span>{% endif %}
+        <div class="crudo">{{ r.texto_codigo or "—" }} · {{ r.texto_descripcion or "—" }}</div>
+        <div class="cantidades">
+          {% for s in sucursales %}{% if r.cantidades.get(s.sucursal) is not none %}{{ s.sucursal }}: {{ r.cantidades.get(s.sucursal)|numero }}  {% endif %}{% endfor %}
+          {% if not r.cantidades %}sin cantidades{% endif %}
+        </div>
+        <input type="hidden" name="renglon_{{ loop.index0 }}_codigo" value="{{ r.texto_codigo or '' }}">
+        <input type="hidden" name="renglon_{{ loop.index0 }}_descripcion" value="{{ r.texto_descripcion or '' }}">
+        {% set indice_renglon = loop.index0 %}
+        {% for s in sucursales %}
+        <input type="hidden" name="renglon_{{ indice_renglon }}_cant_{{ loop.index0 }}"
+               value="{{ r.cantidades.get(s.sucursal) if r.cantidades.get(s.sucursal) is not none else '' }}">
+        {% endfor %}
+        <select name="renglon_{{ loop.index0 }}_articulo_id">
+          <option value="" {% if r.articulo_id is none %}selected{% endif %}>Sin identificar (asignar después)</option>
+          {% for a in articulos_cliente %}
+          <option value="{{ a.id }}" {% if r.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          {% endfor %}
+        </select>
+        <div class="opciones-renglon">
+          {% if r.articulo_id is none or r.match_por == "sugerencia" %}
+          <label><input type="checkbox" name="renglon_{{ loop.index0 }}_guardar_alias" value="si"> Guardar este código en la ficha (la próxima matchea solo)</label>
+          {% endif %}
+          <label><input type="checkbox" name="renglon_{{ loop.index0 }}_descartar" value="si" onchange="recalcularControl()"> No es mío (descartar este renglón)</label>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="tarjeta">
+      <button type="submit" class="guardar">Guardar pedido</button>
+      <a class="volver" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver (pegar de nuevo)</a>
+    </div>
+  </form>
+
+  <script>
+    // Control cruzado EN VIVO: suma lo leído por sucursal (descartados
+    // afuera) y lo compara contra el total declarado del mail.
+    var SUCURSALES = [
+      {% for s in sucursales %}{ nombre: {{ s.sucursal|tojson }}, declarado: {{ s.total_bultos_declarado if s.total_bultos_declarado is not none else 'null' }} }{% if not loop.last %},{% endif %}{% endfor %}
+    ];
+    var CANTIDAD_RENGLONES = {{ renglones|length }};
+
+    function recalcularControl() {
+      var contenedor = document.getElementById("control-cruzado");
+      var html = "";
+      SUCURSALES.forEach(function (sucursal, j) {
+        var suma = 0;
+        for (var i = 0; i < CANTIDAD_RENGLONES; i++) {
+          var descartar = document.querySelector('[name="renglon_' + i + '_descartar"]');
+          if (descartar && descartar.checked) continue;
+          var campo = document.querySelector('[name="renglon_' + i + '_cant_' + j + '"]');
+          var valor = campo ? parseFloat(campo.value) : NaN;
+          if (!isNaN(valor)) suma += valor;
+        }
+        if (sucursal.declarado === null) {
+          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span>leí ' + suma + ' bultos (sin total para comparar)</span></div>';
+        } else if (suma === sucursal.declarado) {
+          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span class="cuadra">leí ' + suma + ' = declarado ✔</span></div>';
+        } else {
+          var diferencia = sucursal.declarado - suma;
+          var detalle = diferencia > 0 ? ("faltan " + diferencia) : ("sobran " + (-diferencia));
+          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span class="descuadre">leí ' + suma + ' pero el mail dice ' + sucursal.declarado + ' — ' + detalle + '</span></div>';
+        }
+      });
+      contenedor.innerHTML = html;
+    }
+    recalcularControl();
+  </script>
+</body>
+</html>

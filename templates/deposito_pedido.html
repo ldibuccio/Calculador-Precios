@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pedido</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  form.filtros label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form.filtros input, form.filtros select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .boton {
+    display: block;
+    margin-top: 0.75rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .descuadre {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 2px solid #dc2626;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .aviso-reemplazo {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+  }
+  .oc-pill {
+    display: inline-block;
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+    font-size: 0.95rem;
+    font-weight: 800;
+    padding: 0.2rem 0.6rem;
+    border-radius: 8px;
+  }
+  .sub { color: #666; font-size: 0.85rem; margin: 0.25rem 0 0.5rem; }
+  .renglon {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .renglon:first-of-type { border-top: none; }
+  .renglon .cantidad { font-weight: 800; font-size: 1.05rem; white-space: nowrap; }
+  .fila-total {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 0.55rem;
+    margin-top: 0.35rem;
+    border-top: 2px solid #ddd;
+    font-weight: 800;
+  }
+  .fila-total .mal { color: #991b1b; }
+  .fila-total .bien { color: #166534; }
+  .tarjeta-sin-identificar { border: 2px solid #f59e0b; background: #fffbeb; }
+  .sin-identificar-item {
+    border-top: 1px solid #fde68a;
+    padding: 0.6rem 0;
+  }
+  .sin-identificar-item:first-of-type { border-top: none; }
+  .sin-identificar-item .crudo { font-weight: 700; }
+  .sin-identificar-item .detalle { color: #713f12; font-size: 0.85rem; margin: 0.15rem 0 0.4rem; }
+  .sin-identificar-item select {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .sin-identificar-item label { display: block; font-size: 0.85rem; margin-top: 0.3rem; }
+  .sin-identificar-item button {
+    margin-top: 0.5rem;
+    width: 100%;
+    padding: 0.6rem;
+    background: #d97706;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .fotos-tira { display: flex; gap: 0.6rem; overflow-x: auto; padding-bottom: 0.25rem; }
+  .foto-item { flex: 0 0 auto; text-align: center; }
+  .foto-item img {
+    width: 6.5rem;
+    height: 6.5rem;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    display: block;
+  }
+  .foto-item .es-pdf {
+    width: 6.5rem; height: 6.5rem; border-radius: 8px; border: 1px solid #ddd;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; background: #f9fafb; text-decoration: none;
+  }
+  .foto-borrar {
+    margin-top: 0.3rem;
+    padding: 0.35rem 0.7rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .subir-foto input[type="file"] { display: none; }
+  .boton-agregar-foto {
+    display: block;
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.8rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Pedido" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/deposito/pedido">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()">
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="fecha">Fecha</label>
+      <input type="date" id="fecha" name="fecha" value="{{ fecha }}" onchange="this.form.submit()">
+    </form>
+    {% if cliente_id %}
+    <a class="boton" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">
+      {% if pedido %}Cargar pedido corregido{% else %}Cargar Pedido{% endif %}
+    </a>
+    {% endif %}
+  </div>
+
+  {% if cliente_id and not pedido %}
+  <div class="tarjeta">
+    <p class="vacio">No hay pedido cargado para el {{ fecha_mostrar }}.</p>
+  </div>
+  {% endif %}
+
+  {% if pedido %}
+
+  {% for d in descuadres %}
+  <div class="descuadre">⚠ {{ d }}</div>
+  {% endfor %}
+
+  {% if pedido.reemplaza_a_pedido_id %}
+  <div class="aviso-reemplazo">Este pedido reemplaza al cargado {{ pedido.reemplazado_creado_en|fecha_hora }} (quedó anulado, de registro). Revisá lo que ya habías armado con el anterior.</div>
+  {% endif %}
+
+  {% if sin_identificar %}
+  <div class="tarjeta tarjeta-sin-identificar">
+    <h2>Sin identificar ({{ sin_identificar|length }})</h2>
+    <p class="sub">Llegaron en el mail pero no matchean ninguna ficha. Asignalos para que el depósito los pueda armar — nada se pierde.</p>
+    {% for r in sin_identificar %}
+    <div class="sin-identificar-item">
+      <div class="crudo">{{ r.texto_codigo or "—" }} · {{ r.texto_descripcion or "—" }}</div>
+      <div class="detalle">{% if r.sucursal %}{{ r.sucursal }}: {{ r.cantidad|numero }} bultos{% else %}sin cantidades en el mail{% endif %}</div>
+      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/asignar">
+        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+        <input type="hidden" name="fecha" value="{{ fecha }}">
+        <input type="hidden" name="texto_codigo" value="{{ r.texto_codigo or '' }}">
+        <input type="hidden" name="texto_descripcion" value="{{ r.texto_descripcion or '' }}">
+        <select name="articulo_id" required>
+          <option value="" selected disabled>Elegí el artículo...</option>
+          {% for a in articulos_cliente %}
+          <option value="{{ a.id }}">{{ a.nombre }}</option>
+          {% endfor %}
+        </select>
+        <label><input type="checkbox" name="guardar_alias" value="si" checked> Guardar este código en la ficha (la próxima matchea solo)</label>
+        <button type="submit">Asignar</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% for s in sucursales %}
+  <div class="tarjeta">
+    <h2>{{ s.sucursal }} {% if s.orden_compra %}<span class="oc-pill">OC {{ s.orden_compra }}</span>{% endif %}</h2>
+    <p class="sub">{% if s.total_bultos_declarado is not none %}El mail declara {{ s.total_bultos_declarado|numero }} bultos.{% else %}Sin total declarado en el mail.{% endif %}</p>
+    {% set filas = renglones_por_sucursal.get(s.sucursal, []) %}
+    {% if filas %}
+      {% for r in filas %}
+      <div class="renglon">
+        <span>{{ r.articulo_nombre }}</span>
+        <span class="cantidad">{{ r.cantidad|numero }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin renglones identificados para esta sucursal.</p>
+    {% endif %}
+    <div class="fila-total">
+      <span>Leído</span>
+      <span class="{% if s.total_bultos_declarado is not none and s.suma_leida != s.total_bultos_declarado|float %}mal{% else %}bien{% endif %}">{{ s.suma_leida|numero }}{% if s.total_bultos_declarado is not none %} / {{ s.total_bultos_declarado|numero }}{% endif %}</span>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="tarjeta">
+    <h2>Respaldo del mail</h2>
+    {% if fotos %}
+    <div class="fotos-tira">
+      {% for f in fotos %}
+      <div class="foto-item">
+        {% if f.foto_ruta.lower().endswith(".pdf") %}
+        <a class="es-pdf" href="/deposito/pedido/{{ pedido.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener">📄</a>
+        {% else %}
+        <a href="/deposito/pedido/{{ pedido.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener">
+          <img src="/deposito/pedido/{{ pedido.id }}/fotos/{{ f.id }}/ver" alt="Captura del mail" loading="lazy">
+        </a>
+        {% endif %}
+        <form method="post" action="/deposito/pedido/{{ pedido.id }}/fotos/{{ f.id }}/borrar"
+              onsubmit="return confirm('¿Borrar esta captura? No se puede deshacer.');">
+          <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+          <input type="hidden" name="fecha" value="{{ fecha }}">
+          <button type="submit" class="foto-borrar">Borrar</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="vacio">Sin capturas todavía. Sumá una foto o captura del mail como respaldo.</p>
+    {% endif %}
+    <form class="subir-foto" method="post" action="/deposito/pedido/{{ pedido.id }}/fotos" enctype="multipart/form-data">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <input type="hidden" name="fecha" value="{{ fecha }}">
+      <input type="file" name="archivo" id="archivo-foto-pedido" accept="image/*,.pdf"
+             onchange="if (this.files.length) this.form.submit();">
+      <label class="boton-agregar-foto" for="archivo-foto-pedido">＋ Agregar captura del mail</label>
+    </form>
+  </div>
+
+  {% endif %}
+</body>
+</html>

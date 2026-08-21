@@ -33,6 +33,12 @@ from app.db import (
     buscar_retiros,
     contar_compras_buscadas,
     contar_ingresos_deposito,
+    contar_pedidos_con_renglones_sin_identificar,
+    crear_pedido,
+    borrar_foto_pedido,
+    guardar_alias_en_ficha,
+    listar_renglones_pedido,
+    obtener_pedido_vigente,
     contar_retiros_buscados,
     cerrar_disponible_generado,
     comanda_ya_guardada,
@@ -2433,3 +2439,112 @@ def test_contar_ingresos_deposito_usa_las_mismas_condiciones():
     assert consulta.startswith("SELECT COUNT(*) FROM compras c WHERE ")
     assert "c.articulo_id = %s" in consulta
     assert parametros == [date(2026, 8, 17), date(2026, 8, 18), 5, "recepcionado"]
+
+
+# --- Pedidos de clientes ---
+
+
+def test_crear_pedido_guarda_todo_en_una_transaccion():
+    conexion, cursor = _conexion_falsa([(51,)])  # RETURNING id de la cabecera
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        pedido_id = crear_pedido(
+            1,
+            date(2026, 8, 21),
+            "texto",
+            "el mail",
+            [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos_declarado": 235.0}],
+            [{"sucursal": "VL", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0}],
+        )
+
+    assert pedido_id == 51
+    # 3 inserts (cabecera + 1 sucursal + 1 renglón), un solo commit.
+    assert cursor.execute.call_count == 3
+    consulta_cabecera, parametros_cabecera = cursor.execute.call_args_list[0].args
+    assert "INSERT INTO pedidos " in consulta_cabecera
+    assert parametros_cabecera == (1, date(2026, 8, 21), "texto", "el mail", None)
+    conexion.commit.assert_called_once()
+
+
+def test_crear_pedido_corregido_anula_el_viejo_en_la_misma_transaccion():
+    conexion, cursor = _conexion_falsa([(52,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_pedido(1, date(2026, 8, 21), "texto", None, [], [], reemplaza_a_pedido_id=50)
+
+    consulta_anular, parametros_anular = cursor.execute.call_args_list[0].args
+    assert "UPDATE pedidos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL" in consulta_anular
+    assert parametros_anular == (50,)
+    conexion.commit.assert_called_once()  # todo o nada
+
+
+def test_obtener_pedido_vigente_ignora_los_anulados():
+    conexion, cursor = _conexion_falsa([None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = obtener_pedido_vigente(1, date(2026, 8, 21))
+
+    assert resultado is None
+    consulta, parametros = cursor.execute.call_args.args
+    assert "p.anulado_el IS NULL" in consulta
+    assert "ORDER BY p.creado_en DESC" in consulta
+    assert parametros == (1, date(2026, 8, 21))
+
+
+def test_listar_renglones_pedido_pone_los_sin_identificar_primero():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_renglones_pedido(51)
+
+    consulta, _ = cursor.execute.call_args.args
+    assert "ORDER BY (r.articulo_id IS NULL) DESC" in consulta
+    assert "LEFT JOIN articulos" in consulta
+
+
+def test_guardar_alias_en_ficha_solo_completa_vacios_y_deja_bitacora():
+    # La ficha tenía nombre pero no código: el UPDATE completa solo el
+    # código, y la bitácora recibe la foto de la edición.
+    conexion, cursor = _conexion_falsa([(2, None, None, "kilo", False, "BATATA", "90102")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_alias_en_ficha(1, 2, "90102", "BATATA")
+
+    consulta_update, _ = cursor.execute.call_args_list[0].args
+    assert "COALESCE(codigo_cliente, %s)" in consulta_update
+    assert "COALESCE(nombre_cliente, %s)" in consulta_update
+    consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
+    assert "INSERT INTO fichas_logistica_historial" in consulta_foto
+    assert parametros_foto == (2, 1, 2, None, None, "kilo", False, "BATATA", "90102", "edicion")
+    conexion.commit.assert_called_once()
+
+
+def test_guardar_alias_en_ficha_sin_cambios_no_escribe_bitacora():
+    conexion, cursor = _conexion_falsa([None])  # el UPDATE no tocó ninguna fila
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_alias_en_ficha(1, 2, "90102", "BATATA")
+
+    assert cursor.execute.call_count == 1
+
+
+def test_contar_pedidos_con_renglones_sin_identificar_solo_vivos():
+    conexion, cursor = _conexion_falsa([(2, date(2026, 8, 3))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_pedidos_con_renglones_sin_identificar()
+
+    assert resultado == {"casos": 2, "mas_viejo": date(2026, 8, 3)}
+    consulta = cursor.execute.call_args.args[0]
+    assert "p.anulado_el IS NULL" in consulta
+    assert "r.articulo_id IS NULL" in consulta
+
+
+def test_borrar_foto_pedido_devuelve_la_ruta_solo_si_nadie_mas_la_usa():
+    conexion, cursor = _conexion_falsa([("2026/pedido-50-x.jpg",), (0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        ruta = borrar_foto_pedido(9)
+
+    assert ruta == "2026/pedido-50-x.jpg"
+    conexion.commit.assert_called_once()

@@ -8980,6 +8980,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_stock_vacios_negativos", return_value=1),
         patch("app.main.contar_articulos_comprados_incotizables", return_value=4) as mock_incotizables,
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
+        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -8997,6 +8998,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Stock de vacíos negativo" in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
+    assert "Pedidos con renglones sin identificar" in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
     # Los links al detalle.
@@ -9018,6 +9020,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_stock_vacios_negativos", return_value=0),
         patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -11111,3 +11114,216 @@ def test_hub_envases_puesto_tiene_proveedores_del_puesto():
 
     assert respuesta.status_code == 200
     assert 'href="/puesto/envases/proveedores"' in respuesta.text
+
+
+# --- Pedidos de clientes (etapa 1: cargar pegando el texto del mail) ---
+
+
+PEDIDO_VIGENTE_DE_PRUEBA = {
+    "id": 50, "cliente_id": 1, "fecha_operacion": date(2026, 8, 21), "origen": "texto",
+    "recibido_el": None, "reemplaza_a_pedido_id": None, "creado_en": datetime(2026, 8, 21, 12, 10),
+    "reemplazado_creado_en": None,
+}
+
+SUCURSALES_PEDIDO_DE_PRUEBA = [
+    {"id": 1, "sucursal": "VL", "orden_compra": "1257673", "total_bultos_declarado": 235.0},
+    {"id": 2, "sucursal": "BZ", "orden_compra": "1257642", "total_bultos_declarado": 40.0},
+]
+
+RENGLONES_PEDIDO_DE_PRUEBA = [
+    {"id": 10, "sucursal": "VL", "articulo_id": None, "articulo_nombre": None,
+     "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None},
+    {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
+     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None},
+    {"id": 12, "sucursal": "BZ", "articulo_id": 2, "articulo_nombre": "Batata",
+     "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None},
+]
+
+FICHAS_PEDIDO_DE_PRUEBA = [
+    {"id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": "BANANA", "codigo_cliente": "90101"},
+    {"id": 2, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "90102"},
+]
+
+
+def test_ver_deposito_muestra_los_accesos_a_pedido():
+    respuesta = cliente.get("/deposito")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito/pedido"' in respuesta.text
+    assert 'href="/deposito/pedido/cargar"' in respuesta.text
+
+
+def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+    ):
+        respuesta = cliente.get("/deposito/pedido")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente" in respuesta.text
+
+
+def test_ver_pedido_muestra_sucursales_con_oc_descuadre_y_sin_identificar():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
+        patch("app.main.listar_fotos_pedido", return_value=[]),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # Cada sucursal con su número de OC bien visible.
+    assert "OC 1257673" in respuesta.text
+    assert "OC 1257642" in respuesta.text
+    # Control cruzado: VL declara 235 pero lo leído suma 230 (225 + 5 del
+    # sin identificar) — aviso fuerte con el faltante.
+    assert "Leí 230 bultos para VL pero el mail dice 235 — faltan 5." in respuesta.text
+    # BZ cuadra (40 = 40): sin aviso para esa sucursal.
+    assert "para BZ" not in respuesta.text
+    # El renglón sin identificar, arriba y con su texto crudo, asignable.
+    assert "Sin identificar (1)" in respuesta.text
+    assert "99999" in respuesta.text
+    assert "RADICHETA" in respuesta.text
+    assert f'action="/deposito/pedido/50/renglones/10/asignar"' in respuesta.text
+    assert "Guardar este código en la ficha" in respuesta.text
+
+
+def test_leer_pedido_pegado_elige_el_bloque_de_esta_empresa_y_marca_los_sin_match():
+    # El mail trae los DOS bloques juntos: el sistema se queda con el de
+    # esta empresa (el encabezado la nombra) y los sin match van arriba.
+    datos_leidos = {
+        "bloques": [
+            {
+                "empresa": "9582 FRUTAMAX",
+                "sucursales": [
+                    {"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 235},
+                    {"sucursal": "BZ", "orden_compra": "1257642", "total_bultos": 40},
+                ],
+                "renglones": [
+                    {"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225, "BZ": None}, "confianza": "alta"},
+                    {"codigo": "99999", "descripcion": "RADICHETA", "cantidades": {"VL": 10, "BZ": 40}, "confianza": "alta"},
+                ],
+            },
+            {
+                "empresa": "11344 PALMALA",
+                "sucursales": [{"sucursal": "VL", "orden_compra": "9999", "total_bultos": 10}],
+                "renglones": [{"codigo": "555", "descripcion": "OTRA COSA", "cantidades": {"VL": 10}, "confianza": "alta"}],
+            },
+        ]
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos) as mock_extraer,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "texto": "9582 FRUTAMAX ... el mail ..."},
+        )
+
+    assert respuesta.status_code == 200
+    mock_extraer.assert_called_once_with("9582 FRUTAMAX ... el mail ...")
+    # Se quedó con el bloque de Frutamax, no con el de Palmala.
+    assert "Bloque leído: 9582 FRUTAMAX" in respuesta.text
+    assert "OTRA COSA" not in respuesta.text
+    # El sin match va marcado, con su texto crudo, y arriba del que matcheó.
+    assert "Sin match — asignar a mano" in respuesta.text
+    assert respuesta.text.index("RADICHETA") < respuesta.text.index("BANANA")
+    # Banana matcheó por código exacto de la ficha: llega preseleccionada.
+    assert "Guardar pedido" in respuesta.text
+
+
+def test_confirmar_pedido_expande_por_sucursal_y_guarda_el_alias_pedido():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.crear_pedido", return_value=51) as mock_crear,
+        patch("app.main.guardar_alias_en_ficha") as mock_alias,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={
+                "cliente_id": "1", "fecha": "2026-08-21", "texto_original": "el mail",
+                "cantidad_sucursales": "2",
+                "sucursal_0_nombre": "VL", "sucursal_0_oc": "1257673", "sucursal_0_total": "235",
+                "sucursal_1_nombre": "BZ", "sucursal_1_oc": "1257642", "sucursal_1_total": "40",
+                "cantidad_renglones": "3",
+                # Banana: cantidades en las dos sucursales -> DOS renglones.
+                "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
+                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "225", "renglon_0_cant_1": "40",
+                # Radicheta: sin match, asignada a mano con "guardar alias".
+                "renglon_1_codigo": "99999", "renglon_1_descripcion": "RADICHETA",
+                "renglon_1_articulo_id": "3", "renglon_1_guardar_alias": "si",
+                "renglon_1_cant_0": "10", "renglon_1_cant_1": "",
+                # Renglón sin ninguna cantidad: se guarda igual, en 0.
+                "renglon_2_codigo": "77777", "renglon_2_descripcion": "SIN CANTIDAD",
+                "renglon_2_articulo_id": "", "renglon_2_cant_0": "", "renglon_2_cant_1": "",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "/deposito/pedido?" in respuesta.headers["location"]
+    (cliente_arg, fecha_arg, origen_arg, texto_arg, sucursales_arg, renglones_arg), kwargs = mock_crear.call_args
+    assert cliente_arg == 1 and fecha_arg == date(2026, 8, 21) and origen_arg == "texto"
+    assert texto_arg == "el mail"
+    assert sucursales_arg[0] == {"sucursal": "VL", "orden_compra": "1257673", "total_bultos_declarado": 235.0}
+    # Banana en dos sucursales = dos renglones; el sin cantidad se guarda
+    # igual (invariante: nada del mail se pierde).
+    assert {"sucursal": "VL", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0} in renglones_arg
+    assert {"sucursal": "BZ", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0} in renglones_arg
+    assert {"sucursal": None, "articulo_id": None, "texto_codigo": "77777", "texto_descripcion": "SIN CANTIDAD", "cantidad": 0} in renglones_arg
+    assert kwargs == {"reemplaza_a_pedido_id": None}
+    mock_alias.assert_called_once_with(1, 3, "99999", "RADICHETA")
+
+
+def test_confirmar_pedido_con_uno_vigente_lo_reemplaza():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.crear_pedido", return_value=52) as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={
+                "cliente_id": "1", "fecha": "2026-08-21", "texto_original": "mail corregido",
+                "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
+                "cantidad_renglones": "1",
+                "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
+                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "60",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "Reemplaza+al+anterior" in respuesta.headers["location"]
+    assert mock_crear.call_args.kwargs == {"reemplaza_a_pedido_id": 50}
+
+
+def test_asignar_renglon_de_pedido_guarda_y_opcionalmente_el_alias():
+    with (
+        patch("app.main.asignar_articulo_a_renglon_pedido") as mock_asignar,
+        patch("app.main.guardar_alias_en_ficha") as mock_alias,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/10/asignar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "articulo_id": "7",
+                  "guardar_alias": "si", "texto_codigo": "99999", "texto_descripcion": "RADICHETA"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "/deposito/pedido?" in respuesta.headers["location"]
+    mock_asignar.assert_called_once_with(10, 7)
+    mock_alias.assert_called_once_with(1, 7, "99999", "RADICHETA")

@@ -382,3 +382,74 @@ def extraer_listado_precios_de_texto(texto: str) -> dict:
         texto, prompt=PROMPT_LISTADO_PRECIOS, max_tokens=MAX_TOKENS_LISTADO_PRECIOS
     )
     return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+MAX_TOKENS_PEDIDO_CLIENTE = 16384
+
+PROMPT_PEDIDO_CLIENTE = """
+Estás leyendo el texto de un MAIL DE PEDIDO que un cliente (un
+supermercado) le manda a un distribuidor mayorista de frutas y verduras.
+El mail puede traer UNO o VARIOS bloques de empresa (el cliente a veces
+le pide a más de una empresa en el mismo mail, con un encabezado por
+bloque, ej. "9582 FRUTAMAX" y "11344 PALMALA"). Cada bloque tiene
+columnas por sucursal/depósito (ej. VL, BZ, GR): cada sucursal trae
+arriba su número de orden de compra y un total de bultos, y después un
+renglón por artículo con el código del cliente, el nombre y la cantidad
+pedida para cada sucursal (muchas celdas vienen vacías).
+
+Devolvé ÚNICAMENTE un JSON con este formato exacto:
+
+{
+  "bloques": [
+    {
+      "empresa": "...",
+      "sucursales": [
+        {"sucursal": "...", "orden_compra": "...", "total_bultos": ...}
+      ],
+      "renglones": [
+        {"codigo": "...", "descripcion": "...", "cantidades": {"VL": ..., "BZ": ...}, "confianza": "alta|baja"}
+      ]
+    }
+  ]
+}
+
+REGLAS DE EXTRACCIÓN:
+
+- Un bloque del JSON por cada bloque de empresa del mail. Si el mail no
+  separa por empresa, devolvé un solo bloque con "empresa": "".
+- "empresa": el encabezado del bloque tal cual está escrito (ej.
+  "9582 FRUTAMAX"). Si no hay encabezado, "".
+- "sucursales": una por columna de sucursal del bloque, con el nombre tal
+  cual aparece (ej. "VL"), su número de orden de compra como TEXTO tal
+  cual está escrito (puede tener ceros a la izquierda) y el total de
+  bultos declarado como número. Si a una sucursal le falta la orden o el
+  total, poné null en lo que falte.
+- "renglones": uno por cada FILA de artículo, en el mismo orden en que
+  aparecen. "codigo" y "descripcion" tal cual están escritos, completos,
+  sin acortar ni inventar. "cantidades": un valor por sucursal usando los
+  MISMOS nombres de sucursal que declaraste en "sucursales"; una celda
+  vacía es null, nunca 0 inventado.
+- NUNCA adivinar. Si un dato no se lee con seguridad, transcribí lo que
+  se alcanza a leer y marcá "confianza": "baja" en ese renglón.
+- Ignorar saludos, firmas y texto que no sea parte del pedido — pero
+  NUNCA saltees una fila de artículo, aunque esté rara: mejor un renglón
+  con confianza baja que un renglón perdido.
+
+Respondé ÚNICAMENTE con el JSON, sin texto adicional antes ni después, y sin
+comillas invertidas (backticks) ni bloques de código markdown.
+"""
+
+
+def extraer_pedido_de_texto(texto: str) -> dict:
+    """Extrae {"bloques": [...]} del texto pegado de un mail de pedido de un cliente.
+
+    Cada bloque trae empresa (el encabezado, si hay), sucursales (con
+    orden de compra y total de bultos declarado) y renglones con las
+    cantidades por sucursal. Elegir QUÉ bloque es de esta empresa lo hace
+    quien llama (app/main.py) — el desempate real es determinista, contra
+    las fichas del cliente.
+    """
+    respuesta_texto = _llamar_api_claude_texto(
+        texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)

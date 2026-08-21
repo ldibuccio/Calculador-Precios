@@ -21,6 +21,7 @@ from core.lector_comandas import (
     extraer_listado_consolidado,
     extraer_listado_precios_de_imagenes,
     extraer_listado_precios_de_texto,
+    extraer_pedido_de_texto,
 )
 
 IMAGEN_DE_PRUEBA = b"contenido falso de una imagen"
@@ -415,3 +416,37 @@ def test_llamar_api_claude_texto_manda_el_texto_y_el_prompt(monkeypatch):
         {"type": "text", "text": "contenido de la planilla"},
         {"type": "text", "text": "prompt de prueba"},
     ]
+
+
+# --- extraer_pedido_de_texto: el mail de pedido de un cliente (Día) ---
+
+
+PEDIDO_VALIDO = {
+    "bloques": [
+        {
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 235}],
+            "renglones": [
+                {"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}
+            ],
+        }
+    ]
+}
+
+
+def test_extraer_pedido_de_texto_devuelve_el_json_parseado():
+    with patch("core.lector_comandas._llamar_api_claude_texto", return_value=json.dumps(PEDIDO_VALIDO)):
+        resultado = extraer_pedido_de_texto("9582 FRUTAMAX\nVL 1257673 235\n90101 BANANA 225")
+
+    assert resultado == PEDIDO_VALIDO
+
+
+def test_extraer_pedido_de_texto_usa_su_propio_prompt():
+    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE, PROMPT_PEDIDO_CLIENTE
+
+    with patch("core.lector_comandas._llamar_api_claude_texto", return_value=json.dumps(PEDIDO_VALIDO)) as mock_llamada:
+        extraer_pedido_de_texto("texto del mail")
+
+    mock_llamada.assert_called_once_with("texto del mail", prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE)
+    assert "bloques" in PROMPT_PEDIDO_CLIENTE
+    assert "NUNCA adivinar" in PROMPT_PEDIDO_CLIENTE

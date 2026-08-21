@@ -3804,3 +3804,291 @@ def desactivar_proveedor_puesto(proveedor_id: int) -> None:
         conexion.commit()
     finally:
         conexion.close()
+
+
+# ----------------------------------------------------------------------------
+# Pedidos de clientes (el mail diario de Día): demanda pura, sin FK contra
+# compras. Nada del mail se pierde: los renglones que no matchean ninguna
+# ficha se guardan igual, con su texto crudo y articulo_id NULL.
+# ----------------------------------------------------------------------------
+
+
+def crear_pedido(
+    cliente_id: int,
+    fecha_operacion,
+    origen: str,
+    texto_original: str | None,
+    sucursales: list[dict],
+    renglones: list[dict],
+    reemplaza_a_pedido_id: int | None = None,
+) -> int:
+    """Guarda un pedido completo (cabecera + sucursales + renglones) en UNA transacción. Devuelve el id.
+
+    sucursales: [{"sucursal", "orden_compra", "total_bultos_declarado"}].
+    renglones: [{"sucursal", "articulo_id" (None = sin identificar),
+    "texto_codigo", "texto_descripcion", "cantidad"}].
+
+    Si reemplaza_a_pedido_id viene, el pedido viejo se ANULA en la misma
+    transacción (baja lógica, nunca DELETE): el corregido manda, el viejo
+    queda de registro. Si algo falla, no queda ni el nuevo a medias ni el
+    viejo anulado.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if reemplaza_a_pedido_id is not None:
+                cursor.execute(
+                    "UPDATE pedidos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                    (reemplaza_a_pedido_id,),
+                )
+            cursor.execute(
+                """
+                INSERT INTO pedidos (cliente_id, fecha_operacion, origen, texto_original, reemplaza_a_pedido_id)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (cliente_id, fecha_operacion, origen, texto_original, reemplaza_a_pedido_id),
+            )
+            (pedido_id,) = cursor.fetchone()
+
+            for sucursal in sucursales:
+                cursor.execute(
+                    """
+                    INSERT INTO pedidos_sucursales (pedido_id, sucursal, orden_compra, total_bultos_declarado)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (pedido_id, sucursal["sucursal"], sucursal.get("orden_compra"), sucursal.get("total_bultos_declarado")),
+                )
+
+            for renglon in renglones:
+                cursor.execute(
+                    """
+                    INSERT INTO pedidos_renglones
+                        (pedido_id, sucursal, articulo_id, texto_codigo, texto_descripcion, cantidad)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        pedido_id,
+                        renglon.get("sucursal"),
+                        renglon.get("articulo_id"),
+                        renglon.get("texto_codigo"),
+                        renglon.get("texto_descripcion"),
+                        renglon.get("cantidad", 0),
+                    ),
+                )
+        conexion.commit()
+        return pedido_id
+    finally:
+        conexion.close()
+
+
+def obtener_pedido_vigente(cliente_id: int, fecha) -> dict | None:
+    """El pedido VIVO de un cliente para una fecha (el más nuevo sin anular), o None.
+
+    Un día puede tener varios pedidos por los reemplazos: los anulados no
+    cuentan acá (se listan aparte si hiciera falta); el vigente es el que
+    el depósito arma.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.id, p.cliente_id, p.fecha_operacion, p.origen, p.recibido_el,
+                       p.reemplaza_a_pedido_id, p.creado_en,
+                       reemplazado.creado_en AS reemplazado_creado_en
+                FROM pedidos p
+                LEFT JOIN pedidos reemplazado ON reemplazado.id = p.reemplaza_a_pedido_id
+                WHERE p.cliente_id = %s AND p.fecha_operacion = %s AND p.anulado_el IS NULL
+                ORDER BY p.creado_en DESC
+                LIMIT 1
+                """,
+                (cliente_id, fecha),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def listar_sucursales_pedido(pedido_id: int) -> list[dict]:
+    """Las sucursales de un pedido con su orden de compra y el total declarado, en el orden del mail (id)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, sucursal, orden_compra, total_bultos_declarado
+                FROM pedidos_sucursales WHERE pedido_id = %s ORDER BY id
+                """,
+                (pedido_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_renglones_pedido(pedido_id: int) -> list[dict]:
+    """Los renglones de un pedido, con el nombre del artículo si está identificado (NULL si no).
+
+    Ordenados para la pantalla del depósito: los SIN identificar primero
+    (hay que resolverlos), después por sucursal y nombre.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.id, r.sucursal, r.articulo_id, a.nombre AS articulo_nombre,
+                       r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el
+                FROM pedidos_renglones r
+                LEFT JOIN articulos a ON a.id = r.articulo_id
+                WHERE r.pedido_id = %s
+                ORDER BY (r.articulo_id IS NULL) DESC, r.sucursal, COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
+                """,
+                (pedido_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def asignar_articulo_a_renglon_pedido(renglon_id: int, articulo_id: int) -> None:
+    """Asigna a mano el artículo de un renglón "sin identificar" (o corrige uno mal asignado)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE pedidos_renglones SET articulo_id = %s WHERE id = %s",
+                (articulo_id, renglon_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def guardar_alias_en_ficha(cliente_id: int, articulo_id: int, texto_codigo: str | None, texto_descripcion: str | None) -> None:
+    """Guarda el código/nombre con el que el cliente pidió, en su ficha, para que la próxima matchee solo.
+
+    SOLO completa los campos vacíos de la ficha — nunca pisa un alias ya
+    cargado (si el que está difiere del que llegó, se corrige a mano desde
+    Editar Ficha, no desde acá). Deja la foto en la bitácora, como
+    cualquier edición de ficha. Sin ficha del artículo para ese cliente,
+    no hace nada (el alias vive en la ficha; primero hay que crearla).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE fichas_logistica
+                SET codigo_cliente = COALESCE(codigo_cliente, %s),
+                    nombre_cliente = COALESCE(nombre_cliente, %s),
+                    actualizado_en = now()
+                WHERE cliente_id = %s AND articulo_id = %s
+                  AND (codigo_cliente IS DISTINCT FROM COALESCE(codigo_cliente, %s)
+                       OR nombre_cliente IS DISTINCT FROM COALESCE(nombre_cliente, %s))
+                RETURNING id, envase_id, contenido_caja, unidad_venta, envase_variable,
+                          nombre_cliente, codigo_cliente
+                """,
+                (texto_codigo, texto_descripcion, cliente_id, articulo_id, texto_codigo, texto_descripcion),
+            )
+            fila = cursor.fetchone()
+            if fila is not None:
+                ficha_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente = fila
+                _registrar_foto_ficha(
+                    cursor,
+                    "edicion",
+                    ficha_id=ficha_id,
+                    cliente_id=cliente_id,
+                    articulo_id=articulo_id,
+                    envase_id=envase_id,
+                    contenido_caja=contenido_caja,
+                    unidad_venta=unidad_venta,
+                    envase_variable=envase_variable,
+                    nombre_cliente=nombre_cliente,
+                    codigo_cliente=codigo_cliente,
+                )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_pedidos_con_renglones_sin_identificar() -> dict:
+    """Auditoría: pedidos vivos con al menos un renglón sin identificar, y el más viejo.
+
+    Renglones que llegaron en el mail y todavía no se sabe qué artículo
+    son: el depósito no los puede armar y facturación no los puede cruzar.
+    Usa el índice parcial pedidos_renglones_sin_identificar_idx.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT p.id), MIN(p.fecha_operacion)
+                FROM pedidos p
+                WHERE p.anulado_el IS NULL
+                  AND EXISTS (SELECT 1 FROM pedidos_renglones r
+                              WHERE r.pedido_id = p.id AND r.articulo_id IS NULL)
+                """
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def listar_fotos_pedido(pedido_id: int) -> list[dict]:
+    """Las capturas de respaldo de un pedido, en orden de llegada."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, foto_ruta FROM fotos_pedido WHERE pedido_id = %s ORDER BY creado_en, id",
+                (pedido_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def agregar_foto_pedido(pedido_id: int, foto_ruta: str) -> None:
+    """Suma una captura de respaldo al pedido (nunca reemplaza). Repetida exacta, se ignora."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO fotos_pedido (pedido_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (pedido_id, foto_ruta),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def borrar_foto_pedido(foto_id: int) -> str | None:
+    """Borra una captura del pedido. Devuelve la ruta si ningún otro pedido la usa (para borrarla del Storage)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM fotos_pedido WHERE id = %s RETURNING foto_ruta", (foto_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            (foto_ruta,) = fila
+            cursor.execute("SELECT COUNT(*) FROM fotos_pedido WHERE foto_ruta = %s", (foto_ruta,))
+            (usos,) = cursor.fetchone()
+        conexion.commit()
+        return foto_ruta if usos == 0 else None
+    finally:
+        conexion.close()

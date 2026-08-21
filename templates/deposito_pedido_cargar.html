@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar Pedido</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  form label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form input, form select, form textarea {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  form textarea {
+    min-height: 14rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+  button {
+    margin-top: 1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .leyendo {
+    display: none;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #2563eb;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Cargar Pedido" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form method="post" action="/deposito/pedido/cargar/leer" onsubmit="document.getElementById('leyendo').style.display='block';">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" required>
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="fecha">Fecha del pedido</label>
+      <input type="date" id="fecha" name="fecha" value="{{ fecha }}">
+      <label for="texto">Texto del mail</label>
+      <textarea id="texto" name="texto" placeholder="Pegá acá el cuerpo del mail del pedido, tal cual llegó (con los dos bloques si vienen juntos: el sistema se queda con el de esta empresa)."></textarea>
+      <p class="ayuda">La IA lo lee y antes de guardar vas a ver la revisión: los renglones que no matchean van arriba, marcados, y no se pierde ninguno.</p>
+      <button type="submit">Leer pedido</button>
+      <p class="leyendo" id="leyendo">Leyendo el pedido…</p>
+    </form>
+  </div>
+</body>
+</html>

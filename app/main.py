@@ -40,6 +40,7 @@ from app.db import (
     cambiar_articulo_de_ficha,
     contar_compras_buscadas,
     contar_ingresos_deposito,
+    contar_pedidos_con_renglones_sin_identificar,
     contar_retiros_buscados,
     cerrar_disponible_generado,
     cerrar_sena,
@@ -60,6 +61,7 @@ from app.db import (
     crear_articulo,
     crear_cliente,
     crear_compra,
+    crear_pedido,
     crear_ajuste_vacios,
     crear_compras_de_comanda,
     crear_conteo_vacios,
@@ -81,9 +83,15 @@ from app.db import (
     guardar_disponible,
     guardar_precios_cliente,
     agregar_foto_guia,
+    agregar_foto_pedido,
+    asignar_articulo_a_renglon_pedido,
     borrar_foto_guia,
+    borrar_foto_pedido,
+    guardar_alias_en_ficha,
+    obtener_pedido_vigente,
     limpiar_foto_ruta_de_compras,
     listar_fotos_de_guia,
+    listar_fotos_pedido,
     listar_ajustes_vacios_por_rango,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
@@ -104,6 +112,8 @@ from app.db import (
     listar_historial_costos_envases,
     listar_historial_fichas_por_cliente,
     listar_fichas_por_cliente,
+    listar_renglones_pedido,
+    listar_sucursales_pedido,
     listar_fotos_para_limpiar,
     listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
@@ -159,6 +169,7 @@ from core.lector_comandas import (
     extraer_listado_consolidado,
     extraer_listado_precios_de_imagenes,
     extraer_listado_precios_de_texto,
+    extraer_pedido_de_texto,
 )
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
@@ -5708,6 +5719,7 @@ def _alertas_auditoria() -> list[dict]:
     negativos = contar_stock_vacios_negativos()
     incotizables = contar_articulos_comprados_incotizables(ventana_comprados, hoy)
     senas = contar_senas_pendientes_viejas(limite_senas)
+    pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
 
     return [
         {
@@ -5755,6 +5767,13 @@ def _alertas_auditoria() -> list[dict]:
             "mas_viejo": senas["mas_viejo"],
             "url": "/puesto/envases/pendientes",
             "texto_link": "Ver en Pendientes de Pago",
+        },
+        {
+            "titulo": "Pedidos con renglones sin identificar",
+            "casos": pedidos_sin_identificar["casos"],
+            "mas_viejo": pedidos_sin_identificar["mas_viejo"],
+            "url": "/deposito/pedido",
+            "texto_link": "Ver en Pedido",
         },
     ]
 
@@ -7010,6 +7029,513 @@ def dar_de_baja_proveedor_puesto_ruta(request: Request, proveedor_id: int):
             request, error=f"No se pudo dar de baja el proveedor: {error_db}", status_code=500
         )
     return RedirectResponse(url="/puesto/envases/proveedores", status_code=303)
+
+
+# ----------------------------------------------------------------------------
+# Pedidos de clientes (etapa 1): el mail diario de Día, pegado como texto.
+# Vive en DEPÓSITO (el que arma el pedido no entra a Comercial, donde están
+# los precios). Invariante duro: nada del mail se pierde — lo que no se
+# entiende se guarda como texto, jamás se descarta en silencio.
+# ----------------------------------------------------------------------------
+
+
+def _alias_de_fichas(fichas: list[dict]) -> tuple[dict, dict]:
+    """Los alias del cliente, normalizados, para el matcheo determinista: codigo -> articulo_id y nombre -> articulo_id."""
+    por_codigo = {
+        normalizar_texto(f["codigo_cliente"]): f["articulo_id"] for f in fichas if f.get("codigo_cliente")
+    }
+    por_nombre = {
+        normalizar_texto(f["nombre_cliente"]): f["articulo_id"] for f in fichas if f.get("nombre_cliente")
+    }
+    return por_codigo, por_nombre
+
+
+def _elegir_bloque_pedido(bloques: list[dict], alias_por_codigo: dict) -> dict | None:
+    """Qué bloque del mail es de ESTA empresa.
+
+    Con un solo bloque, ese. Con varios: primero el que nombra a la
+    empresa en su encabezado; si ninguno la nombra, el desempate es
+    determinista — el bloque con más códigos que matchean las fichas de
+    esta empresa (cada base tiene sus alias). Nunca se adivina por
+    posición.
+    """
+    bloques = [b for b in bloques if b.get("renglones")]
+    if not bloques:
+        return None
+    if len(bloques) == 1:
+        return bloques[0]
+
+    empresa_normalizada = normalizar_texto(NOMBRE_EMPRESA)
+    for bloque in bloques:
+        if empresa_normalizada and empresa_normalizada in normalizar_texto(bloque.get("empresa") or ""):
+            return bloque
+
+    def _matches(bloque):
+        return sum(
+            1 for r in bloque.get("renglones") or []
+            if normalizar_texto(r.get("codigo") or "") in alias_por_codigo
+        )
+
+    return max(bloques, key=_matches)
+
+
+def _armar_renglones_pedido_desde_bloque(bloque: dict, fichas: list[dict], alias_por_codigo: dict, alias_por_nombre: dict) -> list[dict]:
+    """Los renglones del bloque con su matcheo: código exacto -> nombre exacto -> sugerencia difusa (marcada).
+
+    Cada renglón conserva SIEMPRE el texto crudo del mail y las cantidades
+    por sucursal tal como vinieron. Sin match, articulo_id None: en la
+    revisión va arriba, marcado, para asignar a mano.
+    """
+    candidatos = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
+    conversiones = [f for f in fichas if f.get("nombre_cliente")]
+
+    renglones = []
+    for renglon in bloque.get("renglones") or []:
+        codigo = (renglon.get("codigo") or "").strip()
+        descripcion = (renglon.get("descripcion") or "").strip()
+
+        articulo_id = alias_por_codigo.get(normalizar_texto(codigo)) if codigo else None
+        match_por = "codigo" if articulo_id is not None else None
+        if articulo_id is None and descripcion:
+            articulo_id = alias_por_nombre.get(normalizar_texto(descripcion))
+            match_por = "nombre" if articulo_id is not None else None
+        if articulo_id is None and descripcion:
+            articulo_id = adivinar_articulo(descripcion, {}, candidatos, conversiones)
+            match_por = "sugerencia" if articulo_id is not None else None
+
+        cantidades = renglon.get("cantidades") or {}
+        renglones.append(
+            {
+                "texto_codigo": codigo or None,
+                "texto_descripcion": descripcion or None,
+                "cantidades": {s: c for s, c in cantidades.items() if c is not None},
+                "articulo_id": articulo_id,
+                "match_por": match_por,
+                "advertencia": articulo_id is None or match_por == "sugerencia" or renglon.get("confianza") == "baja",
+            }
+        )
+    # Los sin match / dudosos arriba: son los que hay que mirar sí o sí.
+    renglones.sort(key=lambda r: not r["advertencia"])
+    return renglones
+
+
+def _numero_pedido_o_none(valor) -> float | None:
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fecha_pedido_o_hoy(fecha_texto: str | None):
+    hoy = _hoy_argentina()
+    if not fecha_texto:
+        return hoy
+    try:
+        return date.fromisoformat(fecha_texto)
+    except ValueError:
+        return hoy
+
+
+def _sumas_leidas_por_sucursal(renglones: list[dict]) -> dict:
+    """El control cruzado: cuántos bultos suman los renglones guardados, por sucursal."""
+    sumas: dict = {}
+    for renglon in renglones:
+        if renglon["sucursal"] is None:
+            continue
+        sumas[renglon["sucursal"]] = sumas.get(renglon["sucursal"], 0.0) + float(renglon["cantidad"])
+    return sumas
+
+
+@app.get("/deposito/pedido")
+def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: str | None = None, aviso: str | None = None):
+    """El pedido del día de un cliente, por sucursal con su OC — lo que el depósito arma.
+
+    Control cruzado siempre a la vista: la suma de lo leído por sucursal
+    contra el total que declaró el mail. Si no cierran, aviso fuerte — un
+    número mal leído por la IA se detecta solo, sin revisar renglón por
+    renglón.
+    """
+    cliente_id_valor = _id_opcional_desde_query(cliente_id)
+    fecha_valor = _fecha_pedido_o_hoy(fecha)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "clientes": clientes,
+        "cliente_id": cliente_id_valor,
+        "fecha": fecha_valor.isoformat(),
+        "fecha_mostrar": fecha_valor.strftime("%d/%m/%Y"),
+        "aviso": aviso,
+        "pedido": None,
+    }
+    if cliente_id_valor is None:
+        return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
+
+    try:
+        pedido = obtener_pedido_vigente(cliente_id_valor, fecha_valor)
+        if pedido is not None:
+            sucursales = listar_sucursales_pedido(pedido["id"])
+            renglones = listar_renglones_pedido(pedido["id"])
+            fotos = listar_fotos_pedido(pedido["id"])
+            fichas = listar_fichas_por_cliente(cliente_id_valor)
+        else:
+            sucursales, renglones, fotos, fichas = [], [], [], []
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if pedido is None:
+        return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
+
+    sumas = _sumas_leidas_por_sucursal(renglones)
+    descuadres = []
+    for sucursal in sucursales:
+        declarado = sucursal.get("total_bultos_declarado")
+        suma = sumas.get(sucursal["sucursal"], 0.0)
+        sucursal["suma_leida"] = suma
+        if declarado is not None and float(declarado) != suma:
+            diferencia = float(declarado) - suma
+            detalle = f"faltan {_formatear_numero(abs(diferencia))}" if diferencia > 0 else f"sobran {_formatear_numero(abs(diferencia))}"
+            descuadres.append(
+                f"Leí {_formatear_numero(suma)} bultos para {sucursal['sucursal']} pero el mail dice "
+                f"{_formatear_numero(declarado)} — {detalle}."
+            )
+
+    sin_identificar = [r for r in renglones if r["articulo_id"] is None]
+    renglones_por_sucursal: dict = {}
+    for renglon in renglones:
+        if renglon["articulo_id"] is None:
+            continue
+        renglones_por_sucursal.setdefault(renglon["sucursal"], []).append(renglon)
+
+    contexto.update(
+        {
+            "pedido": pedido,
+            "sucursales": sucursales,
+            "descuadres": descuadres,
+            "sin_identificar": sin_identificar,
+            "renglones_por_sucursal": renglones_por_sucursal,
+            "fotos": fotos,
+            "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
+        }
+    )
+    return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
+
+
+@app.get("/deposito/pedido/cargar")
+def ver_cargar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, error: str | None = None):
+    """Cargar Pedido: pegar el texto del mail para que la IA lo lea, con revisión antes de guardar."""
+    cliente_id_valor = _id_opcional_desde_query(cliente_id)
+    fecha_valor = _fecha_pedido_o_hoy(fecha)
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_pedido_cargar.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id_valor,
+            "fecha": fecha_valor.isoformat(),
+            "error": error,
+        },
+    )
+
+
+@app.post("/deposito/pedido/cargar/leer")
+def leer_pedido_pegado(
+    request: Request,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    texto: str = Form(""),
+):
+    """Lee el texto pegado con la IA, se queda con el bloque de ESTA empresa y arma la revisión."""
+    fecha_valor = _fecha_pedido_o_hoy(fecha)
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    if not texto.strip():
+        return templates.TemplateResponse(
+            request,
+            "deposito_pedido_cargar.html",
+            {"clientes": clientes, "cliente_id": cliente_id, "fecha": fecha_valor.isoformat(),
+             "error": "Pegá el texto del mail antes de leer."},
+            status_code=400,
+        )
+
+    try:
+        datos = extraer_pedido_de_texto(texto)
+    except Exception as error_lector:
+        return templates.TemplateResponse(
+            request,
+            "deposito_pedido_cargar.html",
+            {"clientes": clientes, "cliente_id": cliente_id, "fecha": fecha_valor.isoformat(),
+             "error": f"No se pudo leer el pedido: {error_lector}"},
+            status_code=500,
+        )
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id)
+        pedido_vigente = obtener_pedido_vigente(cliente_id, fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    alias_por_codigo, alias_por_nombre = _alias_de_fichas(fichas)
+    bloque = _elegir_bloque_pedido(datos.get("bloques") or [], alias_por_codigo)
+    if bloque is None:
+        return templates.TemplateResponse(
+            request,
+            "deposito_pedido_cargar.html",
+            {"clientes": clientes, "cliente_id": cliente_id, "fecha": fecha_valor.isoformat(),
+             "error": "No se encontró ningún renglón de pedido en el texto. Fijate que hayas pegado el cuerpo del mail."},
+            status_code=400,
+        )
+
+    renglones = _armar_renglones_pedido_desde_bloque(bloque, fichas, alias_por_codigo, alias_por_nombre)
+    sucursales = [
+        {
+            "sucursal": (s.get("sucursal") or "").strip(),
+            "orden_compra": (str(s.get("orden_compra")).strip() if s.get("orden_compra") is not None else None),
+            "total_bultos_declarado": _numero_pedido_o_none(s.get("total_bultos")),
+        }
+        for s in bloque.get("sucursales") or []
+        if (s.get("sucursal") or "").strip()
+    ]
+    # Sucursales que aparecen en cantidades pero no vinieron declaradas
+    # arriba: se agregan igual (sin OC ni total) — nada se pierde.
+    declaradas = {s["sucursal"] for s in sucursales}
+    for renglon in renglones:
+        for nombre_sucursal in renglon["cantidades"]:
+            if nombre_sucursal not in declaradas:
+                sucursales.append({"sucursal": nombre_sucursal, "orden_compra": None, "total_bultos_declarado": None})
+                declaradas.add(nombre_sucursal)
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_pedido_revision.html",
+        {
+            "cliente_id": cliente_id,
+            "cliente_nombre": cliente["nombre"],
+            "fecha": fecha_valor.isoformat(),
+            "fecha_mostrar": fecha_valor.strftime("%d/%m/%Y"),
+            "empresa_bloque": bloque.get("empresa") or "",
+            "sucursales": sucursales,
+            "renglones": renglones,
+            "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
+            "texto_original": texto,
+            "pedido_vigente": pedido_vigente,
+        },
+    )
+
+
+@app.post("/deposito/pedido/cargar/confirmar")
+async def confirmar_pedido(request: Request):
+    """Guarda el pedido revisado. Si ya había uno vigente para esa fecha, este lo reemplaza (el viejo se anula)."""
+    form = await request.form()
+    try:
+        cliente_id = int(form.get("cliente_id", ""))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+    fecha_valor = _fecha_pedido_o_hoy(str(form.get("fecha", "")))
+    texto_original = str(form.get("texto_original", "")) or None
+
+    cantidad_sucursales = int(form.get("cantidad_sucursales", "0") or 0)
+    sucursales = []
+    nombres_sucursales = []
+    for indice in range(cantidad_sucursales):
+        nombre = str(form.get(f"sucursal_{indice}_nombre", "")).strip()
+        if not nombre:
+            continue
+        nombres_sucursales.append(nombre)
+        sucursales.append(
+            {
+                "sucursal": nombre,
+                "orden_compra": str(form.get(f"sucursal_{indice}_oc", "")).strip() or None,
+                "total_bultos_declarado": _numero_pedido_o_none(form.get(f"sucursal_{indice}_total")),
+            }
+        )
+
+    cantidad_renglones = int(form.get("cantidad_renglones", "0") or 0)
+    renglones = []
+    alias_a_guardar = []
+    for indice in range(cantidad_renglones):
+        if str(form.get(f"renglon_{indice}_descartar", "")).strip():
+            continue  # "No es mío": el rastro queda en texto_original
+        texto_codigo = str(form.get(f"renglon_{indice}_codigo", "")).strip() or None
+        texto_descripcion = str(form.get(f"renglon_{indice}_descripcion", "")).strip() or None
+        articulo_id_texto = str(form.get(f"renglon_{indice}_articulo_id", "")).strip()
+        articulo_id = int(articulo_id_texto) if articulo_id_texto else None
+
+        if articulo_id is not None and str(form.get(f"renglon_{indice}_guardar_alias", "")).strip():
+            alias_a_guardar.append((articulo_id, texto_codigo, texto_descripcion))
+
+        con_cantidad = False
+        for indice_sucursal, nombre in enumerate(nombres_sucursales):
+            cantidad = _numero_pedido_o_none(form.get(f"renglon_{indice}_cant_{indice_sucursal}"))
+            if cantidad is None or cantidad == 0:
+                continue
+            con_cantidad = True
+            renglones.append(
+                {
+                    "sucursal": nombre,
+                    "articulo_id": articulo_id,
+                    "texto_codigo": texto_codigo,
+                    "texto_descripcion": texto_descripcion,
+                    "cantidad": cantidad,
+                }
+            )
+        if not con_cantidad:
+            # Renglón sin ninguna cantidad: se guarda igual (invariante:
+            # nada del mail se pierde), sin sucursal y en 0.
+            renglones.append(
+                {
+                    "sucursal": None,
+                    "articulo_id": articulo_id,
+                    "texto_codigo": texto_codigo,
+                    "texto_descripcion": texto_descripcion,
+                    "cantidad": 0,
+                }
+            )
+
+    if not renglones:
+        raise HTTPException(status_code=400, detail="El pedido no tiene ningún renglón para guardar.")
+
+    try:
+        pedido_vigente = obtener_pedido_vigente(cliente_id, fecha_valor)
+        pedido_id = crear_pedido(
+            cliente_id,
+            fecha_valor,
+            "texto",
+            texto_original,
+            sucursales,
+            renglones,
+            reemplaza_a_pedido_id=pedido_vigente["id"] if pedido_vigente else None,
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el pedido: {error_db}") from error_db
+
+    # Los alias se guardan después del pedido (si fallan, el pedido ya
+    # está a salvo): solo completan campos vacíos de la ficha.
+    for articulo_id, texto_codigo, texto_descripcion in alias_a_guardar:
+        try:
+            guardar_alias_en_ficha(cliente_id, articulo_id, texto_codigo, texto_descripcion)
+        except Exception:
+            logger.exception("No se pudo guardar el alias en la ficha (cliente %s, articulo %s)", cliente_id, articulo_id)
+
+    aviso = "Pedido guardado."
+    if pedido_vigente:
+        aviso = "Pedido guardado. Reemplaza al anterior de esta fecha, que quedó anulado de registro."
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha_valor.isoformat(), 'aviso': aviso})}",
+        status_code=303,
+    )
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/asignar")
+def asignar_renglon_pedido_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    articulo_id: str = Form(""),
+    guardar_alias: str = Form(""),
+    texto_codigo: str = Form(""),
+    texto_descripcion: str = Form(""),
+):
+    """Asigna a mano un renglón "sin identificar" desde la pantalla del pedido (y opcionalmente guarda el alias)."""
+    try:
+        articulo_id_valor = int(articulo_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Elegí el artículo.")
+
+    try:
+        asignar_articulo_a_renglon_pedido(renglon_id, articulo_id_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo asignar el artículo: {error_db}") from error_db
+
+    if guardar_alias.strip():
+        try:
+            guardar_alias_en_ficha(
+                cliente_id, articulo_id_valor, texto_codigo.strip() or None, texto_descripcion.strip() or None
+            )
+        except Exception:
+            logger.exception("No se pudo guardar el alias en la ficha (cliente %s, articulo %s)", cliente_id, articulo_id_valor)
+
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
+    )
+
+
+@app.post("/deposito/pedido/{pedido_id}/fotos")
+async def subir_foto_pedido_ruta(
+    pedido_id: int,
+    archivo: UploadFile = File(...),
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+):
+    """Suma una captura de respaldo del mail al pedido (comprimida con el mismo pipeline que las comandas)."""
+    contenido = await archivo.read()
+    nombre = (archivo.filename or "").lower()
+    try:
+        if nombre.endswith(".pdf"):
+            foto_ruta = subir_archivo_comanda(comprimir_pdf(contenido), f"pedido-{pedido_id}", "pdf", "application/pdf")
+        else:
+            comprimida = _comprimir_foto_jpeg(contenido)
+            if comprimida is None:
+                raise HTTPException(status_code=400, detail="No se pudo leer la imagen. Probá con otra captura.")
+            foto_ruta = subir_foto_comanda(comprimida, f"pedido-{pedido_id}")
+        agregar_foto_pedido(pedido_id, foto_ruta)
+    except HTTPException:
+        raise
+    except Exception as error_subida:
+        raise HTTPException(status_code=500, detail=f"No se pudo subir la captura: {error_subida}") from error_subida
+
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
+    )
+
+
+@app.get("/deposito/pedido/{pedido_id}/fotos/{foto_id}/ver")
+def ver_foto_pedido_ruta(pedido_id: int, foto_id: int):
+    """URL firmada de UNA captura del pedido (miniatura y toque para agrandar)."""
+    try:
+        fotos = listar_fotos_pedido(pedido_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    foto = next((f for f in fotos if f["id"] == foto_id), None)
+    if foto is None:
+        raise HTTPException(status_code=404, detail="Esa captura no es de este pedido")
+    try:
+        url_firmada = obtener_url_foto(foto["foto_ruta"])
+    except Exception as error_storage:
+        raise HTTPException(status_code=500, detail=f"No se pudo generar el link: {error_storage}") from error_storage
+    return RedirectResponse(url=url_firmada, status_code=307)
+
+
+@app.post("/deposito/pedido/{pedido_id}/fotos/{foto_id}/borrar")
+def borrar_foto_pedido_ruta(pedido_id: int, foto_id: int, cliente_id: int = Form(...), fecha: str = Form("")):
+    """Borra una captura del pedido; el archivo del Storage solo si ningún otro pedido lo usa."""
+    try:
+        ruta_sin_uso = borrar_foto_pedido(foto_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo borrar la captura: {error_db}") from error_db
+    if ruta_sin_uso:
+        try:
+            borrar_foto_comanda(ruta_sin_uso)
+        except Exception:
+            logger.exception("No se pudo borrar la captura del Storage (%s) — la referencia ya se borró", ruta_sin_uso)
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
+    )
 
 
 if __name__ == "__main__":
