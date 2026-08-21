@@ -2011,6 +2011,108 @@ def buscar_retiros(
         conexion.close()
 
 
+def contar_compras_sin_precio_viejas(fecha_limite) -> dict:
+    """Auditoría: compras que siguen sin precio con fecha_operacion de fecha_limite para atrás, y la más vieja.
+
+    Plata que no se sabe cuánto costó. Usa el índice parcial
+    compras_sin_precio_idx (solo filas sin precio, con la fecha adentro).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*), MIN(fecha_operacion) FROM compras c "
+                "WHERE c.importe IS NULL AND c.fecha_operacion <= %s",
+                (fecha_limite,),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def contar_stock_vacios_negativos() -> int:
+    """Auditoría: cuántos pares proveedor+tipo de Vacíos tienen stock por debajo de cero.
+
+    Menos que cero es imposible en el mundo real: si pasa hay un error de
+    carga (o faltó registrar entradas). Misma cuenta que stock_vacios(),
+    solo el conteo; los índices parciales *_stock_idx cubren los SUM.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM tipos_envase_puesto t
+                LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_recibidos
+                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
+                LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_devueltos
+                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
+                LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM ajustes_vacios
+                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) aj ON aj.tipo_envase_id = t.id
+                WHERE COALESCE(r.total, 0) - COALESCE(d.total, 0) + COALESCE(aj.total, 0) < 0
+                """
+            )
+            (casos,) = cursor.fetchone()
+        return int(casos)
+    finally:
+        conexion.close()
+
+
+def contar_articulos_comprados_incotizables(fecha_desde, hoy) -> int:
+    """Auditoría: artículos con compras desde fecha_desde que no se pueden cotizar para NINGÚN cliente.
+
+    "No se puede cotizar" = sin ficha logística en ningún cliente, o sin
+    ningún precio de venta vigente. Los faltantes por cliente puntual ya
+    los avisan Objetivo de Compra y Márgenes al elegir ese cliente; acá
+    se cazan los agujeros totales, que son los graves.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM (
+                    SELECT DISTINCT c.articulo_id FROM compras c WHERE c.fecha_operacion >= %s
+                ) comprados
+                WHERE NOT EXISTS (
+                        SELECT 1 FROM fichas_logistica f WHERE f.articulo_id = comprados.articulo_id)
+                   OR NOT EXISTS (
+                        SELECT 1 FROM precios_venta_historial p
+                        WHERE p.articulo_id = comprados.articulo_id AND p.vigente_desde <= %s)
+                """,
+                (fecha_desde, hoy),
+            )
+            (casos,) = cursor.fetchone()
+        return int(casos)
+    finally:
+        conexion.close()
+
+
+def contar_senas_pendientes_viejas(fecha_limite) -> dict:
+    """Auditoría: señas de Vacíos sin resolver de antes de fecha_limite, y la más vieja.
+
+    Plata que se le debe a alguien y quedó colgada: el circuito normal las
+    cierra en el día (pagada, vale o anulada).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(creado_en) FROM vacios_recibidos v
+                WHERE v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL
+                  AND v.anulado_el IS NULL
+                  AND v.creado_en < %s
+                """,
+                (fecha_limite,),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
 def contar_retiros_pendientes_viejos(fecha_limite) -> dict:
     """Auditoría: cuántas compras siguen sin retirar con fecha_operacion de fecha_limite para atrás, y la más vieja.
 

@@ -34,7 +34,11 @@ from app.db import (
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_compras_sin_precio,
+    contar_articulos_comprados_incotizables,
+    contar_compras_sin_precio_viejas,
     contar_recepciones_pendientes_viejas,
+    contar_senas_pendientes_viejas,
+    contar_stock_vacios_negativos,
     contar_retiros_pendientes_viejos,
     corregir_recepcion_compra,
     crear_cliente,
@@ -1039,6 +1043,65 @@ def test_contar_retiros_buscados_incluye_el_criterio_de_pendiente():
     consulta = cursor.execute.call_args.args[0]
     assert "COUNT(*)" in consulta
     assert "IS DISTINCT FROM 'retirado'" in consulta
+
+
+def test_contar_compras_sin_precio_viejas_cuenta_y_trae_la_mas_vieja():
+    conexion, cursor = _conexion_falsa([(2, date(2026, 7, 30))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_compras_sin_precio_viejas(date(2026, 8, 4))
+
+    assert resultado == {"casos": 2, "mas_viejo": date(2026, 7, 30)}
+    consulta, parametros = cursor.execute.call_args.args
+    assert "importe IS NULL" in consulta
+    assert "MIN(fecha_operacion)" in consulta
+    assert "fecha_operacion <= %s" in consulta
+    assert parametros == (date(2026, 8, 4),)
+
+
+def test_contar_stock_vacios_negativos_usa_la_misma_cuenta_que_el_stock():
+    conexion, cursor = _conexion_falsa([(1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        casos = contar_stock_vacios_negativos()
+
+    assert casos == 1
+    consulta = cursor.execute.call_args.args[0]
+    # recibidos − devueltos + ajustes, sin anulados: idéntico a stock_vacios().
+    assert consulta.count("anulado_el IS NULL") == 3
+    assert "FROM ajustes_vacios" in consulta
+    assert "< 0" in consulta
+
+
+def test_contar_articulos_comprados_incotizables_pide_ficha_y_precio_vigente():
+    conexion, cursor = _conexion_falsa([(4,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        casos = contar_articulos_comprados_incotizables(date(2026, 7, 30), date(2026, 8, 6))
+
+    assert casos == 4
+    consulta, parametros = cursor.execute.call_args.args
+    assert "FROM fichas_logistica" in consulta
+    assert "FROM precios_venta_historial" in consulta
+    assert "vigente_desde <= %s" in consulta
+    assert parametros == (date(2026, 7, 30), date(2026, 8, 6))
+
+
+def test_contar_senas_pendientes_viejas_usa_el_criterio_de_la_pantalla():
+    conexion, cursor = _conexion_falsa([(5, date(2026, 7, 28))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_senas_pendientes_viejas(date(2026, 7, 30))
+
+    assert resultado == {"casos": 5, "mas_viejo": date(2026, 7, 28)}
+    consulta, parametros = cursor.execute.call_args.args
+    # Mismo "pendiente" que Pendientes de Pago: 3 cierres NULL y sin anular.
+    assert "sena_pagada_el IS NULL" in consulta
+    assert "sena_vale_el IS NULL" in consulta
+    assert "sena_anulada_el IS NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "creado_en < %s" in consulta
+    assert parametros == (date(2026, 7, 30),)
 
 
 def test_contar_retiros_pendientes_viejos_usa_el_criterio_de_la_pantalla():

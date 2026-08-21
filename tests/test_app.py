@@ -8488,30 +8488,50 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     # definición, no tocar el diseño.
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 2, "mas_viejo": date(2026, 7, 30)}) as mock_sin_precio,
         patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 7, "mas_viejo": date(2026, 8, 1)}) as mock_retiros,
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 3, "mas_viejo": date(2026, 8, 2)}) as mock_recepciones,
+        patch("app.main.contar_stock_vacios_negativos", return_value=1),
+        patch("app.main.contar_articulos_comprados_incotizables", return_value=4) as mock_incotizables,
+        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
     assert respuesta.status_code == 200
-    # "Más de 48 horas" = compras de anteayer para atrás.
+    # "Más de 48 horas" = compras de anteayer para atrás; señas y ventana
+    # de comprados, 7 días.
+    mock_sin_precio.assert_called_once_with(date(2026, 8, 4))
     mock_retiros.assert_called_once_with(date(2026, 8, 4))
     mock_recepciones.assert_called_once_with(date(2026, 8, 4))
-    assert "Mercadería sin retirar hace más de 48 horas" in respuesta.text
+    mock_incotizables.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA)
+    mock_senas.assert_called_once_with(date(2026, 7, 30))
+    # Las seis alertas, con sin-precio primera (la más importante).
+    assert respuesta.text.index("Compras sin precio hace") < respuesta.text.index("Mercadería sin retirar hace")
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
+    assert "Stock de vacíos negativo" in respuesta.text
+    assert "sin ficha logística o sin precio de venta" in respuesta.text
+    assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
-    assert "el más viejo es del 02/08/2026" in respuesta.text
-    # Los links al detalle: Consultar Retiros filtrado y Recepción.
+    assert "el más viejo es del 28/07/2026" in respuesta.text
+    # Los links al detalle.
     assert "/logistica/consultar?fecha_desde=2026-08-01&amp;fecha_hasta=2026-08-04&amp;estado=pendiente" in respuesta.text
     assert 'href="/deposito/recepcion"' in respuesta.text
+    assert 'href="/compras/pendientes"' in respuesta.text
+    assert 'href="/puesto/envases/stock"' in respuesta.text
+    assert 'href="/fichas"' in respuesta.text
+    assert 'href="/puesto/envases/pendientes"' in respuesta.text
 
 
 def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
     # Un control sin casos NO aparece; si ninguno tiene, cartel verde.
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_stock_vacios_negativos", return_value=0),
+        patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
+        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 

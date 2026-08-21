@@ -46,9 +46,13 @@ from app.db import (
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_articulos,
+    contar_articulos_comprados_incotizables,
     contar_compras_sin_precio,
+    contar_compras_sin_precio_viejas,
     contar_recepciones_pendientes_viejas,
     contar_retiros_pendientes_viejos,
+    contar_senas_pendientes_viejas,
+    contar_stock_vacios_negativos,
     corregir_recepcion_compra,
     crear_articulo,
     crear_cliente,
@@ -5338,11 +5342,25 @@ def _alertas_auditoria() -> list[dict]:
     # "Más de 48 horas" con la granularidad real del dato (fecha_operacion
     # es una fecha, sin hora): compras de anteayer para atrás.
     limite = hoy - timedelta(days=2)
+    # Ventanas de las alertas nuevas, elegidas a mano y fáciles de tocar.
+    limite_senas = hoy - timedelta(days=7)
+    ventana_comprados = hoy - timedelta(days=7)
 
+    sin_precio = contar_compras_sin_precio_viejas(limite)
     retiros = contar_retiros_pendientes_viejos(limite)
     recepciones = contar_recepciones_pendientes_viejas(limite)
+    negativos = contar_stock_vacios_negativos()
+    incotizables = contar_articulos_comprados_incotizables(ventana_comprados, hoy)
+    senas = contar_senas_pendientes_viejas(limite_senas)
 
     return [
+        {
+            "titulo": "Compras sin precio hace más de 48 horas",
+            "casos": sin_precio["casos"],
+            "mas_viejo": sin_precio["mas_viejo"],
+            "url": "/compras/pendientes",
+            "texto_link": "Ver en Compras sin precio",
+        },
         {
             "titulo": "Mercadería sin retirar hace más de 48 horas",
             "casos": retiros["casos"],
@@ -5360,6 +5378,27 @@ def _alertas_auditoria() -> list[dict]:
             "mas_viejo": recepciones["mas_viejo"],
             "url": "/deposito/recepcion",
             "texto_link": "Ver en Recepción",
+        },
+        {
+            "titulo": "Stock de vacíos negativo",
+            "casos": negativos,
+            "mas_viejo": None,
+            "url": "/puesto/envases/stock",
+            "texto_link": "Ver en Stock del Sistema",
+        },
+        {
+            "titulo": "Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",
+            "casos": incotizables,
+            "mas_viejo": None,
+            "url": "/fichas",
+            "texto_link": "Ver en Fichas Logísticas",
+        },
+        {
+            "titulo": "Señas de vacíos pendientes hace más de 7 días",
+            "casos": senas["casos"],
+            "mas_viejo": senas["mas_viejo"],
+            "url": "/puesto/envases/pendientes",
+            "texto_link": "Ver en Pendientes de Pago",
         },
     ]
 
