@@ -14,7 +14,7 @@ from datetime import date
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -258,96 +258,104 @@ def generar_pdf_lista_precios(
     return buffer.getvalue()
 
 
+# Formato del Excel de la Lista de Precios (pedido explícito, 21/08/2026):
+# el diseño que el dueño ya usaba a mano — fecha arriba, tres columnas
+# (Producto | Precio Anterior | Precio Desde HOY), formato contable con
+# centavos, cambios resaltados en naranja con el precio en rojo, y el pie
+# "PRECIOS POR KG - SIN IVA". Cambiarlo solo si él lo pide.
+NARANJA_CAMBIO_HEX = "FFC000"
+ROJO_CAMBIO_HEX = "C00000"
+FORMATO_CONTABLE = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"_);_(@_)'
+
+
 def generar_excel_lista_precios(
     cliente_nombre: str, fecha: date, filas: list[dict], es_hoy: bool, nombre_empresa: str
 ) -> bytes:
-    """Arma el Excel de la Lista de Precios de un cliente a una fecha, mismas secciones que el PDF.
+    """Arma el Excel de la Lista de Precios con el formato de planilla que el cliente ya conoce.
 
-    A diferencia del PDF, tiene una columna de más: "Precio anterior",
-    antes de "Precio" — fila["precio_anterior"] (o None si el artículo
-    nunca tuvo un precio previo cargado, mostrado como "—").
+    Una sola tabla alfabética (sin secciones por grupo — eso queda para el
+    PDF): fecha arriba, columnas Producto | Precio Anterior | Precio Desde
+    HOY, y el pie "PRECIOS POR KG - SIN IVA". El precio anterior figura
+    SIEMPRE: si el artículo nunca cambió de precio, se repite el vigente —
+    así el cliente ve todas las filas iguales salvo las resaltadas.
 
-    El título lleva el nombre de la empresa, mismo motivo que el PDF (el
-    cliente puede recibir listas de más de una empresa).
+    El resaltado (fondo naranja + precio en rojo) marca las filas cuyo
+    precio difiere del anterior. Para una fecha pasada, el encabezado dice
+    "Precio al dd/mm" en vez de "Precio Desde HOY".
+
+    Los artículos que NO se venden por kilo llevan la unidad pegada al
+    nombre ("Mango (por unidad)"): el pie dice "POR KG" y sin esa
+    aclaración el precio se leería mal.
+
+    cliente_nombre/nombre_empresa no aparecen en la hoja (la planilla
+    original no los lleva): viajan en el nombre del archivo, que arma
+    quien llama.
     """
     libro = Workbook()
     hoja = libro.active
     hoja.title = "Lista de Precios"
 
-    relleno_verde = PatternFill(start_color=VERDE_ENCABEZADO_HEX, end_color=VERDE_ENCABEZADO_HEX, fill_type="solid")
-    fuente_blanca_titulo = Font(color="FFFFFF", bold=True, size=16)
-    fuente_normal = Font(size=10)
-    fuente_ayuda = Font(size=9, italic=True, color="595959")
-    fuente_seccion = Font(bold=True, size=12, color=VERDE_ENCABEZADO_HEX)
-    fuente_encabezado_tabla = Font(bold=True, color="FFFFFF")
-    relleno_rojo_claro = PatternFill(start_color=ROJO_FONDO_CLARO_HEX, end_color=ROJO_FONDO_CLARO_HEX, fill_type="solid")
-    fuente_precio_nuevo = Font(bold=True, color=ROJO_PRECIO_NUEVO_HEX)
+    borde_fino = Side(style="thin", color="000000")
+    borde = Border(left=borde_fino, right=borde_fino, top=borde_fino, bottom=borde_fino)
+    centrado = Alignment(horizontal="center", vertical="center")
+    fuente_encabezado = Font(bold=True, size=11)
+    relleno_naranja = PatternFill(start_color=NARANJA_CAMBIO_HEX, end_color=NARANJA_CAMBIO_HEX, fill_type="solid")
+    fuente_roja = Font(bold=True, color=ROJO_CAMBIO_HEX)
 
-    fila_actual = 1
-    hoja.cell(row=fila_actual, column=1, value=f"Lista de Precios — {nombre_empresa}")
-    for columna in range(1, 5):
-        celda = hoja.cell(row=fila_actual, column=columna)
-        celda.fill = relleno_verde
-        if columna == 1:
-            celda.font = fuente_blanca_titulo
-    fila_actual += 1
+    # Fila 1: la fecha, sola, centrada sobre las tres columnas (21/8/2026,
+    # sin ceros a la izquierda — igual que la planilla original).
+    hoja.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+    celda_fecha = hoja.cell(row=1, column=1, value=f"{fecha.day}/{fecha.month}/{fecha.year}")
+    celda_fecha.alignment = centrado
+    celda_fecha.font = fuente_encabezado
+    for columna in range(1, 4):
+        hoja.cell(row=1, column=columna).border = borde
 
-    hoja.cell(row=fila_actual, column=1, value=f"Cliente: {cliente_nombre}").font = fuente_normal
-    fila_actual += 1
-    fecha_texto = fecha.strftime("%d/%m/%Y")
-    hoja.cell(row=fila_actual, column=1, value=f"Vigencia: {fecha_texto} · Precios + IVA").font = fuente_normal
-    fila_actual += 1
-    hoja.cell(row=fila_actual, column=1, value=LEYENDA_PRECIO_NUEVO).font = fuente_ayuda
-    fila_actual += 2
+    encabezado_precio = "Precio Desde HOY" if es_hoy else f"Precio al {fecha.day}/{fecha.month}"
+    for columna, encabezado in enumerate(("Producto", "Precio Anterior", encabezado_precio), start=1):
+        celda = hoja.cell(row=2, column=columna, value=encabezado)
+        celda.font = fuente_encabezado
+        celda.border = borde
 
-    grupos = _agrupar_y_ordenar_filas(filas)
-    for clave, titulo in ORDEN_GRUPOS:
-        filas_grupo = grupos[clave]
-        if not filas_grupo:
-            continue
+    fila_actual = 3
+    for fila in sorted(filas, key=lambda f: f["articulo_nombre"].lower()):
+        nombre = fila["articulo_nombre"]
+        unidad = fila.get("unidad")
+        if unidad and unidad != "kilo":
+            nombre = f"{nombre} ({_texto_unidad(unidad)})"
 
-        hoja.cell(row=fila_actual, column=1, value=titulo).font = fuente_seccion
+        precio = float(fila["precio"])
+        # El anterior SIEMPRE figura: sin un precio previo cargado, se
+        # repite el vigente (fila sin cambio, no se resalta).
+        precio_anterior = float(fila["precio_anterior"]) if fila.get("precio_anterior") is not None else precio
+        cambio = precio != precio_anterior
+
+        celda_nombre = hoja.cell(row=fila_actual, column=1, value=nombre)
+        celda_nombre.border = borde
+
+        celda_anterior = hoja.cell(row=fila_actual, column=2, value=precio_anterior)
+        celda_anterior.number_format = FORMATO_CONTABLE
+        celda_anterior.border = borde
+
+        celda_precio = hoja.cell(row=fila_actual, column=3, value=precio)
+        celda_precio.number_format = FORMATO_CONTABLE
+        celda_precio.border = borde
+        if cambio:
+            celda_precio.fill = relleno_naranja
+            celda_precio.font = fuente_roja
+
         fila_actual += 1
 
-        for columna, encabezado in enumerate(("Producto", "Precio anterior", "Precio", "Unidad"), start=1):
-            celda = hoja.cell(row=fila_actual, column=columna, value=encabezado)
-            celda.font = fuente_encabezado_tabla
-            celda.fill = relleno_verde
-        fila_actual += 1
+    hoja.merge_cells(start_row=fila_actual, start_column=1, end_row=fila_actual, end_column=3)
+    celda_pie = hoja.cell(row=fila_actual, column=1, value="PRECIOS POR KG - SIN IVA")
+    celda_pie.alignment = centrado
+    celda_pie.font = fuente_encabezado
+    for columna in range(1, 4):
+        hoja.cell(row=fila_actual, column=columna).border = borde
 
-        for fila in filas_grupo:
-            es_nueva = es_hoy and bool(fila.get("es_nuevo"))
-
-            hoja.cell(row=fila_actual, column=1, value=fila["articulo_nombre"])
-
-            precio_anterior = fila.get("precio_anterior")
-            if precio_anterior is not None:
-                celda_precio_anterior = hoja.cell(row=fila_actual, column=2, value=float(precio_anterior))
-                celda_precio_anterior.number_format = '"$"#,##0'
-            else:
-                hoja.cell(row=fila_actual, column=2, value="—")
-
-            celda_precio = hoja.cell(row=fila_actual, column=3, value=float(fila["precio"]))
-            celda_precio.number_format = '"$"#,##0'
-            if es_nueva:
-                celda_precio.font = fuente_precio_nuevo
-                celda_precio.fill = relleno_rojo_claro
-
-            celda_unidad = hoja.cell(row=fila_actual, column=4, value=_texto_unidad(fila.get("unidad")))
-            if es_nueva:
-                celda_unidad.fill = relleno_rojo_claro
-
-            fila_actual += 1
-
-        fila_actual += 1  # renglón en blanco entre secciones
-
-    fila_actual += 1
-    hoja.cell(row=fila_actual, column=1, value=PIE_PAGINA).font = fuente_ayuda
-
-    hoja.column_dimensions[get_column_letter(1)].width = 32
-    hoja.column_dimensions[get_column_letter(2)].width = 14
-    hoja.column_dimensions[get_column_letter(3)].width = 14
-    hoja.column_dimensions[get_column_letter(4)].width = 14
+    hoja.column_dimensions[get_column_letter(1)].width = 24
+    hoja.column_dimensions[get_column_letter(2)].width = 17
+    hoja.column_dimensions[get_column_letter(3)].width = 17
 
     buffer = BytesIO()
     libro.save(buffer)

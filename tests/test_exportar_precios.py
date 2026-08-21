@@ -181,87 +181,82 @@ def _cargar_excel(excel_bytes: bytes):
     return openpyxl.load_workbook(BytesIO(excel_bytes))
 
 
-def test_generar_excel_incluye_encabezado_y_secciones():
+# El Excel usa el formato de planilla que el dueño ya manejaba a mano
+# (pedido explícito del 21/08/2026): fecha arriba, Producto | Precio
+# Anterior | Precio Desde HOY, cambios en naranja con el precio en rojo,
+# pie "PRECIOS POR KG - SIN IVA". El PDF conserva su propio diseño.
+
+
+def test_generar_excel_usa_el_formato_de_la_planilla_del_dueno():
     excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
-    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
-    assert "Lista de Precios — Frutamax" in valores
-
-
-def test_generar_excel_titulo_usa_el_nombre_de_empresa_recibido():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Palmala")
-    libro = _cargar_excel(excel_bytes)
-    hoja = libro.active
+    assert hoja.cell(row=1, column=1).value == "16/8/2026"  # sin ceros a la izquierda
+    assert hoja.cell(row=2, column=1).value == "Producto"
+    assert hoja.cell(row=2, column=2).value == "Precio Anterior"
+    assert hoja.cell(row=2, column=3).value == "Precio Desde HOY"
 
     valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
-    assert "Lista de Precios — Palmala" in valores
-    assert "FRUTA" in valores
-    assert "HORTALIZA" in valores
-    assert "PESADA" in valores
-    assert "SIN CLASIFICAR" in valores
-    assert "Mango" in valores
-    assert "Articulo Raro" in valores
+    assert "PRECIOS POR KG - SIN IVA" in valores
+    # La planilla original no lleva título de empresa ni secciones por grupo.
+    assert not any(isinstance(v, str) and "Lista de Precios" in v for v in valores)
+    assert "FRUTA" not in valores and "HORTALIZA" not in valores
+
+    # Una sola tabla alfabética; lo que no se vende por kilo lleva la
+    # unidad pegada al nombre, porque el pie dice "POR KG".
+    nombres = [fila[0].value for fila in hoja.iter_rows() if fila[0].value and fila[0].row > 2][:-1]
+    assert nombres == sorted(nombres, key=str.lower)
+    assert "Mango (por unidad)" in nombres
+    assert "Cubeta X (por cubeta)" in nombres
+    assert "Articulo Raro" in nombres  # sin unidad conocida, sin sufijo
 
 
-def _nombres_con_precio_resaltado_en_rojo(hoja):
-    from core.exportar_precios import ROJO_FONDO_CLARO_HEX
+def _nombres_con_cambio_resaltado(hoja):
+    from core.exportar_precios import NARANJA_CAMBIO_HEX
 
-    # Columna 2 (índice 2, 0-based) es "Precio" -- la 1 es "Precio anterior".
+    # Columna 3 (índice 2, 0-based) es "Precio Desde HOY".
     return [
         fila[0].value
         for fila in hoja.iter_rows()
         if fila[2].fill
         and fila[2].fill.start_color
-        and fila[2].fill.start_color.rgb == f"00{ROJO_FONDO_CLARO_HEX}"
+        and fila[2].fill.start_color.rgb == f"00{NARANJA_CAMBIO_HEX}"
     ]
 
 
-def test_generar_excel_precio_nuevo_resaltado_solo_si_es_hoy():
+def test_generar_excel_resalta_solo_los_precios_que_cambiaron():
     excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
-    celdas_resaltadas = _nombres_con_precio_resaltado_en_rojo(hoja)
-    assert "Manzana Red" in celdas_resaltadas
-    assert "Tomate Cherry" in celdas_resaltadas
-    assert "Mango" not in celdas_resaltadas
+    # Mango cambió (300 -> 350): naranja + precio en rojo. Los demás no
+    # tienen precio anterior distinto, así que quedan sin resaltar.
+    assert _nombres_con_cambio_resaltado(hoja) == ["Mango (por unidad)"]
+    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango (por unidad)")
+    assert fila_mango[2].font.color.rgb.endswith("C00000")
+    # El precio queda como número (sumar/filtrar sigue andando).
+    assert fila_mango[1].value == 300.0
+    assert fila_mango[2].value == 350.0
 
 
-def test_generar_excel_fecha_pasada_no_resalta_nada():
+def test_generar_excel_el_precio_anterior_figura_siempre():
+    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
+    libro = _cargar_excel(excel_bytes)
+    hoja = libro.active
+
+    # Manzana Red nunca tuvo precio previo: el anterior repite el vigente
+    # (siempre figura, pedido explícito) y la fila no se resalta.
+    fila_manzana = next(fila for fila in hoja.iter_rows() if fila[0].value == "Manzana Red")
+    assert fila_manzana[1].value == 890.0
+    assert fila_manzana[2].value == 890.0
+    assert "Manzana Red" not in _nombres_con_cambio_resaltado(hoja)
+
+
+def test_generar_excel_fecha_pasada_cambia_el_encabezado_del_precio():
     excel_bytes = generar_excel_lista_precios("Día", date(2026, 1, 15), FILAS_DE_PRUEBA, es_hoy=False, nombre_empresa="Frutamax")
     libro = _cargar_excel(excel_bytes)
     hoja = libro.active
 
-    assert _nombres_con_precio_resaltado_en_rojo(hoja) == []
-
-
-def test_generar_excel_precio_guardado_como_numero_no_como_texto():
-    # Guardar el precio como número (con number_format de moneda) en vez de
-    # como texto "$1.200" deja la planilla usable (sumar, filtrar, ordenar).
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
-    libro = _cargar_excel(excel_bytes)
-    hoja = libro.active
-
-    valores_precio = [fila[2].value for fila in hoja.iter_rows() if fila[0].value == "Mango"]
-    assert valores_precio == [350.0]
-
-
-def test_generar_excel_agrega_columna_precio_anterior_antes_del_precio():
-    excel_bytes = generar_excel_lista_precios("Día", date(2026, 8, 16), FILAS_DE_PRUEBA, es_hoy=True, nombre_empresa="Frutamax")
-    libro = _cargar_excel(excel_bytes)
-    hoja = libro.active
-
-    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
-    assert "Precio anterior" in valores
-
-    # Mango tiene precio_anterior cargado (300.0) -> se guarda como número,
-    # en la columna 2 (0-based), antes de "Precio" (columna 3).
-    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango")
-    assert fila_mango[1].value == 300.0
-    assert fila_mango[2].value == 350.0
-
-    # Manzana Red no tiene precio_anterior -> "—", no se rompe ni queda vacío.
-    fila_manzana = next(fila for fila in hoja.iter_rows() if fila[0].value == "Manzana Red")
-    assert fila_manzana[1].value == "—"
+    # "Desde HOY" mentiría en una consulta histórica.
+    assert hoja.cell(row=2, column=3).value == "Precio al 15/1"

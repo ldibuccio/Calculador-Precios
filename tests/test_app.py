@@ -6708,7 +6708,10 @@ def test_exportar_precios_excel_devuelve_archivo_adjunto():
     assert respuesta.content.startswith(b"PK")  # xlsx es un zip
 
 
-def test_exportar_precios_excel_incluye_columna_precio_anterior():
+def test_exportar_precios_excel_usa_el_formato_de_planilla_del_dueno():
+    # Formato pedido explícito (21/08/2026): fecha arriba, Producto |
+    # Precio Anterior | Precio Desde HOY, cambios resaltados en naranja
+    # con el precio en rojo, pie "PRECIOS POR KG - SIN IVA".
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -6726,14 +6729,33 @@ def test_exportar_precios_excel_incluye_columna_precio_anterior():
 
     libro = openpyxl.load_workbook(io.BytesIO(respuesta.content))
     hoja = libro.active
-    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
-    assert "Precio anterior" in valores
 
-    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango")
+    # Fecha arriba sin ceros a la izquierda; encabezados de la planilla.
+    assert hoja.cell(row=1, column=1).value == f"{HOY_DE_PRUEBA.day}/{HOY_DE_PRUEBA.month}/{HOY_DE_PRUEBA.year}"
+    assert hoja.cell(row=2, column=1).value == "Producto"
+    assert hoja.cell(row=2, column=2).value == "Precio Anterior"
+    assert hoja.cell(row=2, column=3).value == "Precio Desde HOY"
+
+    # Mango cambió (300 -> 350): anterior a la vista y el nuevo resaltado
+    # en naranja con el precio en rojo. Se vende por unidad y el pie dice
+    # "POR KG", así que la unidad va pegada al nombre.
+    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango (por unidad)")
     assert fila_mango[1].value == 300.0
+    assert fila_mango[2].value == 350.0
+    assert fila_mango[2].fill.start_color.rgb.endswith("FFC000")
+    assert fila_mango[2].font.color.rgb.endswith("C00000")
+    assert fila_mango[1].fill.start_color.rgb != fila_mango[2].fill.start_color.rgb  # el anterior queda sin resaltar
 
+    # Cherry nunca tuvo precio previo: el anterior figura IGUAL (se repite
+    # el vigente) y la fila no se resalta.
     fila_cherry = next(fila for fila in hoja.iter_rows() if fila[0].value == "Tomate Cherry")
-    assert fila_cherry[1].value == "—"
+    assert fila_cherry[1].value == 500.0
+    assert fila_cherry[2].value == 500.0
+    assert fila_cherry[2].fill.start_color.rgb != fila_mango[2].fill.start_color.rgb
+
+    # Pie de la planilla, en la última fila con contenido.
+    valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
+    assert "PRECIOS POR KG - SIN IVA" in valores
 
 
 def test_exportar_precios_excel_cliente_inexistente_da_404():
