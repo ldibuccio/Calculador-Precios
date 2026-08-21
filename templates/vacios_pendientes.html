@@ -51,7 +51,7 @@
   .boton-pagar { background: #16a34a; color: #fff; }
   .boton-vale { background: #7c3aed; color: #fff; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
-  /* "Anular seña" va a propósito SEPARADO de los dos botones grandes, más
+  /* "Borrar Operación" va a propósito SEPARADO de los dos botones grandes, más
      chico y abajo a la derecha: la pantalla se usa apurada y la mano va a
      "Pagó" — un rojo grande al lado sería un accidente esperando turno. */
   .fila-anular { text-align: right; margin-top: 0.55rem; }
@@ -144,12 +144,12 @@
         </div>
 
         <div class="fila-anular" id="fila-anular-{{ p.id }}">
-          <button type="button" class="boton-anular-sena" onclick="mostrarConfirmacionAnular('{{ p.id }}')">Anular seña</button>
+          <button type="button" class="boton-anular-sena" onclick="mostrarConfirmacionAnular('{{ p.id }}')">Borrar Operación</button>
         </div>
 
         <div class="confirmacion" id="confirmacion-anular-{{ p.id }}">
           <form method="post" action="/puesto/envases/pendientes/{{ p.id }}/anular-sena">
-            <button type="submit" class="boton-anular-confirmar">Sí, anular la seña</button>
+            <button type="submit" class="boton-anular-confirmar">Sí, borrar la operación</button>
           </form>
           <button type="button" class="boton-secundario" onclick="ocultarConfirmacionAnular('{{ p.id }}')">No</button>
         </div>

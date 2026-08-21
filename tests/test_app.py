@@ -9955,8 +9955,9 @@ def test_ver_pendientes_de_pago_ofrece_los_tres_cierres():
     # Los tres con confirmación en dos toques.
     assert "Sí, pagó" in respuesta.text
     assert "Sí, se hizo vale" in respuesta.text
-    assert "Sí, anular la seña" in respuesta.text
-    # "Anular seña" va separado y chico (clase propia), no como tercer botón
+    assert "Borrar Operación" in respuesta.text
+    assert "Sí, borrar la operación" in respuesta.text
+    # "Borrar Operación" va separado y chico (clase propia), no como tercer botón
     # grande al lado de "Pagó" — la pantalla se usa apurada.
     assert 'class="boton-anular-sena"' in respuesta.text
     assert 'class="fila-anular"' in respuesta.text
