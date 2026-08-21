@@ -161,6 +161,19 @@ create table guias_compra (
 
 comment on table guias_compra is 'Una guía por proveedor por día de operación. El id es el número de guía (ej. 105).';
 
+create table fotos_guia (
+    id         bigint generated always as identity primary key,
+    guia_id    bigint not null references guias_compra (id),
+    foto_ruta  text not null,
+    creado_en  timestamptz not null default now(),
+    unique (guia_id, foto_ruta)
+);
+
+comment on table fotos_guia is 'Fotos/archivos de una guía (comanda de un proveedor en un día), en el bucket "comandas". Una guía puede tener varias; un mismo archivo (foto_ruta) puede colgar de varias guías (el Listado consolidado comparte una foto entre proveedores). Reemplaza a compras.foto_ruta, que queda muerta hasta su DROP (ver APLICADO.md).';
+comment on column fotos_guia.foto_ruta is 'Ruta del archivo en el bucket "comandas". El archivo físico se borra del Storage solo cuando NINGUNA guía lo referencia.';
+
+create index fotos_guia_foto_ruta_idx on fotos_guia (foto_ruta);
+
 -- ----------------------------------------------------------------------------
 -- 7. COMPRAS — el corazón del sistema: carga, retiro y recepción de cada renglón
 --

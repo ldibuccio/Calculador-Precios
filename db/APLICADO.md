@@ -46,6 +46,13 @@ bases estén marcadas.
 | `agregar_proveedores_puesto.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_ajustes_vacios.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
 | `agregar_indices_rendimiento.sql` | ✅ 2026-08-20 | ✅ 2026-08-20 |
+| `agregar_fotos_guia.sql` | ⬜ pendiente (OJO: no es aditivo puro — crea guías para compras históricas y les asigna guia_id; correr ANTES la consulta de lectura comentada en el archivo, y correr TODO antes de mergear) | ⬜ pendiente (ídem) |
+
+## Deuda pendiente de limpieza
+
+| Qué | Por qué sigue ahí | Cuándo se resuelve |
+|---|---|---|
+| Columna `compras.foto_ruta` (MUERTA tras `agregar_fotos_guia.sql`) | Las fotos pasaron a `fotos_guia` (por guía, no por renglón). La columna quedó en la transición para poder volver atrás si algo falla en producción: el código ya no la escribe ni la lee. | DROP en una migración futura (`drop_foto_ruta_compras.sql`, a crear), cuando el dueño confirme que las fotos por guía andan bien en las dos empresas un tiempo prudencial. |
 
 ## Pasos manuales que NO son SQL (por base)
 

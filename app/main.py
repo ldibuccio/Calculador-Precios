@@ -77,7 +77,10 @@ from app.db import (
     eliminar_ficha,
     guardar_disponible,
     guardar_precios_cliente,
+    agregar_foto_guia,
+    borrar_foto_guia,
     limpiar_foto_ruta_de_compras,
+    listar_fotos_de_guia,
     listar_ajustes_vacios_por_rango,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
@@ -2272,6 +2275,19 @@ def _generar_preview_foto(imagen: bytes) -> str:
     compras, fotos de precios), así que de no rotarla ahora la foto queda
     guardada girada para siempre.
     """
+    comprimida = _comprimir_foto_jpeg(imagen)
+    if comprimida is None:
+        return ""
+    return f"data:image/jpeg;base64,{base64.standard_b64encode(comprimida).decode('ascii')}"
+
+
+def _comprimir_foto_jpeg(imagen: bytes) -> bytes | None:
+    """El pipeline de compresión de fotos del sistema: EXIF aplicado, máx 1000px, JPEG calidad 60.
+
+    Lo usan el preview de comandas y la subida de fotos a la guía — todo
+    lo que termina en Storage pasa por acá, nunca originales de varios MB.
+    None si los bytes no son una imagen legible.
+    """
     try:
         imagen_pil = Image.open(io.BytesIO(imagen))
         imagen_pil = ImageOps.exif_transpose(imagen_pil)
@@ -2279,10 +2295,9 @@ def _generar_preview_foto(imagen: bytes) -> str:
         imagen_pil.thumbnail((LADO_MAXIMO_PREVIEW_FOTO, LADO_MAXIMO_PREVIEW_FOTO))
         buffer = io.BytesIO()
         imagen_pil.save(buffer, format="JPEG", quality=CALIDAD_PREVIEW_FOTO)
-        preview_base64 = base64.standard_b64encode(buffer.getvalue()).decode("ascii")
-        return f"data:image/jpeg;base64,{preview_base64}"
+        return buffer.getvalue()
     except Exception:
-        return ""
+        return None
 
 
 def _bytes_desde_data_uri(data_uri: str) -> bytes | None:
@@ -2829,6 +2844,7 @@ def ver_editar_compra(request: Request, compra_id: int, error: str | None = None
             "articulos": articulos,
             "modo": "editar",
             "compra": compra,
+            "fotos_guia": _fotos_de_la_guia_de(compra),
             "error": error,
             "cantidad_bloqueada": cantidad_bloqueada,
             "precio_bloqueado": precio_bloqueado,
@@ -3043,14 +3059,14 @@ def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
     nada. Si falla el borrado de la COMPRA en sí, esta función deja que
     la excepción se propague: eso sí lo tiene que ver quien llama.
     """
-    foto_ruta_a_borrar = eliminar_compra(compra_id)
-    if foto_ruta_a_borrar:
+    rutas_a_borrar = eliminar_compra(compra_id)
+    for ruta in rutas_a_borrar:
         try:
-            borrar_foto_comanda(foto_ruta_a_borrar)
+            borrar_foto_comanda(ruta)
         except Exception:
             logger.exception(
                 "No se pudo borrar de Supabase Storage la foto %s (la compra %s ya se borró igual)",
-                foto_ruta_a_borrar,
+                ruta,
                 compra_id,
             )
 
@@ -3165,17 +3181,149 @@ def ver_foto_compra(compra_id: int):
     if compra is None:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
 
-    if not compra.get("foto_ruta"):
-        raise HTTPException(status_code=404, detail="Esta compra no tiene foto guardada")
+    fotos = _fotos_de_la_guia_de(compra)
+    if not fotos:
+        raise HTTPException(status_code=404, detail="Esta compra no tiene fotos guardadas")
 
     try:
-        url_firmada = obtener_url_foto(compra["foto_ruta"])
+        url_firmada = obtener_url_foto(fotos[0]["foto_ruta"])
     except Exception as error_storage:
         raise HTTPException(
             status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
         ) from error_storage
 
     return RedirectResponse(url=url_firmada, status_code=307)
+
+
+def _fotos_de_la_guia_de(compra: dict) -> list[dict]:
+    """Las fotos de la guía de esta compra (lista vacía si la compra no tiene guía — no debería pasar tras la migración)."""
+    if compra.get("guia_id") is None:
+        return []
+    try:
+        return listar_fotos_de_guia(compra["guia_id"])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+
+def _url_vuelta_fotos(compra_id: int, volver: str, query_filtros: str) -> str:
+    """A qué pantalla volver tras subir/borrar una foto: Editar (con sus filtros) o Detalle."""
+    if volver == "detalle":
+        return f"/compras/{compra_id}/detalle"
+    base = f"/compras/{compra_id}/editar"
+    return f"{base}?{query_filtros}" if query_filtros else base
+
+
+@app.get("/compras/{compra_id}/fotos/{foto_id}/ver")
+def ver_foto_de_guia(compra_id: int, foto_id: int):
+    """URL firmada de UNA foto de la guía de esta compra (para las miniaturas y el toque para agrandar)."""
+    try:
+        compra = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    foto = next((f for f in _fotos_de_la_guia_de(compra) if f["id"] == foto_id), None)
+    if foto is None:
+        raise HTTPException(status_code=404, detail="Esa foto no es de la guía de esta compra")
+
+    try:
+        url_firmada = obtener_url_foto(foto["foto_ruta"])
+    except Exception as error_storage:
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
+        ) from error_storage
+    return RedirectResponse(url=url_firmada, status_code=307)
+
+
+@app.post("/compras/{compra_id}/fotos")
+async def subir_foto_a_guia(
+    request: Request,
+    compra_id: int,
+    archivo: UploadFile = File(...),
+    volver: str = Form("editar"),
+    query_filtros: str = Form(""),
+):
+    """Suma una foto o PDF a la GUÍA de esta compra. Nunca reemplaza: si ya había fotos, la nueva se agrega.
+
+    Todo comprimido antes de subir (imagen: 1000px JPEG q60, el pipeline
+    de comandas; PDF: páginas a imagen con comprimir_pdf) — nada de
+    originales de varios MB en el bucket.
+    """
+    try:
+        compra = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+    if compra.get("guia_id") is None:
+        raise HTTPException(status_code=400, detail="Esta compra no tiene guía asignada, no se le pueden colgar fotos")
+
+    bytes_archivo = await archivo.read()
+    if not bytes_archivo:
+        raise HTTPException(status_code=400, detail="El archivo llegó vacío")
+
+    nombre_archivo = (archivo.filename or "").lower()
+    es_pdf = nombre_archivo.endswith(".pdf") or (archivo.content_type or "") == "application/pdf"
+    try:
+        if es_pdf:
+            foto_ruta = subir_archivo_comanda(
+                comprimir_pdf(bytes_archivo), f"guia-{compra['guia_id']}", "pdf", "application/pdf"
+            )
+        else:
+            comprimida = _comprimir_foto_jpeg(bytes_archivo)
+            if comprimida is None:
+                raise HTTPException(status_code=400, detail="El archivo no es una imagen legible (ni un PDF)")
+            foto_ruta = subir_foto_comanda(comprimida, f"guia-{compra['guia_id']}")
+    except HTTPException:
+        raise
+    except Exception as error_storage:
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo subir el archivo al Storage: {error_storage}"
+        ) from error_storage
+
+    try:
+        agregar_foto_guia(compra["guia_id"], foto_ruta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return RedirectResponse(url=_url_vuelta_fotos(compra_id, volver, query_filtros), status_code=303)
+
+
+@app.post("/compras/{compra_id}/fotos/{foto_id}/borrar")
+def borrar_foto_de_guia_ruta(
+    request: Request,
+    compra_id: int,
+    foto_id: int,
+    volver: str = Form("editar"),
+    query_filtros: str = Form(""),
+):
+    """Borra una foto subida por error. El archivo del Storage solo se va si ninguna otra guía lo usa."""
+    try:
+        compra = obtener_compra(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    # Solo fotos de la guía de ESTA compra: un id ajeno no borra nada.
+    if next((f for f in _fotos_de_la_guia_de(compra) if f["id"] == foto_id), None) is None:
+        raise HTTPException(status_code=404, detail="Esa foto no es de la guía de esta compra")
+
+    try:
+        ruta_a_borrar = borrar_foto_guia(foto_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if ruta_a_borrar:
+        try:
+            borrar_foto_comanda(ruta_a_borrar)
+        except Exception:
+            logger.exception(
+                "No se pudo borrar del Storage la foto %s (el registro ya se sacó de la guía igual)", ruta_a_borrar
+            )
+
+    return RedirectResponse(url=_url_vuelta_fotos(compra_id, volver, query_filtros), status_code=303)
 
 
 @app.get("/compras/{compra_id}/detalle")
@@ -3209,6 +3357,7 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
         "compra_detalle.html",
         {
             "compra": compra,
+            "fotos_guia": _fotos_de_la_guia_de(compra),
             "estado_retiro_label": ESTADOS_RETIRO_LABELS.get(compra["estado_retiro"], compra["estado_retiro"]),
             "estado_recepcion_label": ESTADOS_RECEPCION_LABELS.get(compra["estado"], compra["estado"]),
             "origen_retiro_label": ORIGENES_RETIRO_LABELS.get(compra["retiro_origen"], compra["retiro_origen"]),

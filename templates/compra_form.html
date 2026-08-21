@@ -132,13 +132,8 @@
     {% if modo == "editar" %}
     <label>Proveedor</label>
     <div class="campo-fijo">{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</div>
-    {% if compra.foto_ruta %}
-    <a class="boton-ver-foto" href="/compras/{{ compra.id }}/foto" target="_blank" rel="noopener"
-       style="display: block; margin-top: 0.6rem; padding: 0.7rem; background: #7c3aed; color: #fff;
-              border-radius: 8px; font-size: 0.95rem; font-weight: 600; text-align: center; text-decoration: none;">
-      Ver foto de la comanda
-    </a>
-    {% endif %}
+    {% set fotos_volver = "editar" %}
+    {% include "_fotos_guia.html" %}
     {% endif %}
 
     {# En modo editar, el query de la URL trae los filtros de Buscar: el form

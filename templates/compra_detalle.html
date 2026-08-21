@@ -240,14 +240,8 @@
   </div>
 
   <div class="tarjeta">
-    <h3>Foto de la comanda</h3>
-    {% if compra.foto_ruta %}
-    <a href="/compras/{{ compra.id }}/foto" target="_blank" rel="noopener">
-      <img class="foto-comanda" src="/compras/{{ compra.id }}/foto" alt="Foto de la comanda">
-    </a>
-    {% else %}
-    <p class="vacio">No hay foto guardada para esta compra.</p>
-    {% endif %}
+    {% set fotos_volver = "detalle" %}
+    {% include "_fotos_guia.html" %}
   </div>
 
   <a class="volver" href="/compras/buscar">Volver a Buscar Compras</a>

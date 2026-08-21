@@ -814,7 +814,8 @@ def buscar_compras(
                        COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
                        COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
-                       c.importe, c.sena, c.tipo_retiro, c.foto_ruta
+                       c.importe, c.sena, c.tipo_retiro,
+                       EXISTS (SELECT 1 FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_fotos
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -1047,8 +1048,8 @@ def obtener_compra(compra_id: int) -> dict | None:
                 """
                 SELECT c.id, c.fecha_operacion, c.articulo_id, a.nombre AS articulo_nombre,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
-                       c.cantidad_cajones, c.contenido_por_cajon,
-                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro, c.foto_ruta,
+                       c.guia_id, c.cantidad_cajones, c.contenido_por_cajon,
+                       c.cantidad_kilos, c.cantidad_fraccion, c.importe, c.sena, c.tipo_retiro,
                        c.estado, c.estado_retiro
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -1085,7 +1086,7 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                        c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra,
                        c.proveedor_id, p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.guia_id, c.guia_punto,
-                       c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro, c.foto_ruta,
+                       c.cantidad_cajones, c.contenido_por_cajon, c.importe, c.sena, c.tipo_retiro,
                        c.estado_retiro, c.retiro_procesado_el, c.retiro_origen, c.cantidad_cajones_retirada,
                        c.estado, c.procesada_el,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real,
@@ -1241,6 +1242,17 @@ def _insertar_compra_con_guia(
         (fecha_operacion, proveedor_id),
     )
     (guia_id,) = cursor.fetchone()
+
+    # La foto cuelga de la GUÍA, no del renglón: se registra una vez por
+    # guía (el ON CONFLICT absorbe los N renglones de la misma comanda) y
+    # compras.foto_ruta queda muerta (se escribe NULL; DROP pendiente,
+    # ver db/APLICADO.md).
+    if foto_ruta:
+        cursor.execute(
+            "INSERT INTO fotos_guia (guia_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (guia_id, foto_ruta),
+        )
+        foto_ruta = None
 
     cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
     (cantidad_existente,) = cursor.fetchone()
@@ -2412,7 +2424,7 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
         conexion.close()
 
 
-def eliminar_compra(compra_id: int) -> str | None:
+def eliminar_compra(compra_id: int) -> list[str]:
     """Borra una compra (borrado real), salvo que ya haya pasado por Depósito o por el retiro.
 
     Una compra recepcionada tiene kilaje real pesado, una retirada ya
@@ -2425,19 +2437,20 @@ def eliminar_compra(compra_id: int) -> str | None:
     pero eso no se resuelve en esta función. 'pendiente' y
     'rechazado'/'cancelado' se siguen pudiendo borrar sin restricción.
 
-    Una misma foto de comanda (foto_ruta) puede estar compartida por varios
-    renglones/compras. Devuelve el foto_ruta que hay que borrar del Storage
-    SOLO si esta era la última compra que lo usaba (si no tenía foto, o si
-    otro renglón lo sigue usando, devuelve None) — la decisión queda
-    resuelta acá, dentro de la misma transacción, para no tener una
-    condición de carrera entre el DELETE y el conteo posterior.
+    Las fotos cuelgan de la GUÍA (fotos_guia), no del renglón: borrar una
+    compra no toca las fotos mientras la guía siga teniendo renglones.
+    Si esta era la ÚLTIMA compra de su guía, las fotos de la guía se dan
+    de baja también, y se devuelven las rutas a borrar del Storage — SOLO
+    las que ninguna otra guía usa (el Listado consolidado comparte un
+    archivo entre varias guías). Todo dentro de la misma transacción,
+    para no tener carrera entre el DELETE y los conteos.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT foto_ruta, estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
+            cursor.execute("SELECT guia_id, estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
             fila = cursor.fetchone()
-            foto_ruta, estado, estado_retiro = fila if fila else (None, None, None)
+            guia_id, estado, estado_retiro = fila if fila else (None, None, None)
 
             if estado == "recepcionado":
                 raise ValueError("Esta compra ya fue recepcionada, no se puede eliminar.")
@@ -2453,14 +2466,22 @@ def eliminar_compra(compra_id: int) -> str | None:
 
             cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
 
-            foto_ruta_a_borrar = None
-            if foto_ruta:
-                cursor.execute("SELECT COUNT(*) FROM compras WHERE foto_ruta = %s", (foto_ruta,))
-                (restantes,) = cursor.fetchone()
-                if restantes == 0:
-                    foto_ruta_a_borrar = foto_ruta
+            rutas_a_borrar: list[str] = []
+            if guia_id is not None:
+                cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
+                (renglones_restantes,) = cursor.fetchone()
+                if renglones_restantes == 0:
+                    cursor.execute(
+                        "DELETE FROM fotos_guia WHERE guia_id = %s RETURNING foto_ruta", (guia_id,)
+                    )
+                    rutas_borradas = [f[0] for f in cursor.fetchall()]
+                    for ruta in rutas_borradas:
+                        cursor.execute("SELECT COUNT(*) FROM fotos_guia WHERE foto_ruta = %s", (ruta,))
+                        (usos,) = cursor.fetchone()
+                        if usos == 0:
+                            rutas_a_borrar.append(ruta)
         conexion.commit()
-        return foto_ruta_a_borrar
+        return rutas_a_borrar
     finally:
         conexion.close()
 
@@ -2499,20 +2520,19 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     la misma fecha_operacion (se cargan juntos y esa fecha no se puede
     editar después), pero este chequeo se hace igual por las dudas.
 
-    "Ninguna compra reciente la usa" se expresa como MAX(fecha_operacion)
-    por foto — una sola pasada. La versión anterior (NOT EXISTS
-    correlacionado) recorría compras una vez POR CADA compra con foto:
-    costo cuadrático que además corría en cada carga de /sistema.
+    Las fotos cuelgan de las guías (fotos_guia): un archivo es candidato
+    si TODAS las guías que lo usan son de antes de fecha_corte —
+    MAX(fecha de guía) por ruta, una sola pasada.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT foto_ruta FROM compras
-                WHERE foto_ruta IS NOT NULL
-                GROUP BY foto_ruta
-                HAVING MAX(fecha_operacion) < %s
+                SELECT f.foto_ruta FROM fotos_guia f
+                JOIN guias_compra g ON g.id = f.guia_id
+                GROUP BY f.foto_ruta
+                HAVING MAX(g.fecha_operacion) < %s
                 """,
                 (fecha_corte,),
             )
@@ -2523,12 +2543,72 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
 
 
 def limpiar_foto_ruta_de_compras(foto_ruta: str) -> None:
-    """Pone foto_ruta en NULL en todas las compras que lo tenían. Conserva las filas — se usa después de borrar el archivo del bucket."""
+    """Borra los registros de un archivo ya eliminado del bucket: sus filas de fotos_guia, y la columna muerta.
+
+    Se usa después de borrar el archivo del Storage (limpieza de fotos
+    viejas). El UPDATE de compras.foto_ruta es solo higiene de la columna
+    muerta mientras espera su DROP (ver db/APLICADO.md).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM fotos_guia WHERE foto_ruta = %s", (foto_ruta,))
             cursor.execute("UPDATE compras SET foto_ruta = NULL WHERE foto_ruta = %s", (foto_ruta,))
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_fotos_de_guia(guia_id: int) -> list[dict]:
+    """Las fotos/archivos de una guía, más viejas primero (el orden en que se fueron sumando)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, foto_ruta, creado_en FROM fotos_guia WHERE guia_id = %s ORDER BY creado_en, id",
+                (guia_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def agregar_foto_guia(guia_id: int, foto_ruta: str) -> None:
+    """Suma una foto/archivo a la guía. Nunca reemplaza: si la ruta ya estaba en esa guía, no hace nada."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO fotos_guia (guia_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (guia_id, foto_ruta),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def borrar_foto_guia(foto_id: int) -> str | None:
+    """Saca una foto de su guía. Devuelve la ruta a borrar del Storage SOLO si ninguna otra guía la usa.
+
+    El Listado consolidado comparte un mismo archivo entre varias guías:
+    la decisión de si el archivo físico sobra se toma acá, en la misma
+    transacción, para no tener carrera entre el DELETE y el conteo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("DELETE FROM fotos_guia WHERE id = %s RETURNING foto_ruta", (foto_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                conexion.commit()
+                return None
+            (foto_ruta,) = fila
+            cursor.execute("SELECT COUNT(*) FROM fotos_guia WHERE foto_ruta = %s", (foto_ruta,))
+            (restantes,) = cursor.fetchone()
+        conexion.commit()
+        return foto_ruta if restantes == 0 else None
     finally:
         conexion.close()
 

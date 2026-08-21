@@ -1996,8 +1996,8 @@ def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
 
 def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
     compras = [
-        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg"),
-        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], foto_ruta=None),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], tiene_fotos=True),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], tiene_fotos=False),
     ]
     with (
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
@@ -2715,7 +2715,10 @@ def test_ver_editar_compra_error_de_base_da_500():
 
 
 def test_ver_detalle_compra_muestra_toda_la_historia():
-    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2726,12 +2729,15 @@ def test_ver_detalle_compra_muestra_toda_la_historia():
     assert "Retirado" in respuesta.text
     assert "Retirado por Logística" in respuesta.text
     assert "Recibido" in respuesta.text
-    assert "No hay foto guardada" in respuesta.text
+    assert "Esta guía todavía no tiene fotos" in respuesta.text
 
 
 def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_retirada=8)
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2740,25 +2746,43 @@ def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
 
 def test_ver_detalle_compra_marca_la_diferencia_de_recepcion():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=9)
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
     assert "Diferencia contra lo comprado" in respuesta.text
 
 
-def test_ver_detalle_compra_con_foto_muestra_la_imagen():
-    compra = dict(COMPRA_DETALLE_DE_PRUEBA, foto_ruta="2026-08-16/n07p41-30-abcdef12.jpg")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+def test_ver_detalle_compra_con_fotos_muestra_la_galeria_de_la_guia():
+    fotos = [
+        {"id": 9, "foto_ruta": "2026-08-16/a.jpg", "creado_en": datetime(2026, 8, 16, 10, 0)},
+        {"id": 10, "foto_ruta": "2026-08-16/b.pdf", "creado_en": datetime(2026, 8, 16, 11, 0)},
+    ]
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=fotos),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
-    assert 'src="/compras/30/foto"' in respuesta.text
-    assert "No hay foto guardada" not in respuesta.text
+    # Miniatura de la imagen y ficha del PDF, cada una con su link y su Borrar.
+    assert 'src="/compras/30/fotos/9/ver"' in respuesta.text
+    assert 'href="/compras/30/fotos/10/ver"' in respuesta.text
+    assert 'action="/compras/30/fotos/9/borrar"' in respuesta.text
+    # Y el botón para sumar otra (nunca reemplaza).
+    assert 'action="/compras/30/fotos"' in respuesta.text
+    assert "Agregar foto o archivo" in respuesta.text
+    assert "Esta guía todavía no tiene fotos" not in respuesta.text
 
 
 def test_ver_detalle_compra_inexistente_da_404():
-    with patch("app.main.obtener_detalle_compra", return_value=None):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=None),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/999/detalle")
 
     assert respuesta.status_code == 404
@@ -2775,7 +2799,10 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
     # Nunca 'deposito' (auto-retiro de algo que sí pasó por el puesto del
     # Mercado): 'ingreso_directo' es otra cosa, tiene su propia etiqueta.
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, retiro_origen="ingreso_directo")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2783,7 +2810,10 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
 
 
 def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
-    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2792,7 +2822,10 @@ def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
 
 def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2801,7 +2834,10 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
 
 def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=8, cantidad_cajones_rechazada=2, motivo_rechazo="podrido")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2810,7 +2846,10 @@ def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
 
 
 def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
-    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
@@ -2818,7 +2857,10 @@ def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
 
 
 def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
-    with patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra.")
 
     assert respuesta.status_code == 200
@@ -2827,7 +2869,10 @@ def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
 
 def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
@@ -2849,7 +2894,10 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total
         contenido_por_cajon_real=3,
         cantidad_fraccion_real=90,
     )
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
@@ -2862,7 +2910,10 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total
 
 def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formulario():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
@@ -2871,7 +2922,10 @@ def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formula
 
 
 def test_ver_corregir_recepcion_compra_inexistente_da_404():
-    with patch("app.main.obtener_detalle_compra", return_value=None):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=None),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/999/corregir-recepcion")
 
     assert respuesta.status_code == 404
@@ -2899,7 +2953,10 @@ def test_corregir_recepcion_compra_ruta_guarda_y_redirige():
 
 def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargados():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=8, cantidad_cajones_rechazada=2, motivo_rechazo="podrido")
-    with patch("app.main.obtener_detalle_compra", return_value=compra):
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
@@ -3423,7 +3480,7 @@ def test_ver_editar_compra_no_recepcionada_no_marca_la_bandera_js():
 
 def test_eliminar_compra_exitosa_redirige_a_compras():
     with (
-        patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
+        patch("app.main.eliminar_compra", return_value=[]) as mock_eliminar,
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
     ):
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
@@ -3440,7 +3497,7 @@ def test_eliminar_compra_exitosa_conserva_los_filtros_de_la_busqueda():
     # Los filtros viajan como campos ocultos del form de la fila: al borrar
     # se vuelve a la MISMA búsqueda, no a la default de 48hs.
     with (
-        patch("app.main.eliminar_compra", return_value=None),
+        patch("app.main.eliminar_compra", return_value=[]),
         patch("app.main.borrar_foto_comanda"),
     ):
         respuesta = cliente.post(
@@ -3506,7 +3563,7 @@ def test_ver_editar_compra_con_filtros_los_lleva_en_el_form_y_en_volver():
 
 def test_eliminar_compra_con_foto_que_era_la_unica_referencia_la_borra_tambien_del_storage():
     with (
-        patch("app.main.eliminar_compra", return_value="2026-08-13/n07p41-123-abcdef12.jpg"),
+        patch("app.main.eliminar_compra", return_value=["2026-08-13/n07p41-123-abcdef12.jpg"]),
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
     ):
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
@@ -3519,7 +3576,7 @@ def test_eliminar_compra_si_falla_el_borrado_de_la_foto_igual_redirige_bien():
     # Regresión: borrar la foto es un extra — si falla, la compra ya se
     # borró y no debe tumbar la respuesta al usuario.
     with (
-        patch("app.main.eliminar_compra", return_value="2026-08-13/n07p41-123-abcdef12.jpg"),
+        patch("app.main.eliminar_compra", return_value=["2026-08-13/n07p41-123-abcdef12.jpg"]),
         patch("app.main.borrar_foto_comanda", side_effect=Exception("sin conexión con Storage")),
     ):
         respuesta = cliente.post("/compras/30/eliminar", follow_redirects=False)
@@ -3582,7 +3639,7 @@ def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
-        patch("app.main.eliminar_compra", return_value=None) as mock_eliminar,
+        patch("app.main.eliminar_compra", return_value=[]) as mock_eliminar,
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
     ):
         respuesta = cliente.post(
@@ -3628,7 +3685,7 @@ def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicis
     def eliminar_side_effect(compra_id):
         if compra_id == 31:
             raise Exception('update or delete on table "compras" violates foreign key constraint')
-        return None
+        return []
 
     with (
         patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
@@ -4235,10 +4292,12 @@ def test_deshacer_no_ingreso_compra_ruta_error_de_base_da_500():
     assert "No se pudo deshacer" in respuesta.text
 
 
-def test_ver_foto_compra_redirige_a_la_url_firmada():
-    compra_con_foto = dict(COMPRA_DE_PRUEBA, foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg")
+def test_ver_foto_compra_redirige_a_la_url_firmada_de_la_primera_foto_de_la_guia():
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    fotos = [{"id": 9, "foto_ruta": "2026-08-06/n07p41-123-abcdef12.jpg", "creado_en": datetime(2026, 8, 6, 10, 0)}]
     with (
-        patch("app.main.obtener_compra", return_value=compra_con_foto),
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.listar_fotos_de_guia", return_value=fotos) as mock_fotos,
         patch(
             "app.main.obtener_url_foto",
             return_value="https://proyecto.supabase.co/storage/v1/object/sign/comandas/x.jpg?token=abc",
@@ -4248,13 +4307,104 @@ def test_ver_foto_compra_redirige_a_la_url_firmada():
 
     assert respuesta.status_code == 307
     assert respuesta.headers["location"] == "https://proyecto.supabase.co/storage/v1/object/sign/comandas/x.jpg?token=abc"
+    mock_fotos.assert_called_once_with(105)
     mock_url.assert_called_once_with("2026-08-06/n07p41-123-abcdef12.jpg")
 
 
-def test_ver_foto_compra_sin_foto_ruta_da_404():
-    compra_sin_foto = dict(COMPRA_DE_PRUEBA, foto_ruta=None)
-    with patch("app.main.obtener_compra", return_value=compra_sin_foto):
+def test_ver_foto_compra_sin_fotos_en_la_guia_da_404():
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
         respuesta = cliente.get("/compras/30/foto")
+
+    assert respuesta.status_code == 404
+
+
+def test_subir_foto_a_guia_comprime_y_la_suma():
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    imagen = io.BytesIO()
+    Image.new("RGB", (2000, 1500), (200, 100, 50)).save(imagen, format="JPEG")
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.subir_foto_comanda", return_value="2026-08-20/guia-105-abc.jpg") as mock_subir,
+        patch("app.main.agregar_foto_guia") as mock_agregar,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/fotos",
+            files={"archivo": ("comanda.jpg", imagen.getvalue(), "image/jpeg")},
+            data={"volver": "editar", "query_filtros": "fecha_desde=2026-08-01"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/30/editar?fecha_desde=2026-08-01"
+    # Se subió COMPRIMIDA (el pipeline de 1000px la deja mucho más chica
+    # que el original) y se sumó a la guía, nunca reemplaza.
+    bytes_subidos = mock_subir.call_args.args[0]
+    assert Image.open(io.BytesIO(bytes_subidos)).width <= 1000
+    mock_agregar.assert_called_once_with(105, "2026-08-20/guia-105-abc.jpg")
+
+
+def test_subir_archivo_no_imagen_ni_pdf_da_400():
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.agregar_foto_guia") as mock_agregar,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/fotos",
+            files={"archivo": ("nota.txt", b"esto no es una imagen", "text/plain")},
+            data={"volver": "editar"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_agregar.assert_not_called()
+
+
+def test_borrar_foto_de_guia_borra_el_archivo_solo_si_nadie_mas_lo_usa():
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    fotos = [{"id": 9, "foto_ruta": "2026/x.jpg", "creado_en": datetime(2026, 8, 6, 10, 0)}]
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.borrar_foto_guia", return_value="2026/x.jpg") as mock_borrar,
+        patch("app.main.borrar_foto_comanda") as mock_storage,
+    ):
+        respuesta = cliente.post(
+            "/compras/30/fotos/9/borrar",
+            data={"volver": "detalle"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/30/detalle"
+    mock_borrar.assert_called_once_with(9)
+    mock_storage.assert_called_once_with("2026/x.jpg")
+
+
+def test_borrar_foto_ajena_a_la_guia_da_404_y_no_borra_nada():
+    # Un foto_id que no es de la guía de ESTA compra no borra nada.
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.borrar_foto_guia") as mock_borrar,
+    ):
+        respuesta = cliente.post("/compras/30/fotos/999/borrar", data={"volver": "editar"})
+
+    assert respuesta.status_code == 404
+    mock_borrar.assert_not_called()
+
+
+def test_ver_foto_de_guia_valida_que_la_foto_sea_de_esa_guia():
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    with (
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/fotos/999/ver")
 
     assert respuesta.status_code == 404
 
@@ -4267,9 +4417,11 @@ def test_ver_foto_compra_inexistente_da_404():
 
 
 def test_ver_foto_compra_error_de_storage_da_500():
-    compra_con_foto = dict(COMPRA_DE_PRUEBA, foto_ruta="2026-08-06/n07p41-123-abcdef12.jpg")
+    compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
+    fotos = [{"id": 9, "foto_ruta": "2026-08-06/n07p41-123-abcdef12.jpg", "creado_en": datetime(2026, 8, 6, 10, 0)}]
     with (
-        patch("app.main.obtener_compra", return_value=compra_con_foto),
+        patch("app.main.obtener_compra", return_value=compra_con_guia),
+        patch("app.main.listar_fotos_de_guia", return_value=fotos),
         patch("app.main.obtener_url_foto", side_effect=RuntimeError("Supabase Storage no pudo firmar la URL (404)")),
     ):
         respuesta = cliente.get("/compras/30/foto")
@@ -9325,23 +9477,31 @@ def test_editar_compra_etiqueta_el_contenido_con_la_unidad_del_articulo():
     assert 'id="label-contenido-por-cajon"' in respuesta.text
 
 
-def test_editar_compra_muestra_ver_foto_si_la_compra_tiene_foto():
+def test_editar_compra_muestra_las_fotos_de_la_guia_con_subir_y_borrar():
     compra = {
         "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
         "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "guia_id": 105,
         "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
-        "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": "2026/x.jpg",
+        "importe": 5000, "sena": None, "tipo_retiro": "Clark",
         "estado": None, "estado_retiro": "pendiente",
     }
+    fotos = [{"id": 9, "foto_ruta": "2026/x.jpg", "creado_en": datetime(2026, 8, 6, 10, 0)}]
     with (
         patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=fotos),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
-        respuesta = cliente.get("/compras/30/editar")
+        respuesta = cliente.get("/compras/30/editar?fecha_desde=2026-08-01")
 
     assert respuesta.status_code == 200
-    assert 'href="/compras/30/foto"' in respuesta.text
-    assert "Ver foto de la comanda" in respuesta.text
+    # La miniatura de la foto, el borrar por foto, y el botón de sumar otra.
+    assert 'src="/compras/30/fotos/9/ver"' in respuesta.text
+    assert 'action="/compras/30/fotos/9/borrar"' in respuesta.text
+    assert 'action="/compras/30/fotos"' in respuesta.text
+    assert "Agregar foto o archivo" in respuesta.text
+    # Los filtros de Buscar viajan ocultos para volver a la misma búsqueda.
+    assert 'name="query_filtros" value="fecha_desde=2026-08-01"' in respuesta.text
 
 
 def test_editar_compra_sin_foto_no_muestra_el_boton():

@@ -259,7 +259,7 @@
                 {# Los filtros viajan en la URL de editar para que Guardar/Volver vuelvan a ESTA búsqueda. #}
                 <a class="boton boton-editar" href="/compras/{{ c.id }}/editar?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Editar</a>
                 <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle">Detalle</a>
-                {% if c.foto_ruta %}
+                {% if c.tiene_fotos %}
                 <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver foto</a>
                 {% endif %}
                 <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"

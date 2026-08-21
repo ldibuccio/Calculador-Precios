@@ -53,6 +53,9 @@ from app.db import (
     eliminar_compras_del_dia_por_proveedor,
     guardar_disponible,
     guardar_precios_cliente,
+    agregar_foto_guia,
+    borrar_foto_guia,
+    listar_fotos_de_guia,
     limpiar_foto_ruta_de_compras,
     listar_clientes,
     listar_compras_para_costeo,
@@ -93,126 +96,110 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
     return conexion, cursor
 
 
-def test_eliminar_compra_devuelve_el_foto_ruta_si_era_la_unica_referencia():
+def test_eliminar_compra_ultima_de_su_guia_devuelve_las_fotos_sin_otros_usos():
+    # Al borrar el ÚLTIMO renglón de la guía, las fotos de la guía se dan
+    # de baja y se devuelven las rutas que ningúna otra guía usa.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
-            (0,),  # SELECT COUNT(*) después del DELETE: nadie más la usa
-        ]
+            (105, "pendiente", "pendiente"),  # SELECT guia_id, estado, estado_retiro
+            (0,),  # COUNT de compras de la guía tras el DELETE: quedó vacía
+            (0,),  # COUNT de otras guías usando la ruta: ninguna
+        ],
+        filas_fetchall=[("2026-08-13/n07p41-123-abcdef12.jpg",)],  # RETURNING de fotos_guia
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
 
-    assert resultado == "2026-08-13/n07p41-123-abcdef12.jpg"
+    assert resultado == ["2026-08-13/n07p41-123-abcdef12.jpg"]
     conexion.commit.assert_called_once()
     conexion.close.assert_called_once()
 
 
-def test_eliminar_compra_no_devuelve_el_foto_ruta_si_otro_renglon_lo_sigue_usando():
-    # Regresión: una comanda = una foto = varios renglones, todos con el
-    # mismo foto_ruta. Si borro uno pero otro sigue vivo, la foto NO se
-    # puede borrar del bucket todavía.
+def test_eliminar_compra_con_renglones_restantes_no_toca_las_fotos():
+    # La guía sigue teniendo renglones: las fotos son de la GUÍA y se quedan.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
-            (1,),  # SELECT COUNT(*) después del DELETE: queda 1 compra usándola
+            (105, "pendiente", "pendiente"),
+            (2,),  # quedan 2 renglones en la guía
         ]
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
 
-    assert resultado is None
+    assert resultado == []
+    # SELECT compra + DELETE + COUNT de la guía: nada de fotos.
+    assert cursor.execute.call_count == 3
+    assert not any("fotos_guia" in ll.args[0] for ll in cursor.execute.call_args_list)
     conexion.commit.assert_called_once()
 
 
-def test_eliminar_compra_no_borra_la_foto_si_otro_proveedor_del_mismo_listado_la_sigue_usando():
-    # Regresión explícita para "Cargar Listado de Compras Consolidado": una
-    # sola foto de planilla queda compartida por compras de VARIOS
-    # proveedores distintos (ej. Saturno, Crefu, Agro), no solo por varios
-    # renglones de un mismo proveedor. El conteo de referencias filtra
-    # únicamente por foto_ruta, nunca por proveedor_id, así que borrar la
-    # compra de un proveedor no borra la foto mientras compras de OTRO
-    # proveedor sigan usándola.
+def test_eliminar_compra_foto_compartida_por_otra_guia_no_se_borra_del_storage():
+    # Listado consolidado: la misma foto cuelga de VARIAS guías. Vaciar una
+    # guía saca SU registro, pero el archivo sigue mientras otra guía lo use.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/listado-abc123.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
-            (2,),  # SELECT COUNT(*): quedan 2 compras de otros proveedores usándola
+            (105, "pendiente", "pendiente"),
+            (0,),  # la guía quedó vacía
+            (1,),  # otra guía sigue usando la misma ruta
+        ],
+        filas_fetchall=[("2026-08-13/listado-abc123.jpg",)],
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compra(30)
+
+    assert resultado == []
+    # El registro de ESTA guía sí se borró.
+    assert any("DELETE FROM fotos_guia WHERE guia_id" in ll.args[0] for ll in cursor.execute.call_args_list)
+
+
+def test_eliminar_compra_sin_guia_no_toca_fotos():
+    # Compra viejísima sin guía (no debería quedar ninguna tras la
+    # migración): se borra sin mirar fotos.
+    conexion, cursor = _conexion_falsa(
+        [
+            (None, "pendiente", "pendiente"),
         ]
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
 
-    assert resultado is None
-    # El conteo de referencias es global por foto_ruta, sin ningún filtro
-    # de proveedor_id — por eso alcanza para cubrir el caso de varios
-    # proveedores compartiendo la misma foto de planilla.
-    consulta_conteo, parametros_conteo = cursor.execute.call_args_list[2].args
-    assert "proveedor_id" not in consulta_conteo
-    assert parametros_conteo == ("2026-08-13/listado-abc123.jpg",)
-
-
-def test_eliminar_compra_borra_la_foto_al_eliminar_la_ultima_compra_de_cualquier_proveedor_del_listado():
-    # Mismo escenario que arriba, pero esta es la ÚLTIMA compra que queda
-    # (de cualquiera de los proveedores del listado): ahí sí hay que borrar
-    # la foto del bucket.
-    conexion, cursor = _conexion_falsa(
-        [
-            ("2026-08-13/listado-abc123.jpg", "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
-            (0,),  # SELECT COUNT(*): ya no queda ninguna compra usándola
-        ]
-    )
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
-
-    assert resultado == "2026-08-13/listado-abc123.jpg"
-
-
-def test_eliminar_compra_sin_foto_no_cuenta_referencias():
-    conexion, cursor = _conexion_falsa(
-        [
-            (None, "pendiente", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro: esta compra no tenía foto
-        ]
-    )
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = eliminar_compra(30)
-
-    assert resultado is None
-    # Solo el SELECT foto_ruta y el DELETE — sin el SELECT COUNT de más.
-    assert cursor.execute.call_count == 2
+    assert resultado == []
+    assert cursor.execute.call_count == 2  # SELECT + DELETE
 
 
 def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "rechazado", "pendiente"),  # SELECT foto_ruta, estado, estado_retiro
+            (105, "rechazado", "pendiente"),
             (0,),
-        ]
+        ],
+        filas_fetchall=[],
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
 
-    assert resultado == "2026-08-13/n07p41-123-abcdef12.jpg"
+    assert resultado == []
     conexion.commit.assert_called_once()
 
 
 def test_eliminar_compra_cancelada_en_retiro_se_puede_borrar_igual_que_antes():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "cancelado"),  # SELECT foto_ruta, estado, estado_retiro
+            (105, "pendiente", "cancelado"),
             (0,),
-        ]
+        ],
+        filas_fetchall=[],
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
 
-    assert resultado == "2026-08-13/n07p41-123-abcdef12.jpg"
+    assert resultado == []
     conexion.commit.assert_called_once()
 
 
@@ -358,11 +345,17 @@ def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit()
         llamada for llamada in cursor.execute.call_args_list if "INSERT INTO compras" in llamada.args[0]
     ]
     assert len(inserts_compras) == 2
-    # Todos los renglones llevan el mismo carga_token (último parámetro de
-    # la rama normal) y la misma foto.
+    # Todos los renglones llevan el mismo carga_token; la FOTO ya no va en
+    # los renglones (compras.foto_ruta muerta): cuelga de la guía, una vez
+    # (el ON CONFLICT absorbe el segundo renglón).
     for llamada in inserts_compras:
         assert llamada.args[1][-1] == "token123"
-        assert "2026-08-19/n07p41-1.jpg" in llamada.args[1]
+        assert "2026-08-19/n07p41-1.jpg" not in llamada.args[1]
+    inserts_fotos = [
+        llamada for llamada in cursor.execute.call_args_list if "INSERT INTO fotos_guia" in llamada.args[0]
+    ]
+    assert len(inserts_fotos) == 2  # una por renglón, absorbidas por ON CONFLICT
+    assert inserts_fotos[0].args[1] == (105, "2026-08-19/n07p41-1.jpg")
 
 
 def test_crear_compras_de_comanda_con_token_ya_usado_no_inserta_nada():
@@ -1292,6 +1285,55 @@ def test_obtener_uso_storage_bucket_devuelve_cantidad_y_bytes():
     assert parametros == ("comandas",)
 
 
+def test_agregar_foto_guia_suma_sin_reemplazar():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        agregar_foto_guia(105, "2026-08-20/guia-105-abc.jpg")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO fotos_guia" in consulta
+    # Nunca reemplaza: la repetida en la misma guía simplemente no se duplica.
+    assert "ON CONFLICT DO NOTHING" in consulta
+    assert parametros == (105, "2026-08-20/guia-105-abc.jpg")
+    conexion.commit.assert_called_once()
+
+
+def test_borrar_foto_guia_devuelve_la_ruta_solo_si_ninguna_otra_guia_la_usa():
+    conexion, cursor = _conexion_falsa([("2026/x.jpg",), (0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        ruta = borrar_foto_guia(9)
+
+    assert ruta == "2026/x.jpg"
+    consulta_delete = cursor.execute.call_args_list[0].args[0]
+    assert "DELETE FROM fotos_guia WHERE id = %s RETURNING foto_ruta" in consulta_delete
+
+
+def test_borrar_foto_guia_compartida_no_devuelve_la_ruta():
+    # El Listado consolidado comparte el archivo entre guías: mientras otra
+    # guía lo use, el Storage no se toca.
+    conexion, cursor = _conexion_falsa([("2026/listado.jpg",), (2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        ruta = borrar_foto_guia(9)
+
+    assert ruta is None
+    conexion.commit.assert_called_once()
+
+
+def test_listar_fotos_de_guia_ordena_por_llegada():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_fotos_de_guia(105)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "FROM fotos_guia WHERE guia_id = %s" in consulta
+    assert "ORDER BY creado_en" in consulta
+    assert parametros == (105,)
+
+
 def test_obtener_uso_storage_bucket_bucket_vacio_da_cero():
     conexion, cursor = _conexion_falsa([(0, 0)])
 
@@ -1312,13 +1354,13 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     assert resultado == ["2020-01-01/a.jpg", "2020-02-02/b.jpg"]
     cursor.execute.assert_called_once()
     consulta, parametros = cursor.execute.call_args[0]
-    # Una sola pasada: el candidato es la foto cuyo renglón MÁS NUEVO ya
-    # quedó fuera del período a conservar. La versión con NOT EXISTS
-    # correlacionado era cuadrática.
+    # Una sola pasada sobre fotos_guia: candidata si TODAS las guías que
+    # usan la ruta son de antes del corte.
     assert parametros == (date(2023, 8, 15),)
-    assert "GROUP BY foto_ruta" in consulta
-    assert "HAVING MAX(fecha_operacion) < %s" in consulta
-    assert "NOT EXISTS" not in consulta
+    assert "FROM fotos_guia" in consulta
+    assert "JOIN guias_compra" in consulta
+    assert "GROUP BY f.foto_ruta" in consulta
+    assert "HAVING MAX(g.fecha_operacion) < %s" in consulta
 
 
 def test_listar_fotos_para_limpiar_vacio_da_lista_vacia():
@@ -1336,10 +1378,12 @@ def test_limpiar_foto_ruta_de_compras_actualiza_y_comitea():
     with patch("app.db.obtener_conexion", return_value=conexion):
         limpiar_foto_ruta_de_compras("2020-01-01/a.jpg")
 
-    cursor.execute.assert_called_once()
-    consulta, parametros = cursor.execute.call_args[0]
-    assert "UPDATE compras SET foto_ruta = NULL" in consulta
-    assert parametros == ("2020-01-01/a.jpg",)
+    assert cursor.execute.call_count == 2
+    consulta_delete = cursor.execute.call_args_list[0].args[0]
+    assert "DELETE FROM fotos_guia WHERE foto_ruta = %s" in consulta_delete
+    consulta_update = cursor.execute.call_args_list[1].args[0]
+    # Higiene de la columna muerta mientras espera su DROP.
+    assert "UPDATE compras SET foto_ruta = NULL" in consulta_update
     conexion.commit.assert_called_once()
     conexion.close.assert_called_once()
 

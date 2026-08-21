@@ -1,0 +1,107 @@
+{# Fotos de la GUÍA de esta compra (comanda del proveedor en el día):
+   se ven desde cualquier renglón de la guía, se pueden sumar más (nunca
+   reemplazan) y borrar una subida por error. Espera en el contexto:
+   compra (con id y guia_id), fotos_guia (lista), y fotos_volver
+   ("editar" o "detalle") seteado antes del include. #}
+<style>
+  .fotos-guia { margin-top: 0.75rem; }
+  .fotos-guia h3 { font-size: 0.95rem; margin: 0 0 0.5rem; }
+  .fotos-guia-tira {
+    display: flex;
+    gap: 0.6rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+  .foto-guia-item { flex: 0 0 auto; text-align: center; }
+  .foto-guia-item img {
+    width: 6.5rem;
+    height: 6.5rem;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    display: block;
+  }
+  .foto-guia-item .es-pdf {
+    width: 6.5rem;
+    height: 6.5rem;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    background: #f9fafb;
+    text-decoration: none;
+  }
+  .foto-guia-item form { margin: 0.3rem 0 0; }
+  .foto-guia-borrar {
+    padding: 0.35rem 0.7rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    width: auto;
+    margin: 0;
+    display: inline-block;
+  }
+  .fotos-guia-vacio { color: #888; font-style: italic; font-size: 0.88rem; margin: 0 0 0.5rem; }
+  .fotos-guia-subir { margin-top: 0.6rem; }
+  .fotos-guia-subir input[type="file"] { display: none; }
+  .boton-agregar-foto {
+    display: block;
+    width: 100%;
+    padding: 0.8rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    box-sizing: border-box;
+    margin: 0;
+  }
+  .fotos-guia-nota { color: #888; font-size: 0.78rem; margin: 0.35rem 0 0; }
+</style>
+<div class="fotos-guia">
+  <h3>Fotos de la comanda (guía)</h3>
+  {% if fotos_guia %}
+  <div class="fotos-guia-tira">
+    {% for f in fotos_guia %}
+    <div class="foto-guia-item">
+      {% if f.foto_ruta.lower().endswith(".pdf") %}
+      <a class="es-pdf" href="/compras/{{ compra.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener" aria-label="Ver PDF">📄</a>
+      {% else %}
+      <a href="/compras/{{ compra.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener">
+        <img src="/compras/{{ compra.id }}/fotos/{{ f.id }}/ver" alt="Foto de la comanda" loading="lazy">
+      </a>
+      {% endif %}
+      <form method="post" action="/compras/{{ compra.id }}/fotos/{{ f.id }}/borrar"
+            onsubmit="return confirm('¿Borrar esta foto de la guía? No se puede deshacer.');">
+        <input type="hidden" name="volver" value="{{ fotos_volver }}">
+        <input type="hidden" name="query_filtros" value="{{ request.url.query if fotos_volver == 'editar' else '' }}">
+        <button type="submit" class="foto-guia-borrar">Borrar</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="fotos-guia-vacio">Esta guía todavía no tiene fotos.</p>
+  {% endif %}
+
+  {% if compra.guia_id %}
+  <form class="fotos-guia-subir" method="post" action="/compras/{{ compra.id }}/fotos"
+        enctype="multipart/form-data" id="form-subir-foto-guia">
+    <input type="hidden" name="volver" value="{{ fotos_volver }}">
+    <input type="hidden" name="query_filtros" value="{{ request.url.query if fotos_volver == 'editar' else '' }}">
+    <input type="file" name="archivo" id="archivo-foto-guia" accept="image/*,.pdf"
+           onchange="if (this.files.length) this.form.submit();">
+    <label class="boton-agregar-foto" for="archivo-foto-guia">＋ Agregar foto o archivo</label>
+  </form>
+  <p class="fotos-guia-nota">Se suma a las que ya hay (no reemplaza) y se comprime sola antes de subir. Vale para todos los artículos de esta guía.</p>
+  {% endif %}
+</div>
