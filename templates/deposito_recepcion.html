@@ -237,7 +237,7 @@
 
         <div class="acciones-renglon" id="acciones-{{ c.id }}">
           <button type="button" class="boton-exito" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
-          <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazar por calidad</button>
+          <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
           <button type="button" class="boton-advertencia" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazo-parcial')">Rechazo parcial</button>
           <button type="button" class="boton-neutro" onclick="mostrarConfirmacion('{{ c.id }}', 'no-ingreso')">No ingresó</button>
         </div>
@@ -251,7 +251,7 @@
         </div>
 
         <div class="confirmacion" id="confirmacion-rechazar-{{ c.id }}">
-          <p class="texto-confirmacion">¿Rechazar por calidad {{ c.articulo_nombre }}? No se puede deshacer.</p>
+          <p class="texto-confirmacion">¿Rechazo total de {{ c.articulo_nombre }}? No se puede deshacer.</p>
           <div class="acciones-renglon">
             <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazar">
               <button type="submit" class="boton-peligro">Sí</button>
@@ -344,7 +344,7 @@
         return;
       }
       if (rechazados >= llegados) {
-        texto.textContent = 'Si rechazás todo, usá Rechazar por calidad.';
+        texto.textContent = 'Si rechazás todo, usá Rechazo total.';
         texto.classList.add('invalido');
         return;
       }

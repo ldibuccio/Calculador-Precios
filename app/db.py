@@ -1673,7 +1673,7 @@ def actualizar_cantidad_compra(
     """Actualiza artículo/cantidad/tipo de retiro de una compra existente. No toca importe ni seña.
 
     Bloqueada (ValueError) SOLO si la compra ya pasó por Depósito
-    (recepcionada, rechazada por calidad o nunca ingresada — ver
+    (recepcionada, con rechazo total o nunca ingresada — ver
     compra_tiene_cantidad_bloqueada). El retiro de Logística NO bloquea:
     hasta que entra a Depósito, el comprador puede corregir su compra.
     Independiente del bloqueo de precio (actualizar_precio_compra).
@@ -1700,7 +1700,7 @@ def actualizar_cantidad_compra(
                 if estado == "recepcionado":
                     raise ValueError("Esta compra ya fue recepcionada, no se puede editar la cantidad.")
                 if estado == "rechazado":
-                    raise ValueError("Esta compra fue rechazada por calidad, no se puede editar la cantidad.")
+                    raise ValueError("Esta compra tuvo un rechazo total, no se puede editar la cantidad.")
                 raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar la cantidad.")
 
             if tipo_retiro in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO and estado_retiro == "pendiente":
@@ -1766,7 +1766,7 @@ def actualizar_precio_compra(compra_id: int, importe: float | None, sena: float 
 
             if compra_tiene_precio_bloqueado(estado):
                 if estado == "rechazado":
-                    raise ValueError("Esta compra fue rechazada por calidad, no se puede editar el precio.")
+                    raise ValueError("Esta compra tuvo un rechazo total, no se puede editar el precio.")
                 raise ValueError("Esta compra nunca ingresó al depósito, no se puede editar el precio.")
 
             cursor.execute("UPDATE compras SET importe = %s, sena = %s WHERE id = %s", (importe, sena, compra_id))

@@ -49,6 +49,22 @@
     font-weight: 600;
     cursor: pointer;
   }
+  .boton-exportar {
+    display: block;
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
   .error {
     background: #fef2f2;
     color: #991b1b;
@@ -160,6 +176,13 @@
       </select>
       <button type="submit" class="boton-buscar">Buscar</button>
     </form>
+    {% if retiros %}
+    <button type="button" class="boton-buscar boton-exportar" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton-buscar boton-exportar" href="/logistica/consultar/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&tipo={{ tipo or '' }}&estado={{ estado or '' }}">Exportar PDF</a>
+      <a class="boton-buscar boton-exportar" href="/logistica/consultar/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&tipo={{ tipo or '' }}&estado={{ estado or '' }}">Exportar Excel</a>
+    </div>
+    {% endif %}
   </div>
 
   {% if error_fecha %}
@@ -230,5 +253,18 @@
     <p class="vacio">No se encontraron retiros con estos filtros.</p>
     {% endif %}
   </div>
+
+  <script>
+    // "Exportar" es un solo toque para desplegar las 2 opciones, en vez de
+    // navegar a una pantalla intermedia — mismo criterio que Buscar Compras.
+    function mostrarOpcionesExportar() {
+      const boton = document.getElementById("boton-exportar");
+      const opciones = document.getElementById("opciones-exportar");
+      if (boton && opciones) {
+        opciones.style.display = "block";
+        boton.style.display = "none";
+      }
+    }
+  </script>
 </body>
 </html>

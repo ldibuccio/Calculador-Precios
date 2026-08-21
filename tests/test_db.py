@@ -550,7 +550,7 @@ def test_actualizar_cantidad_compra_rechazada_no_se_edita_aunque_nunca_se_haya_r
             actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
-            assert str(error) == "Esta compra fue rechazada por calidad, no se puede editar la cantidad."
+            assert str(error) == "Esta compra tuvo un rechazo total, no se puede editar la cantidad."
 
     conexion.commit.assert_not_called()
 
@@ -600,7 +600,7 @@ def test_actualizar_precio_compra_rechazada_no_se_edita():
             actualizar_precio_compra(30, 60000.0, None)
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
-            assert str(error) == "Esta compra fue rechazada por calidad, no se puede editar el precio."
+            assert str(error) == "Esta compra tuvo un rechazo total, no se puede editar el precio."
 
     assert cursor.execute.call_count == 1
     conexion.commit.assert_not_called()

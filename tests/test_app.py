@@ -3567,7 +3567,7 @@ def test_ver_editar_compra_rechazada_bloquea_todo_aunque_nunca_se_haya_retirado(
         respuesta = cliente.get("/compras/30/editar")
 
     assert respuesta.status_code == 200
-    assert "Esta compra fue rechazada por calidad: no se puede modificar ni la cantidad ni el precio." in respuesta.text
+    assert "Esta compra tuvo un rechazo total: no se puede modificar ni la cantidad ni el precio." in respuesta.text
     assert 'name="accion" value="guardar" disabled' in respuesta.text
     assert respuesta.text.count('class="campo-bloqueado"') == 6
     # "Agregar artículo" sigue habilitado siempre, incluso acá.
@@ -3963,7 +3963,7 @@ def test_ver_recepcion_muestra_los_tres_botones_con_sus_nombres():
 
     assert respuesta.status_code == 200
     assert ">Recibir<" in respuesta.text
-    assert ">Rechazar por calidad<" in respuesta.text
+    assert ">Rechazo total<" in respuesta.text
     assert ">No ingresó<" in respuesta.text
     assert 'action="/deposito/recepcion/1/no-ingreso"' in respuesta.text
 
@@ -3981,7 +3981,7 @@ def test_ver_recepcion_confirmacion_es_en_el_lugar_no_confirm_nativo():
     assert "onclick=\"mostrarConfirmacion('1', 'rechazar')\"" in respuesta.text
     assert "onclick=\"mostrarConfirmacion('1', 'no-ingreso')\"" in respuesta.text
     assert "¿Recepcionar Tomate Cherry?" in respuesta.text
-    assert "¿Rechazar por calidad Tomate Cherry? No se puede deshacer." in respuesta.text
+    assert "¿Rechazo total de Tomate Cherry? No se puede deshacer." in respuesta.text
     # "No ingresó" ya NO dice "No se puede deshacer" -- ahora sí se puede.
     assert "¿Tomate Cherry nunca llegó al depósito?" in respuesta.text
 
@@ -4174,7 +4174,7 @@ def test_rechazo_parcial_que_rechaza_todo_da_error_y_manda_al_otro_boton():
         )
 
     assert respuesta.status_code == 400
-    assert "Si rechazás todo, usá Rechazar por calidad." in respuesta.text
+    assert "Si rechazás todo, usá Rechazo total." in respuesta.text
     mock_recepcionar.assert_not_called()
 
 
@@ -9610,6 +9610,71 @@ def test_consultar_retiros_pasa_los_filtros_a_la_consulta():
         date(2026, 8, 10), date(2026, 8, 12), 7, 5, "Cooperativa", "pendiente", limite=TOPE_FILAS_BUSQUEDA + 1
     )
     assert "No se encontraron retiros" in respuesta.text
+
+
+def test_consultar_retiros_ofrece_exportar_con_todos_los_filtros():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=RETIROS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get(
+            "/logistica/consultar?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&tipo=Carro&estado=retirado"
+        )
+
+    assert respuesta.status_code == 200
+    assert (
+        "/logistica/consultar/exportar-pdf?fecha_desde=2026-08-10&fecha_hasta=2026-08-12"
+        "&proveedor_id=&articulo_id=&tipo=Carro&estado=retirado"
+    ) in respuesta.text
+    assert "/logistica/consultar/exportar-excel?fecha_desde=2026-08-10" in respuesta.text
+
+
+def test_exportar_retiros_pdf_sin_tope_y_con_el_total_desglosado():
+    retiros = [dict(r) for r in RETIROS_DE_PRUEBA]
+    retiros[0]["estado"] = "no_ingresado"  # la de Carro de 10 bultos
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=retiros) as mock_buscar,
+    ):
+        respuesta = cliente.get(
+            "/logistica/consultar/exportar-pdf?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&tipo=Carro"
+        )
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "Retiros_2026-08-10_a_2026-08-12" in respuesta.headers["content-disposition"]
+    # SIN tope: el export no pasa limite, aunque la pantalla corte en 500.
+    mock_buscar.assert_called_once_with(date(2026, 8, 10), date(2026, 8, 12), None, None, "Carro", None)
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Consultar Retiros" in texto
+    assert "tipo Carro" in texto  # los filtros aplicados viajan al subtítulo
+    # El total para liquidar, con el mismo desglose que la pantalla.
+    assert "Total: 22 bultos" in texto
+    assert "10 no ingresaron al depósito — Neto: 12 bultos" in texto
+    assert "No ingresó al depósito" in texto  # la fila marcada
+
+
+def test_exportar_retiros_excel_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=RETIROS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/logistica/consultar/exportar-excel?fecha_desde=2026-08-10&fecha_hasta=2026-08-12")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "Retiros_2026-08-10_a_2026-08-12" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+
+def test_exportar_retiros_pdf_fecha_invalida_da_400():
+    respuesta = cliente.get("/logistica/consultar/exportar-pdf?fecha_desde=no-es-fecha&fecha_hasta=2026-08-12")
+
+    assert respuesta.status_code == 400
 
 
 def test_consultar_retiros_ofrece_cooperativa_en_el_filtro_de_tipo():

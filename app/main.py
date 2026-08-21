@@ -141,6 +141,7 @@ from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
+from core.exportar_retiros import generar_excel_listado_retiros, generar_pdf_listado_retiros
 from core.exportar_vacios import (
     generar_excel_movimientos_vacios,
     generar_excel_stock_vacios,
@@ -169,7 +170,7 @@ ESTADOS_RECEPCION_LABELS = {
     None: "Sin datos",
     "pendiente": "Pendiente",
     "recepcionado": "Recibido",
-    "rechazado": "Rechazado por calidad",
+    "rechazado": "Rechazo total",
     "no_ingresado": "No ingresó",
 }
 ORIGENES_RETIRO_LABELS = {
@@ -2878,7 +2879,7 @@ def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, p
     # Solo Depósito bloquea la cantidad (regla 19/08/2026): si está
     # bloqueada sola (sin el precio), la única causa posible es recepcionada.
     razon_cantidad = "ya fue recepcionada"
-    razon_precio = "fue rechazada por calidad" if estado == "rechazado" else "nunca ingresó al depósito"
+    razon_precio = "tuvo un rechazo total" if estado == "rechazado" else "nunca ingresó al depósito"
 
     if cantidad_bloqueada and precio_bloqueado:
         return f"Esta compra {razon_precio}: no se puede modificar ni la cantidad ni el precio."
@@ -4793,6 +4794,48 @@ def ver_logistica(request: Request):
 ESTADOS_FILTRO_RETIRO_VALIDOS = {"pendiente", "retirado", "cancelado"}
 
 
+def _filas_y_totales_retiros(retiros: list[dict]) -> tuple[list[dict], dict]:
+    """Las filas de Consultar Retiros con sus totales, compartido por la pantalla y los exports.
+
+    El total para liquidar: por fila, lo anotado al retirar si existe, si
+    no lo que cargó el comprador. Se desglosa para que se vea cuánto del
+    total es dato anotado y cuánto viene de la carga.
+
+    Las compras que Depósito marcó "no ingresó" SUMAN al total igual que
+    siempre, pero se cuentan aparte y se muestra el neto — nunca se
+    restan en silencio: si el carrero dice "yo llevé 120" y acá dijera
+    112 directo, no se sabría de dónde sale la diferencia. Los dos
+    números a la vista, y el dueño decide qué paga.
+    """
+    total_bultos = 0.0
+    total_anotados = 0.0
+    total_del_comprador = 0.0
+    total_no_ingresados = 0.0
+    filas = []
+    for retiro in retiros:
+        anotada = retiro["cantidad_cajones_retirada"]
+        bultos = float(anotada) if anotada is not None else float(retiro["cantidad_cajones"])
+        usa_anotada = anotada is not None
+        no_ingreso = retiro.get("estado") == "no_ingresado"
+        total_bultos += bultos
+        if usa_anotada:
+            total_anotados += bultos
+        else:
+            total_del_comprador += bultos
+        if no_ingreso:
+            total_no_ingresados += bultos
+        filas.append({**retiro, "bultos": bultos, "usa_anotada": usa_anotada, "no_ingreso": no_ingreso})
+
+    totales = {
+        "total_bultos": total_bultos,
+        "total_anotados": total_anotados,
+        "total_del_comprador": total_del_comprador,
+        "total_no_ingresados": total_no_ingresados,
+        "total_neto": total_bultos - total_no_ingresados,
+    }
+    return filas, totales
+
+
 @app.get("/logistica/consultar")
 def ver_consultar_retiros(
     request: Request,
@@ -4857,33 +4900,7 @@ def ver_consultar_retiros(
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    # El total para liquidar: por fila, lo anotado al retirar si existe, si
-    # no lo que cargó el comprador. Se desglosa para que se vea cuánto del
-    # total es dato anotado y cuánto viene de la carga.
-    #
-    # Las compras que Depósito marcó "no ingresó" SUMAN al total igual que
-    # siempre, pero se cuentan aparte y se muestra el neto — nunca se
-    # restan en silencio: si el carrero dice "yo llevé 120" y acá dijera
-    # 112 directo, no se sabría de dónde sale la diferencia. Los dos
-    # números a la vista, y el dueño decide qué paga.
-    total_bultos = 0.0
-    total_anotados = 0.0
-    total_del_comprador = 0.0
-    total_no_ingresados = 0.0
-    filas = []
-    for retiro in retiros:
-        anotada = retiro["cantidad_cajones_retirada"]
-        bultos = float(anotada) if anotada is not None else float(retiro["cantidad_cajones"])
-        usa_anotada = anotada is not None
-        no_ingreso = retiro.get("estado") == "no_ingresado"
-        total_bultos += bultos
-        if usa_anotada:
-            total_anotados += bultos
-        else:
-            total_del_comprador += bultos
-        if no_ingreso:
-            total_no_ingresados += bultos
-        filas.append({**retiro, "bultos": bultos, "usa_anotada": usa_anotada, "no_ingreso": no_ingreso})
+    filas, totales = _filas_y_totales_retiros(retiros)
 
     return templates.TemplateResponse(
         request,
@@ -4899,13 +4916,105 @@ def ver_consultar_retiros(
             "tipo": tipo_valor,
             "estado": estado_valor,
             "error_fecha": error_fecha,
-            "total_bultos": total_bultos,
-            "total_anotados": total_anotados,
-            "total_del_comprador": total_del_comprador,
-            "total_no_ingresados": total_no_ingresados,
-            "total_neto": total_bultos - total_no_ingresados,
+            **totales,
             "aviso_tope": aviso_tope,
         },
+    )
+
+
+def _leer_filtros_exportar_retiros(
+    fecha_desde_texto: str, fecha_hasta_texto: str, proveedor_id_texto: str, articulo_id_texto: str,
+    tipo_texto: str, estado_texto: str,
+) -> tuple[date, date, int | None, int | None, str | None, str | None, list[str]]:
+    """Valida los filtros para las rutas de exportación de retiros y arma los textos para el subtítulo.
+
+    El link solo lo arma la propia pantalla con valores ya válidos, así que
+    un error acá es una URL manipulada a mano — alcanza con HTTPException
+    (mismo criterio que la exportación de Buscar Compras).
+    """
+    try:
+        fecha_desde = date.fromisoformat(fecha_desde_texto)
+        fecha_hasta = date.fromisoformat(fecha_hasta_texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+
+    proveedor_id = _id_opcional_desde_query(proveedor_id_texto)
+    articulo_id = _id_opcional_desde_query(articulo_id_texto)
+    tipo = tipo_texto if tipo_texto in TIPOS_RETIRO_VALIDOS else None
+    estado = estado_texto if estado_texto in ESTADOS_FILTRO_RETIRO_VALIDOS else None
+
+    # Los filtros aplicados viajan al subtítulo del archivo: quien lo mira
+    # (el carrero, la cooperativa) tiene que saber qué es sin abrir la app.
+    filtros_texto = []
+    if proveedor_id is not None:
+        try:
+            nombre = next((p["nombre"] for p in listar_proveedores() if p["id"] == proveedor_id), None)
+        except Exception:
+            nombre = None
+        filtros_texto.append(f"proveedor {nombre or f'#{proveedor_id}'}")
+    if articulo_id is not None:
+        try:
+            nombre = next((a["nombre"] for a in listar_articulos() if a["id"] == articulo_id), None)
+        except Exception:
+            nombre = None
+        filtros_texto.append(f"artículo {nombre or f'#{articulo_id}'}")
+    if tipo is not None:
+        filtros_texto.append(f"tipo {tipo}")
+    if estado is not None:
+        filtros_texto.append(f"estado {estado}")
+
+    return fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo, estado, filtros_texto
+
+
+def _nombre_archivo_exportacion_retiros(fecha_desde: date, fecha_hasta: date, extension: str) -> str:
+    return f"Retiros_{fecha_desde.isoformat()}_a_{fecha_hasta.isoformat()}.{extension}"
+
+
+@app.get("/logistica/consultar/exportar-pdf")
+def exportar_retiros_pdf(
+    fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "",
+    tipo: str = "", estado: str = "",
+):
+    """Genera Consultar Retiros (mismos filtros que la pantalla) en PDF — SIN tope, aunque la pantalla corte."""
+    desde, hasta, proveedor_valor, articulo_valor, tipo_valor, estado_valor, filtros_texto = (
+        _leer_filtros_exportar_retiros(fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo, estado)
+    )
+    try:
+        retiros = buscar_retiros(desde, hasta, proveedor_valor, articulo_valor, tipo_valor, estado_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    filas, totales = _filas_y_totales_retiros(retiros)
+    pdf_bytes = generar_pdf_listado_retiros(desde, hasta, filtros_texto, filas, totales)
+    nombre_archivo = _nombre_archivo_exportacion_retiros(desde, hasta, "pdf")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/logistica/consultar/exportar-excel")
+def exportar_retiros_excel(
+    fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "",
+    tipo: str = "", estado: str = "",
+):
+    """Genera Consultar Retiros (mismos filtros que la pantalla) en Excel — SIN tope, aunque la pantalla corte."""
+    desde, hasta, proveedor_valor, articulo_valor, tipo_valor, estado_valor, filtros_texto = (
+        _leer_filtros_exportar_retiros(fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo, estado)
+    )
+    try:
+        retiros = buscar_retiros(desde, hasta, proveedor_valor, articulo_valor, tipo_valor, estado_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    filas, totales = _filas_y_totales_retiros(retiros)
+    excel_bytes = generar_excel_listado_retiros(desde, hasta, filtros_texto, filas, totales)
+    nombre_archivo = _nombre_archivo_exportacion_retiros(desde, hasta, "xlsx")
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
 
 
@@ -5365,7 +5474,7 @@ def _validar_rechazo_parcial(
     if rechazados <= 0:
         return "La cantidad de bultos rechazados tiene que ser mayor a cero. Si no rechazás nada, usá Recibir.", None, None
     if rechazados >= llegados:
-        return "Los bultos rechazados tienen que ser menos que los llegados. Si rechazás todo, usá Rechazar por calidad.", None, None
+        return "Los bultos rechazados tienen que ser menos que los llegados. Si rechazás todo, usá Rechazo total.", None, None
 
     return None, llegados - rechazados, rechazados
 
