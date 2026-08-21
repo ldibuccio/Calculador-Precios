@@ -4860,20 +4860,30 @@ def ver_consultar_retiros(
     # El total para liquidar: por fila, lo anotado al retirar si existe, si
     # no lo que cargó el comprador. Se desglosa para que se vea cuánto del
     # total es dato anotado y cuánto viene de la carga.
+    #
+    # Las compras que Depósito marcó "no ingresó" SUMAN al total igual que
+    # siempre, pero se cuentan aparte y se muestra el neto — nunca se
+    # restan en silencio: si el carrero dice "yo llevé 120" y acá dijera
+    # 112 directo, no se sabría de dónde sale la diferencia. Los dos
+    # números a la vista, y el dueño decide qué paga.
     total_bultos = 0.0
     total_anotados = 0.0
     total_del_comprador = 0.0
+    total_no_ingresados = 0.0
     filas = []
     for retiro in retiros:
         anotada = retiro["cantidad_cajones_retirada"]
         bultos = float(anotada) if anotada is not None else float(retiro["cantidad_cajones"])
         usa_anotada = anotada is not None
+        no_ingreso = retiro.get("estado") == "no_ingresado"
         total_bultos += bultos
         if usa_anotada:
             total_anotados += bultos
         else:
             total_del_comprador += bultos
-        filas.append({**retiro, "bultos": bultos, "usa_anotada": usa_anotada})
+        if no_ingreso:
+            total_no_ingresados += bultos
+        filas.append({**retiro, "bultos": bultos, "usa_anotada": usa_anotada, "no_ingreso": no_ingreso})
 
     return templates.TemplateResponse(
         request,
@@ -4892,6 +4902,8 @@ def ver_consultar_retiros(
             "total_bultos": total_bultos,
             "total_anotados": total_anotados,
             "total_del_comprador": total_del_comprador,
+            "total_no_ingresados": total_no_ingresados,
+            "total_neto": total_bultos - total_no_ingresados,
             "aviso_tope": aviso_tope,
         },
     )

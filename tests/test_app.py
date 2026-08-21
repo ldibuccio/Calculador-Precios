@@ -9508,15 +9508,15 @@ def test_detalle_tiene_etiqueta_para_el_origen_cooperativa():
 
 RETIROS_DE_PRUEBA = [
     {"id": 1, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": datetime(2026, 8, 16, 7, 30),
-     "tipo_retiro": "Carro", "estado_retiro": "retirado", "cantidad_cajones": 10.0,
+     "tipo_retiro": "Carro", "estado_retiro": "retirado", "estado": "pendiente", "cantidad_cajones": 10.0,
      "cantidad_cajones_retirada": None, "proveedor_nombre": "Saturno",
      "proveedor_codigo_puesto": "N07P41", "articulo_nombre": "Kiwi"},
     {"id": 2, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": datetime(2026, 8, 16, 8, 15),
-     "tipo_retiro": "Clark", "estado_retiro": "retirado", "cantidad_cajones": 8.0,
+     "tipo_retiro": "Clark", "estado_retiro": "retirado", "estado": "recepcionado", "cantidad_cajones": 8.0,
      "cantidad_cajones_retirada": 7.0, "proveedor_nombre": "Saturno",
      "proveedor_codigo_puesto": "N07P41", "articulo_nombre": "Mango"},
     {"id": 3, "fecha_operacion": date(2026, 8, 16), "retiro_procesado_el": None,
-     "tipo_retiro": "Clark", "estado_retiro": "pendiente", "cantidad_cajones": 5.0,
+     "tipo_retiro": "Clark", "estado_retiro": "pendiente", "estado": "pendiente", "cantidad_cajones": 5.0,
      "cantidad_cajones_retirada": None, "proveedor_nombre": "Crefu",
      "proveedor_codigo_puesto": "N03P12", "articulo_nombre": "Palta"},
 ]
@@ -9565,6 +9565,32 @@ def test_consultar_retiros_default_48hs_y_total_desglosado():
     assert "7*" not in respuesta.text
     # Pendiente: sin hora de retiro.
     assert "Pendiente" in respuesta.text
+    # Sin ninguna compra "no ingresó", el renglón del neto no aparece.
+    assert "no ingresaron al depósito" not in respuesta.text
+
+
+def test_consultar_retiros_marca_las_no_ingresadas_y_desglosa_el_neto():
+    # Carro/Cooperativa nacen retiradas solas y el total se usa para
+    # liquidarle a terceros — pero si Depósito marcó "no ingresó", esa
+    # mercadería nunca llegó. NUNCA se resta en silencio: el total sigue
+    # siendo el retirado (22), y aparte se ve cuánto no ingresó (10) y el
+    # neto (12) — los dos números a la vista, el dueño decide qué paga.
+    retiros = [dict(r) for r in RETIROS_DE_PRUEBA]
+    retiros[0]["estado"] = "no_ingresado"  # la de Carro de 10 bultos
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_retiros", return_value=retiros),
+    ):
+        respuesta = cliente.get("/logistica/consultar")
+
+    assert respuesta.status_code == 200
+    # El total NO cambia: sigue mostrando todo lo retirado.
+    assert "Total: 22 bultos" in respuesta.text
+    assert "10 no ingresaron al depósito — Neto: 12 bultos" in respuesta.text
+    # Y la fila queda marcada con la etiqueta visible.
+    assert "No ingresó al depósito" in respuesta.text
 
 
 def test_consultar_retiros_pasa_los_filtros_a_la_consulta():

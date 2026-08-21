@@ -2193,6 +2193,11 @@ def buscar_retiros(
     total de bultos para liquidar al carrero/cooperativa lo arma quien
     llama con COALESCE de esos dos — acá se devuelven separados para poder
     mostrar de dónde sale cada número.
+
+    También trae c.estado (el veredicto de Depósito): una compra
+    'no_ingresado' figura retirada (Carro/Cooperativa nacen así solas)
+    pero la mercadería nunca llegó — la pantalla la marca y desglosa el
+    total para no pagarle al carrero bultos que no trajo.
     """
     condiciones, parametros = _condiciones_buscar_retiros(
         fecha_desde, fecha_hasta, proveedor_id, articulo_id, tipo_retiro, estado_retiro
@@ -2208,7 +2213,7 @@ def buscar_retiros(
             cursor.execute(
                 f"""
                 SELECT c.id, c.fecha_operacion, c.retiro_procesado_el, c.tipo_retiro, c.estado_retiro,
-                       c.cantidad_cajones, c.cantidad_cajones_retirada,
+                       c.estado, c.cantidad_cajones, c.cantidad_cajones_retirada,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        a.nombre AS articulo_nombre
                 FROM compras c

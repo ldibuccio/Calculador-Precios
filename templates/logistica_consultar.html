@@ -93,6 +93,24 @@
   }
   .total .desglose { font-size: 0.9rem; color: #1e40af; margin: 0.25rem 0 0; }
   .total .nota { font-size: 0.8rem; color: #64748b; margin: 0.35rem 0 0; }
+  .total .no-ingresados {
+    font-size: 0.95rem;
+    color: #991b1b;
+    font-weight: 700;
+    margin: 0.5rem 0 0;
+    padding-top: 0.5rem;
+    border-top: 1px solid #bfdbfe;
+  }
+  .pill-no-ingreso {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    margin-top: 0.15rem;
+  }
 </style>
 </head>
 <body>
@@ -163,6 +181,12 @@
     <span class="numero-grande">Total: {{ total_bultos|numero }} bultos</span>
     <p class="desglose">{{ total_anotados|numero }} anotados al retirar + {{ total_del_comprador|numero }}* de la carga del comprador</p>
     <p class="nota">* sin cantidad anotada al retirar: se usa lo que cargó el comprador</p>
+    {# Los "no ingresó" NUNCA se restan en silencio: el total de arriba es
+       lo retirado como siempre, y acá abajo se ve cuánto de eso nunca
+       llegó al depósito y el neto — los dos números, y el dueño decide. #}
+    {% if total_no_ingresados > 0 %}
+    <p class="no-ingresados">{{ total_no_ingresados|numero }} no ingresaron al depósito — Neto: {{ total_neto|numero }} bultos</p>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -195,6 +219,7 @@
               {% if r.estado_retiro == "retirado" %}<span class="estado-retirado">Retirado</span>
               {% elif r.estado_retiro == "cancelado" %}<span class="estado-cancelado">Cancelado</span>
               {% else %}<span class="estado-pendiente">Pendiente</span>{% endif %}
+              {% if r.no_ingreso %}<br><span class="pill-no-ingreso">No ingresó al depósito</span>{% endif %}
             </td>
           </tr>
           {% endfor %}
