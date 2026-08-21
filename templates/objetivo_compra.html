@@ -83,16 +83,21 @@
     font-size: 0.85rem;
     margin: 0.35rem 0 0;
   }
+  /* La etiqueta va ARRIBA del input y pegada a él: al costado en gris se
+     perdía y el recuadro parecía un número suelto. El texto sale de la
+     unidad de venta de la FICHA del cliente — si acá dice "Kilos" en un
+     artículo por unidad, la ficha está mal cargada y se nota de una. */
   .fila-kilos {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.3rem;
     margin-top: 0.75rem;
   }
   .fila-kilos label {
     font-size: 0.9rem;
-    color: #444;
-    flex: 1;
+    font-weight: 700;
+    color: #1e3a8a;
   }
   .input-kilos {
     width: 6.5rem;
@@ -188,7 +193,7 @@
       — Venta vigente: {{ fila.precio_vigente|moneda }}/{{ sufijo }}
     </p>
     <div class="fila-kilos">
-      <label>{% if fila.unidad_venta == "kilo" %}Kilos por cajón{% elif fila.unidad_venta == "unidad" %}Unidades por bulto{% else %}Cubetas por bulto{% endif %}</label>
+      <label>{% if fila.unidad_venta == "kilo" %}Kilos por cajón{% elif fila.unidad_venta == "unidad" %}Unidades por cajón{% else %}Cubetas por cajón{% endif %}</label>
       <input class="input-kilos" type="text" inputmode="decimal" value="{{ fila.contenido_ultima|kilos }}">
     </div>
     <div class="objetivo">

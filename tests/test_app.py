@@ -8919,6 +8919,33 @@ def test_ver_objetivo_de_compra_con_cliente_muestra_los_articulos_bajo_objetivo(
     assert "Morrón Rojo" in respuesta.text
 
 
+def test_objetivo_de_compra_etiqueta_el_input_con_la_unidad_de_la_ficha():
+    # El input de contenido lleva SU unidad real (de la ficha logística del
+    # cliente) + "por cajón": sirve de control — si en Palta dijera
+    # "Kilos", la ficha está mal cargada. Nada de "Kilo/Unidad/Cubeta"
+    # barreado: el sistema ya sabe cuál es.
+    base = dict(OBJETIVOS_DE_PRUEBA["articulos"][0])
+    objetivos = dict(
+        OBJETIVOS_DE_PRUEBA,
+        articulos=[
+            dict(base, articulo_nombre="Manzana Roja", unidad_venta="kilo"),
+            dict(base, articulo_nombre="Palta", unidad_venta="unidad"),
+            dict(base, articulo_nombre="Frutilla", unidad_venta="cubeta"),
+        ],
+    )
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.calcular_objetivos_de_compra", return_value=objetivos),
+    ):
+        respuesta = cliente.get("/compras/objetivo?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Kilos por cajón" in respuesta.text
+    assert "Unidades por cajón" in respuesta.text
+    assert "Cubetas por cajón" in respuesta.text
+    assert "por bulto" not in respuesta.text
+
+
 def test_ver_objetivo_de_compra_cliente_sin_utilidad_objetivo_avisa():
     objetivos = {"articulos": [], "sin_precio_vigente": [], "sin_ficha": [], "utilidad_objetivo": None}
     with (
