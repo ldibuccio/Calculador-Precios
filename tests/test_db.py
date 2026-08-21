@@ -34,6 +34,8 @@ from app.db import (
     compra_tiene_deshacer_retiro_bloqueado,
     compra_tiene_precio_bloqueado,
     contar_compras_sin_precio,
+    contar_recepciones_pendientes_viejas,
+    contar_retiros_pendientes_viejos,
     corregir_recepcion_compra,
     crear_cliente,
     crear_compra,
@@ -1037,6 +1039,46 @@ def test_contar_retiros_buscados_incluye_el_criterio_de_pendiente():
     consulta = cursor.execute.call_args.args[0]
     assert "COUNT(*)" in consulta
     assert "IS DISTINCT FROM 'retirado'" in consulta
+
+
+def test_contar_retiros_pendientes_viejos_usa_el_criterio_de_la_pantalla():
+    conexion, cursor = _conexion_falsa([(7, date(2026, 8, 1))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_retiros_pendientes_viejos(date(2026, 8, 4))
+
+    assert resultado == {"casos": 7, "mas_viejo": date(2026, 8, 1)}
+    consulta, parametros = cursor.execute.call_args.args
+    # Mismo "pendiente" que la pantalla de Retiro: los NULL raros cuentan.
+    assert "IS DISTINCT FROM 'retirado'" in consulta
+    assert "IS DISTINCT FROM 'cancelado'" in consulta
+    assert "MIN(fecha_operacion)" in consulta
+    assert "fecha_operacion <= %s" in consulta
+    assert parametros == (date(2026, 8, 4),)
+
+
+def test_contar_recepciones_pendientes_viejas_usa_el_criterio_de_la_pantalla():
+    conexion, cursor = _conexion_falsa([(3, date(2026, 8, 2))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_recepciones_pendientes_viejas(date(2026, 8, 4))
+
+    assert resultado == {"casos": 3, "mas_viejo": date(2026, 8, 2)}
+    consulta, parametros = cursor.execute.call_args.args
+    assert "estado = 'pendiente'" in consulta
+    assert "guia_id IS NOT NULL" in consulta
+    assert "MIN(fecha_operacion)" in consulta
+    assert parametros == (date(2026, 8, 4),)
+
+
+def test_listar_compras_pendientes_retiro_trae_la_fecha_de_operacion():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_compras_pendientes_retiro("Clark")
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "c.fecha_operacion" in consulta
 
 
 def test_listar_compras_procesadas_hoy_retiro_filtra_por_tipo_y_fecha():

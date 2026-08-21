@@ -63,7 +63,21 @@
   .cantidad {
     color: #666;
     font-size: 0.88rem;
+    margin: 0 0 0.35rem;
+  }
+  .fecha-compra {
+    color: #666;
+    font-size: 0.85rem;
     margin: 0 0 0.7rem;
+  }
+  /* Compra con más de un día sin retirar: que salte a la vista. */
+  .fecha-compra.fecha-vieja {
+    display: inline-block;
+    background: #fef9c3;
+    color: #92400e;
+    font-weight: 700;
+    padding: 0.2rem 0.55rem;
+    border-radius: 6px;
   }
   .campo-retirados label {
     display: block;
@@ -207,6 +221,14 @@
       <div class="renglon">
         <p class="articulo-nombre">{{ c.articulo_nombre }}</p>
         <p class="cantidad">{{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</p>
+        {# La mercadería a veces se levanta días después: la fecha de la
+           compra siempre a la vista, y resaltada cuando tiene más de un
+           día para que se note que es vieja. #}
+        {% if c.fecha_vieja %}
+        <p class="fecha-compra fecha-vieja">⚠ Compra del {{ c.fecha_operacion.strftime("%d/%m") }}</p>
+        {% else %}
+        <p class="fecha-compra">Compra del {{ c.fecha_operacion.strftime("%d/%m") }}</p>
+        {% endif %}
 
         <form method="post" action="/logistica/retiro/{{ tipo_retiro }}/{{ c.id }}/retirar?origen={{ origen }}" class="campo-retirados" id="form-retirar-{{ c.id }}">
           <label for="cajones-retirados-{{ c.id }}">Cajones retirados</label>

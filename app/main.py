@@ -47,6 +47,8 @@ from app.db import (
     compra_tiene_precio_bloqueado,
     contar_articulos,
     contar_compras_sin_precio,
+    contar_recepciones_pendientes_viejas,
+    contar_retiros_pendientes_viejos,
     corregir_recepcion_compra,
     crear_articulo,
     crear_cliente,
@@ -4722,6 +4724,13 @@ def _renderizar_pantalla_logistica_retiro(
         procesado["deshacer_bloqueado"] = compra_tiene_deshacer_retiro_bloqueado(procesado["estado"])
         procesado["motivo_bloqueo"] = ESTADOS_RECEPCION_LABELS.get(procesado["estado"]) if procesado["deshacer_bloqueado"] else None
 
+    # La fecha de cada compra pendiente, con marca cuando tiene más de un
+    # día: el que retira tiene que ver de cuándo es lo que está por
+    # levantar — si es de hace dos días, que salte a la vista.
+    hoy = _hoy_argentina()
+    for compra_pendiente in compras_pendientes:
+        compra_pendiente["fecha_vieja"] = compra_pendiente["fecha_operacion"] < hoy - timedelta(days=1)
+
     recien_procesado = None
     if recien_procesado_id is not None:
         recien_procesado = next((p for p in procesados_hoy if p["id"] == recien_procesado_id), None)
@@ -5312,8 +5321,62 @@ def deshacer_no_ingreso_compra_ruta(request: Request, compra_id: int):
 
 @app.get("/gerencia")
 def ver_gerencia(request: Request):
-    return _renderizar_en_construccion(
-        request, "Gerencia", volver_url="/inicio", volver_texto="Volver a Inicio", sector="gerencia"
+    """Hub de Gerencia: por ahora solo Auditoría; acá se van colgando los tableros del dueño."""
+    return templates.TemplateResponse(request, "gerencia.html", {})
+
+
+def _alertas_auditoria() -> list[dict]:
+    """Los controles del tablero de Auditoría, como LISTA de definiciones.
+
+    Agregar el control número diez tiene que ser sumar una entrada acá
+    (título + conteo + link al detalle), no tocar el diseño de la
+    pantalla. Cada control devuelve casos y el dato que más dice: de
+    cuándo es el caso más viejo. Todos son consultas de conteo livianas
+    (corren en cada carga de la pantalla): apoyarse en índices.
+    """
+    hoy = _hoy_argentina()
+    # "Más de 48 horas" con la granularidad real del dato (fecha_operacion
+    # es una fecha, sin hora): compras de anteayer para atrás.
+    limite = hoy - timedelta(days=2)
+
+    retiros = contar_retiros_pendientes_viejos(limite)
+    recepciones = contar_recepciones_pendientes_viejas(limite)
+
+    return [
+        {
+            "titulo": "Mercadería sin retirar hace más de 48 horas",
+            "casos": retiros["casos"],
+            "mas_viejo": retiros["mas_viejo"],
+            "url": "/logistica/consultar?" + urlencode({
+                "fecha_desde": (retiros["mas_viejo"] or limite).isoformat(),
+                "fecha_hasta": limite.isoformat(),
+                "estado": "pendiente",
+            }),
+            "texto_link": "Ver en Consultar Retiros",
+        },
+        {
+            "titulo": "Mercadería sin recepcionar hace más de 48 horas",
+            "casos": recepciones["casos"],
+            "mas_viejo": recepciones["mas_viejo"],
+            "url": "/deposito/recepcion",
+            "texto_link": "Ver en Recepción",
+        },
+    ]
+
+
+@app.get("/gerencia/auditoria")
+def ver_auditoria(request: Request):
+    """Tablero de cosas que están mal, de un pantallazo: solo aparecen los controles con casos."""
+    try:
+        alertas = _alertas_auditoria()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    con_casos = [a for a in alertas if a["casos"] > 0]
+    return templates.TemplateResponse(
+        request,
+        "gerencia_auditoria.html",
+        {"alertas": con_casos, "controles_corridos": len(alertas)},
     )
 
 

@@ -3679,12 +3679,13 @@ def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
 COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
     {
         "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
     },
     {
         "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
     },
     {
@@ -7366,8 +7367,9 @@ def test_ver_inicio_deposito_y_logistica_ya_no_dicen_proximamente():
     assert '<a class="boton-area" href="/deposito">' in respuesta.text
     assert "Logística (Próximamente)" not in respuesta.text
     assert '<a class="boton-area" href="/logistica">' in respuesta.text
-    # Gerencia sigue siendo placeholder: no se tocó.
-    assert "Gerencia (Próximamente)" in respuesta.text
+    # Gerencia ya tiene contenido (Auditoría): dejó de ser placeholder.
+    assert "Gerencia (Próximamente)" not in respuesta.text
+    assert '<a class="boton-area" href="/gerencia">' in respuesta.text
 
 
 def test_ver_inicio_puesto_es_el_primer_boton():
@@ -7554,15 +7556,34 @@ def test_ver_logistica_muestra_solo_clark_y_consultar():
 COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA = [
     {
         "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
-        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
     },
     {
         "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
     },
 ]
+
+
+def test_ver_logistica_retiro_muestra_la_fecha_y_resalta_las_viejas():
+    # El que retira tiene que ver de cuándo es lo que levanta: la fecha va
+    # en cada renglón, y con más de un día se resalta para que se note.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_compras_pendientes_retiro", return_value=COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_retiro", return_value=[]),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+
+    assert respuesta.status_code == 200
+    # La de hoy: fecha visible, sin resaltar.
+    assert "Compra del 06/08" in respuesta.text
+    # La de hace 3 días: resaltada con advertencia.
+    assert "⚠ Compra del 03/08" in respuesta.text
+    assert 'class="fecha-compra fecha-vieja"' in respuesta.text
 
 
 def test_ver_logistica_retiro_agrupa_por_guia_sin_mostrar_el_numero():
@@ -8393,12 +8414,13 @@ def test_ingresar_mercaderia_error_de_base_muestra_mensaje_claro():
     assert "No se pudo guardar la compra" in respuesta.text
 
 
-def test_ver_gerencia_muestra_en_construccion_y_vuelve_a_inicio():
+def test_ver_gerencia_es_un_hub_con_auditoria():
     respuesta = cliente.get("/gerencia")
 
     assert respuesta.status_code == 200
-    assert "Gerencia" in respuesta.text
-    assert "En construcción" in respuesta.text
+    assert 'href="/gerencia/auditoria"' in respuesta.text
+    assert "Auditoría" in respuesta.text
+    assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
 
@@ -8458,6 +8480,45 @@ def test_barra_navegacion_en_sistema():
 
     assert respuesta.status_code == 200
     assert f'href="/sistema" aria-label="Ir a Sistema">{SECTORES["sistema"]["icono"]}</a>' in respuesta.text
+
+
+def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
+    # El tablero es una LISTA de alertas con la misma forma (título +
+    # casos + más viejo + link): agregar la número diez es sumar una
+    # definición, no tocar el diseño.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 7, "mas_viejo": date(2026, 8, 1)}) as mock_retiros,
+        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 3, "mas_viejo": date(2026, 8, 2)}) as mock_recepciones,
+    ):
+        respuesta = cliente.get("/gerencia/auditoria")
+
+    assert respuesta.status_code == 200
+    # "Más de 48 horas" = compras de anteayer para atrás.
+    mock_retiros.assert_called_once_with(date(2026, 8, 4))
+    mock_recepciones.assert_called_once_with(date(2026, 8, 4))
+    assert "Mercadería sin retirar hace más de 48 horas" in respuesta.text
+    assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
+    assert "el más viejo es del 01/08/2026" in respuesta.text
+    assert "el más viejo es del 02/08/2026" in respuesta.text
+    # Los links al detalle: Consultar Retiros filtrado y Recepción.
+    assert "/logistica/consultar?fecha_desde=2026-08-01&amp;fecha_hasta=2026-08-04&amp;estado=pendiente" in respuesta.text
+    assert 'href="/deposito/recepcion"' in respuesta.text
+
+
+def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
+    # Un control sin casos NO aparece; si ninguno tiene, cartel verde.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
+    ):
+        respuesta = cliente.get("/gerencia/auditoria")
+
+    assert respuesta.status_code == 200
+    assert "Todo en orden" in respuesta.text
+    assert "Mercadería sin retirar" not in respuesta.text
+    assert "Mercadería sin recepcionar" not in respuesta.text
 
 
 def test_barra_navegacion_en_placeholders_logistica_gerencia():

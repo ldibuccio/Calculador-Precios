@@ -2011,6 +2011,54 @@ def buscar_retiros(
         conexion.close()
 
 
+def contar_retiros_pendientes_viejos(fecha_limite) -> dict:
+    """Auditoría: cuántas compras siguen sin retirar con fecha_operacion de fecha_limite para atrás, y la más vieja.
+
+    Mismo criterio de "pendiente" que la pantalla de Retiro (IS DISTINCT
+    FROM, los NULL raros cuentan). Consulta de conteo liviana: usa el
+    índice parcial compras_pendientes_retiro_idx.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(fecha_operacion) FROM compras c
+                WHERE c.estado_retiro IS DISTINCT FROM 'retirado'
+                  AND c.estado_retiro IS DISTINCT FROM 'cancelado'
+                  AND c.fecha_operacion <= %s
+                """,
+                (fecha_limite,),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def contar_recepciones_pendientes_viejas(fecha_limite) -> dict:
+    """Auditoría: compras sin recepcionar (ni rechazar ni marcar no ingresada) de fecha_limite para atrás.
+
+    Mismo filtro que la pantalla de Recepción (estado pendiente con guía).
+    Usa el índice parcial compras_pendientes_recepcion_idx.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(fecha_operacion) FROM compras c
+                WHERE c.estado = 'pendiente' AND c.guia_id IS NOT NULL
+                  AND c.fecha_operacion <= %s
+                """,
+                (fecha_limite,),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
 def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
     """Compras de un tipo de retiro puntual (Clark/Carro/Pases) que todavía no se procesaron en Logística.
 
@@ -2036,7 +2084,8 @@ def listar_compras_pendientes_retiro(tipo_retiro: str) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.guia_id, c.guia_punto, a.nombre AS articulo_nombre, a.unidad_compra,
+                SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
+                       a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
                 FROM compras c
