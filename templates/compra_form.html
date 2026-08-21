@@ -167,7 +167,16 @@
              class="{{ 'campo-bloqueado' if cantidad_bloqueada }}"
              value="{% if compra and compra.cantidad_cajones is not none %}{{ compra.cantidad_cajones }}{% endif %}">
 
-      <label for="contenido_por_cajon">Contenido por cajón *</label>
+      {# La etiqueta dice la unidad REAL del artículo elegido ("Kilos por
+         cajón", no "Contenido" a secas): se edita el contenido de UN
+         bulto y sin la unidad se confunde en el Mercado. Al cambiar de
+         artículo la actualiza el JS; acá va la del artículo ya elegido
+         (edición) o el genérico hasta que se elija uno. #}
+      {% set articulo_elegido = (articulos | selectattr("id", "equalto", compra.articulo_id) | list | first) if compra else none %}
+      <label for="contenido_por_cajon" id="label-contenido-por-cajon">{{
+        {"kilo": "Kilos por cajón *", "unidad": "Unidades por cajón *", "cubeta": "Cubetas por cajón *"}.get(
+          articulo_elegido.unidad_compra if articulo_elegido else "", "Contenido por cajón *")
+      }}</label>
       <input type="number" id="contenido_por_cajon" name="contenido_por_cajon" min="0" step="0.01" required
              class="{{ 'campo-bloqueado' if cantidad_bloqueada }}"
              value="{% if compra and compra.contenido_por_cajon is not none %}{{ compra.contenido_por_cajon }}{% endif %}">
@@ -246,21 +255,25 @@
 
   <script>
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
+    const ETIQUETAS_CONTENIDO = { kilo: "Kilos por cajón *", unidad: "Unidades por cajón *", cubeta: "Cubetas por cajón *" };
 
     function actualizarContenidoPorCajon(select) {
       const opcion = select.selectedOptions[0];
       const ayuda = document.getElementById("ayuda-unidad-compra");
       const contenidoInput = document.getElementById("contenido_por_cajon");
+      const etiqueta = document.getElementById("label-contenido-por-cajon");
       const unidadCompra = opcion ? opcion.dataset.unidadCompra : "";
 
       if (!opcion || !unidadCompra) {
         ayuda.classList.remove("visible");
         ayuda.textContent = "";
+        etiqueta.textContent = "Contenido por cajón *";
         return;
       }
 
       ayuda.textContent = "Este artículo se compra por: " + NOMBRES_UNIDAD_COMPRA[unidadCompra];
       ayuda.classList.add("visible");
+      etiqueta.textContent = ETIQUETAS_CONTENIDO[unidadCompra] || "Contenido por cajón *";
 
       const contenidoReferencia = opcion.dataset.contenidoReferencia;
       if (contenidoReferencia) {

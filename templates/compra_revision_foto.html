@@ -369,6 +369,13 @@
       if (!opcion) {
         return;
       }
+      // La etiqueta del contenido dice la unidad real del artículo nuevo
+      // ("Kilos/Unidades/Cubetas por cajón"), no "Contenido" a secas.
+      const etiqueta = document.getElementById("item_" + indice + "_label_contenido");
+      const etiquetasContenido = { kilo: "Kilos por cajón *", unidad: "Unidades por cajón *", cubeta: "Cubetas por cajón *" };
+      if (etiqueta) {
+        etiqueta.textContent = etiquetasContenido[opcion.dataset.unidadCompra] || "Contenido por cajón *";
+      }
       const contenidoReferencia = opcion.dataset.contenidoReferencia;
       if (contenidoReferencia) {
         contenidoInput.value = contenidoReferencia;

@@ -26,7 +26,14 @@
       <input type="number" id="item_{{ loop.index0 }}_cantidad_cajones" name="item_{{ loop.index0 }}_cantidad_cajones"
              min="0" step="0.01" required value="{% if r.cantidad_cajones is not none %}{{ r.cantidad_cajones }}{% endif %}">
 
-      <label for="item_{{ loop.index0 }}_contenido_por_cajon">Contenido por cajón *</label>
+      {# Con la unidad real del artículo elegido — al cambiarlo la
+         actualiza actualizarContenidoRenglon (mismo criterio que la
+         Carga Manual). #}
+      {% set articulo_elegido = (articulos | selectattr("id", "equalto", r.articulo_id) | list | first) if r.articulo_id else none %}
+      <label for="item_{{ loop.index0 }}_contenido_por_cajon" id="item_{{ loop.index0 }}_label_contenido">{{
+        {"kilo": "Kilos por cajón *", "unidad": "Unidades por cajón *", "cubeta": "Cubetas por cajón *"}.get(
+          articulo_elegido.unidad_compra if articulo_elegido else "", "Contenido por cajón *")
+      }}</label>
       <input type="number" id="item_{{ loop.index0 }}_contenido_por_cajon" name="item_{{ loop.index0 }}_contenido_por_cajon"
              min="0" step="0.01" required value="{% if r.contenido_por_cajon is not none %}{{ r.contenido_por_cajon }}{% endif %}">
 

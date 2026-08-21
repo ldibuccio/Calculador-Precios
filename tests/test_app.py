@@ -4522,6 +4522,28 @@ def test_subir_foto_compra_adivina_proveedor_y_articulo():
     assert "oninput=\"actualizarListaProveedores('nombre')\"" in respuesta.text
 
 
+def test_revision_de_foto_etiqueta_el_contenido_con_la_unidad_por_renglon():
+    # El renglón matcheado a Kiwi (por kilo) arranca con "Kilos por cajón";
+    # el renglón sin artículo queda con el genérico hasta que se elija uno
+    # (ahí la actualiza el JS con la unidad del artículo nuevo).
+    with (
+        patch("app.main.extraer_comanda", return_value=COMANDA_LEIDA_DE_PRUEBA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_todas_las_conversiones", return_value=[]),
+        patch("app.main.listar_aprendizaje_articulos_por_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/foto",
+            files={"foto": ("comanda.jpg", b"contenido falso", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 200
+    assert "Kilos por cajón *" in respuesta.text
+    assert "Contenido por cajón *" in respuesta.text
+    assert 'id="item_0_label_contenido"' in respuesta.text
+
+
 def test_subir_foto_compra_proveedor_nuevo_sin_proveedores_existentes_igual_arma_el_codigo():
     # Regresión: antes, si no había NINGÚN proveedor cargado todavía (o
     # ninguno matcheaba), se perdía el código ya interpretado de la foto y
@@ -9197,6 +9219,29 @@ def test_consultar_retiros_ofrece_cooperativa_en_el_filtro_de_tipo():
 
     assert 'value="Cooperativa"' in respuesta.text
     assert 'value="Carro"' in respuesta.text
+
+
+def test_editar_compra_etiqueta_el_contenido_con_la_unidad_del_articulo():
+    # Mismo criterio que Objetivo de Compra: el input de contenido dice su
+    # unidad real ("Kilos por cajón"), no "Contenido" a secas — se edita
+    # el contenido de UN bulto y sin la unidad se confunde en el Mercado.
+    compra = {
+        "id": 30, "fecha_operacion": HOY_DE_PRUEBA, "articulo_id": 5, "articulo_nombre": "Kiwi",
+        "proveedor_id": 200, "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+        "cantidad_cajones": 10, "contenido_por_cajon": 18, "cantidad_kilos": 180, "cantidad_fraccion": None,
+        "importe": 5000, "sena": None, "tipo_retiro": "Clark", "foto_ruta": None,
+        "estado": None, "estado_retiro": "pendiente",
+    }
+    with (
+        patch("app.main.obtener_compra", return_value=compra),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.get("/compras/30/editar")
+
+    assert respuesta.status_code == 200
+    # Kiwi es por kilo: la etiqueta lo dice desde el arranque (sin JS).
+    assert "Kilos por cajón *" in respuesta.text
+    assert 'id="label-contenido-por-cajon"' in respuesta.text
 
 
 def test_editar_compra_muestra_ver_foto_si_la_compra_tiene_foto():
