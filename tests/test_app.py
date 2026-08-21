@@ -8981,6 +8981,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_articulos_comprados_incotizables", return_value=4) as mock_incotizables,
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
+        patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -8999,6 +9000,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
     assert "Pedidos con renglones sin identificar" in respuesta.text
+    assert "Pedidos con renglones incompletos" in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
     # Los links al detalle.
@@ -9021,6 +9023,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -11132,11 +11135,11 @@ SUCURSALES_PEDIDO_DE_PRUEBA = [
 
 RENGLONES_PEDIDO_DE_PRUEBA = [
     {"id": 10, "sucursal": "VL", "articulo_id": None, "articulo_nombre": None,
-     "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None},
+     "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None, "cantidad_armada": None},
     {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
-     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None},
+     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None, "cantidad_armada": None},
     {"id": 12, "sucursal": "BZ", "articulo_id": 2, "articulo_nombre": "Batata",
-     "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None},
+     "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None, "cantidad_armada": None},
 ]
 
 FICHAS_PEDIDO_DE_PRUEBA = [
@@ -11407,3 +11410,161 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
     assert respuesta.status_code == 303
     mock_subir.assert_called_once_with(b"jpeg-comprimido", "pedido-60")
     mock_foto.assert_called_once_with(60, "2026/pedido-60-abc.jpg")
+
+
+# --- Pedidos etapa 2: armado con tildes por sucursal ---
+
+
+RENGLONES_ARMADO_DE_PRUEBA = [
+    {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
+     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 15.0,
+     "armado_el": None, "cantidad_armada": None},
+    {"id": 12, "sucursal": "VL", "articulo_id": 2, "articulo_nombre": "Batata",
+     "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 20.0,
+     "armado_el": datetime(2026, 8, 21, 13, 0), "cantidad_armada": 12.0},
+    {"id": 13, "sucursal": "BZ", "articulo_id": 1, "articulo_nombre": "Banana",
+     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0,
+     "armado_el": datetime(2026, 8, 21, 13, 5), "cantidad_armada": None},
+]
+
+
+def test_armar_pedido_muestra_las_sucursales_con_progreso_y_oc():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # Una sucursal a la vez: botones grandes con progreso y OC.
+    assert "VL — 1 de 2 armados" in respuesta.text
+    assert "BZ — 1 de 1 armados" in respuesta.text
+    assert "OC 1257673" in respuesta.text
+    assert "1 incompleto" in respuesta.text
+
+
+def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&sucursal=VL")
+
+    assert respuesta.status_code == 200
+    assert "VL: 1 de 2 armados" in respuesta.text
+    # Banana pendiente arriba con su tilde; Batata armada abajo, atenuada,
+    # con la marca de incompleto y el botón para destildar.
+    assert "Falta armar (1)" in respuesta.text
+    assert 'action="/deposito/pedido/50/renglones/11/armar"' in respuesta.text
+    assert "Ya armado (1)" in respuesta.text
+    assert "armó 12 de 20" in respuesta.text
+    assert 'action="/deposito/pedido/50/renglones/12/desarmar"' in respuesta.text
+    # El gesto secundario para el incompleto.
+    assert "Armé menos" in respuesta.text
+
+
+def test_armar_pedido_corregido_muestra_el_diff_contra_el_anterior():
+    pedido_corregido = dict(PEDIDO_VIGENTE_DE_PRUEBA, id=52, reemplaza_a_pedido_id=50,
+                            reemplazado_creado_en=datetime(2026, 8, 21, 12, 10))
+    renglones_nuevos = [
+        dict(RENGLONES_ARMADO_DE_PRUEBA[0], cantidad=60.0),  # Banana VL: 15 -> 60
+        RENGLONES_ARMADO_DE_PRUEBA[2],  # Banana BZ idéntica
+    ]
+
+    def _renglones(pedido_id):
+        return renglones_nuevos if pedido_id == 52 else RENGLONES_ARMADO_DE_PRUEBA
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=pedido_corregido),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", side_effect=_renglones),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "los cambiados quedaron sin tildar" in respuesta.text
+    assert "cambió: Banana VL 15 → 60" in respuesta.text
+    assert "ya no está: Batata VL" in respuesta.text
+
+
+def test_armar_renglon_completo_no_guarda_cantidad():
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "sucursal=VL" in respuesta.headers["location"]
+    mock_marcar.assert_called_once_with(11, None)
+
+
+def test_armar_renglon_parcial_guarda_la_cantidad_real():
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_armada": "12", "cantidad_pedida": "15"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(11, 12.0)
+
+
+def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
+    # "Armé menos" con la cantidad completa (o más) no es un incompleto:
+    # se guarda como armado normal, sin número redundante.
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_armada": "15", "cantidad_pedida": "15"},
+            follow_redirects=False,
+        )
+
+    mock_marcar.assert_called_once_with(11, None)
+
+
+def test_desarmar_renglon_destilda():
+    with patch("app.main.desmarcar_renglon_armado") as mock_desmarcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/12/desarmar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_desmarcar.assert_called_once_with(12)
+
+
+def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
+    # La pantalla Pedido es la del que factura o atiende el reclamo de
+    # Día: el "armó 12 de 20" y el total real armado tienen que estar acá.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.listar_fotos_pedido", return_value=[]),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "armó 12 de 20" in respuesta.text
+    # VL: solo Batata armada (12 reales de 20) -> armado real 12, 1 incompleto.
+    assert "Armado real (1 de 2 renglones)" in respuesta.text
+    assert "12 bultos — 1 incompleto" in respuesta.text
+    # Botón para ir a armar.
+    assert 'href="/deposito/pedido/armar?cliente_id=1' in respuesta.text

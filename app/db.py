@@ -3876,6 +3876,28 @@ def crear_pedido(
                         renglon.get("cantidad", 0),
                     ),
                 )
+
+            if reemplaza_a_pedido_id is not None:
+                # Traslado del armado: el tilde (y la cantidad parcial)
+                # viajan SOLO a los renglones IDÉNTICOS al pedido viejo
+                # (misma sucursal, mismo artículo, misma cantidad) — lo ya
+                # armado sigue armado. Lo que cambió queda sin tildar y la
+                # pantalla de armado muestra el diff. Copiar todo mentiría
+                # (armó 40 y ahora piden 60); no copiar nada haría rearmar
+                # de cero.
+                cursor.execute(
+                    """
+                    UPDATE pedidos_renglones nuevo
+                    SET armado_el = viejo.armado_el, cantidad_armada = viejo.cantidad_armada
+                    FROM pedidos_renglones viejo
+                    WHERE nuevo.pedido_id = %s AND viejo.pedido_id = %s
+                      AND viejo.armado_el IS NOT NULL
+                      AND nuevo.articulo_id IS NOT NULL AND nuevo.articulo_id = viejo.articulo_id
+                      AND nuevo.sucursal IS NOT DISTINCT FROM viejo.sucursal
+                      AND nuevo.cantidad = viejo.cantidad
+                    """,
+                    (pedido_id, reemplaza_a_pedido_id),
+                )
         conexion.commit()
         return pedido_id
     finally:
@@ -3945,7 +3967,7 @@ def listar_renglones_pedido(pedido_id: int) -> list[dict]:
             cursor.execute(
                 """
                 SELECT r.id, r.sucursal, r.articulo_id, a.nombre AS articulo_nombre,
-                       r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el
+                       r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el, r.cantidad_armada
                 FROM pedidos_renglones r
                 LEFT JOIN articulos a ON a.id = r.articulo_id
                 WHERE r.pedido_id = %s
@@ -4090,5 +4112,62 @@ def borrar_foto_pedido(foto_id: int) -> str | None:
             (usos,) = cursor.fetchone()
         conexion.commit()
         return foto_ruta if usos == 0 else None
+    finally:
+        conexion.close()
+
+
+def marcar_renglon_armado(renglon_id: int, cantidad_armada=None) -> None:
+    """Tilda un renglón como armado. El tilde significa "terminé con este renglón", no "está completo".
+
+    cantidad_armada solo si armó MENOS de lo pedido (Día pide 15 y hay
+    12): la cantidad real queda grabada y el renglón figura "incompleto".
+    Armado completo va con None — no se guarda un número redundante.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s WHERE id = %s",
+                (cantidad_armada, renglon_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def desmarcar_renglon_armado(renglon_id: int) -> None:
+    """Destilda un renglón (toque por error, o apareció el stock): vuelve arriba, sin cantidad parcial."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE pedidos_renglones SET armado_el = NULL, cantidad_armada = NULL WHERE id = %s",
+                (renglon_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_pedidos_con_renglones_incompletos() -> dict:
+    """Auditoría: pedidos vivos con renglones armados por MENOS de lo pedido, y el más viejo.
+
+    "Armé 12 de 15": el dueño se entera por acá, no cuando reclame Día.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT p.id), MIN(p.fecha_operacion)
+                FROM pedidos p
+                WHERE p.anulado_el IS NULL
+                  AND EXISTS (SELECT 1 FROM pedidos_renglones r
+                              WHERE r.pedido_id = p.id AND r.armado_el IS NOT NULL
+                                AND r.cantidad_armada IS NOT NULL AND r.cantidad_armada <> r.cantidad)
+                """
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
     finally:
         conexion.close()

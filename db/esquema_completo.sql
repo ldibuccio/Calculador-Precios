@@ -501,10 +501,11 @@ create table pedidos_renglones (
     texto_descripcion text,
     cantidad          numeric not null default 0,
     armado_el         timestamptz,
+    cantidad_armada   numeric,
     creado_en         timestamptz not null default now()
 );
 
-comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. articulo_id NULL = sin identificar, con el texto crudo conservado. armado_el: tilde de armado del deposito (etapa 2).';
+comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. articulo_id NULL = sin identificar, con el texto crudo conservado. armado_el: tilde de armado del deposito (= termine con este renglon); cantidad_armada: cuantos bultos se armaron realmente si fue menos que lo pedido (NULL = completo).';
 
 create index pedidos_renglones_pedido_idx on pedidos_renglones (pedido_id);
 create index pedidos_renglones_sin_identificar_idx

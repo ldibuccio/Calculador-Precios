@@ -34,6 +34,9 @@ from app.db import (
     contar_compras_buscadas,
     contar_ingresos_deposito,
     contar_pedidos_con_renglones_sin_identificar,
+    contar_pedidos_con_renglones_incompletos,
+    desmarcar_renglon_armado,
+    marcar_renglon_armado,
     crear_pedido,
     borrar_foto_pedido,
     guardar_alias_en_ficha,
@@ -2548,3 +2551,59 @@ def test_borrar_foto_pedido_devuelve_la_ruta_solo_si_nadie_mas_la_usa():
 
     assert ruta == "2026/pedido-50-x.jpg"
     conexion.commit.assert_called_once()
+
+
+def test_marcar_renglon_armado_completo_y_parcial():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_renglon_armado(11)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET armado_el = now(), cantidad_armada = %s" in consulta
+    assert parametros == (None, 11)
+
+    conexion2, cursor2 = _conexion_falsa()
+    with patch("app.db.obtener_conexion", return_value=conexion2):
+        marcar_renglon_armado(11, 12.0)
+    assert cursor2.execute.call_args.args[1] == (12.0, 11)
+
+
+def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        desmarcar_renglon_armado(12)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET armado_el = NULL, cantidad_armada = NULL" in consulta
+    assert parametros == (12,)
+
+
+def test_crear_pedido_corregido_traslada_los_tildes_solo_a_renglones_identicos():
+    conexion, cursor = _conexion_falsa([(52,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_pedido(1, date(2026, 8, 21), "texto", None, [], [], reemplaza_a_pedido_id=50)
+
+    # Después de anular e insertar, el UPDATE de traslado: tilde y cantidad
+    # parcial viajan SOLO donde sucursal + artículo + cantidad son idénticos.
+    consulta_traslado, parametros_traslado = cursor.execute.call_args_list[-1].args
+    assert "SET armado_el = viejo.armado_el, cantidad_armada = viejo.cantidad_armada" in consulta_traslado
+    assert "nuevo.articulo_id IS NOT NULL AND nuevo.articulo_id = viejo.articulo_id" in consulta_traslado
+    assert "nuevo.sucursal IS NOT DISTINCT FROM viejo.sucursal" in consulta_traslado
+    assert "nuevo.cantidad = viejo.cantidad" in consulta_traslado
+    assert parametros_traslado == (52, 50)
+
+
+def test_contar_pedidos_con_renglones_incompletos_solo_armados_por_menos():
+    conexion, cursor = _conexion_falsa([(1, date(2026, 8, 5))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_pedidos_con_renglones_incompletos()
+
+    assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 5)}
+    consulta = cursor.execute.call_args.args[0]
+    assert "r.armado_el IS NOT NULL" in consulta
+    assert "r.cantidad_armada IS NOT NULL AND r.cantidad_armada <> r.cantidad" in consulta
+    assert "p.anulado_el IS NULL" in consulta

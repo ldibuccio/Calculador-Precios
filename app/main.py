@@ -40,7 +40,10 @@ from app.db import (
     cambiar_articulo_de_ficha,
     contar_compras_buscadas,
     contar_ingresos_deposito,
+    contar_pedidos_con_renglones_incompletos,
     contar_pedidos_con_renglones_sin_identificar,
+    desmarcar_renglon_armado,
+    marcar_renglon_armado,
     contar_retiros_buscados,
     cerrar_disponible_generado,
     cerrar_sena,
@@ -5721,6 +5724,7 @@ def _alertas_auditoria() -> list[dict]:
     incotizables = contar_articulos_comprados_incotizables(ventana_comprados, hoy)
     senas = contar_senas_pendientes_viejas(limite_senas)
     pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
+    pedidos_incompletos = contar_pedidos_con_renglones_incompletos()
 
     return [
         {
@@ -5773,6 +5777,13 @@ def _alertas_auditoria() -> list[dict]:
             "titulo": "Pedidos con renglones sin identificar",
             "casos": pedidos_sin_identificar["casos"],
             "mas_viejo": pedidos_sin_identificar["mas_viejo"],
+            "url": "/deposito/pedido",
+            "texto_link": "Ver en Pedido",
+        },
+        {
+            "titulo": "Pedidos con renglones incompletos (se armó menos de lo pedido)",
+            "casos": pedidos_incompletos["casos"],
+            "mas_viejo": pedidos_incompletos["mas_viejo"],
             "url": "/deposito/pedido",
             "texto_link": "Ver en Pedido",
         },
@@ -7196,6 +7207,18 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         declarado = sucursal.get("total_bultos_declarado")
         suma = sumas.get(sucursal["sucursal"], 0.0)
         sucursal["suma_leida"] = suma
+        # El armado real: lo que efectivamente se armó (con las cantidades
+        # parciales), para el que factura o atiende el reclamo de Día.
+        propios = [r for r in renglones if r["sucursal"] == sucursal["sucursal"] and r["articulo_id"] is not None]
+        armados = [r for r in propios if r["armado_el"] is not None]
+        sucursal["renglones_totales"] = len(propios)
+        sucursal["renglones_armados"] = len(armados)
+        sucursal["armado_real"] = sum(
+            float(r["cantidad_armada"]) if r["cantidad_armada"] is not None else float(r["cantidad"]) for r in armados
+        )
+        sucursal["incompletos"] = sum(
+            1 for r in armados if r["cantidad_armada"] is not None and float(r["cantidad_armada"]) != float(r["cantidad"])
+        )
         if declarado is not None and float(declarado) != suma:
             diferencia = float(declarado) - suma
             detalle = f"faltan {_formatear_numero(abs(diferencia))}" if diferencia > 0 else f"sobran {_formatear_numero(abs(diferencia))}"
@@ -7574,6 +7597,179 @@ def borrar_foto_pedido_ruta(pedido_id: int, foto_id: int, cliente_id: int = Form
     return RedirectResponse(
         url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
     )
+
+
+def _diff_pedido_contra_anterior(renglones_nuevos: list[dict], renglones_viejos: list[dict]) -> list[str]:
+    """Qué cambió entre el pedido corregido y el que reemplazó, para que el armado no arme algo que ya no va.
+
+    Compara los renglones IDENTIFICADOS por (sucursal, artículo): cantidad
+    distinta, renglones que ya no están y renglones nuevos. Los cambiados
+    llegan sin tildar (el traslado de tildes solo copia renglones
+    idénticos, ver crear_pedido) — este diff explica por qué.
+    """
+    def _clave(renglon):
+        return (renglon["sucursal"], renglon["articulo_id"])
+
+    viejos = {_clave(r): r for r in renglones_viejos if r["articulo_id"] is not None}
+    nuevos = {_clave(r): r for r in renglones_nuevos if r["articulo_id"] is not None}
+
+    cambios = []
+    for clave, nuevo in nuevos.items():
+        viejo = viejos.get(clave)
+        if viejo is None:
+            cambios.append(f"nuevo: {nuevo['articulo_nombre']} {nuevo['sucursal'] or ''} {_formatear_numero(nuevo['cantidad'])}".strip())
+        elif float(viejo["cantidad"]) != float(nuevo["cantidad"]):
+            cambios.append(
+                f"cambió: {nuevo['articulo_nombre']} {nuevo['sucursal'] or ''} "
+                f"{_formatear_numero(viejo['cantidad'])} → {_formatear_numero(nuevo['cantidad'])}"
+            )
+    for clave, viejo in viejos.items():
+        if clave not in nuevos:
+            cambios.append(f"ya no está: {viejo['articulo_nombre']} {viejo['sucursal'] or ''}".strip())
+    return sorted(cambios)
+
+
+@app.get("/deposito/pedido/armar")
+def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None):
+    """Armar Pedido: el del depósito, parado y con una mano — sin clave, es la operación del día a día.
+
+    Primero se elige la sucursal (una a la vez, con su OC y el progreso);
+    adentro, renglones grandes con un tilde por renglón. El tilde
+    significa "terminé con este renglón": si armó menos de lo pedido,
+    "Armé menos" guarda la cantidad real y el renglón queda incompleto,
+    marcado. Los tildados bajan y se atenúan; lo que falta queda arriba.
+    """
+    cliente_id_valor = _id_opcional_desde_query(cliente_id)
+    fecha_valor = _fecha_pedido_o_hoy(fecha)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "clientes": clientes,
+        "cliente_id": cliente_id_valor,
+        "fecha": fecha_valor.isoformat(),
+        "fecha_mostrar": fecha_valor.strftime("%d/%m/%Y"),
+        "pedido": None,
+        "sucursal_elegida": None,
+    }
+    if cliente_id_valor is None:
+        return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
+
+    try:
+        pedido = obtener_pedido_vigente(cliente_id_valor, fecha_valor)
+        if pedido is not None:
+            sucursales = listar_sucursales_pedido(pedido["id"])
+            renglones = listar_renglones_pedido(pedido["id"])
+            renglones_viejos = (
+                listar_renglones_pedido(pedido["reemplaza_a_pedido_id"]) if pedido["reemplaza_a_pedido_id"] else []
+            )
+        else:
+            sucursales, renglones, renglones_viejos = [], [], []
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if pedido is None:
+        return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
+
+    # Progreso por sucursal, sobre los renglones IDENTIFICADOS (los sin
+    # identificar no se pueden armar: se asignan primero desde Pedido).
+    identificados = [r for r in renglones if r["articulo_id"] is not None]
+    for s in sucursales:
+        propios = [r for r in identificados if r["sucursal"] == s["sucursal"]]
+        s["total_renglones"] = len(propios)
+        s["armados"] = sum(1 for r in propios if r["armado_el"] is not None)
+        s["incompletos"] = sum(
+            1 for r in propios
+            if r["armado_el"] is not None and r["cantidad_armada"] is not None
+            and float(r["cantidad_armada"]) != float(r["cantidad"])
+        )
+
+    sin_identificar = sum(1 for r in renglones if r["articulo_id"] is None)
+    diff = _diff_pedido_contra_anterior(renglones, renglones_viejos) if renglones_viejos else []
+
+    contexto.update(
+        {
+            "pedido": pedido,
+            "sucursales": sucursales,
+            "sin_identificar": sin_identificar,
+            "diff": diff,
+        }
+    )
+
+    sucursal_valida = next((s for s in sucursales if s["sucursal"] == sucursal), None)
+    if sucursal_valida is None:
+        return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
+
+    propios = [r for r in identificados if r["sucursal"] == sucursal_valida["sucursal"]]
+    pendientes = sorted((r for r in propios if r["armado_el"] is None), key=lambda r: r["articulo_nombre"])
+    armados = sorted((r for r in propios if r["armado_el"] is not None), key=lambda r: r["articulo_nombre"])
+
+    contexto.update(
+        {
+            "sucursal_elegida": sucursal_valida,
+            "pendientes": pendientes,
+            "armados": armados,
+        }
+    )
+    return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
+
+
+def _url_vuelta_armado(cliente_id: int, fecha: str, sucursal: str) -> str:
+    return f"/deposito/pedido/armar?{urlencode({'cliente_id': cliente_id, 'fecha': fecha, 'sucursal': sucursal})}"
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/armar")
+def armar_renglon_pedido_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    sucursal: str = Form(""),
+    cantidad_armada: str = Form(""),
+    cantidad_pedida: str = Form(""),
+):
+    """Tilda un renglón como armado. Con cantidad_armada (menor a lo pedido), queda "incompleto" con su cantidad real."""
+    cantidad_armada_valor = None
+    texto = cantidad_armada.strip()
+    if texto:
+        try:
+            cantidad_armada_valor = float(texto)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="La cantidad armada tiene que ser un número.")
+        if cantidad_armada_valor <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad armada tiene que ser mayor a cero.")
+        pedida = _numero_pedido_o_none(cantidad_pedida)
+        # Armó todo (o más): es un armado completo — el número redundante
+        # no se guarda, para que "incompleto" signifique siempre "menos".
+        if pedida is not None and cantidad_armada_valor >= pedida:
+            cantidad_armada_valor = None
+
+    try:
+        marcar_renglon_armado(renglon_id, cantidad_armada_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo marcar el renglón: {error_db}") from error_db
+
+    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/desarmar")
+def desarmar_renglon_pedido_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    sucursal: str = Form(""),
+):
+    """Destilda un renglón (toque por error, o apareció el stock que faltaba)."""
+    try:
+        desmarcar_renglon_armado(renglon_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo destildar el renglón: {error_db}") from error_db
+
+    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
 
 
 if __name__ == "__main__":

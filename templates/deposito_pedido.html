@@ -109,6 +109,25 @@
   }
   .fila-total .mal { color: #991b1b; }
   .fila-total .bien { color: #166534; }
+  .fila-armado {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding-top: 0.4rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #444;
+  }
+  .fila-armado .mal { color: #991b1b; }
+  .marca-incompleto {
+    display: inline-block;
+    background: #fef9c3;
+    color: #713f12;
+    font-size: 0.8rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
   .tarjeta-sin-identificar { border: 2px solid #f59e0b; background: #fffbeb; }
   .sin-identificar-item {
     border-top: 1px solid #fde68a;
@@ -206,6 +225,9 @@
       <input type="date" id="fecha" name="fecha" value="{{ fecha }}" onchange="this.form.submit()">
     </form>
     {% if cliente_id %}
+    {% if pedido %}
+    <a class="boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Armar Pedido</a>
+    {% endif %}
     <a class="boton" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">
       {% if pedido %}Cargar pedido corregido{% else %}Cargar Pedido{% endif %}
     </a>
@@ -264,7 +286,11 @@
       {% for r in filas %}
       <div class="renglon">
         <span>{{ r.articulo_nombre }}</span>
-        <span class="cantidad">{{ r.cantidad|numero }}</span>
+        <span class="cantidad">
+          {% if r.armado_el and r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
+          <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
+          {% else %}{{ r.cantidad|numero }}{% endif %}
+        </span>
       </div>
       {% endfor %}
     {% else %}
@@ -274,6 +300,12 @@
       <span>Leído</span>
       <span class="{% if s.total_bultos_declarado is not none and s.suma_leida != s.total_bultos_declarado|float %}mal{% else %}bien{% endif %}">{{ s.suma_leida|numero }}{% if s.total_bultos_declarado is not none %} / {{ s.total_bultos_declarado|numero }}{% endif %}</span>
     </div>
+    {% if s.renglones_armados %}
+    <div class="fila-armado">
+      <span>Armado real ({{ s.renglones_armados }} de {{ s.renglones_totales }} renglones)</span>
+      <span class="{% if s.incompletos %}mal{% endif %}">{{ s.armado_real|numero }} bultos{% if s.incompletos %} — {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 

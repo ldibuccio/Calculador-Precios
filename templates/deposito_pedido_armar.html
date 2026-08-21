@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Armar Pedido</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  form.filtros label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form.filtros input, form.filtros select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  /* Botones de sucursal BIEN grandes: se elige parado, con una mano. */
+  .boton-sucursal {
+    display: block;
+    width: 100%;
+    padding: 1.1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.15rem;
+    font-weight: 800;
+    text-align: left;
+    text-decoration: none;
+    box-sizing: border-box;
+    margin-bottom: 0.75rem;
+  }
+  .boton-sucursal .detalle { display: block; font-size: 0.85rem; font-weight: 500; opacity: 0.9; margin-top: 0.2rem; }
+  .boton-sucursal.completa { background: #16a34a; }
+  .aviso-diff {
+    background: #fef9c3;
+    color: #713f12;
+    border: 2px solid #facc15;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .aviso-diff strong { display: block; margin-bottom: 0.3rem; }
+  .aviso-diff ul { margin: 0; padding-left: 1.1rem; }
+  .aviso-sin-identificar {
+    background: #fffbeb;
+    border: 1px solid #f59e0b;
+    color: #713f12;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+  }
+  .progreso {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .progreso .numeros { font-size: 1.35rem; font-weight: 800; color: #1d4ed8; }
+  .progreso .oc { color: #1e40af; font-size: 0.9rem; margin-top: 0.15rem; }
+  .progreso .incompletos { color: #991b1b; font-weight: 700; font-size: 0.9rem; margin-top: 0.25rem; }
+  /* Renglones grandes con tilde de área generosa: se toca con el pulgar. */
+  .renglon-armar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.35rem 0;
+    border-top: 1px solid #eee;
+  }
+  .renglon-armar:first-of-type { border-top: none; }
+  .renglon-armar .datos { flex: 1; min-width: 0; }
+  .renglon-armar .nombre { font-size: 1.05rem; font-weight: 700; }
+  .renglon-armar .cantidad { font-size: 0.95rem; color: #444; }
+  .renglon-armar form { margin: 0; }
+  .boton-tilde {
+    width: 3.4rem;
+    height: 3.4rem;
+    border-radius: 12px;
+    border: 2px solid #16a34a;
+    background: #fff;
+    color: #16a34a;
+    font-size: 1.6rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .link-parcial {
+    display: inline-block;
+    margin-top: 0.15rem;
+    background: none;
+    border: none;
+    color: #b45309;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: underline;
+    padding: 0.2rem 0;
+    cursor: pointer;
+  }
+  .form-parcial { display: none; margin-top: 0.3rem; }
+  .form-parcial.abierto { display: flex; gap: 0.5rem; }
+  .form-parcial input {
+    width: 6rem;
+    padding: 0.55rem;
+    border: 1px solid #d97706;
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+  .form-parcial button {
+    padding: 0.55rem 0.9rem;
+    background: #d97706;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  /* Los armados: abajo y atenuados — lo que falta queda arriba y a mano. */
+  .renglon-armar.armado { opacity: 0.55; }
+  .renglon-armar.armado .nombre { text-decoration: line-through; }
+  .marca-incompleto {
+    display: inline-block;
+    background: #fef9c3;
+    color: #713f12;
+    font-size: 0.8rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .boton-destildar {
+    padding: 0.6rem 0.8rem;
+    background: #fff;
+    color: #666;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Armar Pedido" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if not sucursal_elegida %}
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/deposito/pedido/armar">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()">
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="fecha">Fecha</label>
+      <input type="date" id="fecha" name="fecha" value="{{ fecha }}" onchange="this.form.submit()">
+    </form>
+  </div>
+  {% endif %}
+
+  {% if cliente_id and not pedido %}
+  <div class="tarjeta">
+    <p class="vacio">No hay pedido cargado para el {{ fecha_mostrar }}. Cargalo primero desde Cargar Pedido.</p>
+  </div>
+  {% endif %}
+
+  {% if pedido and diff %}
+  <div class="aviso-diff">
+    <strong>Pedido corregido — cambió respecto del anterior (los cambiados quedaron sin tildar):</strong>
+    <ul>
+      {% for cambio in diff %}<li>{{ cambio }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if pedido and sin_identificar and not sucursal_elegida %}
+  <div class="aviso-sin-identificar">Hay {{ sin_identificar }} renglón{{ "es" if sin_identificar != 1 else "" }} sin identificar: no se pueden armar. Asignalos primero desde la pantalla Pedido.</div>
+  {% endif %}
+
+  {% if pedido and not sucursal_elegida %}
+  <div class="tarjeta">
+    <h2>Elegí la sucursal para armar</h2>
+    {% for s in sucursales %}
+    <a class="boton-sucursal {% if s.total_renglones > 0 and s.armados == s.total_renglones %}completa{% endif %}"
+       href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}&sucursal={{ s.sucursal }}">
+      {{ s.sucursal }} — {{ s.armados }} de {{ s.total_renglones }} armados
+      <span class="detalle">{% if s.orden_compra %}OC {{ s.orden_compra }}{% else %}sin OC{% endif %}{% if s.incompletos %} · {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if sucursal_elegida %}
+  <div class="progreso">
+    <div class="numeros">{{ sucursal_elegida.sucursal }}: {{ sucursal_elegida.armados }} de {{ sucursal_elegida.total_renglones }} armados</div>
+    <div class="oc">{% if sucursal_elegida.orden_compra %}OC {{ sucursal_elegida.orden_compra }}{% else %}Sin OC{% endif %}</div>
+    {% if sucursal_elegida.incompletos %}
+    <div class="incompletos">{{ sucursal_elegida.incompletos }} renglón{{ "es" if sucursal_elegida.incompletos != 1 else "" }} incompleto{{ "s" if sucursal_elegida.incompletos != 1 else "" }} (se armó menos de lo pedido)</div>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>Falta armar ({{ pendientes|length }})</h2>
+    {% if pendientes %}
+      {% for r in pendientes %}
+      <div class="renglon-armar">
+        <div class="datos">
+          <div class="nombre">{{ r.articulo_nombre }}</div>
+          <div class="cantidad">{{ r.cantidad|numero }} bultos</div>
+          <button type="button" class="link-parcial" onclick="document.getElementById('parcial-{{ r.id }}').classList.toggle('abierto')">Armé menos</button>
+          <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/armar"
+                class="form-parcial" id="parcial-{{ r.id }}">
+            <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+            <input type="hidden" name="fecha" value="{{ fecha }}">
+            <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
+            <input type="hidden" name="cantidad_pedida" value="{{ r.cantidad }}">
+            <input type="number" name="cantidad_armada" min="0.01" step="0.01" max="{{ r.cantidad }}"
+                   placeholder="¿Cuántos?" required>
+            <button type="submit">Listo</button>
+          </form>
+        </div>
+        <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/armar">
+          <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+          <input type="hidden" name="fecha" value="{{ fecha }}">
+          <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
+          <button type="submit" class="boton-tilde" aria-label="Marcar {{ r.articulo_nombre }} como armado">✓</button>
+        </form>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Nada pendiente: la sucursal está armada completa.</p>
+    {% endif %}
+  </div>
+
+  {% if armados %}
+  <div class="tarjeta">
+    <h2>Ya armado ({{ armados|length }})</h2>
+    {% for r in armados %}
+    <div class="renglon-armar armado">
+      <div class="datos">
+        <div class="nombre">{{ r.articulo_nombre }}</div>
+        <div class="cantidad">
+          {% if r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
+          <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
+          {% else %}{{ r.cantidad|numero }} bultos{% endif %}
+        </div>
+      </div>
+      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
+        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+        <input type="hidden" name="fecha" value="{{ fecha }}">
+        <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
+        <button type="submit" class="boton-destildar">Destildar</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>
+  {% endif %}
+</body>
+</html>
