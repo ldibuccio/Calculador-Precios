@@ -2349,3 +2349,32 @@ def test_listar_historial_fichas_va_de_lo_mas_nuevo_a_lo_mas_viejo():
     assert "FROM fichas_logistica_historial h" in consulta
     assert "ORDER BY h.registrado_en DESC, h.id DESC" in consulta
     assert parametros == (1,)
+
+
+def test_stock_vacios_sin_fecha_no_filtra_por_creado_en():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock_vacios()
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "creado_en" not in consulta
+    assert parametros == tuple()
+
+
+def test_stock_vacios_a_fecha_filtra_las_tres_sumas_y_excluye_anulados_siempre():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock_vacios(date(2026, 8, 10))
+
+    consulta, parametros = cursor.execute.call_args.args
+    # Las TRES sumas (recibidos, devueltos, ajustes) cortan a la fecha, con
+    # el patrón sargable de siempre.
+    assert consulta.count("AND creado_en < %s::date + 1") == 3
+    assert parametros == (date(2026, 8, 10), date(2026, 8, 10), date(2026, 8, 10))
+    # Los anulados quedan afuera SIEMPRE (sin mirar cuándo se anularon): un
+    # movimiento anulado no existió nunca, ni siquiera en fechas anteriores
+    # a su anulación.
+    assert consulta.count("anulado_el IS NULL") == 3
+    assert "anulado_el <" not in consulta

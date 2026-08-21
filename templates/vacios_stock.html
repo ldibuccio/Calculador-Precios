@@ -47,6 +47,46 @@
   .negativo { color: #dc2626; }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 1rem; }
+  form.filtro-fecha label {
+    display: block;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form.filtro-fecha input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-bottom: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .boton {
+    display: block;
+    width: 100%;
+    padding: 0.75rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+    margin-top: 0.6rem;
+  }
+  .aviso-pasada {
+    background: #fef9c3;
+    color: #713f12;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -62,6 +102,25 @@
   {% set barra_titulo = "Stock del Sistema" %}
   {% include "_barra_navegacion.html" %}
   {% include "_boton_bloquear.html" %}
+
+  <div class="tarjeta">
+    <form class="filtro-fecha" method="get" action="/puesto/envases/stock">
+      <label for="fecha">Stock al día</label>
+      <input type="date" id="fecha" name="fecha" value="{{ fecha }}">
+      <button type="submit" class="boton">Ver</button>
+    </form>
+    {% if grupos %}
+    <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton" href="/puesto/envases/stock/exportar-pdf?fecha={{ fecha }}">Exportar PDF</a>
+      <a class="boton" href="/puesto/envases/stock/exportar-excel?fecha={{ fecha }}">Exportar Excel</a>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if es_pasada %}
+  <div class="aviso-pasada">Stock al {{ fecha_mostrar }}. Ojo: el stock de fechas pasadas puede cambiar si se anulan movimientos anteriores — anular un movimiento lo borra del stock de todos los días, también de los de antes de la anulación.</div>
+  {% endif %}
 
   <p class="ayuda">Cajones en el puesto según los movimientos: recibidos de clientes − devueltos al proveedor. Un número en rojo es un negativo para revisar en el Cotejo.</p>
 
@@ -87,10 +146,23 @@
     {% endfor %}
   {% else %}
   <div class="tarjeta">
-    <p class="vacio">Sin movimientos todavía. El stock aparece cuando se reciben los primeros cajones.</p>
+    <p class="vacio">Sin movimientos hasta esta fecha. El stock aparece cuando se reciben los primeros cajones.</p>
   </div>
   {% endif %}
 
   <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+
+  <script>
+    // "Exportar" es un solo toque para desplegar las 2 opciones, en vez de
+    // navegar a una pantalla intermedia — mismo criterio que Buscar Compras.
+    function mostrarOpcionesExportar() {
+      const boton = document.getElementById("boton-exportar");
+      const opciones = document.getElementById("opciones-exportar");
+      if (boton && opciones) {
+        opciones.style.display = "block";
+        boton.style.display = "none";
+      }
+    }
+  </script>
 </body>
 </html>

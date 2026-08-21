@@ -9924,6 +9924,80 @@ def test_ver_stock_vacios_agrupa_por_proveedor_y_marca_negativos():
     # Total del proveedor con más de un tipo: 20 + (-5) = 15.
     assert ">Total</span>" in respuesta.text
     assert ">15</span>" in respuesta.text
+    # Por default es el stock de HOY: sin aviso de fecha pasada, y con
+    # el selector de fecha y el botón de exportar a la vista.
+    assert "puede cambiar si se anulan movimientos anteriores" not in respuesta.text
+    assert 'name="fecha"' in respuesta.text
+    assert "/puesto/envases/stock/exportar-pdf?fecha=" in respuesta.text
+
+
+STOCK_VACIOS_DE_PRUEBA = [
+    {"proveedor_id": 200, "proveedor_nombre": "Saturno",
+     "tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro",
+     "recibidos": 50, "devueltos": 30, "ajustes": -5, "stock": 15},
+]
+
+
+def test_ver_stock_vacios_a_fecha_pasada_avisa_que_puede_cambiar():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.stock_vacios", return_value=STOCK_VACIOS_DE_PRUEBA) as mock_stock,
+    ):
+        respuesta = cliente.get("/puesto/envases/stock?fecha=2026-08-10")
+
+    assert respuesta.status_code == 200
+    # El stock se calcula A ESA FECHA (la consulta recibe la fecha elegida).
+    mock_stock.assert_called_once_with(date(2026, 8, 10))
+    # Aviso pedido a propósito: anular un movimiento lo borra del stock de
+    # TODOS los días (desde siempre), así que una fecha pasada puede dar
+    # distinto en dos consultas — no es una falla del sistema.
+    assert "puede cambiar si se anulan movimientos anteriores" in respuesta.text
+    assert "Stock al 10/08/2026" in respuesta.text
+    # Los exports llevan la misma fecha consultada.
+    assert "/puesto/envases/stock/exportar-pdf?fecha=2026-08-10" in respuesta.text
+    assert "/puesto/envases/stock/exportar-excel?fecha=2026-08-10" in respuesta.text
+
+
+def test_ver_stock_vacios_fecha_invalida_o_futura_cae_a_hoy():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.stock_vacios", return_value=STOCK_VACIOS_DE_PRUEBA) as mock_stock,
+    ):
+        respuesta = cliente.get("/puesto/envases/stock?fecha=2027-01-01")
+
+    assert respuesta.status_code == 200
+    mock_stock.assert_called_once_with(date(2026, 8, 19))
+    assert "puede cambiar si se anulan movimientos anteriores" not in respuesta.text
+
+
+def test_exportar_stock_vacios_pdf_lleva_fecha_y_aviso_si_es_pasada():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.stock_vacios", return_value=STOCK_VACIOS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/puesto/envases/stock/exportar-pdf?fecha=2026-08-10")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "Stock_Vacios_2026-08-10" in respuesta.headers["content-disposition"]
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    assert "Stock del Sistema" in texto
+    assert "Al 10/08/2026" in texto
+    assert "puede cambiar si se anulan movimientos anteriores" in texto
+    assert "Saturno" in texto
+
+
+def test_exportar_stock_vacios_excel_devuelve_archivo_adjunto():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.stock_vacios", return_value=STOCK_VACIOS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/puesto/envases/stock/exportar-excel?fecha=2026-08-19")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "Stock_Vacios_2026-08-19" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
 
 
 PROVEEDORES_PUESTO_DE_PRUEBA = [
@@ -10197,6 +10271,70 @@ def test_anular_desde_movimientos_redirige_al_mismo_rango():
     assert location.startswith("/puesto/envases/movimientos?")
     assert "fecha_desde=2026-08-09" in location
     mock_anular.assert_called_once_with(9)
+
+
+MOVIMIENTOS_EXPORT_RECIBIDOS = [
+    {"id": 9, "cantidad": 12, "creado_en": datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
+     "anulado_el": None, "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
+]
+MOVIMIENTOS_EXPORT_DEVUELTOS = [
+    {"id": 4, "cantidad": 30, "stock_sistema": 40, "creado_en": datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc),
+     "anulado_el": datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc), "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
+]
+MOVIMIENTOS_EXPORT_AJUSTES = [
+    {"id": 30, "cantidad": -5, "motivo": "Se rompieron dos", "stock_sistema": 40,
+     "creado_en": datetime(2026, 8, 10, 15, 0, tzinfo=timezone.utc),
+     "anulado_el": None, "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
+]
+
+
+def test_ver_movimientos_ofrece_exportar_con_los_mismos_filtros():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 19)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=MOVIMIENTOS_EXPORT_RECIBIDOS),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos?fecha_desde=2026-08-09&fecha_hasta=2026-08-11")
+
+    assert respuesta.status_code == 200
+    assert "/puesto/envases/movimientos/exportar-pdf?fecha_desde=2026-08-09&fecha_hasta=2026-08-11" in respuesta.text
+    assert "/puesto/envases/movimientos/exportar-excel?fecha_desde=2026-08-09&fecha_hasta=2026-08-11" in respuesta.text
+
+
+def test_exportar_movimientos_vacios_pdf_trae_las_tres_secciones_y_los_motivos():
+    with (
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=MOVIMIENTOS_EXPORT_RECIBIDOS) as mock_r,
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=MOVIMIENTOS_EXPORT_DEVUELTOS),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=MOVIMIENTOS_EXPORT_AJUSTES),
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos/exportar-pdf?fecha_desde=2026-08-09&fecha_hasta=2026-08-11")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/pdf"
+    assert "Movimientos_Vacios_2026-08-09_a_2026-08-11" in respuesta.headers["content-disposition"]
+    # El export usa los mismos filtros que la pantalla, sin tope.
+    mock_r.assert_called_once_with(date(2026, 8, 9), date(2026, 8, 11))
+    texto = _texto_del_pdf_de_respuesta(respuesta.content)
+    # Las tres secciones, en el mismo orden que la pantalla.
+    assert texto.index("Salidas") < texto.index("Entradas") < texto.index("Ajustes")
+    assert "Juan Pérez" in texto  # quién trajo, en Entradas
+    assert "Se rompieron dos" in texto  # el motivo del ajuste viaja
+    assert "ANULADO" in texto  # los anulados van marcados, no escondidos
+
+
+def test_exportar_movimientos_vacios_excel_devuelve_archivo_adjunto():
+    with (
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=MOVIMIENTOS_EXPORT_RECIBIDOS),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=MOVIMIENTOS_EXPORT_DEVUELTOS),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=MOVIMIENTOS_EXPORT_AJUSTES),
+    ):
+        respuesta = cliente.get("/puesto/envases/movimientos/exportar-excel?fecha_desde=2026-08-09&fecha_hasta=2026-08-11")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "Movimientos_Vacios_2026-08-09_a_2026-08-11" in respuesta.headers["content-disposition"]
+    assert respuesta.content.startswith(b"PK")  # xlsx es un zip
 
 
 # --- Vacíos: ajustes de stock (cajera) ---

@@ -50,6 +50,22 @@
     font-weight: 600;
     cursor: pointer;
   }
+  .boton-exportar {
+    display: block;
+    width: 100%;
+    padding: 0.75rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+    margin-top: 0.6rem;
+  }
   .renglon {
     padding: 0.7rem 0;
     border-top: 1px solid #eee;
@@ -128,6 +144,13 @@
       </div>
       <button type="submit" class="boton-buscar">Buscar</button>
     </form>
+    {% if devueltos or recibidos or ajustes %}
+    <button type="button" class="boton-exportar" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
+    <div id="opciones-exportar" style="display: none;">
+      <a class="boton-exportar" href="/puesto/envases/movimientos/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar PDF</a>
+      <a class="boton-exportar" href="/puesto/envases/movimientos/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar Excel</a>
+    </div>
+    {% endif %}
   </div>
 
   <p class="ayuda">Para corregir un movimiento viejo mal cargado: anulalo acá (queda el registro, tachado) y cargalo de nuevo bien desde Recibir o Devolver. El stock excluye lo anulado.</p>
@@ -214,5 +237,18 @@
   </div>
 
   <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+
+  <script>
+    // "Exportar" es un solo toque para desplegar las 2 opciones, en vez de
+    // navegar a una pantalla intermedia — mismo criterio que Buscar Compras.
+    function mostrarOpcionesExportar() {
+      const boton = document.getElementById("boton-exportar");
+      const opciones = document.getElementById("opciones-exportar");
+      if (boton && opciones) {
+        opciones.style.display = "block";
+        boton.style.display = "none";
+      }
+    }
+  </script>
 </body>
 </html>

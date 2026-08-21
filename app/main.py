@@ -141,6 +141,12 @@ from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
+from core.exportar_vacios import (
+    generar_excel_movimientos_vacios,
+    generar_excel_stock_vacios,
+    generar_pdf_movimientos_vacios,
+    generar_pdf_stock_vacios,
+)
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
@@ -5920,17 +5926,21 @@ def anular_vacio_devuelto_ruta(request: Request, movimiento_id: int):
     return RedirectResponse(url="/puesto/envases/vacios/devolver", status_code=303)
 
 
-@app.get("/puesto/envases/stock")
-def ver_stock_vacios(request: Request):
-    """Stock del sistema por proveedor y tipo (recibidos − devueltos). La ve la cajera, NO el empleado del fondo."""
-    if not _acceso_control_valido(request):
-        return _pantalla_clave_control(request)
+def _fecha_consulta_stock_vacios(fecha_texto: str | None):
+    """La fecha elegida para consultar el stock, o hoy. Fechas mal escritas o futuras caen a hoy."""
+    hoy = _hoy_argentina()
+    if not fecha_texto:
+        return hoy
     try:
-        filas = stock_vacios()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        fecha = date.fromisoformat(fecha_texto)
+    except ValueError:
+        return hoy
+    return fecha if fecha <= hoy else hoy
 
-    # Agrupado por proveedor para mostrar: encabezado + una fila por tipo.
+
+def _grupos_stock_vacios(fecha_consulta) -> list[dict]:
+    """El stock a una fecha, agrupado por proveedor para mostrar/exportar: encabezado + una fila por tipo."""
+    filas = stock_vacios(fecha_consulta)
     grupos: list[dict] = []
     grupos_por_proveedor: dict[int, dict] = {}
     for fila in filas:
@@ -5945,8 +5955,74 @@ def ver_stock_vacios(request: Request):
             grupos.append(grupo)
         grupo["tipos"].append(fila)
         grupo["total"] += fila["stock"]
+    return grupos
 
-    return templates.TemplateResponse(request, "vacios_stock.html", {"grupos": grupos})
+
+@app.get("/puesto/envases/stock")
+def ver_stock_vacios(request: Request, fecha: str | None = None):
+    """Stock del sistema por proveedor y tipo a una fecha (por default hoy). La ve la cajera, NO el empleado del fondo.
+
+    Para una fecha pasada la pantalla avisa que el número puede cambiar: un
+    movimiento anulado se descuenta DESDE SIEMPRE (si no existió, no existió
+    nunca), así que anular hoy un movimiento viejo también corrige el stock
+    de los días anteriores.
+    """
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
+    fecha_consulta = _fecha_consulta_stock_vacios(fecha)
+    try:
+        grupos = _grupos_stock_vacios(fecha_consulta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_stock.html",
+        {
+            "grupos": grupos,
+            "fecha": fecha_consulta.isoformat(),
+            "fecha_mostrar": fecha_consulta.strftime("%d/%m/%Y"),
+            "es_pasada": fecha_consulta < _hoy_argentina(),
+        },
+    )
+
+
+@app.get("/puesto/envases/stock/exportar-pdf")
+def exportar_stock_vacios_pdf(request: Request, fecha: str = ""):
+    """Genera el Stock del Sistema a una fecha en PDF — no se guarda en ningún lado. Zona de control: pide la clave."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/stock", status_code=303)
+    fecha_consulta = _fecha_consulta_stock_vacios(fecha)
+    try:
+        grupos = _grupos_stock_vacios(fecha_consulta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    pdf_bytes = generar_pdf_stock_vacios(fecha_consulta, fecha_consulta < _hoy_argentina(), grupos)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Stock_Vacios_{fecha_consulta.isoformat()}.pdf"'},
+    )
+
+
+@app.get("/puesto/envases/stock/exportar-excel")
+def exportar_stock_vacios_excel(request: Request, fecha: str = ""):
+    """Genera el Stock del Sistema a una fecha en Excel — no se guarda en ningún lado. Zona de control: pide la clave."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/stock", status_code=303)
+    fecha_consulta = _fecha_consulta_stock_vacios(fecha)
+    try:
+        grupos = _grupos_stock_vacios(fecha_consulta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    excel_bytes = generar_excel_stock_vacios(fecha_consulta, fecha_consulta < _hoy_argentina(), grupos)
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Stock_Vacios_{fecha_consulta.isoformat()}.xlsx"'},
+    )
 
 
 def _renderizar_pantalla_tipos_envase_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):
@@ -6214,6 +6290,50 @@ def ver_movimientos_vacios(request: Request, fecha_desde: str | None = None, fec
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
         },
+    )
+
+
+@app.get("/puesto/envases/movimientos/exportar-pdf")
+def exportar_movimientos_vacios_pdf(request: Request, fecha_desde: str = "", fecha_hasta: str = ""):
+    """Genera los Movimientos de Vacíos (mismo rango que la pantalla) en PDF — no se guarda en ningún lado."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
+    desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
+    try:
+        recibidos = listar_vacios_recibidos_por_rango(desde, hasta)
+        devueltos = listar_vacios_devueltos_por_rango(desde, hasta)
+        ajustes = listar_ajustes_vacios_por_rango(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    pdf_bytes = generar_pdf_movimientos_vacios(desde, hasta, devueltos, recibidos, ajustes)
+    nombre_archivo = f"Movimientos_Vacios_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/puesto/envases/movimientos/exportar-excel")
+def exportar_movimientos_vacios_excel(request: Request, fecha_desde: str = "", fecha_hasta: str = ""):
+    """Genera los Movimientos de Vacíos (mismo rango que la pantalla) en Excel — no se guarda en ningún lado."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
+    desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
+    try:
+        recibidos = listar_vacios_recibidos_por_rango(desde, hasta)
+        devueltos = listar_vacios_devueltos_por_rango(desde, hasta)
+        ajustes = listar_ajustes_vacios_por_rango(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    excel_bytes = generar_excel_movimientos_vacios(desde, hasta, devueltos, recibidos, ajustes)
+    nombre_archivo = f"Movimientos_Vacios_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
 
 

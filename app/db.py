@@ -3314,17 +3314,26 @@ def anular_vacio_devuelto(movimiento_id: int) -> None:
         conexion.close()
 
 
-def stock_vacios() -> list[dict]:
+def stock_vacios(fecha_hasta=None) -> list[dict]:
     """Stock del sistema por proveedor y tipo: recibidos − devueltos + ajustes (sin anulados), calculado siempre.
+
+    Con fecha_hasta, es el stock A ESE DÍA (movimientos con creado_en hasta
+    esa fecha inclusive); sin fecha_hasta, el de hoy (todos los movimientos).
+    Los anulados se excluyen SIEMPRE, sin importar cuándo se anularon: un
+    movimiento anulado no existió nunca, así que también desaparece del
+    stock de fechas anteriores a su anulación (a propósito — el stock de un
+    día pasado puede cambiar si después se descubre un movimiento mal cargado).
 
     Incluye tipos dados de baja que todavía tengan movimientos (su stock
     histórico no puede desaparecer de la pantalla por una baja del ABM).
     """
+    filtro_fecha = "" if fecha_hasta is None else "AND creado_en < %s::date + 1"
+    parametros = tuple() if fecha_hasta is None else (fecha_hasta, fecha_hasta, fecha_hasta)
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT p.id AS proveedor_id, p.nombre AS proveedor_nombre,
                        t.id AS tipo_envase_id, t.nombre AS tipo_nombre,
                        COALESCE(r.total, 0) AS recibidos,
@@ -3333,15 +3342,16 @@ def stock_vacios() -> list[dict]:
                 FROM tipos_envase_puesto t
                 JOIN proveedores_puesto p ON p.id = t.proveedor_id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_recibidos
-                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
+                           WHERE anulado_el IS NULL {filtro_fecha} GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_devueltos
-                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
+                           WHERE anulado_el IS NULL {filtro_fecha} GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM ajustes_vacios
-                           WHERE anulado_el IS NULL GROUP BY tipo_envase_id) aj ON aj.tipo_envase_id = t.id
+                           WHERE anulado_el IS NULL {filtro_fecha} GROUP BY tipo_envase_id) aj ON aj.tipo_envase_id = t.id
                 WHERE t.activo OR COALESCE(r.total, 0) <> 0 OR COALESCE(d.total, 0) <> 0
                    OR COALESCE(aj.total, 0) <> 0
                 ORDER BY p.nombre, t.id
-                """
+                """,
+                parametros,
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
