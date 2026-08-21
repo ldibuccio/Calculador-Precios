@@ -387,8 +387,12 @@ def extraer_listado_precios_de_texto(texto: str) -> dict:
 MAX_TOKENS_PEDIDO_CLIENTE = 16384
 
 PROMPT_PEDIDO_CLIENTE = """
-Estás leyendo el texto de un MAIL DE PEDIDO que un cliente (un
-supermercado) le manda a un distribuidor mayorista de frutas y verduras.
+Estás leyendo un MAIL DE PEDIDO que un cliente (un supermercado) le
+manda a un distribuidor mayorista de frutas y verduras. Puede venir como
+texto pegado o como una o varias capturas de pantalla del MISMO mail (el
+mail es largo y no entra en una sola pantalla: las capturas son partes
+consecutivas de la misma tabla — juntalas en un solo resultado, sin
+repetir renglones si dos capturas se solapan).
 El mail puede traer UNO o VARIOS bloques de empresa (el cliente a veces
 le pide a más de una empresa en el mismo mail, con un encabezado por
 bloque, ej. "9582 FRUTAMAX" y "11344 PALMALA"). Cada bloque tiene
@@ -427,8 +431,13 @@ REGLAS DE EXTRACCIÓN:
 - "renglones": uno por cada FILA de artículo, en el mismo orden en que
   aparecen. "codigo" y "descripcion" tal cual están escritos, completos,
   sin acortar ni inventar. "cantidades": un valor por sucursal usando los
-  MISMOS nombres de sucursal que declaraste en "sucursales"; una celda
-  vacía es null, nunca 0 inventado.
+  MISMOS nombres de sucursal que declaraste en "sucursales".
+- OJO CON LAS CELDAS VACÍAS — es lo que más fácil se lee mal en la tabla:
+  una celda vacía significa que esa sucursal NO pide ese artículo. Va
+  null, NUNCA un 0 inventado. Y cuidá la alineación: cada cantidad
+  pertenece a la columna de SU sucursal — si una fila tiene vacía la
+  primera columna y número en la segunda, ese número es de la segunda
+  sucursal, no corras cantidades de columna para llenar huecos.
 - NUNCA adivinar. Si un dato no se lee con seguridad, transcribí lo que
   se alcanza a leer y marcá "confianza": "baja" en ese renglón.
 - Ignorar saludos, firmas y texto que no sea parte del pedido — pero
@@ -451,5 +460,19 @@ def extraer_pedido_de_texto(texto: str) -> dict:
     """
     respuesta_texto = _llamar_api_claude_texto(
         texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def extraer_pedido_de_imagenes(imagenes: list[bytes]) -> dict:
+    """Extrae {"bloques": [...]} de una o varias capturas del MISMO mail de pedido.
+
+    Mismo contrato que extraer_pedido_de_texto — la revisión no necesita
+    saber de qué formato salió. Varias imágenes son partes consecutivas
+    del mismo mail (no entra en una pantalla): van todas juntas en la
+    misma llamada para que la IA las junte en un solo resultado.
+    """
+    respuesta_texto = _llamar_api_claude_multi_imagen(
+        imagenes, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
     )
     return _parsear_json_de_la_respuesta(respuesta_texto)

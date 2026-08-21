@@ -108,6 +108,9 @@
     </div>
     {% endfor %}
     <div id="control-cruzado"></div>
+    {% if fotos_data %}
+    <p class="sub">Leído de {{ fotos_data|length }} captura{{ "s" if fotos_data|length != 1 else "" }} — al guardar quedan como respaldo del pedido.</p>
+    {% endif %}
   </div>
 
   {% if pedido_vigente %}
@@ -118,6 +121,12 @@
     <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
     <input type="hidden" name="fecha" value="{{ fecha }}">
     <input type="hidden" name="texto_original" value="{{ texto_original }}">
+    {# Las capturas leídas viajan comprimidas hasta el guardado: al
+       confirmar quedan como respaldo del pedido en fotos_pedido. #}
+    <input type="hidden" name="cantidad_fotos" value="{{ fotos_data|length }}">
+    {% for foto in fotos_data %}
+    <input type="hidden" name="foto_data_{{ loop.index0 }}" value="{{ foto }}">
+    {% endfor %}
     <input type="hidden" name="cantidad_sucursales" value="{{ sucursales|length }}">
     {% for s in sucursales %}
     <input type="hidden" name="sucursal_{{ loop.index0 }}_nombre" value="{{ s.sucursal }}">

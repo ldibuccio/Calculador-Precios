@@ -82,7 +82,8 @@
   {% endif %}
 
   <div class="tarjeta">
-    <form method="post" action="/deposito/pedido/cargar/leer" onsubmit="document.getElementById('leyendo').style.display='block';">
+    <form method="post" action="/deposito/pedido/cargar/leer" enctype="multipart/form-data"
+          onsubmit="document.getElementById('leyendo').style.display='block';">
       <label for="cliente_id">Cliente</label>
       <select id="cliente_id" name="cliente_id" required>
         <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
@@ -92,8 +93,13 @@
       </select>
       <label for="fecha">Fecha del pedido</label>
       <input type="date" id="fecha" name="fecha" value="{{ fecha }}">
-      <label for="texto">Texto del mail</label>
-      <textarea id="texto" name="texto" placeholder="Pegá acá el cuerpo del mail del pedido, tal cual llegó (con los dos bloques si vienen juntos: el sistema se queda con el de esta empresa)."></textarea>
+
+      <label for="imagenes">Capturas del mail (lo más fácil desde el celular)</label>
+      <input type="file" id="imagenes" name="imagenes" accept="image/*" multiple>
+      <p class="ayuda">Si el mail es largo, sacale varias capturas seguidas y subilas todas juntas: se leen como un solo pedido. Las capturas quedan además como respaldo del pedido.</p>
+
+      <label for="texto">… o pegá el texto del mail</label>
+      <textarea id="texto" name="texto" placeholder="Si preferís, pegá acá el cuerpo del mail tal cual llegó (con los dos bloques si vienen juntos: el sistema se queda con el de esta empresa)."></textarea>
       <p class="ayuda">La IA lo lee y antes de guardar vas a ver la revisión: los renglones que no matchean van arriba, marcados, y no se pierde ninguno.</p>
       <button type="submit">Leer pedido</button>
       <p class="leyendo" id="leyendo">Leyendo el pedido…</p>

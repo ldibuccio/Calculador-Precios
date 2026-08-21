@@ -169,6 +169,7 @@ from core.lector_comandas import (
     extraer_listado_consolidado,
     extraer_listado_precios_de_imagenes,
     extraer_listado_precios_de_texto,
+    extraer_pedido_de_imagenes,
     extraer_pedido_de_texto,
 )
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
@@ -7247,13 +7248,22 @@ def ver_cargar_pedido(request: Request, cliente_id: str | None = None, fecha: st
 
 
 @app.post("/deposito/pedido/cargar/leer")
-def leer_pedido_pegado(
+async def leer_pedido_pegado(
     request: Request,
     cliente_id: int = Form(...),
     fecha: str = Form(""),
     texto: str = Form(""),
+    imagenes: list[UploadFile] = File([]),
 ):
-    """Lee el texto pegado con la IA, se queda con el bloque de ESTA empresa y arma la revisión."""
+    """Lee el pedido con la IA — texto pegado O capturas del mail — y arma la revisión con el bloque de ESTA empresa.
+
+    Las capturas son lo natural desde el celular (el pedido es una tabla
+    en el cuerpo del mail): pueden ser VARIAS partes del mismo mail y van
+    todas juntas a la misma lectura. La IA lee los originales; las
+    versiones comprimidas (mismo pipeline que las comandas) viajan a la
+    revisión y al confirmar quedan como respaldo en fotos_pedido — la
+    lectura y el respaldo se resuelven de una.
+    """
     fecha_valor = _fecha_pedido_o_hoy(fecha)
     try:
         clientes = listar_clientes()
@@ -7263,25 +7273,38 @@ def leer_pedido_pegado(
     if cliente is None:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    if not texto.strip():
+    def _pantalla_error(mensaje: str, status_code: int):
         return templates.TemplateResponse(
             request,
             "deposito_pedido_cargar.html",
-            {"clientes": clientes, "cliente_id": cliente_id, "fecha": fecha_valor.isoformat(),
-             "error": "Pegá el texto del mail antes de leer."},
-            status_code=400,
+            {"clientes": clientes, "cliente_id": cliente_id, "fecha": fecha_valor.isoformat(), "error": mensaje},
+            status_code=status_code,
         )
 
-    try:
-        datos = extraer_pedido_de_texto(texto)
-    except Exception as error_lector:
-        return templates.TemplateResponse(
-            request,
-            "deposito_pedido_cargar.html",
-            {"clientes": clientes, "cliente_id": cliente_id, "fecha": fecha_valor.isoformat(),
-             "error": f"No se pudo leer el pedido: {error_lector}"},
-            status_code=500,
-        )
+    archivos = [a for a in imagenes if a is not None and a.filename]
+    fotos_data: list[str] = []
+    if archivos:
+        originales = []
+        for archivo in archivos:
+            contenido = await archivo.read()
+            comprimida = _comprimir_foto_jpeg(contenido)
+            if comprimida is None:
+                return _pantalla_error(
+                    f'No se pudo leer la imagen "{archivo.filename}". Probá con otra captura.', 400
+                )
+            originales.append(contenido)
+            fotos_data.append(_generar_data_uri_generico(comprimida, "image/jpeg"))
+        try:
+            datos = extraer_pedido_de_imagenes(originales)
+        except Exception as error_lector:
+            return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
+    elif texto.strip():
+        try:
+            datos = extraer_pedido_de_texto(texto)
+        except Exception as error_lector:
+            return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
+    else:
+        return _pantalla_error("Pegá el texto del mail o subí una captura antes de leer.", 400)
 
     try:
         fichas = listar_fichas_por_cliente(cliente_id)
@@ -7332,6 +7355,7 @@ def leer_pedido_pegado(
             "renglones": renglones,
             "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
             "texto_original": texto,
+            "fotos_data": fotos_data,
             "pedido_vigente": pedido_vigente,
         },
     )
@@ -7430,6 +7454,20 @@ async def confirmar_pedido(request: Request):
             guardar_alias_en_ficha(cliente_id, articulo_id, texto_codigo, texto_descripcion)
         except Exception:
             logger.exception("No se pudo guardar el alias en la ficha (cliente %s, articulo %s)", cliente_id, articulo_id)
+
+    # Las capturas leídas quedan como respaldo del pedido (ya vienen
+    # comprimidas desde la lectura). Si Storage falla, el pedido igual
+    # quedó guardado — mismo criterio que las fotos de precios.
+    cantidad_fotos = int(form.get("cantidad_fotos", "0") or 0)
+    for indice in range(cantidad_fotos):
+        bytes_foto = _bytes_desde_data_uri(str(form.get(f"foto_data_{indice}", "")))
+        if not bytes_foto:
+            continue
+        try:
+            foto_ruta = subir_foto_comanda(bytes_foto, f"pedido-{pedido_id}")
+            agregar_foto_pedido(pedido_id, foto_ruta)
+        except Exception:
+            logger.exception("No se pudo subir la captura del pedido %s — el pedido quedó guardado igual", pedido_id)
 
     aviso = "Pedido guardado."
     if pedido_vigente:

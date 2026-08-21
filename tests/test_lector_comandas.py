@@ -450,3 +450,27 @@ def test_extraer_pedido_de_texto_usa_su_propio_prompt():
     mock_llamada.assert_called_once_with("texto del mail", prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE)
     assert "bloques" in PROMPT_PEDIDO_CLIENTE
     assert "NUNCA adivinar" in PROMPT_PEDIDO_CLIENTE
+
+
+def test_extraer_pedido_de_imagenes_manda_todas_juntas_con_el_mismo_prompt():
+    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE, PROMPT_PEDIDO_CLIENTE, extraer_pedido_de_imagenes
+
+    with patch("core.lector_comandas._llamar_api_claude_multi_imagen", return_value=json.dumps(PEDIDO_VALIDO)) as mock_llamada:
+        resultado = extraer_pedido_de_imagenes([b"captura-1", b"captura-2"])
+
+    assert resultado == PEDIDO_VALIDO
+    mock_llamada.assert_called_once_with(
+        [b"captura-1", b"captura-2"], prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
+    )
+
+
+def test_prompt_de_pedido_cuida_las_celdas_vacias_de_la_tabla():
+    from core.lector_comandas import PROMPT_PEDIDO_CLIENTE
+
+    # Lo que más fácil se lee mal en la tabla: celdas vacías y cantidades
+    # corridas de columna. El prompt lo dice explícito.
+    assert "celda vacía significa que esa sucursal NO pide ese artículo" in PROMPT_PEDIDO_CLIENTE
+    assert "no corras cantidades de columna" in PROMPT_PEDIDO_CLIENTE
+    assert "NUNCA un 0 inventado" in PROMPT_PEDIDO_CLIENTE
+    # Varias capturas del mismo mail se juntan en un solo resultado.
+    assert "capturas" in PROMPT_PEDIDO_CLIENTE

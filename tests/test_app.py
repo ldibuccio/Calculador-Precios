@@ -11327,3 +11327,83 @@ def test_asignar_renglon_de_pedido_guarda_y_opcionalmente_el_alias():
     assert "/deposito/pedido?" in respuesta.headers["location"]
     mock_asignar.assert_called_once_with(10, 7)
     mock_alias.assert_called_once_with(1, 7, "99999", "RADICHETA")
+
+
+def test_leer_pedido_con_capturas_lee_los_originales_y_arrastra_el_respaldo():
+    # Desde el celular: capturas en vez de texto. La IA lee los ORIGINALES
+    # (mejor resolución) y las versiones comprimidas viajan a la revisión
+    # para quedar como respaldo al confirmar.
+    datos_leidos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 235}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+        }]
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-comprimido") as mock_comprimir,
+        patch("app.main.extraer_pedido_de_imagenes", return_value=datos_leidos) as mock_extraer,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "texto": ""},
+            files=[
+                ("imagenes", ("parte1.png", b"bytes-originales-1", "image/png")),
+                ("imagenes", ("parte2.png", b"bytes-originales-2", "image/png")),
+            ],
+        )
+
+    assert respuesta.status_code == 200
+    # Las DOS capturas van juntas a la misma lectura, con los bytes originales.
+    mock_extraer.assert_called_once_with([b"bytes-originales-1", b"bytes-originales-2"])
+    assert mock_comprimir.call_count == 2
+    # Las comprimidas viajan escondidas a la revisión, listas para el respaldo.
+    assert 'name="cantidad_fotos" value="2"' in respuesta.text
+    assert 'name="foto_data_0" value="data:image/jpeg;base64,' in respuesta.text
+    assert "al guardar quedan como respaldo del pedido" in respuesta.text
+
+
+def test_leer_pedido_sin_texto_ni_capturas_pide_alguno_de_los_dos():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "texto": "   "},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Pegá el texto del mail o subí una captura" in respuesta.text
+
+
+def test_confirmar_pedido_sube_las_capturas_como_respaldo():
+    import base64
+    foto_data = "data:image/jpeg;base64," + base64.standard_b64encode(b"jpeg-comprimido").decode("ascii")
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.crear_pedido", return_value=60),
+        patch("app.main.subir_foto_comanda", return_value="2026/pedido-60-abc.jpg") as mock_subir,
+        patch("app.main.agregar_foto_pedido") as mock_foto,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={
+                "cliente_id": "1", "fecha": "2026-08-21", "texto_original": "",
+                "cantidad_fotos": "1", "foto_data_0": foto_data,
+                "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
+                "cantidad_renglones": "1",
+                "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
+                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "225",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_subir.assert_called_once_with(b"jpeg-comprimido", "pedido-60")
+    mock_foto.assert_called_once_with(60, "2026/pedido-60-abc.jpg")
