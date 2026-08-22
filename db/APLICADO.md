@@ -53,7 +53,7 @@ bases estén marcadas.
 | `agregar_cantidad_armada_pedidos.sql` | ✅ 2026-08-21 | ✅ 2026-08-21 |
 | `agregar_casilla_pedidos.sql` | ✅ 2026-08-22 | ✅ 2026-08-22 |
 | `agregar_asunto_filtro_casilla.sql` | ✅ 2026-08-22 | ✅ 2026-08-22 |
-| `agregar_leido_con_ia_mails_pedido.sql` | ⬜ | ⬜ |
+| `agregar_leido_con_ia_mails_pedido.sql` | ✅ 2026-08-22 | ✅ 2026-08-22 |
 
 ## Deuda pendiente de limpieza
 
