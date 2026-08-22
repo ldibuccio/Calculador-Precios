@@ -4546,3 +4546,37 @@ def contar_mails_pedido_leidos_con_ia(fecha_desde) -> dict:
         return {"casos": int(casos), "mas_viejo": mas_viejo}
     finally:
         conexion.close()
+
+
+def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dict]:
+    """Los pedidos VIVOS de un cliente desde una fecha (pasados recientes y TODOS los futuros), con su estado de armado.
+
+    Una fila por fecha (el vigente: el más nuevo sin anular), con lo justo
+    para verlos de un vistazo sin entrar a cada uno: renglones
+    identificados, cuántos están armados y cuántos quedaron sin
+    identificar — "Pedido del 22/08 — 18 de 32 armados".
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (p.fecha_operacion)
+                       p.id, p.fecha_operacion, p.origen, p.creado_en,
+                       (SELECT COUNT(*) FROM pedidos_renglones r
+                        WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL) AS renglones_totales,
+                       (SELECT COUNT(*) FROM pedidos_renglones r
+                        WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                          AND r.armado_el IS NOT NULL) AS renglones_armados,
+                       (SELECT COUNT(*) FROM pedidos_renglones r
+                        WHERE r.pedido_id = p.id AND r.articulo_id IS NULL) AS sin_identificar
+                FROM pedidos p
+                WHERE p.cliente_id = %s AND p.anulado_el IS NULL AND p.fecha_operacion >= %s
+                ORDER BY p.fecha_operacion, p.creado_en DESC
+                """,
+                (cliente_id, fecha_desde),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()

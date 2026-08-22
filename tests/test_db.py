@@ -43,6 +43,7 @@ from app.db import (
     marcar_mail_pedido_ignorado,
     contar_mails_pedido_leidos_con_ia,
     contar_mails_pedido_sin_procesar,
+    listar_pedidos_vigentes_con_armado,
     registrar_mail_pedido,
     registrar_revision_casilla,
     desmarcar_renglon_armado,
@@ -2792,3 +2793,25 @@ def test_contar_mails_pedido_leidos_con_ia_mira_la_ventana_reciente():
     consulta, parametros = cursor.execute.call_args.args
     assert "leido_con_ia AND recibido_el >= %s" in consulta
     assert parametros == (date(2026, 8, 15),)
+
+
+def test_listar_pedidos_vigentes_con_armado_una_fila_por_fecha_desde_el_corte():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [
+        ("id",), ("fecha_operacion",), ("origen",), ("creado_en",),
+        ("renglones_totales",), ("renglones_armados",), ("sin_identificar",),
+    ]
+    cursor.fetchall.return_value = [(50, date(2026, 8, 22), "mail", datetime(2026, 8, 21, 12, 30), 32, 18, 1)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        pedidos = listar_pedidos_vigentes_con_armado(1, date(2026, 8, 15))
+
+    assert pedidos[0]["renglones_armados"] == 18
+    consulta, parametros = cursor.execute.call_args.args
+    # Una fila por fecha (el vigente: el más nuevo sin anular), pasados
+    # desde el corte y TODOS los futuros (sin tope superior).
+    assert "DISTINCT ON (p.fecha_operacion)" in consulta
+    assert "p.anulado_el IS NULL" in consulta
+    assert "p.fecha_operacion >= %s" in consulta
+    assert "<=" not in consulta
+    assert parametros == (1, date(2026, 8, 15))

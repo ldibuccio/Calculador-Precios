@@ -11183,6 +11183,7 @@ def test_ver_pedido_muestra_sucursales_con_oc_descuadre_y_sin_identificar():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
@@ -11440,11 +11441,12 @@ def test_armar_pedido_muestra_las_sucursales_con_progreso_y_oc():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
     assert respuesta.status_code == 200
     # Una sucursal a la vez: botones grandes con progreso y OC.
@@ -11458,11 +11460,12 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&sucursal=VL")
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
 
     assert respuesta.status_code == 200
     assert "VL: 1 de 2 armados" in respuesta.text
@@ -11495,7 +11498,7 @@ def test_armar_pedido_corregido_muestra_el_diff_contra_el_anterior():
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", side_effect=_renglones),
     ):
-        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
     assert respuesta.status_code == 200
     assert "los cambiados quedaron sin tildar" in respuesta.text
@@ -11561,6 +11564,7 @@ def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
@@ -12282,3 +12286,77 @@ def test_revisar_mail_reconvierte_el_crudo_html_y_lee_por_estructura():
     assert "OC 1257673" in respuesta.text
     # Banana matcheó por el código de la ficha y la cantidad quedó en VL.
     assert "declara 225 bultos" in respuesta.text
+
+
+LISTADO_PEDIDOS_DE_PRUEBA = [
+    # Desordenados a propósito: el orden lo decide la pantalla.
+    {"id": 48, "fecha_operacion": date(2026, 8, 20), "origen": "texto", "creado_en": datetime(2026, 8, 19, 12, 0),
+     "renglones_totales": 30, "renglones_armados": 30, "sin_identificar": 0},
+    {"id": 51, "fecha_operacion": date(2026, 8, 23), "origen": "mail", "creado_en": datetime(2026, 8, 22, 12, 0),
+     "renglones_totales": 28, "renglones_armados": 0, "sin_identificar": 2},
+    {"id": 50, "fecha_operacion": date(2026, 8, 22), "origen": "mail", "creado_en": datetime(2026, 8, 21, 12, 10),
+     "renglones_totales": 32, "renglones_armados": 18, "sin_identificar": 0},
+]
+
+
+def test_armar_pedido_sin_fecha_lista_los_pedidos_hoy_primero():
+    # El del sábado se puede ir armando el viernes: se listan TODOS los
+    # vigentes (próximos y última semana), hoy primero, con su estado.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=list(LISTADO_PEDIDOS_DE_PRUEBA)) as mock_listar,
+        patch("app.main.obtener_pedido_vigente") as mock_vigente,
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # Ventana: últimos 7 días (los futuros van sin tope).
+    mock_listar.assert_called_once_with(1, date(2026, 8, 15))
+    mock_vigente.assert_not_called()
+    texto = respuesta.text
+    # Hoy primero, después el próximo, después el pasado.
+    assert texto.index("Pedido del 22/08/2026 — HOY") < texto.index("Pedido del 23/08/2026 — próximo") < texto.index("Pedido del 20/08/2026")
+    # El estado de un vistazo, sin entrar: armados, completo, sin identificar.
+    assert "18 de 32 armados" in texto
+    assert "30 de 30 armados · COMPLETO ✔" in texto
+    assert "0 de 28 armados" in texto and "2 sin identificar" in texto
+    # Cada uno entra a su fecha.
+    assert 'href="/deposito/pedido/armar?cliente_id=1&fecha=2026-08-23"' in texto
+
+
+def test_armar_pedido_con_fecha_muestra_ese_pedido_con_su_fecha_visible():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+
+    assert respuesta.status_code == 200
+    # La fecha bien visible (se puede estar armando el de mañana) y la
+    # vuelta al listado a mano.
+    assert "Pedido del 21/08/2026 — elegí la sucursal" in respuesta.text
+    assert 'href="/deposito/pedido/armar?cliente_id=1">Volver a los pedidos' in respuesta.text
+
+
+def test_ver_pedido_lista_todos_los_cargados_ademas_del_abierto():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=list(LISTADO_PEDIDOS_DE_PRUEBA)),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1&fecha=2026-08-24")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    # Aunque la fecha abierta no tenga pedido, el listado muestra los que hay.
+    assert "No hay pedido cargado para el 24/08/2026" in texto
+    assert "Pedido del 22/08/2026 — HOY" in texto
+    assert "Pedido del 23/08/2026 — próximo" in texto
+    # El pasado completo sigue consultable, marcado, sin desaparecer.
+    assert "Pedido del 20/08/2026" in texto and "COMPLETO ✔" in texto
+    assert 'href="/deposito/pedido?cliente_id=1&fecha=2026-08-20"' in texto

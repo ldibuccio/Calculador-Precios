@@ -129,6 +129,21 @@
     border-radius: 999px;
   }
   .tarjeta-sin-identificar { border: 2px solid #f59e0b; background: #fffbeb; }
+  /* El listado multi-día: botones grandes, uno por pedido, con su estado. */
+  .item-pedido {
+    display: block;
+    padding: 0.85rem 1rem;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 10px;
+    font-size: 1.05rem;
+    font-weight: 800;
+    text-decoration: none;
+    margin-bottom: 0.6rem;
+  }
+  .item-pedido .detalle { display: block; font-size: 0.85rem; font-weight: 500; opacity: 0.9; margin-top: 0.15rem; }
+  .item-pedido.completo { background: #16a34a; }
+  .item-pedido.abierto { outline: 3px solid #1e3a8a; }
   .sin-identificar-item {
     border-top: 1px solid #fde68a;
     padding: 0.6rem 0;
@@ -233,6 +248,19 @@
     </a>
     {% endif %}
   </div>
+
+  {% if cliente_id and pedidos_listado %}
+  <div class="tarjeta">
+    <h2>Pedidos cargados</h2>
+    {% for p in pedidos_listado %}
+    <a class="item-pedido {% if p.completo %}completo{% endif %} {% if p.fecha == fecha %}abierto{% endif %}"
+       href="/deposito/pedido?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
+      Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
+      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   {% if cliente_id and not pedido %}
   <div class="tarjeta">

@@ -101,6 +101,7 @@ from app.db import (
     guardar_alias_en_ficha,
     listar_casillas_pedidos,
     listar_mails_pedido,
+    listar_pedidos_vigentes_con_armado,
     marcar_lectura_mail_pedido,
     marcar_mail_pedido_confirmado,
     marcar_mail_pedido_error,
@@ -7200,6 +7201,52 @@ def _fecha_pedido_o_hoy(fecha_texto: str | None):
         return hoy
 
 
+# Hasta cuándo se ven los pedidos pasados en los listados de Pedido y
+# Armar Pedido (los FUTUROS van siempre): un pedido armado no desaparece
+# al día siguiente — queda consultable una semana. Tocar acá si el dueño
+# quiere más historia a mano.
+DIAS_PASADOS_LISTADO_PEDIDOS = 7
+
+
+def _listado_de_pedidos(cliente_id: int, hoy) -> list[dict]:
+    """Los pedidos del listado (últimos 7 días + todos los futuros), con HOY primero y su estado a la vista.
+
+    Orden pensado para el que arma: hoy, después los próximos (el del
+    sábado se puede ir armando el viernes), y al final los pasados del más
+    reciente al más viejo.
+    """
+    pedidos = listar_pedidos_vigentes_con_armado(cliente_id, hoy - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS))
+
+    def _orden(pedido):
+        if pedido["fecha_operacion"] == hoy:
+            return (0, 0)
+        if pedido["fecha_operacion"] > hoy:
+            return (1, pedido["fecha_operacion"].toordinal())
+        return (2, -pedido["fecha_operacion"].toordinal())
+
+    listado = []
+    for pedido in sorted(pedidos, key=_orden):
+        listado.append(
+            {
+                "fecha": pedido["fecha_operacion"].isoformat(),
+                "fecha_mostrar": pedido["fecha_operacion"].strftime("%d/%m/%Y"),
+                "es_hoy": pedido["fecha_operacion"] == hoy,
+                "es_futuro": pedido["fecha_operacion"] > hoy,
+                "renglones_totales": pedido["renglones_totales"],
+                "renglones_armados": pedido["renglones_armados"],
+                "sin_identificar": pedido["sin_identificar"],
+                # Completo = todos los identificados armados y ninguno sin
+                # identificar: se marca, no desaparece.
+                "completo": (
+                    pedido["renglones_totales"] > 0
+                    and pedido["renglones_armados"] == pedido["renglones_totales"]
+                    and pedido["sin_identificar"] == 0
+                ),
+            }
+        )
+    return listado
+
+
 def _sumas_leidas_por_sucursal(renglones: list[dict]) -> dict:
     """El control cruzado: cuántos bultos suman los renglones guardados, por sucursal."""
     sumas: dict = {}
@@ -7296,6 +7343,10 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
 
     try:
+        # El listado multi-día: si están cargados el de hoy Y el de mañana,
+        # se ven los dos — el depósito puede adelantar el del sábado el
+        # viernes. Los pasados de la última semana siguen consultables.
+        contexto["pedidos_listado"] = _listado_de_pedidos(cliente_id_valor, _hoy_argentina())
         pedido = obtener_pedido_vigente(cliente_id_valor, fecha_valor)
         if pedido is not None:
             sucursales = listar_sucursales_pedido(pedido["id"])
@@ -7744,14 +7795,19 @@ def _diff_pedido_contra_anterior(renglones_nuevos: list[dict], renglones_viejos:
 def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None):
     """Armar Pedido: el del depósito, parado y con una mano — sin clave, es la operación del día a día.
 
-    Primero se elige la sucursal (una a la vez, con su OC y el progreso);
-    adentro, renglones grandes con un tilde por renglón. El tilde
-    significa "terminé con este renglón": si armó menos de lo pedido,
-    "Armé menos" guarda la cantidad real y el renglón queda incompleto,
-    marcado. Los tildados bajan y se atenúan; lo que falta queda arriba.
+    Primero el LISTADO de pedidos (hoy primero, después los próximos —
+    el del sábado se puede ir armando el viernes — y los de la última
+    semana, que no desaparecen: un pedido terminado queda marcado como
+    completo). Recién al entrar a un pedido se elige la sucursal (una a
+    la vez, con su OC y el progreso); adentro, renglones grandes con un
+    tilde por renglón. El tilde significa "terminé con este renglón": si
+    armó menos de lo pedido, "Armé menos" guarda la cantidad real y el
+    renglón queda incompleto, marcado. Los tildados bajan y se atenúan.
     """
     cliente_id_valor = _id_opcional_desde_query(cliente_id)
     fecha_valor = _fecha_pedido_o_hoy(fecha)
+    # Sin fecha en la URL se muestra el LISTADO; con fecha, ese pedido.
+    modo_lista = not fecha
 
     try:
         clientes = listar_clientes()
@@ -7765,8 +7821,16 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         "fecha_mostrar": fecha_valor.strftime("%d/%m/%Y"),
         "pedido": None,
         "sucursal_elegida": None,
+        "modo_lista": modo_lista,
     }
     if cliente_id_valor is None:
+        return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
+
+    if modo_lista:
+        try:
+            contexto["pedidos_listado"] = _listado_de_pedidos(cliente_id_valor, _hoy_argentina())
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
 
     try:

@@ -178,7 +178,7 @@
   {% set barra_titulo = "Armar Pedido" %}
   {% include "_barra_navegacion.html" %}
 
-  {% if not sucursal_elegida %}
+  {% if modo_lista %}
   <div class="tarjeta">
     <form class="filtros" method="get" action="/deposito/pedido/armar">
       <label for="cliente_id">Cliente</label>
@@ -188,15 +188,31 @@
         <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
         {% endfor %}
       </select>
-      <label for="fecha">Fecha</label>
-      <input type="date" id="fecha" name="fecha" value="{{ fecha }}" onchange="this.form.submit()">
     </form>
   </div>
   {% endif %}
 
-  {% if cliente_id and not pedido %}
+  {% if modo_lista and cliente_id %}
+  <div class="tarjeta">
+    <h2>Pedidos para armar</h2>
+    {% if pedidos_listado %}
+      {% for p in pedidos_listado %}
+      <a class="boton-sucursal {% if p.completo %}completa{% endif %}"
+         href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
+        Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+      </a>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">No hay pedidos cargados (últimos 7 días ni próximos). Cargalos desde Cargar Pedido.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if cliente_id and not pedido and not modo_lista %}
   <div class="tarjeta">
     <p class="vacio">No hay pedido cargado para el {{ fecha_mostrar }}. Cargalo primero desde Cargar Pedido.</p>
+    <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
   </div>
   {% endif %}
 
@@ -215,7 +231,7 @@
 
   {% if pedido and not sucursal_elegida %}
   <div class="tarjeta">
-    <h2>Elegí la sucursal para armar</h2>
+    <h2>Pedido del {{ fecha_mostrar }} — elegí la sucursal</h2>
     {% for s in sucursales %}
     <a class="boton-sucursal {% if s.total_renglones > 0 and s.armados == s.total_renglones %}completa{% endif %}"
        href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}&sucursal={{ s.sucursal }}">
@@ -223,13 +239,14 @@
       <span class="detalle">{% if s.orden_compra %}OC {{ s.orden_compra }}{% else %}sin OC{% endif %}{% if s.incompletos %} · {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>
     </a>
     {% endfor %}
+    <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
   </div>
   {% endif %}
 
   {% if sucursal_elegida %}
   <div class="progreso">
     <div class="numeros">{{ sucursal_elegida.sucursal }}: {{ sucursal_elegida.armados }} de {{ sucursal_elegida.total_renglones }} armados</div>
-    <div class="oc">{% if sucursal_elegida.orden_compra %}OC {{ sucursal_elegida.orden_compra }}{% else %}Sin OC{% endif %}</div>
+    <div class="oc">Pedido del {{ fecha_mostrar }} · {% if sucursal_elegida.orden_compra %}OC {{ sucursal_elegida.orden_compra }}{% else %}sin OC{% endif %}</div>
     {% if sucursal_elegida.incompletos %}
     <div class="incompletos">{{ sucursal_elegida.incompletos }} renglón{{ "es" if sucursal_elegida.incompletos != 1 else "" }} incompleto{{ "s" if sucursal_elegida.incompletos != 1 else "" }} (se armó menos de lo pedido)</div>
     {% endif %}
