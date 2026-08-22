@@ -304,3 +304,42 @@ def test_revisar_casilla_sin_message_id_fabrica_uno_estable_por_uid():
         )
 
     assert resultado["mails"][0]["message_id"] == "<uid-7@casilla@empresa.com>"
+
+
+# --- La fecha del pedido sale del ASUNTO (el mail del mediodía es para el día siguiente) ---
+
+from core.casilla_pedidos import fecha_de_pedido_del_asunto  # noqa: E402
+
+
+def test_fecha_del_asunto_manda_sobre_la_llegada():
+    # "Pedido Dia 22-08 Sabado" llegado el 21/08: el pedido es del 22.
+    assert fecha_de_pedido_del_asunto("Pedido Dia 22-08 Sabado", date(2026, 8, 21)) == date(2026, 8, 22)
+    # Con barra también.
+    assert fecha_de_pedido_del_asunto("Pedido Dia 22/08", date(2026, 8, 21)) == date(2026, 8, 22)
+
+
+def test_fecha_del_asunto_cruza_el_anio_en_los_dos_sentidos():
+    # "01-01" llegado el 31/12 es del año que ENTRA...
+    assert fecha_de_pedido_del_asunto("Pedido Dia 01-01 Jueves", date(2026, 12, 31)) == date(2027, 1, 1)
+    # ...y "31-12" llegado el 02/01 es del año que SE FUE.
+    assert fecha_de_pedido_del_asunto("Pedido Dia 31-12", date(2027, 1, 2)) == date(2026, 12, 31)
+
+
+def test_fecha_del_asunto_con_anio_explicito_ese_manda():
+    assert fecha_de_pedido_del_asunto("Pedido Dia 22-08-2026", date(2026, 8, 21)) == date(2026, 8, 22)
+    assert fecha_de_pedido_del_asunto("Pedido 22/08/26", date(2026, 8, 21)) == date(2026, 8, 22)
+
+
+def test_asunto_sin_fecha_devuelve_none():
+    assert fecha_de_pedido_del_asunto("Pedido del dia", date(2026, 8, 22)) is None
+    assert fecha_de_pedido_del_asunto(None, date(2026, 8, 22)) is None
+    assert fecha_de_pedido_del_asunto("", date(2026, 8, 22)) is None
+
+
+def test_numeros_que_no_son_fecha_se_saltean():
+    # "45-13" no es una fecha; el "25-12" que sigue sí.
+    assert fecha_de_pedido_del_asunto("Ref 45-13 pedido 25-12", date(2026, 12, 24)) == date(2026, 12, 25)
+
+
+def test_fecha_del_asunto_bisiesto():
+    assert fecha_de_pedido_del_asunto("Pedido 29-02", date(2028, 2, 28)) == date(2028, 2, 29)

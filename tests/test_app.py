@@ -12195,3 +12195,57 @@ def test_leer_pedido_desde_capturas_dice_que_fue_con_ia():
 
     assert respuesta.status_code == 200
     assert "Leído con IA desde capturas" in respuesta.text
+
+
+def test_revisar_mail_toma_la_fecha_del_asunto_no_de_la_llegada():
+    # El mail del mediodía es para el DÍA SIGUIENTE: llegó el 22 con asunto
+    # "23-08" -> el pedido es del 23. Si no, dos mails de días distintos
+    # caerían en la misma fecha y el segundo pisaría al primero.
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, asunto="Pedido Dia 23-08 Domingo",
+                cuerpo_texto=TEXTO_PEDIDO_ESTRUCTURADO)
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.marcar_lectura_mail_pedido"),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None) as mock_vigente,
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    assert 'name="fecha" value="2026-08-23"' in respuesta.text
+    # El "pedido vigente" (y el reemplazo del tramo 2) se compara contra la
+    # fecha REAL del pedido, la del asunto.
+    mock_vigente.assert_called_once_with(1, date(2026, 8, 23))
+    assert "aviso" not in respuesta.text.split("Renglones")[0].lower() or "quedó con la fecha de llegada" not in respuesta.text
+
+
+def test_revisar_mail_sin_fecha_en_el_asunto_usa_la_llegada_y_avisa():
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, asunto="Pedido del dia", cuerpo_texto=TEXTO_PEDIDO_ESTRUCTURADO)
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.marcar_lectura_mail_pedido"),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    assert 'name="fecha" value="2026-08-22"' in respuesta.text
+    assert "El asunto del mail no trae fecha" in respuesta.text
+    assert "22/08/2026" in respuesta.text
+
+
+def test_revisar_mail_con_fecha_del_asunto_lejana_avisa_posible_tipeo():
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, asunto="Pedido Dia 15-09", cuerpo_texto=TEXTO_PEDIDO_ESTRUCTURADO)
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.marcar_lectura_mail_pedido"),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    # La fecha del asunto igual manda (15/09), pero con el aviso bien visible.
+    assert 'name="fecha" value="2026-09-15"' in respuesta.text
+    assert "puede ser un error de tipeo" in respuesta.text

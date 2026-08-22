@@ -186,6 +186,7 @@ from core.casilla_pedidos import (
     CLAVE_CASILLA_ENV_VAR,
     ErrorCasilla,
     clave_casilla_configurada,
+    fecha_de_pedido_del_asunto,
     revisar_casilla,
     separar_remitentes,
 )
@@ -7208,7 +7209,7 @@ def _sumas_leidas_por_sucursal(renglones: list[dict]) -> dict:
     return sumas
 
 
-def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, texto_original, fotos_data, mail=None, metodo_lectura=None):
+def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, texto_original, fotos_data, mail=None, metodo_lectura=None, aviso_fecha=None):
     """El contexto de la pantalla de revisión a partir de lo que leyó la IA, o None si no encontró renglones.
 
     Es el mismo camino para el texto pegado, las capturas y el mail
@@ -7259,6 +7260,9 @@ def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, te
         # salen de la tabla, sin IA), "ia" (el parser no pudo: mirar con
         # más atención) o "ia_capturas" (una imagen solo se lee con IA).
         "metodo_lectura": metodo_lectura,
+        # Fecha dudosa (el asunto no la trae, o está lejos de la llegada):
+        # se avisa, nunca se decide en silencio.
+        "aviso_fecha": aviso_fecha,
     }
 
 
@@ -8169,13 +8173,27 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
                 logger.exception("No se pudo registrar el error de lectura en el mail %s", mail_id)
             return _redirigir_a_casilla(error=f"No se pudo leer el pedido del mail: {error_lector}")
 
-    # El pedido es del día del mail (el mail de Día llega al mediodía del
-    # día que se arma), en fecha argentina.
-    fecha_valor = mail["recibido_el"].astimezone(ARGENTINA).date()
+    # La fecha del pedido la manda el ASUNTO ("Pedido Dia 22-08 Sabado":
+    # el mail del mediodía es para el día siguiente); la llegada es solo
+    # el respaldo. Se recalcula en CADA relectura — nunca queda congelada.
+    fecha_llegada = mail["recibido_el"].astimezone(ARGENTINA).date()
+    fecha_valor = fecha_de_pedido_del_asunto(mail["asunto"], fecha_llegada)
+    aviso_fecha = None
+    if fecha_valor is None:
+        fecha_valor = fecha_llegada
+        aviso_fecha = (
+            f"El asunto del mail no trae fecha: el pedido quedó con la fecha de llegada "
+            f"({fecha_llegada.strftime('%d/%m/%Y')}). Fijate que sea la que corresponde antes de guardar."
+        )
+    elif abs((fecha_valor - fecha_llegada).days) > 5:
+        aviso_fecha = (
+            f"Ojo: la fecha del asunto ({fecha_valor.strftime('%d/%m/%Y')}) está lejos de la llegada del mail "
+            f"({fecha_llegada.strftime('%d/%m/%Y')}) — puede ser un error de tipeo de Día. Revisala antes de guardar."
+        )
     try:
         contexto = _contexto_revision_pedido(
             mail["cliente_id"], mail["cliente_nombre"], fecha_valor, datos, texto, [],
-            mail=mail, metodo_lectura=metodo_lectura,
+            mail=mail, metodo_lectura=metodo_lectura, aviso_fecha=aviso_fecha,
         )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db

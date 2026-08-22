@@ -136,6 +136,10 @@
   </div>
   {% endif %}
 
+  {% if aviso_fecha %}
+  <div class="aviso">{{ aviso_fecha }}</div>
+  {% endif %}
+
   {% if pedido_vigente %}
   <div class="aviso">Ya hay un pedido vigente para esta fecha (cargado {{ pedido_vigente.creado_en|fecha_hora }}). Al guardar, este lo REEMPLAZA: el anterior se anula y queda de registro.</div>
   {% endif %}

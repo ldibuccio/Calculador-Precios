@@ -29,7 +29,7 @@ import email.utils
 import imaplib
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 
 from core.matcheo_comanda import normalizar_texto
@@ -56,6 +56,46 @@ def clave_casilla_configurada() -> str | None:
 def separar_remitentes(remitentes_permitidos: str) -> list[str]:
     """La lista de direcciones permitidas desde el texto separado por comas de la config."""
     return [parte.strip().lower() for parte in (remitentes_permitidos or "").split(",") if parte.strip()]
+
+
+# La fecha dentro del asunto del mail: "22-08", "22/08" o con año
+# ("22-08-2026", "22/08/26"). El primer match VÁLIDO gana.
+_PATRON_FECHA_ASUNTO = re.compile(r"\b(\d{1,2})[-/](\d{1,2})(?:[-/](\d{2,4}))?\b")
+
+
+def fecha_de_pedido_del_asunto(asunto: str | None, fecha_llegada: date) -> date | None:
+    """La fecha del pedido leída del ASUNTO ("Pedido Dia 22-08 Sabado" -> 22/08), o None si no trae.
+
+    El mail del mediodía es para el día SIGUIENTE: la fecha del pedido la
+    manda el asunto, no la llegada — si no, dos mails de días distintos
+    caerían en la misma fecha y el segundo pisaría al primero como si
+    fuera un reemplazo. El asunto trae día y mes; el año sale del
+    CONTEXTO: el que deje la fecha más cerca de la llegada (cubre el
+    cruce de año en los dos sentidos — un "01-01" llegado el 31/12 es del
+    año que entra, un "31-12" llegado el 02/01 es del año que se fue). Si
+    el asunto trae el año explícito, ese manda.
+    """
+    for coincidencia in _PATRON_FECHA_ASUNTO.finditer(asunto or ""):
+        dia, mes = int(coincidencia.group(1)), int(coincidencia.group(2))
+        anio_texto = coincidencia.group(3)
+        if anio_texto is not None:
+            anio = int(anio_texto)
+            if anio < 100:
+                anio += 2000
+            try:
+                return date(anio, mes, dia)
+            except ValueError:
+                continue
+
+        candidatas = []
+        for anio in (fecha_llegada.year - 1, fecha_llegada.year, fecha_llegada.year + 1):
+            try:
+                candidatas.append(date(anio, mes, dia))
+            except ValueError:
+                continue
+        if candidatas:
+            return min(candidatas, key=lambda fecha: abs((fecha - fecha_llegada).days))
+    return None
 
 
 class _ExtractorTextoMail(HTMLParser):
