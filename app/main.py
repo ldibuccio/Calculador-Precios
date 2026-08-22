@@ -189,6 +189,7 @@ from core.casilla_pedidos import (
     fecha_de_pedido_del_asunto,
     revisar_casilla,
     separar_remitentes,
+    texto_del_mail_guardado,
 )
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.precios_venta import calcular_cambios_de_precios
@@ -8146,7 +8147,10 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
     if mail["estado"] not in ("pendiente", "error"):
         return _redirigir_a_casilla(error="Ese mail ya fue procesado: no hay nada para confirmar.")
 
-    texto = mail["cuerpo_texto"] or mail["cuerpo_crudo"]
+    # SIEMPRE desde el cuerpo crudo guardado, con la conversión vigente:
+    # una mejora del parser o de la conversión aplica retroactivamente a
+    # cualquier mail ya registrado, sin migrar nada.
+    texto = texto_del_mail_guardado(mail["cuerpo_crudo"], mail["cuerpo_texto"])
     texto_recortado = recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA)
 
     # Camino principal: el parser por estructura — las cantidades salen de

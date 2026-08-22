@@ -116,6 +116,7 @@ class _ExtractorTextoMail(HTMLParser):
         self._partes: list[str] = []
         self._ignorando = 0
         self._celdas_en_fila = 0
+        self._colspan_extra = 0
 
     def handle_starttag(self, tag, attrs):
         if tag in self._IGNORADOS:
@@ -129,6 +130,13 @@ class _ExtractorTextoMail(HTMLParser):
             if self._celdas_en_fila:
                 self._partes.append("\t")
             self._celdas_en_fila += 1
+            # colspan expandido a celdas vacías: sin esto una celda combinada
+            # (el "FRUTAMAX" con colspan=2 del mail real) corre TODAS las
+            # columnas de la fila y desalinea la grilla.
+            try:
+                self._colspan_extra = max(int(dict(attrs).get("colspan", 1)), 1) - 1
+            except (TypeError, ValueError):
+                self._colspan_extra = 0
         elif tag in self._BLOQUES:
             self._partes.append("\n")
 
@@ -136,6 +144,11 @@ class _ExtractorTextoMail(HTMLParser):
         if tag in self._IGNORADOS:
             if self._ignorando:
                 self._ignorando -= 1
+        elif tag in ("td", "th"):
+            if self._colspan_extra:
+                self._partes.append("\t" * self._colspan_extra)
+                self._celdas_en_fila += self._colspan_extra
+                self._colspan_extra = 0
         elif tag == "tr" or tag in self._BLOQUES:
             self._partes.append("\n")
 
@@ -162,6 +175,25 @@ def html_a_texto(html: str) -> str:
     extractor.feed(html or "")
     extractor.close()
     return extractor.texto()
+
+
+_PATRON_ETIQUETA_HTML = re.compile(r"<(html|body|div|table|tr|p)\b", re.IGNORECASE)
+
+
+def texto_del_mail_guardado(cuerpo_crudo: str | None, cuerpo_texto: str | None) -> str:
+    """El texto a leer de un mail guardado, SIEMPRE con la conversión vigente.
+
+    El cuerpo_crudo es el respaldo permanente; el cuerpo_texto guardado es
+    solo la foto de la conversión del momento. Releer convierte de nuevo
+    desde el crudo: cualquier mejora de la conversión (colspan, celdas
+    vacías) aplica retroactivamente a todos los mails ya registrados, sin
+    migrar nada. Si el crudo no es HTML, vale el texto guardado o el crudo
+    tal cual.
+    """
+    crudo = cuerpo_crudo or ""
+    if _PATRON_ETIQUETA_HTML.search(crudo):
+        return html_a_texto(crudo)
+    return (cuerpo_texto or "").strip() or crudo
 
 
 def _contenido_de_parte(parte) -> str:

@@ -148,16 +148,8 @@ def _parsear_segmento(empresa: str | None, lineas: list[str]) -> dict | None:
     return {"empresa": empresa or "", "sucursales": sucursales, "renglones": renglones}
 
 
-def parsear_pedido_estructurado(texto: str) -> dict | None:
-    """El pedido leído de la estructura de la tabla, o None si hay que caer al camino IA.
-
-    None NUNCA es silencioso: quien llama lo registra y lo muestra ("leído
-    con IA — el parser no pudo"), porque si Día cambia el formato del mail
-    hay que enterarse ese día, no cuando aparezca un cruce de bultos.
-    """
-    if "\t" not in (texto or ""):
-        return None
-
+def _parsear_por_titulos(texto: str) -> dict | None:
+    """Formato "títulos completos": fila de títulos con código/descripción/sucursales pegados."""
     segmentos = _partir_en_segmentos(texto.split("\n"))
     bloques = []
     for empresa, lineas in segmentos:
@@ -172,3 +164,155 @@ def parsear_pedido_estructurado(texto: str) -> dict | None:
         bloques.append(bloque)
 
     return {"bloques": bloques} if bloques else None
+
+
+def _es_fila_vacia(celdas: list[str]) -> bool:
+    return not any(celdas)
+
+
+def _es_encabezado_de_sucursales(celdas: list[str]) -> bool:
+    """La fila que abre un bloque en el mail real: SOLO los nombres de sucursal, sin ningún número."""
+    no_vacias = [celda for celda in celdas if celda]
+    return len(no_vacias) >= 1 and all(_numero_de_celda(celda) is None for celda in no_vacias)
+
+
+def _parsear_grilla_dia(texto: str) -> dict | None:
+    """El formato REAL del mail de Día (calibrado contra los mails guardados del 21 y 22/08/2026).
+
+    Una sola tabla ancha con columnas de margen vacías; cada bloque de
+    empresa adentro de la tabla, con esta secuencia fija:
+
+      1. fila encabezado: SOLO los nombres de sucursal (VL/BZ/GR), el
+         resto vacío — de acá salen las COLUMNAS de cada sucursal;
+      2. fila de OC: números bajo las columnas de sucursal, sin etiqueta
+         y nada fuera de ellas;
+      3. fila de empresa + totales: "9582 FRUTAMAX" en las columnas de
+         margen (con colspan, ya expandido por la conversión) y el total
+         declarado bajo cada sucursal;
+      4. filas de producto: código numérico y descripción en sus columnas,
+         cantidades bajo las sucursales (las vacías son vacías).
+
+    Todo posicional y estricto: cualquier fila que no calce en la
+    secuencia devuelve None y se cae al camino IA, avisando.
+    """
+    filas = [[celda.strip() for celda in linea.split("\t")] for linea in texto.split("\n") if "\t" in linea]
+    if not filas:
+        return None
+    # La grilla tiene que ser rectangular: una fila con celdas de más o de
+    # menos es EXACTAMENTE el corrimiento que no puede pasar de largo.
+    if len({len(fila) for fila in filas}) != 1:
+        return None
+
+    bloques = []
+    indice = 0
+    while indice < len(filas):
+        if _es_fila_vacia(filas[indice]):
+            indice += 1
+            continue
+        if not _es_encabezado_de_sucursales(filas[indice]):
+            return None
+        columnas = [posicion for posicion, celda in enumerate(filas[indice]) if celda]
+        nombres = [filas[indice][posicion] for posicion in columnas]
+
+        # 2. La fila de OC: solo números bajo las sucursales.
+        indice += 1
+        if indice >= len(filas):
+            return None
+        fila_oc = filas[indice]
+        if any(celda for posicion, celda in enumerate(fila_oc) if posicion not in columnas):
+            return None
+        ordenes = {}
+        for posicion in columnas:
+            if fila_oc[posicion]:
+                if _numero_de_celda(fila_oc[posicion]) is None:
+                    return None
+                # La OC como TEXTO tal cual (puede traer ceros a la izquierda).
+                ordenes[posicion] = fila_oc[posicion]
+
+        # 3. La fila de empresa + totales declarados.
+        indice += 1
+        if indice >= len(filas):
+            return None
+        fila_empresa = filas[indice]
+        fuera = [celda for posicion, celda in enumerate(fila_empresa) if posicion not in columnas and celda]
+        if not fuera:
+            return None
+        empresa = " ".join(fuera)
+        totales = {}
+        for posicion in columnas:
+            if fila_empresa[posicion]:
+                valor = _numero_de_celda(fila_empresa[posicion])
+                if valor is None:
+                    return None
+                totales[posicion] = valor
+
+        sucursales = [
+            {"sucursal": nombres[orden], "orden_compra": ordenes.get(posicion), "total_bultos": totales.get(posicion)}
+            for orden, posicion in enumerate(columnas)
+        ]
+
+        # 4. Los renglones de producto, hasta el próximo encabezado de bloque.
+        renglones = []
+        indice += 1
+        while indice < len(filas) and not (
+            not _es_fila_vacia(filas[indice]) and _es_encabezado_de_sucursales(filas[indice])
+        ):
+            fila = filas[indice]
+            indice += 1
+            if _es_fila_vacia(fila):
+                continue
+            fuera_fila = [celda for posicion, celda in enumerate(fila) if posicion not in columnas and celda]
+            codigo = ""
+            descripcion = ""
+            if len(fuera_fila) == 2:
+                # Código numérico y descripción de texto, en ese orden.
+                if _numero_de_celda(fuera_fila[0]) is None or _numero_de_celda(fuera_fila[1]) is not None:
+                    return None
+                codigo, descripcion = fuera_fila
+            elif len(fuera_fila) == 1:
+                if _numero_de_celda(fuera_fila[0]) is not None:
+                    codigo = fuera_fila[0]
+                else:
+                    descripcion = fuera_fila[0]
+            else:
+                # Sin identidad (o con celdas de más): este parser no lo
+                # entiende — no se adivina.
+                return None
+
+            cantidades = {}
+            for orden, posicion in enumerate(columnas):
+                if fila[posicion]:
+                    valor = _numero_de_celda(fila[posicion])
+                    if valor is None:
+                        return None
+                    cantidades[nombres[orden]] = valor
+
+            renglones.append(
+                {"codigo": codigo, "descripcion": descripcion, "cantidades": cantidades, "confianza": "alta"}
+            )
+
+        if not renglones:
+            return None
+        bloques.append({"empresa": empresa, "sucursales": sucursales, "renglones": renglones})
+
+    return {"bloques": bloques} if bloques else None
+
+
+def parsear_pedido_estructurado(texto: str) -> dict | None:
+    """El pedido leído de la estructura de la tabla, o None si hay que caer al camino IA.
+
+    Dos formatos deterministas, en orden: el de "títulos completos"
+    (código/descripción/sucursales en la fila de títulos) y el REAL del
+    mail de Día (grilla ancha con encabezado de solo sucursales, fila de
+    OC y fila de empresa+totales). None NUNCA es silencioso: quien llama
+    lo registra y lo muestra ("leído con IA — el parser no pudo"), porque
+    si Día cambia el formato hay que enterarse ese día, no cuando
+    aparezca un cruce de bultos.
+    """
+    if "\t" not in (texto or ""):
+        return None
+
+    resultado = _parsear_por_titulos(texto)
+    if resultado is not None:
+        return resultado
+    return _parsear_grilla_dia(texto)

@@ -343,3 +343,29 @@ def test_numeros_que_no_son_fecha_se_saltean():
 
 def test_fecha_del_asunto_bisiesto():
     assert fecha_de_pedido_del_asunto("Pedido 29-02", date(2028, 2, 28)) == date(2028, 2, 29)
+
+
+def test_html_a_texto_expande_colspan_para_no_correr_columnas():
+    from core.casilla_pedidos import texto_del_mail_guardado
+
+    # El mail real trae "FRUTAMAX" con colspan=2: sin expandirlo, toda la
+    # fila se corre una columna y la grilla queda desalineada.
+    html = '<table><tr><td>9582</td><td colspan="2">FRUTAMAX</td><td>235</td></tr></table>'
+
+    assert "9582\tFRUTAMAX\t\t235" in html_a_texto(html)
+
+
+def test_texto_del_mail_guardado_reconvierte_el_html_con_la_conversion_vigente():
+    from core.casilla_pedidos import texto_del_mail_guardado
+
+    crudo = '<div><table><tr><td>90039</td><td colspan="2">MANZ</td><td>15</td></tr></table></div>'
+    # El cuerpo_texto guardado es la foto VIEJA de la conversión (sin
+    # colspan): releer usa la conversión de hoy, retroactiva y sin migrar.
+    assert texto_del_mail_guardado(crudo, "90039\tMANZ\t15") == "90039\tMANZ\t\t15"
+
+
+def test_texto_del_mail_guardado_sin_html_usa_el_texto_guardado_o_el_crudo():
+    from core.casilla_pedidos import texto_del_mail_guardado
+
+    assert texto_del_mail_guardado("pedido plano 5 < 10", "texto convertido") == "texto convertido"
+    assert texto_del_mail_guardado("pedido plano", None) == "pedido plano"

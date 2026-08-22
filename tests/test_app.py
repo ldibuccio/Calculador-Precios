@@ -11596,7 +11596,7 @@ MAIL_PEDIDO_DE_PRUEBA = {
     "id": 9, "casilla_id": 3, "cliente_id": 1, "message_id": "<pedido-1@dia.com.ar>",
     "remitente": "pedidos@dia.com.ar", "asunto": "Pedido del dia",
     "recibido_el": datetime(2026, 8, 22, 12, 5, tzinfo=ARGENTINA_TEST),
-    "cuerpo_crudo": "<html>...</html>", "cuerpo_texto": "9582 FRUTAMAX\nVL\t235",
+    "cuerpo_crudo": "cuerpo crudo de prueba (texto plano)", "cuerpo_texto": "9582 FRUTAMAX\nVL\t235",
     "estado": "pendiente", "motivo": None, "pedido_id": None, "procesado_el": None,
     "creado_en": datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST),
     "cliente_nombre": "Día",
@@ -12249,3 +12249,36 @@ def test_revisar_mail_con_fecha_del_asunto_lejana_avisa_posible_tipeo():
     # La fecha del asunto igual manda (15/09), pero con el aviso bien visible.
     assert 'name="fecha" value="2026-09-15"' in respuesta.text
     assert "puede ser un error de tipeo" in respuesta.text
+
+
+def test_revisar_mail_reconvierte_el_crudo_html_y_lee_por_estructura():
+    # El formato REAL de Día: colspan en la fila de empresa, columnas de
+    # margen, OC sin etiqueta. El cuerpo_texto guardado está VIEJO (de una
+    # conversión anterior): la relectura va al crudo con la conversión
+    # vigente, así las mejoras aplican a los mails ya registrados.
+    crudo = (
+        '<div dir="ltr"><table><tbody>'
+        "<tr><td></td><td></td><td></td><td></td><td></td><td>VL</td><td>BZ</td></tr>"
+        "<tr><td></td><td></td><td></td><td></td><td></td><td>1257673</td><td>1257642</td></tr>"
+        '<tr><td>9582</td><td colspan="2">FRUTAMAX</td><td></td><td></td><td>225</td><td>40</td></tr>'
+        "<tr><td></td><td></td><td>90101</td><td>BANANA</td><td></td><td>225</td><td></td></tr>"
+        "<tr><td></td><td></td><td>90102</td><td>BATATA</td><td></td><td></td><td>40</td></tr>"
+        "</tbody></table></div>"
+    )
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, cuerpo_crudo=crudo, cuerpo_texto="foto vieja de la conversión")
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.extraer_pedido_de_texto") as mock_ia,
+        patch("app.main.marcar_lectura_mail_pedido") as mock_marcar,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    mock_ia.assert_not_called()
+    mock_marcar.assert_called_once_with(9, leido_con_ia=False)
+    assert "Leído por estructura" in respuesta.text
+    assert "OC 1257673" in respuesta.text
+    # Banana matcheó por el código de la ficha y la cantidad quedó en VL.
+    assert "declara 225 bultos" in respuesta.text
