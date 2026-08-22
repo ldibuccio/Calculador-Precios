@@ -8,9 +8,14 @@ Las garantías van en capas:
   cualquier intento de escritura sobre el buzón.
 - ``BODY.PEEK`` en todos los FETCH: ni siquiera se marcaría ``\\Seen``
   aunque el buzón no estuviera abierto en solo lectura.
-- Búsqueda SERVER-SIDE (``SINCE`` + ``FROM``): jamás se enumera ni se
-  descarga el buzón entero — solo se bajan los mails de los remitentes
-  permitidos posteriores a la fecha de activación.
+- Búsqueda SERVER-SIDE (``SINCE``, más ``FROM`` si hay remitentes): jamás
+  se enumera ni se descarga el buzón entero — solo entran los correos
+  posteriores a la fecha de activación.
+- El filtro de asunto es POR CONTENIDO y sin mayúsculas ni acentos
+  ("Pedido Dia" matchea "Pedido Día 22-08 Sabado"). El SUBJECT de IMAP no
+  garantiza los acentos, así que de los candidatos del día se bajan solo
+  los ENCABEZADOS y el asunto se compara acá; el cuerpo completo se
+  descarga únicamente de los que matchean.
 - Sin estado en el mailbox: la idempotencia es por Message-ID contra la
   base (``mails_pedido``), nunca por flags del buzón.
 
@@ -26,6 +31,8 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+
+from core.matcheo_comanda import normalizar_texto
 
 CLAVE_CASILLA_ENV_VAR = "CLAVE_CASILLA_PEDIDOS"
 
@@ -194,17 +201,43 @@ def _bytes_de_fetch(datos) -> bytes | None:
     return None
 
 
-def revisar_casilla(direccion: str, clave: str, servidor: str, fecha_desde: datetime, remitentes: list[str]) -> dict:
+def _asunto_de_uid(conexion, uid) -> str:
+    """Solo el asunto de un mail, bajando nada más que ese encabezado (con PEEK).
+
+    email.message_from_bytes decodifica los asuntos RFC 2047
+    (=?UTF-8?...?=): los acentos llegan bien aunque viajen codificados.
+    """
+    estado, datos = conexion.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+    encabezado = _bytes_de_fetch(datos)
+    if estado != "OK" or encabezado is None:
+        raise ErrorCasilla("No se pudo leer el asunto de un mail del buzón.")
+    mensaje = email.message_from_bytes(encabezado, policy=email.policy.default)
+    return str(mensaje["Subject"] or "").strip()
+
+
+def revisar_casilla(
+    direccion: str,
+    clave: str,
+    servidor: str,
+    fecha_desde: datetime,
+    asunto_filtro: str,
+    remitentes: list[str],
+) -> dict:
     """Revisa el buzón en solo lectura y devuelve qué hay, con el detalle para el reporte.
 
-    Devuelve ``{"total_desde": n, "mails": [...]}``: ``total_desde`` es
-    cuántos mails (de CUALQUIER remitente) hay desde la fecha de
-    activación — sirve para ver de una si el filtro de remitente está mal
-    escrito ("hay 12 mails pero ninguno pasa el filtro") — y ``mails`` son
-    los de remitentes permitidos, ya descargados y con el cuerpo extraído:
-    {"message_id", "remitente", "asunto", "recibido_el", "cuerpo_crudo",
-    "cuerpo_texto"}. Los ajenos al filtro NI SE DESCARGAN.
+    Devuelve ``{"total_desde", "candidatos", "con_asunto", "mails"}``:
+    ``total_desde`` es cuántos mails (de cualquiera) hay desde la fecha de
+    activación; ``candidatos`` cuántos quedan tras el filtro opcional de
+    remitente (igual a ``total_desde`` si no hay remitentes);
+    ``con_asunto`` cuántos de esos contienen el asunto (sin mayúsculas ni
+    acentos) — el número para afinar el filtro — y ``mails`` son esos,
+    ya descargados enteros y con el cuerpo extraído: {"message_id",
+    "remitente", "asunto", "recibido_el", "cuerpo_crudo", "cuerpo_texto"}.
+    De los que no matchean solo se bajó el encabezado, nunca el cuerpo.
     """
+    asunto_normalizado = normalizar_texto(asunto_filtro)
+    if not asunto_normalizado:
+        raise ErrorCasilla("Falta el filtro de asunto: sin él no se revisa nada.")
     try:
         conexion = imaplib.IMAP4_SSL(servidor)
     except Exception as error:
@@ -227,16 +260,31 @@ def revisar_casilla(direccion: str, clave: str, servidor: str, fecha_desde: date
             raise ErrorCasilla("No se pudo abrir la bandeja de entrada en modo solo lectura.")
 
         criterio_desde = _criterio_since(fecha_desde)
-        total_desde = len(_buscar_uids(conexion, f"(SINCE {criterio_desde})"))
+        uids_desde = _buscar_uids(conexion, f"(SINCE {criterio_desde})")
+        total_desde = len(uids_desde)
 
-        uids: list[bytes] = []
-        for remitente in remitentes:
-            for uid in _buscar_uids(conexion, f'(SINCE {criterio_desde} FROM "{remitente}")'):
-                if uid not in uids:
-                    uids.append(uid)
+        # El filtro opcional de remitente achica server-side con FROM; sin
+        # remitentes configurados, los candidatos son todos los del período
+        # (así un pedido no se pierde porque cambió quién lo manda).
+        if remitentes:
+            candidatos: list[bytes] = []
+            for remitente in remitentes:
+                for uid in _buscar_uids(conexion, f'(SINCE {criterio_desde} FROM "{remitente}")'):
+                    if uid not in candidatos:
+                        candidatos.append(uid)
+        else:
+            candidatos = list(uids_desde)
+
+        # De los candidatos, primero SOLO el encabezado: el asunto se
+        # compara acá, normalizado, y el cuerpo entero se baja únicamente
+        # de los que lo contienen.
+        con_asunto = [
+            uid for uid in candidatos
+            if asunto_normalizado in normalizar_texto(_asunto_de_uid(conexion, uid))
+        ]
 
         mails = []
-        for uid in uids:
+        for uid in con_asunto:
             estado, datos = conexion.uid("FETCH", uid, "(BODY.PEEK[])")
             crudo_bytes = _bytes_de_fetch(datos)
             if estado != "OK" or crudo_bytes is None:
@@ -267,7 +315,12 @@ def revisar_casilla(direccion: str, clave: str, servidor: str, fecha_desde: date
                     "cuerpo_texto": cuerpo_texto,
                 }
             )
-        return {"total_desde": total_desde, "mails": mails}
+        return {
+            "total_desde": total_desde,
+            "candidatos": len(candidatos),
+            "con_asunto": len(con_asunto),
+            "mails": mails,
+        }
     finally:
         try:
             conexion.logout()

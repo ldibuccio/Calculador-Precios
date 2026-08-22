@@ -91,10 +91,10 @@ def test_html_a_texto_respeta_saltos_de_br_y_parrafos():
 # --- El cuerpo del mail: HTML preferido, text/plain de respaldo, crudo SIEMPRE ---
 
 
-def _mail_de_prueba(html=None, texto=None, message_id="<pedido-1@dia.com.ar>"):
+def _mail_de_prueba(html=None, texto=None, message_id="<pedido-1@dia.com.ar>", asunto="Pedido Dia 22-08 Sabado"):
     mensaje = EmailMessage()
     mensaje["From"] = "Pedidos Dia <pedidos@dia.com.ar>"
-    mensaje["Subject"] = "Pedido del dia"
+    mensaje["Subject"] = asunto
     mensaje["Date"] = "Fri, 22 Aug 2026 12:05:00 -0300"
     if message_id:
         mensaje["Message-ID"] = message_id
@@ -134,7 +134,10 @@ def test_criterio_since_usa_el_dia_argentino_y_mes_en_ingles():
 # --- revisar_casilla: las garantías de solo-lectura, con el IMAP simulado ---
 
 
-def _conexion_imap_simulada(mensajes_por_uid, uids_totales, uids_por_remitente):
+def _conexion_imap_simulada(mensajes_por_uid, uids_totales, uids_por_remitente=None):
+    # El FETCH de encabezado y el del cuerpo entero devuelven los mismos
+    # bytes del mensaje: lo que distingue a uno del otro (y lo que los
+    # tests verifican) es QUÉ se pidió — HEADER.FIELDS o BODY.PEEK[].
     conexion = MagicMock()
     conexion.login.return_value = ("OK", [b""])
     conexion.select.return_value = ("OK", [b"9000"])
@@ -143,7 +146,7 @@ def _conexion_imap_simulada(mensajes_por_uid, uids_totales, uids_por_remitente):
         if comando == "SEARCH":
             criterio = argumentos[-1]
             if "FROM" in criterio:
-                for remitente, uids in uids_por_remitente.items():
+                for remitente, uids in (uids_por_remitente or {}).items():
                     if remitente in criterio:
                         return ("OK", [b" ".join(uids)])
                 return ("OK", [b""])
@@ -157,6 +160,10 @@ def _conexion_imap_simulada(mensajes_por_uid, uids_totales, uids_por_remitente):
     return conexion
 
 
+def _fetches_de_cuerpo_entero(conexion):
+    return [c.args[1] for c in conexion.uid.call_args_list if c.args[0] == "FETCH" and c.args[2] == "(BODY.PEEK[])"]
+
+
 def test_revisar_casilla_abre_solo_lectura_usa_peek_y_busca_server_side():
     mensaje = _mail_de_prueba(html="<p>pedido</p>")
     conexion = _conexion_imap_simulada(
@@ -166,20 +173,22 @@ def test_revisar_casilla_abre_solo_lectura_usa_peek_y_busca_server_side():
 
     with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion):
         resultado = revisar_casilla(
-            "casilla@empresa.com", "clave", "imap.gmail.com", fecha_desde, ["pedidos@dia.com.ar"]
+            "casilla@empresa.com", "clave", "imap.gmail.com", fecha_desde, "Pedido Dia", ["pedidos@dia.com.ar"]
         )
 
     # EXAMINE: la bandeja se abre en modo solo lectura, siempre.
     conexion.select.assert_called_once_with("INBOX", readonly=True)
-    # BODY.PEEK en el FETCH: ni siquiera se marcaría \Seen.
+    # BODY.PEEK en TODOS los FETCH (encabezados y cuerpos): ni \Seen se marcaría.
     llamadas_fetch = [c for c in conexion.uid.call_args_list if c.args[0] == "FETCH"]
-    assert llamadas_fetch and all("BODY.PEEK[]" in c.args[2] for c in llamadas_fetch)
-    # Búsqueda server-side: SINCE para el total, SINCE+FROM para lo permitido.
+    assert llamadas_fetch and all("BODY.PEEK[" in c.args[2] for c in llamadas_fetch)
+    # Búsqueda server-side: SINCE para el total, SINCE+FROM para el filtro opcional.
     criterios = [c.args[2] for c in conexion.uid.call_args_list if c.args[0] == "SEARCH"]
     assert "(SINCE 22-Aug-2026)" in criterios
     assert '(SINCE 22-Aug-2026 FROM "pedidos@dia.com.ar")' in criterios
-    # El reporte: 3 mails en total desde la activación, 1 del remitente.
+    # El reporte completo: total, candidatos por remitente, con el asunto.
     assert resultado["total_desde"] == 3
+    assert resultado["candidatos"] == 1
+    assert resultado["con_asunto"] == 1
     assert len(resultado["mails"]) == 1
     assert resultado["mails"][0]["message_id"] == "<pedido-1@dia.com.ar>"
     assert resultado["mails"][0]["remitente"] == "pedidos@dia.com.ar"
@@ -188,7 +197,44 @@ def test_revisar_casilla_abre_solo_lectura_usa_peek_y_busca_server_side():
     conexion.logout.assert_called_once()
 
 
-def test_revisar_casilla_solo_descarga_los_de_remitentes_permitidos():
+def test_revisar_casilla_matchea_el_asunto_por_contenido_sin_mayusculas_ni_acentos():
+    # El asunto real trae la fecha adentro y puede venir con tilde o en
+    # mayúsculas: "Pedido Dia" tiene que matchear igual.
+    con_tilde = _mail_de_prueba(html="<p>pedido</p>", asunto="PEDIDO DÍA 23-08 Domingo", message_id="<a@dia>")
+    ajeno = _mail_de_prueba(html="<p>factura</p>", asunto="Factura agosto", message_id="<b@dia>")
+    conexion = _conexion_imap_simulada(
+        {b"7": con_tilde.as_bytes(), b"8": ajeno.as_bytes()}, uids_totales=[b"7", b"8"]
+    )
+    with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion):
+        resultado = revisar_casilla(
+            "casilla@empresa.com", "clave", "imap.gmail.com",
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "pedido dia", [],
+        )
+
+    assert resultado["con_asunto"] == 1
+    assert resultado["mails"][0]["asunto"] == "PEDIDO DÍA 23-08 Domingo"
+    # Del que no matchea el asunto solo se bajó el ENCABEZADO, nunca el cuerpo.
+    assert _fetches_de_cuerpo_entero(conexion) == [b"7"]
+
+
+def test_revisar_casilla_sin_remitentes_mira_todos_los_del_periodo():
+    # Remitente vacío = cualquier remitente: el pedido no se pierde porque
+    # cambió quién lo manda. No se emite ninguna búsqueda FROM.
+    mensaje = _mail_de_prueba(html="<p>pedido</p>")
+    conexion = _conexion_imap_simulada({b"7": mensaje.as_bytes()}, uids_totales=[b"7"])
+    with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion):
+        resultado = revisar_casilla(
+            "casilla@empresa.com", "clave", "imap.gmail.com",
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "Pedido Dia", [],
+        )
+
+    criterios = [c.args[2] for c in conexion.uid.call_args_list if c.args[0] == "SEARCH"]
+    assert all("FROM" not in criterio for criterio in criterios)
+    assert resultado["candidatos"] == 1
+    assert len(resultado["mails"]) == 1
+
+
+def test_revisar_casilla_con_remitentes_no_baja_ni_el_encabezado_de_los_ajenos():
     mensaje = _mail_de_prueba(html="<p>pedido</p>")
     conexion = _conexion_imap_simulada(
         {b"7": mensaje.as_bytes()}, uids_totales=[b"5", b"6", b"7"], uids_por_remitente={"pedidos@dia.com.ar": [b"7"]}
@@ -196,12 +242,20 @@ def test_revisar_casilla_solo_descarga_los_de_remitentes_permitidos():
     with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion):
         revisar_casilla(
             "casilla@empresa.com", "clave", "imap.gmail.com",
-            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), ["pedidos@dia.com.ar"],
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "Pedido Dia", ["pedidos@dia.com.ar"],
         )
 
-    # Los mails ajenos al filtro (uids 5 y 6) NI SE DESCARGAN.
-    uids_descargados = [c.args[1] for c in conexion.uid.call_args_list if c.args[0] == "FETCH"]
-    assert uids_descargados == [b"7"]
+    # Los mails ajenos al filtro de remitente (uids 5 y 6) NI SE TOCAN.
+    uids_tocados = [c.args[1] for c in conexion.uid.call_args_list if c.args[0] == "FETCH"]
+    assert set(uids_tocados) == {b"7"}
+
+
+def test_revisar_casilla_sin_asunto_configurado_no_revisa():
+    with pytest.raises(ErrorCasilla):
+        revisar_casilla(
+            "casilla@empresa.com", "clave", "imap.gmail.com",
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "   ", [],
+        )
 
 
 def test_revisar_casilla_filtra_fino_por_la_fecha_real_del_mail():
@@ -210,15 +264,14 @@ def test_revisar_casilla_filtra_fino_por_la_fecha_real_del_mail():
     mensaje_viejo = _mail_de_prueba(html="<p>viejo</p>", message_id="<viejo@dia.com.ar>")
     del mensaje_viejo["Date"]
     mensaje_viejo["Date"] = "Sat, 22 Aug 2026 09:00:00 -0300"
-    conexion = _conexion_imap_simulada(
-        {b"7": mensaje_viejo.as_bytes()}, uids_totales=[b"7"], uids_por_remitente={"pedidos@dia.com.ar": [b"7"]}
-    )
+    conexion = _conexion_imap_simulada({b"7": mensaje_viejo.as_bytes()}, uids_totales=[b"7"])
     with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion):
         resultado = revisar_casilla(
             "casilla@empresa.com", "clave", "imap.gmail.com",
-            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), ["pedidos@dia.com.ar"],
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "Pedido Dia", [],
         )
 
+    assert resultado["con_asunto"] == 1
     assert resultado["mails"] == []
 
 
@@ -231,7 +284,7 @@ def test_revisar_casilla_login_fallido_avisa_y_menciona_workspace():
         with pytest.raises(ErrorCasilla) as error:
             revisar_casilla(
                 "casilla@empresa.com", "clave", "imap.gmail.com",
-                datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), ["pedidos@dia.com.ar"],
+                datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "Pedido Dia", ["pedidos@dia.com.ar"],
             )
 
     # El mensaje orienta al diagnóstico real: Workspace puede tener IMAP
@@ -243,13 +296,11 @@ def test_revisar_casilla_login_fallido_avisa_y_menciona_workspace():
 
 def test_revisar_casilla_sin_message_id_fabrica_uno_estable_por_uid():
     mensaje = _mail_de_prueba(html="<p>pedido</p>", message_id=None)
-    conexion = _conexion_imap_simulada(
-        {b"7": mensaje.as_bytes()}, uids_totales=[b"7"], uids_por_remitente={"pedidos@dia.com.ar": [b"7"]}
-    )
+    conexion = _conexion_imap_simulada({b"7": mensaje.as_bytes()}, uids_totales=[b"7"])
     with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion):
         resultado = revisar_casilla(
             "casilla@empresa.com", "clave", "imap.gmail.com",
-            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), ["pedidos@dia.com.ar"],
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "Pedido Dia", [],
         )
 
     assert resultado["mails"][0]["message_id"] == "<uid-7@casilla@empresa.com>"

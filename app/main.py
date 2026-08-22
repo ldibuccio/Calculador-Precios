@@ -7884,28 +7884,36 @@ def guardar_casilla_pedidos(
     direccion: str = Form(""),
     servidor_imap: str = Form(""),
     cliente_id: int = Form(...),
+    asunto_filtro: str = Form(""),
     remitentes_permitidos: str = Form(""),
     casilla_id: str = Form(""),
 ):
-    """Alta o edición de la configuración de la casilla. La clave no viaja por acá: vive en Railway."""
+    """Alta o edición de la configuración de la casilla. La clave no viaja por acá: vive en Railway.
+
+    El asunto es el filtro OBLIGATORIO (por contenido, sin mayúsculas ni
+    acentos: "Pedido Dia" matchea "Pedido Día 22-08 Sabado"); el remitente
+    es opcional — vacío significa cualquier remitente, así el pedido no se
+    pierde porque cambió quién lo manda.
+    """
     direccion_valor = direccion.strip().lower()
     servidor_valor = servidor_imap.strip() or "imap.gmail.com"
-    remitentes_valor = ", ".join(separar_remitentes(remitentes_permitidos))
+    asunto_valor = " ".join(asunto_filtro.split())
+    remitentes_valor = ", ".join(separar_remitentes(remitentes_permitidos)) or None
     if not direccion_valor:
         return _renderizar_casilla_pedidos(request, error="Falta la dirección de la casilla.", status_code=400)
-    if not remitentes_valor:
+    if not asunto_valor:
         return _renderizar_casilla_pedidos(
             request,
-            error="Falta al menos un remitente permitido: sin ese filtro no se lee nada del buzón.",
+            error='Falta el filtro de asunto (ej. "Pedido Dia"): sin él no se lee nada del buzón.',
             status_code=400,
         )
 
     try:
         if casilla_id.strip():
-            actualizar_casilla_pedidos(int(casilla_id), direccion_valor, servidor_valor, cliente_id, remitentes_valor)
+            actualizar_casilla_pedidos(int(casilla_id), direccion_valor, servidor_valor, cliente_id, asunto_valor, remitentes_valor)
             mensaje = "Casilla actualizada."
         else:
-            crear_casilla_pedidos(direccion_valor, servidor_valor, cliente_id, remitentes_valor)
+            crear_casilla_pedidos(direccion_valor, servidor_valor, cliente_id, asunto_valor, remitentes_valor)
             mensaje = "Casilla guardada. Cuando la clave esté en Railway, activala y probá con Revisar ahora."
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo guardar la casilla: {error_db}") from error_db
@@ -7999,13 +8007,16 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
         )
     if casilla["fecha_activacion"] is None:
         return _redirigir_a_casilla(error="La casilla no tiene fecha de activación: activala primero.")
+    if not (casilla["asunto_filtro"] or "").strip():
+        return _redirigir_a_casilla(
+            error='Falta el filtro de asunto (ej. "Pedido Dia"): configuralo en Editar configuración antes de revisar.'
+        )
     remitentes = separar_remitentes(casilla["remitentes_permitidos"])
-    if not remitentes:
-        return _redirigir_a_casilla(error="No hay remitentes permitidos configurados: sin ese filtro no se lee nada.")
 
     try:
         resultado = revisar_casilla(
-            casilla["direccion"], clave, casilla["servidor_imap"], casilla["fecha_activacion"], remitentes
+            casilla["direccion"], clave, casilla["servidor_imap"], casilla["fecha_activacion"],
+            casilla["asunto_filtro"], remitentes,
         )
     except ErrorCasilla as error_casilla:
         try:
@@ -8036,15 +8047,24 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Se leyó el buzón pero falló el registro en la base: {error_db}") from error_db
 
-    permitidos = len(resultado["mails"])
-    mensaje = (
-        f"Conectado OK a {casilla['direccion']} — {resultado['total_desde']} "
-        f"mail{'s' if resultado['total_desde'] != 1 else ''} desde la activación, "
-        f"{permitidos} de remitentes permitidos, {ya_registrados} ya registrado{'s' if ya_registrados != 1 else ''}, "
-        f"{nuevos} nuevo{'s' if nuevos != 1 else ''} por confirmar."
+    # El detalle por filtro es para AFINAR: cuántos había, cuántos pasaron
+    # el remitente (si está configurado) y cuántos contienen el asunto.
+    partes = [
+        f"{resultado['total_desde']} mail{'s' if resultado['total_desde'] != 1 else ''} desde la activación"
+    ]
+    if remitentes:
+        partes.append(f"{resultado['candidatos']} de remitentes permitidos")
+    partes.append(
+        f"{resultado['con_asunto']} con el asunto (“{casilla['asunto_filtro']}”)"
     )
-    if resultado["total_desde"] > 0 and permitidos == 0:
-        mensaje += " Ojo: hay mails en el buzón pero ninguno pasa el filtro de remitente — si esperabas ver el pedido, revisá que el remitente esté bien escrito."
+    partes.append(f"{ya_registrados} ya registrado{'s' if ya_registrados != 1 else ''}")
+    partes.append(f"{nuevos} nuevo{'s' if nuevos != 1 else ''} por confirmar")
+    mensaje = f"Conectado OK a {casilla['direccion']} — " + ", ".join(partes) + "."
+
+    if remitentes and resultado["total_desde"] > 0 and resultado["candidatos"] == 0:
+        mensaje += " Ojo: hay mails en el buzón pero ninguno pasa el filtro de remitente — revisá que esté bien escrito, o dejalo vacío para no filtrar por remitente."
+    elif resultado["candidatos"] > 0 and resultado["con_asunto"] == 0:
+        mensaje += " Ojo: hay mails pero ninguno contiene ese asunto — si esperabas ver el pedido, afiná el filtro de asunto."
     return _redirigir_a_casilla(mensaje=mensaje)
 
 

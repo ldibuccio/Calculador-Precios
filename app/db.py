@@ -4183,7 +4183,8 @@ def listar_casillas_pedidos() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id, ca.remitentes_permitidos,
+                SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id,
+                       ca.asunto_filtro, ca.remitentes_permitidos,
                        ca.activa, ca.fecha_activacion, ca.auto_confirmar,
                        ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
                        c.nombre AS cliente_nombre
@@ -4204,7 +4205,8 @@ def obtener_casilla_pedidos(casilla_id: int) -> dict | None:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id, ca.remitentes_permitidos,
+                SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id,
+                       ca.asunto_filtro, ca.remitentes_permitidos,
                        ca.activa, ca.fecha_activacion, ca.auto_confirmar,
                        ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
                        c.nombre AS cliente_nombre
@@ -4223,18 +4225,25 @@ def obtener_casilla_pedidos(casilla_id: int) -> dict | None:
         conexion.close()
 
 
-def crear_casilla_pedidos(direccion: str, servidor_imap: str, cliente_id: int, remitentes_permitidos: str) -> int:
-    """Da de alta una casilla, DESACTIVADA: se activa aparte, cuando la clave ya está en Railway."""
+def crear_casilla_pedidos(
+    direccion: str, servidor_imap: str, cliente_id: int, asunto_filtro: str, remitentes_permitidos: str | None
+) -> int:
+    """Da de alta una casilla, DESACTIVADA: se activa aparte, cuando la clave ya está en Railway.
+
+    El asunto es el filtro obligatorio (por contenido); los remitentes son
+    opcionales (None = cualquier remitente, para no perder un pedido
+    porque cambió quién lo manda).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO casillas_pedidos (direccion, servidor_imap, cliente_id, remitentes_permitidos)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO casillas_pedidos (direccion, servidor_imap, cliente_id, asunto_filtro, remitentes_permitidos)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (direccion, servidor_imap, cliente_id, remitentes_permitidos),
+                (direccion, servidor_imap, cliente_id, asunto_filtro, remitentes_permitidos),
             )
             (casilla_id,) = cursor.fetchone()
         conexion.commit()
@@ -4243,17 +4252,19 @@ def crear_casilla_pedidos(direccion: str, servidor_imap: str, cliente_id: int, r
         conexion.close()
 
 
-def actualizar_casilla_pedidos(casilla_id: int, direccion: str, servidor_imap: str, cliente_id: int, remitentes_permitidos: str) -> None:
+def actualizar_casilla_pedidos(
+    casilla_id: int, direccion: str, servidor_imap: str, cliente_id: int, asunto_filtro: str, remitentes_permitidos: str | None
+) -> None:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE casillas_pedidos
-                SET direccion = %s, servidor_imap = %s, cliente_id = %s, remitentes_permitidos = %s
+                SET direccion = %s, servidor_imap = %s, cliente_id = %s, asunto_filtro = %s, remitentes_permitidos = %s
                 WHERE id = %s
                 """,
-                (direccion, servidor_imap, cliente_id, remitentes_permitidos, casilla_id),
+                (direccion, servidor_imap, cliente_id, asunto_filtro, remitentes_permitidos, casilla_id),
             )
         conexion.commit()
     finally:

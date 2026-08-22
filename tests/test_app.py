@@ -11578,7 +11578,7 @@ ARGENTINA_TEST = timezone(timedelta(hours=-3))
 
 CASILLA_DE_PRUEBA = {
     "id": 3, "direccion": "casilla@empresa.com", "servidor_imap": "imap.gmail.com",
-    "cliente_id": 1, "remitentes_permitidos": "pedidos@dia.com.ar",
+    "cliente_id": 1, "asunto_filtro": "Pedido Dia", "remitentes_permitidos": "pedidos@dia.com.ar",
     "activa": True, "fecha_activacion": datetime(2026, 8, 22, 11, 0, tzinfo=ARGENTINA_TEST),
     "auto_confirmar": False, "ultima_revision_el": None, "ultimo_error": None, "ultimo_error_el": None,
     "cliente_nombre": "Día",
@@ -11667,15 +11667,19 @@ def test_guardar_casilla_nueva_normaliza_y_redirige():
         respuesta = cliente.post(
             "/sistema/casilla-pedidos/guardar",
             data={"direccion": " Casilla@Empresa.com ", "servidor_imap": "",
-                  "cliente_id": "1", "remitentes_permitidos": " Pedidos@dia.com.ar , otro@dia.com.ar "},
+                  "cliente_id": "1", "asunto_filtro": "  Pedido   Dia ",
+                  "remitentes_permitidos": " Pedidos@dia.com.ar , otro@dia.com.ar "},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar, otro@dia.com.ar")
+    mock_crear.assert_called_once_with(
+        "casilla@empresa.com", "imap.gmail.com", 1, "Pedido Dia", "pedidos@dia.com.ar, otro@dia.com.ar"
+    )
 
 
-def test_guardar_casilla_sin_remitentes_no_guarda():
+def test_guardar_casilla_sin_asunto_no_guarda():
+    # El asunto es EL filtro obligatorio: sin él no se lee nada del buzón.
     with (
         patch("app.main.crear_casilla_pedidos") as mock_crear,
         patch("app.main.listar_casillas_pedidos", return_value=[]),
@@ -11685,12 +11689,28 @@ def test_guardar_casilla_sin_remitentes_no_guarda():
     ):
         respuesta = cliente.post(
             "/sistema/casilla-pedidos/guardar",
-            data={"direccion": "casilla@empresa.com", "cliente_id": "1", "remitentes_permitidos": "  "},
+            data={"direccion": "casilla@empresa.com", "cliente_id": "1", "asunto_filtro": "  ",
+                  "remitentes_permitidos": "pedidos@dia.com.ar"},
         )
 
     assert respuesta.status_code == 400
-    assert "Falta al menos un remitente permitido" in respuesta.text
+    assert "Falta el filtro de asunto" in respuesta.text
     mock_crear.assert_not_called()
+
+
+def test_guardar_casilla_sin_remitentes_guarda_con_cualquier_remitente():
+    # El remitente es OPCIONAL: vacío = cualquiera, así el pedido no se
+    # pierde porque cambió quién lo manda.
+    with patch("app.main.crear_casilla_pedidos", return_value=3) as mock_crear:
+        respuesta = cliente.post(
+            "/sistema/casilla-pedidos/guardar",
+            data={"direccion": "casilla@empresa.com", "cliente_id": "1",
+                  "asunto_filtro": "Pedido Dia", "remitentes_permitidos": "  "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("casilla@empresa.com", "imap.gmail.com", 1, "Pedido Dia", None)
 
 
 def test_activar_casilla_sin_fecha_activa_desde_ahora():
@@ -11715,7 +11735,8 @@ def test_revisar_ahora_reporta_el_detalle_de_lo_que_encontro():
     with (
         patch("app.main.obtener_casilla_pedidos", return_value=dict(CASILLA_DE_PRUEBA)),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
-        patch("app.main.revisar_casilla", return_value={"total_desde": 12, "mails": [mail_leido]}) as mock_revisar,
+        patch("app.main.revisar_casilla",
+              return_value={"total_desde": 12, "candidatos": 3, "con_asunto": 1, "mails": [mail_leido]}) as mock_revisar,
         patch("app.main.registrar_mail_pedido", return_value=9) as mock_registrar,
         patch("app.main.registrar_revision_casilla") as mock_revision,
     ):
@@ -11725,29 +11746,69 @@ def test_revisar_ahora_reporta_el_detalle_de_lo_que_encontro():
     # La conexión usa la config guardada y la clave de la variable.
     mock_revisar.assert_called_once_with(
         "casilla@empresa.com", "clave", "imap.gmail.com",
-        CASILLA_DE_PRUEBA["fecha_activacion"], ["pedidos@dia.com.ar"],
+        CASILLA_DE_PRUEBA["fecha_activacion"], "Pedido Dia", ["pedidos@dia.com.ar"],
     )
     mock_registrar.assert_called_once()
     mock_revision.assert_called_once_with(3)
-    # El detalle completo en el mensaje: mails vistos, permitidos, nuevos.
+    # El detalle completo en el mensaje: total, por remitente, por asunto, nuevos.
     destino = respuesta.headers["location"]
     assert "Conectado+OK+a+casilla%40empresa.com" in destino
     assert "12+mails+desde+la+activaci%C3%B3n" in destino
-    assert "1+de+remitentes+permitidos" in destino
+    assert "3+de+remitentes+permitidos" in destino
+    assert "1+con+el+asunto" in destino
+    assert "Pedido+Dia" in destino
     assert "1+nuevo+por+confirmar" in destino
 
 
-def test_revisar_ahora_avisa_si_hay_mails_pero_ninguno_pasa_el_filtro():
-    # El caso que el dueño quiere ver DE UNA: el remitente mal escrito.
+def test_revisar_ahora_sin_remitentes_no_menciona_ese_filtro():
+    casilla = dict(CASILLA_DE_PRUEBA, remitentes_permitidos=None)
+    with (
+        patch("app.main.obtener_casilla_pedidos", return_value=casilla),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.revisar_casilla",
+              return_value={"total_desde": 12, "candidatos": 12, "con_asunto": 0, "mails": []}) as mock_revisar,
+        patch("app.main.registrar_revision_casilla"),
+    ):
+        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+
+    mock_revisar.assert_called_once_with(
+        "casilla@empresa.com", "clave", "imap.gmail.com",
+        CASILLA_DE_PRUEBA["fecha_activacion"], "Pedido Dia", [],
+    )
+    destino = respuesta.headers["location"]
+    assert "remitentes+permitidos" not in destino
+    # Hay mails pero ninguno con el asunto: el aviso para afinar el filtro.
+    assert "0+con+el+asunto" in destino
+    assert "ninguno+contiene+ese+asunto" in destino
+
+
+def test_revisar_ahora_avisa_si_hay_mails_pero_ninguno_pasa_el_filtro_de_remitente():
+    # El remitente mal escrito se ve DE UNA, y el aviso recuerda que se
+    # puede dejar vacío.
     with (
         patch("app.main.obtener_casilla_pedidos", return_value=dict(CASILLA_DE_PRUEBA)),
         patch("app.main.clave_casilla_configurada", return_value="clave"),
-        patch("app.main.revisar_casilla", return_value={"total_desde": 12, "mails": []}),
+        patch("app.main.revisar_casilla",
+              return_value={"total_desde": 12, "candidatos": 0, "con_asunto": 0, "mails": []}),
         patch("app.main.registrar_revision_casilla"),
     ):
         respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
 
     assert "ninguno+pasa+el+filtro+de+remitente" in respuesta.headers["location"]
+
+
+def test_revisar_ahora_sin_asunto_configurado_pide_configurarlo():
+    casilla = dict(CASILLA_DE_PRUEBA, asunto_filtro=None)
+    with (
+        patch("app.main.obtener_casilla_pedidos", return_value=casilla),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.revisar_casilla") as mock_revisar,
+    ):
+        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "Falta+el+filtro+de+asunto" in respuesta.headers["location"]
+    mock_revisar.assert_not_called()
 
 
 def test_revisar_ahora_sin_clave_no_conecta_y_apunta_a_railway():

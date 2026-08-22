@@ -154,7 +154,7 @@
 
   <div class="tarjeta">
     <h2>Cómo funciona</h2>
-    <p class="sub" style="margin-bottom: 0.25rem;">El sistema mira el buzón en <strong>solo lectura estricta</strong>: nunca borra, nunca mueve, nunca marca como leído, nunca responde. Solo correos posteriores a la fecha de activación y solo de los remitentes permitidos — el resto ni se descarga.</p>
+    <p class="sub" style="margin-bottom: 0.25rem;">El sistema mira el buzón en <strong>solo lectura estricta</strong>: nunca borra, nunca mueve, nunca marca como leído, nunca responde. Solo correos posteriores a la fecha de activación; entra el que contiene el asunto configurado (sin mayúsculas ni acentos) y, si además hay remitentes permitidos, solo de esos. Del resto no se baja el cuerpo.</p>
     {% if clave_configurada %}
     <div class="estado-clave ok">La clave de la casilla está configurada en Railway ({{ clave_env_var }}).</div>
     {% else %}
@@ -169,7 +169,14 @@
       {% else %}<span class="pill pill-inactiva">Inactiva</span>{% endif %}
     </h2>
     <p class="dato">Cliente: <strong>{{ casilla.cliente_nombre }}</strong></p>
-    <p class="dato">Remitentes permitidos: <strong>{{ casilla.remitentes_permitidos }}</strong></p>
+    <p class="dato">Asunto que contiene:
+      {% if casilla.asunto_filtro %}<strong>“{{ casilla.asunto_filtro }}”</strong> (sin mayúsculas ni acentos)
+      {% else %}<em>sin configurar — completalo en Editar configuración</em>{% endif %}
+    </p>
+    <p class="dato">Remitentes permitidos:
+      {% if casilla.remitentes_permitidos %}<strong>{{ casilla.remitentes_permitidos }}</strong>
+      {% else %}<strong>cualquiera</strong> (sin filtro de remitente){% endif %}
+    </p>
     <p class="dato">Mira correos desde:
       {% if casilla.fecha_activacion %}<strong>{{ casilla.fecha_activacion|fecha_hora }}</strong>
       {% else %}<em>sin fecha de activación todavía</em>{% endif %}
@@ -231,8 +238,10 @@
           <option value="{{ c.id }}" {% if casilla.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
           {% endfor %}
         </select>
-        <label for="remitentes-{{ casilla.id }}">Remitentes permitidos (separados por coma)</label>
-        <input type="text" id="remitentes-{{ casilla.id }}" name="remitentes_permitidos" value="{{ casilla.remitentes_permitidos }}" required>
+        <label for="asunto-{{ casilla.id }}">El asunto contiene (sin mayúsculas ni acentos)</label>
+        <input type="text" id="asunto-{{ casilla.id }}" name="asunto_filtro" value="{{ casilla.asunto_filtro or '' }}" placeholder="Pedido Dia" required>
+        <label for="remitentes-{{ casilla.id }}">Remitentes permitidos (opcional, separados por coma — vacío = cualquiera)</label>
+        <input type="text" id="remitentes-{{ casilla.id }}" name="remitentes_permitidos" value="{{ casilla.remitentes_permitidos or '' }}">
         <button type="submit" class="boton boton-secundario">Guardar cambios</button>
       </form>
     </details>
@@ -254,8 +263,10 @@
         <option value="{{ c.id }}">{{ c.nombre }}</option>
         {% endfor %}
       </select>
-      <label for="remitentes-nuevo">Remitentes permitidos (separados por coma)</label>
-      <input type="text" id="remitentes-nuevo" name="remitentes_permitidos" placeholder="pedidos@dia.com.ar" required>
+      <label for="asunto-nuevo">El asunto contiene (sin mayúsculas ni acentos)</label>
+      <input type="text" id="asunto-nuevo" name="asunto_filtro" placeholder="Pedido Dia" required>
+      <label for="remitentes-nuevo">Remitentes permitidos (opcional, separados por coma — vacío = cualquiera)</label>
+      <input type="text" id="remitentes-nuevo" name="remitentes_permitidos" placeholder="pedidos@dia.com.ar">
       <button type="submit" class="boton">Guardar casilla</button>
     </form>
   </div>

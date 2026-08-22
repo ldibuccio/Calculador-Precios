@@ -2622,14 +2622,15 @@ def test_crear_casilla_pedidos_nace_desactivada():
     conexion, cursor = _conexion_falsa([(1,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        casilla_id = crear_casilla_pedidos("casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar")
+        casilla_id = crear_casilla_pedidos("casilla@empresa.com", "imap.gmail.com", 1, "Pedido Dia", None)
 
     assert casilla_id == 1
     consulta, parametros = cursor.execute.call_args.args
     assert "INSERT INTO casillas_pedidos" in consulta
     # Ni activa ni fecha_activacion en el insert: nace apagada, se activa aparte.
     assert "activa" not in consulta
-    assert parametros == ("casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar")
+    # Remitentes None = cualquier remitente (el filtro obligatorio es el asunto).
+    assert parametros == ("casilla@empresa.com", "imap.gmail.com", 1, "Pedido Dia", None)
     conexion.commit.assert_called_once()
 
 
@@ -2699,12 +2700,12 @@ def test_marcar_mail_pedido_ignorado_solo_toca_pendientes():
 def test_listar_casillas_pedidos_trae_el_nombre_del_cliente():
     conexion, cursor = _conexion_falsa()
     cursor.description = [
-        ("id",), ("direccion",), ("servidor_imap",), ("cliente_id",), ("remitentes_permitidos",),
+        ("id",), ("direccion",), ("servidor_imap",), ("cliente_id",), ("asunto_filtro",), ("remitentes_permitidos",),
         ("activa",), ("fecha_activacion",), ("auto_confirmar",),
         ("ultima_revision_el",), ("ultimo_error",), ("ultimo_error_el",), ("cliente_nombre",),
     ]
     cursor.fetchall.return_value = [
-        (3, "casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar",
+        (3, "casilla@empresa.com", "imap.gmail.com", 1, "Pedido Dia", "pedidos@dia.com.ar",
          True, datetime(2026, 8, 22, 11, 0), False, None, None, None, "Dia"),
     ]
 
@@ -2714,7 +2715,8 @@ def test_listar_casillas_pedidos_trae_el_nombre_del_cliente():
     assert casillas == [
         {
             "id": 3, "direccion": "casilla@empresa.com", "servidor_imap": "imap.gmail.com",
-            "cliente_id": 1, "remitentes_permitidos": "pedidos@dia.com.ar", "activa": True,
+            "cliente_id": 1, "asunto_filtro": "Pedido Dia", "remitentes_permitidos": "pedidos@dia.com.ar",
+            "activa": True,
             "fecha_activacion": datetime(2026, 8, 22, 11, 0), "auto_confirmar": False,
             "ultima_revision_el": None, "ultimo_error": None, "ultimo_error_el": None,
             "cliente_nombre": "Dia",
