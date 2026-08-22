@@ -51,6 +51,7 @@ bases estén marcadas.
 | `corregir_retiros_recepcionados.sql` (corrección de datos, no de esquema: retiros colgados de compras procesadas en Depósito antes del auto-retiro del 2026-08-19) | ✅ 2026-08-21 | ✅ 2026-08-21 (verificado: 0 filas colgadas) |
 | `agregar_pedidos.sql` | ✅ 2026-08-21 (verificado: 4 tablas creadas) | ✅ 2026-08-21 (verificado: 4 tablas creadas) |
 | `agregar_cantidad_armada_pedidos.sql` | ✅ 2026-08-21 | ✅ 2026-08-21 |
+| `agregar_casilla_pedidos.sql` | ⬜ | ⬜ |
 
 ## Deuda pendiente de limpieza
 

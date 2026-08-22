@@ -113,6 +113,12 @@
     {% endif %}
   </div>
 
+  {% if mail %}
+  <div class="tarjeta">
+    <p class="sub" style="margin: 0;">Leído del mail de <strong>{{ mail.remitente }}</strong>{% if mail.asunto %} — "{{ mail.asunto }}"{% endif %} (llegó {{ mail.recibido_el|fecha_hora }}). Al guardar, el mail queda confirmado.</p>
+  </div>
+  {% endif %}
+
   {% if pedido_vigente %}
   <div class="aviso">Ya hay un pedido vigente para esta fecha (cargado {{ pedido_vigente.creado_en|fecha_hora }}). Al guardar, este lo REEMPLAZA: el anterior se anula y queda de registro.</div>
   {% endif %}
@@ -120,6 +126,7 @@
   <form method="post" action="/deposito/pedido/cargar/confirmar" id="form-confirmar">
     <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
     <input type="hidden" name="fecha" value="{{ fecha }}">
+    {% if mail %}<input type="hidden" name="mail_id" value="{{ mail.id }}">{% endif %}
     <input type="hidden" name="texto_original" value="{{ texto_original }}">
     {# Las capturas leídas viajan comprimidas hasta el guardado: al
        confirmar quedan como respaldo del pedido en fotos_pedido. #}
@@ -173,7 +180,11 @@
 
     <div class="tarjeta">
       <button type="submit" class="guardar">Guardar pedido</button>
+      {% if mail %}
+      <a class="volver" href="/sistema/casilla-pedidos">Volver a la casilla (sin guardar)</a>
+      {% else %}
       <a class="volver" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver (pegar de nuevo)</a>
+      {% endif %}
     </div>
   </form>
 

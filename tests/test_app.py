@@ -11287,7 +11287,7 @@ def test_confirmar_pedido_expande_por_sucursal_y_guarda_el_alias_pedido():
     assert {"sucursal": "VL", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0} in renglones_arg
     assert {"sucursal": "BZ", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0} in renglones_arg
     assert {"sucursal": None, "articulo_id": None, "texto_codigo": "77777", "texto_descripcion": "SIN CANTIDAD", "cantidad": 0} in renglones_arg
-    assert kwargs == {"reemplaza_a_pedido_id": None}
+    assert kwargs == {"reemplaza_a_pedido_id": None, "mail_message_id": None, "recibido_el": None}
     mock_alias.assert_called_once_with(1, 3, "99999", "RADICHETA")
 
 
@@ -11311,7 +11311,7 @@ def test_confirmar_pedido_con_uno_vigente_lo_reemplaza():
 
     assert respuesta.status_code == 303
     assert "Reemplaza+al+anterior" in respuesta.headers["location"]
-    assert mock_crear.call_args.kwargs == {"reemplaza_a_pedido_id": 50}
+    assert mock_crear.call_args.kwargs == {"reemplaza_a_pedido_id": 50, "mail_message_id": None, "recibido_el": None}
 
 
 def test_asignar_renglon_de_pedido_guarda_y_opcionalmente_el_alias():
@@ -11568,3 +11568,318 @@ def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
     assert "12 bultos — 1 incompleto" in respuesta.text
     # Botón para ir a armar.
     assert 'href="/deposito/pedido/armar?cliente_id=1' in respuesta.text
+
+
+# --- Casilla de pedidos (etapa 3, tramo 1) ---
+
+from core.casilla_pedidos import ErrorCasilla  # noqa: E402
+
+ARGENTINA_TEST = timezone(timedelta(hours=-3))
+
+CASILLA_DE_PRUEBA = {
+    "id": 3, "direccion": "casilla@empresa.com", "servidor_imap": "imap.gmail.com",
+    "cliente_id": 1, "remitentes_permitidos": "pedidos@dia.com.ar",
+    "activa": True, "fecha_activacion": datetime(2026, 8, 22, 11, 0, tzinfo=ARGENTINA_TEST),
+    "auto_confirmar": False, "ultima_revision_el": None, "ultimo_error": None, "ultimo_error_el": None,
+    "cliente_nombre": "Día",
+}
+
+MAIL_PEDIDO_DE_PRUEBA = {
+    "id": 9, "casilla_id": 3, "cliente_id": 1, "message_id": "<pedido-1@dia.com.ar>",
+    "remitente": "pedidos@dia.com.ar", "asunto": "Pedido del dia",
+    "recibido_el": datetime(2026, 8, 22, 12, 5, tzinfo=ARGENTINA_TEST),
+    "cuerpo_crudo": "<html>...</html>", "cuerpo_texto": "9582 FRUTAMAX\nVL\t235",
+    "estado": "pendiente", "motivo": None, "pedido_id": None, "procesado_el": None,
+    "creado_en": datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST),
+    "cliente_nombre": "Día",
+}
+
+
+def test_ver_sistema_muestra_el_acceso_a_la_casilla_de_pedidos():
+    with patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 12, "bytes_totales": 907397}):
+        respuesta = cliente.get("/sistema")
+
+    assert respuesta.status_code == 200
+    assert 'href="/sistema/casilla-pedidos"' in respuesta.text
+
+
+def test_ver_casilla_pedidos_sin_casillas_muestra_el_alta_y_avisa_que_falta_la_clave():
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value=None),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert respuesta.status_code == 200
+    # El alta, con el filtro de remitente obligatorio.
+    assert 'action="/sistema/casilla-pedidos/guardar"' in respuesta.text
+    assert "Remitentes permitidos" in respuesta.text
+    # La clave falta y la pantalla lo dice, apuntando a la variable de Railway.
+    assert "Falta la clave" in respuesta.text
+    assert "CLAVE_CASILLA_PEDIDOS" in respuesta.text
+    # Las garantías, dichas de frente.
+    assert "solo lectura estricta" in respuesta.text
+
+
+def test_ver_casilla_pedidos_muestra_el_estado_y_el_boton_revisar_ahora():
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.listar_mails_pedido", return_value=[dict(MAIL_PEDIDO_DE_PRUEBA)]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert respuesta.status_code == 200
+    assert "casilla@empresa.com" in respuesta.text
+    assert ">Activa<" in respuesta.text
+    assert 'action="/sistema/casilla-pedidos/3/revisar"' in respuesta.text
+    assert "está configurada" in respuesta.text
+    # El mail pendiente, con sus dos acciones.
+    assert "Pedido del dia" in respuesta.text
+    assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
+    assert 'action="/sistema/casilla-pedidos/mails/9/ignorar"' in respuesta.text
+
+
+def test_ver_casilla_pedidos_destaca_un_error_mas_nuevo_que_la_ultima_revision_ok():
+    casilla = dict(
+        CASILLA_DE_PRUEBA,
+        ultima_revision_el=datetime(2026, 8, 21, 12, 0, tzinfo=ARGENTINA_TEST),
+        ultimo_error="login fallido",
+        ultimo_error_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST),
+    )
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[casilla]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert "La última revisión falló" in respuesta.text
+    assert "login fallido" in respuesta.text
+
+
+def test_guardar_casilla_nueva_normaliza_y_redirige():
+    with patch("app.main.crear_casilla_pedidos", return_value=3) as mock_crear:
+        respuesta = cliente.post(
+            "/sistema/casilla-pedidos/guardar",
+            data={"direccion": " Casilla@Empresa.com ", "servidor_imap": "",
+                  "cliente_id": "1", "remitentes_permitidos": " Pedidos@dia.com.ar , otro@dia.com.ar "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with("casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar, otro@dia.com.ar")
+
+
+def test_guardar_casilla_sin_remitentes_no_guarda():
+    with (
+        patch("app.main.crear_casilla_pedidos") as mock_crear,
+        patch("app.main.listar_casillas_pedidos", return_value=[]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+    ):
+        respuesta = cliente.post(
+            "/sistema/casilla-pedidos/guardar",
+            data={"direccion": "casilla@empresa.com", "cliente_id": "1", "remitentes_permitidos": "  "},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Falta al menos un remitente permitido" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_activar_casilla_sin_fecha_activa_desde_ahora():
+    with patch("app.main.activar_casilla_pedidos") as mock_activar:
+        respuesta = cliente.post(
+            "/sistema/casilla-pedidos/3/activar", data={"fecha_activacion": ""}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    (casilla_id, fecha), _ = mock_activar.call_args
+    assert casilla_id == 3
+    # "Ahora" en hora argentina, con zona: solo correos posteriores a este instante.
+    assert fecha.tzinfo is not None
+
+
+def test_revisar_ahora_reporta_el_detalle_de_lo_que_encontro():
+    mail_leido = {
+        "message_id": "<pedido-1@dia.com.ar>", "remitente": "pedidos@dia.com.ar",
+        "asunto": "Pedido del dia", "recibido_el": datetime(2026, 8, 22, 12, 5, tzinfo=ARGENTINA_TEST),
+        "cuerpo_crudo": "<html>...</html>", "cuerpo_texto": "texto",
+    }
+    with (
+        patch("app.main.obtener_casilla_pedidos", return_value=dict(CASILLA_DE_PRUEBA)),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.revisar_casilla", return_value={"total_desde": 12, "mails": [mail_leido]}) as mock_revisar,
+        patch("app.main.registrar_mail_pedido", return_value=9) as mock_registrar,
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+    ):
+        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    # La conexión usa la config guardada y la clave de la variable.
+    mock_revisar.assert_called_once_with(
+        "casilla@empresa.com", "clave", "imap.gmail.com",
+        CASILLA_DE_PRUEBA["fecha_activacion"], ["pedidos@dia.com.ar"],
+    )
+    mock_registrar.assert_called_once()
+    mock_revision.assert_called_once_with(3)
+    # El detalle completo en el mensaje: mails vistos, permitidos, nuevos.
+    destino = respuesta.headers["location"]
+    assert "Conectado+OK+a+casilla%40empresa.com" in destino
+    assert "12+mails+desde+la+activaci%C3%B3n" in destino
+    assert "1+de+remitentes+permitidos" in destino
+    assert "1+nuevo+por+confirmar" in destino
+
+
+def test_revisar_ahora_avisa_si_hay_mails_pero_ninguno_pasa_el_filtro():
+    # El caso que el dueño quiere ver DE UNA: el remitente mal escrito.
+    with (
+        patch("app.main.obtener_casilla_pedidos", return_value=dict(CASILLA_DE_PRUEBA)),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.revisar_casilla", return_value={"total_desde": 12, "mails": []}),
+        patch("app.main.registrar_revision_casilla"),
+    ):
+        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+
+    assert "ninguno+pasa+el+filtro+de+remitente" in respuesta.headers["location"]
+
+
+def test_revisar_ahora_sin_clave_no_conecta_y_apunta_a_railway():
+    with (
+        patch("app.main.obtener_casilla_pedidos", return_value=dict(CASILLA_DE_PRUEBA)),
+        patch("app.main.clave_casilla_configurada", return_value=None),
+        patch("app.main.revisar_casilla") as mock_revisar,
+    ):
+        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "CLAVE_CASILLA_PEDIDOS" in respuesta.headers["location"]
+    mock_revisar.assert_not_called()
+
+
+def test_revisar_ahora_con_error_imap_lo_registra_y_lo_muestra():
+    with (
+        patch("app.main.obtener_casilla_pedidos", return_value=dict(CASILLA_DE_PRUEBA)),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.revisar_casilla", side_effect=ErrorCasilla("IMAP deshabilitado")),
+        patch("app.main.registrar_mail_pedido") as mock_registrar,
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+    ):
+        respuesta = cliente.post("/sistema/casilla-pedidos/3/revisar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    # El error queda GRABADO (después alimenta la alerta de Auditoría) y a la vista.
+    mock_revision.assert_called_once_with(3, error="IMAP deshabilitado")
+    assert "IMAP+deshabilitado" in respuesta.headers["location"]
+    mock_registrar.assert_not_called()
+
+
+def test_revisar_mail_pendiente_precarga_la_revision_con_el_cuerpo_guardado():
+    datos_leidos = {
+        "bloques": [
+            {
+                "empresa": "9582 FRUTAMAX",
+                "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 235}],
+                "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 235}, "confianza": "alta"}],
+            }
+        ]
+    }
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_PEDIDO_DE_PRUEBA)),
+        patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos) as mock_extraer,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    # La IA lee el cuerpo YA guardado (pasado a texto), no vuelve al buzón.
+    mock_extraer.assert_called_once_with(MAIL_PEDIDO_DE_PRUEBA["cuerpo_texto"])
+    # Es la misma revisión de siempre, pero atada al mail: al guardar lo confirma.
+    assert 'name="mail_id" value="9"' in respuesta.text
+    assert "Leído del mail" in respuesta.text
+    assert "pedidos@dia.com.ar" in respuesta.text
+    # La fecha del pedido es el día del mail (22/08, hora argentina).
+    assert 'name="fecha" value="2026-08-22"' in respuesta.text
+
+
+def test_revisar_mail_ya_procesado_no_deja_confirmar_dos_veces():
+    mail_confirmado = dict(MAIL_PEDIDO_DE_PRUEBA, estado="confirmado")
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail_confirmado),
+        patch("app.main.extraer_pedido_de_texto") as mock_extraer,
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "/sistema/casilla-pedidos" in respuesta.headers["location"]
+    mock_extraer.assert_not_called()
+
+
+def test_confirmar_pedido_desde_mail_lo_marca_confirmado_y_guarda_el_origen():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_PEDIDO_DE_PRUEBA)),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.crear_pedido", return_value=61) as mock_crear,
+        patch("app.main.marcar_mail_pedido_confirmado") as mock_confirmar,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={
+                "cliente_id": "1", "fecha": "2026-08-22", "texto_original": "el cuerpo", "mail_id": "9",
+                "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "1257673", "sucursal_0_total": "235",
+                "cantidad_renglones": "1",
+                "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
+                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "235",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # El pedido nace con origen mail y su Message-ID (la idempotencia).
+    assert mock_crear.call_args.args[2] == "mail"
+    assert mock_crear.call_args.kwargs == {
+        "reemplaza_a_pedido_id": None,
+        "mail_message_id": "<pedido-1@dia.com.ar>",
+        "recibido_el": MAIL_PEDIDO_DE_PRUEBA["recibido_el"],
+    }
+    mock_confirmar.assert_called_once_with(9, 61)
+
+
+def test_confirmar_pedido_de_un_mail_ya_procesado_no_guarda_nada():
+    mail_confirmado = dict(MAIL_PEDIDO_DE_PRUEBA, estado="confirmado")
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_mail_pedido", return_value=mail_confirmado),
+        patch("app.main.crear_pedido") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={
+                "cliente_id": "1", "fecha": "2026-08-22", "texto_original": "el cuerpo", "mail_id": "9",
+                "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
+                "cantidad_renglones": "1",
+                "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
+                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "235",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "/sistema/casilla-pedidos" in respuesta.headers["location"]
+    mock_crear.assert_not_called()
+
+
+def test_ignorar_mail_pedido_lo_marca_y_redirige():
+    with patch("app.main.marcar_mail_pedido_ignorado") as mock_ignorar:
+        respuesta = cliente.post("/sistema/casilla-pedidos/mails/9/ignorar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_ignorar.assert_called_once_with(9, "Marcado a mano desde Sistema")

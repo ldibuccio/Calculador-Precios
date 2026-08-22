@@ -38,6 +38,7 @@ from app.db import (
     buscar_ingresos_deposito,
     buscar_retiros,
     cambiar_articulo_de_ficha,
+    cambiar_fecha_activacion_casilla,
     contar_compras_buscadas,
     contar_ingresos_deposito,
     contar_pedidos_con_renglones_incompletos,
@@ -61,7 +62,10 @@ from app.db import (
     contar_senas_pendientes_viejas,
     contar_stock_vacios_negativos,
     corregir_recepcion_compra,
+    activar_casilla_pedidos,
+    actualizar_casilla_pedidos,
     crear_articulo,
+    crear_casilla_pedidos,
     crear_cliente,
     crear_compra,
     crear_pedido,
@@ -74,6 +78,7 @@ from app.db import (
     crear_vacio_devuelto,
     crear_vacio_recibido,
     desactivar_articulo,
+    desactivar_casilla_pedidos,
     desactivar_cliente,
     desactivar_cliente_puesto,
     desactivar_proveedor_puesto,
@@ -90,8 +95,17 @@ from app.db import (
     asignar_articulo_a_renglon_pedido,
     borrar_foto_guia,
     borrar_foto_pedido,
+    fijar_auto_confirmar_casilla,
     guardar_alias_en_ficha,
+    listar_casillas_pedidos,
+    listar_mails_pedido,
+    marcar_mail_pedido_confirmado,
+    marcar_mail_pedido_ignorado,
+    obtener_casilla_pedidos,
+    obtener_mail_pedido,
     obtener_pedido_vigente,
+    registrar_mail_pedido,
+    registrar_revision_casilla,
     limpiar_foto_ruta_de_compras,
     listar_fotos_de_guia,
     listar_fotos_pedido,
@@ -163,6 +177,13 @@ from core.exportar_vacios import (
     generar_excel_stock_vacios,
     generar_pdf_movimientos_vacios,
     generar_pdf_stock_vacios,
+)
+from core.casilla_pedidos import (
+    CLAVE_CASILLA_ENV_VAR,
+    ErrorCasilla,
+    clave_casilla_configurada,
+    revisar_casilla,
+    separar_remitentes,
 )
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
@@ -7158,6 +7179,56 @@ def _sumas_leidas_por_sucursal(renglones: list[dict]) -> dict:
     return sumas
 
 
+def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, texto_original, fotos_data, mail=None):
+    """El contexto de la pantalla de revisión a partir de lo que leyó la IA, o None si no encontró renglones.
+
+    Es el mismo camino para el texto pegado, las capturas y el mail
+    registrado de la casilla (que entra con ``mail``: la revisión muestra
+    de qué mail viene y el guardado lo confirma).
+    """
+    fichas = listar_fichas_por_cliente(cliente_id)
+    pedido_vigente = obtener_pedido_vigente(cliente_id, fecha_valor)
+
+    alias_por_codigo, alias_por_nombre = _alias_de_fichas(fichas)
+    bloque = _elegir_bloque_pedido(datos.get("bloques") or [], alias_por_codigo)
+    if bloque is None:
+        return None
+
+    renglones = _armar_renglones_pedido_desde_bloque(bloque, fichas, alias_por_codigo, alias_por_nombre)
+    sucursales = [
+        {
+            "sucursal": (s.get("sucursal") or "").strip(),
+            "orden_compra": (str(s.get("orden_compra")).strip() if s.get("orden_compra") is not None else None),
+            "total_bultos_declarado": _numero_pedido_o_none(s.get("total_bultos")),
+        }
+        for s in bloque.get("sucursales") or []
+        if (s.get("sucursal") or "").strip()
+    ]
+    # Sucursales que aparecen en cantidades pero no vinieron declaradas
+    # arriba: se agregan igual (sin OC ni total) — nada se pierde.
+    declaradas = {s["sucursal"] for s in sucursales}
+    for renglon in renglones:
+        for nombre_sucursal in renglon["cantidades"]:
+            if nombre_sucursal not in declaradas:
+                sucursales.append({"sucursal": nombre_sucursal, "orden_compra": None, "total_bultos_declarado": None})
+                declaradas.add(nombre_sucursal)
+
+    return {
+        "cliente_id": cliente_id,
+        "cliente_nombre": cliente_nombre,
+        "fecha": fecha_valor.isoformat(),
+        "fecha_mostrar": fecha_valor.strftime("%d/%m/%Y"),
+        "empresa_bloque": bloque.get("empresa") or "",
+        "sucursales": sucursales,
+        "renglones": renglones,
+        "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
+        "texto_original": texto_original,
+        "fotos_data": fotos_data,
+        "pedido_vigente": pedido_vigente,
+        "mail": mail,
+    }
+
+
 @app.get("/deposito/pedido")
 def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: str | None = None, aviso: str | None = None):
     """El pedido del día de un cliente, por sucursal con su OC — lo que el depósito arma.
@@ -7330,14 +7401,11 @@ async def leer_pedido_pegado(
         return _pantalla_error("Pegá el texto del mail o subí una captura antes de leer.", 400)
 
     try:
-        fichas = listar_fichas_por_cliente(cliente_id)
-        pedido_vigente = obtener_pedido_vigente(cliente_id, fecha_valor)
+        contexto = _contexto_revision_pedido(cliente_id, cliente["nombre"], fecha_valor, datos, texto, fotos_data)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    alias_por_codigo, alias_por_nombre = _alias_de_fichas(fichas)
-    bloque = _elegir_bloque_pedido(datos.get("bloques") or [], alias_por_codigo)
-    if bloque is None:
+    if contexto is None:
         return templates.TemplateResponse(
             request,
             "deposito_pedido_cargar.html",
@@ -7346,42 +7414,7 @@ async def leer_pedido_pegado(
             status_code=400,
         )
 
-    renglones = _armar_renglones_pedido_desde_bloque(bloque, fichas, alias_por_codigo, alias_por_nombre)
-    sucursales = [
-        {
-            "sucursal": (s.get("sucursal") or "").strip(),
-            "orden_compra": (str(s.get("orden_compra")).strip() if s.get("orden_compra") is not None else None),
-            "total_bultos_declarado": _numero_pedido_o_none(s.get("total_bultos")),
-        }
-        for s in bloque.get("sucursales") or []
-        if (s.get("sucursal") or "").strip()
-    ]
-    # Sucursales que aparecen en cantidades pero no vinieron declaradas
-    # arriba: se agregan igual (sin OC ni total) — nada se pierde.
-    declaradas = {s["sucursal"] for s in sucursales}
-    for renglon in renglones:
-        for nombre_sucursal in renglon["cantidades"]:
-            if nombre_sucursal not in declaradas:
-                sucursales.append({"sucursal": nombre_sucursal, "orden_compra": None, "total_bultos_declarado": None})
-                declaradas.add(nombre_sucursal)
-
-    return templates.TemplateResponse(
-        request,
-        "deposito_pedido_revision.html",
-        {
-            "cliente_id": cliente_id,
-            "cliente_nombre": cliente["nombre"],
-            "fecha": fecha_valor.isoformat(),
-            "fecha_mostrar": fecha_valor.strftime("%d/%m/%Y"),
-            "empresa_bloque": bloque.get("empresa") or "",
-            "sucursales": sucursales,
-            "renglones": renglones,
-            "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
-            "texto_original": texto,
-            "fotos_data": fotos_data,
-            "pedido_vigente": pedido_vigente,
-        },
-    )
+    return templates.TemplateResponse(request, "deposito_pedido_revision.html", contexto)
 
 
 @app.post("/deposito/pedido/cargar/confirmar")
@@ -7394,6 +7427,24 @@ async def confirmar_pedido(request: Request):
         raise HTTPException(status_code=400, detail="Cliente inválido")
     fecha_valor = _fecha_pedido_o_hoy(str(form.get("fecha", "")))
     texto_original = str(form.get("texto_original", "")) or None
+
+    # Si la revisión vino de un mail registrado de la casilla, el guardado
+    # además confirma ese mail (y el pedido nace con origen 'mail' y su
+    # Message-ID: la idempotencia de la etapa 3).
+    mail = None
+    mail_id_texto = str(form.get("mail_id", "")).strip()
+    if mail_id_texto:
+        try:
+            mail = obtener_mail_pedido(int(mail_id_texto))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Mail inválido")
+        if mail is None:
+            raise HTTPException(status_code=404, detail="Mail no encontrado")
+        if mail["estado"] != "pendiente":
+            return RedirectResponse(
+                url=f"/sistema/casilla-pedidos?{urlencode({'error': 'Ese mail ya fue procesado (quizás desde otra pestaña). No se guardó nada.'})}",
+                status_code=303,
+            )
 
     cantidad_sucursales = int(form.get("cantidad_sucursales", "0") or 0)
     sucursales = []
@@ -7461,14 +7512,22 @@ async def confirmar_pedido(request: Request):
         pedido_id = crear_pedido(
             cliente_id,
             fecha_valor,
-            "texto",
+            "mail" if mail else "texto",
             texto_original,
             sucursales,
             renglones,
             reemplaza_a_pedido_id=pedido_vigente["id"] if pedido_vigente else None,
+            mail_message_id=mail["message_id"] if mail else None,
+            recibido_el=mail["recibido_el"] if mail else None,
         )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo guardar el pedido: {error_db}") from error_db
+
+    if mail is not None:
+        try:
+            marcar_mail_pedido_confirmado(mail["id"], pedido_id)
+        except Exception:
+            logger.exception("El pedido %s quedó guardado pero no se pudo marcar el mail %s como confirmado", pedido_id, mail["id"])
 
     # Los alias se guardan después del pedido (si fallan, el pedido ya
     # está a salvo): solo completan campos vacíos de la ficha.
@@ -7770,6 +7829,273 @@ def desarmar_renglon_pedido_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo destildar el renglón: {error_db}") from error_db
 
     return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+
+
+# --- Casilla de pedidos (etapa 3, tramo 1): configuración y revisión manual ---
+
+
+def _renderizar_casilla_pedidos(request: Request, *, mensaje: str | None = None, error: str | None = None, status_code: int = 200):
+    try:
+        casillas = listar_casillas_pedidos()
+        mails = listar_mails_pedido()
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "sistema_casilla_pedidos.html",
+        {
+            "casillas": casillas,
+            "mails": mails,
+            "clientes": clientes,
+            # La clave JAMÁS pasa por esta pantalla: solo se muestra si la
+            # variable de Railway está configurada o falta.
+            "clave_configurada": clave_casilla_configurada() is not None,
+            "clave_env_var": CLAVE_CASILLA_ENV_VAR,
+            "mensaje": mensaje,
+            "error": error,
+        },
+        status_code=status_code,
+    )
+
+
+def _redirigir_a_casilla(mensaje: str | None = None, error: str | None = None):
+    parametros = {}
+    if mensaje:
+        parametros["mensaje"] = mensaje
+    if error:
+        parametros["error"] = error
+    url = "/sistema/casilla-pedidos"
+    if parametros:
+        url += f"?{urlencode(parametros)}"
+    return RedirectResponse(url=url, status_code=303)
+
+
+@app.get("/sistema/casilla-pedidos")
+def ver_casilla_pedidos(request: Request, mensaje: str | None = None, error: str | None = None):
+    """Casilla de Pedidos: la configuración de lectura del buzón, su estado y los mails registrados."""
+    return _renderizar_casilla_pedidos(request, mensaje=mensaje, error=error)
+
+
+@app.post("/sistema/casilla-pedidos/guardar")
+def guardar_casilla_pedidos(
+    request: Request,
+    direccion: str = Form(""),
+    servidor_imap: str = Form(""),
+    cliente_id: int = Form(...),
+    remitentes_permitidos: str = Form(""),
+    casilla_id: str = Form(""),
+):
+    """Alta o edición de la configuración de la casilla. La clave no viaja por acá: vive en Railway."""
+    direccion_valor = direccion.strip().lower()
+    servidor_valor = servidor_imap.strip() or "imap.gmail.com"
+    remitentes_valor = ", ".join(separar_remitentes(remitentes_permitidos))
+    if not direccion_valor:
+        return _renderizar_casilla_pedidos(request, error="Falta la dirección de la casilla.", status_code=400)
+    if not remitentes_valor:
+        return _renderizar_casilla_pedidos(
+            request,
+            error="Falta al menos un remitente permitido: sin ese filtro no se lee nada del buzón.",
+            status_code=400,
+        )
+
+    try:
+        if casilla_id.strip():
+            actualizar_casilla_pedidos(int(casilla_id), direccion_valor, servidor_valor, cliente_id, remitentes_valor)
+            mensaje = "Casilla actualizada."
+        else:
+            crear_casilla_pedidos(direccion_valor, servidor_valor, cliente_id, remitentes_valor)
+            mensaje = "Casilla guardada. Cuando la clave esté en Railway, activala y probá con Revisar ahora."
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar la casilla: {error_db}") from error_db
+
+    return _redirigir_a_casilla(mensaje=mensaje)
+
+
+def _fecha_activacion_desde_form(texto: str):
+    """La fecha de activación del form (datetime-local), en hora argentina. Vacía = ahora. Inválida = None."""
+    texto = texto.strip()
+    if not texto:
+        return datetime.now(ARGENTINA)
+    try:
+        valor = datetime.fromisoformat(texto)
+    except ValueError:
+        return None
+    if valor.tzinfo is None:
+        valor = valor.replace(tzinfo=ARGENTINA)
+    return valor
+
+
+@app.post("/sistema/casilla-pedidos/{casilla_id}/activar")
+def activar_casilla_pedidos_ruta(request: Request, casilla_id: int, fecha_activacion: str = Form("")):
+    """Prende la lectura. Solo se miran correos POSTERIORES a la fecha de activación (default: ahora)."""
+    fecha_valor = _fecha_activacion_desde_form(fecha_activacion)
+    if fecha_valor is None:
+        return _renderizar_casilla_pedidos(request, error="La fecha de activación no es válida.", status_code=400)
+    try:
+        activar_casilla_pedidos(casilla_id, fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo activar la casilla: {error_db}") from error_db
+    return _redirigir_a_casilla(mensaje="Casilla activada. Probá la conexión con Revisar ahora.")
+
+
+@app.post("/sistema/casilla-pedidos/{casilla_id}/desactivar")
+def desactivar_casilla_pedidos_ruta(casilla_id: int):
+    try:
+        desactivar_casilla_pedidos(casilla_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo desactivar la casilla: {error_db}") from error_db
+    return _redirigir_a_casilla(mensaje="Casilla desactivada: no se revisa más hasta que la vuelvas a activar.")
+
+
+@app.post("/sistema/casilla-pedidos/{casilla_id}/fecha-activacion")
+def cambiar_fecha_activacion_ruta(request: Request, casilla_id: int, fecha_activacion: str = Form("")):
+    """Corrige a mano desde cuándo se miran los correos (p. ej. atrasarla para releer un día)."""
+    fecha_valor = _fecha_activacion_desde_form(fecha_activacion)
+    if fecha_valor is None:
+        return _renderizar_casilla_pedidos(request, error="La fecha de activación no es válida.", status_code=400)
+    try:
+        cambiar_fecha_activacion_casilla(casilla_id, fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo cambiar la fecha: {error_db}") from error_db
+    return _redirigir_a_casilla(mensaje="Fecha de activación cambiada: la próxima revisión mira desde ahí.")
+
+
+@app.post("/sistema/casilla-pedidos/{casilla_id}/auto-confirmar")
+def auto_confirmar_casilla_ruta(casilla_id: int, valor: str = Form("")):
+    """El toggle de auto-confirmar (tramo 2: confirmar solo el pedido que cuadra 100% y no reemplaza a nadie)."""
+    activar = valor.strip() == "si"
+    try:
+        fijar_auto_confirmar_casilla(casilla_id, activar)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo cambiar auto-confirmar: {error_db}") from error_db
+    if activar:
+        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: por ahora informativo — empieza a confirmar solo cuando la revisión automática esté andando (tramo 2).")
+    return _redirigir_a_casilla(mensaje="Auto-confirmar apagado: todos los mails quedan pendientes para confirmar a mano.")
+
+
+@app.post("/sistema/casilla-pedidos/{casilla_id}/revisar")
+def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
+    """Revisar ahora: conecta al buzón en solo lectura, registra lo nuevo y CUENTA lo que vio.
+
+    El detalle del mensaje es a propósito: "N mails desde la activación, M
+    de remitentes permitidos" delata al toque un filtro de remitente mal
+    escrito ("hay mails pero ninguno pasa el filtro") o el IMAP
+    deshabilitado por el administrador de Workspace — hoy, no mañana a las
+    15:00.
+    """
+    try:
+        casilla = obtener_casilla_pedidos(casilla_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if casilla is None:
+        raise HTTPException(status_code=404, detail="Casilla no encontrada")
+
+    clave = clave_casilla_configurada()
+    if clave is None:
+        return _redirigir_a_casilla(
+            error=f"Falta la clave de la casilla: cargá la variable {CLAVE_CASILLA_ENV_VAR} en Railway (clave de aplicación de Gmail) y redeployá."
+        )
+    if casilla["fecha_activacion"] is None:
+        return _redirigir_a_casilla(error="La casilla no tiene fecha de activación: activala primero.")
+    remitentes = separar_remitentes(casilla["remitentes_permitidos"])
+    if not remitentes:
+        return _redirigir_a_casilla(error="No hay remitentes permitidos configurados: sin ese filtro no se lee nada.")
+
+    try:
+        resultado = revisar_casilla(
+            casilla["direccion"], clave, casilla["servidor_imap"], casilla["fecha_activacion"], remitentes
+        )
+    except ErrorCasilla as error_casilla:
+        try:
+            registrar_revision_casilla(casilla_id, error=str(error_casilla))
+        except Exception:
+            logger.exception("No se pudo registrar el error de revisión de la casilla %s", casilla_id)
+        return _redirigir_a_casilla(error=f"La casilla no se pudo revisar: {error_casilla}")
+
+    try:
+        nuevos = 0
+        ya_registrados = 0
+        for mail in resultado["mails"]:
+            mail_id = registrar_mail_pedido(
+                casilla_id,
+                casilla["cliente_id"],
+                mail["message_id"],
+                mail["remitente"],
+                mail["asunto"],
+                mail["recibido_el"],
+                mail["cuerpo_crudo"],
+                mail["cuerpo_texto"],
+            )
+            if mail_id is None:
+                ya_registrados += 1
+            else:
+                nuevos += 1
+        registrar_revision_casilla(casilla_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Se leyó el buzón pero falló el registro en la base: {error_db}") from error_db
+
+    permitidos = len(resultado["mails"])
+    mensaje = (
+        f"Conectado OK a {casilla['direccion']} — {resultado['total_desde']} "
+        f"mail{'s' if resultado['total_desde'] != 1 else ''} desde la activación, "
+        f"{permitidos} de remitentes permitidos, {ya_registrados} ya registrado{'s' if ya_registrados != 1 else ''}, "
+        f"{nuevos} nuevo{'s' if nuevos != 1 else ''} por confirmar."
+    )
+    if resultado["total_desde"] > 0 and permitidos == 0:
+        mensaje += " Ojo: hay mails en el buzón pero ninguno pasa el filtro de remitente — si esperabas ver el pedido, revisá que el remitente esté bien escrito."
+    return _redirigir_a_casilla(mensaje=mensaje)
+
+
+@app.post("/sistema/casilla-pedidos/mails/{mail_id}/ignorar")
+def ignorar_mail_pedido_ruta(mail_id: int):
+    """Marca un mail pendiente como ignorado (no era un pedido). El registro queda, nada desaparece."""
+    try:
+        marcar_mail_pedido_ignorado(mail_id, "Marcado a mano desde Sistema")
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo ignorar el mail: {error_db}") from error_db
+    return _redirigir_a_casilla(mensaje="Mail marcado como ignorado.")
+
+
+@app.get("/deposito/pedido/mails/{mail_id}/revisar")
+def revisar_mail_pedido_ruta(request: Request, mail_id: int):
+    """Precarga la revisión de Cargar Pedido desde el cuerpo guardado de un mail pendiente.
+
+    Mismo circuito que pegar el texto a mano: la IA lee el cuerpo (ya
+    pasado a texto), la revisión muestra el control cruzado y al guardar
+    el mail queda confirmado y el pedido nace con origen 'mail'.
+    """
+    try:
+        mail = obtener_mail_pedido(mail_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if mail is None:
+        raise HTTPException(status_code=404, detail="Mail no encontrado")
+    if mail["estado"] != "pendiente":
+        return _redirigir_a_casilla(error="Ese mail ya fue procesado: no hay nada para confirmar.")
+
+    texto = mail["cuerpo_texto"] or mail["cuerpo_crudo"]
+    try:
+        datos = extraer_pedido_de_texto(texto)
+    except Exception as error_lector:
+        return _redirigir_a_casilla(error=f"No se pudo leer el pedido del mail: {error_lector}")
+
+    # El pedido es del día del mail (el mail de Día llega al mediodía del
+    # día que se arma), en fecha argentina.
+    fecha_valor = mail["recibido_el"].astimezone(ARGENTINA).date()
+    try:
+        contexto = _contexto_revision_pedido(
+            mail["cliente_id"], mail["cliente_nombre"], fecha_valor, datos, texto, [], mail=mail
+        )
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if contexto is None:
+        return _redirigir_a_casilla(
+            error="La IA no encontró renglones de pedido en ese mail. Cargalo a mano desde Cargar Pedido, o marcalo como ignorado."
+        )
+    return templates.TemplateResponse(request, "deposito_pedido_revision.html", contexto)
 
 
 if __name__ == "__main__":

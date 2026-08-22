@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casilla de Pedidos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .mensaje {
+    background: #e0f2fe;
+    color: #075985;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .sub { color: #666; font-size: 0.88rem; margin: 0 0 0.5rem; }
+  .dato { font-size: 0.92rem; margin: 0.3rem 0; }
+  .dato strong { font-weight: 700; }
+  .pill {
+    display: inline-block;
+    font-size: 0.8rem;
+    font-weight: 800;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+  .pill-activa { background: #dcfce7; color: #166534; }
+  .pill-inactiva { background: #e5e7eb; color: #4b5563; }
+  .pill-pendiente { background: #fef9c3; color: #713f12; }
+  .pill-confirmado { background: #dcfce7; color: #166534; }
+  .pill-ignorado { background: #e5e7eb; color: #4b5563; }
+  .pill-error { background: #fee2e2; color: #991b1b; }
+  .estado-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.88rem;
+    margin: 0.5rem 0;
+  }
+  .estado-clave {
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.88rem;
+    margin-bottom: 0.5rem;
+  }
+  .estado-clave.ok { background: #f0fdf4; color: #166534; }
+  .estado-clave.falta { background: #fffbeb; color: #713f12; border: 1px solid #f59e0b; }
+  .boton {
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    margin-top: 0.75rem;
+    cursor: pointer;
+  }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .boton-chico {
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+  }
+  .boton-confirmar-mail { background: #16a34a; color: #fff; text-decoration: none; display: inline-block; }
+  .boton-ignorar { background: #fff; color: #666; border: 1px solid #ccc; }
+  label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  input, select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  details { margin-top: 0.75rem; }
+  details summary {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: #2563eb;
+    cursor: pointer;
+    padding: 0.4rem 0;
+  }
+  .mail {
+    border-top: 1px solid #eee;
+    padding: 0.6rem 0;
+  }
+  .mail:first-of-type { border-top: none; }
+  .mail .asunto { font-weight: 700; font-size: 0.95rem; }
+  .mail .detalle { color: #666; font-size: 0.85rem; margin: 0.15rem 0 0.4rem; }
+  .mail .acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #2563eb;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "sistema" %}
+  {% set barra_titulo = "Casilla de Pedidos" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if mensaje %}
+  <div class="mensaje">{{ mensaje }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Cómo funciona</h2>
+    <p class="sub" style="margin-bottom: 0.25rem;">El sistema mira el buzón en <strong>solo lectura estricta</strong>: nunca borra, nunca mueve, nunca marca como leído, nunca responde. Solo correos posteriores a la fecha de activación y solo de los remitentes permitidos — el resto ni se descarga.</p>
+    {% if clave_configurada %}
+    <div class="estado-clave ok">La clave de la casilla está configurada en Railway ({{ clave_env_var }}).</div>
+    {% else %}
+    <div class="estado-clave falta">Falta la clave: cargá la variable <strong>{{ clave_env_var }}</strong> en Railway (clave de aplicación de Gmail) y redeployá. La clave nunca va en la base ni en esta pantalla.</div>
+    {% endif %}
+  </div>
+
+  {% for casilla in casillas %}
+  <div class="tarjeta">
+    <h2>{{ casilla.direccion }}
+      {% if casilla.activa %}<span class="pill pill-activa">Activa</span>
+      {% else %}<span class="pill pill-inactiva">Inactiva</span>{% endif %}
+    </h2>
+    <p class="dato">Cliente: <strong>{{ casilla.cliente_nombre }}</strong></p>
+    <p class="dato">Remitentes permitidos: <strong>{{ casilla.remitentes_permitidos }}</strong></p>
+    <p class="dato">Mira correos desde:
+      {% if casilla.fecha_activacion %}<strong>{{ casilla.fecha_activacion|fecha_hora }}</strong>
+      {% else %}<em>sin fecha de activación todavía</em>{% endif %}
+    </p>
+    <p class="dato">Última revisión OK:
+      {% if casilla.ultima_revision_el %}<strong>{{ casilla.ultima_revision_el|fecha_hora }}</strong>
+      {% else %}<em>nunca</em>{% endif %}
+    </p>
+    {% if casilla.ultimo_error_el and (not casilla.ultima_revision_el or casilla.ultimo_error_el > casilla.ultima_revision_el) %}
+    <div class="estado-error"><strong>La última revisión falló</strong> ({{ casilla.ultimo_error_el|fecha_hora }}): {{ casilla.ultimo_error }}</div>
+    {% endif %}
+
+    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/revisar">
+      <button type="submit" class="boton">Revisar ahora</button>
+    </form>
+
+    {% if not casilla.activa %}
+    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/activar">
+      <label for="fecha-activacion-{{ casilla.id }}">Mirar correos desde (vacío = ahora)</label>
+      <input type="datetime-local" id="fecha-activacion-{{ casilla.id }}" name="fecha_activacion">
+      <button type="submit" class="boton boton-secundario">Activar la casilla</button>
+    </form>
+    {% else %}
+    <details>
+      <summary>Cambiar desde cuándo se miran los correos</summary>
+      <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/fecha-activacion">
+        <label for="fecha-nueva-{{ casilla.id }}">Nueva fecha (vacío = ahora)</label>
+        <input type="datetime-local" id="fecha-nueva-{{ casilla.id }}" name="fecha_activacion">
+        <button type="submit" class="boton boton-secundario">Cambiar fecha</button>
+      </form>
+    </details>
+    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/desactivar">
+      <button type="submit" class="boton boton-secundario">Desactivar la casilla</button>
+    </form>
+    {% endif %}
+
+    <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/auto-confirmar">
+      {% if casilla.auto_confirmar %}
+      <input type="hidden" name="valor" value="no">
+      <button type="submit" class="boton boton-secundario">Apagar auto-confirmar (hoy: prendido)</button>
+      {% else %}
+      <input type="hidden" name="valor" value="si">
+      <button type="submit" class="boton boton-secundario">Prender auto-confirmar (hoy: apagado)</button>
+      {% endif %}
+    </form>
+    <p class="sub" style="margin-top: 0.4rem;">Auto-confirmar (cuando la revisión automática esté andando): confirma solo el pedido que cuadra 100% con los totales del mail y no reemplaza a ningún pedido ya cargado. Todo lo demás queda pendiente igual.</p>
+
+    <details>
+      <summary>Editar configuración</summary>
+      <form method="post" action="/sistema/casilla-pedidos/guardar">
+        <input type="hidden" name="casilla_id" value="{{ casilla.id }}">
+        <label for="direccion-{{ casilla.id }}">Dirección de la casilla</label>
+        <input type="email" id="direccion-{{ casilla.id }}" name="direccion" value="{{ casilla.direccion }}" required>
+        <label for="servidor-{{ casilla.id }}">Servidor IMAP</label>
+        <input type="text" id="servidor-{{ casilla.id }}" name="servidor_imap" value="{{ casilla.servidor_imap }}">
+        <label for="cliente-{{ casilla.id }}">Cliente</label>
+        <select id="cliente-{{ casilla.id }}" name="cliente_id">
+          {% for c in clientes %}
+          <option value="{{ c.id }}" {% if casilla.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+          {% endfor %}
+        </select>
+        <label for="remitentes-{{ casilla.id }}">Remitentes permitidos (separados por coma)</label>
+        <input type="text" id="remitentes-{{ casilla.id }}" name="remitentes_permitidos" value="{{ casilla.remitentes_permitidos }}" required>
+        <button type="submit" class="boton boton-secundario">Guardar cambios</button>
+      </form>
+    </details>
+  </div>
+  {% endfor %}
+
+  {% if not casillas %}
+  <div class="tarjeta">
+    <h2>Conectar la casilla</h2>
+    <p class="sub">La casilla queda guardada DESACTIVADA: se activa recién cuando la clave esté cargada en Railway.</p>
+    <form method="post" action="/sistema/casilla-pedidos/guardar">
+      <label for="direccion-nueva">Dirección de la casilla (la cuenta Gmail de la empresa)</label>
+      <input type="email" id="direccion-nueva" name="direccion" placeholder="pedidos@empresa.com" required>
+      <label for="servidor-nuevo">Servidor IMAP</label>
+      <input type="text" id="servidor-nuevo" name="servidor_imap" value="imap.gmail.com">
+      <label for="cliente-nuevo">Cliente que manda los pedidos</label>
+      <select id="cliente-nuevo" name="cliente_id">
+        {% for c in clientes %}
+        <option value="{{ c.id }}">{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <label for="remitentes-nuevo">Remitentes permitidos (separados por coma)</label>
+      <input type="text" id="remitentes-nuevo" name="remitentes_permitidos" placeholder="pedidos@dia.com.ar" required>
+      <button type="submit" class="boton">Guardar casilla</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Mails registrados</h2>
+    <p class="sub">Los pendientes van arriba: cada uno es un borrador de pedido para revisar y confirmar. Nada se confirma solo.</p>
+    {% if mails %}
+      {% for m in mails %}
+      <div class="mail">
+        <div class="asunto">{{ m.asunto or "(sin asunto)" }}
+          <span class="pill pill-{{ m.estado }}">{{ {"pendiente": "Pendiente", "confirmado": "Confirmado", "ignorado": "Ignorado", "error": "Error"}[m.estado] }}</span>
+        </div>
+        <div class="detalle">{{ m.remitente }} · llegó {{ m.recibido_el|fecha_hora }} · {{ m.cliente_nombre }}{% if m.motivo %} · {{ m.motivo }}{% endif %}</div>
+        {% if m.estado == "pendiente" %}
+        <div class="acciones">
+          <a class="boton-chico boton-confirmar-mail" href="/deposito/pedido/mails/{{ m.id }}/revisar">Revisar y confirmar</a>
+          <form method="post" action="/sistema/casilla-pedidos/mails/{{ m.id }}/ignorar"
+                onsubmit="return confirm('¿Marcar este mail como ignorado? No se carga ningún pedido con él.')">
+            <button type="submit" class="boton-chico boton-ignorar">Ignorar</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no hay ningún mail registrado. Con la casilla activa, Revisar ahora los trae.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/sistema">Volver a Sistema</a>
+</body>
+</html>

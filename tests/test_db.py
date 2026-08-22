@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -35,6 +35,12 @@ from app.db import (
     contar_ingresos_deposito,
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_con_renglones_incompletos,
+    activar_casilla_pedidos,
+    crear_casilla_pedidos,
+    listar_casillas_pedidos,
+    marcar_mail_pedido_ignorado,
+    registrar_mail_pedido,
+    registrar_revision_casilla,
     desmarcar_renglon_armado,
     marcar_renglon_armado,
     crear_pedido,
@@ -2465,7 +2471,7 @@ def test_crear_pedido_guarda_todo_en_una_transaccion():
     assert cursor.execute.call_count == 3
     consulta_cabecera, parametros_cabecera = cursor.execute.call_args_list[0].args
     assert "INSERT INTO pedidos " in consulta_cabecera
-    assert parametros_cabecera == (1, date(2026, 8, 21), "texto", "el mail", None)
+    assert parametros_cabecera == (1, date(2026, 8, 21), "texto", "el mail", None, None, None)
     conexion.commit.assert_called_once()
 
 
@@ -2607,3 +2613,127 @@ def test_contar_pedidos_con_renglones_incompletos_solo_armados_por_menos():
     assert "r.armado_el IS NOT NULL" in consulta
     assert "r.cantidad_armada IS NOT NULL AND r.cantidad_armada <> r.cantidad" in consulta
     assert "p.anulado_el IS NULL" in consulta
+
+
+# --- Casilla de pedidos (etapa 3) ---
+
+
+def test_crear_casilla_pedidos_nace_desactivada():
+    conexion, cursor = _conexion_falsa([(1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        casilla_id = crear_casilla_pedidos("casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar")
+
+    assert casilla_id == 1
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO casillas_pedidos" in consulta
+    # Ni activa ni fecha_activacion en el insert: nace apagada, se activa aparte.
+    assert "activa" not in consulta
+    assert parametros == ("casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar")
+    conexion.commit.assert_called_once()
+
+
+def test_activar_casilla_pedidos_fija_la_fecha_de_activacion():
+    conexion, cursor = _conexion_falsa()
+    momento = datetime(2026, 8, 22, 11, 0)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        activar_casilla_pedidos(3, momento)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET activa = true, fecha_activacion = %s" in consulta
+    assert parametros == (momento, 3)
+
+
+def test_registrar_revision_casilla_no_pisa_el_exito_con_el_error():
+    # Éxito y error van a columnas distintas: si el error es más nuevo que
+    # la última revisión OK, la pantalla lo muestra — nada se pisa.
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        registrar_revision_casilla(3)
+        registrar_revision_casilla(3, error="login fallido")
+
+    consulta_ok = cursor.execute.call_args_list[0].args[0]
+    consulta_error, parametros_error = cursor.execute.call_args_list[1].args
+    assert "SET ultima_revision_el = now()" in consulta_ok
+    assert "ultimo_error" not in consulta_ok
+    assert "SET ultimo_error = %s, ultimo_error_el = now()" in consulta_error
+    assert "ultima_revision_el" not in consulta_error
+    assert parametros_error == ("login fallido", 3)
+
+
+def test_registrar_mail_pedido_es_idempotente_por_message_id():
+    conexion, cursor = _conexion_falsa([(9,), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        primero = registrar_mail_pedido(
+            3, 1, "<pedido-1@dia.com.ar>", "pedidos@dia.com.ar", "Pedido",
+            datetime(2026, 8, 22, 12, 5), "<html>...</html>", "texto",
+        )
+        repetido = registrar_mail_pedido(
+            3, 1, "<pedido-1@dia.com.ar>", "pedidos@dia.com.ar", "Pedido",
+            datetime(2026, 8, 22, 12, 5), "<html>...</html>", "texto",
+        )
+
+    assert primero == 9
+    # El duplicado devuelve None y no toca nada: ON CONFLICT DO NOTHING.
+    assert repetido is None
+    consulta = cursor.execute.call_args.args[0]
+    assert "ON CONFLICT (message_id) DO NOTHING" in consulta
+
+
+def test_marcar_mail_pedido_ignorado_solo_toca_pendientes():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_mail_pedido_ignorado(9, "no era un pedido")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET estado = 'ignorado'" in consulta
+    # Un mail ya confirmado no se puede pisar a ignorado por un doble toque.
+    assert "estado = 'pendiente'" in consulta
+    assert parametros == ("no era un pedido", 9)
+
+
+def test_listar_casillas_pedidos_trae_el_nombre_del_cliente():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [
+        ("id",), ("direccion",), ("servidor_imap",), ("cliente_id",), ("remitentes_permitidos",),
+        ("activa",), ("fecha_activacion",), ("auto_confirmar",),
+        ("ultima_revision_el",), ("ultimo_error",), ("ultimo_error_el",), ("cliente_nombre",),
+    ]
+    cursor.fetchall.return_value = [
+        (3, "casilla@empresa.com", "imap.gmail.com", 1, "pedidos@dia.com.ar",
+         True, datetime(2026, 8, 22, 11, 0), False, None, None, None, "Dia"),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        casillas = listar_casillas_pedidos()
+
+    assert casillas == [
+        {
+            "id": 3, "direccion": "casilla@empresa.com", "servidor_imap": "imap.gmail.com",
+            "cliente_id": 1, "remitentes_permitidos": "pedidos@dia.com.ar", "activa": True,
+            "fecha_activacion": datetime(2026, 8, 22, 11, 0), "auto_confirmar": False,
+            "ultima_revision_el": None, "ultimo_error": None, "ultimo_error_el": None,
+            "cliente_nombre": "Dia",
+        }
+    ]
+    assert "JOIN clientes c ON c.id = ca.cliente_id" in cursor.execute.call_args.args[0]
+
+
+def test_crear_pedido_de_mail_guarda_message_id_y_recibido():
+    conexion, cursor = _conexion_falsa([(60,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_pedido(
+            1, date(2026, 8, 22), "mail", "el cuerpo", [], [],
+            mail_message_id="<pedido-1@dia.com.ar>", recibido_el=datetime(2026, 8, 22, 12, 5),
+        )
+
+    consulta, parametros = cursor.execute.call_args_list[0].args
+    assert "mail_message_id" in consulta and "recibido_el" in consulta
+    assert parametros == (
+        1, date(2026, 8, 22), "mail", "el cuerpo", None, "<pedido-1@dia.com.ar>", datetime(2026, 8, 22, 12, 5),
+    )

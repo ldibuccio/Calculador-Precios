@@ -3821,6 +3821,8 @@ def crear_pedido(
     sucursales: list[dict],
     renglones: list[dict],
     reemplaza_a_pedido_id: int | None = None,
+    mail_message_id: str | None = None,
+    recibido_el=None,
 ) -> int:
     """Guarda un pedido completo (cabecera + sucursales + renglones) en UNA transacción. Devuelve el id.
 
@@ -3843,11 +3845,12 @@ def crear_pedido(
                 )
             cursor.execute(
                 """
-                INSERT INTO pedidos (cliente_id, fecha_operacion, origen, texto_original, reemplaza_a_pedido_id)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO pedidos (cliente_id, fecha_operacion, origen, texto_original,
+                                     reemplaza_a_pedido_id, mail_message_id, recibido_el)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (cliente_id, fecha_operacion, origen, texto_original, reemplaza_a_pedido_id),
+                (cliente_id, fecha_operacion, origen, texto_original, reemplaza_a_pedido_id, mail_message_id, recibido_el),
             )
             (pedido_id,) = cursor.fetchone()
 
@@ -4169,5 +4172,282 @@ def contar_pedidos_con_renglones_incompletos() -> dict:
             )
             casos, mas_viejo = cursor.fetchone()
         return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def listar_casillas_pedidos() -> list[dict]:
+    """Las casillas de pedidos configuradas (hoy una: Día), con el nombre del cliente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id, ca.remitentes_permitidos,
+                       ca.activa, ca.fecha_activacion, ca.auto_confirmar,
+                       ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
+                       c.nombre AS cliente_nombre
+                FROM casillas_pedidos ca
+                JOIN clientes c ON c.id = ca.cliente_id
+                ORDER BY ca.id
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def obtener_casilla_pedidos(casilla_id: int) -> dict | None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id, ca.remitentes_permitidos,
+                       ca.activa, ca.fecha_activacion, ca.auto_confirmar,
+                       ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
+                       c.nombre AS cliente_nombre
+                FROM casillas_pedidos ca
+                JOIN clientes c ON c.id = ca.cliente_id
+                WHERE ca.id = %s
+                """,
+                (casilla_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def crear_casilla_pedidos(direccion: str, servidor_imap: str, cliente_id: int, remitentes_permitidos: str) -> int:
+    """Da de alta una casilla, DESACTIVADA: se activa aparte, cuando la clave ya está en Railway."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO casillas_pedidos (direccion, servidor_imap, cliente_id, remitentes_permitidos)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (direccion, servidor_imap, cliente_id, remitentes_permitidos),
+            )
+            (casilla_id,) = cursor.fetchone()
+        conexion.commit()
+        return casilla_id
+    finally:
+        conexion.close()
+
+
+def actualizar_casilla_pedidos(casilla_id: int, direccion: str, servidor_imap: str, cliente_id: int, remitentes_permitidos: str) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE casillas_pedidos
+                SET direccion = %s, servidor_imap = %s, cliente_id = %s, remitentes_permitidos = %s
+                WHERE id = %s
+                """,
+                (direccion, servidor_imap, cliente_id, remitentes_permitidos, casilla_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def activar_casilla_pedidos(casilla_id: int, fecha_activacion) -> None:
+    """Activa la casilla con su fecha de activación: solo se miran correos POSTERIORES a esto."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE casillas_pedidos SET activa = true, fecha_activacion = %s WHERE id = %s",
+                (fecha_activacion, casilla_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def desactivar_casilla_pedidos(casilla_id: int) -> None:
+    """Baja el interruptor. La fecha de activación queda: si se reactiva, sigue desde ahí."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE casillas_pedidos SET activa = false WHERE id = %s", (casilla_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def cambiar_fecha_activacion_casilla(casilla_id: int, fecha_activacion) -> None:
+    """Corrige a mano desde cuándo se miran los correos (p. ej. para releer un día puntual)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE casillas_pedidos SET fecha_activacion = %s WHERE id = %s",
+                (fecha_activacion, casilla_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def fijar_auto_confirmar_casilla(casilla_id: int, valor: bool) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE casillas_pedidos SET auto_confirmar = %s WHERE id = %s", (valor, casilla_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def registrar_revision_casilla(casilla_id: int, error: str | None = None) -> None:
+    """Deja rastro de cada revisión: la exitosa por un lado, el último error por el otro.
+
+    Si el último error es más nuevo que la última revisión exitosa, la
+    casilla está fallando — eso es lo que la pantalla (y la futura alerta
+    de Auditoría) mira. Nunca se pisa una cosa con la otra.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if error is None:
+                cursor.execute(
+                    "UPDATE casillas_pedidos SET ultima_revision_el = now() WHERE id = %s",
+                    (casilla_id,),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE casillas_pedidos SET ultimo_error = %s, ultimo_error_el = now() WHERE id = %s",
+                    (error, casilla_id),
+                )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def registrar_mail_pedido(
+    casilla_id: int,
+    cliente_id: int,
+    message_id: str,
+    remitente: str,
+    asunto: str | None,
+    recibido_el,
+    cuerpo_crudo: str,
+    cuerpo_texto: str | None,
+) -> int | None:
+    """Registra un mail detectado, UNA sola vez: si el Message-ID ya está, devuelve None y no toca nada.
+
+    Esta es la idempotencia de toda la etapa 3 — la revisión puede correr
+    mil veces sobre el mismo buzón sin duplicar nada y sin marcar nada en
+    el mailbox.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO mails_pedido
+                    (casilla_id, cliente_id, message_id, remitente, asunto, recibido_el, cuerpo_crudo, cuerpo_texto)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (message_id) DO NOTHING
+                RETURNING id
+                """,
+                (casilla_id, cliente_id, message_id, remitente, asunto, recibido_el, cuerpo_crudo, cuerpo_texto),
+            )
+            fila = cursor.fetchone()
+        conexion.commit()
+        return fila[0] if fila else None
+    finally:
+        conexion.close()
+
+
+def obtener_mail_pedido(mail_id: int) -> dict | None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, m.casilla_id, m.cliente_id, m.message_id, m.remitente, m.asunto,
+                       m.recibido_el, m.cuerpo_crudo, m.cuerpo_texto, m.estado, m.motivo,
+                       m.pedido_id, m.procesado_el, m.creado_en,
+                       c.nombre AS cliente_nombre
+                FROM mails_pedido m
+                JOIN clientes c ON c.id = m.cliente_id
+                WHERE m.id = %s
+                """,
+                (mail_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def listar_mails_pedido(limite: int = 30) -> list[dict]:
+    """Los últimos mails registrados, pendientes arriba (son los que piden acción)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, m.message_id, m.remitente, m.asunto, m.recibido_el, m.estado,
+                       m.motivo, m.pedido_id, m.procesado_el, m.creado_en,
+                       c.nombre AS cliente_nombre
+                FROM mails_pedido m
+                JOIN clientes c ON c.id = m.cliente_id
+                ORDER BY (m.estado = 'pendiente') DESC, m.recibido_el DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def marcar_mail_pedido_confirmado(mail_id: int, pedido_id: int) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE mails_pedido
+                SET estado = 'confirmado', pedido_id = %s, motivo = NULL, procesado_el = now()
+                WHERE id = %s
+                """,
+                (pedido_id, mail_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def marcar_mail_pedido_ignorado(mail_id: int, motivo: str | None = None) -> None:
+    """Marca el mail como ignorado (no era un pedido). El registro queda: nada desaparece en silencio."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE mails_pedido
+                SET estado = 'ignorado', motivo = %s, procesado_el = now()
+                WHERE id = %s AND estado = 'pendiente'
+                """,
+                (motivo, mail_id),
+            )
+        conexion.commit()
     finally:
         conexion.close()

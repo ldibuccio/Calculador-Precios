@@ -521,4 +521,49 @@ create table fotos_pedido (
 
 comment on table fotos_pedido is 'Capturas del mail original del pedido, como respaldo visual.';
 
+-- ----------------------------------------------------------------------------
+-- 14. CASILLA DE PEDIDOS — lectura solo-lectura del buzón de la empresa
+-- ----------------------------------------------------------------------------
+create table casillas_pedidos (
+    id                    bigint generated always as identity primary key,
+    direccion             text not null,
+    servidor_imap         text not null default 'imap.gmail.com',
+    cliente_id            bigint not null references clientes (id),
+    remitentes_permitidos text not null,
+    activa                boolean not null default false,
+    fecha_activacion      timestamptz,
+    auto_confirmar        boolean not null default false,
+    ultima_revision_el    timestamptz,
+    ultimo_error          text,
+    ultimo_error_el       timestamptz,
+    creado_en             timestamptz not null default now(),
+    unique (direccion, cliente_id)
+);
+
+comment on table casillas_pedidos is 'Configuración de lectura de la casilla de pedidos: una fila por casilla+cliente con sus remitentes permitidos. Solo lectura estricta del buzón; la clave IMAP vive en la variable de Railway CLAVE_CASILLA_PEDIDOS, jamás acá.';
+
+create table mails_pedido (
+    id            bigint generated always as identity primary key,
+    casilla_id    bigint not null references casillas_pedidos (id),
+    cliente_id    bigint not null references clientes (id),
+    message_id    text not null unique,
+    remitente     text not null,
+    asunto        text,
+    recibido_el   timestamptz not null,
+    cuerpo_crudo  text not null,
+    cuerpo_texto  text,
+    estado        text not null default 'pendiente'
+                  check (estado in ('pendiente', 'confirmado', 'ignorado', 'error')),
+    motivo        text,
+    pedido_id     bigint references pedidos (id),
+    procesado_el  timestamptz,
+    creado_en     timestamptz not null default now()
+);
+
+comment on table mails_pedido is 'Un registro por mail detectado en la casilla de pedidos (unique por Message-ID: cada mail se procesa UNA vez). El cuerpo crudo completo se guarda siempre. pendiente = borrador por confirmar desde la revisión.';
+
+create index mails_pedido_pendientes_idx
+    on mails_pedido (creado_en) where estado = 'pendiente';
+create index mails_pedido_casilla_idx on mails_pedido (casilla_id);
+
 commit;
