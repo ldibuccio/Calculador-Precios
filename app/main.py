@@ -5883,8 +5883,10 @@ def _alertas_auditoria() -> list[dict]:
             "texto_link": "Ver en Pedido",
         },
         {
-            # La casilla activa que falló o que a las 15:00 no tuvo
-            # ninguna revisión exitosa hoy: el buzón quedó sin mirar.
+            # Solo el problema REAL: desde las 14:00, la casilla activa
+            # que en todo el día no tuvo ninguna revisión exitosa. Un
+            # fallo puntual que se recuperó solo no alerta (se ve en la
+            # pantalla de la casilla, pero no grita acá).
             "titulo": "La casilla de pedidos no se pudo revisar",
             "casos": casillas_sin_revisar["casos"],
             "mas_viejo": casillas_sin_revisar["mas_viejo"],
@@ -7380,25 +7382,28 @@ def contar_pedidos_faltantes() -> dict:
 
 
 def contar_casillas_sin_revisar() -> dict:
-    """Cuántas casillas ACTIVAS están fallando o sin revisar hoy, para Auditoría.
+    """Cuántas casillas ACTIVAS llevan el día sin UNA revisión exitosa, para Auditoría.
 
-    Dos maneras de estar mal: la última revisión terminó en error (el
-    error es más nuevo que el último éxito), o ya pasó la ventana de
-    revisión automática (15:00) y hoy no hubo ninguna revisión exitosa.
-    Así el "no se pudo revisar el buzón" no depende de que alguien entre
-    a la pantalla de la casilla a mirar.
+    A propósito NO alerta al primer fallo: una caída de internet a las
+    12:00 que a las 12:15 se recuperó sola no es un problema, y una
+    alerta que grita por eso se deja de mirar en una semana. El criterio
+    es "pasó un rato largo y nunca pudo": desde las 14:00 (una hora antes
+    del cierre de la ventana), si hoy no hubo NINGUNA revisión exitosa —
+    porque todos los intentos fallaron o porque directamente no corrió
+    ninguno — el problema es real y hay que resolverlo antes de que se
+    pase el día. El último error puntual se ve igual en la pantalla de la
+    casilla, siempre, aunque después se haya recuperado.
     """
     ahora = datetime.now(ARGENTINA)
+    if ahora.time() < HORA_ALERTA_CASILLA_SIN_REVISAR:
+        return {"casos": 0, "mas_viejo": None}
     casos = 0
     for casilla in listar_casillas_pedidos():
         if not casilla["activa"]:
             continue
         revision = casilla["ultima_revision_el"]
-        error_el = casilla["ultimo_error_el"]
-        con_error = error_el is not None and (revision is None or error_el > revision)
         revisada_hoy = revision is not None and revision.astimezone(ARGENTINA).date() == ahora.date()
-        sin_revisar_hoy = ahora.time() >= VENTANA_REVISION_HASTA and not revisada_hoy
-        if con_error or sin_revisar_hoy:
+        if not revisada_hoy:
             casos += 1
     return {"casos": casos, "mas_viejo": None}
 
@@ -8395,6 +8400,10 @@ VENTANA_REVISION_DESDE = time(12, 0)
 VENTANA_REVISION_HASTA = time(15, 0)
 SEGUNDOS_ENTRE_REVISIONES = 900  # dentro de la ventana: cada 15 minutos
 SEGUNDOS_FUERA_DE_VENTANA = 300  # fuera: mirar el reloj cada 5 minutos
+# Desde qué hora alerta Auditoría si HOY no hubo ninguna revisión exitosa:
+# una hora antes del cierre de la ventana. Antes de eso no se alerta — el
+# sistema todavía tiene ticks por delante para recuperarse solo.
+HORA_ALERTA_CASILLA_SIN_REVISAR = time(14, 0)
 
 
 def _intentar_auto_confirmar(mail: dict) -> bool:

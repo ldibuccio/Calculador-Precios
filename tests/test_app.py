@@ -11683,6 +11683,28 @@ def test_ver_casilla_pedidos_destaca_un_error_mas_nuevo_que_la_ultima_revision_o
     assert "login fallido" in respuesta.text
 
 
+def test_ver_casilla_pedidos_muestra_el_error_recuperado_sin_destacarlo():
+    # Falló a las 12:00 pero a las 12:15 pudo: el error queda a la VISTA
+    # (para diagnosticar), pero sin el bloque rojo de "está fallando".
+    casilla = dict(
+        CASILLA_DE_PRUEBA,
+        ultima_revision_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
+        ultimo_error="caída momentánea",
+        ultimo_error_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST),
+    )
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[casilla]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert "La última revisión falló" not in respuesta.text
+    assert "Último error (ya recuperado)" in respuesta.text
+    assert "caída momentánea" in respuesta.text
+
+
 def test_guardar_casilla_nueva_normaliza_y_redirige():
     with patch("app.main.crear_casilla_pedidos", return_value=3) as mock_crear:
         respuesta = cliente.post(
@@ -12471,52 +12493,59 @@ def test_contar_pedidos_faltantes_suma_todos_los_clientes_con_dias():
     assert resultado == {"casos": 3, "mas_viejo": date(2026, 8, 15)}
 
 
-def test_contar_casillas_sin_revisar_cuenta_el_error_mas_nuevo_que_el_exito():
+def test_contar_casillas_sin_revisar_no_alerta_por_un_fallo_que_se_recupero_solo():
+    # Falló a las 12:00 pero a las 12:15 pudo: caída momentánea, el sistema
+    # se recuperó solo. NO alerta — una alerta que grita por eso se deja de
+    # mirar en una semana. El error igual queda visible en la pantalla de
+    # la casilla.
     casillas = [
-        # Falló después del último éxito: cuenta.
-        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST),
-             ultimo_error_el=datetime(2026, 8, 22, 13, 0, tzinfo=ARGENTINA_TEST)),
-        # Éxito más nuevo que el error, revisada hoy: no cuenta.
-        dict(CASILLA_DE_PRUEBA, id=2, ultima_revision_el=datetime(2026, 8, 22, 13, 30, tzinfo=ARGENTINA_TEST),
-             ultimo_error_el=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST)),
+        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
+             ultimo_error_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST)),
+        # Y un error DESPUÉS del éxito de hoy tampoco alerta: los mails del
+        # día ya se registraron a las 12:15.
+        dict(CASILLA_DE_PRUEBA, id=2, ultima_revision_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
+             ultimo_error_el=datetime(2026, 8, 22, 14, 15, tzinfo=ARGENTINA_TEST)),
+    ]
+    ahora = datetime(2026, 8, 22, 14, 30, tzinfo=ARGENTINA_APP)
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.return_value = ahora
+        resultado = contar_casillas_sin_revisar()
+
+    assert resultado == {"casos": 0, "mas_viejo": None}
+
+
+def test_contar_casillas_sin_revisar_alerta_desde_las_14_si_hoy_nunca_pudo():
+    casillas = [
+        # Viene fallando todo el día (último éxito AYER): problema real.
+        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 21, 13, 0, tzinfo=ARGENTINA_TEST),
+             ultimo_error_el=datetime(2026, 8, 22, 13, 45, tzinfo=ARGENTINA_TEST)),
+        # Nunca corrió nada hoy (ni error registrado): también es problema —
+        # el task puede estar muerto.
+        dict(CASILLA_DE_PRUEBA, id=2, ultima_revision_el=None, ultimo_error_el=None),
         # Inactiva: nunca cuenta, aunque esté fallando.
         dict(CASILLA_DE_PRUEBA, id=3, activa=False, ultima_revision_el=None,
              ultimo_error_el=datetime(2026, 8, 22, 13, 0, tzinfo=ARGENTINA_TEST)),
     ]
-    ahora = datetime(2026, 8, 22, 14, 0, tzinfo=ARGENTINA_APP)
-    with (
-        patch("app.main.listar_casillas_pedidos", return_value=casillas),
-        patch("app.main.datetime") as mock_datetime,
-    ):
-        mock_datetime.now.return_value = ahora
-        resultado = contar_casillas_sin_revisar()
-
-    assert resultado == {"casos": 1, "mas_viejo": None}
-
-
-def test_contar_casillas_sin_revisar_despues_de_las_15_sin_revision_de_hoy():
-    casillas = [
-        # Última revisión exitosa AYER y ya son las 15:30: el buzón de hoy
-        # quedó sin mirar — cuenta, aunque no haya ningún error grabado.
-        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 21, 13, 0, tzinfo=ARGENTINA_TEST),
-             ultimo_error_el=None),
-    ]
-    ahora = datetime(2026, 8, 22, 15, 30, tzinfo=ARGENTINA_APP)
-    with (
-        patch("app.main.listar_casillas_pedidos", return_value=casillas),
-        patch("app.main.datetime") as mock_datetime,
-    ):
-        mock_datetime.now.return_value = ahora
-        resultado = contar_casillas_sin_revisar()
-
-    assert resultado == {"casos": 1, "mas_viejo": None}
-
-    # A las 14:00 todavía no: la ventana sigue abierta.
     with (
         patch("app.main.listar_casillas_pedidos", return_value=casillas),
         patch("app.main.datetime") as mock_datetime,
     ):
         mock_datetime.now.return_value = datetime(2026, 8, 22, 14, 0, tzinfo=ARGENTINA_APP)
+        resultado = contar_casillas_sin_revisar()
+
+    assert resultado == {"casos": 2, "mas_viejo": None}
+
+    # A las 13:59 todavía NO, aunque venga fallando: quedan ticks por
+    # delante y puede recuperarse solo. Avisar recién cuando "pasó un rato
+    # largo y nunca pudo".
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.return_value = datetime(2026, 8, 22, 13, 59, tzinfo=ARGENTINA_APP)
         assert contar_casillas_sin_revisar() == {"casos": 0, "mas_viejo": None}
 
 

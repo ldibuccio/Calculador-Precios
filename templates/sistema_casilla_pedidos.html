@@ -187,6 +187,9 @@
     </p>
     {% if casilla.ultimo_error_el and (not casilla.ultima_revision_el or casilla.ultimo_error_el > casilla.ultima_revision_el) %}
     <div class="estado-error"><strong>La última revisión falló</strong> ({{ casilla.ultimo_error_el|fecha_hora }}): {{ casilla.ultimo_error }}</div>
+    {% elif casilla.ultimo_error_el %}
+    {# Se recuperó solo: el error queda a la vista acá (para diagnosticar), pero sin rojo y sin alerta en Auditoría. #}
+    <p class="dato">Último error (ya recuperado): {{ casilla.ultimo_error_el|fecha_hora }} — {{ casilla.ultimo_error }}</p>
     {% endif %}
 
     <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/revisar">
