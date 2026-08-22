@@ -476,7 +476,9 @@ def test_prompt_de_pedido_cuida_las_celdas_vacias_de_la_tabla():
 
     # Lo que más fácil se lee mal en la tabla: celdas vacías y cantidades
     # corridas de columna. El prompt lo dice explícito.
-    assert "celda vacía significa que esa sucursal NO pide ese artículo" in PROMPT_PEDIDO_CLIENTE
+    assert "significa que esa sucursal\n  NO pide ese artículo" in PROMPT_PEDIDO_CLIENTE
+    # El marcador del camino de respaldo: "-" también es celda vacía.
+    assert 'con un guion solo ("-")' in PROMPT_PEDIDO_CLIENTE
     assert "no corras cantidades de columna" in PROMPT_PEDIDO_CLIENTE
     assert "NUNCA un 0 inventado" in PROMPT_PEDIDO_CLIENTE
     # Varias capturas del mismo mail se juntan en un solo resultado.
@@ -705,3 +707,26 @@ def test_extraer_pedido_de_texto_si_ni_la_tanda_minima_entra_recien_ahi_error():
     with patch("core.lector_comandas._llamar_api_claude_texto", side_effect=RespuestaCortada("se cortó")):
         with pytest.raises(RespuestaCortada):
             extraer_pedido_de_texto(_texto_pedido_largo(8))
+
+
+def test_marcar_celdas_vacias_pone_el_guion_en_todas_las_posiciones():
+    from core.lector_comandas import _marcar_celdas_vacias
+
+    texto = "9582 FRUTAMAX\n\tSIN CODIGO\t\t7\t\n90101\tBANANA\t225\t\t3"
+
+    marcado = _marcar_celdas_vacias(texto)
+
+    # Toda fila tabulada trae TODAS sus columnas con un valor visible: no
+    # queda nada que inferir contando tabs consecutivos.
+    assert "-\tSIN CODIGO\t-\t7\t-" in marcado
+    assert "90101\tBANANA\t225\t-\t3" in marcado
+    # Las líneas sin tabs no se tocan.
+    assert "9582 FRUTAMAX" in marcado
+
+
+def test_extraer_pedido_de_texto_manda_las_celdas_vacias_marcadas():
+    with patch("core.lector_comandas._llamar_api_claude_texto", side_effect=_lector_falso_por_tanda) as mock_llamada:
+        extraer_pedido_de_texto("Cod\tProd\tVL\tBZ\n90101\tBANANA\t225\t")
+
+    texto_mandado = mock_llamada.call_args.args[0]
+    assert "90101\tBANANA\t225\t-" in texto_mandado

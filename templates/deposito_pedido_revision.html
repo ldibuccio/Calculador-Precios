@@ -29,6 +29,15 @@
     margin-bottom: 1rem;
     font-size: 0.9rem;
   }
+  .lectura {
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+  }
+  .lectura-estructura { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+  .lectura-ia { background: #fffbeb; color: #713f12; border: 2px solid #f59e0b; }
   .sucursal-resumen {
     display: flex;
     justify-content: space-between;
@@ -97,6 +106,14 @@
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Revisar Pedido" %}
   {% include "_barra_navegacion.html" %}
+
+  {% if metodo_lectura == "estructura" %}
+  <div class="lectura lectura-estructura">Leído por estructura: las cantidades salen de la tabla tal cual, sin IA.</div>
+  {% elif metodo_lectura == "ia" %}
+  <div class="lectura lectura-ia">Leído con IA — el parser de estructura no pudo con este texto. Revisá las cantidades con más atención.</div>
+  {% elif metodo_lectura == "ia_capturas" %}
+  <div class="lectura lectura-ia">Leído con IA desde capturas: revisá las cantidades contra la imagen.</div>
+  {% endif %}
 
   <div class="tarjeta">
     <h2>{{ cliente_nombre }} — {{ fecha_mostrar }}</h2>

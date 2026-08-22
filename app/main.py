@@ -41,6 +41,7 @@ from app.db import (
     cambiar_fecha_activacion_casilla,
     contar_compras_buscadas,
     contar_ingresos_deposito,
+    contar_mails_pedido_leidos_con_ia,
     contar_mails_pedido_sin_procesar,
     contar_pedidos_con_renglones_incompletos,
     contar_pedidos_con_renglones_sin_identificar,
@@ -100,6 +101,7 @@ from app.db import (
     guardar_alias_en_ficha,
     listar_casillas_pedidos,
     listar_mails_pedido,
+    marcar_lectura_mail_pedido,
     marcar_mail_pedido_confirmado,
     marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
@@ -187,6 +189,7 @@ from core.casilla_pedidos import (
     revisar_casilla,
     separar_remitentes,
 )
+from core.pedido_estructura import parsear_pedido_estructurado
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
@@ -5750,6 +5753,9 @@ def _alertas_auditoria() -> list[dict]:
     pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
     pedidos_incompletos = contar_pedidos_con_renglones_incompletos()
     mails_sin_procesar = contar_mails_pedido_sin_procesar()
+    # Ventana de 7 días: alcanza para ver un cambio de formato ese día y
+    # los siguientes, sin arrastrar para siempre un mail viejo ya resuelto.
+    mails_leidos_con_ia = contar_mails_pedido_leidos_con_ia(hoy - timedelta(days=7))
 
     return [
         {
@@ -5818,6 +5824,16 @@ def _alertas_auditoria() -> list[dict]:
             "titulo": "Mails de pedido sin confirmar",
             "casos": mails_sin_procesar["casos"],
             "mas_viejo": mails_sin_procesar["mas_viejo"],
+            "url": "/sistema/casilla-pedidos",
+            "texto_link": "Ver en Casilla de Pedidos",
+        },
+        {
+            # El fallback a IA VISIBLE: si Día cambió el formato del mail y
+            # el parser por estructura dejó de poder, esto lo dice ese
+            # mismo día — antes de que un cruce de bultos llegue a una entrega.
+            "titulo": "Pedidos de mail leídos con IA (el parser de estructura no pudo, últimos 7 días)",
+            "casos": mails_leidos_con_ia["casos"],
+            "mas_viejo": mails_leidos_con_ia["mas_viejo"],
             "url": "/sistema/casilla-pedidos",
             "texto_link": "Ver en Casilla de Pedidos",
         },
@@ -7192,7 +7208,7 @@ def _sumas_leidas_por_sucursal(renglones: list[dict]) -> dict:
     return sumas
 
 
-def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, texto_original, fotos_data, mail=None):
+def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, texto_original, fotos_data, mail=None, metodo_lectura=None):
     """El contexto de la pantalla de revisión a partir de lo que leyó la IA, o None si no encontró renglones.
 
     Es el mismo camino para el texto pegado, las capturas y el mail
@@ -7239,6 +7255,10 @@ def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, te
         "fotos_data": fotos_data,
         "pedido_vigente": pedido_vigente,
         "mail": mail,
+        # Cómo se leyó, SIEMPRE a la vista: "estructura" (las cantidades
+        # salen de la tabla, sin IA), "ia" (el parser no pudo: mirar con
+        # más atención) o "ia_capturas" (una imagen solo se lee con IA).
+        "metodo_lectura": metodo_lectura,
     }
 
 
@@ -7390,7 +7410,9 @@ async def leer_pedido_pegado(
 
     archivos = [a for a in imagenes if a is not None and a.filename]
     fotos_data: list[str] = []
+    metodo_lectura = None
     if archivos:
+        metodo_lectura = "ia_capturas"
         originales = []
         for archivo in archivos:
             contenido = await archivo.read()
@@ -7406,18 +7428,25 @@ async def leer_pedido_pegado(
         except Exception as error_lector:
             return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
     elif texto.strip():
-        try:
-            # A la IA va SOLO el bloque de esta empresa si se puede
-            # delimitar (la mitad del trabajo); el texto completo queda
-            # igual como texto_original del pedido.
-            datos = extraer_pedido_de_texto(recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA))
-        except Exception as error_lector:
-            return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
+        # Se lee SOLO el bloque de esta empresa si se puede delimitar; el
+        # texto completo queda igual como texto_original del pedido. El
+        # camino principal es el parser por estructura (cero IA en los
+        # números); la IA es el respaldo, y la revisión dice cuál se usó.
+        texto_recortado = recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA)
+        datos = parsear_pedido_estructurado(texto_recortado)
+        metodo_lectura = "estructura" if datos is not None else "ia"
+        if datos is None:
+            try:
+                datos = extraer_pedido_de_texto(texto_recortado)
+            except Exception as error_lector:
+                return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
     else:
         return _pantalla_error("Pegá el texto del mail o subí una captura antes de leer.", 400)
 
     try:
-        contexto = _contexto_revision_pedido(cliente_id, cliente["nombre"], fecha_valor, datos, texto, fotos_data)
+        contexto = _contexto_revision_pedido(
+            cliente_id, cliente["nombre"], fecha_valor, datos, texto, fotos_data, metodo_lectura=metodo_lectura
+        )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -8114,24 +8143,39 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
         return _redirigir_a_casilla(error="Ese mail ya fue procesado: no hay nada para confirmar.")
 
     texto = mail["cuerpo_texto"] or mail["cuerpo_crudo"]
+    texto_recortado = recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA)
+
+    # Camino principal: el parser por estructura — las cantidades salen de
+    # la tabla tal cual, sin IA. Si no puede, cae a la IA, y ese fallback
+    # queda GRABADO en el mail (alerta de Auditoría "leídos con IA"): si
+    # Día cambia el formato, se ve ese mismo día.
+    datos = parsear_pedido_estructurado(texto_recortado)
+    metodo_lectura = "estructura" if datos is not None else "ia"
     try:
-        datos = extraer_pedido_de_texto(recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA))
-    except Exception as error_lector:
-        # La falla queda GRABADA en el mail (y alimenta la alerta de
-        # Auditoría): cuando la revisión corra sola a las 12:00, un error
-        # de lectura no se puede perder en un redirect que nadie vio.
+        marcar_lectura_mail_pedido(mail_id, leido_con_ia=metodo_lectura == "ia")
+    except Exception:
+        logger.exception("No se pudo grabar el método de lectura del mail %s", mail_id)
+
+    if datos is None:
         try:
-            marcar_mail_pedido_error(mail_id, f"La lectura falló: {error_lector}")
-        except Exception:
-            logger.exception("No se pudo registrar el error de lectura en el mail %s", mail_id)
-        return _redirigir_a_casilla(error=f"No se pudo leer el pedido del mail: {error_lector}")
+            datos = extraer_pedido_de_texto(texto_recortado)
+        except Exception as error_lector:
+            # La falla queda GRABADA en el mail (y alimenta la alerta de
+            # Auditoría): cuando la revisión corra sola a las 12:00, un error
+            # de lectura no se puede perder en un redirect que nadie vio.
+            try:
+                marcar_mail_pedido_error(mail_id, f"La lectura falló: {error_lector}")
+            except Exception:
+                logger.exception("No se pudo registrar el error de lectura en el mail %s", mail_id)
+            return _redirigir_a_casilla(error=f"No se pudo leer el pedido del mail: {error_lector}")
 
     # El pedido es del día del mail (el mail de Día llega al mediodía del
     # día que se arma), en fecha argentina.
     fecha_valor = mail["recibido_el"].astimezone(ARGENTINA).date()
     try:
         contexto = _contexto_revision_pedido(
-            mail["cliente_id"], mail["cliente_nombre"], fecha_valor, datos, texto, [], mail=mail
+            mail["cliente_id"], mail["cliente_nombre"], fecha_valor, datos, texto, [],
+            mail=mail, metodo_lectura=metodo_lectura,
         )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db

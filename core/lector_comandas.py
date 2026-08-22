@@ -458,8 +458,12 @@ REGLAS DE EXTRACCIÓN:
   sin acortar ni inventar. "cantidades": un valor por sucursal usando los
   MISMOS nombres de sucursal que declaraste en "sucursales".
 - OJO CON LAS CELDAS VACÍAS — es lo que más fácil se lee mal en la tabla:
-  una celda vacía significa que esa sucursal NO pide ese artículo. Va
-  null, NUNCA un 0 inventado. Y cuidá la alineación: cada cantidad
+  una celda vacía, o con un guion solo ("-"), significa que esa sucursal
+  NO pide ese artículo. Va null, NUNCA un 0 inventado (y no transcribas el
+  guion como si fuera un dato: "-" en cualquier celda es celda VACÍA). En
+  el texto pegado las celdas vacías pueden venir marcadas así con "-",
+  justamente para que cada fila traiga TODAS sus columnas y no haya que
+  inferir posiciones. Y cuidá la alineación: cada cantidad
   pertenece a la columna de SU sucursal — si una fila tiene vacía la
   primera columna y número en la segunda, ese número es de la segunda
   sucursal, no corras cantidades de columna para llenar huecos.
@@ -642,6 +646,27 @@ def _combinar_lecturas(lecturas: list[dict]) -> dict:
     return {"bloques": [combinados[clave] for clave in orden]}
 
 
+MARCADOR_CELDA_VACIA = "-"
+
+
+def _marcar_celdas_vacias(texto: str) -> str:
+    """Pone el marcador en cada celda vacía de las filas tabuladas.
+
+    Refuerzo para el camino IA: con el marcador, toda fila trae TODAS sus
+    columnas con un valor visible y no queda nada que inferir contando
+    tabuladores consecutivos — que es exactamente donde una cantidad se
+    cruza de sucursal. El prompt explica que "-" es celda vacía (null).
+    """
+    lineas = []
+    for linea in texto.split("\n"):
+        if "\t" in linea:
+            celdas = [celda if celda.strip() else MARCADOR_CELDA_VACIA for celda in linea.split("\t")]
+            lineas.append("\t".join(celdas))
+        else:
+            lineas.append(linea)
+    return "\n".join(lineas)
+
+
 def _leer_pedido_de_texto_directo(texto: str) -> dict:
     respuesta_texto = _llamar_api_claude_texto(
         texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
@@ -682,8 +707,12 @@ def extraer_pedido_de_texto(texto: str) -> dict:
     renglones del texto) y los resultados se combinan; si una tanda se
     corta igual, se reintenta sola partiéndola más chica. 60 o 300
     renglones se leen igual, sin tocar nada.
+
+    Este es el camino de RESPALDO: el principal es el parser por
+    estructura (core/pedido_estructura.py), que no usa IA. Acá las celdas
+    vacías van con marcador para que la IA no tenga que inferir columnas.
     """
-    tandas = _partir_en_tandas(texto, MAX_RENGLONES_POR_TANDA)
+    tandas = _partir_en_tandas(_marcar_celdas_vacias(texto), MAX_RENGLONES_POR_TANDA)
     lecturas: list[dict] = []
     for tanda in tandas:
         lecturas.extend(_leer_tanda_con_reintento(tanda, MAX_RENGLONES_POR_TANDA))

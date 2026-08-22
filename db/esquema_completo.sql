@@ -558,6 +558,7 @@ create table mails_pedido (
     motivo        text,
     pedido_id     bigint references pedidos (id),
     procesado_el  timestamptz,
+    leido_con_ia  boolean not null default false,
     creado_en     timestamptz not null default now()
 );
 

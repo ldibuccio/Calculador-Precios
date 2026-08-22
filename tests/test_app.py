@@ -8983,6 +8983,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
         patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 6)}),
+        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 1, "mas_viejo": date(2026, 8, 7)}) as mock_leidos_ia,
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -9003,6 +9004,8 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Pedidos con renglones sin identificar" in respuesta.text
     assert "Pedidos con renglones incompletos" in respuesta.text
     assert "Mails de pedido sin confirmar" in respuesta.text
+    mock_leidos_ia.assert_called_once_with(date(2026, 7, 30))
+    assert "leídos con IA (el parser de estructura no pudo" in respuesta.text
     assert 'href="/sistema/casilla-pedidos"' in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
@@ -9028,6 +9031,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -11967,6 +11971,7 @@ def test_leer_pedido_pegado_manda_a_la_ia_solo_el_bloque_de_esta_empresa():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.parsear_pedido_estructurado", return_value=None),
         patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos) as mock_extraer,
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.obtener_pedido_vigente", return_value=None),
@@ -12064,3 +12069,129 @@ def test_ver_casilla_muestra_las_acciones_en_un_mail_con_error():
     assert "La lectura falló: se cortó" in respuesta.text
     assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
     assert 'action="/sistema/casilla-pedidos/mails/9/ignorar"' in respuesta.text
+
+
+TEXTO_PEDIDO_ESTRUCTURADO = (
+    "9582 FRUTAMAX\n"
+    "Código\tProducto\tVL\tBZ\n"
+    "\tOC\t1257673\t1257642\n"
+    "90101\tBANANA\t225\t\n"
+    "90102\tBATATA\t\t40\n"
+    "\tTOTAL BULTOS\t225\t40\n"
+)
+
+
+def test_leer_pedido_pegado_estructurado_no_llama_a_la_ia():
+    # El camino principal: el parser por estructura lee la tabla ENTERA sin
+    # IA — las cantidades por posición, la OC y el total por columna.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.extraer_pedido_de_texto") as mock_ia,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-22", "texto": TEXTO_PEDIDO_ESTRUCTURADO},
+        )
+
+    assert respuesta.status_code == 200
+    mock_ia.assert_not_called()
+    # El banner lo dice de un vistazo.
+    assert "Leído por estructura" in respuesta.text
+    # Banana matcheó por código de ficha; la OC y el total llegaron a la revisión.
+    assert "OC 1257673" in respuesta.text
+    assert "declara 225 bultos" in respuesta.text
+
+
+def test_leer_pedido_pegado_sin_estructura_cae_a_ia_y_lo_dice():
+    datos_leidos = {
+        "bloques": [{
+            "empresa": "",
+            "sucursales": [{"sucursal": "VL", "orden_compra": None, "total_bultos": None}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+        }]
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos) as mock_ia,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-22", "texto": "pedido sin estructura 90101 BANANA 225"},
+        )
+
+    assert respuesta.status_code == 200
+    mock_ia.assert_called_once()
+    assert "Leído con IA — el parser de estructura no pudo" in respuesta.text
+
+
+def test_revisar_mail_estructurado_lee_sin_ia_y_graba_el_metodo():
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, cuerpo_texto=TEXTO_PEDIDO_ESTRUCTURADO)
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.extraer_pedido_de_texto") as mock_ia,
+        patch("app.main.marcar_lectura_mail_pedido") as mock_marcar,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    mock_ia.assert_not_called()
+    mock_marcar.assert_called_once_with(9, leido_con_ia=False)
+    assert "Leído por estructura" in respuesta.text
+
+
+def test_revisar_mail_sin_estructura_graba_el_fallback_a_ia():
+    # El fallback VISIBLE: la marca alimenta la alerta "leídos con IA" — si
+    # Día cambia el formato, se ve ese mismo día.
+    datos_leidos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": None, "total_bultos": None}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 235}, "confianza": "alta"}],
+        }]
+    }
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_PEDIDO_DE_PRUEBA)),
+        patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos),
+        patch("app.main.marcar_lectura_mail_pedido") as mock_marcar,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    mock_marcar.assert_called_once_with(9, leido_con_ia=True)
+    assert "Leído con IA — el parser de estructura no pudo" in respuesta.text
+
+
+def test_leer_pedido_desde_capturas_dice_que_fue_con_ia():
+    datos_leidos = {
+        "bloques": [{
+            "empresa": "",
+            "sucursales": [{"sucursal": "VL", "orden_compra": None, "total_bultos": None}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+        }]
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-comprimido"),
+        patch("app.main.extraer_pedido_de_imagenes", return_value=datos_leidos),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-22"},
+            files=[("imagenes", ("captura.jpg", b"bytes-de-imagen", "image/jpeg"))],
+        )
+
+    assert respuesta.status_code == 200
+    assert "Leído con IA desde capturas" in respuesta.text

@@ -38,8 +38,10 @@ from app.db import (
     activar_casilla_pedidos,
     crear_casilla_pedidos,
     listar_casillas_pedidos,
+    marcar_lectura_mail_pedido,
     marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
+    contar_mails_pedido_leidos_con_ia,
     contar_mails_pedido_sin_procesar,
     registrar_mail_pedido,
     registrar_revision_casilla,
@@ -2767,3 +2769,26 @@ def test_contar_mails_pedido_sin_procesar_suma_pendientes_y_errores():
     assert resultado == {"casos": 3, "mas_viejo": date(2026, 8, 20)}
     consulta = cursor.execute.call_args.args[0]
     assert "estado IN ('pendiente', 'error')" in consulta
+
+
+def test_marcar_lectura_mail_pedido_graba_el_metodo_de_la_ultima_lectura():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_lectura_mail_pedido(9, leido_con_ia=True)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET leido_con_ia = %s" in consulta
+    assert parametros == (True, 9)
+
+
+def test_contar_mails_pedido_leidos_con_ia_mira_la_ventana_reciente():
+    conexion, cursor = _conexion_falsa([(1, date(2026, 8, 22))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_mails_pedido_leidos_con_ia(date(2026, 8, 15))
+
+    assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 22)}
+    consulta, parametros = cursor.execute.call_args.args
+    assert "leido_con_ia AND recibido_el >= %s" in consulta
+    assert parametros == (date(2026, 8, 15),)

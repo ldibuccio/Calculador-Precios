@@ -4504,3 +4504,45 @@ def contar_mails_pedido_sin_procesar() -> dict:
         return {"casos": int(casos), "mas_viejo": mas_viejo}
     finally:
         conexion.close()
+
+
+def marcar_lectura_mail_pedido(mail_id: int, leido_con_ia: bool) -> None:
+    """Graba CÓMO se leyó el mail la última vez: por estructura (false) o cayendo al camino IA (true).
+
+    Se pisa en cada lectura: si un reintento posterior entra por
+    estructura, la marca vuelve a false — la alerta refleja el estado
+    real, no la historia.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE mails_pedido SET leido_con_ia = %s WHERE id = %s",
+                (leido_con_ia, mail_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_mails_pedido_leidos_con_ia(fecha_desde) -> dict:
+    """Auditoría: mails de pedido recientes cuya lectura cayó al camino IA (el parser no pudo), y el más viejo.
+
+    Si Día cambia el formato del mail, esto lo dice ese mismo día — antes
+    de que un cruce de bultos llegue a una entrega.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(recibido_el)::date
+                FROM mails_pedido
+                WHERE leido_con_ia AND recibido_el >= %s
+                """,
+                (fecha_desde,),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
