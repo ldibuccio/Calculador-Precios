@@ -52,7 +52,7 @@ bases estén marcadas.
 | `agregar_pedidos.sql` | ✅ 2026-08-21 (verificado: 4 tablas creadas) | ✅ 2026-08-21 (verificado: 4 tablas creadas) |
 | `agregar_cantidad_armada_pedidos.sql` | ✅ 2026-08-21 | ✅ 2026-08-21 |
 | `agregar_casilla_pedidos.sql` | ✅ 2026-08-22 | ✅ 2026-08-22 |
-| `agregar_asunto_filtro_casilla.sql` | ⬜ | ⬜ |
+| `agregar_asunto_filtro_casilla.sql` | ✅ 2026-08-22 | ✅ 2026-08-22 |
 
 ## Deuda pendiente de limpieza
 
