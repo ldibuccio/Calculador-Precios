@@ -36,8 +36,16 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_con_renglones_incompletos,
     activar_casilla_pedidos,
+    borrar_dia_sin_pedido,
     crear_casilla_pedidos,
+    guardar_condiciones_pedido,
     listar_casillas_pedidos,
+    listar_condiciones_pedido,
+    listar_fechas_con_pedido_vigente,
+    marcar_dia_sin_pedido,
+    marcar_mail_pedido_confirmado,
+    obtener_condiciones_pedido,
+    obtener_mail_de_pedido,
     marcar_lectura_mail_pedido,
     marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
@@ -2815,3 +2823,107 @@ def test_listar_pedidos_vigentes_con_armado_una_fila_por_fecha_desde_el_corte():
     assert "p.fecha_operacion >= %s" in consulta
     assert "<=" not in consulta
     assert parametros == (1, date(2026, 8, 15))
+
+
+# --- Condiciones de pedido y días sin pedido (etapa 3, tramo 2) ---
+
+def test_guardar_condiciones_pedido_hace_upsert_por_cliente():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_condiciones_pedido(1, "1,2,3,4,5,6")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO clientes_condiciones_pedido" in consulta
+    assert "ON CONFLICT (cliente_id)" in consulta
+    assert "actualizado_en = now()" in consulta
+    assert parametros == (1, "1,2,3,4,5,6")
+    conexion.commit.assert_called_once()
+
+
+def test_guardar_condiciones_pedido_acepta_esporadico_con_none():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_condiciones_pedido(1, None)
+
+    assert cursor.execute.call_args.args[1] == (1, None)
+
+
+def test_obtener_condiciones_pedido_devuelve_none_si_nunca_se_configuro():
+    conexion, cursor = _conexion_falsa([None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert obtener_condiciones_pedido(1) is None
+
+
+def test_listar_condiciones_pedido_solo_clientes_activos_con_dias():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("cliente_id",), ("dias_esperados",), ("cliente_nombre",)]
+    cursor.fetchall.return_value = [(1, "1,2,3,4,5,6", "Día")]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        condiciones = listar_condiciones_pedido()
+
+    assert condiciones == [{"cliente_id": 1, "dias_esperados": "1,2,3,4,5,6", "cliente_nombre": "Día"}]
+    consulta = cursor.execute.call_args.args[0]
+    # Los esporádicos (dias NULL) y los clientes dados de baja no alertan.
+    assert "dias_esperados IS NOT NULL" in consulta
+    assert "c.activo" in consulta
+
+
+def test_listar_fechas_con_pedido_vigente_solo_los_vivos():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[(date(2026, 8, 21),), (date(2026, 8, 22),)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        fechas = listar_fechas_con_pedido_vigente(1, date(2026, 8, 15))
+
+    assert fechas == [date(2026, 8, 21), date(2026, 8, 22)]
+    consulta, parametros = cursor.execute.call_args.args
+    assert "anulado_el IS NULL" in consulta
+    assert parametros == (1, date(2026, 8, 15))
+
+
+def test_marcar_dia_sin_pedido_es_idempotente_por_cliente_y_fecha():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_dia_sin_pedido(1, date(2026, 8, 20), "Feriado")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO dias_sin_pedido" in consulta
+    assert "ON CONFLICT (cliente_id, fecha) DO NOTHING" in consulta
+    assert parametros == (1, date(2026, 8, 20), "Feriado")
+    conexion.commit.assert_called_once()
+
+
+def test_borrar_dia_sin_pedido_borra_la_marca_administrativa():
+    # La excepción acordada a la regla de bajas lógicas: la marca es
+    # administrativa (no un registro operativo) y deshacer la borra.
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        borrar_dia_sin_pedido(1, date(2026, 8, 20))
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "DELETE FROM dias_sin_pedido" in consulta
+    assert parametros == (1, date(2026, 8, 20))
+    conexion.commit.assert_called_once()
+
+
+def test_marcar_mail_pedido_confirmado_graba_el_motivo():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_mail_pedido_confirmado(9, 50, motivo="Confirmado automáticamente")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET estado = 'confirmado'" in consulta
+    assert parametros == (50, "Confirmado automáticamente", 9)
+
+
+def test_obtener_mail_de_pedido_devuelve_none_si_no_vino_de_mail():
+    conexion, cursor = _conexion_falsa([None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert obtener_mail_de_pedido(50) is None

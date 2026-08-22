@@ -4429,17 +4429,18 @@ def listar_mails_pedido(limite: int = 30) -> list[dict]:
         conexion.close()
 
 
-def marcar_mail_pedido_confirmado(mail_id: int, pedido_id: int) -> None:
+def marcar_mail_pedido_confirmado(mail_id: int, pedido_id: int, motivo: str | None = None) -> None:
+    """Confirma el mail apuntando al pedido. motivo distingue el auto-confirmado ("Confirmado automáticamente")."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE mails_pedido
-                SET estado = 'confirmado', pedido_id = %s, motivo = NULL, procesado_el = now()
+                SET estado = 'confirmado', pedido_id = %s, motivo = %s, procesado_el = now()
                 WHERE id = %s
                 """,
-                (pedido_id, mail_id),
+                (pedido_id, motivo, mail_id),
             )
         conexion.commit()
     finally:
@@ -4578,5 +4579,152 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def obtener_condiciones_pedido(cliente_id: int) -> dict | None:
+    """Las condiciones de pedido de un cliente, o None si nunca se configuraron (= esporádico)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT cliente_id, dias_esperados FROM clientes_condiciones_pedido WHERE cliente_id = %s",
+                (cliente_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def guardar_condiciones_pedido(cliente_id: int, dias_esperados: str | None) -> None:
+    """Guarda los días esperados de pedido del cliente (None = esporádico: sin alerta de faltantes)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO clientes_condiciones_pedido (cliente_id, dias_esperados)
+                VALUES (%s, %s)
+                ON CONFLICT (cliente_id)
+                DO UPDATE SET dias_esperados = EXCLUDED.dias_esperados, actualizado_en = now()
+                """,
+                (cliente_id, dias_esperados),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_condiciones_pedido() -> list[dict]:
+    """Los clientes CON días esperados configurados (los esporádicos no aparecen: sin alerta)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT cc.cliente_id, cc.dias_esperados, c.nombre AS cliente_nombre
+                FROM clientes_condiciones_pedido cc
+                JOIN clientes c ON c.id = cc.cliente_id
+                WHERE cc.dias_esperados IS NOT NULL AND c.activo
+                ORDER BY c.nombre
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_fechas_con_pedido_vigente(cliente_id: int, fecha_desde) -> list:
+    """Las fechas (desde fecha_desde) que tienen pedido VIVO para el cliente."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT fecha_operacion FROM pedidos
+                WHERE cliente_id = %s AND anulado_el IS NULL AND fecha_operacion >= %s
+                """,
+                (cliente_id, fecha_desde),
+            )
+            return [fila[0] for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_dias_sin_pedido(cliente_id: int, fecha_desde) -> list[dict]:
+    """Las marcas "no hubo pedido" del cliente desde una fecha."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, fecha, motivo, registrado_en FROM dias_sin_pedido
+                WHERE cliente_id = %s AND fecha >= %s
+                ORDER BY fecha
+                """,
+                (cliente_id, fecha_desde),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def marcar_dia_sin_pedido(cliente_id: int, fecha, motivo: str | None = None) -> None:
+    """Cierra un día esperado sin pedido (feriado, el cliente no pidió): la alerta lo deja de contar."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO dias_sin_pedido (cliente_id, fecha, motivo)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (cliente_id, fecha) DO NOTHING
+                """,
+                (cliente_id, fecha, motivo),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def borrar_dia_sin_pedido(cliente_id: int, fecha) -> None:
+    """Deshace la marca "no hubo pedido". Es una marca administrativa, no un registro operativo:
+    el borrado físico es la excepción acordada a la regla de bajas lógicas."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM dias_sin_pedido WHERE cliente_id = %s AND fecha = %s",
+                (cliente_id, fecha),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def obtener_mail_de_pedido(pedido_id: int) -> dict | None:
+    """El mail del que salió un pedido (si vino de la casilla), para mostrar cómo se confirmó."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, remitente, asunto, recibido_el, motivo, procesado_el
+                FROM mails_pedido WHERE pedido_id = %s
+                """,
+                (pedido_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+        return dict(zip(columnas, fila))
     finally:
         conexion.close()

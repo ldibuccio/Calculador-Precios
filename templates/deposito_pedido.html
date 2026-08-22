@@ -144,6 +144,55 @@
   .item-pedido .detalle { display: block; font-size: 0.85rem; font-weight: 500; opacity: 0.9; margin-top: 0.15rem; }
   .item-pedido.completo { background: #16a34a; }
   .item-pedido.abierto { outline: 3px solid #1e3a8a; }
+  /* Días esperados SIN pedido: se cierran cargando el pedido o marcando "no hubo". */
+  .dia-faltante {
+    border: 2px solid #f59e0b;
+    background: #fffbeb;
+    color: #713f12;
+    border-radius: 10px;
+    padding: 0.7rem 1rem;
+    margin-bottom: 0.6rem;
+  }
+  .dia-faltante .titulo-dia { font-weight: 800; font-size: 1rem; }
+  .dia-faltante .acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.55rem; }
+  .dia-faltante .acciones > * { flex: 1; min-width: 8rem; }
+  .dia-faltante .acciones form { margin: 0; }
+  .boton-chico {
+    display: block;
+    width: 100%;
+    padding: 0.65rem 0.6rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+    background: #2563eb;
+    color: #fff;
+  }
+  .boton-chico.secundario { background: #fff; color: #713f12; border: 1px solid #d97706; }
+  .dia-marcado {
+    background: #f3f4f6;
+    color: #6b7280;
+    border-radius: 10px;
+    padding: 0.7rem 1rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.9rem;
+  }
+  .dia-marcado .titulo-dia { font-weight: 700; }
+  .dia-marcado form { margin: 0.45rem 0 0; }
+  .dia-marcado .boton-chico { background: #fff; color: #6b7280; border: 1px solid #d1d5db; }
+  .aviso-auto {
+    background: #eff6ff;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+  }
   .sin-identificar-item {
     border-top: 1px solid #fde68a;
     padding: 0.6rem 0;
@@ -249,15 +298,39 @@
     {% endif %}
   </div>
 
-  {% if cliente_id and pedidos_listado %}
+  {% if cliente_id and (pedidos_listado or dias_faltantes or dias_marcados) %}
   <div class="tarjeta">
     <h2>Pedidos cargados</h2>
+    {% for d in dias_faltantes | default([]) %}
+    <div class="dia-faltante">
+      <div class="titulo-dia">⚠ Falta el pedido del {{ d.fecha_mostrar }}</div>
+      <div class="acciones">
+        <a class="boton-chico" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ d.fecha }}">Cargar</a>
+        <form method="post" action="/deposito/pedido/dias-sin-pedido" onsubmit="return marcarSinPedido(this, '{{ d.fecha_mostrar }}')">
+          <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+          <input type="hidden" name="fecha" value="{{ d.fecha }}">
+          <input type="hidden" name="motivo" value="">
+          <button type="submit" class="boton-chico secundario">No hubo pedido</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
     {% for p in pedidos_listado %}
     <a class="item-pedido {% if p.completo %}completo{% endif %} {% if p.fecha == fecha %}abierto{% endif %}"
        href="/deposito/pedido?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
       Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
       <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
     </a>
+    {% endfor %}
+    {% for m in dias_marcados | default([]) %}
+    <div class="dia-marcado">
+      <div class="titulo-dia">{{ m.fecha_mostrar }} — no hubo pedido{% if m.motivo %} ({{ m.motivo }}){% endif %}</div>
+      <form method="post" action="/deposito/pedido/dias-sin-pedido/deshacer" onsubmit="return confirm('¿Deshacer la marca del {{ m.fecha_mostrar }}? El día vuelve a contar como faltante.')">
+        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+        <input type="hidden" name="fecha" value="{{ m.fecha }}">
+        <button type="submit" class="boton-chico">Deshacer</button>
+      </form>
+    </div>
     {% endfor %}
   </div>
   {% endif %}
@@ -269,6 +342,10 @@
   {% endif %}
 
   {% if pedido %}
+
+  {% if confirmado_automaticamente %}
+  <div class="aviso-auto">🤖 Confirmado automáticamente {{ confirmado_automaticamente.procesado_el|fecha_hora }} desde el mail de la casilla (“{{ confirmado_automaticamente.asunto }}”): la lectura por estructura cuadró al 100% con los totales del mail. Nadie lo revisó a mano.</div>
+  {% endif %}
 
   {% for d in descuadres %}
   <div class="descuadre">⚠ {{ d }}</div>
@@ -372,5 +449,19 @@
   </div>
 
   {% endif %}
+
+  <script>
+    function marcarSinPedido(formulario, fechaMostrar) {
+      if (!confirm("¿Marcar que el " + fechaMostrar + " no hubo pedido? La alerta lo deja de contar. Se puede deshacer.")) {
+        return false;
+      }
+      const motivo = prompt("Motivo (opcional — ej. feriado):", "");
+      if (motivo === null) {
+        return false;
+      }
+      formulario.motivo.value = motivo;
+      return true;
+    }
+  </script>
 </body>
 </html>

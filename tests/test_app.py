@@ -623,6 +623,7 @@ def test_ver_editar_cliente_muestra_datos_precargados():
     with (
         patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA),
         patch("app.main.listar_conceptos_editables_por_cliente", return_value=CONCEPTOS_EDITABLES_DE_PRUEBA),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
     ):
         respuesta = cliente.get("/clientes/1/editar")
 
@@ -8984,6 +8985,8 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
         patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 6)}),
         patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 1, "mas_viejo": date(2026, 8, 7)}) as mock_leidos_ia,
+        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
+        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 1, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -9006,6 +9009,8 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Mails de pedido sin confirmar" in respuesta.text
     mock_leidos_ia.assert_called_once_with(date(2026, 7, 30))
     assert "leídos con IA (el parser de estructura no pudo" in respuesta.text
+    assert "Falta el pedido de un día esperado" in respuesta.text
+    assert "La casilla de pedidos no se pudo revisar" in respuesta.text
     assert 'href="/sistema/casilla-pedidos"' in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
@@ -9032,6 +9037,8 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -11184,6 +11191,7 @@ def test_ver_pedido_muestra_sucursales_con_oc_descuadre_y_sin_identificar():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
@@ -11565,6 +11573,7 @@ def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
@@ -12347,6 +12356,7 @@ def test_ver_pedido_lista_todos_los_cargados_ademas_del_abierto():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=list(LISTADO_PEDIDOS_DE_PRUEBA)),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
         patch("app.main.obtener_pedido_vigente", return_value=None),
     ):
         respuesta = cliente.get("/deposito/pedido?cliente_id=1&fecha=2026-08-24")
@@ -12360,3 +12370,640 @@ def test_ver_pedido_lista_todos_los_cargados_ademas_del_abierto():
     # El pasado completo sigue consultable, marcado, sin desaparecer.
     assert "Pedido del 20/08/2026" in texto and "COMPLETO ✔" in texto
     assert 'href="/deposito/pedido?cliente_id=1&fecha=2026-08-20"' in texto
+
+
+# --- Etapa 3, tramo 2: revisión automática, alertas y auto-confirmar ---
+
+from app.main import (  # noqa: E402
+    _dias_esperados_como_numeros,
+    _en_ventana_de_revision,
+    _fechas_esperadas_sin_pedido,
+    _intentar_auto_confirmar,
+    contar_casillas_sin_revisar,
+    contar_pedidos_faltantes,
+    revisar_casillas_activas,
+)
+
+ARGENTINA_APP = timezone(timedelta(hours=-3))
+
+
+def test_dias_esperados_como_numeros_ignora_basura():
+    assert _dias_esperados_como_numeros("1,2,3,4,5,6") == {1, 2, 3, 4, 5, 6}
+    assert _dias_esperados_como_numeros(" 1 , 7 ") == {1, 7}
+    assert _dias_esperados_como_numeros("0,8,x,") == set()
+    assert _dias_esperados_como_numeros(None) == set()
+
+
+def test_fechas_esperadas_sin_pedido_no_cuenta_hoy_antes_de_las_15():
+    # Viernes 21/08 a las 14:00: el mail de hoy todavía puede llegar — hoy
+    # no cuenta como faltante. El jueves 20 sin pedido, sí.
+    ahora = datetime(2026, 8, 21, 14, 0, tzinfo=ARGENTINA_APP)
+    with (
+        patch("app.main.listar_fechas_con_pedido_vigente", return_value=[date(2026, 8, 19)]),
+        patch("app.main.listar_dias_sin_pedido", return_value=[]),
+    ):
+        resultado = _fechas_esperadas_sin_pedido(1, "1,2,3,4,5", ahora)
+
+    assert date(2026, 8, 21) not in resultado["faltantes"]
+    assert date(2026, 8, 20) in resultado["faltantes"]
+    # El 19 tiene pedido vivo: no falta.
+    assert date(2026, 8, 19) not in resultado["faltantes"]
+
+
+def test_fechas_esperadas_sin_pedido_cuenta_hoy_desde_las_15():
+    ahora = datetime(2026, 8, 21, 15, 0, tzinfo=ARGENTINA_APP)
+    with (
+        patch("app.main.listar_fechas_con_pedido_vigente", return_value=[]),
+        patch("app.main.listar_dias_sin_pedido", return_value=[]),
+    ):
+        resultado = _fechas_esperadas_sin_pedido(1, "5", ahora)  # solo viernes
+
+    assert resultado["faltantes"] == [date(2026, 8, 14), date(2026, 8, 21)]
+
+
+def test_fechas_esperadas_sin_pedido_respeta_la_marca_y_el_pedido_manda():
+    # El 20 está marcado "no hubo pedido": deja de faltar y aparece en
+    # marcados. El 19 está marcado PERO después se cargó un pedido: el
+    # pedido manda y la marca no se muestra (queda de registro).
+    ahora = datetime(2026, 8, 21, 16, 0, tzinfo=ARGENTINA_APP)
+    marcas = [
+        {"id": 1, "fecha": date(2026, 8, 19), "motivo": None, "registrado_en": None},
+        {"id": 2, "fecha": date(2026, 8, 20), "motivo": "Feriado", "registrado_en": None},
+    ]
+    with (
+        patch("app.main.listar_fechas_con_pedido_vigente", return_value=[date(2026, 8, 19), date(2026, 8, 21)]),
+        patch("app.main.listar_dias_sin_pedido", return_value=marcas),
+    ):
+        resultado = _fechas_esperadas_sin_pedido(1, "3,4,5", ahora)  # mié-jue-vie
+
+    assert date(2026, 8, 20) not in resultado["faltantes"]
+    assert [m["fecha"] for m in resultado["marcados"]] == [date(2026, 8, 20)]
+
+
+def test_fechas_esperadas_sin_pedido_esporadico_no_alerta():
+    ahora = datetime(2026, 8, 21, 16, 0, tzinfo=ARGENTINA_APP)
+    with (
+        patch("app.main.listar_fechas_con_pedido_vigente", return_value=[]),
+        patch("app.main.listar_dias_sin_pedido", return_value=[]),
+    ):
+        resultado = _fechas_esperadas_sin_pedido(1, None, ahora)
+
+    assert resultado["faltantes"] == []
+
+
+def test_contar_pedidos_faltantes_suma_todos_los_clientes_con_dias():
+    condiciones = [
+        {"cliente_id": 1, "dias_esperados": "1,2,3,4,5", "cliente_nombre": "Día"},
+        {"cliente_id": 2, "dias_esperados": "6", "cliente_nombre": "Otro"},
+    ]
+
+    def _faltantes(cliente_id, dias, ahora):
+        if cliente_id == 1:
+            return {"faltantes": [date(2026, 8, 20), date(2026, 8, 21)], "marcados": []}
+        return {"faltantes": [date(2026, 8, 15)], "marcados": []}
+
+    with (
+        patch("app.main.listar_condiciones_pedido", return_value=condiciones),
+        patch("app.main._fechas_esperadas_sin_pedido", side_effect=_faltantes),
+    ):
+        resultado = contar_pedidos_faltantes()
+
+    assert resultado == {"casos": 3, "mas_viejo": date(2026, 8, 15)}
+
+
+def test_contar_casillas_sin_revisar_cuenta_el_error_mas_nuevo_que_el_exito():
+    casillas = [
+        # Falló después del último éxito: cuenta.
+        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST),
+             ultimo_error_el=datetime(2026, 8, 22, 13, 0, tzinfo=ARGENTINA_TEST)),
+        # Éxito más nuevo que el error, revisada hoy: no cuenta.
+        dict(CASILLA_DE_PRUEBA, id=2, ultima_revision_el=datetime(2026, 8, 22, 13, 30, tzinfo=ARGENTINA_TEST),
+             ultimo_error_el=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST)),
+        # Inactiva: nunca cuenta, aunque esté fallando.
+        dict(CASILLA_DE_PRUEBA, id=3, activa=False, ultima_revision_el=None,
+             ultimo_error_el=datetime(2026, 8, 22, 13, 0, tzinfo=ARGENTINA_TEST)),
+    ]
+    ahora = datetime(2026, 8, 22, 14, 0, tzinfo=ARGENTINA_APP)
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.return_value = ahora
+        resultado = contar_casillas_sin_revisar()
+
+    assert resultado == {"casos": 1, "mas_viejo": None}
+
+
+def test_contar_casillas_sin_revisar_despues_de_las_15_sin_revision_de_hoy():
+    casillas = [
+        # Última revisión exitosa AYER y ya son las 15:30: el buzón de hoy
+        # quedó sin mirar — cuenta, aunque no haya ningún error grabado.
+        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 21, 13, 0, tzinfo=ARGENTINA_TEST),
+             ultimo_error_el=None),
+    ]
+    ahora = datetime(2026, 8, 22, 15, 30, tzinfo=ARGENTINA_APP)
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.return_value = ahora
+        resultado = contar_casillas_sin_revisar()
+
+    assert resultado == {"casos": 1, "mas_viejo": None}
+
+    # A las 14:00 todavía no: la ventana sigue abierta.
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.datetime") as mock_datetime,
+    ):
+        mock_datetime.now.return_value = datetime(2026, 8, 22, 14, 0, tzinfo=ARGENTINA_APP)
+        assert contar_casillas_sin_revisar() == {"casos": 0, "mas_viejo": None}
+
+
+def test_editar_cliente_muestra_los_dias_de_pedido_tildados():
+    with (
+        patch("app.main.obtener_cliente", return_value=CLIENTE_DE_PRUEBA),
+        patch("app.main.listar_conceptos_editables_por_cliente", return_value=CONCEPTOS_EDITABLES_DE_PRUEBA),
+        patch("app.main.obtener_condiciones_pedido", return_value={"cliente_id": 1, "dias_esperados": "1,4"}),
+    ):
+        respuesta = cliente.get("/clientes/1/editar")
+
+    assert respuesta.status_code == 200
+    assert "Días de pedido" in respuesta.text
+    assert 'action="/clientes/1/dias-pedido"' in respuesta.text
+    assert 'value="1" checked' in respuesta.text
+    assert 'value="4" checked' in respuesta.text
+    assert 'value="2" checked' not in respuesta.text
+
+
+def test_guardar_dias_pedido_ordena_y_filtra_los_dias():
+    with patch("app.main.guardar_condiciones_pedido") as mock_guardar:
+        respuesta = cliente.post(
+            "/clientes/1/dias-pedido",
+            data={"dia": ["6", "1", "3", "9", "x"]},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/clientes/1/editar"
+    mock_guardar.assert_called_once_with(1, "1,3,6")
+
+
+def test_guardar_dias_pedido_sin_dias_deja_al_cliente_esporadico():
+    with patch("app.main.guardar_condiciones_pedido") as mock_guardar:
+        respuesta = cliente.post("/clientes/1/dias-pedido", data={}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(1, None)
+
+
+def test_ver_pedido_muestra_los_dias_faltantes_con_sus_dos_cierres():
+    estado_dias = {
+        "faltantes": [date(2026, 8, 20)],
+        "marcados": [{"id": 2, "fecha": date(2026, 8, 19), "motivo": "Feriado", "registrado_en": None}],
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value={"cliente_id": 1, "dias_esperados": "3,4,5"}),
+        patch("app.main._fechas_esperadas_sin_pedido", return_value=estado_dias),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    # El faltante, con sus DOS cierres: cargar el pedido o marcar que no hubo.
+    assert "Falta el pedido del 20/08/2026" in texto
+    assert 'href="/deposito/pedido/cargar?cliente_id=1&fecha=2026-08-20"' in texto
+    assert 'action="/deposito/pedido/dias-sin-pedido"' in texto
+    assert "No hubo pedido" in texto
+    # El marcado, atenuado con su motivo y el deshacer.
+    assert "19/08/2026 — no hubo pedido (Feriado)" in texto
+    assert 'action="/deposito/pedido/dias-sin-pedido/deshacer"' in texto
+    assert "Deshacer" in texto
+
+
+def test_marcar_dia_sin_pedido_guarda_con_motivo_opcional():
+    with patch("app.main.marcar_dia_sin_pedido") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/dias-sin-pedido",
+            data={"cliente_id": "1", "fecha": "2026-08-20", "motivo": "  Feriado  "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(1, date(2026, 8, 20), "Feriado")
+
+
+def test_deshacer_dia_sin_pedido_borra_la_marca():
+    with patch("app.main.borrar_dia_sin_pedido") as mock_borrar:
+        respuesta = cliente.post(
+            "/deposito/pedido/dias-sin-pedido/deshacer",
+            data={"cliente_id": "1", "fecha": "2026-08-20"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_borrar.assert_called_once_with(1, date(2026, 8, 20))
+
+
+def test_ver_pedido_avisa_cuando_se_confirmo_automaticamente():
+    pedido_de_mail = dict(PEDIDO_VIGENTE_DE_PRUEBA, origen="mail")
+    mail_del_pedido = {
+        "id": 9, "remitente": "pedidos@dia.com.ar", "asunto": "Pedido Dia 21-08",
+        "recibido_el": datetime(2026, 8, 20, 12, 5, tzinfo=ARGENTINA_TEST),
+        "motivo": "Confirmado automáticamente",
+        "procesado_el": datetime(2026, 8, 20, 12, 10, tzinfo=ARGENTINA_TEST),
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.obtener_pedido_vigente", return_value=pedido_de_mail),
+        patch("app.main.obtener_mail_de_pedido", return_value=mail_del_pedido),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
+        patch("app.main.listar_fotos_pedido", return_value=[]),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Confirmado automáticamente" in respuesta.text
+    assert "Nadie lo revisó a mano" in respuesta.text
+
+
+def test_ver_pedido_confirmado_a_mano_desde_mail_no_muestra_el_aviso_auto():
+    pedido_de_mail = dict(PEDIDO_VIGENTE_DE_PRUEBA, origen="mail")
+    mail_del_pedido = {
+        "id": 9, "remitente": "pedidos@dia.com.ar", "asunto": "Pedido Dia 21-08",
+        "recibido_el": datetime(2026, 8, 20, 12, 5, tzinfo=ARGENTINA_TEST),
+        "motivo": None,
+        "procesado_el": datetime(2026, 8, 20, 12, 10, tzinfo=ARGENTINA_TEST),
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.obtener_pedido_vigente", return_value=pedido_de_mail),
+        patch("app.main.obtener_mail_de_pedido", return_value=mail_del_pedido),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
+        patch("app.main.listar_fotos_pedido", return_value=[]),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert "Nadie lo revisó a mano" not in respuesta.text
+
+
+# --- Auto-confirmar: los candados, uno por uno ---
+
+MAIL_AUTO_DE_PRUEBA = dict(
+    MAIL_PEDIDO_DE_PRUEBA,
+    asunto="Pedido Dia 23-08 Domingo",
+    cuerpo_texto=TEXTO_PEDIDO_ESTRUCTURADO,
+)
+
+
+def _patches_auto_confirmar(**overrides):
+    """Los patches del camino FELIZ del auto-confirmar; cada test rompe un candado."""
+    valores = {
+        "listar_fichas_por_cliente": {"return_value": FICHAS_PEDIDO_DE_PRUEBA},
+        "obtener_pedido_vigente": {"return_value": None},
+        "crear_pedido": {"return_value": 77},
+        "marcar_mail_pedido_confirmado": {},
+        "marcar_lectura_mail_pedido": {},
+    }
+    valores.update(overrides)
+    return {nombre: patch(f"app.main.{nombre}", **kwargs) for nombre, kwargs in valores.items()}
+
+
+def test_auto_confirmar_camino_feliz_crea_el_pedido_y_confirma_el_mail():
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"] as mock_vigente,
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"] as mock_confirmar,
+        patches["marcar_lectura_mail_pedido"] as mock_lectura,
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is True
+    # La fecha sale del ASUNTO (llegó el 22, es para el 23).
+    mock_vigente.assert_called_once_with(1, date(2026, 8, 23))
+    args = mock_crear.call_args
+    assert args.args[0] == 1
+    assert args.args[1] == date(2026, 8, 23)
+    assert args.args[2] == "mail"
+    # Renglones expandidos por sucursal con cantidad, identificados.
+    renglones = args.args[5]
+    assert {(r["sucursal"], r["articulo_id"], r["cantidad"]) for r in renglones} == {("VL", 1, 225.0), ("BZ", 2, 40.0)}
+    assert args.kwargs["mail_message_id"] == MAIL_AUTO_DE_PRUEBA["message_id"]
+    mock_confirmar.assert_called_once_with(9, 77, motivo="Confirmado automáticamente")
+    mock_lectura.assert_called_once_with(9, leido_con_ia=False)
+
+
+def test_auto_confirmar_no_toca_un_mail_con_error_previo():
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA, estado="error"))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_sin_fecha_en_el_asunto_no_adivina():
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA, asunto="Pedido del dia"))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_con_fecha_lejana_del_asunto_no_confirma():
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA, asunto="Pedido Dia 15-10"))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_jamas_usa_la_ia_si_el_parser_no_puede():
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"] as mock_lectura,
+        patch("app.main.extraer_pedido_de_texto") as mock_ia,
+    ):
+        resultado = _intentar_auto_confirmar(
+            dict(MAIL_AUTO_DE_PRUEBA, cuerpo_texto="pedido sin estructura 90101 BANANA 225")
+        )
+
+    assert resultado is False
+    mock_ia.assert_not_called()
+    mock_crear.assert_not_called()
+    # El mail queda PENDIENTE sin marca de lectura: lo va a leer una persona.
+    mock_lectura.assert_not_called()
+
+
+def test_auto_confirmar_con_un_renglon_sin_identificar_no_confirma():
+    solo_banana = [f for f in FICHAS_PEDIDO_DE_PRUEBA if f["articulo_id"] == 1]
+    patches = _patches_auto_confirmar(listar_fichas_por_cliente={"return_value": solo_banana})
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+        patch("app.main.adivinar_articulo", return_value=None),
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_con_match_por_sugerencia_no_confirma():
+    # La sugerencia difusa alcanza para PRECARGAR la revisión, nunca para
+    # confirmar solo: elegir es una decisión humana.
+    solo_banana = [f for f in FICHAS_PEDIDO_DE_PRUEBA if f["articulo_id"] == 1]
+    patches = _patches_auto_confirmar(listar_fichas_por_cliente={"return_value": solo_banana})
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+        patch("app.main.adivinar_articulo", return_value=2),
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_sin_total_declarado_no_confirma():
+    datos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": None}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+        }]
+    }
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+        patch("app.main.parsear_pedido_estructurado", return_value=datos),
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_con_descuadre_no_confirma():
+    datos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 300}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+        }]
+    }
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+        patch("app.main.parsear_pedido_estructurado", return_value=datos),
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_con_sucursal_solo_en_cantidades_no_confirma():
+    # Una sucursal que aparece en cantidades pero no vino declarada arriba
+    # no tiene total contra el cual cuadrar: sin red, a revisión.
+    datos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 225}],
+            "renglones": [
+                {"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225, "GR": 10}, "confianza": "alta"},
+            ],
+        }]
+    }
+    patches = _patches_auto_confirmar()
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"],
+        patches["marcar_lectura_mail_pedido"],
+        patch("app.main.parsear_pedido_estructurado", return_value=datos),
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+
+
+def test_auto_confirmar_no_reemplaza_un_pedido_vigente():
+    patches = _patches_auto_confirmar(obtener_pedido_vigente={"return_value": PEDIDO_VIGENTE_DE_PRUEBA})
+    with (
+        patches["listar_fichas_por_cliente"],
+        patches["obtener_pedido_vigente"],
+        patches["crear_pedido"] as mock_crear,
+        patches["marcar_mail_pedido_confirmado"] as mock_confirmar,
+        patches["marcar_lectura_mail_pedido"],
+    ):
+        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+
+    assert resultado is False
+    mock_crear.assert_not_called()
+    mock_confirmar.assert_not_called()
+
+
+# --- El tick de la revisión automática ---
+
+MAILS_DEL_BUZON_DE_PRUEBA = [
+    {
+        "message_id": "<pedido-n@dia.com.ar>", "remitente": "pedidos@dia.com.ar",
+        "asunto": "Pedido Dia 23-08", "recibido_el": datetime(2026, 8, 22, 12, 5, tzinfo=ARGENTINA_TEST),
+        "cuerpo_crudo": "<html>...</html>", "cuerpo_texto": "9582 FRUTAMAX...",
+    },
+    {
+        "message_id": "<pedido-viejo@dia.com.ar>", "remitente": "pedidos@dia.com.ar",
+        "asunto": "Pedido Dia 22-08", "recibido_el": datetime(2026, 8, 21, 12, 5, tzinfo=ARGENTINA_TEST),
+        "cuerpo_crudo": "<html>...</html>", "cuerpo_texto": "9582 FRUTAMAX...",
+    },
+]
+
+
+def test_tick_revisa_las_activas_y_auto_confirma_solo_los_nuevos():
+    casilla_auto = dict(CASILLA_DE_PRUEBA, auto_confirmar=True)
+    casilla_inactiva = dict(CASILLA_DE_PRUEBA, id=4, activa=False)
+    resultado_buzon = {"total_desde": 2, "candidatos": 2, "con_asunto": 2, "mails": MAILS_DEL_BUZON_DE_PRUEBA}
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[casilla_auto, casilla_inactiva]),
+        patch("app.main.clave_casilla_configurada", return_value="clave-app"),
+        patch("app.main.revisar_casilla", return_value=resultado_buzon) as mock_revisar,
+        # El primero es NUEVO (id 11); el segundo ya estaba registrado (None).
+        patch("app.main.registrar_mail_pedido", side_effect=[11, None]),
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+        patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_AUTO_DE_PRUEBA, id=11)) as mock_obtener,
+        patch("app.main._intentar_auto_confirmar", return_value=True) as mock_auto,
+    ):
+        revisar_casillas_activas()
+
+    # Solo la activa se revisó (una conexión, no dos).
+    mock_revisar.assert_called_once()
+    mock_revision.assert_called_once_with(3)
+    # Auto-confirmar SOLO el mail nuevo, no el ya registrado.
+    mock_obtener.assert_called_once_with(11)
+    mock_auto.assert_called_once()
+
+
+def test_tick_sin_auto_confirmar_solo_registra():
+    resultado_buzon = {"total_desde": 1, "candidatos": 1, "con_asunto": 1, "mails": MAILS_DEL_BUZON_DE_PRUEBA[:1]}
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.clave_casilla_configurada", return_value="clave-app"),
+        patch("app.main.revisar_casilla", return_value=resultado_buzon),
+        patch("app.main.registrar_mail_pedido", return_value=11),
+        patch("app.main.registrar_revision_casilla"),
+        patch("app.main._intentar_auto_confirmar") as mock_auto,
+    ):
+        revisar_casillas_activas()
+
+    mock_auto.assert_not_called()
+
+
+def test_tick_sin_clave_registra_el_error_en_la_casilla():
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.clave_casilla_configurada", return_value=None),
+        patch("app.main.revisar_casilla") as mock_revisar,
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+    ):
+        revisar_casillas_activas()
+
+    mock_revisar.assert_not_called()
+    args = mock_revision.call_args
+    assert args.args == (3,)
+    assert "CLAVE_CASILLA_PEDIDOS" in args.kwargs["error"]
+
+
+def test_tick_con_error_de_buzon_lo_registra_y_sigue():
+    # El buzón falla corriendo solo a las 12: el error queda GRABADO en la
+    # casilla (alimenta la alerta de Auditoría), no en un log que nadie ve.
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.clave_casilla_configurada", return_value="clave-app"),
+        patch("app.main.revisar_casilla", side_effect=ErrorCasilla("No se pudo entrar al buzón")),
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+        patch("app.main._intentar_auto_confirmar") as mock_auto,
+    ):
+        revisar_casillas_activas()
+
+    args = mock_revision.call_args
+    assert args.args == (3,)
+    assert "No se pudo entrar al buzón" in args.kwargs["error"]
+    mock_auto.assert_not_called()
+
+
+def test_tick_una_casilla_sin_fecha_de_activacion_se_saltea():
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA, fecha_activacion=None)]),
+        patch("app.main.clave_casilla_configurada", return_value="clave-app"),
+        patch("app.main.revisar_casilla") as mock_revisar,
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+    ):
+        revisar_casillas_activas()
+
+    mock_revisar.assert_not_called()
+    mock_revision.assert_not_called()
+
+
+def test_ventana_de_revision_es_de_12_a_15_argentina():
+    assert not _en_ventana_de_revision(datetime(2026, 8, 22, 11, 59, tzinfo=ARGENTINA_APP))
+    assert _en_ventana_de_revision(datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_APP))
+    assert _en_ventana_de_revision(datetime(2026, 8, 22, 14, 59, tzinfo=ARGENTINA_APP))
+    assert not _en_ventana_de_revision(datetime(2026, 8, 22, 15, 0, tzinfo=ARGENTINA_APP))

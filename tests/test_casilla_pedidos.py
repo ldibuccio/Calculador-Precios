@@ -369,3 +369,19 @@ def test_texto_del_mail_guardado_sin_html_usa_el_texto_guardado_o_el_crudo():
 
     assert texto_del_mail_guardado("pedido plano 5 < 10", "texto convertido") == "texto convertido"
     assert texto_del_mail_guardado("pedido plano", None) == "pedido plano"
+
+
+def test_revisar_casilla_conecta_con_timeout():
+    # Sin timeout, una conexión colgada dejaría trabado el bucle de la
+    # revisión automática sin registrar error: el tope es obligatorio.
+    from core.casilla_pedidos import SEGUNDOS_TIMEOUT_IMAP
+
+    mensaje = _mail_de_prueba(html="<p>pedido</p>")
+    conexion = _conexion_imap_simulada({b"7": mensaje.as_bytes()}, uids_totales=[b"7"])
+    with patch("core.casilla_pedidos.imaplib.IMAP4_SSL", return_value=conexion) as mock_imap:
+        revisar_casilla(
+            "casilla@empresa.com", "clave", "imap.gmail.com",
+            datetime(2026, 8, 22, 10, 0, tzinfo=ARGENTINA), "Pedido Dia", [],
+        )
+
+    mock_imap.assert_called_once_with("imap.gmail.com", timeout=SEGUNDOS_TIMEOUT_IMAP)

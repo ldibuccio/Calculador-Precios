@@ -36,6 +36,10 @@ from core.matcheo_comanda import normalizar_texto
 
 CLAVE_CASILLA_ENV_VAR = "CLAVE_CASILLA_PEDIDOS"
 
+# Tope de espera de CADA operación IMAP (conectar, login, buscar, bajar): la
+# revisión automática corre en un bucle y no puede quedar colgada para siempre.
+SEGUNDOS_TIMEOUT_IMAP = 60
+
 ARGENTINA = timezone(timedelta(hours=-3))
 
 # Abreviaturas de mes del criterio SINCE de IMAP (RFC 3501): van EN INGLÉS
@@ -311,7 +315,9 @@ def revisar_casilla(
     if not asunto_normalizado:
         raise ErrorCasilla("Falta el filtro de asunto: sin él no se revisa nada.")
     try:
-        conexion = imaplib.IMAP4_SSL(servidor)
+        # Con timeout SIEMPRE: la revisión automática corre en un bucle y una
+        # conexión colgada sin límite lo dejaría trabado sin registrar error.
+        conexion = imaplib.IMAP4_SSL(servidor, timeout=SEGUNDOS_TIMEOUT_IMAP)
     except Exception as error:
         raise ErrorCasilla(f"No se pudo conectar a {servidor}: {error}") from error
 

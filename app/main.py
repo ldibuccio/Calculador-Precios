@@ -4,6 +4,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 (core/lector_comandas.py) ahora sí se conecta, en la carga de compras por foto.
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -13,7 +14,7 @@ import logging
 import os
 import re
 import unicodedata
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -95,18 +96,26 @@ from app.db import (
     agregar_foto_guia,
     agregar_foto_pedido,
     asignar_articulo_a_renglon_pedido,
+    borrar_dia_sin_pedido,
     borrar_foto_guia,
     borrar_foto_pedido,
     fijar_auto_confirmar_casilla,
     guardar_alias_en_ficha,
+    guardar_condiciones_pedido,
     listar_casillas_pedidos,
+    listar_condiciones_pedido,
+    listar_dias_sin_pedido,
+    listar_fechas_con_pedido_vigente,
     listar_mails_pedido,
     listar_pedidos_vigentes_con_armado,
+    marcar_dia_sin_pedido,
     marcar_lectura_mail_pedido,
     marcar_mail_pedido_confirmado,
     marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
     obtener_casilla_pedidos,
+    obtener_condiciones_pedido,
+    obtener_mail_de_pedido,
     obtener_mail_pedido,
     obtener_pedido_vigente,
     registrar_mail_pedido,
@@ -1149,9 +1158,11 @@ def ver_editar_cliente(request: Request, cliente_id: int, error: str | None = No
 
     try:
         conceptos = listar_conceptos_editables_por_cliente(cliente_id)
+        condiciones = obtener_condiciones_pedido(cliente_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    dias_esperados = condiciones["dias_esperados"] if condiciones else None
     return templates.TemplateResponse(
         request,
         "cliente_formulario.html",
@@ -1161,6 +1172,9 @@ def ver_editar_cliente(request: Request, cliente_id: int, error: str | None = No
             "tasas_suma": _filas_desde_conceptos_guardados(conceptos["tasas_suma"]),
             "tasas_resta": _filas_desde_conceptos_guardados(conceptos["tasas_resta"]),
             "utilidad_pct": conceptos["utilidad_pct"],
+            # Los días en que se ESPERA pedido de este cliente (alimenta la
+            # alerta de faltantes). Conjunto de números 1..7, vacío = esporádico.
+            "dias_pedido": _dias_esperados_como_numeros(dias_esperados),
             "error": error,
         },
     )
@@ -1213,6 +1227,22 @@ async def editar_cliente(request: Request, cliente_id: int):
         )
 
     return RedirectResponse(url="/clientes", status_code=303)
+
+
+@app.post("/clientes/{cliente_id}/dias-pedido")
+async def guardar_dias_pedido_cliente(request: Request, cliente_id: int):
+    """Guarda los días de la semana en que se espera pedido del cliente (formulario propio, separado de las tasas).
+
+    Sin ningún día tildado el cliente queda como ESPORÁDICO: la alerta de
+    pedidos faltantes no le aplica.
+    """
+    form = await request.form()
+    dias = sorted({d for d in form.getlist("dia") if d in {"1", "2", "3", "4", "5", "6", "7"}}, key=int)
+    try:
+        guardar_condiciones_pedido(cliente_id, ",".join(dias) or None)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudieron guardar los días de pedido: {error_db}") from error_db
+    return RedirectResponse(url=f"/clientes/{cliente_id}/editar", status_code=303)
 
 
 @app.post("/clientes/{cliente_id}/eliminar")
@@ -5759,6 +5789,8 @@ def _alertas_auditoria() -> list[dict]:
     # Ventana de 7 días: alcanza para ver un cambio de formato ese día y
     # los siguientes, sin arrastrar para siempre un mail viejo ya resuelto.
     mails_leidos_con_ia = contar_mails_pedido_leidos_con_ia(hoy - timedelta(days=7))
+    pedidos_faltantes = contar_pedidos_faltantes()
+    casillas_sin_revisar = contar_casillas_sin_revisar()
 
     return [
         {
@@ -5837,6 +5869,25 @@ def _alertas_auditoria() -> list[dict]:
             "titulo": "Pedidos de mail leídos con IA (el parser de estructura no pudo, últimos 7 días)",
             "casos": mails_leidos_con_ia["casos"],
             "mas_viejo": mails_leidos_con_ia["mas_viejo"],
+            "url": "/sistema/casilla-pedidos",
+            "texto_link": "Ver en Casilla de Pedidos",
+        },
+        {
+            # Un día esperado sin pedido después de las 15:00: o el mail
+            # no llegó, o no se leyó. Se cierra cargando el pedido o
+            # marcando "no hubo pedido" desde la pantalla de Pedido.
+            "titulo": "Falta el pedido de un día esperado",
+            "casos": pedidos_faltantes["casos"],
+            "mas_viejo": pedidos_faltantes["mas_viejo"],
+            "url": "/deposito/pedido",
+            "texto_link": "Ver en Pedido",
+        },
+        {
+            # La casilla activa que falló o que a las 15:00 no tuvo
+            # ninguna revisión exitosa hoy: el buzón quedó sin mirar.
+            "titulo": "La casilla de pedidos no se pudo revisar",
+            "casos": casillas_sin_revisar["casos"],
+            "mas_viejo": casillas_sin_revisar["mas_viejo"],
             "url": "/sistema/casilla-pedidos",
             "texto_link": "Ver en Casilla de Pedidos",
         },
@@ -7191,6 +7242,31 @@ def _numero_pedido_o_none(valor) -> float | None:
         return None
 
 
+def _sucursales_desde_bloque(bloque: dict, renglones: list[dict]) -> list[dict]:
+    """Las sucursales del bloque leído, con su OC y su total declarado.
+
+    Las que aparecen en cantidades pero no vinieron declaradas arriba se
+    agregan igual (sin OC ni total) — nada se pierde. Mismo armado para la
+    revisión a mano y para el auto-confirmar.
+    """
+    sucursales = [
+        {
+            "sucursal": (s.get("sucursal") or "").strip(),
+            "orden_compra": (str(s.get("orden_compra")).strip() if s.get("orden_compra") is not None else None),
+            "total_bultos_declarado": _numero_pedido_o_none(s.get("total_bultos")),
+        }
+        for s in bloque.get("sucursales") or []
+        if (s.get("sucursal") or "").strip()
+    ]
+    declaradas = {s["sucursal"] for s in sucursales}
+    for renglon in renglones:
+        for nombre_sucursal in renglon["cantidades"]:
+            if nombre_sucursal not in declaradas:
+                sucursales.append({"sucursal": nombre_sucursal, "orden_compra": None, "total_bultos_declarado": None})
+                declaradas.add(nombre_sucursal)
+    return sucursales
+
+
 def _fecha_pedido_o_hoy(fecha_texto: str | None):
     hoy = _hoy_argentina()
     if not fecha_texto:
@@ -7247,6 +7323,86 @@ def _listado_de_pedidos(cliente_id: int, hoy) -> list[dict]:
     return listado
 
 
+def _dias_esperados_como_numeros(dias_esperados: str | None) -> set[int]:
+    """El texto guardado ('1,3,5' — 1=lunes ... 7=domingo) como conjunto de números. Basura adentro se ignora."""
+    numeros = set()
+    for parte in (dias_esperados or "").split(","):
+        parte = parte.strip()
+        if parte.isdigit() and 1 <= int(parte) <= 7:
+            numeros.add(int(parte))
+    return numeros
+
+
+def _fechas_esperadas_sin_pedido(cliente_id: int, dias_esperados: str | None, ahora) -> dict:
+    """Los días ESPERADOS sin pedido del cliente en la última semana, y las marcas "no hubo pedido" vigentes.
+
+    Un día esperado cuenta como faltante si no tiene pedido VIVO ni marca
+    de "no hubo pedido". El día de HOY recién cuenta desde las 15:00 (el
+    cierre de la ventana de revisión automática): antes de esa hora el
+    mail todavía puede llegar, y una alerta que grita antes de tiempo se
+    termina ignorando. Si una fecha marcada después recibe un pedido, el
+    pedido manda: la marca deja de mostrarse (queda de registro).
+    """
+    hoy = ahora.date()
+    dias = _dias_esperados_como_numeros(dias_esperados)
+    desde = hoy - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)
+
+    con_pedido = set(listar_fechas_con_pedido_vigente(cliente_id, desde))
+    marcas = listar_dias_sin_pedido(cliente_id, desde)
+    fechas_marcadas = {marca["fecha"] for marca in marcas}
+
+    ultima = hoy if ahora.time() >= VENTANA_REVISION_HASTA else hoy - timedelta(days=1)
+    faltantes = []
+    fecha = desde
+    while fecha <= ultima:
+        if fecha.isoweekday() in dias and fecha not in con_pedido and fecha not in fechas_marcadas:
+            faltantes.append(fecha)
+        fecha += timedelta(days=1)
+
+    return {
+        "faltantes": faltantes,
+        "marcados": [marca for marca in marcas if marca["fecha"] not in con_pedido],
+    }
+
+
+def contar_pedidos_faltantes() -> dict:
+    """Cuántos días esperados quedaron sin pedido (todas los clientes con días configurados), para Auditoría."""
+    ahora = datetime.now(ARGENTINA)
+    casos = 0
+    mas_viejo = None
+    for condicion in listar_condiciones_pedido():
+        faltantes = _fechas_esperadas_sin_pedido(condicion["cliente_id"], condicion["dias_esperados"], ahora)["faltantes"]
+        casos += len(faltantes)
+        for fecha in faltantes:
+            if mas_viejo is None or fecha < mas_viejo:
+                mas_viejo = fecha
+    return {"casos": casos, "mas_viejo": mas_viejo}
+
+
+def contar_casillas_sin_revisar() -> dict:
+    """Cuántas casillas ACTIVAS están fallando o sin revisar hoy, para Auditoría.
+
+    Dos maneras de estar mal: la última revisión terminó en error (el
+    error es más nuevo que el último éxito), o ya pasó la ventana de
+    revisión automática (15:00) y hoy no hubo ninguna revisión exitosa.
+    Así el "no se pudo revisar el buzón" no depende de que alguien entre
+    a la pantalla de la casilla a mirar.
+    """
+    ahora = datetime.now(ARGENTINA)
+    casos = 0
+    for casilla in listar_casillas_pedidos():
+        if not casilla["activa"]:
+            continue
+        revision = casilla["ultima_revision_el"]
+        error_el = casilla["ultimo_error_el"]
+        con_error = error_el is not None and (revision is None or error_el > revision)
+        revisada_hoy = revision is not None and revision.astimezone(ARGENTINA).date() == ahora.date()
+        sin_revisar_hoy = ahora.time() >= VENTANA_REVISION_HASTA and not revisada_hoy
+        if con_error or sin_revisar_hoy:
+            casos += 1
+    return {"casos": casos, "mas_viejo": None}
+
+
 def _sumas_leidas_por_sucursal(renglones: list[dict]) -> dict:
     """El control cruzado: cuántos bultos suman los renglones guardados, por sucursal."""
     sumas: dict = {}
@@ -7273,23 +7429,7 @@ def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, te
         return None
 
     renglones = _armar_renglones_pedido_desde_bloque(bloque, fichas, alias_por_codigo, alias_por_nombre)
-    sucursales = [
-        {
-            "sucursal": (s.get("sucursal") or "").strip(),
-            "orden_compra": (str(s.get("orden_compra")).strip() if s.get("orden_compra") is not None else None),
-            "total_bultos_declarado": _numero_pedido_o_none(s.get("total_bultos")),
-        }
-        for s in bloque.get("sucursales") or []
-        if (s.get("sucursal") or "").strip()
-    ]
-    # Sucursales que aparecen en cantidades pero no vinieron declaradas
-    # arriba: se agregan igual (sin OC ni total) — nada se pierde.
-    declaradas = {s["sucursal"] for s in sucursales}
-    for renglon in renglones:
-        for nombre_sucursal in renglon["cantidades"]:
-            if nombre_sucursal not in declaradas:
-                sucursales.append({"sucursal": nombre_sucursal, "orden_compra": None, "total_bultos_declarado": None})
-                declaradas.add(nombre_sucursal)
+    sucursales = _sucursales_desde_bloque(bloque, renglones)
 
     return {
         "cliente_id": cliente_id,
@@ -7347,6 +7487,19 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         # se ven los dos — el depósito puede adelantar el del sábado el
         # viernes. Los pasados de la última semana siguen consultables.
         contexto["pedidos_listado"] = _listado_de_pedidos(cliente_id_valor, _hoy_argentina())
+        # Los días ESPERADOS sin pedido (si el cliente tiene días fijos
+        # configurados): se muestran en el listado con sus dos cierres —
+        # cargar el pedido, o marcar que ese día no hubo.
+        condiciones = obtener_condiciones_pedido(cliente_id_valor)
+        if condiciones is not None and condiciones["dias_esperados"]:
+            estado_dias = _fechas_esperadas_sin_pedido(cliente_id_valor, condiciones["dias_esperados"], datetime.now(ARGENTINA))
+            contexto["dias_faltantes"] = [
+                {"fecha": f.isoformat(), "fecha_mostrar": f.strftime("%d/%m/%Y")} for f in estado_dias["faltantes"]
+            ]
+            contexto["dias_marcados"] = [
+                {"fecha": m["fecha"].isoformat(), "fecha_mostrar": m["fecha"].strftime("%d/%m/%Y"), "motivo": m["motivo"]}
+                for m in estado_dias["marcados"]
+            ]
         pedido = obtener_pedido_vigente(cliente_id_valor, fecha_valor)
         if pedido is not None:
             sucursales = listar_sucursales_pedido(pedido["id"])
@@ -7360,6 +7513,17 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
 
     if pedido is None:
         return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
+
+    # Si el pedido lo confirmó solo la revisión automática, la pantalla lo
+    # dice: el dueño tiene que saber que ese pedido no lo miró nadie.
+    if pedido["origen"] == "mail":
+        try:
+            mail_del_pedido = obtener_mail_de_pedido(pedido["id"])
+        except Exception:
+            mail_del_pedido = None
+            logger.exception("No se pudo leer el mail del pedido %s para el aviso de auto-confirmado", pedido["id"])
+        if mail_del_pedido is not None and mail_del_pedido["motivo"] == "Confirmado automáticamente":
+            contexto["confirmado_automaticamente"] = mail_del_pedido
 
     sumas = _sumas_leidas_por_sucursal(renglones)
     descuadres = []
@@ -7761,6 +7925,41 @@ def borrar_foto_pedido_ruta(pedido_id: int, foto_id: int, cliente_id: int = Form
     )
 
 
+@app.post("/deposito/pedido/dias-sin-pedido")
+def marcar_dia_sin_pedido_ruta(cliente_id: int = Form(...), fecha: str = Form(...), motivo: str = Form("")):
+    """Cierra un día esperado que quedó sin pedido (feriado, el cliente no pidió): la alerta lo deja de contar."""
+    try:
+        fecha_valor = date.fromisoformat(fecha)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+    try:
+        marcar_dia_sin_pedido(cliente_id, fecha_valor, motivo.strip() or None)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo marcar el día sin pedido: {error_db}") from error_db
+    aviso = f"Marcado: el {fecha_valor.strftime('%d/%m/%Y')} no hubo pedido."
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'aviso': aviso})}",
+        status_code=303,
+    )
+
+
+@app.post("/deposito/pedido/dias-sin-pedido/deshacer")
+def deshacer_dia_sin_pedido_ruta(cliente_id: int = Form(...), fecha: str = Form(...)):
+    """Deshace la marca "no hubo pedido" (marca administrativa: se borra, no hay baja lógica que guardar)."""
+    try:
+        fecha_valor = date.fromisoformat(fecha)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+    try:
+        borrar_dia_sin_pedido(cliente_id, fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo deshacer la marca: {error_db}") from error_db
+    return RedirectResponse(
+        url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'aviso': 'Marca deshecha: el día vuelve a contar como faltante.'})}",
+        status_code=303,
+    )
+
+
 def _diff_pedido_contra_anterior(renglones_nuevos: list[dict], renglones_viejos: list[dict]) -> list[str]:
     """Qué cambió entre el pedido corregido y el que reemplazó, para que el armado no arme algo que ya no va.
 
@@ -8095,7 +8294,7 @@ def auto_confirmar_casilla_ruta(casilla_id: int, valor: str = Form("")):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo cambiar auto-confirmar: {error_db}") from error_db
     if activar:
-        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: por ahora informativo — empieza a confirmar solo cuando la revisión automática esté andando (tramo 2).")
+        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: la revisión automática (12:00 a 15:00) confirma sola el pedido que cuadra al 100% — todo lo demás queda pendiente para revisar a mano.")
     return _redirigir_a_casilla(mensaje="Auto-confirmar apagado: todos los mails quedan pendientes para confirmar a mano.")
 
 
@@ -8182,6 +8381,231 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
     elif resultado["candidatos"] > 0 and resultado["con_asunto"] == 0:
         mensaje += " Ojo: hay mails pero ninguno contiene ese asunto — si esperabas ver el pedido, afiná el filtro de asunto."
     return _redirigir_a_casilla(mensaje=mensaje)
+
+
+# ---------------------------------------------------------------------------
+# Revisión automática de casillas (tramo 2): un task que corre solo entre las
+# 12:00 y las 15:00 argentinas, hace lo mismo que "Revisar ahora" por cada
+# casilla activa, y (si la casilla lo tiene prendido) intenta auto-confirmar
+# los mails NUEVOS que cuadran al 100%. Todo lo que falla queda registrado en
+# la casilla o en el mail — nunca en un log que nadie mira.
+# ---------------------------------------------------------------------------
+
+VENTANA_REVISION_DESDE = time(12, 0)
+VENTANA_REVISION_HASTA = time(15, 0)
+SEGUNDOS_ENTRE_REVISIONES = 900  # dentro de la ventana: cada 15 minutos
+SEGUNDOS_FUERA_DE_VENTANA = 300  # fuera: mirar el reloj cada 5 minutos
+
+
+def _intentar_auto_confirmar(mail: dict) -> bool:
+    """Confirma solo el mail que cuadra al CIEN por ciento, sin tocar nada dudoso. Devuelve si confirmó.
+
+    Los candados, en orden (cualquiera que no cierra deja el mail
+    PENDIENTE para revisar a mano, sin marcar nada):
+    1. El mail está pendiente (un error previo se revisa a mano).
+    2. La fecha sale del ASUNTO y es creíble (sin fecha, o a más de 5
+       días de la llegada, no se adivina).
+    3. Lo leyó el parser por ESTRUCTURA — la IA nunca confirma sola.
+    4. Todos los renglones identificados por código o nombre exacto
+       (una sugerencia difusa es una decisión humana).
+    5. Todas las sucursales con total declarado y la suma leída EXACTA.
+    6. No hay pedido vigente para esa fecha (reemplazar es decisión humana).
+    """
+    if mail["estado"] != "pendiente":
+        return False
+
+    fecha_llegada = mail["recibido_el"].astimezone(ARGENTINA).date()
+    fecha_valor = fecha_de_pedido_del_asunto(mail["asunto"], fecha_llegada)
+    if fecha_valor is None or abs((fecha_valor - fecha_llegada).days) > 5:
+        return False
+
+    texto = texto_del_mail_guardado(mail["cuerpo_crudo"], mail["cuerpo_texto"])
+    texto_recortado = recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA)
+    datos = parsear_pedido_estructurado(texto_recortado)
+    if datos is None:
+        return False
+
+    fichas = listar_fichas_por_cliente(mail["cliente_id"])
+    alias_por_codigo, alias_por_nombre = _alias_de_fichas(fichas)
+    bloque = _elegir_bloque_pedido(datos.get("bloques") or [], alias_por_codigo)
+    if bloque is None:
+        return False
+
+    renglones = _armar_renglones_pedido_desde_bloque(bloque, fichas, alias_por_codigo, alias_por_nombre)
+    if not renglones:
+        return False
+    if any(r["articulo_id"] is None or r["match_por"] not in ("codigo", "nombre") for r in renglones):
+        return False
+
+    sucursales = _sucursales_desde_bloque(bloque, renglones)
+    sumas: dict = {}
+    for renglon in renglones:
+        for nombre_sucursal, cantidad in renglon["cantidades"].items():
+            cantidad_valor = _numero_pedido_o_none(cantidad)
+            if cantidad_valor is not None:
+                sumas[nombre_sucursal] = sumas.get(nombre_sucursal, 0.0) + cantidad_valor
+    for sucursal in sucursales:
+        declarado = sucursal["total_bultos_declarado"]
+        if declarado is None or float(declarado) != sumas.get(sucursal["sucursal"], 0.0):
+            return False
+
+    if obtener_pedido_vigente(mail["cliente_id"], fecha_valor) is not None:
+        return False
+
+    # Todos los candados cerraron: se guarda con la MISMA expansión de
+    # renglones que el confirmar a mano (por sucursal con cantidad; un
+    # renglón sin ninguna cantidad se guarda igual, sin sucursal y en 0).
+    renglones_guardar = []
+    for renglon in renglones:
+        con_cantidad = False
+        for nombre_sucursal, cantidad in renglon["cantidades"].items():
+            cantidad_valor = _numero_pedido_o_none(cantidad)
+            if cantidad_valor is None or cantidad_valor == 0:
+                continue
+            con_cantidad = True
+            renglones_guardar.append(
+                {
+                    "sucursal": nombre_sucursal,
+                    "articulo_id": renglon["articulo_id"],
+                    "texto_codigo": renglon["texto_codigo"],
+                    "texto_descripcion": renglon["texto_descripcion"],
+                    "cantidad": cantidad_valor,
+                }
+            )
+        if not con_cantidad:
+            renglones_guardar.append(
+                {
+                    "sucursal": None,
+                    "articulo_id": renglon["articulo_id"],
+                    "texto_codigo": renglon["texto_codigo"],
+                    "texto_descripcion": renglon["texto_descripcion"],
+                    "cantidad": 0,
+                }
+            )
+
+    pedido_id = crear_pedido(
+        mail["cliente_id"],
+        fecha_valor,
+        "mail",
+        texto,
+        sucursales,
+        renglones_guardar,
+        mail_message_id=mail["message_id"],
+        recibido_el=mail["recibido_el"],
+    )
+    marcar_mail_pedido_confirmado(mail["id"], pedido_id, motivo="Confirmado automáticamente")
+    try:
+        marcar_lectura_mail_pedido(mail["id"], leido_con_ia=False)
+    except Exception:
+        logger.exception("No se pudo grabar el método de lectura del mail %s auto-confirmado", mail["id"])
+    logger.info("Mail %s auto-confirmado: pedido %s del %s", mail["id"], pedido_id, fecha_valor.isoformat())
+    return True
+
+
+def _revisar_casilla_automaticamente(casilla: dict) -> None:
+    """Una casilla del tick: mismo circuito que Revisar ahora, con TODO error registrado en la casilla."""
+    clave = clave_casilla_configurada()
+    if clave is None:
+        registrar_revision_casilla(
+            casilla["id"],
+            error=f"Falta la clave de la casilla: cargá la variable {CLAVE_CASILLA_ENV_VAR} en Railway y redeployá.",
+        )
+        return
+    if not (casilla["asunto_filtro"] or "").strip():
+        registrar_revision_casilla(
+            casilla["id"],
+            error='Falta el filtro de asunto (ej. "Pedido Dia"): sin él no se lee nada del buzón.',
+        )
+        return
+
+    try:
+        resultado = revisar_casilla(
+            casilla["direccion"], clave, casilla["servidor_imap"], casilla["fecha_activacion"],
+            casilla["asunto_filtro"], separar_remitentes(casilla["remitentes_permitidos"]),
+        )
+    except Exception as error_casilla:
+        try:
+            registrar_revision_casilla(casilla["id"], error=f"La revisión automática falló: {error_casilla}")
+        except Exception:
+            logger.exception("No se pudo registrar el error de revisión de la casilla %s", casilla["id"])
+        return
+
+    try:
+        nuevos = []
+        for mail in resultado["mails"]:
+            mail_id = registrar_mail_pedido(
+                casilla["id"],
+                casilla["cliente_id"],
+                mail["message_id"],
+                mail["remitente"],
+                mail["asunto"],
+                mail["recibido_el"],
+                mail["cuerpo_crudo"],
+                mail["cuerpo_texto"],
+            )
+            if mail_id is not None:
+                nuevos.append(mail_id)
+        registrar_revision_casilla(casilla["id"])
+    except Exception as error_db:
+        try:
+            registrar_revision_casilla(casilla["id"], error=f"Se leyó el buzón pero falló el registro en la base: {error_db}")
+        except Exception:
+            logger.exception("No se pudo registrar el error de revisión de la casilla %s", casilla["id"])
+        return
+
+    if not casilla["auto_confirmar"]:
+        return
+    # Auto-confirmar SOLO los nuevos de esta pasada: los pendientes viejos
+    # ya están esperando a una persona y no se les cambia el destino.
+    for mail_id in nuevos:
+        try:
+            mail = obtener_mail_pedido(mail_id)
+            if mail is not None:
+                _intentar_auto_confirmar(mail)
+        except Exception:
+            logger.exception("Auto-confirmar falló para el mail %s — queda pendiente para revisar a mano", mail_id)
+
+
+def revisar_casillas_activas() -> None:
+    """El tick de la revisión automática: cada casilla ACTIVA con fecha de activación, una por una."""
+    try:
+        casillas = listar_casillas_pedidos()
+    except Exception:
+        logger.exception("La revisión automática no pudo leer las casillas configuradas")
+        return
+    for casilla in casillas:
+        if not casilla["activa"] or casilla["fecha_activacion"] is None:
+            continue
+        _revisar_casilla_automaticamente(casilla)
+
+
+def _en_ventana_de_revision(ahora) -> bool:
+    return VENTANA_REVISION_DESDE <= ahora.time() < VENTANA_REVISION_HASTA
+
+
+async def _bucle_revision_casillas() -> None:
+    """El task de fondo: dentro de la ventana revisa cada 15 minutos; fuera, solo mira el reloj.
+
+    La revisión en sí corre en un hilo (asyncio.to_thread): el IMAP y la
+    base son bloqueantes y no tienen que frenar a la app. Cualquier
+    excepción se loguea y el bucle SIGUE — un tick fallido no mata la
+    revisión de mañana.
+    """
+    while True:
+        try:
+            if _en_ventana_de_revision(datetime.now(ARGENTINA)):
+                await asyncio.to_thread(revisar_casillas_activas)
+                await asyncio.sleep(SEGUNDOS_ENTRE_REVISIONES)
+            else:
+                await asyncio.sleep(SEGUNDOS_FUERA_DE_VENTANA)
+        except Exception:
+            logger.exception("El bucle de revisión de casillas falló — sigue en el próximo ciclo")
+            await asyncio.sleep(SEGUNDOS_ENTRE_REVISIONES)
+
+
+@app.on_event("startup")
+async def _arrancar_revision_casillas() -> None:
+    asyncio.create_task(_bucle_revision_casillas())
 
 
 @app.post("/sistema/casilla-pedidos/mails/{mail_id}/ignorar")

@@ -120,6 +120,32 @@
   .boton-agregar-tasa {
     margin-top: 1rem;
   }
+  /* Días de pedido: 7 botones grandes que envuelven, cómodos con el pulgar. */
+  .dias-pedido {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .dia-pedido input { position: absolute; opacity: 0; pointer-events: none; }
+  .dia-pedido span {
+    display: block;
+    padding: 0.7rem 0.9rem;
+    min-width: 3.2rem;
+    text-align: center;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #fff;
+    color: #444;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .dia-pedido input:checked + span {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -176,6 +202,24 @@
     <button type="submit" class="boton-exito">Guardar</button>
     <a class="boton boton-peligro" href="/clientes">Cancelar</a>
   </form>
+
+  {% if modo == "edicion" %}
+  <form method="post" action="/clientes/{{ cliente.id }}/dias-pedido">
+    <div class="tarjeta">
+      <h2>Días de pedido</h2>
+      <p class="subtexto-grupo">Qué días se espera pedido de este cliente. Si un día esperado queda sin pedido después de las 15:00, salta la alerta en Auditoría. Sin ningún día tildado, el cliente es esporádico y la alerta no le aplica.</p>
+      <div class="dias-pedido">
+        {% for numero, nombre in [(1, "Lun"), (2, "Mar"), (3, "Mié"), (4, "Jue"), (5, "Vie"), (6, "Sáb"), (7, "Dom")] %}
+        <label class="dia-pedido">
+          <input type="checkbox" name="dia" value="{{ numero }}" {% if numero in (dias_pedido | default([])) %}checked{% endif %}>
+          <span>{{ nombre }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit">Guardar días de pedido</button>
+    </div>
+  </form>
+  {% endif %}
 
   <script>
     let contadorTasaSuma = {{ tasas_suma|length }};
