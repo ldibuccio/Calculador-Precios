@@ -4657,6 +4657,46 @@ def listar_fechas_con_pedido_vigente(cliente_id: int, fecha_desde) -> list:
         conexion.close()
 
 
+def listar_renglones_pedidos_vigentes(cliente_id: int, fecha_desde, fecha_hasta) -> list[dict]:
+    """Los renglones de los pedidos VIGENTES del rango, sumados por fecha y artículo — la base de Rentabilidad.
+
+    "Vigente" por fecha = el pedido más nuevo sin anular (los anulados por
+    reemplazo no cuentan: contarían la demanda dos veces). Los renglones
+    sin identificar (articulo_id NULL) vienen agrupados por fecha con
+    nombre y grupo NULL: se reportan aparte, nunca se descartan en
+    silencio. Suma sobre TODAS las sucursales: la rentabilidad es del
+    artículo, no de la sucursal.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (fecha_operacion) id, fecha_operacion
+                    FROM pedidos
+                    WHERE cliente_id = %s AND anulado_el IS NULL
+                      AND fecha_operacion >= %s AND fecha_operacion <= %s
+                    ORDER BY fecha_operacion, creado_en DESC
+                )
+                SELECT v.fecha_operacion, r.articulo_id,
+                       a.nombre AS articulo_nombre, a.grupo AS articulo_grupo,
+                       SUM(r.cantidad) AS bultos
+                FROM vigentes v
+                JOIN pedidos_renglones r ON r.pedido_id = v.id
+                LEFT JOIN articulos a ON a.id = r.articulo_id
+                GROUP BY v.fecha_operacion, r.articulo_id, a.nombre, a.grupo
+                ORDER BY v.fecha_operacion, a.nombre
+                """,
+                (cliente_id, fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
 def listar_dias_sin_pedido(cliente_id: int, fecha_desde) -> list[dict]:
     """Las marcas "no hubo pedido" del cliente desde una fecha."""
     conexion = obtener_conexion()

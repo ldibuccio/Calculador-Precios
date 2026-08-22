@@ -23,7 +23,12 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
 
-from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios, calcular_objetivos_de_compra
+from app.costeo import (
+    agrupar_para_negociar,
+    calcular_costo_por_unidad_venta_reciente,
+    calcular_listado_para_negociar_precios,
+    calcular_objetivos_de_compra,
+)
 from app.db import (
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -108,6 +113,7 @@ from app.db import (
     listar_fechas_con_pedido_vigente,
     listar_mails_pedido,
     listar_pedidos_vigentes_con_armado,
+    listar_renglones_pedidos_vigentes,
     marcar_dia_sin_pedido,
     marcar_lectura_mail_pedido,
     marcar_mail_pedido_confirmado,
@@ -202,6 +208,8 @@ from core.casilla_pedidos import (
     texto_del_mail_guardado,
 )
 from core.pedido_estructura import parsear_pedido_estructurado
+from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
+from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
@@ -5909,6 +5917,175 @@ def ver_auditoria(request: Request):
         request,
         "gerencia_auditoria.html",
         {"alertas": con_casos, "controles_corridos": len(alertas)},
+    )
+
+
+def _datos_rentabilidad(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo, fichas: list[dict]) -> dict:
+    """Junta los datos y llama al motor puro de rentabilidad (core/rentabilidad.py).
+
+    Por cada FECHA con pedido vigente en el rango se piden el precio
+    vigente A ESA fecha y el costo de 48 hs CON ESA fecha como momento de
+    referencia: un cambio de precio o de costo a mitad del rango pega solo
+    en los pedidos de ahí en adelante, nunca retroactivo.
+    """
+    renglones = listar_renglones_pedidos_vigentes(cliente_id, fecha_desde, fecha_hasta)
+    fechas = sorted({r["fecha_operacion"] for r in renglones})
+    precios_por_fecha = {}
+    costos_por_fecha = {}
+    for fecha in fechas:
+        precios_por_fecha[fecha] = {
+            p["articulo_id"]: float(p["precio"]) for p in listar_precios_vigentes_por_cliente(cliente_id, fecha)
+        }
+        costeo = calcular_costo_por_unidad_venta_reciente(
+            cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
+        )
+        costos_por_fecha[fecha] = {
+            a["articulo_id"]: a["costo_por_unidad_de_venta"] for a in costeo["articulos"]
+        }
+    return calcular_rentabilidad_de_pedidos(renglones, fichas, precios_por_fecha, costos_por_fecha, articulo_id, grupo)
+
+
+def _leer_filtros_rentabilidad(
+    cliente_id_texto, fecha_desde_texto, fecha_hasta_texto, articulo_id_texto, grupo_texto
+):
+    """Valida los filtros de Rentabilidad (pantalla y exports usan lo mismo). Devuelve también el error de fechas."""
+    cliente_id = _id_opcional_desde_query(cliente_id_texto)
+    articulo_id = _id_opcional_desde_query(articulo_id_texto)
+    grupo = grupo_texto if grupo_texto in GRUPOS_ARTICULO_VALIDOS else None
+
+    hoy = _hoy_argentina()
+    fecha_desde = hoy - timedelta(days=7)
+    fecha_hasta = hoy
+    error_fecha = None
+    if fecha_desde_texto:
+        try:
+            fecha_desde = date.fromisoformat(fecha_desde_texto)
+        except ValueError:
+            error_fecha = "La fecha desde no es válida."
+    if fecha_hasta_texto:
+        try:
+            fecha_hasta = date.fromisoformat(fecha_hasta_texto)
+        except ValueError:
+            error_fecha = "La fecha hasta no es válida."
+    if error_fecha is None and fecha_desde > fecha_hasta:
+        error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
+    return cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo, error_fecha
+
+
+def _filtros_texto_rentabilidad(cliente_nombre, articulo_id, grupo, articulos_cliente) -> list[str]:
+    filtros = [f"cliente {cliente_nombre}"]
+    if articulo_id is not None:
+        nombre = next((a["nombre"] for a in articulos_cliente if a["id"] == articulo_id), None)
+        filtros.append(f"artículo {nombre or f'#{articulo_id}'}")
+    if grupo is not None:
+        filtros.append(f"grupo {ETIQUETAS_GRUPO.get(grupo, grupo)}")
+    return filtros
+
+
+@app.get("/gerencia/rentabilidad")
+def ver_rentabilidad_pedidos(
+    request: Request,
+    cliente_id: str | None = None,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    articulo_id: str | None = None,
+    grupo: str | None = None,
+):
+    """Rentabilidad de Pedidos: cuánto dejó (estimado) lo pedido, por artículo y por grupo.
+
+    Bultos = LO PEDIDO, sin ajustar por armado (decisión del dueño: el
+    tilde de armado es una herramienta del depósito, no una medición).
+    Los artículos que no se pueden calcular van APARTE con su motivo —
+    jamás suman como cero en silencio.
+    """
+    cliente_valor, desde, hasta, articulo_valor, grupo_valor, error_fecha = _leer_filtros_rentabilidad(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "clientes": clientes,
+        "cliente_id": cliente_valor,
+        "fecha_desde": desde.isoformat(),
+        "fecha_hasta": hasta.isoformat(),
+        "articulo_id": articulo_valor,
+        "grupo": grupo_valor,
+        "grupos_articulo": [(clave, ETIQUETAS_GRUPO[clave]) for clave in ("fruta", "hortaliza", "hoja", "pesada")],
+        "error_fecha": error_fecha,
+        "articulos_cliente": [],
+        "resultado": None,
+    }
+    if cliente_valor is None or error_fecha:
+        return templates.TemplateResponse(request, "gerencia_rentabilidad.html", contexto)
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_valor)
+        contexto["articulos_cliente"] = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
+        contexto["resultado"] = _datos_rentabilidad(cliente_valor, desde, hasta, articulo_valor, grupo_valor, fichas)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(request, "gerencia_rentabilidad.html", contexto)
+
+
+def _resultado_rentabilidad_para_exportar(cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo):
+    """Los datos + textos de filtros para los exports (mismos filtros que la pantalla, sin tope)."""
+    cliente_valor, desde, hasta, articulo_valor, grupo_valor, error_fecha = _leer_filtros_rentabilidad(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+    if cliente_valor is None:
+        raise HTTPException(status_code=400, detail="Elegí el cliente antes de exportar.")
+    if error_fecha:
+        raise HTTPException(status_code=400, detail=error_fecha)
+
+    try:
+        cliente = obtener_cliente(cliente_valor)
+        fichas = listar_fichas_por_cliente(cliente_valor)
+        resultado = _datos_rentabilidad(cliente_valor, desde, hasta, articulo_valor, grupo_valor, fichas)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    articulos_cliente = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
+    nombre_cliente = cliente["nombre"] if cliente else f"#{cliente_valor}"
+    filtros_texto = _filtros_texto_rentabilidad(nombre_cliente, articulo_valor, grupo_valor, articulos_cliente)
+    return desde, hasta, filtros_texto, resultado
+
+
+@app.get("/gerencia/rentabilidad/exportar-pdf")
+def exportar_rentabilidad_pdf(
+    cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = ""
+):
+    """Genera Rentabilidad de Pedidos (mismos filtros que la pantalla) en PDF — sin tope."""
+    desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_para_exportar(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+    pdf_bytes = generar_pdf_rentabilidad(desde, hasta, filtros_texto, resultado)
+    nombre_archivo = f"Rentabilidad_Pedidos_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/gerencia/rentabilidad/exportar-excel")
+def exportar_rentabilidad_excel(
+    cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = ""
+):
+    """Genera Rentabilidad de Pedidos (mismos filtros que la pantalla) en Excel — sin tope."""
+    desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_para_exportar(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+    excel_bytes = generar_excel_rentabilidad(desde, hasta, filtros_texto, resultado)
+    nombre_archivo = f"Rentabilidad_Pedidos_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
 
 

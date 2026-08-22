@@ -52,6 +52,7 @@ from app.db import (
     contar_mails_pedido_leidos_con_ia,
     contar_mails_pedido_sin_procesar,
     listar_pedidos_vigentes_con_armado,
+    listar_renglones_pedidos_vigentes,
     registrar_mail_pedido,
     registrar_revision_casilla,
     desmarcar_renglon_armado,
@@ -2927,3 +2928,28 @@ def test_obtener_mail_de_pedido_devuelve_none_si_no_vino_de_mail():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         assert obtener_mail_de_pedido(50) is None
+
+
+def test_listar_renglones_pedidos_vigentes_suma_por_fecha_y_articulo():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [
+        ("fecha_operacion",), ("articulo_id",), ("articulo_nombre",), ("articulo_grupo",), ("bultos",),
+    ]
+    cursor.fetchall.return_value = [
+        (date(2026, 8, 21), 1, "Banana", "fruta", 235.0),
+        (date(2026, 8, 21), None, None, None, 5.0),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        renglones = listar_renglones_pedidos_vigentes(1, date(2026, 8, 15), date(2026, 8, 22))
+
+    assert renglones[0]["bultos"] == 235.0
+    assert renglones[1]["articulo_id"] is None  # sin identificar: viene igual, se reporta aparte
+    consulta, parametros = cursor.execute.call_args.args
+    # Solo pedidos VIGENTES: uno por fecha (el más nuevo sin anular) — los
+    # reemplazados no cuentan la demanda dos veces.
+    assert "DISTINCT ON (fecha_operacion)" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "SUM(r.cantidad)" in consulta
+    assert "LEFT JOIN articulos" in consulta
+    assert parametros == (1, date(2026, 8, 15), date(2026, 8, 22))
