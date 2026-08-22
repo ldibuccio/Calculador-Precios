@@ -41,6 +41,7 @@ from app.db import (
     cambiar_fecha_activacion_casilla,
     contar_compras_buscadas,
     contar_ingresos_deposito,
+    contar_mails_pedido_sin_procesar,
     contar_pedidos_con_renglones_incompletos,
     contar_pedidos_con_renglones_sin_identificar,
     desmarcar_renglon_armado,
@@ -100,6 +101,7 @@ from app.db import (
     listar_casillas_pedidos,
     listar_mails_pedido,
     marcar_mail_pedido_confirmado,
+    marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
     obtener_casilla_pedidos,
     obtener_mail_pedido,
@@ -195,6 +197,7 @@ from core.lector_comandas import (
     extraer_listado_precios_de_texto,
     extraer_pedido_de_imagenes,
     extraer_pedido_de_texto,
+    recortar_bloque_de_empresa,
 )
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
 from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
@@ -5746,6 +5749,7 @@ def _alertas_auditoria() -> list[dict]:
     senas = contar_senas_pendientes_viejas(limite_senas)
     pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
     pedidos_incompletos = contar_pedidos_con_renglones_incompletos()
+    mails_sin_procesar = contar_mails_pedido_sin_procesar()
 
     return [
         {
@@ -5807,6 +5811,15 @@ def _alertas_auditoria() -> list[dict]:
             "mas_viejo": pedidos_incompletos["mas_viejo"],
             "url": "/deposito/pedido",
             "texto_link": "Ver en Pedido",
+        },
+        {
+            # Pendientes Y con error de lectura: un mail que falló a las
+            # 12:00 corriendo solo se tiene que ver acá, no perderse.
+            "titulo": "Mails de pedido sin confirmar",
+            "casos": mails_sin_procesar["casos"],
+            "mas_viejo": mails_sin_procesar["mas_viejo"],
+            "url": "/sistema/casilla-pedidos",
+            "texto_link": "Ver en Casilla de Pedidos",
         },
     ]
 
@@ -7394,7 +7407,10 @@ async def leer_pedido_pegado(
             return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
     elif texto.strip():
         try:
-            datos = extraer_pedido_de_texto(texto)
+            # A la IA va SOLO el bloque de esta empresa si se puede
+            # delimitar (la mitad del trabajo); el texto completo queda
+            # igual como texto_original del pedido.
+            datos = extraer_pedido_de_texto(recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA))
         except Exception as error_lector:
             return _pantalla_error(f"No se pudo leer el pedido: {error_lector}", 500)
     else:
@@ -7440,7 +7456,9 @@ async def confirmar_pedido(request: Request):
             raise HTTPException(status_code=400, detail="Mail inválido")
         if mail is None:
             raise HTTPException(status_code=404, detail="Mail no encontrado")
-        if mail["estado"] != "pendiente":
+        # Un mail con error de lectura previo se puede confirmar igual (el
+        # reintento anduvo); solo un confirmado o ignorado queda cerrado.
+        if mail["estado"] not in ("pendiente", "error"):
             return RedirectResponse(
                 url=f"/sistema/casilla-pedidos?{urlencode({'error': 'Ese mail ya fue procesado (quizás desde otra pestaña). No se guardó nada.'})}",
                 status_code=303,
@@ -8092,13 +8110,20 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     if mail is None:
         raise HTTPException(status_code=404, detail="Mail no encontrado")
-    if mail["estado"] != "pendiente":
+    if mail["estado"] not in ("pendiente", "error"):
         return _redirigir_a_casilla(error="Ese mail ya fue procesado: no hay nada para confirmar.")
 
     texto = mail["cuerpo_texto"] or mail["cuerpo_crudo"]
     try:
-        datos = extraer_pedido_de_texto(texto)
+        datos = extraer_pedido_de_texto(recortar_bloque_de_empresa(texto, NOMBRE_EMPRESA))
     except Exception as error_lector:
+        # La falla queda GRABADA en el mail (y alimenta la alerta de
+        # Auditoría): cuando la revisión corra sola a las 12:00, un error
+        # de lectura no se puede perder en un redirect que nadie vio.
+        try:
+            marcar_mail_pedido_error(mail_id, f"La lectura falló: {error_lector}")
+        except Exception:
+            logger.exception("No se pudo registrar el error de lectura en el mail %s", mail_id)
         return _redirigir_a_casilla(error=f"No se pudo leer el pedido del mail: {error_lector}")
 
     # El pedido es del día del mail (el mail de Día llega al mediodía del

@@ -233,7 +233,7 @@ def _bloque_imagen(imagen: bytes, media_type: str | None = None) -> dict:
     }
 
 
-def _llamar_api_claude_con_contenido(contenido: list[dict], max_tokens: int) -> str:
+def _llamar_api_claude_con_contenido(contenido: list[dict], max_tokens: int, mensaje_corte: str | None = None) -> str:
     """Manda un bloque de contenido ya armado (imágenes y/o texto) a la API de Claude y devuelve el texto de la respuesta.
 
     Pieza compartida por las tres formas de leer un listado (una imagen,
@@ -247,14 +247,19 @@ def _llamar_api_claude_con_contenido(contenido: list[dict], max_tokens: int) -> 
     cliente = anthropic.Anthropic(api_key=api_key)
 
     try:
-        respuesta = cliente.messages.create(
+        # Streaming, no porque haga falta mostrar nada en vivo, sino porque
+        # con límites de salida grandes (el lector de pedidos usa 64K) una
+        # llamada sin streaming choca contra el timeout HTTP del SDK. La
+        # respuesta final es idéntica.
+        with cliente.messages.stream(
             model=MODELO_LECTOR_COMANDAS,
             # Generoso a propósito: con el thinking activado y una comanda con
             # varios artículos, un límite chico corta la respuesta a mitad del
             # JSON (quedaba un "Unterminated string" al parsearlo).
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": contenido}],
-        )
+        ) as stream:
+            respuesta = stream.get_final_message()
     except anthropic.APIConnectionError as error:
         raise RuntimeError(f"No se pudo conectar con la API de Claude: {error}") from error
     except anthropic.APIStatusError as error:
@@ -262,7 +267,8 @@ def _llamar_api_claude_con_contenido(contenido: list[dict], max_tokens: int) -> 
 
     if respuesta.stop_reason == "max_tokens":
         raise RuntimeError(
-            "La respuesta de la API se cortó por quedarse sin espacio (debe tener muchos artículos). "
+            mensaje_corte
+            or "La respuesta de la API se cortó por quedarse sin espacio (debe tener muchos artículos). "
             "Probá sacar la foto en partes, o avisale a Lionel para subir el límite."
         )
 
@@ -282,7 +288,7 @@ def _llamar_api_claude(
     return _llamar_api_claude_con_contenido(contenido, max_tokens)
 
 
-def _llamar_api_claude_multi_imagen(imagenes: list[bytes], prompt: str, max_tokens: int) -> str:
+def _llamar_api_claude_multi_imagen(imagenes: list[bytes], prompt: str, max_tokens: int, mensaje_corte: str | None = None) -> str:
     """Envía VARIAS imágenes (ej. las páginas de un PDF) en un solo mensaje, con un único prompt.
 
     El media_type de cada imagen se detecta solo (todas se renderizan como
@@ -292,10 +298,10 @@ def _llamar_api_claude_multi_imagen(imagenes: list[bytes], prompt: str, max_toke
     """
     contenido = [_bloque_imagen(imagen) for imagen in imagenes]
     contenido.append({"type": "text", "text": prompt})
-    return _llamar_api_claude_con_contenido(contenido, max_tokens)
+    return _llamar_api_claude_con_contenido(contenido, max_tokens, mensaje_corte)
 
 
-def _llamar_api_claude_texto(texto: str, prompt: str, max_tokens: int) -> str:
+def _llamar_api_claude_texto(texto: str, prompt: str, max_tokens: int, mensaje_corte: str | None = None) -> str:
     """Envía texto plano (ej. el contenido de un Excel ya extraído) en vez de una imagen.
 
     Mismo contrato de salida que la lectura por imagen, pero sin tokens de
@@ -303,7 +309,7 @@ def _llamar_api_claude_texto(texto: str, prompt: str, max_tokens: int) -> str:
     estructurado (no hace falta "ver" nada, solo interpretar).
     """
     contenido = [{"type": "text", "text": texto}, {"type": "text", "text": prompt}]
-    return _llamar_api_claude_con_contenido(contenido, max_tokens)
+    return _llamar_api_claude_con_contenido(contenido, max_tokens, mensaje_corte)
 
 
 def _extraer_texto_de_la_respuesta(bloques) -> str:
@@ -384,7 +390,16 @@ def extraer_listado_precios_de_texto(texto: str) -> dict:
     return _parsear_json_de_la_respuesta(respuesta_texto)
 
 
-MAX_TOKENS_PEDIDO_CLIENTE = 16384
+# El pedido diario de Día son ~60 renglones con cantidades por 3
+# sucursales — el JSON de salida es largo TODOS los días, no es un caso
+# raro. 64K deja lugar de sobra (el modelo admite hasta 128K); la llamada
+# va por streaming para que el límite grande no choque con el timeout HTTP.
+MAX_TOKENS_PEDIDO_CLIENTE = 65536
+
+MENSAJE_CORTE_PEDIDO = (
+    "La lectura del pedido quedó cortada por el límite de espacio de la respuesta: "
+    "el pedido es más largo de lo previsto. Avisale a Lionel para subir el límite del lector de pedidos."
+)
 
 PROMPT_PEDIDO_CLIENTE = """
 Estás leyendo un MAIL DE PEDIDO que un cliente (un supermercado) le
@@ -449,6 +464,59 @@ comillas invertidas (backticks) ni bloques de código markdown.
 """
 
 
+# Un encabezado de bloque de empresa en el mail de Día: código y nombre en
+# mayúsculas ("9582 FRUTAMAX", "11344 PALMALA"), sin tabuladores (las filas
+# de productos vienen con las celdas separadas por tab).
+_PATRON_ENCABEZADO_BLOQUE = re.compile(r"^\d{2,6}\s*[-–]?\s*[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s.\-]*$")
+
+
+def recortar_bloque_de_empresa(texto: str, nombre_empresa: str) -> str:
+    """Recorta del texto del mail SOLO el bloque de esta empresa, si se puede delimitar con confianza.
+
+    El mail de Día trae los bloques de las dos empresas juntos: mandar a la
+    IA solo el propio reduce la salida (y el tiempo de lectura) a la mitad.
+    El corte es CONSERVADOR — arranca en la línea que nombra a esta empresa
+    y termina en el próximo encabezado de bloque de OTRA empresa; si el
+    nombre no aparece, ante la duda se devuelve el texto entero (nada del
+    mail se puede perder por un recorte agresivo). La selección de bloque
+    de siempre sigue corriendo después, como red de seguridad.
+    """
+    # Import local: matcheo_comanda importa de este módulo (los placeholders
+    # del lector), así que importarlo arriba armaría un ciclo.
+    from core.matcheo_comanda import normalizar_texto
+
+    empresa = normalizar_texto(nombre_empresa)
+    # Sin tabuladores no hay cómo distinguir una fila de producto de un
+    # encabezado de bloque (en el texto tabulado los productos SIEMPRE
+    # traen tabs): ante esa duda, no se recorta.
+    if not empresa or "\t" not in texto:
+        return texto
+
+    lineas = texto.split("\n")
+    inicio = None
+    for indice, linea in enumerate(lineas):
+        linea_limpia = linea.strip()
+        # El arranque tiene que ser un encabezado de bloque DE VERDAD
+        # ("9582 FRUTAMAX"), no una mención suelta de la empresa en el
+        # saludo — arrancar en una mención cortaría cualquier cosa.
+        if "\t" not in linea and _PATRON_ENCABEZADO_BLOQUE.match(linea_limpia) and empresa in normalizar_texto(linea_limpia):
+            inicio = indice
+            break
+    if inicio is None:
+        return texto
+
+    fin = len(lineas)
+    for indice in range(inicio + 1, len(lineas)):
+        linea = lineas[indice].strip()
+        if "\t" in lineas[indice] or not linea:
+            continue
+        if _PATRON_ENCABEZADO_BLOQUE.match(linea) and empresa not in normalizar_texto(linea):
+            fin = indice
+            break
+
+    return "\n".join(lineas[inicio:fin]).strip("\n")
+
+
 def extraer_pedido_de_texto(texto: str) -> dict:
     """Extrae {"bloques": [...]} del texto pegado de un mail de pedido de un cliente.
 
@@ -459,7 +527,8 @@ def extraer_pedido_de_texto(texto: str) -> dict:
     las fichas del cliente.
     """
     respuesta_texto = _llamar_api_claude_texto(
-        texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
+        texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
+        mensaje_corte=MENSAJE_CORTE_PEDIDO,
     )
     return _parsear_json_de_la_respuesta(respuesta_texto)
 
@@ -473,6 +542,7 @@ def extraer_pedido_de_imagenes(imagenes: list[bytes]) -> dict:
     misma llamada para que la IA las junte en un solo resultado.
     """
     respuesta_texto = _llamar_api_claude_multi_imagen(
-        imagenes, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
+        imagenes, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
+        mensaje_corte=MENSAJE_CORTE_PEDIDO,
     )
     return _parsear_json_de_la_respuesta(respuesta_texto)

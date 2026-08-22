@@ -4407,7 +4407,7 @@ def obtener_mail_pedido(mail_id: int) -> dict | None:
 
 
 def listar_mails_pedido(limite: int = 30) -> list[dict]:
-    """Los últimos mails registrados, pendientes arriba (son los que piden acción)."""
+    """Los últimos mails registrados, pendientes y con error arriba (son los que piden acción)."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -4418,7 +4418,7 @@ def listar_mails_pedido(limite: int = 30) -> list[dict]:
                        c.nombre AS cliente_nombre
                 FROM mails_pedido m
                 JOIN clientes c ON c.id = m.cliente_id
-                ORDER BY (m.estado = 'pendiente') DESC, m.recibido_el DESC
+                ORDER BY (m.estado IN ('pendiente', 'error')) DESC, m.recibido_el DESC
                 LIMIT %s
                 """,
                 (limite,),
@@ -4455,10 +4455,52 @@ def marcar_mail_pedido_ignorado(mail_id: int, motivo: str | None = None) -> None
                 """
                 UPDATE mails_pedido
                 SET estado = 'ignorado', motivo = %s, procesado_el = now()
-                WHERE id = %s AND estado = 'pendiente'
+                WHERE id = %s AND estado IN ('pendiente', 'error')
                 """,
                 (motivo, mail_id),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def marcar_mail_pedido_error(mail_id: int, motivo: str) -> None:
+    """Deja grabado que la lectura de este mail FALLÓ, con el motivo.
+
+    El mail no se pierde: queda en estado error (reintentable desde la
+    pantalla, igual que un pendiente) y alimenta la alerta de Auditoría —
+    una lectura que falla a las 12:00 corriendo sola se tiene que ver.
+    Un mail ya confirmado o ignorado no se pisa.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE mails_pedido
+                SET estado = 'error', motivo = %s, procesado_el = now()
+                WHERE id = %s AND estado IN ('pendiente', 'error')
+                """,
+                (motivo, mail_id),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def contar_mails_pedido_sin_procesar() -> dict:
+    """Auditoría: mails de pedido registrados que nadie confirmó todavía (pendientes o con error), y el más viejo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(recibido_el)::date
+                FROM mails_pedido
+                WHERE estado IN ('pendiente', 'error')
+                """
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
     finally:
         conexion.close()

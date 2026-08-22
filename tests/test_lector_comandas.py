@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -258,6 +258,13 @@ def _respuesta_falsa(bloques, stop_reason="end_turn"):
     return SimpleNamespace(content=bloques, stop_reason=stop_reason)
 
 
+def _cliente_falso_con_respuesta(respuesta):
+    """El cliente de anthropic simulado: la llamada real va por STREAMING (para que el limite grande de salida no choque con el timeout HTTP) y la respuesta final sale de get_final_message."""
+    cliente = MagicMock()
+    cliente.messages.stream.return_value.__enter__.return_value.get_final_message.return_value = respuesta
+    return cliente
+
+
 def test_extraer_texto_de_la_respuesta_ignora_bloques_de_thinking():
     # ThinkingBlock real: tiene "type" == "thinking" y ".thinking", pero NO ".text".
     bloque_thinking = SimpleNamespace(type="thinking", thinking="razonando sobre la comanda...")
@@ -290,8 +297,7 @@ def test_llamar_api_claude_con_thinking_activado_usa_solo_el_bloque_de_texto(mon
     monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
     bloque_thinking = SimpleNamespace(type="thinking", thinking="pensando en la comanda...")
     bloque_texto = SimpleNamespace(type="text", text=json.dumps(COMANDA_VALIDA))
-    cliente_falso = Mock()
-    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_thinking, bloque_texto])
+    cliente_falso = _cliente_falso_con_respuesta(_respuesta_falsa([bloque_thinking, bloque_texto]))
 
     with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
         resultado = _llamar_api_claude(IMAGEN_PNG_DE_PRUEBA)
@@ -305,8 +311,7 @@ def test_llamar_api_claude_cortada_por_max_tokens_da_error_claro(monkeypatch):
     # claramente que se quedó sin espacio.
     monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
     bloque_texto_cortado = SimpleNamespace(type="text", text='{"proveedor": {"nombre": "Sat')
-    cliente_falso = Mock()
-    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_texto_cortado], stop_reason="max_tokens")
+    cliente_falso = _cliente_falso_con_respuesta(_respuesta_falsa([bloque_texto_cortado], stop_reason="max_tokens"))
 
     with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
         with pytest.raises(RuntimeError, match="se cortó"):
@@ -384,8 +389,7 @@ def test_prompt_listado_precios_incluye_las_reglas_clave():
 def test_llamar_api_claude_multi_imagen_manda_todas_las_imagenes_en_un_solo_mensaje(monkeypatch):
     monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
     bloque_texto = SimpleNamespace(type="text", text=json.dumps(LISTADO_PRECIOS_VALIDO))
-    cliente_falso = Mock()
-    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_texto])
+    cliente_falso = _cliente_falso_con_respuesta(_respuesta_falsa([bloque_texto]))
 
     with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
         resultado = _llamar_api_claude_multi_imagen(
@@ -393,7 +397,7 @@ def test_llamar_api_claude_multi_imagen_manda_todas_las_imagenes_en_un_solo_mens
         )
 
     assert resultado == json.dumps(LISTADO_PRECIOS_VALIDO)
-    contenido = cliente_falso.messages.create.call_args.kwargs["messages"][0]["content"]
+    contenido = cliente_falso.messages.stream.call_args.kwargs["messages"][0]["content"]
     # 2 imágenes + el bloque de texto del prompt al final.
     assert len(contenido) == 3
     assert contenido[0]["type"] == "image"
@@ -404,14 +408,13 @@ def test_llamar_api_claude_multi_imagen_manda_todas_las_imagenes_en_un_solo_mens
 def test_llamar_api_claude_texto_manda_el_texto_y_el_prompt(monkeypatch):
     monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
     bloque_texto = SimpleNamespace(type="text", text=json.dumps(LISTADO_PRECIOS_VALIDO))
-    cliente_falso = Mock()
-    cliente_falso.messages.create.return_value = _respuesta_falsa([bloque_texto])
+    cliente_falso = _cliente_falso_con_respuesta(_respuesta_falsa([bloque_texto]))
 
     with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
         resultado = _llamar_api_claude_texto("contenido de la planilla", prompt="prompt de prueba", max_tokens=1000)
 
     assert resultado == json.dumps(LISTADO_PRECIOS_VALIDO)
-    contenido = cliente_falso.messages.create.call_args.kwargs["messages"][0]["content"]
+    contenido = cliente_falso.messages.stream.call_args.kwargs["messages"][0]["content"]
     assert contenido == [
         {"type": "text", "text": "contenido de la planilla"},
         {"type": "text", "text": "prompt de prueba"},
@@ -442,25 +445,29 @@ def test_extraer_pedido_de_texto_devuelve_el_json_parseado():
 
 
 def test_extraer_pedido_de_texto_usa_su_propio_prompt():
-    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE, PROMPT_PEDIDO_CLIENTE
+    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE, MENSAJE_CORTE_PEDIDO, PROMPT_PEDIDO_CLIENTE
 
     with patch("core.lector_comandas._llamar_api_claude_texto", return_value=json.dumps(PEDIDO_VALIDO)) as mock_llamada:
         extraer_pedido_de_texto("texto del mail")
 
-    mock_llamada.assert_called_once_with("texto del mail", prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE)
+    mock_llamada.assert_called_once_with(
+        "texto del mail", prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
+        mensaje_corte=MENSAJE_CORTE_PEDIDO,
+    )
     assert "bloques" in PROMPT_PEDIDO_CLIENTE
     assert "NUNCA adivinar" in PROMPT_PEDIDO_CLIENTE
 
 
 def test_extraer_pedido_de_imagenes_manda_todas_juntas_con_el_mismo_prompt():
-    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE, PROMPT_PEDIDO_CLIENTE, extraer_pedido_de_imagenes
+    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE, MENSAJE_CORTE_PEDIDO, PROMPT_PEDIDO_CLIENTE, extraer_pedido_de_imagenes
 
     with patch("core.lector_comandas._llamar_api_claude_multi_imagen", return_value=json.dumps(PEDIDO_VALIDO)) as mock_llamada:
         resultado = extraer_pedido_de_imagenes([b"captura-1", b"captura-2"])
 
     assert resultado == PEDIDO_VALIDO
     mock_llamada.assert_called_once_with(
-        [b"captura-1", b"captura-2"], prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE
+        [b"captura-1", b"captura-2"], prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
+        mensaje_corte=MENSAJE_CORTE_PEDIDO,
     )
 
 
@@ -474,3 +481,93 @@ def test_prompt_de_pedido_cuida_las_celdas_vacias_de_la_tabla():
     assert "NUNCA un 0 inventado" in PROMPT_PEDIDO_CLIENTE
     # Varias capturas del mismo mail se juntan en un solo resultado.
     assert "capturas" in PROMPT_PEDIDO_CLIENTE
+
+
+# --- recortar_bloque_de_empresa: mandar a la IA solo el bloque propio ---
+
+from core.lector_comandas import MENSAJE_CORTE_PEDIDO, recortar_bloque_de_empresa  # noqa: E402
+
+MAIL_DOS_BLOQUES = (
+    "Buenas tardes, va el pedido del día:\n"
+    "9582 FRUTAMAX\n"
+    "Código\tProducto\tVL\tBZ\tGR\n"
+    "90101\tBANANA\t225\t\t\n"
+    "90102\tBATATA\t\t40\t\n"
+    "\tTOTAL BULTOS\t225\t40\t\n"
+    "11344 PALMALA\n"
+    "Código\tProducto\tVL\tBZ\tGR\n"
+    "555\tOTRA COSA\t10\t\t\n"
+    "\tTOTAL BULTOS\t10\t\t\n"
+    "Saludos"
+)
+
+
+def test_recortar_bloque_de_empresa_con_el_bloque_primero_corta_antes_del_otro():
+    recortado = recortar_bloque_de_empresa(MAIL_DOS_BLOQUES, "Frutamax")
+
+    assert recortado.startswith("9582 FRUTAMAX")
+    assert "BANANA" in recortado and "BATATA" in recortado
+    # El bloque ajeno (la mitad del trabajo de la IA) queda afuera.
+    assert "PALMALA" not in recortado
+    assert "OTRA COSA" not in recortado
+
+
+def test_recortar_bloque_de_empresa_con_el_bloque_segundo_llega_hasta_el_final():
+    recortado = recortar_bloque_de_empresa(MAIL_DOS_BLOQUES, "Palmala")
+
+    assert recortado.startswith("11344 PALMALA")
+    assert "OTRA COSA" in recortado
+    assert "FRUTAMAX" not in recortado
+    assert "BANANA" not in recortado
+
+
+def test_recortar_bloque_de_empresa_sin_su_encabezado_devuelve_todo():
+    # Ante la duda no se recorta: nada del mail se puede perder.
+    recortado = recortar_bloque_de_empresa(MAIL_DOS_BLOQUES, "Empresa Inexistente")
+
+    assert recortado == MAIL_DOS_BLOQUES
+
+
+def test_recortar_bloque_de_empresa_sin_tabuladores_no_recorta():
+    # Sin tabs (texto pegado que perdió la estructura) no hay cómo
+    # distinguir una fila de producto de un encabezado: no se toca nada.
+    texto_plano = "9582 FRUTAMAX\n90101 BANANA 225\n11344 PALMALA\n555 OTRA COSA 10"
+
+    assert recortar_bloque_de_empresa(texto_plano, "Frutamax") == texto_plano
+
+
+def test_recortar_bloque_de_empresa_ignora_menciones_que_no_son_encabezado():
+    # "pedido para Frutamax" en el saludo NO es el arranque del bloque: si
+    # se arrancara ahí, un mail con los bloques en otro orden se cortaría mal.
+    texto = (
+        "Va el pedido para Frutamax y Palmala:\n"
+        "11344 PALMALA\n555\tOTRA COSA\t10\n"
+        "9582 FRUTAMAX\n90101\tBANANA\t225\n"
+    )
+    recortado = recortar_bloque_de_empresa(texto, "Frutamax")
+
+    assert recortado.startswith("9582 FRUTAMAX")
+    assert "BANANA" in recortado
+    assert "OTRA COSA" not in recortado
+
+
+def test_max_tokens_del_lector_de_pedidos_alcanza_para_el_pedido_diario():
+    from core.lector_comandas import MAX_TOKENS_PEDIDO_CLIENTE
+
+    # ~60 renglones TODOS los días: el JSON de salida es largo siempre, no
+    # es un caso raro — 16K quedaba corto en producción.
+    assert MAX_TOKENS_PEDIDO_CLIENTE >= 65536
+
+
+def test_lectura_de_pedido_cortada_avisa_con_el_mensaje_del_pedido(monkeypatch):
+    # El mensaje viejo ("probá sacar la foto en partes") es del lector de
+    # comandas y no aplica cuando el pedido entra por texto.
+    monkeypatch.setenv(ANTHROPIC_API_KEY_ENV_VAR, "clave-de-prueba")
+    bloque_cortado = SimpleNamespace(type="text", text='{"bloques": [')
+    cliente_falso = _cliente_falso_con_respuesta(_respuesta_falsa([bloque_cortado], stop_reason="max_tokens"))
+
+    with patch("core.lector_comandas.anthropic.Anthropic", return_value=cliente_falso):
+        with pytest.raises(RuntimeError, match="lector de pedidos"):
+            extraer_pedido_de_texto("el mail")
+
+    assert "foto" not in MENSAJE_CORTE_PEDIDO

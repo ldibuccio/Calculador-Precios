@@ -282,7 +282,7 @@
           <span class="pill pill-{{ m.estado }}">{{ {"pendiente": "Pendiente", "confirmado": "Confirmado", "ignorado": "Ignorado", "error": "Error"}[m.estado] }}</span>
         </div>
         <div class="detalle">{{ m.remitente }} · llegó {{ m.recibido_el|fecha_hora }} · {{ m.cliente_nombre }}{% if m.motivo %} · {{ m.motivo }}{% endif %}</div>
-        {% if m.estado == "pendiente" %}
+        {% if m.estado in ("pendiente", "error") %}
         <div class="acciones">
           <a class="boton-chico boton-confirmar-mail" href="/deposito/pedido/mails/{{ m.id }}/revisar">Revisar y confirmar</a>
           <form method="post" action="/sistema/casilla-pedidos/mails/{{ m.id }}/ignorar"

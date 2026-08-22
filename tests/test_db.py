@@ -38,7 +38,9 @@ from app.db import (
     activar_casilla_pedidos,
     crear_casilla_pedidos,
     listar_casillas_pedidos,
+    marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
+    contar_mails_pedido_sin_procesar,
     registrar_mail_pedido,
     registrar_revision_casilla,
     desmarcar_renglon_armado,
@@ -2692,8 +2694,9 @@ def test_marcar_mail_pedido_ignorado_solo_toca_pendientes():
 
     consulta, parametros = cursor.execute.call_args.args
     assert "SET estado = 'ignorado'" in consulta
-    # Un mail ya confirmado no se puede pisar a ignorado por un doble toque.
-    assert "estado = 'pendiente'" in consulta
+    # Un mail ya confirmado no se puede pisar a ignorado por un doble toque
+    # (un error de lectura sí se puede ignorar: sigue abierto).
+    assert "estado IN ('pendiente', 'error')" in consulta
     assert parametros == ("no era un pedido", 9)
 
 
@@ -2739,3 +2742,28 @@ def test_crear_pedido_de_mail_guarda_message_id_y_recibido():
     assert parametros == (
         1, date(2026, 8, 22), "mail", "el cuerpo", None, "<pedido-1@dia.com.ar>", datetime(2026, 8, 22, 12, 5),
     )
+
+
+def test_marcar_mail_pedido_error_graba_el_motivo_sin_pisar_cerrados():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        marcar_mail_pedido_error(9, "La lectura falló: se cortó la respuesta")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET estado = 'error'" in consulta
+    # Reintentable: un error se puede volver a marcar error, pero un
+    # confirmado o ignorado no se pisa.
+    assert "estado IN ('pendiente', 'error')" in consulta
+    assert parametros == ("La lectura falló: se cortó la respuesta", 9)
+
+
+def test_contar_mails_pedido_sin_procesar_suma_pendientes_y_errores():
+    conexion, cursor = _conexion_falsa([(3, date(2026, 8, 20))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_mails_pedido_sin_procesar()
+
+    assert resultado == {"casos": 3, "mas_viejo": date(2026, 8, 20)}
+    consulta = cursor.execute.call_args.args[0]
+    assert "estado IN ('pendiente', 'error')" in consulta

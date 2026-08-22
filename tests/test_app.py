@@ -8982,6 +8982,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
+        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 6)}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -9001,6 +9002,8 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
     assert "Pedidos con renglones sin identificar" in respuesta.text
     assert "Pedidos con renglones incompletos" in respuesta.text
+    assert "Mails de pedido sin confirmar" in respuesta.text
+    assert 'href="/sistema/casilla-pedidos"' in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
     # Los links al detalle.
@@ -9024,6 +9027,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
     ):
         respuesta = cliente.get("/gerencia/auditoria")
 
@@ -11944,3 +11948,119 @@ def test_ignorar_mail_pedido_lo_marca_y_redirige():
 
     assert respuesta.status_code == 303
     mock_ignorar.assert_called_once_with(9, "Marcado a mano desde Sistema")
+
+
+def test_leer_pedido_pegado_manda_a_la_ia_solo_el_bloque_de_esta_empresa():
+    # El mail trae los dos bloques: a la IA va solo el de esta empresa (la
+    # mitad de la salida y del tiempo); el texto_original guarda TODO igual.
+    texto_completo = (
+        "9582 FRUTAMAX\nCod\tProd\tVL\n90101\tBANANA\t225\n"
+        "11344 PALMALA\nCod\tProd\tVL\n555\tOTRA COSA\t10\n"
+    )
+    datos_leidos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": None, "total_bultos": 225}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+        }]
+    }
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos) as mock_extraer,
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/leer",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "texto": texto_completo},
+        )
+
+    assert respuesta.status_code == 200
+    texto_mandado = mock_extraer.call_args.args[0]
+    assert "FRUTAMAX" in texto_mandado and "BANANA" in texto_mandado
+    assert "PALMALA" not in texto_mandado
+    # El respaldo completo sigue viajando entero a la revisión.
+    assert "PALMALA" in respuesta.text
+
+
+def test_revisar_mail_con_fallo_del_lector_graba_el_error_en_el_mail():
+    # Cuando la revisión corra sola a las 12:00 esto va a pasar igual: la
+    # falla queda en el mail (estado error + motivo) y alimenta la alerta
+    # de Auditoría — no se pierde en un redirect que nadie vio.
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_PEDIDO_DE_PRUEBA)),
+        patch("app.main.extraer_pedido_de_texto", side_effect=RuntimeError("se cortó la lectura")),
+        patch("app.main.marcar_mail_pedido_error") as mock_error,
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "No+se+pudo+leer+el+pedido" in respuesta.headers["location"]
+    mock_error.assert_called_once_with(9, "La lectura falló: se cortó la lectura")
+
+
+def test_revisar_mail_en_estado_error_se_puede_reintentar():
+    mail_con_error = dict(MAIL_PEDIDO_DE_PRUEBA, estado="error", motivo="La lectura falló: se cortó")
+    datos_leidos = {
+        "bloques": [{
+            "empresa": "9582 FRUTAMAX",
+            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 235}],
+            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 235}, "confianza": "alta"}],
+        }]
+    }
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail_con_error),
+        patch("app.main.extraer_pedido_de_texto", return_value=datos_leidos),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido/mails/9/revisar")
+
+    assert respuesta.status_code == 200
+    assert 'name="mail_id" value="9"' in respuesta.text
+
+
+def test_confirmar_pedido_de_un_mail_con_error_previo_lo_confirma_igual():
+    # El reintento anduvo: el error previo no bloquea la confirmación.
+    mail_con_error = dict(MAIL_PEDIDO_DE_PRUEBA, estado="error")
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_mail_pedido", return_value=mail_con_error),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.crear_pedido", return_value=61) as mock_crear,
+        patch("app.main.marcar_mail_pedido_confirmado") as mock_confirmar,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={
+                "cliente_id": "1", "fecha": "2026-08-22", "texto_original": "el cuerpo", "mail_id": "9",
+                "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
+                "cantidad_renglones": "1",
+                "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
+                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "235",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once()
+    mock_confirmar.assert_called_once_with(9, 61)
+
+
+def test_ver_casilla_muestra_las_acciones_en_un_mail_con_error():
+    mail_con_error = dict(MAIL_PEDIDO_DE_PRUEBA, estado="error", motivo="La lectura falló: se cortó")
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.listar_mails_pedido", return_value=[mail_con_error]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert respuesta.status_code == 200
+    # El error se ve (pill + motivo) y el mail sigue accionable: reintentar o ignorar.
+    assert ">Error<" in respuesta.text
+    assert "La lectura falló: se cortó" in respuesta.text
+    assert 'href="/deposito/pedido/mails/9/revisar"' in respuesta.text
+    assert 'action="/sistema/casilla-pedidos/mails/9/ignorar"' in respuesta.text
