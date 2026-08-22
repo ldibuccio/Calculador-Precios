@@ -17,6 +17,16 @@ ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
 FIRMA_PNG = b"\x89PNG\r\n\x1a\n"
 FIRMA_JPEG = b"\xff\xd8\xff"
 
+
+class RespuestaCortada(RuntimeError):
+    """La API cortó la respuesta por max_tokens: la salida no entró en el límite.
+
+    Subclase de RuntimeError para que quien la trate como un error genérico
+    siga andando; la distingue quien puede REINTENTAR con menos trabajo
+    (la lectura de pedidos en tandas parte la tanda más chica y prueba de
+    nuevo, sola).
+    """
+
 PROMPT_EXTRACCION = """
 Estás leyendo la foto de una comanda de compra de un distribuidor mayorista
 de frutas y verduras. Tu trabajo es extraer los datos crudos tal como están
@@ -266,7 +276,7 @@ def _llamar_api_claude_con_contenido(contenido: list[dict], max_tokens: int, men
         raise RuntimeError(f"La API de Claude devolvió un error ({error.status_code}): {error.message}") from error
 
     if respuesta.stop_reason == "max_tokens":
-        raise RuntimeError(
+        raise RespuestaCortada(
             mensaje_corte
             or "La respuesta de la API se cortó por quedarse sin espacio (debe tener muchos artículos). "
             "Probá sacar la foto en partes, o avisale a Lionel para subir el límite."
@@ -517,6 +527,148 @@ def recortar_bloque_de_empresa(texto: str, nombre_empresa: str) -> str:
     return "\n".join(lineas[inicio:fin]).strip("\n")
 
 
+# Tope de filas de producto por llamada a la IA. La restricción real es la
+# SALIDA (el JSON de cada renglón más el thinking): con el pedido real de
+# ~60 renglones la salida pasó los 16K tokens (~270 por renglón), así que
+# 100 renglones entran holgados en el límite de 64K. La cantidad de tandas
+# sale del tamaño real del texto, no de un número fijo de tandas.
+MAX_RENGLONES_POR_TANDA = 100
+
+
+def _es_numero_de_celda(celda: str) -> bool:
+    try:
+        float(celda.replace(",", "."))
+        return True
+    except ValueError:
+        return False
+
+
+def _es_fila_de_titulos(linea: str) -> bool:
+    """Una fila tabulada SIN ninguna celda numérica: los títulos de columna ("Código  Producto  VL  BZ  GR").
+
+    Las filas de producto siempre traen algún número (el código o una
+    cantidad) — por eso esto no confunde un producto con los títulos.
+    """
+    celdas = [celda.strip() for celda in linea.split("\t")]
+    return not any(_es_numero_de_celda(celda) for celda in celdas if celda)
+
+
+def _partir_en_tandas(texto: str, max_renglones: int) -> list[str]:
+    """Parte el texto tabulado en tandas de tamaño parejo, repitiendo el encabezado en cada una.
+
+    Cada tanda arranca con las líneas previas a la tabla (el encabezado del
+    bloque de empresa) y la fila de títulos de columna si la hay — sin eso
+    la IA no sabría de qué empresa es la tanda ni qué sucursal es cada
+    columna. Un texto sin tabuladores no se puede partir con confianza:
+    va entero en una sola tanda.
+    """
+    lineas = texto.split("\n")
+    indice_primera_tab = next((i for i, linea in enumerate(lineas) if "\t" in linea), None)
+    if indice_primera_tab is None:
+        return [texto]
+
+    fin_encabezado = indice_primera_tab
+    if _es_fila_de_titulos(lineas[indice_primera_tab]):
+        fin_encabezado += 1
+    encabezado = lineas[:fin_encabezado]
+    cuerpo = lineas[fin_encabezado:]
+
+    filas = sum(1 for linea in cuerpo if "\t" in linea)
+    if filas <= max_renglones:
+        return [texto]
+
+    # Tandas parejas: 250 filas con tope 100 son 3 tandas de ~84, no dos
+    # de 100 y una colita de 50.
+    cantidad_tandas = -(-filas // max_renglones)
+    filas_por_tanda = -(-filas // cantidad_tandas)
+
+    tandas: list[list[str]] = []
+    actual: list[str] = []
+    contadas = 0
+    for linea in cuerpo:
+        actual.append(linea)
+        if "\t" in linea:
+            contadas += 1
+            if contadas == filas_por_tanda:
+                tandas.append(actual)
+                actual = []
+                contadas = 0
+    if actual:
+        if any("\t" in linea for linea in actual) or not tandas:
+            tandas.append(actual)
+        else:
+            # Las líneas sueltas del final (un saludo, una aclaración) van
+            # con la última tanda: nada del mail queda sin mandar.
+            tandas[-1].extend(actual)
+
+    return ["\n".join(encabezado + tanda).strip("\n") for tanda in tandas]
+
+
+def _combinar_lecturas(lecturas: list[dict]) -> dict:
+    """Junta los resultados de varias tandas en un solo {"bloques": [...]}.
+
+    Los bloques se combinan por empresa (todas las tandas llevan el mismo
+    encabezado, así que el nombre coincide); los renglones se concatenan en
+    el orden del mail y las sucursales se completan entre tandas (la OC y
+    el total declarado suelen venir en una sola).
+    """
+    from core.matcheo_comanda import normalizar_texto
+
+    combinados: dict = {}
+    orden: list[str] = []
+    for lectura in lecturas:
+        for bloque in lectura.get("bloques") or []:
+            clave = normalizar_texto(bloque.get("empresa") or "")
+            if clave not in combinados:
+                combinados[clave] = {"empresa": bloque.get("empresa"), "sucursales": [], "renglones": []}
+                orden.append(clave)
+            combinado = combinados[clave]
+
+            por_sucursal = {normalizar_texto(s.get("sucursal") or ""): s for s in combinado["sucursales"]}
+            for sucursal in bloque.get("sucursales") or []:
+                clave_sucursal = normalizar_texto(sucursal.get("sucursal") or "")
+                existente = por_sucursal.get(clave_sucursal)
+                if existente is None:
+                    copia = dict(sucursal)
+                    combinado["sucursales"].append(copia)
+                    por_sucursal[clave_sucursal] = copia
+                else:
+                    for campo in ("orden_compra", "total_bultos"):
+                        if existente.get(campo) is None and sucursal.get(campo) is not None:
+                            existente[campo] = sucursal[campo]
+
+            combinado["renglones"].extend(bloque.get("renglones") or [])
+
+    return {"bloques": [combinados[clave] for clave in orden]}
+
+
+def _leer_pedido_de_texto_directo(texto: str) -> dict:
+    respuesta_texto = _llamar_api_claude_texto(
+        texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
+        mensaje_corte=MENSAJE_CORTE_PEDIDO,
+    )
+    return _parsear_json_de_la_respuesta(respuesta_texto)
+
+
+def _leer_tanda_con_reintento(texto_tanda: str, max_renglones: int) -> list[dict]:
+    """Lee una tanda; si la respuesta se corta igual, la parte más chica y reintenta SOLA.
+
+    Error recién cuando ni la tanda mínima (o un texto que no se puede
+    partir) entra en el límite — ahí sí no hay nada más que probar solo.
+    """
+    try:
+        return [_leer_pedido_de_texto_directo(texto_tanda)]
+    except RespuestaCortada:
+        mitad = max(1, max_renglones // 2)
+        tandas_mas_chicas = _partir_en_tandas(texto_tanda, mitad)
+        if len(tandas_mas_chicas) <= 1:
+            raise
+        lecturas: list[dict] = []
+        for tanda in tandas_mas_chicas:
+            lecturas.extend(_leer_tanda_con_reintento(tanda, mitad))
+        return lecturas
+
+
 def extraer_pedido_de_texto(texto: str) -> dict:
     """Extrae {"bloques": [...]} del texto pegado de un mail de pedido de un cliente.
 
@@ -525,12 +677,19 @@ def extraer_pedido_de_texto(texto: str) -> dict:
     cantidades por sucursal. Elegir QUÉ bloque es de esta empresa lo hace
     quien llama (app/main.py) — el desempate real es determinista, contra
     las fichas del cliente.
+
+    Un pedido largo se lee en TANDAS (el tamaño sale de la cantidad real de
+    renglones del texto) y los resultados se combinan; si una tanda se
+    corta igual, se reintenta sola partiéndola más chica. 60 o 300
+    renglones se leen igual, sin tocar nada.
     """
-    respuesta_texto = _llamar_api_claude_texto(
-        texto, prompt=PROMPT_PEDIDO_CLIENTE, max_tokens=MAX_TOKENS_PEDIDO_CLIENTE,
-        mensaje_corte=MENSAJE_CORTE_PEDIDO,
-    )
-    return _parsear_json_de_la_respuesta(respuesta_texto)
+    tandas = _partir_en_tandas(texto, MAX_RENGLONES_POR_TANDA)
+    lecturas: list[dict] = []
+    for tanda in tandas:
+        lecturas.extend(_leer_tanda_con_reintento(tanda, MAX_RENGLONES_POR_TANDA))
+    if len(lecturas) == 1:
+        return lecturas[0]
+    return _combinar_lecturas(lecturas)
 
 
 def extraer_pedido_de_imagenes(imagenes: list[bytes]) -> dict:

@@ -571,3 +571,137 @@ def test_lectura_de_pedido_cortada_avisa_con_el_mensaje_del_pedido(monkeypatch):
             extraer_pedido_de_texto("el mail")
 
     assert "foto" not in MENSAJE_CORTE_PEDIDO
+
+
+# --- Lectura de pedidos en tandas: partir, combinar, reintentar solo ---
+
+from core.lector_comandas import (  # noqa: E402
+    MAX_RENGLONES_POR_TANDA,
+    RespuestaCortada,
+    _combinar_lecturas,
+    _es_fila_de_titulos,
+    _partir_en_tandas,
+)
+
+
+def _texto_pedido_largo(filas):
+    lineas = ["9582 FRUTAMAX", "Código\tProducto\tVL\tBZ\tGR"]
+    for i in range(filas):
+        lineas.append(f"9{i:04d}\tPRODUCTO {i}\t{i % 9 + 1}\t\t")
+    return "\n".join(lineas)
+
+
+def test_partir_en_tandas_un_pedido_chico_va_entero():
+    texto = _texto_pedido_largo(60)
+
+    assert _partir_en_tandas(texto, MAX_RENGLONES_POR_TANDA) == [texto]
+
+
+def test_partir_en_tandas_reparte_parejo_y_repite_el_encabezado():
+    tandas = _partir_en_tandas(_texto_pedido_largo(250), 100)
+
+    # 250 filas con tope 100: tres tandas de ~84, no dos de 100 y una de 50.
+    assert len(tandas) == 3
+    for tanda in tandas:
+        # Cada tanda sabe de qué empresa es y qué sucursal es cada columna.
+        assert tanda.startswith("9582 FRUTAMAX\nCódigo\tProducto\tVL\tBZ\tGR")
+        filas = [l for l in tanda.split("\n") if "\t" in l and not _es_fila_de_titulos(l)]
+        assert 82 <= len(filas) <= 84
+    # Nada se pierde ni se duplica: la unión de las tandas es el original.
+    todas = [l for t in tandas for l in t.split("\n") if "\t" in l and not _es_fila_de_titulos(l)]
+    originales = [l for l in _texto_pedido_largo(250).split("\n") if "\t" in l and not _es_fila_de_titulos(l)]
+    assert todas == originales
+
+
+def test_partir_en_tandas_sin_fila_de_titulos_no_duplica_productos():
+    # Si la tabla arranca directo con un producto (sin títulos de columna),
+    # esa fila NO se puede repetir en cada tanda: sería un renglón duplicado.
+    lineas = ["9582 FRUTAMAX"] + [f"9{i:04d}\tPRODUCTO {i}\t{i + 1}" for i in range(6)]
+    tandas = _partir_en_tandas("\n".join(lineas), 3)
+
+    assert len(tandas) == 2
+    todas = [l for t in tandas for l in t.split("\n") if "\t" in l]
+    assert len(todas) == 6  # cada producto una sola vez
+
+
+def test_partir_en_tandas_texto_sin_tabuladores_va_entero():
+    texto = "pedido en texto plano sin estructura"
+
+    assert _partir_en_tandas(texto, 2) == [texto]
+
+
+def test_combinar_lecturas_concatena_renglones_y_completa_sucursales():
+    primera = {"bloques": [{
+        "empresa": "9582 FRUTAMAX",
+        "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": None}],
+        "renglones": [{"codigo": "1", "descripcion": "A", "cantidades": {"VL": 5}, "confianza": "alta"}],
+    }]}
+    segunda = {"bloques": [{
+        "empresa": "9582 FRUTAMAX",
+        "sucursales": [
+            {"sucursal": "VL", "orden_compra": None, "total_bultos": 235},
+            {"sucursal": "BZ", "orden_compra": "1257642", "total_bultos": 40},
+        ],
+        "renglones": [{"codigo": "2", "descripcion": "B", "cantidades": {"BZ": 3}, "confianza": "alta"}],
+    }]}
+
+    resultado = _combinar_lecturas([primera, segunda])
+
+    assert len(resultado["bloques"]) == 1
+    bloque = resultado["bloques"][0]
+    # Renglones en el orden del mail; la OC de una tanda y el total de la
+    # otra se completan entre sí.
+    assert [r["codigo"] for r in bloque["renglones"]] == ["1", "2"]
+    assert bloque["sucursales"][0] == {"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 235}
+    assert bloque["sucursales"][1]["sucursal"] == "BZ"
+
+
+def _lector_falso_por_tanda(texto, prompt, max_tokens, mensaje_corte=None):
+    """Simula la IA: devuelve un renglón por cada fila de producto del texto recibido."""
+    filas = [l for l in texto.split("\n") if "\t" in l and not _es_fila_de_titulos(l)]
+    bloque = {
+        "empresa": "9582 FRUTAMAX",
+        "sucursales": [{"sucursal": "VL", "orden_compra": None, "total_bultos": None}],
+        "renglones": [
+            {"codigo": l.split("\t")[0], "descripcion": l.split("\t")[1], "cantidades": {"VL": 1}, "confianza": "alta"}
+            for l in filas
+        ],
+    }
+    return json.dumps({"bloques": [bloque]})
+
+
+def test_extraer_pedido_de_texto_largo_lee_en_tandas_y_junta_todo():
+    with patch("core.lector_comandas._llamar_api_claude_texto", side_effect=_lector_falso_por_tanda) as mock_llamada:
+        resultado = extraer_pedido_de_texto(_texto_pedido_largo(250))
+
+    # Tres llamadas (una por tanda) y NINGÚN renglón perdido ni duplicado.
+    assert mock_llamada.call_count == 3
+    assert len(resultado["bloques"]) == 1
+    codigos = [r["codigo"] for r in resultado["bloques"][0]["renglones"]]
+    assert len(codigos) == 250
+    assert codigos == [f"9{i:04d}" for i in range(250)]
+
+
+def test_extraer_pedido_de_texto_reintenta_solo_partiendo_mas_chico():
+    # La primera llamada (el pedido entero) se corta: el sistema parte en
+    # tandas más chicas y reintenta SOLO, sin que nadie toque nada.
+    llamadas = []
+
+    def _falso_con_corte(texto, prompt, max_tokens, mensaje_corte=None):
+        llamadas.append(texto)
+        if len(llamadas) == 1:
+            raise RespuestaCortada("se cortó")
+        return _lector_falso_por_tanda(texto, prompt, max_tokens, mensaje_corte)
+
+    with patch("core.lector_comandas._llamar_api_claude_texto", side_effect=_falso_con_corte):
+        resultado = extraer_pedido_de_texto(_texto_pedido_largo(80))
+
+    # 1 corte + 2 mitades leídas.
+    assert len(llamadas) == 3
+    assert len(resultado["bloques"][0]["renglones"]) == 80
+
+
+def test_extraer_pedido_de_texto_si_ni_la_tanda_minima_entra_recien_ahi_error():
+    with patch("core.lector_comandas._llamar_api_claude_texto", side_effect=RespuestaCortada("se cortó")):
+        with pytest.raises(RespuestaCortada):
+            extraer_pedido_de_texto(_texto_pedido_largo(8))
