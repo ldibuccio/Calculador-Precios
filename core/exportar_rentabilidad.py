@@ -64,7 +64,9 @@ def _armar_subtitulo(fecha_desde: date, fecha_hasta: date, filtros_texto: list[s
     subtitulo = (
         f"Pedidos del {fecha_desde.strftime('%d/%m/%Y')} al {fecha_hasta.strftime('%d/%m/%Y')} "
         f"({cantidad_fechas} día{'s' if cantidad_fechas != 1 else ''} con pedido) — "
-        "bultos = lo PEDIDO, sin ajustar por armado (estimación, no facturación)"
+        "bultos = lo PEDIDO, sin ajustar por armado (estimación, no facturación). "
+        "Misma cuenta que Márgenes por Artículo: venta neta con las tasas del cliente, "
+        "costo = mercadería + envase, utilidad % solo sobre la mercadería"
     )
     if filtros_texto:
         subtitulo += " — " + ", ".join(filtros_texto)
@@ -133,7 +135,7 @@ def generar_pdf_rentabilidad(
     if not grupos and not no_calculables:
         elementos.append(Paragraph("No se encontraron pedidos con estos filtros.", estilo_vacio))
 
-    encabezados = ("Artículo", "Bultos", "Precio", "Costo", "Venta", "Costo total", "Renta $", "Renta %")
+    encabezados = ("Artículo", "Bultos", "Lista", "Neta", "Costo+env.", "Venta neta", "Renta $", "Util. %")
     anchos = [
         ancho_util * 0.24, ancho_util * 0.08, ancho_util * 0.11, ancho_util * 0.11,
         ancho_util * 0.13, ancho_util * 0.13, ancho_util * 0.12, ancho_util * 0.08,
@@ -150,16 +152,17 @@ def generar_pdf_rentabilidad(
         for indice, fila in enumerate(grupo["filas"]):
             sufijo = SUFIJOS_UNIDAD_VENTA.get(fila["unidad_venta"], "")
             estilo_renta = estilo_negativo if fila["renta_pesos"] < 0 else estilo_numero
+            costo_unidad = (fila["costo_promedio"] or 0) + (fila["envase_promedio"] or 0)
             datos_tabla.append(
                 [
                     Paragraph(fila["articulo_nombre"], estilo_dato),
                     Paragraph(_formatear_numero(fila["bultos"]), estilo_dato),
-                    Paragraph(f"{_formatear_moneda(fila['precio_promedio'])}/{sufijo}" if sufijo else _formatear_moneda(fila["precio_promedio"]), estilo_dato),
-                    Paragraph(f"{_formatear_moneda(fila['costo_promedio'])}/{sufijo}" if sufijo else _formatear_moneda(fila["costo_promedio"]), estilo_dato),
-                    Paragraph(_formatear_moneda(fila["venta"]), estilo_dato),
-                    Paragraph(_formatear_moneda(fila["costo_total"]), estilo_dato),
+                    Paragraph(f"{_formatear_moneda(fila['precio_lista_promedio'])}/{sufijo}" if sufijo else _formatear_moneda(fila["precio_lista_promedio"]), estilo_dato),
+                    Paragraph(f"{_formatear_moneda(fila['precio_neto_promedio'])}/{sufijo}" if sufijo else _formatear_moneda(fila["precio_neto_promedio"]), estilo_dato),
+                    Paragraph(f"{_formatear_moneda(costo_unidad)}/{sufijo}" if sufijo else _formatear_moneda(costo_unidad), estilo_dato),
+                    Paragraph(_formatear_moneda(fila["venta_neta"]), estilo_dato),
                     Paragraph(_formatear_moneda(fila["renta_pesos"]), estilo_renta),
-                    Paragraph(_formatear_pct(fila["renta_pct"]), estilo_renta),
+                    Paragraph(_formatear_pct(fila["utilidad_pct"]), estilo_renta),
                 ]
             )
             if indice % 2 == 1:
@@ -171,11 +174,10 @@ def generar_pdf_rentabilidad(
             [
                 Paragraph("Subtotal", estilo_subtotal),
                 Paragraph(_formatear_numero(subtotal["bultos"]), estilo_subtotal),
-                "", "",
-                Paragraph(_formatear_moneda(subtotal["venta"]), estilo_subtotal),
-                Paragraph(_formatear_moneda(subtotal["costo_total"]), estilo_subtotal),
+                "", "", "",
+                Paragraph(_formatear_moneda(subtotal["venta_neta"]), estilo_subtotal),
                 Paragraph(_formatear_moneda(subtotal["renta_pesos"]), estilo_subtotal),
-                Paragraph(_formatear_pct(subtotal["renta_pct"]), estilo_subtotal),
+                Paragraph(_formatear_pct(subtotal["utilidad_pct"]), estilo_subtotal),
             ]
         )
 
@@ -203,8 +205,9 @@ def generar_pdf_rentabilidad(
         elementos.append(Spacer(1, 16))
         elementos.append(
             Paragraph(
-                f"Total: venta {_formatear_moneda(totales['venta'])} — costo {_formatear_moneda(totales['costo_total'])} — "
-                f"renta {_formatear_moneda(totales['renta_pesos'])} ({_formatear_pct(totales['renta_pct'])})",
+                f"Total: venta neta {_formatear_moneda(totales['venta_neta'])} — mercadería {_formatear_moneda(totales['costo_mercaderia'])} "
+                f"+ envase {_formatear_moneda(totales['costo_envase'])} — "
+                f"renta {_formatear_moneda(totales['renta_pesos'])} (utilidad {_formatear_pct(totales['utilidad_pct'])} sobre mercadería)",
                 estilo_total,
             )
         )
@@ -300,8 +303,8 @@ def generar_excel_rentabilidad(
         hoja.cell(row=fila_actual, column=1, value="No se encontraron pedidos con estos filtros.").font = fuente_normal
 
     encabezados = (
-        "Artículo", "Bultos", "Unidades", "Unidad", "Precio", "Costo",
-        "Venta", "Costo total", "Renta $", "Renta %",
+        "Artículo", "Bultos", "Unidades", "Unidad", "Precio lista", "Precio neto",
+        "Costo mercadería", "Costo envase", "Venta neta", "Costo total", "Renta $", "Utilidad %",
     )
     for grupo in grupos:
         hoja.cell(row=fila_actual, column=1, value=grupo["etiqueta"]).font = fuente_grupo
@@ -318,40 +321,43 @@ def generar_excel_rentabilidad(
             hoja.cell(row=fila_actual, column=2, value=float(fila["bultos"]))
             hoja.cell(row=fila_actual, column=3, value=round(float(fila["unidades"]), 2))
             hoja.cell(row=fila_actual, column=4, value=fila["unidad_venta"] or "—")
-            for columna, valor in ((5, fila["precio_promedio"]), (6, fila["costo_promedio"]),
-                                   (7, fila["venta"]), (8, fila["costo_total"]), (9, fila["renta_pesos"])):
+            for columna, valor in ((5, fila["precio_lista_promedio"]), (6, fila["precio_neto_promedio"]),
+                                   (7, fila["costo_mercaderia"]), (8, fila["costo_envase"]),
+                                   (9, fila["venta_neta"]), (10, fila["costo_total"]), (11, fila["renta_pesos"])):
                 if valor is not None:
                     celda = hoja.cell(row=fila_actual, column=columna, value=round(float(valor), 2))
                     celda.number_format = '"$"#,##0'
-            if fila["renta_pct"] is not None:
-                celda = hoja.cell(row=fila_actual, column=10, value=round(float(fila["renta_pct"]) / 100, 4))
+            if fila["utilidad_pct"] is not None:
+                celda = hoja.cell(row=fila_actual, column=12, value=round(float(fila["utilidad_pct"]) / 100, 4))
                 celda.number_format = "0.0%"
             if fila["renta_pesos"] < 0:
-                hoja.cell(row=fila_actual, column=9).font = fuente_marca
+                hoja.cell(row=fila_actual, column=11).font = fuente_marca
             fila_actual += 1
 
         subtotal = grupo["subtotal"]
         hoja.cell(row=fila_actual, column=1, value="Subtotal").font = fuente_subtotal
         celda = hoja.cell(row=fila_actual, column=2, value=float(subtotal["bultos"]))
         celda.font = fuente_subtotal
-        for columna, valor in ((7, subtotal["venta"]), (8, subtotal["costo_total"]), (9, subtotal["renta_pesos"])):
+        for columna, valor in ((7, subtotal["costo_mercaderia"]), (8, subtotal["costo_envase"]),
+                               (9, subtotal["venta_neta"]), (10, subtotal["costo_total"]), (11, subtotal["renta_pesos"])):
             celda = hoja.cell(row=fila_actual, column=columna, value=round(float(valor), 2))
             celda.font = fuente_subtotal
             celda.number_format = '"$"#,##0'
-        if subtotal["renta_pct"] is not None:
-            celda = hoja.cell(row=fila_actual, column=10, value=round(float(subtotal["renta_pct"]) / 100, 4))
+        if subtotal["utilidad_pct"] is not None:
+            celda = hoja.cell(row=fila_actual, column=12, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
             celda.font = fuente_subtotal
             celda.number_format = "0.0%"
         fila_actual += 2
 
     if grupos:
         hoja.cell(row=fila_actual, column=1, value="Total").font = fuente_total
-        for columna, valor in ((7, totales["venta"]), (8, totales["costo_total"]), (9, totales["renta_pesos"])):
+        for columna, valor in ((7, totales["costo_mercaderia"]), (8, totales["costo_envase"]),
+                               (9, totales["venta_neta"]), (10, totales["costo_total"]), (11, totales["renta_pesos"])):
             celda = hoja.cell(row=fila_actual, column=columna, value=round(float(valor), 2))
             celda.font = fuente_total
             celda.number_format = '"$"#,##0'
-        if totales["renta_pct"] is not None:
-            celda = hoja.cell(row=fila_actual, column=10, value=round(float(totales["renta_pct"]) / 100, 4))
+        if totales["utilidad_pct"] is not None:
+            celda = hoja.cell(row=fila_actual, column=12, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total
             celda.number_format = "0.0%"
         fila_actual += 2
@@ -375,7 +381,7 @@ def generar_excel_rentabilidad(
             hoja.cell(row=fila_actual, column=4, value=entrada["motivo_etiqueta"])
             fila_actual += 1
 
-    for columna, ancho in enumerate((24, 9, 10, 9, 12, 12, 13, 13, 13, 10), start=1):
+    for columna, ancho in enumerate((24, 9, 10, 9, 12, 12, 15, 13, 13, 13, 13, 11), start=1):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 
     buffer = BytesIO()

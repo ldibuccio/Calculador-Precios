@@ -163,7 +163,7 @@
     <a class="boton-exportar" href="/gerencia/rentabilidad/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
     <a class="boton-exportar" href="/gerencia/rentabilidad/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">Los bultos son <strong>lo pedido</strong>, sin ajustar por lo armado: es una estimación de rentabilidad, no facturación. Precio y costo se toman a la fecha de cada pedido.</p>
+    <p class="ayuda">Los bultos son <strong>lo pedido</strong>, sin ajustar por lo armado: es una estimación de rentabilidad, no facturación. La cuenta es <strong>la misma que Márgenes por Artículo</strong>, a la fecha de cada pedido: venta neta = precio de lista con las tasas del cliente aplicadas; costo = mercadería + envase; la utilidad % se mide solo sobre la mercadería, nunca sobre el envase.</p>
   </div>
 
   {% if resultado %}
@@ -171,12 +171,13 @@
   {% if resultado.grupos %}
   <div class="total">
     <div class="numero-grande {% if resultado.totales.renta_pesos < 0 %}negativo{% endif %}">
-      {{ resultado.totales.renta_pesos|moneda }}{% if resultado.totales.renta_pct is not none %} ({{ "%.1f"|format(resultado.totales.renta_pct) }}%){% endif %}
+      {{ resultado.totales.renta_pesos|moneda }}{% if resultado.totales.utilidad_pct is not none %} ({{ "%.1f"|format(resultado.totales.utilidad_pct) }}%){% endif %}
     </div>
     <div class="detalle">
       Renta estimada de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con pedido —
-      venta {{ resultado.totales.venta|moneda }}, costo {{ resultado.totales.costo_total|moneda }},
-      {{ resultado.totales.bultos|numero }} bultos.
+      venta neta {{ resultado.totales.venta_neta|moneda }}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
+      envase {{ resultado.totales.costo_envase|moneda }}, {{ resultado.totales.bultos|numero }} bultos.
+      La utilidad % es sobre la mercadería.
     </div>
     {% if resultado.totales.no_calculables_casos %}
     <p class="afuera">Quedaron afuera {{ resultado.totales.no_calculables_casos }} artículo{{ "s" if resultado.totales.no_calculables_casos != 1 }} ({{ resultado.totales.no_calculables_bultos|numero }} bultos) — no sumaron como cero, mirá el detalle abajo.</p>
@@ -195,18 +196,18 @@
     <div class="fila-articulo">
       <div class="nombre">
         {{ f.articulo_nombre }}
-        <span class="detalle">{{ f.bultos|numero }} bultos · {{ f.precio_promedio|moneda }} venta / {{ f.costo_promedio|moneda }} costo por {{ f.unidad_venta or "unidad" }}</span>
-        <span class="detalle">Venta {{ f.venta|moneda }} — costo {{ f.costo_total|moneda }}</span>
+        <span class="detalle">{{ f.bultos|numero }} bultos · lista {{ f.precio_lista_promedio|moneda }} → neta {{ f.precio_neto_promedio|moneda }} por {{ f.unidad_venta or "unidad" }}</span>
+        <span class="detalle">Costo {{ f.costo_promedio|moneda }}{% if f.envase_promedio %} + {{ f.envase_promedio|moneda }} envase{% endif %} por {{ f.unidad_venta or "unidad" }} · venta neta {{ f.venta_neta|moneda }} — costo {{ f.costo_total|moneda }}</span>
       </div>
       <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">
         {{ f.renta_pesos|moneda }}
-        {% if f.renta_pct is not none %}<span class="pct">{{ "%.1f"|format(f.renta_pct) }}%</span>{% endif %}
+        {% if f.utilidad_pct is not none %}<span class="pct">{{ "%.1f"|format(f.utilidad_pct) }}%</span>{% endif %}
       </div>
     </div>
     {% endfor %}
     <div class="fila-subtotal">
       <span>Subtotal {{ g.etiqueta }}</span>
-      <span>{{ g.subtotal.renta_pesos|moneda }}{% if g.subtotal.renta_pct is not none %} ({{ "%.1f"|format(g.subtotal.renta_pct) }}%){% endif %}</span>
+      <span>{{ g.subtotal.renta_pesos|moneda }}{% if g.subtotal.utilidad_pct is not none %} ({{ "%.1f"|format(g.subtotal.utilidad_pct) }}%){% endif %}</span>
     </div>
   </div>
   {% endfor %}

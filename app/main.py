@@ -23,12 +23,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
 
-from app.costeo import (
-    agrupar_para_negociar,
-    calcular_costo_por_unidad_venta_reciente,
-    calcular_listado_para_negociar_precios,
-    calcular_objetivos_de_compra,
-)
+from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios, calcular_objetivos_de_compra
 from app.db import (
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -5923,26 +5918,25 @@ def ver_auditoria(request: Request):
 def _datos_rentabilidad(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo, fichas: list[dict]) -> dict:
     """Junta los datos y llama al motor puro de rentabilidad (core/rentabilidad.py).
 
-    Por cada FECHA con pedido vigente en el rango se piden el precio
-    vigente A ESA fecha y el costo de 48 hs CON ESA fecha como momento de
-    referencia: un cambio de precio o de costo a mitad del rango pega solo
-    en los pedidos de ahí en adelante, nunca retroactivo.
+    La fuente de precio, costo, envase y tasas es EL MISMO listado que
+    Márgenes por Artículo (calcular_listado_para_negociar_precios),
+    anclado a cada FECHA con pedido vigente del rango: precio de lista
+    vigente a esa fecha, costo de mercadería por la última compra, envase
+    ponderado y el denominador de tasas del cliente. Usar el mismo listado
+    es lo que garantiza el control del dueño: Rentabilidad y Márgenes,
+    sobre el mismo artículo en la misma fecha, dan idéntico. Un cambio de
+    precio o de tasas a mitad del rango pega solo en los pedidos de ahí en
+    adelante, nunca retroactivo.
     """
     renglones = listar_renglones_pedidos_vigentes(cliente_id, fecha_desde, fecha_hasta)
     fechas = sorted({r["fecha_operacion"] for r in renglones})
-    precios_por_fecha = {}
-    costos_por_fecha = {}
+    margenes_por_fecha = {}
     for fecha in fechas:
-        precios_por_fecha[fecha] = {
-            p["articulo_id"]: float(p["precio"]) for p in listar_precios_vigentes_por_cliente(cliente_id, fecha)
-        }
-        costeo = calcular_costo_por_unidad_venta_reciente(
+        listado = calcular_listado_para_negociar_precios(
             cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
         )
-        costos_por_fecha[fecha] = {
-            a["articulo_id"]: a["costo_por_unidad_de_venta"] for a in costeo["articulos"]
-        }
-    return calcular_rentabilidad_de_pedidos(renglones, fichas, precios_por_fecha, costos_por_fecha, articulo_id, grupo)
+        margenes_por_fecha[fecha] = {fila["articulo_id"]: fila for fila in listado}
+    return calcular_rentabilidad_de_pedidos(renglones, fichas, margenes_por_fecha, articulo_id, grupo)
 
 
 def _leer_filtros_rentabilidad(

@@ -13,15 +13,21 @@ RESULTADO_DE_PRUEBA = {
             "filas": [
                 {
                     "articulo_id": 1, "articulo_nombre": "Banana", "grupo": "fruta", "unidad_venta": "kilo",
-                    "bultos": 15.0, "unidades": 300.0, "venta": 30000.0, "costo_total": 24000.0,
-                    "precio_promedio": 100.0, "costo_promedio": 80.0, "renta_pesos": 6000.0, "renta_pct": 20.0,
+                    "bultos": 15.0, "unidades": 300.0,
+                    "venta_lista": 30000.0, "venta_neta": 24000.0,
+                    "costo_mercaderia": 18000.0, "costo_envase": 1500.0, "costo_total": 19500.0,
+                    "precio_lista_promedio": 100.0, "precio_neto_promedio": 80.0,
+                    "costo_promedio": 60.0, "envase_promedio": 5.0,
+                    "renta_pesos": 4500.0, "utilidad_pct": 25.0,
                 }
             ],
-            "subtotal": {"bultos": 15.0, "venta": 30000.0, "costo_total": 24000.0, "renta_pesos": 6000.0, "renta_pct": 20.0},
+            "subtotal": {"bultos": 15.0, "venta_neta": 24000.0, "costo_mercaderia": 18000.0,
+                         "costo_envase": 1500.0, "costo_total": 19500.0, "renta_pesos": 4500.0, "utilidad_pct": 25.0},
         }
     ],
     "totales": {
-        "bultos": 15.0, "venta": 30000.0, "costo_total": 24000.0, "renta_pesos": 6000.0, "renta_pct": 20.0,
+        "bultos": 15.0, "venta_neta": 24000.0, "costo_mercaderia": 18000.0, "costo_envase": 1500.0,
+        "costo_total": 19500.0, "renta_pesos": 4500.0, "utilidad_pct": 25.0,
         "no_calculables_casos": 1, "no_calculables_bultos": 3.0,
     },
     "no_calculables": [
@@ -47,10 +53,14 @@ def test_generar_excel_rentabilidad_grupos_totales_y_no_calculables():
     # El subtítulo lleva la regla de la medición, para que el archivo se
     # explique solo cuando alguien lo abra en tres meses.
     assert "bultos = lo PEDIDO" in texto
+    assert "Misma cuenta que Márgenes por Artículo" in texto
+    assert "utilidad % solo sobre la mercadería" in texto
     assert "2 días con pedido" in texto
     assert "cliente Día" in texto
     assert "Fruta" in texto and "Banana" in texto
     assert "Subtotal" in texto and "Total" in texto
+    # Venta neta y envase como columnas propias: la lista cruda no es la venta.
+    assert "Venta neta" in texto and "Costo envase" in texto and "Utilidad %" in texto
     # Los no calculables NUNCA se caen del archivo.
     assert "Quedaron AFUERA del cálculo 1 artículos (3 bultos)" in texto
     assert "Sin identificar" in texto
@@ -59,7 +69,8 @@ def test_generar_excel_rentabilidad_grupos_totales_y_no_calculables():
 def test_generar_excel_rentabilidad_sin_datos_lo_dice():
     vacio = {
         "grupos": [], "no_calculables": [], "fechas_incluidas": [],
-        "totales": {"bultos": 0, "venta": 0, "costo_total": 0, "renta_pesos": 0, "renta_pct": None,
+        "totales": {"bultos": 0, "venta_neta": 0, "costo_mercaderia": 0, "costo_envase": 0,
+                    "costo_total": 0, "renta_pesos": 0, "utilidad_pct": None,
                     "no_calculables_casos": 0, "no_calculables_bultos": 0},
     }
     excel = generar_excel_rentabilidad(date(2026, 8, 15), date(2026, 8, 22), [], vacio)

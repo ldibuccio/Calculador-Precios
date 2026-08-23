@@ -13057,19 +13057,21 @@ FICHAS_RENTABILIDAD_DE_PRUEBA = [
 
 
 def _patches_rentabilidad():
+    # La fila de Márgenes por Artículo que Rentabilidad consume tal cual:
+    # lista $100, denominador de tasas 0.8 (neta $80), costo $60 + $4 de
+    # envase por kilo.
+    fila_margenes = {
+        "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
+        "precio_vigente": 100.0, "costo_actual": 60.0,
+        "costo_envase_unidad_venta": 4.0, "denominador_tasas": 0.8,
+        "utilidad_aproximada": 0.2666, "precio_sugerido": None, "fresco": True,
+    }
     return (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_RENTABILIDAD_DE_PRUEBA),
         patch("app.main.listar_renglones_pedidos_vigentes", return_value=list(RENGLONES_RENTABILIDAD_DE_PRUEBA)),
-        patch("app.main.listar_precios_vigentes_por_cliente", return_value=[{"articulo_id": 1, "precio": 100.0}]),
-        patch(
-            "app.main.calcular_costo_por_unidad_venta_reciente",
-            return_value={"articulos": [{"articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
-                                         "cantidad_total": 500.0, "costo_por_unidad_de_venta": 80.0,
-                                         "compras_sin_precio_excluidas": 0}],
-                          "articulos_sin_ficha": []},
-        ),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[dict(fila_margenes)]),
     )
 
 
@@ -13088,26 +13090,32 @@ def test_ver_rentabilidad_sin_cliente_muestra_solo_el_selector():
     assert "lo pedido" in respuesta.text
 
 
-def test_ver_rentabilidad_calcula_por_fecha_y_muestra_grupos_y_totales():
-    p1, p2, p3, p4, p5, p6 = _patches_rentabilidad()
-    with p1, p2, p3, p4, p5 as mock_precios, p6 as mock_costos:
+def test_ver_rentabilidad_usa_el_listado_de_margenes_por_fecha():
+    p1, p2, p3, p4, p5 = _patches_rentabilidad()
+    with p1, p2, p3, p4, p5 as mock_margenes:
         respuesta = cliente.get("/gerencia/rentabilidad?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
 
     assert respuesta.status_code == 200
-    # Una consulta de precio y una corrida de costeo POR FECHA con pedido,
-    # cada una anclada a esa fecha (nunca el precio de hoy retroactivo).
-    assert mock_precios.call_args_list == [((1, date(2026, 8, 21)),), ((1, date(2026, 8, 22)),)]
-    fechas_costeo = [llamada.args[1].date() for llamada in mock_costos.call_args_list]
-    assert fechas_costeo == [date(2026, 8, 21), date(2026, 8, 22)]
+    # UNA corrida del listado de Márgenes por Artículo POR FECHA con
+    # pedido, anclada a esa fecha (nunca el margen de hoy retroactivo).
+    # Usar ese mismo listado es el control: las dos pantallas dan idéntico.
+    assert [llamada.args[0] for llamada in mock_margenes.call_args_list] == [1, 1]
+    fechas_margenes = [llamada.args[1].date() for llamada in mock_margenes.call_args_list]
+    assert fechas_margenes == [date(2026, 8, 21), date(2026, 8, 22)]
 
     texto = respuesta.text
     assert "Fruta" in texto
     assert "Banana" in texto
-    # 15 bultos × 20k = 300k; venta 30.000, costo 24.000, renta 6.000 (20%).
-    assert "$30.000" in texto
+    # 15 bultos × 20k = 300k. Venta NETA (con tasas, no la lista cruda):
+    # 300 × $80 = 24.000. Costo: 300 × ($60 + $4 envase) = 19.200. Renta
+    # 4.800, utilidad SOLO sobre mercadería: 4.800 / 18.000 = 26.7%.
     assert "$24.000" in texto
-    assert "$6.000" in texto
-    assert "20.0%" in texto
+    assert "$19.200" in texto
+    assert "$4.800" in texto
+    assert "26.7%" in texto
+    # La lista cruda ($100) y la neta ($80) se ven por unidad, no se mezclan.
+    assert "lista $100" in texto
+    assert "neta $80" in texto
     # El sin identificar AFUERA, con su peso — no sumó como cero.
     assert "Afuera del cálculo (1)" in texto
     assert "Sin identificar — 3 bultos" in texto
@@ -13117,8 +13125,8 @@ def test_ver_rentabilidad_calcula_por_fecha_y_muestra_grupos_y_totales():
 
 
 def test_exportar_rentabilidad_pdf_y_excel_bajan_con_sus_nombres():
-    p1, p2, p3, p4, p5, p6 = _patches_rentabilidad()
-    with p1, p2, p3, p4, p5, p6, patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)):
+    p1, p2, p3, p4, p5 = _patches_rentabilidad()
+    with p1, p2, p3, p4, p5, patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)):
         pdf = cliente.get("/gerencia/rentabilidad/exportar-pdf?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
 
     assert pdf.status_code == 200
@@ -13126,8 +13134,8 @@ def test_exportar_rentabilidad_pdf_y_excel_bajan_con_sus_nombres():
     assert 'filename="Rentabilidad_Pedidos_2026-08-15_a_2026-08-22.pdf"' in pdf.headers["content-disposition"]
     assert pdf.content.startswith(b"%PDF")
 
-    p1, p2, p3, p4, p5, p6 = _patches_rentabilidad()
-    with p1, p2, p3, p4, p5, p6, patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)):
+    p1, p2, p3, p4, p5 = _patches_rentabilidad()
+    with p1, p2, p3, p4, p5, patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)):
         excel = cliente.get("/gerencia/rentabilidad/exportar-excel?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
 
     assert excel.status_code == 200
