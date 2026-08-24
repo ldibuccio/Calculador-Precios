@@ -6301,7 +6301,7 @@ def test_ver_precios_muestra_la_botonera_con_los_seis_accesos_en_orden():
     assert 'href="/negociar"' in respuesta.text
     assert 'href="/precios/resultado-negociacion"' in respuesta.text
     assert 'href="/precios/generar-listado"' in respuesta.text
-    assert "Negociación Precios" in respuesta.text
+    assert "Modificar Precios" in respuesta.text
     assert "Carga Foto Precios" in respuesta.text
     assert "Consultar Precios" in respuesta.text
     assert "Márgenes por Artículo" in respuesta.text
@@ -6310,7 +6310,7 @@ def test_ver_precios_muestra_la_botonera_con_los_seis_accesos_en_orden():
     assert "Próximamente" in respuesta.text
 
     orden = [
-        "Negociación Precios",
+        "Modificar Precios",
         "Carga Foto Precios",
         "Consultar Precios",
         "Márgenes por Artículo",
