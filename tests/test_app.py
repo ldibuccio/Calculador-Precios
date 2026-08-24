@@ -11262,6 +11262,10 @@ def test_ver_deposito_muestra_los_accesos_a_pedido():
     assert respuesta.status_code == 200
     assert 'href="/deposito/pedido"' in respuesta.text
     assert 'href="/deposito/pedido/cargar"' in respuesta.text
+    # Buscar Pedidos también entra directo desde el menú: es la pantalla
+    # de facturar, no debería exigir pasar antes por Pedido.
+    assert 'href="/deposito/pedido/buscar"' in respuesta.text
+    assert "Buscar Pedidos" in respuesta.text
 
 
 def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
