@@ -2117,18 +2117,45 @@ async def guardar_y_exportar_disponible_excel(request: Request):
     )
 
 
-@app.get("/compras/nueva/manual")
-def ver_nueva_compra_manual(request: Request, error: str | None = None):
+def _renderizar_compra_manual(
+    request: Request,
+    *,
+    error: str | None = None,
+    codigo_puesto: str = "",
+    nombre: str = "",
+    compra: dict | None = None,
+    status_code: int = 200,
+):
+    """La pantalla ÚNICA de carga manual: proveedor y artículo juntos, como en la carga de comandas.
+
+    En error se repuebla todo lo tipeado (proveedor y renglón): en el
+    Mercado nadie quiere volver a escribir una compra entera por un campo
+    mal cargado.
+    """
     try:
         proveedores = listar_proveedores()
+        articulos = listar_articulos()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
-        "compra_proveedor_manual.html",
-        {"proveedores": proveedores, "error": error},
+        "compra_manual.html",
+        {
+            "proveedores": proveedores,
+            "articulos": articulos,
+            "codigo_puesto_sugerido": codigo_puesto,
+            "nombre_sugerido": nombre,
+            "compra": compra,
+            "error": error,
+        },
+        status_code=status_code,
     )
+
+
+@app.get("/compras/nueva/manual")
+def ver_nueva_compra_manual(request: Request, error: str | None = None):
+    return _renderizar_compra_manual(request, error=error)
 
 
 @app.get("/compras/nueva/foto-una")
@@ -2178,39 +2205,100 @@ def ver_nueva_compra(request: Request, proveedor_id: int | None = None, error: s
     )
 
 
-@app.post("/compras/nueva/proveedor")
-def elegir_proveedor_compra(request: Request, codigo_puesto: str = Form(""), nombre: str = Form("")):
-    error, codigo_valor = _validar_codigo_puesto(codigo_puesto)
+@app.post("/compras/nueva/manual")
+def agregar_compra_manual(
+    request: Request,
+    codigo_puesto: str = Form(""),
+    nombre: str = Form(""),
+    accion: str = Form("agregar"),
+    articulo_id: str = Form(""),
+    cantidad_cajones: str = Form(""),
+    contenido_por_cajon: str = Form(""),
+    importe: str = Form(""),
+    sena: str = Form(""),
+    tipo_retiro: str = Form(""),
+):
+    """Guarda proveedor Y primer artículo en UN solo paso (la pantalla combinada de carga manual).
 
+    Mismas validaciones que el alta por proveedor confirmado. Después del
+    primer renglón se sigue en /compras/nueva con el proveedor ya fijado
+    (lista de lo cargado hoy, agregar/terminar/cancelar como siempre) —
+    el paso que se eliminó es el de "confirmar proveedor" solo.
+    """
+    renglon_vacio = not any(
+        campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro)
+    )
+    if accion == "terminar" and renglon_vacio:
+        return RedirectResponse(url="/compras/buscar", status_code=303)
+
+    def _reintentar(error, status_code):
+        compra = {
+            "articulo_id": valores["articulo_id"] if valores else None,
+            "cantidad_cajones": cantidad_cajones,
+            "contenido_por_cajon": contenido_por_cajon,
+            "importe": importe,
+            "sena": sena,
+            "tipo_retiro": tipo_retiro,
+        }
+        return _renderizar_compra_manual(
+            request, error=error, codigo_puesto=codigo_puesto, nombre=nombre, compra=compra, status_code=status_code
+        )
+
+    valores = None
+    error, codigo_valor = _validar_codigo_puesto(codigo_puesto)
     nombre_valor = nombre
     if not error:
         error, nombre_valor = _validar_nombre(nombre)
-
-    if error:
-        try:
-            proveedores = listar_proveedores()
-        except Exception:
-            proveedores = []
-        return templates.TemplateResponse(
-            request,
-            "compra_proveedor_manual.html",
-            {"proveedores": proveedores, "error": error},
-            status_code=400,
+    if not error:
+        error, valores = _validar_compra_nueva_form(
+            articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
         )
 
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(valores["articulo_id"])
+        except Exception as error_db:
+            return _reintentar(f"No se pudo leer el artículo: {error_db}", 500)
+        if articulo is None:
+            error = "El artículo elegido no es válido."
+        elif not articulo["unidad_compra"]:
+            error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
+
+    if error:
+        return _reintentar(error, 400)
+
+    # El proveedor se crea/resuelve recién con el renglón ya validado: un
+    # error de tipeo en la compra no deja proveedores nuevos colgados.
     try:
         proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
     except Exception as error_db:
-        try:
-            proveedores = listar_proveedores()
-        except Exception:
-            proveedores = []
-        return templates.TemplateResponse(
-            request,
-            "compra_proveedor_manual.html",
-            {"proveedores": proveedores, "error": f"No se pudo guardar el proveedor: {error_db}"},
-            status_code=500,
+        return _reintentar(f"No se pudo guardar el proveedor: {error_db}", 500)
+
+    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
+    if articulo["unidad_compra"] == "kilo":
+        cantidad_kilos, cantidad_fraccion = total, None
+    else:
+        cantidad_kilos, cantidad_fraccion = None, total
+
+    try:
+        crear_compra(
+            _hoy_argentina(),
+            valores["articulo_id"],
+            proveedor_id,
+            valores["cantidad_cajones"],
+            valores["contenido_por_cajon"],
+            cantidad_kilos,
+            cantidad_fraccion,
+            valores["importe"],
+            valores["sena"],
+            valores["tipo_retiro"],
         )
+    except Exception as error_db:
+        return _reintentar(f"No se pudo guardar la compra: {error_db}", 500)
+
+    if accion == "terminar":
+        return RedirectResponse(url="/compras/buscar", status_code=303)
 
     return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
 

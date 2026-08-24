@@ -1706,15 +1706,24 @@ def test_ver_nueva_compra_sin_proveedor_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
-def test_ver_nueva_compra_manual_muestra_solo_el_formulario_de_proveedor():
-    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+def test_ver_nueva_compra_manual_muestra_proveedor_y_articulo_juntos():
+    # UNA sola pantalla, como la carga de comandas: proveedor y artículo se
+    # cargan juntos — se eliminó el paso intermedio de "confirmar proveedor".
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
         respuesta = cliente.get("/compras/nueva/manual")
 
     assert respuesta.status_code == 200
     assert "Código de puesto" in respuesta.text
     assert "N07P41" in respuesta.text
-    assert 'action="/compras/nueva/proveedor"' in respuesta.text
     assert "PROVEEDORES_LISTA" in respuesta.text
+    # Los campos del artículo en la MISMA pantalla, con el mismo form.
+    assert 'action="/compras/nueva/manual"' in respuesta.text
+    assert "Kiwi" in respuesta.text
+    assert "Cantidad de cajones" in respuesta.text
+    assert "Agregar artículo" in respuesta.text
     # No mezcla el flujo de foto: sin formulario de subida ni el link a
     # múltiples comandas.
     assert 'id="form-leer-comanda"' not in respuesta.text
@@ -2193,61 +2202,130 @@ def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
     assert '<div class="aviso">3 compras canceladas.</div>' in respuesta.text
 
 
-def test_elegir_proveedor_compra_exitoso_redirige_con_proveedor_id():
-    with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor:
+def _datos_compra_manual(**overrides):
+    datos = {
+        "codigo_puesto": "n07p41",
+        "nombre": "Saturno",
+        "accion": "agregar",
+        "articulo_id": "5",
+        "cantidad_cajones": "8",
+        "contenido_por_cajon": "18",
+        "importe": "3000",
+        "sena": "",
+        "tipo_retiro": "Clark",
+    }
+    datos.update(overrides)
+    return datos
+
+
+def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
+    hoy = date(2026, 8, 22)
+    with (
+        patch("app.main._hoy_argentina", return_value=hoy),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post("/compras/nueva/manual", data=_datos_compra_manual(), follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    # Sigue en la pantalla clásica con el proveedor YA fijado: los
+    # siguientes artículos no lo repiten.
+    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
+    mock_proveedor.assert_called_once_with("N07P41", "Saturno")
+    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark")
+
+
+def test_agregar_compra_manual_con_guardar_termina_en_buscar():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
         respuesta = cliente.post(
-            "/compras/nueva/proveedor",
-            data={"codigo_puesto": "n07p41", "nombre": "Saturno"},
-            follow_redirects=False,
+            "/compras/nueva/manual", data=_datos_compra_manual(accion="terminar"), follow_redirects=False
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
-    mock_proveedor.assert_called_once_with("N07P41", "Saturno")
+    assert respuesta.headers["location"] == "/compras/buscar"
+    mock_crear.assert_called_once()
 
 
-def test_elegir_proveedor_compra_codigo_invalido_muestra_error():
+def test_agregar_compra_manual_codigo_invalido_repuebla_todo_lo_tipeado():
     with (
         patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
-        respuesta = cliente.post(
-            "/compras/nueva/proveedor",
-            data={"codigo_puesto": "puesto15", "nombre": "Saturno"},
-        )
+        respuesta = cliente.post("/compras/nueva/manual", data=_datos_compra_manual(codigo_puesto="puesto15"))
 
     assert respuesta.status_code == 400
     assert "formato NNNPNN" in respuesta.text
     mock_proveedor.assert_not_called()
-    # Regresión: el error vuelve a la pantalla manual sola, no a la
-    # combinada vieja con la carga de foto mezclada.
-    assert 'id="form-leer-comanda"' not in respuesta.text
+    mock_crear.assert_not_called()
+    # Lo tipeado NO se pierde: el proveedor y el renglón vuelven cargados.
+    assert 'value="puesto15"' in respuesta.text
+    assert 'value="Saturno"' in respuesta.text
+    assert 'value="8"' in respuesta.text
+    assert 'value="3000"' in respuesta.text
 
 
-def test_elegir_proveedor_compra_sin_nombre_muestra_error():
+def test_agregar_compra_manual_sin_nombre_muestra_error():
     with (
         patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
         patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
-        respuesta = cliente.post(
-            "/compras/nueva/proveedor",
-            data={"codigo_puesto": "N07P41", "nombre": ""},
-        )
+        respuesta = cliente.post("/compras/nueva/manual", data=_datos_compra_manual(nombre=""))
 
     assert respuesta.status_code == 400
     assert "El nombre no puede estar vacío" in respuesta.text
     mock_proveedor.assert_not_called()
 
 
-def test_elegir_proveedor_compra_error_de_base_muestra_mensaje_claro():
+def test_agregar_compra_manual_renglon_invalido_no_crea_el_proveedor():
+    # El proveedor se resuelve recién con el renglón validado: un error de
+    # tipeo en la compra no deja proveedores nuevos colgados.
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
         patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.post("/compras/nueva/manual", data=_datos_compra_manual(articulo_id=""))
+
+    assert respuesta.status_code == 400
+    assert "Elegí un artículo" in respuesta.text
+    mock_proveedor.assert_not_called()
+
+
+def test_agregar_compra_manual_terminar_sin_nada_cargado_sale_sin_guardar():
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
-            "/compras/nueva/proveedor",
-            data={"codigo_puesto": "N07P41", "nombre": "Saturno"},
+            "/compras/nueva/manual",
+            data={"codigo_puesto": "N07P41", "nombre": "Saturno", "accion": "terminar", "articulo_id": "",
+                  "cantidad_cajones": "", "contenido_por_cajon": "", "importe": "", "sena": "", "tipo_retiro": ""},
+            follow_redirects=False,
         )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/buscar"
+    mock_proveedor.assert_not_called()
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_manual_error_de_base_muestra_mensaje_claro():
+    with (
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.post("/compras/nueva/manual", data=_datos_compra_manual())
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar el proveedor" in respuesta.text
@@ -9103,7 +9181,10 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
         assert respuesta.status_code == 200
         assert "titulo-sector" not in respuesta.text, f"'titulo-sector' todavía aparece en {url}"
 
-    with patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA):
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
         respuesta = cliente.get("/compras/nueva/manual")
     assert respuesta.status_code == 200
     assert "titulo-sector" not in respuesta.text
