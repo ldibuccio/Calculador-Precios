@@ -1723,7 +1723,10 @@ def test_ver_nueva_compra_manual_muestra_proveedor_y_articulo_juntos():
     assert 'action="/compras/nueva/manual"' in respuesta.text
     assert "Kiwi" in respuesta.text
     assert "Cantidad de cajones" in respuesta.text
-    assert "Agregar artículo" in respuesta.text
+    # "Agregar más artículos" primero, "Guardar y cerrar" abajo de todo.
+    assert "Agregar más artículos" in respuesta.text
+    assert "Guardar y cerrar" in respuesta.text
+    assert respuesta.text.index('id="boton-agregar-articulo"') < respuesta.text.index('id="boton-terminar-carga"')
     # No mezcla el flujo de foto: sin formulario de subida ni el link a
     # múltiples comandas.
     assert 'id="form-leer-comanda"' not in respuesta.text
@@ -2358,7 +2361,7 @@ def test_ver_nueva_compra_con_proveedor_muestra_formulario_de_renglon():
     assert "setTimeout" in respuesta.text
 
 
-def test_ver_nueva_compra_con_proveedor_botones_en_orden_guardar_agregar_cancelar():
+def test_ver_nueva_compra_con_proveedor_botones_en_orden_agregar_guardar_cancelar():
     with (
         patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
@@ -2368,12 +2371,14 @@ def test_ver_nueva_compra_con_proveedor_botones_en_orden_guardar_agregar_cancela
 
     assert respuesta.status_code == 200
     # Regresión: los 3 botones de abajo de todo, en este orden exacto y con
-    # estos colores. Solo "Cancelar" pide confirmación. Se busca por id, no
-    # por el texto visible "Agregar artículo", porque ese mismo texto
-    # también aparece en el <title> de la página (título de la pestaña).
-    orden = ['id="boton-terminar-carga"', 'id="boton-agregar-articulo"', 'id="boton-cancelar-carga"']
+    # estos colores — "Agregar más artículos" primero (el gesto repetido) y
+    # "Guardar y cerrar" abajo de todo, antes de Cancelar. Solo "Cancelar"
+    # pide confirmación. Se busca por id, no por el texto visible.
+    orden = ['id="boton-agregar-articulo"', 'id="boton-terminar-carga"', 'id="boton-cancelar-carga"']
     posiciones = [respuesta.text.index(texto) for texto in orden]
     assert posiciones == sorted(posiciones)
+    assert "Agregar más artículos" in respuesta.text
+    assert "Guardar y cerrar" in respuesta.text
     assert 'class="boton-exito" id="boton-terminar-carga"' in respuesta.text
     assert 'class="boton-peligro" id="boton-cancelar-carga"' in respuesta.text
     assert 'action="/compras/nueva/cancelar"' in respuesta.text

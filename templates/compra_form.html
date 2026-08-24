@@ -216,11 +216,13 @@
       <input type="file" id="comanda_foto" name="comanda_foto" accept="image/*" class="input-foto-oculto">
       <button type="button" class="boton-adjuntar" id="boton-adjuntar-comanda">📎 Adjuntar comanda</button>
       <div class="estado-adjunto" id="estado-comanda-adjunta">
-        Comanda adjunta ✓ — se sube al tocar Guardar o Agregar artículo.
+        Comanda adjunta ✓ — se sube al tocar "Agregar más artículos" o "Guardar y cerrar".
         <a href="#" id="quitar-comanda-adjunta">Quitar</a>
       </div>
-      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
-      <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
+      {# "Agregar más artículos" primero (es el gesto repetido de la carga);
+         "Guardar y cerrar" abajo de todo — cierra la comanda y termina. #}
+      <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar más artículos</button>
+      <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar y cerrar</button>
       {% else %}
       <button type="submit" name="accion" value="guardar" {% if cantidad_bloqueada and precio_bloqueado %}disabled{% endif %} class="boton-exito" id="boton-guardar-compra">Guardar</button>
       <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
