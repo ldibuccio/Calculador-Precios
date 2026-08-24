@@ -107,8 +107,7 @@
     border-top: 2px solid #ddd;
     font-weight: 800;
   }
-  .fila-total .mal { color: #991b1b; }
-  .fila-total .bien { color: #166534; }
+  .fila-total .declarado-info { color: #888; font-weight: 500; font-size: 0.85rem; }
   .fila-armado {
     display: flex;
     justify-content: space-between;
@@ -295,6 +294,7 @@
     <a class="boton" href="/deposito/pedido/cargar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">
       {% if pedido %}Cargar pedido corregido{% else %}Cargar Pedido{% endif %}
     </a>
+    <a class="boton" href="/deposito/pedido/buscar?cliente_id={{ cliente_id }}">Buscar Pedidos</a>
     {% endif %}
   </div>
 
@@ -319,7 +319,7 @@
     <a class="item-pedido {% if p.completo %}completo{% endif %} {% if p.fecha == fecha %}abierto{% endif %}"
        href="/deposito/pedido?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
       Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.cerrado %} · TERMINADO ✔{% elif p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
     </a>
     {% endfor %}
     {% for m in dias_marcados | default([]) %}
@@ -346,10 +346,6 @@
   {% if confirmado_automaticamente %}
   <div class="aviso-auto">🤖 Confirmado automáticamente {{ confirmado_automaticamente.procesado_el|fecha_hora }} desde el mail de la casilla (“{{ confirmado_automaticamente.asunto }}”): la lectura por estructura cuadró al 100% con los totales del mail. Nadie lo revisó a mano.</div>
   {% endif %}
-
-  {% for d in descuadres %}
-  <div class="descuadre">⚠ {{ d }}</div>
-  {% endfor %}
 
   {% if pedido.reemplaza_a_pedido_id %}
   <div class="aviso-reemplazo">Este pedido reemplaza al cargado {{ pedido.reemplazado_creado_en|fecha_hora }} (quedó anulado, de registro). Revisá lo que ya habías armado con el anterior.</div>
@@ -403,7 +399,9 @@
     {% endif %}
     <div class="fila-total">
       <span>Leído</span>
-      <span class="{% if s.total_bultos_declarado is not none and s.suma_leida != s.total_bultos_declarado|float %}mal{% else %}bien{% endif %}">{{ s.suma_leida|numero }}{% if s.total_bultos_declarado is not none %} / {{ s.total_bultos_declarado|numero }}{% endif %}</span>
+      {# El declarado del mail es solo un DATO (Día se equivoca sumando):
+         sin colores de alarma — se confía en lo leído por estructura. #}
+      <span>{{ s.suma_leida|numero }}{% if s.total_bultos_declarado is not none %} <span class="declarado-info">(mail: {{ s.total_bultos_declarado|numero }})</span>{% endif %}</span>
     </div>
     {% if s.renglones_armados %}
     <div class="fila-armado">

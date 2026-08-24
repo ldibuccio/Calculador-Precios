@@ -210,8 +210,10 @@
   </form>
 
   <script>
-    // Control cruzado EN VIVO: suma lo leído por sucursal (descartados
-    // afuera) y lo compara contra el total declarado del mail.
+    // Resumen EN VIVO por sucursal: la suma de lo leído, con el total
+    // declarado del mail como DATO al lado. Sin alarma de descuadre (el
+    // supermercado se equivoca sumando sus propios totales — decisión del
+    // 24/08/2026): se confía en lo leído por estructura.
     var SUCURSALES = [
       {% for s in sucursales %}{ nombre: {{ s.sucursal|tojson }}, declarado: {{ s.total_bultos_declarado if s.total_bultos_declarado is not none else 'null' }} }{% if not loop.last %},{% endif %}{% endfor %}
     ];
@@ -230,13 +232,9 @@
           if (!isNaN(valor)) suma += valor;
         }
         if (sucursal.declarado === null) {
-          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span>leí ' + suma + ' bultos (sin total para comparar)</span></div>';
-        } else if (suma === sucursal.declarado) {
-          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span class="cuadra">leí ' + suma + ' = declarado ✔</span></div>';
+          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span>leí ' + suma + ' bultos</span></div>';
         } else {
-          var diferencia = sucursal.declarado - suma;
-          var detalle = diferencia > 0 ? ("faltan " + diferencia) : ("sobran " + (-diferencia));
-          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span class="descuadre">leí ' + suma + ' pero el mail dice ' + sucursal.declarado + ' — ' + detalle + '</span></div>';
+          html += '<div class="sucursal-resumen"><span>' + sucursal.nombre + '</span><span>leí ' + suma + ' bultos (el mail declara ' + sucursal.declarado + ')</span></div>';
         }
       });
       contenedor.innerHTML = html;

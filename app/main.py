@@ -111,8 +111,13 @@ from app.db import (
     listar_mails_pedido,
     listar_pedidos_vigentes_con_armado,
     listar_renglones_pedidos_vigentes,
+    anular_renglon_pedido,
+    buscar_renglones_pedidos,
+    cerrar_armado_pedido,
+    desanular_renglon_pedido,
     marcar_dia_sin_pedido,
     marcar_lectura_mail_pedido,
+    reabrir_armado_pedido,
     marcar_mail_pedido_confirmado,
     marcar_mail_pedido_error,
     marcar_mail_pedido_ignorado,
@@ -207,6 +212,7 @@ from core.casilla_pedidos import (
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
+from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
 from core.lector_comandas import (
@@ -7676,6 +7682,8 @@ def _listado_de_pedidos(cliente_id: int, hoy) -> list[dict]:
                 "renglones_totales": pedido["renglones_totales"],
                 "renglones_armados": pedido["renglones_armados"],
                 "sin_identificar": pedido["sin_identificar"],
+                # Cierre explícito del armado ("Terminar pedido").
+                "cerrado": pedido.get("armado_cerrado_el") is not None,
                 # Completo = todos los identificados armados y ninguno sin
                 # identificar: se marca, no desaparece.
                 "completo": (
@@ -7903,9 +7911,7 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
             contexto["confirmado_automaticamente"] = mail_del_pedido
 
     sumas = _sumas_leidas_por_sucursal(renglones)
-    descuadres = []
     for sucursal in sucursales:
-        declarado = sucursal.get("total_bultos_declarado")
         suma = sumas.get(sucursal["sucursal"], 0.0)
         sucursal["suma_leida"] = suma
         # El armado real: lo que efectivamente se armó (con las cantidades
@@ -7920,13 +7926,6 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         sucursal["incompletos"] = sum(
             1 for r in armados if r["cantidad_armada"] is not None and float(r["cantidad_armada"]) != float(r["cantidad"])
         )
-        if declarado is not None and float(declarado) != suma:
-            diferencia = float(declarado) - suma
-            detalle = f"faltan {_formatear_numero(abs(diferencia))}" if diferencia > 0 else f"sobran {_formatear_numero(abs(diferencia))}"
-            descuadres.append(
-                f"Leí {_formatear_numero(suma)} bultos para {sucursal['sucursal']} pero el mail dice "
-                f"{_formatear_numero(declarado)} — {detalle}."
-            )
 
     sin_identificar = [r for r in renglones if r["articulo_id"] is None]
     renglones_por_sucursal: dict = {}
@@ -7939,7 +7938,6 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         {
             "pedido": pedido,
             "sucursales": sucursales,
-            "descuadres": descuadres,
             "sin_identificar": sin_identificar,
             "renglones_por_sucursal": renglones_por_sucursal,
             "fotos": fotos,
@@ -7947,6 +7945,180 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
+
+
+def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
+    """Agrupa los renglones de Buscar Pedidos por fecha, con los totales que se facturan.
+
+    Los kilos son SIEMPRE los kilos_enviados que grabó el depósito al
+    armar — un renglón sin kilaje se cuenta aparte, jamás se calcula el
+    de la ficha acá. Los anulados se muestran (registrados) pero no suman.
+    """
+    grupos: list[dict] = []
+    grupos_por_fecha: dict = {}
+    total_kilos = 0.0
+    total_bultos = 0.0
+    sin_kilaje = 0
+    anulados = 0
+
+    for renglon in renglones:
+        fecha = renglon["fecha_operacion"]
+        grupo = grupos_por_fecha.get(fecha)
+        if grupo is None:
+            grupo = {
+                "fecha": fecha,
+                "fecha_mostrar": fecha.strftime("%d/%m/%Y"),
+                "filas": [],
+                "kilos": 0.0,
+                "bultos": 0.0,
+                "sin_kilaje": 0,
+            }
+            grupos_por_fecha[fecha] = grupo
+            grupos.append(grupo)
+
+        # Los bultos que se mandaron: la cantidad armada real si existe,
+        # si no lo pedido (el renglón sin armar muestra lo pedido).
+        bultos = float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None else float(renglon["cantidad"])
+        anulado = renglon["anulado_el"] is not None
+        armado = renglon["armado_el"] is not None
+        kilos = float(renglon["kilos_enviados"]) if renglon["kilos_enviados"] is not None else None
+
+        fila = {
+            "articulo_nombre": renglon["articulo_nombre"] or "(sin identificar)",
+            "sucursal": renglon["sucursal"],
+            "bultos": bultos,
+            "kilos": kilos,
+            "anulado": anulado,
+            "armado": armado,
+        }
+        grupo["filas"].append(fila)
+
+        if anulado:
+            anulados += 1
+            continue
+        grupo["bultos"] += bultos
+        total_bultos += bultos
+        if kilos is not None:
+            grupo["kilos"] += kilos
+            total_kilos += kilos
+        else:
+            grupo["sin_kilaje"] += 1
+            sin_kilaje += 1
+
+    totales = {
+        "kilos": total_kilos,
+        "bultos": total_bultos,
+        "sin_kilaje": sin_kilaje,
+        "anulados": anulados,
+        "renglones": len(renglones),
+    }
+    return grupos, totales
+
+
+def _leer_filtros_buscar_pedidos(cliente_id_texto, fecha_desde_texto, fecha_hasta_texto):
+    cliente_id = _id_opcional_desde_query(cliente_id_texto)
+    hoy = _hoy_argentina()
+    fecha_desde = hoy - timedelta(days=7)
+    fecha_hasta = hoy
+    error_fecha = None
+    if fecha_desde_texto:
+        try:
+            fecha_desde = date.fromisoformat(fecha_desde_texto)
+        except ValueError:
+            error_fecha = "La fecha desde no es válida."
+    if fecha_hasta_texto:
+        try:
+            fecha_hasta = date.fromisoformat(fecha_hasta_texto)
+        except ValueError:
+            error_fecha = "La fecha hasta no es válida."
+    if error_fecha is None and fecha_desde > fecha_hasta:
+        error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
+    return cliente_id, fecha_desde, fecha_hasta, error_fecha
+
+
+@app.get("/deposito/pedido/buscar")
+def ver_buscar_pedidos(
+    request: Request,
+    cliente_id: str | None = None,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+):
+    """Buscar Pedidos: lo que se mandó por fecha y artículo, con los KILOS REALES del depósito.
+
+    Es la pantalla para facturar: los kilos son los que el depósito grabó
+    al armar cada renglón (editables en Armar Pedido), no los de la
+    ficha. Un renglón sin kilaje lo dice tal cual.
+    """
+    cliente_valor, desde, hasta, error_fecha = _leer_filtros_buscar_pedidos(cliente_id, fecha_desde, fecha_hasta)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "clientes": clientes,
+        "cliente_id": cliente_valor,
+        "fecha_desde": desde.isoformat(),
+        "fecha_hasta": hasta.isoformat(),
+        "error_fecha": error_fecha,
+        "grupos": None,
+        "totales": None,
+    }
+    if cliente_valor is None or error_fecha:
+        return templates.TemplateResponse(request, "deposito_pedido_buscar.html", contexto)
+
+    try:
+        renglones = buscar_renglones_pedidos(cliente_valor, desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    grupos, totales = _grupos_buscar_pedidos(renglones)
+    contexto["grupos"] = grupos
+    contexto["totales"] = totales
+    return templates.TemplateResponse(request, "deposito_pedido_buscar.html", contexto)
+
+
+def _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta):
+    cliente_valor, desde, hasta, error_fecha = _leer_filtros_buscar_pedidos(cliente_id, fecha_desde, fecha_hasta)
+    if cliente_valor is None:
+        raise HTTPException(status_code=400, detail="Elegí el cliente antes de exportar.")
+    if error_fecha:
+        raise HTTPException(status_code=400, detail=error_fecha)
+    try:
+        cliente_dato = obtener_cliente(cliente_valor)
+        renglones = buscar_renglones_pedidos(cliente_valor, desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    grupos, totales = _grupos_buscar_pedidos(renglones)
+    nombre_cliente = cliente_dato["nombre"] if cliente_dato else f"#{cliente_valor}"
+    return desde, hasta, nombre_cliente, grupos, totales
+
+
+@app.get("/deposito/pedido/buscar/exportar-pdf")
+def exportar_pedidos_pdf(cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = ""):
+    """Buscar Pedidos en PDF (mismos filtros que la pantalla) — sin tope."""
+    desde, hasta, nombre_cliente, grupos, totales = _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta)
+    pdf_bytes = generar_pdf_pedidos(desde, hasta, nombre_cliente, grupos, totales)
+    nombre_archivo = f"Pedidos_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/deposito/pedido/buscar/exportar-excel")
+def exportar_pedidos_excel(cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = ""):
+    """Buscar Pedidos en Excel (mismos filtros que la pantalla) — sin tope."""
+    desde, hasta, nombre_cliente, grupos, totales = _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta)
+    excel_bytes = generar_excel_pedidos(desde, hasta, nombre_cliente, grupos, totales)
+    nombre_archivo = f"Pedidos_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
 
 
 @app.get("/deposito/pedido/cargar")
@@ -8368,7 +8540,7 @@ def _diff_pedido_contra_anterior(renglones_nuevos: list[dict], renglones_viejos:
 
 
 @app.get("/deposito/pedido/armar")
-def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None):
+def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str | None = None, sucursal: str | None = None, aviso: str | None = None):
     """Armar Pedido: el del depósito, parado y con una mano — sin clave, es la operación del día a día.
 
     Primero el LISTADO de pedidos (hoy primero, después los próximos —
@@ -8398,6 +8570,7 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         "pedido": None,
         "sucursal_elegida": None,
         "modo_lista": modo_lista,
+        "aviso": aviso,
     }
     if cliente_id_valor is None:
         return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
@@ -8425,9 +8598,11 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     if pedido is None:
         return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
 
-    # Progreso por sucursal, sobre los renglones IDENTIFICADOS (los sin
-    # identificar no se pueden armar: se asignan primero desde Pedido).
-    identificados = [r for r in renglones if r["articulo_id"] is not None]
+    # Progreso por sucursal, sobre los renglones IDENTIFICADOS y NO
+    # anulados (los sin identificar se asignan primero desde Pedido; los
+    # anulados no se van a armar y no cuentan en el progreso).
+    identificados = [r for r in renglones if r["articulo_id"] is not None and r["anulado_el"] is None]
+    anulados_todos = [r for r in renglones if r["articulo_id"] is not None and r["anulado_el"] is not None]
     for s in sucursales:
         propios = [r for r in identificados if r["sucursal"] == s["sucursal"]]
         s["total_renglones"] = len(propios)
@@ -8447,6 +8622,9 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
             "sucursales": sucursales,
             "sin_identificar": sin_identificar,
             "diff": diff,
+            # Para el confirm de "Terminar pedido": cuántos quedan sin
+            # tildar en TODO el pedido (todas las sucursales).
+            "pendientes_totales": sum(1 for r in identificados if r["armado_el"] is None),
         }
     )
 
@@ -8454,15 +8632,49 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     if sucursal_valida is None:
         return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
 
+    # Los kilos con los que se manda cada renglón: el default sale de la
+    # ficha (bultos × contenido por caja) pero es EDITABLE — lo que queda
+    # grabado es lo que el depósito dijo que mandó, no la ficha.
+    try:
+        fichas = listar_fichas_por_cliente(cliente_id_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    contenido_por_articulo = {
+        f["articulo_id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")
+    }
+
+    def _kilos_de_ficha(renglon, bultos):
+        contenido = contenido_por_articulo.get(renglon["articulo_id"])
+        if contenido is None or bultos is None:
+            return None
+        return round(float(bultos) * contenido, 2)
+
     propios = [r for r in identificados if r["sucursal"] == sucursal_valida["sucursal"]]
     pendientes = sorted((r for r in propios if r["armado_el"] is None), key=lambda r: r["articulo_nombre"])
     armados = sorted((r for r in propios if r["armado_el"] is not None), key=lambda r: r["articulo_nombre"])
+    anulados = sorted(
+        (r for r in anulados_todos if r["sucursal"] == sucursal_valida["sucursal"]),
+        key=lambda r: r["articulo_nombre"],
+    )
+    for r in pendientes:
+        r["kilos_sugeridos"] = _kilos_de_ficha(r, r["cantidad"])
+        r["contenido_caja"] = contenido_por_articulo.get(r["articulo_id"])
+    for r in armados:
+        # Con qué comparar para la marca "editado a mano": el cálculo de
+        # ficha sobre los bultos que realmente armó.
+        bultos_reales = r["cantidad_armada"] if r["cantidad_armada"] is not None else r["cantidad"]
+        kilos_ficha = _kilos_de_ficha(r, bultos_reales)
+        r["kilos_editados"] = (
+            r["kilos_enviados"] is not None
+            and (kilos_ficha is None or float(r["kilos_enviados"]) != kilos_ficha)
+        )
 
     contexto.update(
         {
             "sucursal_elegida": sucursal_valida,
             "pendientes": pendientes,
             "armados": armados,
+            "anulados": anulados,
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
@@ -8481,8 +8693,14 @@ def armar_renglon_pedido_ruta(
     sucursal: str = Form(""),
     cantidad_armada: str = Form(""),
     cantidad_pedida: str = Form(""),
+    kilos_enviados: str = Form(""),
 ):
-    """Tilda un renglón como armado. Con cantidad_armada (menor a lo pedido), queda "incompleto" con su cantidad real."""
+    """Tilda un renglón como armado. Con cantidad_armada (menor a lo pedido), queda "incompleto" con su cantidad real.
+
+    kilos_enviados: los kilos REALES con los que se manda el renglón (lo
+    que se factura). Viene precargado con el cálculo de la ficha pero es
+    editable; vacío = sin kilaje (queda NULL, los listados lo dicen).
+    """
     cantidad_armada_valor = None
     texto = cantidad_armada.strip()
     if texto:
@@ -8498,8 +8716,18 @@ def armar_renglon_pedido_ruta(
         if pedida is not None and cantidad_armada_valor >= pedida:
             cantidad_armada_valor = None
 
+    kilos_valor = None
+    texto_kilos = kilos_enviados.strip()
+    if texto_kilos:
+        try:
+            kilos_valor = float(texto_kilos)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Los kilos enviados tienen que ser un número.")
+        if kilos_valor <= 0:
+            raise HTTPException(status_code=400, detail="Los kilos enviados tienen que ser mayores a cero.")
+
     try:
-        marcar_renglon_armado(renglon_id, cantidad_armada_valor)
+        marcar_renglon_armado(renglon_id, cantidad_armada_valor, kilos_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo marcar el renglón: {error_db}") from error_db
 
@@ -8521,6 +8749,63 @@ def desarmar_renglon_pedido_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo destildar el renglón: {error_db}") from error_db
 
     return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/anular")
+def anular_renglon_pedido_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    sucursal: str = Form(""),
+):
+    """La CRUZ: este artículo no se va a armar. Anulado (registrado, nunca borrado), fuera del progreso."""
+    try:
+        anular_renglon_pedido(renglon_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el renglón: {error_db}") from error_db
+    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/desanular")
+def desanular_renglon_pedido_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    sucursal: str = Form(""),
+):
+    """Deshace la cruz: el renglón vuelve a los pendientes."""
+    try:
+        desanular_renglon_pedido(renglon_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo reponer el renglón: {error_db}") from error_db
+    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+
+
+@app.post("/deposito/pedido/{pedido_id}/terminar")
+def terminar_pedido_ruta(pedido_id: int, cliente_id: int = Form(...), fecha: str = Form("")):
+    """El "Terminar pedido": cierre explícito del armado. Con renglones sin tildar se confirma en pantalla, no se impide."""
+    try:
+        cerrar_armado_pedido(pedido_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo terminar el pedido: {error_db}") from error_db
+    return RedirectResponse(
+        url=f"/deposito/pedido/armar?{urlencode({'cliente_id': cliente_id, 'aviso': f'Pedido del {fecha} terminado.'})}",
+        status_code=303,
+    )
+
+
+@app.post("/deposito/pedido/{pedido_id}/reabrir")
+def reabrir_pedido_ruta(pedido_id: int, cliente_id: int = Form(...), fecha: str = Form("")):
+    """Reabre un pedido terminado (el cierre es operativo, no un candado)."""
+    try:
+        reabrir_armado_pedido(pedido_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo reabrir el pedido: {error_db}") from error_db
+    return RedirectResponse(
+        url=f"/deposito/pedido/armar?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
+    )
 
 
 # --- Casilla de pedidos (etapa 3, tramo 1): configuración y revisión manual ---
@@ -8859,7 +9144,7 @@ def _le_toca_revision(casilla: dict, ahora) -> bool:
 def _intentar_auto_confirmar(mail: dict) -> bool:
     """Confirma solo el mail que cuadra al CIEN por ciento, sin tocar nada dudoso. Devuelve si confirmó.
 
-    Los candados, en orden (cualquiera que no cierra deja el mail
+    CINCO candados, en orden (cualquiera que no cierra deja el mail
     PENDIENTE para revisar a mano, sin marcar nada):
     1. El mail está pendiente (un error previo se revisa a mano).
     2. La fecha sale del ASUNTO y es creíble (sin fecha, o a más de 5
@@ -8867,8 +9152,13 @@ def _intentar_auto_confirmar(mail: dict) -> bool:
     3. Lo leyó el parser por ESTRUCTURA — la IA nunca confirma sola.
     4. Todos los renglones identificados por código o nombre exacto
        (una sugerencia difusa es una decisión humana).
-    5. Todas las sucursales con total declarado y la suma leída EXACTA.
-    6. No hay pedido vigente para esa fecha (reemplazar es decisión humana).
+    5. No hay pedido vigente para esa fecha (reemplazar es decisión humana).
+
+    El candado de "sumas exactas contra el total declarado" SE SACÓ a
+    pedido del dueño (24/08/2026): Día se equivoca sumando sus propios
+    totales, y contra lecturas rotas la red real es el candado 3 — el
+    parser estructural lee la grilla validada entera o devuelve None. El
+    total declarado se sigue guardando como dato, sin frenar nada.
     """
     if mail["estado"] != "pendiente":
         return False
@@ -8897,16 +9187,6 @@ def _intentar_auto_confirmar(mail: dict) -> bool:
         return False
 
     sucursales = _sucursales_desde_bloque(bloque, renglones)
-    sumas: dict = {}
-    for renglon in renglones:
-        for nombre_sucursal, cantidad in renglon["cantidades"].items():
-            cantidad_valor = _numero_pedido_o_none(cantidad)
-            if cantidad_valor is not None:
-                sumas[nombre_sucursal] = sumas.get(nombre_sucursal, 0.0) + cantidad_valor
-    for sucursal in sucursales:
-        declarado = sucursal["total_bultos_declarado"]
-        if declarado is None or float(declarado) != sumas.get(sucursal["sucursal"], 0.0):
-            return False
 
     if obtener_pedido_vigente(mail["cliente_id"], fecha_valor) is not None:
         return False

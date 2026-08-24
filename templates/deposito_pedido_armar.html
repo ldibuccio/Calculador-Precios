@@ -162,6 +162,96 @@
     cursor: pointer;
     white-space: nowrap;
   }
+  .campo-kilos { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.35rem; }
+  .campo-kilos label { font-size: 0.85rem; color: #444; white-space: nowrap; }
+  .campo-kilos input {
+    width: 6.5rem;
+    padding: 0.55rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+  .campo-kilos .unidad { font-size: 0.9rem; color: #666; }
+  .ayuda-kilos { font-size: 0.78rem; color: #888; margin: 0.15rem 0 0; }
+  .kilos-enviados { font-size: 0.9rem; color: #444; }
+  .marca-kilos-mano {
+    display: inline-block;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .sin-kilaje { color: #991b1b; font-weight: 700; font-size: 0.85rem; }
+  .acciones-renglon-armar { display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
+  .boton-anular {
+    width: 3.4rem;
+    height: 2.2rem;
+    border-radius: 10px;
+    border: 1px solid #dc2626;
+    background: #fff;
+    color: #dc2626;
+    font-size: 1rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .renglon-armar.anulado { opacity: 0.55; }
+  .renglon-armar.anulado .nombre { text-decoration: line-through; color: #991b1b; }
+  details.seccion-cerrados { margin-top: 0.75rem; }
+  details.seccion-cerrados summary {
+    background: #fff;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    font-weight: 700;
+    color: #2563eb;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  details.seccion-cerrados .tarjeta { margin-top: 0.5rem; }
+  .boton-terminar {
+    display: block;
+    width: 100%;
+    margin-top: 1rem;
+    padding: 0.9rem;
+    background: #16a34a;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.05rem;
+    font-weight: 800;
+    text-align: center;
+    cursor: pointer;
+  }
+  .banner-terminado {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .banner-terminado form { margin-top: 0.5rem; }
+  .boton-reabrir {
+    padding: 0.55rem 0.9rem;
+    background: #fff;
+    color: #166534;
+    border: 1px solid #16a34a;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -192,6 +282,10 @@
   </div>
   {% endif %}
 
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
   {% if modo_lista and cliente_id %}
   <div class="tarjeta">
     <h2>Pedidos para armar</h2>
@@ -200,7 +294,7 @@
       <a class="boton-sucursal {% if p.completo %}completa{% endif %}"
          href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
         Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.cerrado %} · TERMINADO ✔{% elif p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
       </a>
       {% endfor %}
     {% else %}
@@ -226,7 +320,18 @@
   {% endif %}
 
   {% if pedido and sin_identificar and not sucursal_elegida %}
-  <div class="aviso-sin-identificar">Hay {{ sin_identificar }} renglón{{ "es" if sin_identificar != 1 else "" }} sin identificar: no se pueden armar. Asignalos primero desde la pantalla Pedido.</div>
+  <div class="aviso-sin-identificar">Hay {{ sin_identificar }} {% if sin_identificar == 1 %}renglón{% else %}renglones{% endif %} sin identificar: no se pueden armar. Asignalos primero desde la pantalla Pedido.</div>
+  {% endif %}
+
+  {% if pedido and not sucursal_elegida and pedido.armado_cerrado_el %}
+  <div class="banner-terminado">
+    Pedido terminado {{ pedido.armado_cerrado_el|fecha_hora }}. Se puede seguir consultando y tocando; si hace falta, reabrilo.
+    <form method="post" action="/deposito/pedido/{{ pedido.id }}/reabrir">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <input type="hidden" name="fecha" value="{{ fecha }}">
+      <button type="submit" class="boton-reabrir">Reabrir pedido</button>
+    </form>
+  </div>
   {% endif %}
 
   {% if pedido and not sucursal_elegida %}
@@ -239,6 +344,16 @@
       <span class="detalle">{% if s.orden_compra %}OC {{ s.orden_compra }}{% else %}sin OC{% endif %}{% if s.incompletos %} · {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>
     </a>
     {% endfor %}
+    {% if not pedido.armado_cerrado_el %}
+    {# El cierre explícito, abajo de todo: con renglones sin tildar se
+       AVISA cuántos y se confirma — nunca se impide. #}
+    <form method="post" action="/deposito/pedido/{{ pedido.id }}/terminar"
+          onsubmit="return confirm({% if pendientes_totales %}'Quedan {{ pendientes_totales }} {% if pendientes_totales == 1 %}renglón{% else %}renglones{% endif %} sin tildar. ¿Terminar el pedido igual?'{% else %}'¿Terminar el pedido?'{% endif %});">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <input type="hidden" name="fecha" value="{{ fecha }}">
+      <button type="submit" class="boton-terminar">Terminar pedido{% if pendientes_totales %} ({{ pendientes_totales }} sin tildar){% endif %}</button>
+    </form>
+    {% endif %}
     <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
   </div>
   {% endif %}
@@ -248,7 +363,7 @@
     <div class="numeros">{{ sucursal_elegida.sucursal }}: {{ sucursal_elegida.armados }} de {{ sucursal_elegida.total_renglones }} armados</div>
     <div class="oc">Pedido del {{ fecha_mostrar }} · {% if sucursal_elegida.orden_compra %}OC {{ sucursal_elegida.orden_compra }}{% else %}sin OC{% endif %}</div>
     {% if sucursal_elegida.incompletos %}
-    <div class="incompletos">{{ sucursal_elegida.incompletos }} renglón{{ "es" if sucursal_elegida.incompletos != 1 else "" }} incompleto{{ "s" if sucursal_elegida.incompletos != 1 else "" }} (se armó menos de lo pedido)</div>
+    <div class="incompletos">{{ sucursal_elegida.incompletos }} {% if sucursal_elegida.incompletos == 1 %}renglón incompleto{% else %}renglones incompletos{% endif %} (se armó menos de lo pedido)</div>
     {% endif %}
   </div>
 
@@ -257,27 +372,46 @@
     {% if pendientes %}
       {% for r in pendientes %}
       <div class="renglon-armar">
-        <div class="datos">
-          <div class="nombre">{{ r.articulo_nombre }}</div>
-          <div class="cantidad">{{ r.cantidad|numero }} bultos</div>
-          <button type="button" class="link-parcial" onclick="document.getElementById('parcial-{{ r.id }}').classList.toggle('abierto')">Armé menos</button>
-          <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/armar"
-                class="form-parcial" id="parcial-{{ r.id }}">
-            <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-            <input type="hidden" name="fecha" value="{{ fecha }}">
-            <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
-            <input type="hidden" name="cantidad_pedida" value="{{ r.cantidad }}">
-            <input type="number" name="cantidad_armada" min="0.01" step="0.01" max="{{ r.cantidad }}"
-                   placeholder="¿Cuántos?" required>
-            <button type="submit">Listo</button>
-          </form>
-        </div>
-        <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/armar">
+        {# UN solo form por renglón: el tilde y el "Armé menos" mandan lo
+           mismo (incluidos los KILOS, editables) por caminos distintos. #}
+        <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/armar"
+              id="armar-{{ r.id }}" class="datos" data-contenido="{{ r.contenido_caja if r.contenido_caja is not none else '' }}">
           <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
           <input type="hidden" name="fecha" value="{{ fecha }}">
           <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
-          <button type="submit" class="boton-tilde" aria-label="Marcar {{ r.articulo_nombre }} como armado">✓</button>
+          <input type="hidden" name="cantidad_pedida" value="{{ r.cantidad }}">
+          <div class="nombre">{{ r.articulo_nombre }}</div>
+          <div class="cantidad">{{ r.cantidad|numero }} bultos</div>
+          {# Los kilos REALES con los que se manda: precargados con la
+             ficha, editables — lo que se guarda es lo que se factura. #}
+          <div class="campo-kilos">
+            <label for="kilos-{{ r.id }}">Kilos que mando</label>
+            <input type="number" id="kilos-{{ r.id }}" name="kilos_enviados" min="0.01" step="0.01"
+                   value="{% if r.kilos_sugeridos is not none %}{{ r.kilos_sugeridos|numero }}{% endif %}">
+            <span class="unidad">kg</span>
+          </div>
+          {% if r.kilos_sugeridos is not none %}
+          <p class="ayuda-kilos">Según ficha: {{ r.kilos_sugeridos|numero }} kg ({{ r.cantidad|numero }} × {{ r.contenido_caja|numero }}). Corregilo si mandás distinto.</p>
+          {% else %}
+          <p class="ayuda-kilos">La ficha no tiene contenido por caja: cargá los kilos a mano si los sabés.</p>
+          {% endif %}
+          <button type="button" class="link-parcial" onclick="document.getElementById('parcial-{{ r.id }}').classList.toggle('abierto')">Armé menos</button>
+          <div class="form-parcial" id="parcial-{{ r.id }}">
+            <input type="number" name="cantidad_armada" min="0.01" step="0.01" max="{{ r.cantidad }}"
+                   placeholder="¿Cuántos?" oninput="recalcularKilos('{{ r.id }}')">
+            <button type="submit">Listo</button>
+          </div>
         </form>
+        <div class="acciones-renglon-armar">
+          <button type="submit" form="armar-{{ r.id }}" class="boton-tilde" aria-label="Marcar {{ r.articulo_nombre }} como armado">✓</button>
+          <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/anular"
+                onsubmit="return confirm('¿Anular {{ r.articulo_nombre }}? No se va a armar. Queda registrado como anulado y se puede reponer.');">
+            <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+            <input type="hidden" name="fecha" value="{{ fecha }}">
+            <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
+            <button type="submit" class="boton-anular" aria-label="Anular {{ r.articulo_nombre }}">✗</button>
+          </form>
+        </div>
       </div>
       {% endfor %}
     {% else %}
@@ -286,8 +420,11 @@
   </div>
 
   {% if armados %}
-  <div class="tarjeta">
-    <h2>Ya armado ({{ armados|length }})</h2>
+  {# Los terminados SE VAN de la lista de arriba: quedan acá abajo,
+     plegados — como en Vacíos y Retiros. Deshacer desde acá. #}
+  <details class="seccion-cerrados">
+    <summary>Ya armado ({{ armados|length }})</summary>
+    <div class="tarjeta">
     {% for r in armados %}
     <div class="renglon-armar armado">
       <div class="datos">
@@ -296,6 +433,11 @@
           {% if r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
           <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
           {% else %}{{ r.cantidad|numero }} bultos{% endif %}
+        </div>
+        <div class="kilos-enviados">
+          {% if r.kilos_enviados is not none %}
+          Mandó {{ r.kilos_enviados|numero }} kg{% if r.kilos_editados %} <span class="marca-kilos-mano">kilaje editado a mano</span>{% endif %}
+          {% else %}<span class="sin-kilaje">sin kilaje cargado</span>{% endif %}
         </div>
       </div>
       <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
@@ -306,8 +448,46 @@
       </form>
     </div>
     {% endfor %}
-  </div>
+    </div>
+  </details>
   {% endif %}
+
+  {% if anulados %}
+  <details class="seccion-cerrados">
+    <summary>Anulados ({{ anulados|length }})</summary>
+    <div class="tarjeta">
+    {% for r in anulados %}
+    <div class="renglon-armar anulado">
+      <div class="datos">
+        <div class="nombre">{{ r.articulo_nombre }}</div>
+        <div class="cantidad">{{ r.cantidad|numero }} bultos — anulado (no se armó)</div>
+      </div>
+      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desanular">
+        <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+        <input type="hidden" name="fecha" value="{{ fecha }}">
+        <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
+        <button type="submit" class="boton-destildar">Reponer</button>
+      </form>
+    </div>
+    {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  <script>
+    // "Armé menos" cambia los bultos reales: los kilos sugeridos acompañan
+    // (bultos armados × contenido de ficha) — siempre editables después.
+    function recalcularKilos(renglonId) {
+      const form = document.getElementById("armar-" + renglonId);
+      const contenido = parseFloat(form.dataset.contenido);
+      const armada = parseFloat(form.querySelector('[name="cantidad_armada"]').value);
+      if (!contenido || !armada) {
+        return;
+      }
+      const kilos = Math.round(armada * contenido * 100) / 100;
+      document.getElementById("kilos-" + renglonId).value = kilos;
+    }
+  </script>
 
   <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>
   {% endif %}

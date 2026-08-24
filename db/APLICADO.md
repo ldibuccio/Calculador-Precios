@@ -56,6 +56,7 @@ bases estén marcadas.
 | `agregar_leido_con_ia_mails_pedido.sql` | ✅ 2026-08-22 | ✅ 2026-08-22 |
 | `agregar_condiciones_pedido.sql` | ✅ 2026-08-22 (verificado: 2 tablas creadas) | ✅ 2026-08-22 (verificado: 2 tablas creadas) |
 | `agregar_horario_revision_casilla.sql` | ✅ 2026-08-24 (verificado) | ✅ 2026-08-24 (verificado) |
+| `agregar_kilos_y_cierre_armado.sql` | ✅ 2026-08-24 (verificado: 3 columnas creadas) | ✅ 2026-08-24 (verificado: 3 columnas creadas) |
 
 ## Deuda pendiente de limpieza
 

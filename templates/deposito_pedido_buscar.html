@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buscar Pedidos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .filtros label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  .filtros select, .filtros input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .filtros .fechas { display: flex; gap: 0.6rem; }
+  .filtros .fechas > div { flex: 1; min-width: 0; }
+  button.boton-buscar, .boton-exportar {
+    display: block;
+    width: 100%;
+    margin-top: 0.9rem;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-exportar { background: #fff; color: #2563eb; border: 1px solid #2563eb; margin-top: 0.6rem; }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .total {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .total .numero-grande { font-size: 1.5rem; font-weight: 800; color: #1d4ed8; }
+  .total .detalle { color: #666; font-size: 0.9rem; margin-top: 0.25rem; }
+  .total .afuera {
+    font-size: 0.9rem;
+    color: #991b1b;
+    font-weight: 700;
+    margin: 0.5rem 0 0;
+    padding-top: 0.5rem;
+    border-top: 1px solid #bfdbfe;
+  }
+  .fila-renglon {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid #eee;
+  }
+  .fila-renglon:first-of-type { border-top: none; }
+  .fila-renglon .nombre { font-weight: 600; font-size: 0.95rem; }
+  .fila-renglon .detalle { display: block; color: #666; font-size: 0.82rem; font-weight: 400; margin-top: 0.1rem; }
+  .fila-renglon .kilos { text-align: right; white-space: nowrap; font-weight: 800; font-size: 0.95rem; }
+  .fila-renglon .kilos .bultos { display: block; font-size: 0.82rem; font-weight: 600; color: #666; }
+  .fila-renglon.anulada { opacity: 0.55; }
+  .fila-renglon.anulada .nombre { text-decoration: line-through; color: #991b1b; }
+  .sin-kilaje { color: #991b1b; font-weight: 700; }
+  .marca-estado {
+    display: inline-block;
+    background: #fef9c3;
+    color: #713f12;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .fila-subtotal {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 0.55rem;
+    margin-top: 0.35rem;
+    border-top: 2px solid #ddd;
+    font-weight: 800;
+    font-size: 0.95rem;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Buscar Pedidos" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error_fecha %}
+  <div class="error">{{ error_fecha }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/deposito/pedido/buscar">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()">
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+    {% if grupos is not none %}
+    <a class="boton-exportar" href="/deposito/pedido/buscar/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar PDF</a>
+    <a class="boton-exportar" href="/deposito/pedido/buscar/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar Excel</a>
+    {% endif %}
+    <p class="ayuda">Los kilos son los <strong>enviados por el depósito</strong> al armar cada renglón (lo que se factura), no los de la ficha. Un renglón sin armar figura "sin kilaje".</p>
+  </div>
+
+  {% if grupos is not none %}
+
+  {% if grupos %}
+  <div class="total">
+    <div class="numero-grande">{{ totales.kilos|numero }} kg</div>
+    <div class="detalle">{{ totales.bultos|numero }} bultos en {{ grupos|length }} pedido{{ "s" if grupos|length != 1 }}.</div>
+    {% if totales.sin_kilaje or totales.anulados %}
+    <p class="afuera">{% if totales.sin_kilaje %}{{ totales.sin_kilaje }} {% if totales.sin_kilaje == 1 %}renglón{% else %}renglones{% endif %} sin kilaje (no suman kilos).{% endif %}{% if totales.anulados %} {{ totales.anulados }} anulado{{ "s" if totales.anulados != 1 }} (no suman).{% endif %}</p>
+    {% endif %}
+  </div>
+
+  {% for g in grupos %}
+  <div class="tarjeta">
+    <h2>Pedido del {{ g.fecha_mostrar }}</h2>
+    {% for f in g.filas %}
+    <div class="fila-renglon {% if f.anulado %}anulada{% endif %}">
+      <div class="nombre">
+        {{ f.articulo_nombre }}
+        <span class="detalle">{% if f.sucursal %}{{ f.sucursal }} · {% endif %}{{ f.bultos|numero }} bultos{% if f.anulado %} · <span class="marca-estado">anulado</span>{% elif not f.armado %} · <span class="marca-estado">sin armar</span>{% endif %}</span>
+      </div>
+      <div class="kilos">
+        {% if f.anulado %}—
+        {% elif f.kilos is not none %}{{ f.kilos|numero }} kg
+        {% else %}<span class="sin-kilaje">sin kilaje</span>{% endif %}
+        <span class="bultos">{{ f.bultos|numero }} bultos</span>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="fila-subtotal">
+      <span>Subtotal</span>
+      <span>{{ g.kilos|numero }} kg{% if g.sin_kilaje %} ({{ g.sin_kilaje }} sin kilaje){% endif %} · {{ g.bultos|numero }} bultos</span>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% else %}
+  <div class="tarjeta">
+    <p class="vacio">No hay pedidos en este rango.</p>
+  </div>
+  {% endif %}
+
+  {% endif %}
+</body>
+</html>

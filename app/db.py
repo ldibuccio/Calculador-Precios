@@ -3948,7 +3948,7 @@ def obtener_pedido_vigente(cliente_id: int, fecha) -> dict | None:
             cursor.execute(
                 """
                 SELECT p.id, p.cliente_id, p.fecha_operacion, p.origen, p.recibido_el,
-                       p.reemplaza_a_pedido_id, p.creado_en,
+                       p.reemplaza_a_pedido_id, p.creado_en, p.armado_cerrado_el,
                        reemplazado.creado_en AS reemplazado_creado_en
                 FROM pedidos p
                 LEFT JOIN pedidos reemplazado ON reemplazado.id = p.reemplaza_a_pedido_id
@@ -3998,7 +3998,8 @@ def listar_renglones_pedido(pedido_id: int) -> list[dict]:
             cursor.execute(
                 """
                 SELECT r.id, r.sucursal, r.articulo_id, a.nombre AS articulo_nombre,
-                       r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el, r.cantidad_armada
+                       r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el, r.cantidad_armada,
+                       r.kilos_enviados, r.anulado_el
                 FROM pedidos_renglones r
                 LEFT JOIN articulos a ON a.id = r.articulo_id
                 WHERE r.pedido_id = %s
@@ -4147,19 +4148,23 @@ def borrar_foto_pedido(foto_id: int) -> str | None:
         conexion.close()
 
 
-def marcar_renglon_armado(renglon_id: int, cantidad_armada=None) -> None:
+def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=None) -> None:
     """Tilda un renglón como armado. El tilde significa "terminé con este renglón", no "está completo".
 
     cantidad_armada solo si armó MENOS de lo pedido (Día pide 15 y hay
     12): la cantidad real queda grabada y el renglón figura "incompleto".
     Armado completo va con None — no se guarda un número redundante.
+
+    kilos_enviados: los kilos REALES con los que se mandó el renglón (lo
+    que se factura). El default sugerido en pantalla sale de la ficha,
+    pero acá se guarda lo que el depósito dijo — puede diferir.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s WHERE id = %s",
-                (cantidad_armada, renglon_id),
+                "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s WHERE id = %s",
+                (cantidad_armada, kilos_enviados, renglon_id),
             )
         conexion.commit()
     finally:
@@ -4172,10 +4177,102 @@ def desmarcar_renglon_armado(renglon_id: int) -> None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE pedidos_renglones SET armado_el = NULL, cantidad_armada = NULL WHERE id = %s",
+                "UPDATE pedidos_renglones SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL WHERE id = %s",
                 (renglon_id,),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def anular_renglon_pedido(renglon_id: int) -> None:
+    """La CRUZ del armado: este renglón directamente no se va a armar. Anulado, nunca borrado.
+
+    Si estaba tildado, el tilde y sus números se limpian: anulado y armado
+    son estados excluyentes — un renglón anulado no manda nada.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE pedidos_renglones
+                SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL
+                WHERE id = %s
+                """,
+                (renglon_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def desanular_renglon_pedido(renglon_id: int) -> None:
+    """Deshace la cruz: el renglón vuelve a los pendientes de armar."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE pedidos_renglones SET anulado_el = NULL WHERE id = %s", (renglon_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def cerrar_armado_pedido(pedido_id: int) -> None:
+    """El "Terminar pedido": cierre explícito del armado. Operativo, no un candado — se puede reabrir."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE pedidos SET armado_cerrado_el = now() WHERE id = %s", (pedido_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def reabrir_armado_pedido(pedido_id: int) -> None:
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("UPDATE pedidos SET armado_cerrado_el = NULL WHERE id = %s", (pedido_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[dict]:
+    """Los renglones de los pedidos VIGENTES del rango, para Buscar Pedidos (lo que se factura).
+
+    Trae los KILOS ENVIADOS tal cual los grabó el depósito al armar —
+    NULL si el renglón no se armó: la pantalla lo dice, jamás se calcula
+    el kilaje de la ficha en el listado. Los anulados vienen marcados
+    (anulado_el), nunca desaparecen. Una fila por renglón, del pedido
+    vigente de cada fecha (los reemplazados no cuentan doble).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (fecha_operacion) id, fecha_operacion
+                    FROM pedidos
+                    WHERE cliente_id = %s AND anulado_el IS NULL
+                      AND fecha_operacion >= %s AND fecha_operacion <= %s
+                    ORDER BY fecha_operacion, creado_en DESC
+                )
+                SELECT v.fecha_operacion, r.id, r.sucursal, r.articulo_id,
+                       COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
+                       r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el
+                FROM vigentes v
+                JOIN pedidos_renglones r ON r.pedido_id = v.id
+                LEFT JOIN articulos a ON a.id = r.articulo_id
+                ORDER BY v.fecha_operacion DESC, (r.anulado_el IS NOT NULL),
+                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo), r.sucursal
+                """,
+                (cliente_id, fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()
 
@@ -4611,12 +4708,13 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
             cursor.execute(
                 """
                 SELECT DISTINCT ON (p.fecha_operacion)
-                       p.id, p.fecha_operacion, p.origen, p.creado_en,
-                       (SELECT COUNT(*) FROM pedidos_renglones r
-                        WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL) AS renglones_totales,
+                       p.id, p.fecha_operacion, p.origen, p.creado_en, p.armado_cerrado_el,
                        (SELECT COUNT(*) FROM pedidos_renglones r
                         WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
-                          AND r.armado_el IS NOT NULL) AS renglones_armados,
+                          AND r.anulado_el IS NULL) AS renglones_totales,
+                       (SELECT COUNT(*) FROM pedidos_renglones r
+                        WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                          AND r.anulado_el IS NULL AND r.armado_el IS NOT NULL) AS renglones_armados,
                        (SELECT COUNT(*) FROM pedidos_renglones r
                         WHERE r.pedido_id = p.id AND r.articulo_id IS NULL) AS sin_identificar
                 FROM pedidos p

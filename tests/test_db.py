@@ -36,7 +36,12 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_con_renglones_incompletos,
     activar_casilla_pedidos,
+    anular_renglon_pedido,
     borrar_dia_sin_pedido,
+    buscar_renglones_pedidos,
+    cerrar_armado_pedido,
+    desanular_renglon_pedido,
+    reabrir_armado_pedido,
     crear_casilla_pedidos,
     guardar_condiciones_pedido,
     guardar_horario_revision_casilla,
@@ -2585,13 +2590,13 @@ def test_marcar_renglon_armado_completo_y_parcial():
         marcar_renglon_armado(11)
 
     consulta, parametros = cursor.execute.call_args.args
-    assert "SET armado_el = now(), cantidad_armada = %s" in consulta
-    assert parametros == (None, 11)
+    assert "SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s" in consulta
+    assert parametros == (None, None, 11)
 
     conexion2, cursor2 = _conexion_falsa()
     with patch("app.db.obtener_conexion", return_value=conexion2):
-        marcar_renglon_armado(11, 12.0)
-    assert cursor2.execute.call_args.args[1] == (12.0, 11)
+        marcar_renglon_armado(11, 12.0, 120.0)
+    assert cursor2.execute.call_args.args[1] == (12.0, 120.0, 11)
 
 
 def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
@@ -3006,3 +3011,70 @@ def test_listar_casillas_pedidos_trae_el_horario_de_revision():
     assert "ca.revision_desde" in consulta
     assert "ca.revision_hasta" in consulta
     assert "ca.revision_cada_minutos" in consulta
+
+
+def test_anular_renglon_pedido_limpia_el_tilde_y_sus_numeros():
+    # Anulado y armado son excluyentes: un renglón anulado no manda nada.
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_renglon_pedido(11)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL" in consulta
+    conexion.commit.assert_called_once()
+
+
+def test_desanular_renglon_pedido_vuelve_a_pendientes():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        desanular_renglon_pedido(11)
+
+    assert "SET anulado_el = NULL" in cursor.execute.call_args.args[0]
+
+
+def test_cerrar_y_reabrir_armado_pedido():
+    conexion, cursor = _conexion_falsa()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cerrar_armado_pedido(50)
+    assert "SET armado_cerrado_el = now()" in cursor.execute.call_args.args[0]
+
+    conexion2, cursor2 = _conexion_falsa()
+    with patch("app.db.obtener_conexion", return_value=conexion2):
+        reabrir_armado_pedido(50)
+    assert "SET armado_cerrado_el = NULL" in cursor2.execute.call_args.args[0]
+
+
+def test_buscar_renglones_pedidos_trae_kilos_y_anulados_de_los_vigentes():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [
+        ("fecha_operacion",), ("id",), ("sucursal",), ("articulo_id",), ("articulo_nombre",),
+        ("cantidad",), ("cantidad_armada",), ("kilos_enviados",), ("armado_el",), ("anulado_el",),
+    ]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_renglones_pedidos(1, date(2026, 8, 15), date(2026, 8, 22))
+
+    consulta, parametros = cursor.execute.call_args.args
+    # Solo pedidos VIGENTES (uno por fecha) y los kilos REALES grabados.
+    assert "DISTINCT ON (fecha_operacion)" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "r.kilos_enviados" in consulta
+    assert "r.anulado_el" in consulta
+    assert parametros == (1, date(2026, 8, 15), date(2026, 8, 22))
+
+
+def test_listar_pedidos_vigentes_con_armado_no_cuenta_los_anulados():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_pedidos_vigentes_con_armado(1, date(2026, 8, 15))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Los anulados quedan fuera del progreso ("18 de 32 armados").
+    assert consulta.count("r.anulado_el IS NULL") == 2
+    assert "p.armado_cerrado_el" in consulta

@@ -11226,7 +11226,7 @@ def test_hub_envases_puesto_tiene_proveedores_del_puesto():
 PEDIDO_VIGENTE_DE_PRUEBA = {
     "id": 50, "cliente_id": 1, "fecha_operacion": date(2026, 8, 21), "origen": "texto",
     "recibido_el": None, "reemplaza_a_pedido_id": None, "creado_en": datetime(2026, 8, 21, 12, 10),
-    "reemplazado_creado_en": None,
+    "reemplazado_creado_en": None, "armado_cerrado_el": None,
 }
 
 SUCURSALES_PEDIDO_DE_PRUEBA = [
@@ -11236,11 +11236,14 @@ SUCURSALES_PEDIDO_DE_PRUEBA = [
 
 RENGLONES_PEDIDO_DE_PRUEBA = [
     {"id": 10, "sucursal": "VL", "articulo_id": None, "articulo_nombre": None,
-     "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None, "cantidad_armada": None},
+     "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None, "cantidad_armada": None,
+     "kilos_enviados": None, "anulado_el": None},
     {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
-     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None, "cantidad_armada": None},
+     "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None, "cantidad_armada": None,
+     "kilos_enviados": None, "anulado_el": None},
     {"id": 12, "sucursal": "BZ", "articulo_id": 2, "articulo_nombre": "Batata",
-     "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None, "cantidad_armada": None},
+     "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None, "cantidad_armada": None,
+     "kilos_enviados": None, "anulado_el": None},
 ]
 
 FICHAS_PEDIDO_DE_PRUEBA = [
@@ -11272,7 +11275,7 @@ def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
     assert "Elegí un cliente" in respuesta.text
 
 
-def test_ver_pedido_muestra_sucursales_con_oc_descuadre_y_sin_identificar():
+def test_ver_pedido_muestra_sucursales_con_oc_declarado_informativo_y_sin_identificar():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -11290,11 +11293,12 @@ def test_ver_pedido_muestra_sucursales_con_oc_descuadre_y_sin_identificar():
     # Cada sucursal con su número de OC bien visible.
     assert "OC 1257673" in respuesta.text
     assert "OC 1257642" in respuesta.text
-    # Control cruzado: VL declara 235 pero lo leído suma 230 (225 + 5 del
-    # sin identificar) — aviso fuerte con el faltante.
-    assert "Leí 230 bultos para VL pero el mail dice 235 — faltan 5." in respuesta.text
-    # BZ cuadra (40 = 40): sin aviso para esa sucursal.
-    assert "para BZ" not in respuesta.text
+    # El total declarado es solo un DATO informativo (Día se equivoca
+    # sumando — decisión del 24/08/2026): NADA de alarma de descuadre,
+    # aunque VL declare 235 y lo leído sume 230.
+    assert "pero el mail dice" not in respuesta.text
+    assert 'class="descuadre"' not in respuesta.text
+    assert "(mail: 235)" in respuesta.text
     # El renglón sin identificar, arriba y con su texto crudo, asignable.
     assert "Sin identificar (1)" in respuesta.text
     assert "99999" in respuesta.text
@@ -11521,13 +11525,13 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
 RENGLONES_ARMADO_DE_PRUEBA = [
     {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 15.0,
-     "armado_el": None, "cantidad_armada": None},
+     "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
     {"id": 12, "sucursal": "VL", "articulo_id": 2, "articulo_nombre": "Batata",
      "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 20.0,
-     "armado_el": datetime(2026, 8, 21, 13, 0), "cantidad_armada": 12.0},
+     "armado_el": datetime(2026, 8, 21, 13, 0), "cantidad_armada": 12.0, "kilos_enviados": 120.0, "anulado_el": None},
     {"id": 13, "sucursal": "BZ", "articulo_id": 1, "articulo_nombre": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0,
-     "armado_el": datetime(2026, 8, 21, 13, 5), "cantidad_armada": None},
+     "armado_el": datetime(2026, 8, 21, 13, 5), "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
 ]
 
 
@@ -11558,6 +11562,7 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
     ):
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
 
@@ -11610,7 +11615,7 @@ def test_armar_renglon_completo_no_guarda_cantidad():
 
     assert respuesta.status_code == 303
     assert "sucursal=VL" in respuesta.headers["location"]
-    mock_marcar.assert_called_once_with(11, None)
+    mock_marcar.assert_called_once_with(11, None, None)
 
 
 def test_armar_renglon_parcial_guarda_la_cantidad_real():
@@ -11623,7 +11628,7 @@ def test_armar_renglon_parcial_guarda_la_cantidad_real():
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, 12.0)
+    mock_marcar.assert_called_once_with(11, 12.0, None)
 
 
 def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
@@ -11637,7 +11642,7 @@ def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
             follow_redirects=False,
         )
 
-    mock_marcar.assert_called_once_with(11, None)
+    mock_marcar.assert_called_once_with(11, None, None)
 
 
 def test_desarmar_renglon_destilda():
@@ -12934,55 +12939,49 @@ def test_auto_confirmar_con_match_por_sugerencia_no_confirma():
     mock_crear.assert_not_called()
 
 
-def test_auto_confirmar_sin_total_declarado_no_confirma():
-    datos = {
-        "bloques": [{
-            "empresa": "9582 FRUTAMAX",
-            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": None}],
-            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
-        }]
-    }
-    patches = _patches_auto_confirmar()
-    with (
-        patches["listar_fichas_por_cliente"],
-        patches["obtener_pedido_vigente"],
-        patches["crear_pedido"] as mock_crear,
-        patches["marcar_mail_pedido_confirmado"],
-        patches["marcar_lectura_mail_pedido"],
-        patch("app.main.parsear_pedido_estructurado", return_value=datos),
-    ):
-        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
+def test_auto_confirmar_ya_no_frena_por_totales_declarados():
+    # El candado de "sumas exactas contra el total declarado" SE SACÓ
+    # (24/08/2026): Día se equivoca sumando sus propios totales, y contra
+    # lecturas rotas la red es el parser por estructura. Sin total
+    # declarado, con descuadre, o con una sucursal solo en cantidades: si
+    # los CINCO candados restantes cierran, se confirma igual.
+    casos = [
+        # Sin total declarado.
+        [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": None}],
+        # Total declarado que NO cuadra con la suma (Día sumó mal: 300 vs 225).
+        [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 300}],
+    ]
+    for sucursales_bloque in casos:
+        datos = {
+            "bloques": [{
+                "empresa": "9582 FRUTAMAX",
+                "sucursales": sucursales_bloque,
+                "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
+            }]
+        }
+        patches = _patches_auto_confirmar()
+        with (
+            patches["listar_fichas_por_cliente"],
+            patches["obtener_pedido_vigente"],
+            patches["crear_pedido"] as mock_crear,
+            patches["marcar_mail_pedido_confirmado"] as mock_confirmar,
+            patches["marcar_lectura_mail_pedido"],
+            patch("app.main.parsear_pedido_estructurado", return_value=datos),
+        ):
+            resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
 
-    assert resultado is False
-    mock_crear.assert_not_called()
-
-
-def test_auto_confirmar_con_descuadre_no_confirma():
-    datos = {
-        "bloques": [{
-            "empresa": "9582 FRUTAMAX",
-            "sucursales": [{"sucursal": "VL", "orden_compra": "1257673", "total_bultos": 300}],
-            "renglones": [{"codigo": "90101", "descripcion": "BANANA", "cantidades": {"VL": 225}, "confianza": "alta"}],
-        }]
-    }
-    patches = _patches_auto_confirmar()
-    with (
-        patches["listar_fichas_por_cliente"],
-        patches["obtener_pedido_vigente"],
-        patches["crear_pedido"] as mock_crear,
-        patches["marcar_mail_pedido_confirmado"],
-        patches["marcar_lectura_mail_pedido"],
-        patch("app.main.parsear_pedido_estructurado", return_value=datos),
-    ):
-        resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
-
-    assert resultado is False
-    mock_crear.assert_not_called()
+        assert resultado is True, sucursales_bloque
+        mock_crear.assert_called_once()
+        # El total declarado se sigue GUARDANDO como dato (viaja en las
+        # sucursales del pedido): solo dejó de frenar.
+        sucursales_guardadas = mock_crear.call_args.args[4]
+        assert sucursales_guardadas[0]["total_bultos_declarado"] == sucursales_bloque[0]["total_bultos"]
+        mock_confirmar.assert_called_once_with(9, 77, motivo="Confirmado automáticamente")
 
 
-def test_auto_confirmar_con_sucursal_solo_en_cantidades_no_confirma():
+def test_auto_confirmar_con_sucursal_solo_en_cantidades_confirma_igual():
     # Una sucursal que aparece en cantidades pero no vino declarada arriba
-    # no tiene total contra el cual cuadrar: sin red, a revisión.
+    # ya no frena: se agrega sin OC ni total (nada se pierde) y se confirma.
     datos = {
         "bloques": [{
             "empresa": "9582 FRUTAMAX",
@@ -13003,8 +13002,9 @@ def test_auto_confirmar_con_sucursal_solo_en_cantidades_no_confirma():
     ):
         resultado = _intentar_auto_confirmar(dict(MAIL_AUTO_DE_PRUEBA))
 
-    assert resultado is False
-    mock_crear.assert_not_called()
+    assert resultado is True
+    sucursales_guardadas = mock_crear.call_args.args[4]
+    assert {s["sucursal"] for s in sucursales_guardadas} == {"VL", "GR"}
 
 
 def test_auto_confirmar_no_reemplaza_un_pedido_vigente():
@@ -13564,3 +13564,287 @@ def test_ver_casilla_muestra_el_horario_de_revision_y_su_formulario():
     assert 'value="12:00" required' in respuesta.text
     assert 'value="13:00" required' in respuesta.text
     assert "Cambiar horario de revisión automática" in respuesta.text
+
+
+# --- Armado: kilos reales, anular, terminar, Buscar Pedidos ---
+
+FICHAS_ARMADO_CON_CONTENIDO = [
+    {"id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": 20.0, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": "BANANA", "codigo_cliente": "90101"},
+    {"id": 2, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "90102"},
+]
+
+
+def _get_armar_sucursal(renglones, pedido=None):
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=pedido or PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_ARMADO_CON_CONTENIDO),
+    ):
+        return cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+
+
+def test_armar_muestra_los_kilos_editables_precargados_de_la_ficha():
+    respuesta = _get_armar_sucursal(RENGLONES_ARMADO_DE_PRUEBA)
+
+    assert respuesta.status_code == 200
+    # Banana pendiente: 15 bultos × 20k de ficha = 300 kg precargados, editables.
+    assert 'name="kilos_enviados"' in respuesta.text
+    assert 'value="300"' in respuesta.text
+    assert "Según ficha: 300 kg (15 × 20)" in respuesta.text
+    assert "Kilos que mando" in respuesta.text
+
+
+def test_armar_sin_contenido_en_la_ficha_pide_los_kilos_a_mano():
+    renglon_batata = [dict(RENGLONES_ARMADO_DE_PRUEBA[0], articulo_id=2, articulo_nombre="Batata")]
+    respuesta = _get_armar_sucursal(renglon_batata)
+
+    assert respuesta.status_code == 200
+    assert "La ficha no tiene contenido por caja: cargá los kilos a mano" in respuesta.text
+
+
+def test_armar_muestra_los_kilos_enviados_y_marca_el_editado_a_mano():
+    renglones = [
+        # Armado con kilos = ficha (12 armados × 20 = 240): sin marca.
+        dict(RENGLONES_ARMADO_DE_PRUEBA[1], articulo_id=1, articulo_nombre="Banana",
+             cantidad_armada=12.0, kilos_enviados=240.0),
+        # Armado con kilos DISTINTOS de la ficha: marca "editado a mano".
+        dict(RENGLONES_ARMADO_DE_PRUEBA[1], id=14, articulo_id=1, articulo_nombre="Banana2",
+             cantidad_armada=None, kilos_enviados=350.0),
+        # Armado SIN kilaje: se dice, no se calcula.
+        dict(RENGLONES_ARMADO_DE_PRUEBA[1], id=15, articulo_id=2, articulo_nombre="Batata",
+             cantidad_armada=None, kilos_enviados=None),
+    ]
+    respuesta = _get_armar_sucursal(renglones)
+
+    assert respuesta.status_code == 200
+    assert "Mandó 240 kg" in respuesta.text
+    assert "Mandó 350 kg" in respuesta.text
+    assert respuesta.text.count("kilaje editado a mano") == 1
+    assert "sin kilaje cargado" in respuesta.text
+
+
+def test_armar_renglon_guarda_los_kilos_enviados():
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_pedida": "15", "cantidad_armada": "", "kilos_enviados": "312.5"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(11, None, 312.5)
+
+
+def test_armar_renglon_kilos_invalidos_da_400():
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_pedida": "15", "kilos_enviados": "-3"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_marcar.assert_not_called()
+
+
+def test_anular_renglon_lo_registra_y_desanular_lo_repone():
+    with patch("app.main.anular_renglon_pedido") as mock_anular:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/anular",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_anular.assert_called_once_with(11)
+
+    with patch("app.main.desanular_renglon_pedido") as mock_desanular:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/desanular",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_desanular.assert_called_once_with(11)
+
+
+def test_armar_separa_anulados_en_su_seccion_y_los_saca_del_progreso():
+    renglones = [
+        dict(RENGLONES_ARMADO_DE_PRUEBA[0]),  # Banana pendiente
+        dict(RENGLONES_ARMADO_DE_PRUEBA[0], id=19, articulo_nombre="Anulada",
+             anulado_el=datetime(2026, 8, 21, 13, 0)),
+    ]
+    respuesta = _get_armar_sucursal(renglones)
+
+    assert respuesta.status_code == 200
+    # El anulado NO está en pendientes ni cuenta en el progreso.
+    assert "Falta armar (1)" in respuesta.text
+    assert "VL: 0 de 1 armados" in respuesta.text
+    # Sección propia, distinta del completado, con Reponer.
+    assert "Anulados (1)" in respuesta.text
+    assert "anulado (no se armó)" in respuesta.text
+    assert 'action="/deposito/pedido/50/renglones/19/desanular"' in respuesta.text
+    assert "Reponer" in respuesta.text
+    # La cruz en los pendientes.
+    assert 'action="/deposito/pedido/50/renglones/11/anular"' in respuesta.text
+
+
+def test_armar_los_armados_van_plegados_abajo_como_en_vacios_y_retiros():
+    respuesta = _get_armar_sucursal(RENGLONES_ARMADO_DE_PRUEBA)
+
+    assert respuesta.status_code == 200
+    # Pendientes arriba y corto; lo terminado abajo, plegado, con deshacer.
+    assert "Falta armar (1)" in respuesta.text
+    assert "<summary>Ya armado (1)</summary>" in respuesta.text
+    assert "Destildar" in respuesta.text
+
+
+def test_terminar_pedido_cierra_y_muestra_el_banner_con_reabrir():
+    with patch("app.main.cerrar_armado_pedido") as mock_cerrar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/terminar",
+            data={"cliente_id": "1", "fecha": "2026-08-21"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_cerrar.assert_called_once_with(50)
+    assert "terminado" in respuesta.headers["location"]
+
+    # El pedido cerrado muestra el banner con Reabrir (y sin el botón Terminar).
+    pedido_cerrado = dict(PEDIDO_VIGENTE_DE_PRUEBA, armado_cerrado_el=datetime(2026, 8, 21, 18, 0, tzinfo=timezone.utc))
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=pedido_cerrado),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+    ):
+        vista = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+
+    assert vista.status_code == 200
+    assert "Pedido terminado" in vista.text
+    assert "Reabrir pedido" in vista.text
+    assert "Terminar pedido (" not in vista.text
+
+    with patch("app.main.reabrir_armado_pedido") as mock_reabrir:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/reabrir",
+            data={"cliente_id": "1", "fecha": "2026-08-21"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_reabrir.assert_called_once_with(50)
+
+
+def test_armar_muestra_terminar_pedido_con_los_sin_tildar_avisados():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+
+    assert respuesta.status_code == 200
+    # Un pendiente (Banana): el botón lo dice y el confirm avisa, sin impedir.
+    assert "Terminar pedido (1 sin tildar)" in respuesta.text
+    assert "sin tildar. ¿Terminar el pedido igual?" in respuesta.text
+    assert 'action="/deposito/pedido/50/terminar"' in respuesta.text
+
+
+RENGLONES_BUSCAR_DE_PRUEBA = [
+    {"fecha_operacion": date(2026, 8, 21), "id": 11, "sucursal": "VL", "articulo_id": 1,
+     "articulo_nombre": "Banana", "cantidad": 15.0, "cantidad_armada": 12.0,
+     "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None},
+    {"fecha_operacion": date(2026, 8, 21), "id": 12, "sucursal": "BZ", "articulo_id": 2,
+     "articulo_nombre": "Batata", "cantidad": 40.0, "cantidad_armada": None,
+     "kilos_enviados": None, "armado_el": None, "anulado_el": None},
+    {"fecha_operacion": date(2026, 8, 20), "id": 13, "sucursal": "VL", "articulo_id": 1,
+     "articulo_nombre": "Banana", "cantidad": 10.0, "cantidad_armada": None,
+     "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0)},
+]
+
+
+def test_buscar_pedidos_muestra_los_kilos_enviados_nunca_los_de_ficha():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        respuesta = cliente.get("/deposito/pedido/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    assert "Pedido del 21/08/2026" in texto
+    # Los kilos REALES del depósito (240, de 12 bultos armados) — y el sin
+    # armar dice "sin kilaje", jamás un cálculo de ficha.
+    assert "240 kg" in texto
+    assert "sin kilaje" in texto
+    assert "sin armar" in texto
+    # El anulado, visible como anulado (registrado, no borrado) y sin sumar.
+    assert "anulado" in texto
+    assert "1 anulado" in texto
+    # Export con los mismos filtros.
+    assert "/deposito/pedido/buscar/exportar-pdf?cliente_id=1" in texto
+    assert "/deposito/pedido/buscar/exportar-excel?cliente_id=1" in texto
+
+
+def test_buscar_pedidos_sin_cliente_muestra_solo_el_selector():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos") as mock_buscar,
+    ):
+        respuesta = cliente.get("/deposito/pedido/buscar")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente" in respuesta.text
+    mock_buscar.assert_not_called()
+
+
+def test_exportar_buscar_pedidos_pdf_y_excel():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        pdf = cliente.get("/deposito/pedido/buscar/exportar-pdf?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
+        excel = cliente.get("/deposito/pedido/buscar/exportar-excel?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
+
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF")
+    assert 'filename="Pedidos_2026-08-15_a_2026-08-22.pdf"' in pdf.headers["content-disposition"]
+    assert excel.status_code == 200
+    assert "spreadsheetml" in excel.headers["content-type"]
+
+
+def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
+    listado = [{
+        "id": 50, "fecha_operacion": date(2026, 8, 21), "origen": "texto",
+        "creado_en": datetime(2026, 8, 21, 12, 10), "armado_cerrado_el": datetime(2026, 8, 21, 18, 0),
+        "renglones_totales": 3, "renglones_armados": 2, "sin_identificar": 0,
+    }]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=listado),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito/pedido/buscar?cliente_id=1"' in respuesta.text
+    # Cerrado explícitamente: TERMINADO ✔ aunque no esté completo (2 de 3).
+    assert "TERMINADO ✔" in respuesta.text
