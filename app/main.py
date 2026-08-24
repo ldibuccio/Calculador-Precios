@@ -109,6 +109,7 @@ from app.db import (
     listar_dias_sin_pedido,
     listar_fechas_con_pedido_vigente,
     listar_mails_pedido,
+    listar_mails_pedido_sin_procesar_de_cliente,
     listar_pedidos_vigentes_con_armado,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
@@ -7885,6 +7886,16 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
                 {"fecha": m["fecha"].isoformat(), "fecha_mostrar": m["fecha"].strftime("%d/%m/%Y"), "motivo": m["motivo"]}
                 for m in estado_dias["marcados"]
             ]
+        # Los mails de pedido TRABADOS (pendientes o con error de lectura)
+        # de este cliente, acá donde se trabaja — no estacionados en
+        # Sistema donde nadie los ve. Cada uno con su fecha estimada del
+        # asunto y el botón para revisar/reintentar.
+        contexto["mails_sin_confirmar"] = []
+        for mail_trabado in listar_mails_pedido_sin_procesar_de_cliente(cliente_id_valor):
+            llegada = mail_trabado["recibido_el"].astimezone(ARGENTINA).date()
+            fecha_estimada = fecha_de_pedido_del_asunto(mail_trabado["asunto"], llegada) or llegada
+            mail_trabado["fecha_estimada_mostrar"] = fecha_estimada.strftime("%d/%m/%Y")
+            contexto["mails_sin_confirmar"].append(mail_trabado)
         pedido = obtener_pedido_vigente(cliente_id_valor, fecha_valor)
         if pedido is not None:
             sucursales = listar_sucursales_pedido(pedido["id"])

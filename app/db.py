@@ -4574,6 +4574,30 @@ def listar_mails_pedido(limite: int = 30) -> list[dict]:
         conexion.close()
 
 
+def listar_mails_pedido_sin_procesar_de_cliente(cliente_id: int) -> list[dict]:
+    """Los mails PENDIENTES o CON ERROR de un cliente, para mostrarlos en SU pantalla de Pedido.
+
+    El mail trabado no puede quedar estacionado solo en Sistema: el que
+    arma tiene que verlo donde trabaja. Los más nuevos primero.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, remitente, asunto, recibido_el, estado, motivo
+                FROM mails_pedido
+                WHERE cliente_id = %s AND estado IN ('pendiente', 'error')
+                ORDER BY recibido_el DESC
+                """,
+                (cliente_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def marcar_mail_pedido_confirmado(mail_id: int, pedido_id: int, motivo: str | None = None) -> None:
     """Confirma el mail apuntando al pedido. motivo distingue el auto-confirmado ("Confirmado automáticamente")."""
     conexion = obtener_conexion()

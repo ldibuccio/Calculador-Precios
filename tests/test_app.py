@@ -11281,6 +11281,7 @@ def test_ver_pedido_muestra_sucursales_con_oc_declarado_informativo_y_sin_identi
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
@@ -11665,6 +11666,7 @@ def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
@@ -12472,6 +12474,7 @@ def test_ver_pedido_lista_todos_los_cargados_ademas_del_abierto():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=list(LISTADO_PEDIDOS_DE_PRUEBA)),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=None),
     ):
         respuesta = cliente.get("/deposito/pedido?cliente_id=1&fecha=2026-08-24")
@@ -12694,6 +12697,7 @@ def test_ver_pedido_muestra_los_dias_faltantes_con_sus_dos_cierres():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_condiciones_pedido", return_value={"cliente_id": 1, "dias_esperados": "3,4,5"}),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main._fechas_esperadas_sin_pedido", return_value=estado_dias),
         patch("app.main.obtener_pedido_vigente", return_value=None),
     ):
@@ -12749,6 +12753,7 @@ def test_ver_pedido_avisa_cuando_se_confirmo_automaticamente():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=pedido_de_mail),
         patch("app.main.obtener_mail_de_pedido", return_value=mail_del_pedido),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
@@ -12776,6 +12781,7 @@ def test_ver_pedido_confirmado_a_mano_desde_mail_no_muestra_el_aviso_auto():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=pedido_de_mail),
         patch("app.main.obtener_mail_de_pedido", return_value=mail_del_pedido),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
@@ -13840,6 +13846,7 @@ def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_pedidos_vigentes_con_armado", return_value=listado),
         patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.obtener_pedido_vigente", return_value=None),
     ):
         respuesta = cliente.get("/deposito/pedido?cliente_id=1")
@@ -13848,3 +13855,40 @@ def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
     assert 'href="/deposito/pedido/buscar?cliente_id=1"' in respuesta.text
     # Cerrado explícitamente: TERMINADO ✔ aunque no esté completo (2 de 3).
     assert "TERMINADO ✔" in respuesta.text
+
+
+def test_ver_pedido_muestra_los_mails_trabados_del_cliente_con_revisar():
+    # El mail con problemas NO queda estacionado solo en Sistema: aparece
+    # en la pantalla de Pedido del cliente, con su estado y el botón de
+    # revisar (que para un error de lectura es también el reintento).
+    mails = [
+        {"id": 9, "remitente": "pedidos@dia.com.ar", "asunto": "Pedido Dia 23-08 Domingo",
+         "recibido_el": datetime(2026, 8, 22, 15, 8, tzinfo=timezone.utc), "estado": "error",
+         "motivo": "La lectura falló: se cortó la respuesta"},
+        {"id": 8, "remitente": "pedidos@dia.com.ar", "asunto": "Pedido Dia 22-08 Sabado",
+         "recibido_el": datetime(2026, 8, 21, 15, 8, tzinfo=timezone.utc), "estado": "pendiente", "motivo": None},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_condiciones_pedido", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=mails) as mock_mails,
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+    ):
+        respuesta = cliente.get("/deposito/pedido?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    mock_mails.assert_called_once_with(1)
+    texto = respuesta.text
+    assert "Mails de pedido por confirmar (2)" in texto
+    # El error con su motivo a la vista, y la fecha ESTIMADA del asunto.
+    assert "Error de lectura" in texto
+    assert "La lectura falló: se cortó la respuesta" in texto
+    assert "pedido estimado del 23/08/2026" in texto
+    assert "pedido estimado del 22/08/2026" in texto
+    # El botón lleva directo a la revisión (mismo circuito de siempre).
+    assert 'href="/deposito/pedido/mails/9/revisar"' in texto
+    assert 'href="/deposito/pedido/mails/8/revisar"' in texto
+    # Con un error, la tarjeta se marca fuerte.
+    assert "tarjeta-mails-trabados con-error" in texto
