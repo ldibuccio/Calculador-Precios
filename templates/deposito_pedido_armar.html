@@ -375,30 +375,33 @@
         {# UN solo form por renglón: el tilde y el "Armé menos" mandan lo
            mismo (incluidos los KILOS, editables) por caminos distintos. #}
         <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/armar"
-              id="armar-{{ r.id }}" class="datos" data-contenido="{{ r.contenido_caja if r.contenido_caja is not none else '' }}">
+              id="armar-{{ r.id }}" class="datos" data-sufijo="{{ r.sufijo_unidad }}">
           <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
           <input type="hidden" name="fecha" value="{{ fecha }}">
           <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
           <input type="hidden" name="cantidad_pedida" value="{{ r.cantidad }}">
           <div class="nombre">{{ r.articulo_nombre }}</div>
           <div class="cantidad">{{ r.cantidad|numero }} bultos</div>
-          {# Los kilos REALES con los que se manda: precargados con la
-             ficha, editables — lo que se guarda es lo que se factura. #}
+          {# Lo que se carga es el kilaje POR BULTO (el que arma sabe que
+             el cajón va con 16 kg): precargado con la ficha, editable.
+             El TOTAL enviado lo calcula el server al tildar y acá se
+             muestra como dato informativo, en vivo. #}
           <div class="campo-kilos">
-            <label for="kilos-{{ r.id }}">Kilos que mando</label>
-            <input type="number" id="kilos-{{ r.id }}" name="kilos_enviados" min="0.01" step="0.01"
-                   value="{% if r.kilos_sugeridos is not none %}{{ r.kilos_sugeridos|numero }}{% endif %}">
-            <span class="unidad">kg</span>
+            <label for="porbulto-{{ r.id }}">{{ r.etiqueta_por_bulto }}</label>
+            <input type="number" id="porbulto-{{ r.id }}" name="kilos_por_bulto" min="0.01" step="0.01"
+                   value="{% if r.contenido_caja is not none %}{{ r.contenido_caja|numero }}{% endif %}"
+                   oninput="actualizarTotal('{{ r.id }}')">
+            <span class="unidad">{{ r.sufijo_unidad }}</span>
           </div>
-          {% if r.kilos_sugeridos is not none %}
-          <p class="ayuda-kilos">Según ficha: {{ r.kilos_sugeridos|numero }} kg ({{ r.cantidad|numero }} × {{ r.contenido_caja|numero }}). Corregilo si mandás distinto.</p>
+          {% if r.total_sugerido is not none %}
+          <p class="ayuda-kilos" id="total-{{ r.id }}" data-inicial="Manda {{ r.cantidad|numero }} bultos × {{ r.contenido_caja|numero }} {{ r.sufijo_unidad }} = {{ r.total_sugerido|numero }} {{ r.sufijo_unidad }}.">Manda {{ r.cantidad|numero }} bultos × {{ r.contenido_caja|numero }} {{ r.sufijo_unidad }} = {{ r.total_sugerido|numero }} {{ r.sufijo_unidad }}.</p>
           {% else %}
-          <p class="ayuda-kilos">La ficha no tiene contenido por caja: cargá los kilos a mano si los sabés.</p>
+          <p class="ayuda-kilos" id="total-{{ r.id }}" data-inicial="La ficha no tiene contenido por caja: cargá cuánto va por cajón a mano si lo sabés.">La ficha no tiene contenido por caja: cargá cuánto va por cajón a mano si lo sabés.</p>
           {% endif %}
           <button type="button" class="link-parcial" onclick="document.getElementById('parcial-{{ r.id }}').classList.toggle('abierto')">Armé menos</button>
           <div class="form-parcial" id="parcial-{{ r.id }}">
             <input type="number" name="cantidad_armada" min="0.01" step="0.01" max="{{ r.cantidad }}"
-                   placeholder="¿Cuántos?" oninput="recalcularKilos('{{ r.id }}')">
+                   placeholder="¿Cuántos?" oninput="actualizarTotal('{{ r.id }}')">
             <button type="submit">Listo</button>
           </div>
         </form>
@@ -475,17 +478,26 @@
   {% endif %}
 
   <script>
-    // "Armé menos" cambia los bultos reales: los kilos sugeridos acompañan
-    // (bultos armados × contenido de ficha) — siempre editables después.
-    function recalcularKilos(renglonId) {
+    // El total enviado es un DATO INFORMATIVO en vivo: se rehace al tocar
+    // el kilaje por bulto o el "Armé menos". El que vale es el que graba
+    // el server al tildar (por bulto × bultos armados), congelado.
+    function numeroCorto(n) {
+      return parseFloat(n.toFixed(2)).toString();
+    }
+    function actualizarTotal(renglonId) {
       const form = document.getElementById("armar-" + renglonId);
-      const contenido = parseFloat(form.dataset.contenido);
+      const aviso = document.getElementById("total-" + renglonId);
+      const porBulto = parseFloat(form.querySelector('[name="kilos_por_bulto"]').value);
       const armada = parseFloat(form.querySelector('[name="cantidad_armada"]').value);
-      if (!contenido || !armada) {
+      const pedida = parseFloat(form.querySelector('[name="cantidad_pedida"]').value);
+      const bultos = armada > 0 ? armada : pedida;
+      if (!porBulto || !bultos) {
+        aviso.textContent = aviso.dataset.inicial;
         return;
       }
-      const kilos = Math.round(armada * contenido * 100) / 100;
-      document.getElementById("kilos-" + renglonId).value = kilos;
+      const sufijo = form.dataset.sufijo ? " " + form.dataset.sufijo : "";
+      const total = Math.round(porBulto * bultos * 100) / 100;
+      aviso.textContent = "Manda " + numeroCorto(bultos) + " bultos × " + numeroCorto(porBulto) + sufijo + " = " + numeroCorto(total) + sufijo + ".";
     }
   </script>
 

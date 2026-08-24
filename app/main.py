@@ -8653,6 +8653,9 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     contenido_por_articulo = {
         f["articulo_id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")
     }
+    unidad_por_articulo = {f["articulo_id"]: f.get("unidad_venta") for f in fichas}
+    etiquetas_por_bulto = {"kilo": "Kilos por cajón", "unidad": "Unidades por cajón", "cubeta": "Cubetas por cajón"}
+    sufijos_unidad = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
 
     def _kilos_de_ficha(renglon, bultos):
         contenido = contenido_por_articulo.get(renglon["articulo_id"])
@@ -8668,8 +8671,13 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         key=lambda r: r["articulo_nombre"],
     )
     for r in pendientes:
-        r["kilos_sugeridos"] = _kilos_de_ficha(r, r["cantidad"])
         r["contenido_caja"] = contenido_por_articulo.get(r["articulo_id"])
+        unidad = unidad_por_articulo.get(r["articulo_id"])
+        # La etiqueta dice la unidad REAL del artículo (como en las otras
+        # pantallas): "Kilos por cajón", "Unidades por cajón"...
+        r["etiqueta_por_bulto"] = etiquetas_por_bulto.get(unidad, "Contenido por cajón")
+        r["sufijo_unidad"] = sufijos_unidad.get(unidad, "")
+        r["total_sugerido"] = _kilos_de_ficha(r, r["cantidad"])
     for r in armados:
         # Con qué comparar para la marca "editado a mano": el cálculo de
         # ficha sobre los bultos que realmente armó.
@@ -8704,13 +8712,16 @@ def armar_renglon_pedido_ruta(
     sucursal: str = Form(""),
     cantidad_armada: str = Form(""),
     cantidad_pedida: str = Form(""),
-    kilos_enviados: str = Form(""),
+    kilos_por_bulto: str = Form(""),
 ):
     """Tilda un renglón como armado. Con cantidad_armada (menor a lo pedido), queda "incompleto" con su cantidad real.
 
-    kilos_enviados: los kilos REALES con los que se manda el renglón (lo
-    que se factura). Viene precargado con el cálculo de la ficha pero es
-    editable; vacío = sin kilaje (queda NULL, los listados lo dicen).
+    kilos_por_bulto: lo que la persona carga (el cajón va con 16 kg — ese
+    es el número que sabe y corrige). El TOTAL enviado lo calcula el
+    SERVER acá: por bulto × bultos armados de ESTE tilde, y queda
+    CONGELADO en kilos_enviados — lo que se factura es un dato grabado,
+    no una multiplicación viva. Vacío = sin kilaje (NULL, los listados lo
+    dicen).
     """
     cantidad_armada_valor = None
     texto = cantidad_armada.strip()
@@ -8728,14 +8739,18 @@ def armar_renglon_pedido_ruta(
             cantidad_armada_valor = None
 
     kilos_valor = None
-    texto_kilos = kilos_enviados.strip()
+    texto_kilos = kilos_por_bulto.strip()
     if texto_kilos:
         try:
-            kilos_valor = float(texto_kilos)
+            por_bulto = float(texto_kilos)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Los kilos enviados tienen que ser un número.")
-        if kilos_valor <= 0:
-            raise HTTPException(status_code=400, detail="Los kilos enviados tienen que ser mayores a cero.")
+            raise HTTPException(status_code=400, detail="El kilaje por bulto tiene que ser un número.")
+        if por_bulto <= 0:
+            raise HTTPException(status_code=400, detail="El kilaje por bulto tiene que ser mayor a cero.")
+        bultos_armados = cantidad_armada_valor if cantidad_armada_valor is not None else _numero_pedido_o_none(cantidad_pedida)
+        if bultos_armados is None:
+            raise HTTPException(status_code=400, detail="Falta la cantidad de bultos para calcular los kilos enviados.")
+        kilos_valor = round(por_bulto * bultos_armados, 2)
 
     try:
         marcar_renglon_armado(renglon_id, cantidad_armada_valor, kilos_valor)

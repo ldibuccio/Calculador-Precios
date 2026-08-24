@@ -13597,23 +13597,25 @@ def _get_armar_sucursal(renglones, pedido=None):
         return cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
 
 
-def test_armar_muestra_los_kilos_editables_precargados_de_la_ficha():
+def test_armar_muestra_el_kilaje_por_bulto_precargado_de_la_ficha():
     respuesta = _get_armar_sucursal(RENGLONES_ARMADO_DE_PRUEBA)
 
     assert respuesta.status_code == 200
-    # Banana pendiente: 15 bultos × 20k de ficha = 300 kg precargados, editables.
-    assert 'name="kilos_enviados"' in respuesta.text
-    assert 'value="300"' in respuesta.text
-    assert "Según ficha: 300 kg (15 × 20)" in respuesta.text
-    assert "Kilos que mando" in respuesta.text
+    # Banana pendiente: el input es el POR BULTO (20 kg de ficha, editable),
+    # con la unidad real del artículo en la etiqueta, y el total al lado
+    # como dato informativo.
+    assert 'name="kilos_por_bulto"' in respuesta.text
+    assert 'value="20"' in respuesta.text
+    assert "Kilos por cajón" in respuesta.text
+    assert "Manda 15 bultos × 20 kg = 300 kg." in respuesta.text
 
 
-def test_armar_sin_contenido_en_la_ficha_pide_los_kilos_a_mano():
+def test_armar_sin_contenido_en_la_ficha_pide_el_por_bulto_a_mano():
     renglon_batata = [dict(RENGLONES_ARMADO_DE_PRUEBA[0], articulo_id=2, articulo_nombre="Batata")]
     respuesta = _get_armar_sucursal(renglon_batata)
 
     assert respuesta.status_code == 200
-    assert "La ficha no tiene contenido por caja: cargá los kilos a mano" in respuesta.text
+    assert "La ficha no tiene contenido por caja: cargá cuánto va por cajón a mano" in respuesta.text
 
 
 def test_armar_muestra_los_kilos_enviados_y_marca_el_editado_a_mano():
@@ -13637,17 +13639,34 @@ def test_armar_muestra_los_kilos_enviados_y_marca_el_editado_a_mano():
     assert "sin kilaje cargado" in respuesta.text
 
 
-def test_armar_renglon_guarda_los_kilos_enviados():
+def test_armar_renglon_guarda_el_total_calculado_por_el_server():
+    # Se carga el POR BULTO; el total enviado (lo que se factura) lo
+    # calcula el server al tildar y queda congelado: 16 × 15 pedidos = 240.
     with patch("app.main.marcar_renglon_armado") as mock_marcar:
         respuesta = cliente.post(
             "/deposito/pedido/50/renglones/11/armar",
             data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
-                  "cantidad_pedida": "15", "cantidad_armada": "", "kilos_enviados": "312.5"},
+                  "cantidad_pedida": "15", "cantidad_armada": "", "kilos_por_bulto": "16"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_marcar.assert_called_once_with(11, None, 312.5)
+    mock_marcar.assert_called_once_with(11, None, 240.0)
+
+
+def test_armar_renglon_incompleto_calcula_el_total_con_los_bultos_armados():
+    # "Armé menos" cambia los bultos REALES del tilde: el total sale de
+    # esos, no de lo pedido: 16 × 12 armados = 192.
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_pedida": "15", "cantidad_armada": "12", "kilos_por_bulto": "16"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(11, 12.0, 192.0)
 
 
 def test_armar_renglon_kilos_invalidos_da_400():
@@ -13655,7 +13674,21 @@ def test_armar_renglon_kilos_invalidos_da_400():
         respuesta = cliente.post(
             "/deposito/pedido/50/renglones/11/armar",
             data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
-                  "cantidad_pedida": "15", "kilos_enviados": "-3"},
+                  "cantidad_pedida": "15", "kilos_por_bulto": "-3"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_marcar.assert_not_called()
+
+
+def test_armar_renglon_con_kilaje_pero_sin_bultos_da_400():
+    # Sin cantidad pedida ni armada no hay con qué multiplicar el por
+    # bulto: mejor un error claro que guardar cualquier cosa.
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "kilos_por_bulto": "16"},
         )
 
     assert respuesta.status_code == 400
