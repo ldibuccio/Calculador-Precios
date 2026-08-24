@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -39,6 +39,7 @@ from app.db import (
     borrar_dia_sin_pedido,
     crear_casilla_pedidos,
     guardar_condiciones_pedido,
+    guardar_horario_revision_casilla,
     listar_casillas_pedidos,
     listar_condiciones_pedido,
     listar_fechas_con_pedido_vigente,
@@ -2981,3 +2982,27 @@ def test_agregar_foto_guia_del_dia_sin_guia_devuelve_false():
 
     assert resultado is False
     assert cursor.execute.call_count == 1  # solo el SELECT, nada que insertar
+
+
+def test_guardar_horario_revision_casilla_actualiza_los_tres_campos():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_horario_revision_casilla(3, time(12, 0), time(13, 0), 30)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET revision_desde = %s, revision_hasta = %s, revision_cada_minutos = %s" in consulta
+    assert parametros == (time(12, 0), time(13, 0), 30, 3)
+    conexion.commit.assert_called_once()
+
+
+def test_listar_casillas_pedidos_trae_el_horario_de_revision():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_casillas_pedidos()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "ca.revision_desde" in consulta
+    assert "ca.revision_hasta" in consulta
+    assert "ca.revision_cada_minutos" in consulta

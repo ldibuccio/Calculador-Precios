@@ -103,6 +103,7 @@ from app.db import (
     fijar_auto_confirmar_casilla,
     guardar_alias_en_ficha,
     guardar_condiciones_pedido,
+    guardar_horario_revision_casilla,
     listar_casillas_pedidos,
     listar_condiciones_pedido,
     listar_dias_sin_pedido,
@@ -430,6 +431,15 @@ def _formatear_hora(valor) -> str:
     return valor.astimezone(ARGENTINA).strftime("%H:%M")
 
 
+def _formatear_hora_corta(valor) -> str:
+    """Un time PURO (time(12, 0) o "12:00:00") como "12:00" — sin zona: ya viene en hora argentina."""
+    if valor is None:
+        return ""
+    if isinstance(valor, str):
+        return valor[:5]
+    return valor.strftime("%H:%M")
+
+
 def _formatear_porcentaje(valor) -> str:
     """Formatea una fracción (0.2548) como porcentaje con un decimal y coma decimal ("25,5%")."""
     if valor is None:
@@ -473,6 +483,7 @@ templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 templates.env.filters["hora"] = _formatear_hora
+templates.env.filters["hora_corta"] = _formatear_hora_corta
 
 
 # Íconos de navegación: SVG minimalistas de línea (heroicons, MIT), un solo
@@ -7733,25 +7744,34 @@ def contar_pedidos_faltantes() -> dict:
     return {"casos": casos, "mas_viejo": mas_viejo}
 
 
-def contar_casillas_sin_revisar() -> dict:
+def contar_casillas_sin_revisar(ahora=None) -> dict:
     """Cuántas casillas ACTIVAS llevan el día sin UNA revisión exitosa, para Auditoría.
 
-    A propósito NO alerta al primer fallo: una caída de internet a las
-    12:00 que a las 12:15 se recuperó sola no es un problema, y una
-    alerta que grita por eso se deja de mirar en una semana. El criterio
-    es "pasó un rato largo y nunca pudo": desde las 14:00 (una hora antes
-    del cierre de la ventana), si hoy no hubo NINGUNA revisión exitosa —
-    porque todos los intentos fallaron o porque directamente no corrió
-    ninguno — el problema es real y hay que resolverlo antes de que se
-    pase el día. El último error puntual se ve igual en la pantalla de la
-    casilla, siempre, aunque después se haya recuperado.
+    A propósito NO alerta al primer fallo: una caída de internet que al
+    tick siguiente se recuperó sola no es un problema, y una alerta que
+    grita por eso se deja de mirar en una semana. El criterio es "pasó un
+    rato largo y nunca pudo": desde UNA HORA antes del cierre de la
+    ventana DE CADA casilla (su horario es configurable), si hoy no hubo
+    NINGUNA revisión exitosa — porque todos los intentos fallaron o
+    porque directamente no corrió ninguno — el problema es real y hay que
+    resolverlo antes de que se pase el día. El último error puntual se ve
+    igual en la pantalla de la casilla, siempre, aunque después se haya
+    recuperado.
     """
-    ahora = datetime.now(ARGENTINA)
-    if ahora.time() < HORA_ALERTA_CASILLA_SIN_REVISAR:
-        return {"casos": 0, "mas_viejo": None}
+    if ahora is None:
+        ahora = datetime.now(ARGENTINA)
     casos = 0
     for casilla in listar_casillas_pedidos():
         if not casilla["activa"]:
+            continue
+        desde, hasta, _ = _horario_revision_de(casilla)
+        # El umbral nunca cae antes de la apertura: con una ventana más
+        # corta que el margen, se alerta recién desde que la ventana abre.
+        umbral = max(
+            datetime.combine(ahora.date(), hasta, tzinfo=ARGENTINA) - MARGEN_ALERTA_CASILLA,
+            datetime.combine(ahora.date(), desde, tzinfo=ARGENTINA),
+        )
+        if ahora < umbral:
             continue
         revision = casilla["ultima_revision_el"]
         revisada_hoy = revision is not None and revision.astimezone(ARGENTINA).date() == ahora.date()
@@ -8651,8 +8671,50 @@ def auto_confirmar_casilla_ruta(casilla_id: int, valor: str = Form("")):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo cambiar auto-confirmar: {error_db}") from error_db
     if activar:
-        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: la revisión automática (12:00 a 15:00) confirma sola el pedido que cuadra al 100% — todo lo demás queda pendiente para revisar a mano.")
+        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: la revisión automática (en el horario configurado de la casilla) confirma sola el pedido que cuadra al 100% — todo lo demás queda pendiente para revisar a mano.")
     return _redirigir_a_casilla(mensaje="Auto-confirmar apagado: todos los mails quedan pendientes para confirmar a mano.")
+
+
+@app.post("/sistema/casilla-pedidos/{casilla_id}/horario")
+def cambiar_horario_revision_ruta(
+    request: Request,
+    casilla_id: int,
+    revision_desde: str = Form(""),
+    revision_hasta: str = Form(""),
+    revision_cada_minutos: str = Form(""),
+):
+    """El horario de la revisión automática de ESTA casilla: desde, hasta y cada cuántos minutos.
+
+    Todo en hora argentina, como el resto del sistema. La ventana tiene
+    que ser válida (desde antes que hasta) y la cadencia razonable (5 a
+    240 minutos) — sin eso no se guarda nada.
+    """
+    try:
+        desde = time.fromisoformat(revision_desde.strip())
+        hasta = time.fromisoformat(revision_hasta.strip())
+    except ValueError:
+        return _renderizar_casilla_pedidos(request, error="El horario de revisión no es válido.", status_code=400)
+    try:
+        cada_minutos = int(revision_cada_minutos.strip())
+    except ValueError:
+        return _renderizar_casilla_pedidos(request, error="Los minutos entre chequeos no son válidos.", status_code=400)
+
+    if desde >= hasta:
+        return _renderizar_casilla_pedidos(
+            request, error="La hora de inicio tiene que ser anterior a la de fin.", status_code=400
+        )
+    if not 5 <= cada_minutos <= 240:
+        return _renderizar_casilla_pedidos(
+            request, error="Los minutos entre chequeos tienen que estar entre 5 y 240.", status_code=400
+        )
+
+    try:
+        guardar_horario_revision_casilla(casilla_id, desde, hasta, cada_minutos)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el horario: {error_db}") from error_db
+    return _redirigir_a_casilla(
+        mensaje=f"Horario guardado: se revisa de {desde.strftime('%H:%M')} a {hasta.strftime('%H:%M')} cada {cada_minutos} minutos (hora argentina)."
+    )
 
 
 @app.post("/sistema/casilla-pedidos/{casilla_id}/revisar")
@@ -8748,14 +8810,50 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
 # la casilla o en el mail — nunca en un log que nadie mira.
 # ---------------------------------------------------------------------------
 
+# Defaults del horario de revisión (los mismos que el DEFAULT de las
+# columnas revision_* de casillas_pedidos): cada casilla puede cambiarlos
+# desde su pantalla. VENTANA_REVISION_HASTA además sigue siendo el corte
+# fijo de la alerta de pedidos faltantes ("hoy cuenta desde las 15:00").
 VENTANA_REVISION_DESDE = time(12, 0)
 VENTANA_REVISION_HASTA = time(15, 0)
-SEGUNDOS_ENTRE_REVISIONES = 900  # dentro de la ventana: cada 15 minutos
-SEGUNDOS_FUERA_DE_VENTANA = 300  # fuera: mirar el reloj cada 5 minutos
-# Desde qué hora alerta Auditoría si HOY no hubo ninguna revisión exitosa:
-# una hora antes del cierre de la ventana. Antes de eso no se alerta — el
-# sistema todavía tiene ticks por delante para recuperarse solo.
-HORA_ALERTA_CASILLA_SIN_REVISAR = time(14, 0)
+MINUTOS_ENTRE_REVISIONES = 15
+# El bucle mira el reloj cada minuto y decide POR CASILLA si le toca
+# revisar (según su ventana y su cadencia): así un "desde las 12:00"
+# arranca 12:00 en punto, no cuando caiga un tick global.
+SEGUNDOS_TICK_REVISION = 60
+# Margen antes del cierre de la ventana de cada casilla desde el que
+# Auditoría alerta si HOY no hubo ninguna revisión exitosa. Antes de eso
+# no se alerta — quedan ticks por delante para recuperarse solo.
+MARGEN_ALERTA_CASILLA = timedelta(hours=1)
+
+
+def _horario_revision_de(casilla: dict) -> tuple[time, time, int]:
+    """El horario configurado de la casilla, con los defaults de siempre si el dato falta."""
+    return (
+        casilla.get("revision_desde") or VENTANA_REVISION_DESDE,
+        casilla.get("revision_hasta") or VENTANA_REVISION_HASTA,
+        casilla.get("revision_cada_minutos") or MINUTOS_ENTRE_REVISIONES,
+    )
+
+
+def _casilla_en_ventana(casilla: dict, ahora) -> bool:
+    desde, hasta, _ = _horario_revision_de(casilla)
+    return desde <= ahora.time() < hasta
+
+
+def _le_toca_revision(casilla: dict, ahora) -> bool:
+    """Si ya pasó la cadencia configurada desde el último INTENTO (éxito o error).
+
+    Se mira la base, no memoria del proceso: sobrevive reinicios del
+    server sin ametrallar el buzón, y un error también espera su turno
+    (el reintento es al próximo intervalo, no al minuto siguiente).
+    """
+    _, _, cada_minutos = _horario_revision_de(casilla)
+    intentos = [casilla.get("ultima_revision_el"), casilla.get("ultimo_error_el")]
+    ultimo_intento = max((i for i in intentos if i is not None), default=None)
+    if ultimo_intento is None:
+        return True
+    return ahora - ultimo_intento >= timedelta(minutes=cada_minutos)
 
 
 def _intentar_auto_confirmar(mail: dict) -> bool:
@@ -8927,8 +9025,16 @@ def _revisar_casilla_automaticamente(casilla: dict) -> None:
             logger.exception("Auto-confirmar falló para el mail %s — queda pendiente para revisar a mano", mail_id)
 
 
-def revisar_casillas_activas() -> None:
-    """El tick de la revisión automática: cada casilla ACTIVA con fecha de activación, una por una."""
+def revisar_casillas_activas(ahora=None) -> None:
+    """El tick de la revisión automática: cada casilla ACTIVA a la que le toca según SU horario.
+
+    Cada casilla tiene su propia ventana (desde/hasta) y su cadencia (cada
+    N minutos), configurables en su pantalla. El tick corre cada minuto y
+    decide por casilla: en ventana Y con el intervalo cumplido desde el
+    último intento → se revisa; si no, se saltea sin tocar nada.
+    """
+    if ahora is None:
+        ahora = datetime.now(ARGENTINA)
     try:
         casillas = listar_casillas_pedidos()
     except Exception:
@@ -8937,15 +9043,13 @@ def revisar_casillas_activas() -> None:
     for casilla in casillas:
         if not casilla["activa"] or casilla["fecha_activacion"] is None:
             continue
+        if not _casilla_en_ventana(casilla, ahora) or not _le_toca_revision(casilla, ahora):
+            continue
         _revisar_casilla_automaticamente(casilla)
 
 
-def _en_ventana_de_revision(ahora) -> bool:
-    return VENTANA_REVISION_DESDE <= ahora.time() < VENTANA_REVISION_HASTA
-
-
 async def _bucle_revision_casillas() -> None:
-    """El task de fondo: dentro de la ventana revisa cada 15 minutos; fuera, solo mira el reloj.
+    """El task de fondo: mira el reloj cada minuto y revisa la casilla a la que le toca.
 
     La revisión en sí corre en un hilo (asyncio.to_thread): el IMAP y la
     base son bloqueantes y no tienen que frenar a la app. Cualquier
@@ -8954,14 +9058,10 @@ async def _bucle_revision_casillas() -> None:
     """
     while True:
         try:
-            if _en_ventana_de_revision(datetime.now(ARGENTINA)):
-                await asyncio.to_thread(revisar_casillas_activas)
-                await asyncio.sleep(SEGUNDOS_ENTRE_REVISIONES)
-            else:
-                await asyncio.sleep(SEGUNDOS_FUERA_DE_VENTANA)
+            await asyncio.to_thread(revisar_casillas_activas)
         except Exception:
             logger.exception("El bucle de revisión de casillas falló — sigue en el próximo ciclo")
-            await asyncio.sleep(SEGUNDOS_ENTRE_REVISIONES)
+        await asyncio.sleep(SEGUNDOS_TICK_REVISION)
 
 
 @app.on_event("startup")

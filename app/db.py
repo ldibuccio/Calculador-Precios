@@ -4214,6 +4214,7 @@ def listar_casillas_pedidos() -> list[dict]:
                 SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id,
                        ca.asunto_filtro, ca.remitentes_permitidos,
                        ca.activa, ca.fecha_activacion, ca.auto_confirmar,
+                       ca.revision_desde, ca.revision_hasta, ca.revision_cada_minutos,
                        ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
                        c.nombre AS cliente_nombre
                 FROM casillas_pedidos ca
@@ -4236,6 +4237,7 @@ def obtener_casilla_pedidos(casilla_id: int) -> dict | None:
                 SELECT ca.id, ca.direccion, ca.servidor_imap, ca.cliente_id,
                        ca.asunto_filtro, ca.remitentes_permitidos,
                        ca.activa, ca.fecha_activacion, ca.auto_confirmar,
+                       ca.revision_desde, ca.revision_hasta, ca.revision_cada_minutos,
                        ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
                        c.nombre AS cliente_nombre
                 FROM casillas_pedidos ca
@@ -4343,6 +4345,24 @@ def fijar_auto_confirmar_casilla(casilla_id: int, valor: bool) -> None:
     try:
         with conexion.cursor() as cursor:
             cursor.execute("UPDATE casillas_pedidos SET auto_confirmar = %s WHERE id = %s", (valor, casilla_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def guardar_horario_revision_casilla(casilla_id: int, desde, hasta, cada_minutos: int) -> None:
+    """El horario de la revisión automática de UNA casilla: desde, hasta y cada cuántos minutos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE casillas_pedidos
+                SET revision_desde = %s, revision_hasta = %s, revision_cada_minutos = %s
+                WHERE id = %s
+                """,
+                (desde, hasta, cada_minutos, casilla_id),
+            )
         conexion.commit()
     finally:
         conexion.close()

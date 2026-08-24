@@ -113,6 +113,8 @@
     background: #fff;
   }
   details { margin-top: 0.75rem; }
+  .fila-horario { display: flex; gap: 0.6rem; }
+  .fila-horario > div { flex: 1; min-width: 0; }
   details summary {
     font-size: 0.92rem;
     font-weight: 700;
@@ -181,6 +183,10 @@
       {% if casilla.fecha_activacion %}<strong>{{ casilla.fecha_activacion|fecha_hora }}</strong>
       {% else %}<em>sin fecha de activación todavía</em>{% endif %}
     </p>
+    <p class="dato">Revisión automática:
+      <strong>de {{ (casilla.revision_desde or "12:00")|hora_corta }} a {{ (casilla.revision_hasta or "15:00")|hora_corta }},
+      cada {{ casilla.revision_cada_minutos or 15 }} min</strong> (hora argentina)
+    </p>
     <p class="dato">Última revisión OK:
       {% if casilla.ultima_revision_el %}<strong>{{ casilla.ultima_revision_el|fecha_hora }}</strong>
       {% else %}<em>nunca</em>{% endif %}
@@ -225,7 +231,32 @@
       <button type="submit" class="boton boton-secundario">Prender auto-confirmar (hoy: apagado)</button>
       {% endif %}
     </form>
-    <p class="sub" style="margin-top: 0.4rem;">Auto-confirmar: en la revisión automática (12:00 a 15:00), confirma solo el pedido leído por estructura que cuadra 100% con los totales del mail, con todos los renglones identificados y sin reemplazar a ningún pedido ya cargado. Todo lo demás queda pendiente igual.</p>
+    <p class="sub" style="margin-top: 0.4rem;">Auto-confirmar: en la revisión automática (en el horario configurado arriba), confirma solo el pedido leído por estructura que cuadra 100% con los totales del mail, con todos los renglones identificados y sin reemplazar a ningún pedido ya cargado. Todo lo demás queda pendiente igual.</p>
+
+    <details>
+      <summary>Cambiar horario de revisión automática</summary>
+      <form method="post" action="/sistema/casilla-pedidos/{{ casilla.id }}/horario">
+        <div class="fila-horario">
+          <div>
+            <label for="revision-desde-{{ casilla.id }}">Desde</label>
+            <input type="time" id="revision-desde-{{ casilla.id }}" name="revision_desde"
+                   value="{{ (casilla.revision_desde or "12:00")|hora_corta }}" required>
+          </div>
+          <div>
+            <label for="revision-hasta-{{ casilla.id }}">Hasta</label>
+            <input type="time" id="revision-hasta-{{ casilla.id }}" name="revision_hasta"
+                   value="{{ (casilla.revision_hasta or "15:00")|hora_corta }}" required>
+          </div>
+        </div>
+        <label for="revision-cada-{{ casilla.id }}">Chequear cada</label>
+        <select id="revision-cada-{{ casilla.id }}" name="revision_cada_minutos">
+          {% for minutos in (5, 10, 15, 20, 30, 45, 60, 90, 120) %}
+          <option value="{{ minutos }}" {% if (casilla.revision_cada_minutos or 15) == minutos %}selected{% endif %}>{{ minutos }} minutos</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="boton boton-secundario">Guardar horario</button>
+      </form>
+    </details>
 
     <details>
       <summary>Editar configuración</summary>

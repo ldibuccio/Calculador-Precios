@@ -1,6 +1,6 @@
 import base64
 import io
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import patch
 
 import openpyxl
@@ -11688,6 +11688,8 @@ CASILLA_DE_PRUEBA = {
     "cliente_id": 1, "asunto_filtro": "Pedido Dia", "remitentes_permitidos": "pedidos@dia.com.ar",
     "activa": True, "fecha_activacion": datetime(2026, 8, 22, 11, 0, tzinfo=ARGENTINA_TEST),
     "auto_confirmar": False, "ultima_revision_el": None, "ultimo_error": None, "ultimo_error_el": None,
+    # Horario de revisión sin configurar: rigen los defaults (12-15, cada 15).
+    "revision_desde": None, "revision_hasta": None, "revision_cada_minutos": None,
     "cliente_nombre": "Día",
 }
 
@@ -12484,7 +12486,8 @@ def test_ver_pedido_lista_todos_los_cargados_ademas_del_abierto():
 
 from app.main import (  # noqa: E402
     _dias_esperados_como_numeros,
-    _en_ventana_de_revision,
+    _casilla_en_ventana,
+    _le_toca_revision,
     _fechas_esperadas_sin_pedido,
     _intentar_auto_confirmar,
     contar_casillas_sin_revisar,
@@ -12592,13 +12595,8 @@ def test_contar_casillas_sin_revisar_no_alerta_por_un_fallo_que_se_recupero_solo
         dict(CASILLA_DE_PRUEBA, id=2, ultima_revision_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
              ultimo_error_el=datetime(2026, 8, 22, 14, 15, tzinfo=ARGENTINA_TEST)),
     ]
-    ahora = datetime(2026, 8, 22, 14, 30, tzinfo=ARGENTINA_APP)
-    with (
-        patch("app.main.listar_casillas_pedidos", return_value=casillas),
-        patch("app.main.datetime") as mock_datetime,
-    ):
-        mock_datetime.now.return_value = ahora
-        resultado = contar_casillas_sin_revisar()
+    with patch("app.main.listar_casillas_pedidos", return_value=casillas):
+        resultado = contar_casillas_sin_revisar(ahora=datetime(2026, 8, 22, 14, 30, tzinfo=ARGENTINA_APP))
 
     assert resultado == {"casos": 0, "mas_viejo": None}
 
@@ -12615,24 +12613,33 @@ def test_contar_casillas_sin_revisar_alerta_desde_las_14_si_hoy_nunca_pudo():
         dict(CASILLA_DE_PRUEBA, id=3, activa=False, ultima_revision_el=None,
              ultimo_error_el=datetime(2026, 8, 22, 13, 0, tzinfo=ARGENTINA_TEST)),
     ]
-    with (
-        patch("app.main.listar_casillas_pedidos", return_value=casillas),
-        patch("app.main.datetime") as mock_datetime,
-    ):
-        mock_datetime.now.return_value = datetime(2026, 8, 22, 14, 0, tzinfo=ARGENTINA_APP)
-        resultado = contar_casillas_sin_revisar()
+    with patch("app.main.listar_casillas_pedidos", return_value=casillas):
+        resultado = contar_casillas_sin_revisar(ahora=datetime(2026, 8, 22, 14, 0, tzinfo=ARGENTINA_APP))
 
     assert resultado == {"casos": 2, "mas_viejo": None}
 
     # A las 13:59 todavía NO, aunque venga fallando: quedan ticks por
     # delante y puede recuperarse solo. Avisar recién cuando "pasó un rato
     # largo y nunca pudo".
-    with (
-        patch("app.main.listar_casillas_pedidos", return_value=casillas),
-        patch("app.main.datetime") as mock_datetime,
-    ):
-        mock_datetime.now.return_value = datetime(2026, 8, 22, 13, 59, tzinfo=ARGENTINA_APP)
-        assert contar_casillas_sin_revisar() == {"casos": 0, "mas_viejo": None}
+    with patch("app.main.listar_casillas_pedidos", return_value=casillas):
+        assert contar_casillas_sin_revisar(
+            ahora=datetime(2026, 8, 22, 13, 59, tzinfo=ARGENTINA_APP)
+        ) == {"casos": 0, "mas_viejo": None}
+
+
+def test_contar_casillas_sin_revisar_respeta_el_horario_configurado():
+    # Casilla con ventana propia 09:00-18:00: el umbral de alerta es 17:00
+    # (una hora antes de SU cierre), no las 14:00 del default.
+    casillas = [
+        dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=None, ultimo_error_el=None,
+             revision_desde=time(9, 0), revision_hasta=time(18, 0), revision_cada_minutos=30),
+    ]
+    with patch("app.main.listar_casillas_pedidos", return_value=casillas):
+        antes = contar_casillas_sin_revisar(ahora=datetime(2026, 8, 22, 16, 59, tzinfo=ARGENTINA_APP))
+        despues = contar_casillas_sin_revisar(ahora=datetime(2026, 8, 22, 17, 0, tzinfo=ARGENTINA_APP))
+
+    assert antes == {"casos": 0, "mas_viejo": None}
+    assert despues == {"casos": 1, "mas_viejo": None}
 
 
 def test_editar_cliente_muestra_los_dias_de_pedido_tildados():
@@ -13046,7 +13053,7 @@ def test_tick_revisa_las_activas_y_auto_confirma_solo_los_nuevos():
         patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_AUTO_DE_PRUEBA, id=11)) as mock_obtener,
         patch("app.main._intentar_auto_confirmar", return_value=True) as mock_auto,
     ):
-        revisar_casillas_activas()
+        revisar_casillas_activas(ahora=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST))
 
     # Solo la activa se revisó (una conexión, no dos).
     mock_revisar.assert_called_once()
@@ -13066,7 +13073,7 @@ def test_tick_sin_auto_confirmar_solo_registra():
         patch("app.main.registrar_revision_casilla"),
         patch("app.main._intentar_auto_confirmar") as mock_auto,
     ):
-        revisar_casillas_activas()
+        revisar_casillas_activas(ahora=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST))
 
     mock_auto.assert_not_called()
 
@@ -13078,7 +13085,7 @@ def test_tick_sin_clave_registra_el_error_en_la_casilla():
         patch("app.main.revisar_casilla") as mock_revisar,
         patch("app.main.registrar_revision_casilla") as mock_revision,
     ):
-        revisar_casillas_activas()
+        revisar_casillas_activas(ahora=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST))
 
     mock_revisar.assert_not_called()
     args = mock_revision.call_args
@@ -13096,7 +13103,7 @@ def test_tick_con_error_de_buzon_lo_registra_y_sigue():
         patch("app.main.registrar_revision_casilla") as mock_revision,
         patch("app.main._intentar_auto_confirmar") as mock_auto,
     ):
-        revisar_casillas_activas()
+        revisar_casillas_activas(ahora=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST))
 
     args = mock_revision.call_args
     assert args.args == (3,)
@@ -13111,17 +13118,59 @@ def test_tick_una_casilla_sin_fecha_de_activacion_se_saltea():
         patch("app.main.revisar_casilla") as mock_revisar,
         patch("app.main.registrar_revision_casilla") as mock_revision,
     ):
-        revisar_casillas_activas()
+        revisar_casillas_activas(ahora=datetime(2026, 8, 22, 12, 30, tzinfo=ARGENTINA_TEST))
 
     mock_revisar.assert_not_called()
     mock_revision.assert_not_called()
 
 
-def test_ventana_de_revision_es_de_12_a_15_argentina():
-    assert not _en_ventana_de_revision(datetime(2026, 8, 22, 11, 59, tzinfo=ARGENTINA_APP))
-    assert _en_ventana_de_revision(datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_APP))
-    assert _en_ventana_de_revision(datetime(2026, 8, 22, 14, 59, tzinfo=ARGENTINA_APP))
-    assert not _en_ventana_de_revision(datetime(2026, 8, 22, 15, 0, tzinfo=ARGENTINA_APP))
+def test_ventana_de_revision_default_es_de_12_a_15_argentina():
+    # Sin horario configurado rigen los defaults de siempre: 12:00 a 15:00.
+    casilla = dict(CASILLA_DE_PRUEBA)
+    assert not _casilla_en_ventana(casilla, datetime(2026, 8, 22, 11, 59, tzinfo=ARGENTINA_APP))
+    assert _casilla_en_ventana(casilla, datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_APP))
+    assert _casilla_en_ventana(casilla, datetime(2026, 8, 22, 14, 59, tzinfo=ARGENTINA_APP))
+    assert not _casilla_en_ventana(casilla, datetime(2026, 8, 22, 15, 0, tzinfo=ARGENTINA_APP))
+
+
+def test_ventana_de_revision_configurada_por_casilla():
+    casilla = dict(CASILLA_DE_PRUEBA, revision_desde=time(9, 30), revision_hasta=time(18, 0))
+    assert not _casilla_en_ventana(casilla, datetime(2026, 8, 22, 9, 29, tzinfo=ARGENTINA_APP))
+    assert _casilla_en_ventana(casilla, datetime(2026, 8, 22, 9, 30, tzinfo=ARGENTINA_APP))
+    assert _casilla_en_ventana(casilla, datetime(2026, 8, 22, 17, 59, tzinfo=ARGENTINA_APP))
+    assert not _casilla_en_ventana(casilla, datetime(2026, 8, 22, 18, 0, tzinfo=ARGENTINA_APP))
+
+
+def test_le_toca_revision_respeta_la_cadencia_configurada():
+    # Cada 30 minutos: a los 29 del último intento no toca, a los 30 sí.
+    # Un ERROR también cuenta como intento (el reintento espera su turno).
+    casilla = dict(
+        CASILLA_DE_PRUEBA, revision_cada_minutos=30,
+        ultima_revision_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST),
+        ultimo_error_el=datetime(2026, 8, 22, 12, 10, tzinfo=ARGENTINA_TEST),
+    )
+    assert not _le_toca_revision(casilla, datetime(2026, 8, 22, 12, 39, tzinfo=ARGENTINA_TEST))
+    assert _le_toca_revision(casilla, datetime(2026, 8, 22, 12, 40, tzinfo=ARGENTINA_TEST))
+    # Sin ningún intento previo, toca ya mismo.
+    assert _le_toca_revision(dict(CASILLA_DE_PRUEBA), datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST))
+
+
+def test_tick_no_revisa_fuera_de_la_ventana_de_la_casilla_ni_antes_de_la_cadencia():
+    # A las 16:00 la casilla default (12-15) queda afuera; la de horario
+    # extendido se revisa. Y la que ya se revisó hace 5 minutos espera.
+    casilla_default = dict(CASILLA_DE_PRUEBA, id=1)
+    casilla_extendida = dict(CASILLA_DE_PRUEBA, id=2, revision_hasta=time(18, 0))
+    casilla_recien_revisada = dict(
+        CASILLA_DE_PRUEBA, id=4, revision_hasta=time(18, 0),
+        ultima_revision_el=datetime(2026, 8, 22, 15, 55, tzinfo=ARGENTINA_TEST),
+    )
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[casilla_default, casilla_extendida, casilla_recien_revisada]),
+        patch("app.main._revisar_casilla_automaticamente") as mock_revisar,
+    ):
+        revisar_casillas_activas(ahora=datetime(2026, 8, 22, 16, 0, tzinfo=ARGENTINA_TEST))
+
+    assert [llamada.args[0]["id"] for llamada in mock_revisar.call_args_list] == [2]
 
 
 # --- Rentabilidad de Pedidos (Gerencia) ---
@@ -13457,3 +13506,61 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
     assert '<p class="fecha-guia">Compra del 22/08</p>' in respuesta.text
     # La de anteayer: con la marca fuerte.
     assert '<p class="fecha-guia fecha-vieja">⚠ Compra del 20/08</p>' in respuesta.text
+
+
+def test_cambiar_horario_revision_guarda_y_confirma():
+    with patch("app.main.guardar_horario_revision_casilla") as mock_guardar:
+        respuesta = cliente.post(
+            "/sistema/casilla-pedidos/3/horario",
+            data={"revision_desde": "12:00", "revision_hasta": "13:00", "revision_cada_minutos": "30"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(3, time(12, 0), time(13, 0), 30)
+    assert "de+12%3A00+a+13%3A00+cada+30+minutos" in respuesta.headers["location"]
+
+
+def test_cambiar_horario_revision_valida_la_ventana_y_la_cadencia():
+    casos = [
+        # Desde después de hasta: no hay ventana.
+        ({"revision_desde": "15:00", "revision_hasta": "12:00", "revision_cada_minutos": "15"},
+         "La hora de inicio tiene que ser anterior a la de fin."),
+        # Cadencia fuera de rango.
+        ({"revision_desde": "12:00", "revision_hasta": "15:00", "revision_cada_minutos": "3"},
+         "entre 5 y 240"),
+        # Hora ilegible.
+        ({"revision_desde": "doce", "revision_hasta": "15:00", "revision_cada_minutos": "15"},
+         "El horario de revisión no es válido."),
+    ]
+    for datos, mensaje in casos:
+        with (
+            patch("app.main.guardar_horario_revision_casilla") as mock_guardar,
+            patch("app.main.listar_casillas_pedidos", return_value=[]),
+            patch("app.main.listar_mails_pedido", return_value=[]),
+            patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+            patch("app.main.clave_casilla_configurada", return_value="clave"),
+        ):
+            respuesta = cliente.post("/sistema/casilla-pedidos/3/horario", data=datos)
+
+        assert respuesta.status_code == 400, datos
+        assert mensaje in respuesta.text
+        mock_guardar.assert_not_called()
+
+
+def test_ver_casilla_muestra_el_horario_de_revision_y_su_formulario():
+    casilla = dict(CASILLA_DE_PRUEBA, revision_desde=time(12, 0), revision_hasta=time(13, 0), revision_cada_minutos=30)
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[casilla]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert respuesta.status_code == 200
+    assert "de 12:00 a 13:00,\n      cada 30 min" in respuesta.text
+    assert 'action="/sistema/casilla-pedidos/3/horario"' in respuesta.text
+    assert 'value="12:00" required' in respuesta.text
+    assert 'value="13:00" required' in respuesta.text
+    assert "Cambiar horario de revisión automática" in respuesta.text
