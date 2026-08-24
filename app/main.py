@@ -5746,7 +5746,10 @@ def _validar_rechazo_parcial(
 def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
     """Agrupa las compras pendientes de Recepción por guía, en el orden en que ya vienen (por guia_id, guia_punto).
 
-    Devuelve una lista de {"guia_id", "proveedor_nombre", "proveedor_codigo_puesto", "compras"}.
+    Devuelve una lista de {"guia_id", "proveedor_nombre", "proveedor_codigo_puesto",
+    "fecha_operacion", "compras"}. La fecha es UNA por guía (la guía es por
+    proveedor y día): la pantalla la muestra en el encabezado para que se
+    vea de un vistazo si la partida es de un día anterior.
     """
     guias_por_id: dict[int, dict] = {}
     orden_guias: list[int] = []
@@ -5757,6 +5760,7 @@ def _agrupar_pendientes_por_guia(compras: list[dict]) -> list[dict]:
                 "guia_id": guia_id,
                 "proveedor_nombre": compra["proveedor_nombre"],
                 "proveedor_codigo_puesto": compra["proveedor_codigo_puesto"],
+                "fecha_operacion": compra.get("fecha_operacion"),
                 "compras": [],
             }
             orden_guias.append(guia_id)
@@ -5797,6 +5801,13 @@ def _renderizar_pantalla_recepcion(
         recien_procesado = next((p for p in procesados_hoy if p["id"] == recien_procesado_id), None)
 
     guias = _agrupar_pendientes_por_guia(compras_pendientes)
+    # La fecha de cada guía con marca cuando tiene más de un día (mismo
+    # criterio que Retirar Mercadería): el que recepciona tiene que ver de
+    # cuándo es la partida — si es de anteayer, que salte a la vista.
+    hoy = _hoy_argentina()
+    for guia in guias:
+        guia["fecha_vieja"] = guia["fecha_operacion"] is not None and guia["fecha_operacion"] < hoy - timedelta(days=1)
+
     return templates.TemplateResponse(
         request,
         "deposito_recepcion.html",

@@ -13425,3 +13425,35 @@ def test_boton_adjuntar_comanda_en_las_dos_pantallas_de_carga_manual():
         assert 'name="comanda_foto"' in respuesta.text
         assert 'accept="image/*"' in respuesta.text
         assert 'enctype="multipart/form-data"' in respuesta.text
+
+
+def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
+    # La fecha SIEMPRE a la vista para ver si la partida es de un día
+    # anterior; con más de un día, marca fuerte (mismo criterio que
+    # Retirar Mercadería). La guía es por proveedor y día: una fecha por tarjeta.
+    pendientes = [
+        {
+            "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate", "unidad_compra": "kilo",
+            "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
+            "fecha_operacion": date(2026, 8, 22),
+            "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
+        },
+        {
+            "id": 2, "guia_id": 106, "guia_punto": 1, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+            "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
+            "fecha_operacion": date(2026, 8, 20),
+            "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
+        },
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=pendientes),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    # La de hoy: fecha visible, sin marca.
+    assert '<p class="fecha-guia">Compra del 22/08</p>' in respuesta.text
+    # La de anteayer: con la marca fuerte.
+    assert '<p class="fecha-guia fecha-vieja">⚠ Compra del 20/08</p>' in respuesta.text

@@ -1799,7 +1799,8 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.guia_id, c.guia_punto, a.nombre AS articulo_nombre, a.unidad_compra,
+                SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
+                       a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
                 FROM compras c

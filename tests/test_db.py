@@ -732,6 +732,9 @@ def test_listar_compras_pendientes_recepcion_filtra_por_estado_y_guia():
     consulta = cursor.execute.call_args[0][0]
     assert "estado = 'pendiente'" in consulta
     assert "guia_id IS NOT NULL" in consulta
+    # La fecha de la partida viaja a la pantalla: Depósito tiene que ver
+    # de un vistazo si lo que recepciona es de un día anterior.
+    assert "c.fecha_operacion" in consulta
     # Sin real-si-existe acá: esta pantalla necesita el estimado en crudo
     # para prellenar los inputs (ninguna compra pendiente tiene real todavía).
     assert "COALESCE" not in consulta

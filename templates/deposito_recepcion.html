@@ -42,6 +42,20 @@
     font-size: 0.75rem;
     margin: 0 0 0.85rem;
   }
+  .fecha-guia {
+    color: #666;
+    font-size: 0.85rem;
+    margin: 0 0 0.85rem;
+  }
+  /* Partida con más de un día sin recepcionar: que salte a la vista. */
+  .fecha-guia.fecha-vieja {
+    display: inline-block;
+    background: #fef9c3;
+    color: #92400e;
+    font-weight: 700;
+    padding: 0.2rem 0.55rem;
+    border-radius: 6px;
+  }
   .renglon {
     padding: 0.85rem 0;
     border-top: 1px solid #eee;
@@ -213,6 +227,16 @@
     <div class="tarjeta">
       <h2>{{ guia.proveedor_nombre }} ({{ guia.proveedor_codigo_puesto }})</h2>
       <p class="guia-numero">Guía {{ guia.guia_id }}</p>
+      {# La fecha de la partida SIEMPRE a la vista (la guía es por proveedor
+         y día): si es de un día anterior, se ve al toque. Con más de un
+         día, marca fuerte — mismo criterio que Retirar Mercadería. #}
+      {% if guia.fecha_operacion %}
+      {% if guia.fecha_vieja %}
+      <p class="fecha-guia fecha-vieja">⚠ Compra del {{ guia.fecha_operacion.strftime("%d/%m") }}</p>
+      {% else %}
+      <p class="fecha-guia">Compra del {{ guia.fecha_operacion.strftime("%d/%m") }}</p>
+      {% endif %}
+      {% endif %}
 
       {% for c in guia.compras %}
       <div class="renglon">
