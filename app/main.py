@@ -94,6 +94,7 @@ from app.db import (
     guardar_disponible,
     guardar_precios_cliente,
     agregar_foto_guia,
+    agregar_foto_guia_del_dia,
     agregar_foto_pedido,
     asignar_articulo_a_renglon_pedido,
     borrar_dia_sin_pedido,
@@ -2205,8 +2206,20 @@ def ver_nueva_compra(request: Request, proveedor_id: int | None = None, error: s
     )
 
 
+AVISO_READJUNTAR_COMANDA = " Ojo: la comanda adjunta se descartó con el error — volvé a adjuntarla antes de guardar."
+
+
+def _subir_comanda_adjunta(comprimida: bytes, nombre_base: str) -> str | None:
+    """Sube la comanda adjuntada a mano (ya comprimida). None si Storage falló: la foto es un extra, nunca bloquea la compra."""
+    try:
+        return subir_foto_comanda(comprimida, nombre_base)
+    except Exception:
+        logger.exception("No se pudo subir la comanda adjunta (%s) — la compra se guarda igual, sin foto", nombre_base)
+        return None
+
+
 @app.post("/compras/nueva/manual")
-def agregar_compra_manual(
+async def agregar_compra_manual(
     request: Request,
     codigo_puesto: str = Form(""),
     nombre: str = Form(""),
@@ -2217,6 +2230,7 @@ def agregar_compra_manual(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    comanda_foto: UploadFile | None = File(None),
 ):
     """Guarda proveedor Y primer artículo en UN solo paso (la pantalla combinada de carga manual).
 
@@ -2224,7 +2238,13 @@ def agregar_compra_manual(
     primer renglón se sigue en /compras/nueva con el proveedor ya fijado
     (lista de lo cargado hoy, agregar/terminar/cancelar como siempre) —
     el paso que se eliminó es el de "confirmar proveedor" solo.
+
+    comanda_foto (opcional): la foto de la comanda ADJUNTA, sin analizar —
+    se comprime con el pipeline de siempre y cuelga de la guía del
+    proveedor del día, como las fotos de las comandas leídas.
     """
+    bytes_foto = await comanda_foto.read() if comanda_foto is not None else b""
+
     renglon_vacio = not any(
         campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro)
     )
@@ -2232,6 +2252,10 @@ def agregar_compra_manual(
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
     def _reintentar(error, status_code):
+        # El navegador no permite repoblar un input de archivo: si venía una
+        # comanda adjunta, el error tiene que avisar que hay que re-adjuntarla.
+        if bytes_foto:
+            error += AVISO_READJUNTAR_COMANDA
         compra = {
             "articulo_id": valores["articulo_id"] if valores else None,
             "cantidad_cajones": cantidad_cajones,
@@ -2254,6 +2278,12 @@ def agregar_compra_manual(
             articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
         )
 
+    comprimida = None
+    if not error and bytes_foto:
+        comprimida = _comprimir_foto_jpeg(bytes_foto)
+        if comprimida is None:
+            error = "La comanda adjunta no es una imagen legible. Sacá la foto de nuevo o quitala."
+
     articulo = None
     if not error:
         try:
@@ -2275,6 +2305,8 @@ def agregar_compra_manual(
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar el proveedor: {error_db}", 500)
 
+    foto_ruta = _subir_comanda_adjunta(comprimida, codigo_valor) if comprimida is not None else None
+
     total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
     if articulo["unidad_compra"] == "kilo":
         cantidad_kilos, cantidad_fraccion = total, None
@@ -2293,6 +2325,7 @@ def agregar_compra_manual(
             valores["importe"],
             valores["sena"],
             valores["tipo_retiro"],
+            foto_ruta,
         )
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar la compra: {error_db}", 500)
@@ -2304,7 +2337,7 @@ def agregar_compra_manual(
 
 
 @app.post("/compras/nueva")
-def agregar_compra(
+async def agregar_compra(
     request: Request,
     proveedor_id: int = Form(...),
     accion: str = Form("agregar"),
@@ -2314,11 +2347,14 @@ def agregar_compra(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    comanda_foto: UploadFile | None = File(None),
 ):
+    bytes_foto = await comanda_foto.read() if comanda_foto is not None else b""
+
     renglon_vacio = not any(
         campo.strip() for campo in (articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro)
     )
-    if accion == "terminar" and renglon_vacio:
+    if accion == "terminar" and renglon_vacio and not bytes_foto:
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
     try:
@@ -2329,9 +2365,52 @@ def agregar_compra(
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
 
+    def _reintentar_con_foto_error(error, status_code):
+        articulos = listar_articulos()
+        renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
+        return templates.TemplateResponse(
+            request,
+            "compra_form.html",
+            {
+                "articulos": articulos,
+                "modo": "nueva",
+                "compra": None,
+                "proveedor": proveedor,
+                "renglones_hoy": renglones_hoy,
+                "error": error,
+            },
+            status_code=status_code,
+        )
+
+    comprimida = None
+    if bytes_foto:
+        comprimida = _comprimir_foto_jpeg(bytes_foto)
+        if comprimida is None:
+            return _reintentar_con_foto_error(
+                "La comanda adjunta no es una imagen legible. Sacá la foto de nuevo o quitala.", 400
+            )
+
+    # Terminar SOLO con la comanda adjunta (sin renglón nuevo): la foto se
+    # cuelga de la guía del día ya creada por los renglones anteriores —
+    # es el "cerrar la comanda" al final de la carga.
+    if accion == "terminar" and renglon_vacio:
+        try:
+            foto_ruta = subir_foto_comanda(comprimida, proveedor["codigo_puesto"])
+            con_guia = agregar_foto_guia_del_dia(_hoy_argentina(), proveedor_id, foto_ruta)
+        except Exception as error_subida:
+            return _reintentar_con_foto_error(f"No se pudo subir la comanda adjunta: {error_subida}", 500)
+        if not con_guia:
+            return _reintentar_con_foto_error(
+                "Todavía no hay nada cargado hoy de este proveedor: la comanda adjunta se guarda junto con un artículo.",
+                400,
+            )
+        return RedirectResponse(url="/compras/buscar", status_code=303)
+
     error, valores = _validar_compra_nueva_form(
         articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
     )
+    if error and bytes_foto:
+        error += AVISO_READJUNTAR_COMANDA
 
     articulo = None
     if not error:
@@ -2400,6 +2479,8 @@ def agregar_compra(
     else:
         cantidad_kilos, cantidad_fraccion = None, total
 
+    foto_ruta = _subir_comanda_adjunta(comprimida, proveedor["codigo_puesto"]) if comprimida is not None else None
+
     try:
         crear_compra(
             _hoy_argentina(),
@@ -2412,6 +2493,7 @@ def agregar_compra(
             valores["importe"],
             valores["sena"],
             valores["tipo_retiro"],
+            foto_ruta,
         )
     except Exception as error_db:
         articulos = listar_articulos()

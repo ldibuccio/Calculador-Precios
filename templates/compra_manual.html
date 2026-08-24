@@ -68,6 +68,20 @@
   }
   .boton-exito { background: #16a34a; }
   .boton-peligro { background: #dc2626; }
+  .boton-adjuntar { background: #ea580c; }
+  .input-foto-oculto { display: none; }
+  .estado-adjunto {
+    display: none;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+  }
+  .estado-adjunto.visible { display: block; }
+  .estado-adjunto a { color: #9a3412; font-weight: 700; }
   button[disabled] { opacity: 0.5; }
   .buscador-proveedor { position: relative; }
   .lista-proveedores {
@@ -112,7 +126,7 @@
      artículo se cargan juntos — sin el paso intermedio de "confirmar
      proveedor". Con "Agregar artículo" el proveedor queda fijado y los
      siguientes artículos se suman sin repetirlo. #}
-  <form method="post" action="/compras/nueva/manual" id="form-compra" onsubmit="normalizarCodigoPuesto()">
+  <form method="post" action="/compras/nueva/manual" id="form-compra" enctype="multipart/form-data" onsubmit="normalizarCodigoPuesto()">
     <div class="tarjeta">
       <h2>Proveedor</h2>
       <p class="ayuda">Elegí uno de la lista o cargá uno nuevo. Con "Agregar artículo" queda fijado para seguir sumándole artículos sin repetirlo.</p>
@@ -156,6 +170,16 @@
         {% set tipo_retiro_elegido = compra.tipo_retiro if compra else None %}
         {% include "_opciones_tipo_retiro.html" %}
       </select>
+
+      {# Adjuntar la comanda SIN analizarla: la foto viaja con el form y al
+         guardar se comprime y cuelga de la guía del proveedor del día —
+         el mismo bucket y la misma baja resolución de siempre. #}
+      <input type="file" id="comanda_foto" name="comanda_foto" accept="image/*" class="input-foto-oculto">
+      <button type="button" class="boton-adjuntar" id="boton-adjuntar-comanda">📎 Adjuntar comanda</button>
+      <div class="estado-adjunto" id="estado-comanda-adjunta">
+        Comanda adjunta ✓ — se sube al tocar Guardar o Agregar artículo.
+        <a href="#" id="quitar-comanda-adjunta">Quitar</a>
+      </div>
 
       <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>
       <button type="submit" name="accion" value="agregar" id="boton-agregar-articulo">Agregar artículo</button>
@@ -273,6 +297,34 @@
         contenidoInput.value = contenidoReferencia;
       }
     }
+
+    // Adjuntar comanda: el botón abre el selector (en el celular ofrece
+    // cámara o galería solo, por el accept="image/*"). La foto NO se
+    // analiza ni se sube todavía: viaja con el form al guardar, así
+    // adjuntar y cerrar la comanda es un solo flujo sin salir de acá.
+    (function () {
+      const input = document.getElementById("comanda_foto");
+      const boton = document.getElementById("boton-adjuntar-comanda");
+      const estado = document.getElementById("estado-comanda-adjunta");
+      const quitar = document.getElementById("quitar-comanda-adjunta");
+      if (!input || !boton || !estado || !quitar) {
+        return;
+      }
+      boton.addEventListener("click", function () {
+        input.click();
+      });
+      input.addEventListener("change", function () {
+        const adjunta = input.files.length > 0;
+        estado.classList.toggle("visible", adjunta);
+        boton.textContent = adjunta ? "📎 Cambiar comanda adjunta" : "📎 Adjuntar comanda";
+      });
+      quitar.addEventListener("click", function (evento) {
+        evento.preventDefault();
+        input.value = "";
+        estado.classList.remove("visible");
+        boton.textContent = "📎 Adjuntar comanda";
+      });
+    })();
 
     // Evita que, al no ver ningún cambio en pantalla mientras guarda, el
     // comprador apriete varias veces y termine cargando lo mismo repetido.

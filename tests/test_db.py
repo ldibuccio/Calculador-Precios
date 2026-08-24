@@ -90,6 +90,7 @@ from app.db import (
     guardar_disponible,
     guardar_precios_cliente,
     agregar_foto_guia,
+    agregar_foto_guia_del_dia,
     borrar_foto_guia,
     listar_fotos_de_guia,
     limpiar_foto_ruta_de_compras,
@@ -2953,3 +2954,27 @@ def test_listar_renglones_pedidos_vigentes_suma_por_fecha_y_articulo():
     assert "SUM(r.cantidad)" in consulta
     assert "LEFT JOIN articulos" in consulta
     assert parametros == (1, date(2026, 8, 15), date(2026, 8, 22))
+
+
+def test_agregar_foto_guia_del_dia_cuelga_si_la_guia_existe():
+    conexion, cursor = _conexion_falsa([(105,)])  # SELECT id de la guía del día
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = agregar_foto_guia_del_dia(date(2026, 8, 22), 200, "2026-08-22/n07p41-abc.jpg")
+
+    assert resultado is True
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO fotos_guia" in consulta
+    assert "ON CONFLICT DO NOTHING" in consulta
+    assert parametros == (105, "2026-08-22/n07p41-abc.jpg")
+    conexion.commit.assert_called_once()
+
+
+def test_agregar_foto_guia_del_dia_sin_guia_devuelve_false():
+    conexion, cursor = _conexion_falsa([None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = agregar_foto_guia_del_dia(date(2026, 8, 22), 200, "ruta.jpg")
+
+    assert resultado is False
+    assert cursor.execute.call_count == 1  # solo el SELECT, nada que insertar

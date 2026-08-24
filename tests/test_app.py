@@ -2233,7 +2233,7 @@ def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
     # siguientes artículos no lo repiten.
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark")
+    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None)
 
 
 def test_agregar_compra_manual_con_guardar_termina_en_buscar():
@@ -2446,7 +2446,7 @@ def test_agregar_compra_exitosa_redirige_al_mismo_proveedor_calcula_kilos():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     # 10 cajones × 18 kg = 180 kg (unidad_compra del artículo = kilo)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None)
 
 
 def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
@@ -2472,7 +2472,7 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
 
     assert respuesta.status_code == 303
     # 5 cajones × 10 unidades = 50 unidades (unidad_compra del artículo = unidad)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro", None)
 
 
 def test_agregar_compra_proveedor_inexistente_da_404():
@@ -2543,7 +2543,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None)
 
 
 def test_agregar_compra_terminar_con_renglon_invalido_muestra_error_y_no_pierde_datos():
@@ -2669,7 +2669,7 @@ def test_agregar_compra_sin_importe_queda_pendiente():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None)
 
 
 def test_agregar_compra_importe_negativo_muestra_error():
@@ -2746,7 +2746,7 @@ def test_agregar_compra_tipo_retiro_pases_se_acepta():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases")
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None)
 
 
 def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
@@ -13246,3 +13246,177 @@ def test_gerencia_tiene_el_acceso_a_rentabilidad():
     respuesta = cliente.get("/gerencia")
     assert respuesta.status_code == 200
     assert 'href="/gerencia/rentabilidad"' in respuesta.text
+
+
+# --- Adjuntar comanda a la carga manual (foto sin analizar) ---
+
+def test_agregar_compra_manual_con_comanda_adjunta_la_cuelga_de_la_guia():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico") as mock_comprimir,
+        patch("app.main.subir_foto_comanda", return_value="2026-08-22/n07p41-abc.jpg") as mock_subir,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/manual",
+            data=_datos_compra_manual(),
+            files={"comanda_foto": ("comanda.jpg", b"bytes-originales", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # SIEMPRE comprimida antes de subir (baja resolución, nunca el original).
+    mock_comprimir.assert_called_once_with(b"bytes-originales")
+    mock_subir.assert_called_once_with(b"jpeg-chico", "N07P41")
+    # La ruta viaja a crear_compra: la foto cuelga de la guía del día.
+    assert mock_crear.call_args.args[10] == "2026-08-22/n07p41-abc.jpg"
+
+
+def test_agregar_compra_manual_foto_ilegible_avisa_sin_crear_nada():
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main._comprimir_foto_jpeg", return_value=None),
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/manual",
+            data=_datos_compra_manual(),
+            files={"comanda_foto": ("comanda.jpg", b"no-es-imagen", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no es una imagen legible" in respuesta.text
+    mock_proveedor.assert_not_called()
+    mock_crear.assert_not_called()
+
+
+def test_agregar_compra_manual_si_storage_falla_la_compra_se_guarda_igual():
+    # La foto es un extra: un fallo de Storage jamás pierde la compra.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico"),
+        patch("app.main.subir_foto_comanda", side_effect=RuntimeError("sin conexión")),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/manual",
+            data=_datos_compra_manual(),
+            files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.args[10] is None
+
+
+def test_agregar_compra_manual_error_con_foto_avisa_que_hay_que_readjuntarla():
+    # El navegador no repuebla un input de archivo: el error lo dice.
+    with (
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/manual",
+            data=_datos_compra_manual(codigo_puesto="puesto15"),
+            files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "volvé a adjuntarla" in respuesta.text
+
+
+def test_agregar_compra_clasica_con_comanda_adjunta_la_cuelga_de_la_guia():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico"),
+        patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-abc.jpg") as mock_subir,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={"proveedor_id": "200", "accion": "agregar", "articulo_id": "5", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "18", "importe": "50000", "sena": "", "tipo_retiro": "Clark"},
+            files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_subir.assert_called_once_with(b"jpeg-chico", "N07P41")
+    assert mock_crear.call_args.args[10] == "2026-08-06/n07p41-abc.jpg"
+
+
+def test_terminar_solo_con_la_comanda_adjunta_la_cuelga_y_cierra():
+    # El "cerrar la comanda": todos los artículos ya cargados, se adjunta
+    # la foto al final y Guardar la cuelga de la guía del día — sin
+    # renglón nuevo.
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico"),
+        patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-abc.jpg"),
+        patch("app.main.agregar_foto_guia_del_dia", return_value=True) as mock_colgar,
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={"proveedor_id": "200", "accion": "terminar", "articulo_id": "", "cantidad_cajones": "",
+                  "contenido_por_cajon": "", "importe": "", "sena": "", "tipo_retiro": ""},
+            files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/compras/buscar"
+    mock_colgar.assert_called_once_with(HOY_DE_PRUEBA, 200, "2026-08-06/n07p41-abc.jpg")
+    mock_crear.assert_not_called()
+
+
+def test_terminar_solo_con_foto_sin_guia_del_dia_avisa():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico"),
+        patch("app.main.subir_foto_comanda", return_value="ruta.jpg"),
+        patch("app.main.agregar_foto_guia_del_dia", return_value=False),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={"proveedor_id": "200", "accion": "terminar", "articulo_id": "", "cantidad_cajones": "",
+                  "contenido_por_cajon": "", "importe": "", "sena": "", "tipo_retiro": ""},
+            files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "se guarda junto con un artículo" in respuesta.text
+
+
+def test_boton_adjuntar_comanda_en_las_dos_pantallas_de_carga_manual():
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+    ):
+        combinada = cliente.get("/compras/nueva/manual")
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        clasica = cliente.get("/compras/nueva?proveedor_id=200")
+
+    for respuesta in (combinada, clasica):
+        assert respuesta.status_code == 200
+        assert "Adjuntar comanda" in respuesta.text
+        assert 'class="boton-adjuntar"' in respuesta.text
+        assert 'name="comanda_foto"' in respuesta.text
+        assert 'accept="image/*"' in respuesta.text
+        assert 'enctype="multipart/form-data"' in respuesta.text

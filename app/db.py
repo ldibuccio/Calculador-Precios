@@ -2893,6 +2893,33 @@ def listar_fotos_de_guia(guia_id: int) -> list[dict]:
         conexion.close()
 
 
+def agregar_foto_guia_del_dia(fecha_operacion, proveedor_id: int, foto_ruta: str) -> bool:
+    """Cuelga una foto a la guía de (fecha, proveedor) SI existe. Devuelve si la encontró.
+
+    Para la carga manual: adjuntar la comanda al cerrar, sin renglón nuevo
+    — la guía ya la crearon los renglones cargados antes. Sin guía (nada
+    cargado ese día) no hay dónde colgarla: False, y quien llama avisa.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM guias_compra WHERE fecha_operacion = %s AND proveedor_id = %s",
+                (fecha_operacion, proveedor_id),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return False
+            cursor.execute(
+                "INSERT INTO fotos_guia (guia_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (fila[0], foto_ruta),
+            )
+        conexion.commit()
+        return True
+    finally:
+        conexion.close()
+
+
 def agregar_foto_guia(guia_id: int, foto_ruta: str) -> None:
     """Suma una foto/archivo a la guía. Nunca reemplaza: si la ruta ya estaba en esa guía, no hace nada."""
     conexion = obtener_conexion()
