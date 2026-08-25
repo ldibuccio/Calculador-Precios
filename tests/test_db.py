@@ -3525,3 +3525,35 @@ def test_los_insert_de_compras_ya_no_nombran_la_columna_foto_ruta():
         columnas = fragmento.split("VALUES")[0]
         assert "foto_ruta" not in columnas
     assert "UPDATE compras SET foto_ruta" not in fuente
+
+
+def test_registrar_revision_automatica_sella_las_dos_columnas():
+    from app.db import registrar_revision_casilla
+
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        registrar_revision_casilla(3, automatica=True)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "ultima_revision_el = now(), ultima_revision_automatica_el = now()" in consulta
+
+    # El manual (default) NO toca la automática: es lo que mira la alerta.
+    conexion2, cursor2 = _conexion_falsa()
+    with patch("app.db.obtener_conexion", return_value=conexion2):
+        registrar_revision_casilla(3)
+    assert "ultima_revision_automatica_el" not in cursor2.execute.call_args.args[0]
+
+
+def test_registrar_tick_revision_es_un_upsert_de_una_fila():
+    from app.db import registrar_tick_revision
+
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        registrar_tick_revision()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "INSERT INTO revision_tick" in consulta
+    assert "ON CONFLICT (id) DO UPDATE" in consulta
+    conexion.commit.assert_called_once()

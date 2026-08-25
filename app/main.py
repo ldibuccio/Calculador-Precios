@@ -6,6 +6,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import io
@@ -146,7 +147,9 @@ from app.db import (
     obtener_mail_pedido,
     obtener_pedido_vigente,
     registrar_mail_pedido,
+    obtener_ultimo_tick_revision,
     registrar_revision_casilla,
+    registrar_tick_revision,
     limpiar_foto_ruta_de_compras,
     listar_fotos_de_guia,
     listar_fotos_pedido,
@@ -397,9 +400,38 @@ def _hoy_argentina():
     """Fecha de hoy en Argentina (UTC-3 fijo, sin horario de verano), sin depender de la hora del servidor."""
     return datetime.now(ARGENTINA).date()
 
+# Sin esto, uvicorn deja el logger del módulo en WARNING y los logs INFO
+# del bucle de revisión (arranque y ticks) no aparecen en Railway — que es
+# exactamente donde hacen falta para ver si el tick corre sin deducirlo.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# Referencia FUERTE al task de fondo: el event loop guarda solo
+# referencias débiles a las tasks (pitfall documentado de create_task) y
+# un task recolectado por el GC muere en silencio.
+_TAREAS_DE_FONDO: set = set()
+
+
+@asynccontextmanager
+async def _ciclo_de_vida(app_fastapi):
+    """El lifespan de la app (reemplaza al @app.on_event("startup") deprecado).
+
+    Arranca el bucle de revisión de casillas al iniciar y lo cancela
+    prolijo al apagar. Los nombres se resuelven en tiempo de ejecución:
+    _bucle_revision_casillas se define más abajo en este módulo, y para
+    cuando el server arranca ya existe.
+    """
+    tarea = asyncio.create_task(_bucle_revision_casillas())
+    _TAREAS_DE_FONDO.add(tarea)
+    tarea.add_done_callback(_TAREAS_DE_FONDO.discard)
+    yield
+    tarea.cancel()
+
+
+app = FastAPI(lifespan=_ciclo_de_vida)
 templates = Jinja2Templates(directory="templates")
 
 
@@ -8834,7 +8866,10 @@ def contar_casillas_sin_revisar(ahora=None) -> dict:
         )
         if ahora < umbral:
             continue
-        revision = casilla["ultima_revision_el"]
+        # SOLO las automáticas: el botón manual no cuenta — si contara,
+        # un tick muerto sería invisible mientras el dueño toque el botón
+        # (el punto ciego del diagnóstico del 25/08).
+        revision = casilla["ultima_revision_automatica_el"]
         revisada_hoy = revision is not None and revision.astimezone(ARGENTINA).date() == ahora.date()
         if not revisada_hoy:
             casos += 1
@@ -9897,6 +9932,24 @@ def _renderizar_casilla_pedidos(request: Request, *, mensaje: str | None = None,
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    # El latido del bucle: si quedó viejo (más de dos ticks sin sellar),
+    # el bucle NO está corriendo — la pantalla lo dice en rojo, sin tener
+    # que deducirlo de logs ni de "no llegó ningún mail".
+    try:
+        ultimo_tick = obtener_ultimo_tick_revision()
+    except Exception:
+        logger.exception("No se pudo leer el latido del bucle de revisión")
+        ultimo_tick = None
+    # Umbral: 3 ticks de gracia MÁS el tope de un tick colgado — con un
+    # IMAP colgado el latido se re-sella recién cada timeout + espera, y
+    # sin ese margen la tarjeta roja parpadearía por un cuelgue transitorio
+    # del que el bucle se recupera solo.
+    tick_vencido = (
+        ultimo_tick is None
+        or (datetime.now(ARGENTINA) - ultimo_tick)
+        > timedelta(seconds=SEGUNDOS_TICK_REVISION * 3 + SEGUNDOS_TIMEOUT_TICK)
+    )
+
     return templates.TemplateResponse(
         request,
         "sistema_casilla_pedidos.html",
@@ -9904,6 +9957,8 @@ def _renderizar_casilla_pedidos(request: Request, *, mensaje: str | None = None,
             "casillas": casillas,
             "mails": mails,
             "clientes": clientes,
+            "ultimo_tick": ultimo_tick,
+            "tick_vencido": tick_vencido,
             # La clave JAMÁS pasa por esta pantalla: solo se muestra si la
             # variable de Railway está configurada o falta.
             "clave_configurada": clave_casilla_configurada() is not None,
@@ -10362,7 +10417,7 @@ def _revisar_casilla_automaticamente(casilla: dict) -> None:
             )
             if mail_id is not None:
                 nuevos.append(mail_id)
-        registrar_revision_casilla(casilla["id"])
+        registrar_revision_casilla(casilla["id"], automatica=True)
     except Exception as error_db:
         try:
             registrar_revision_casilla(casilla["id"], error=f"Se leyó el buzón pero falló el registro en la base: {error_db}")
@@ -10383,13 +10438,14 @@ def _revisar_casilla_automaticamente(casilla: dict) -> None:
             logger.exception("Auto-confirmar falló para el mail %s — queda pendiente para revisar a mano", mail_id)
 
 
-def revisar_casillas_activas(ahora=None) -> None:
+def revisar_casillas_activas(ahora=None) -> int:
     """El tick de la revisión automática: cada casilla ACTIVA a la que le toca según SU horario.
 
     Cada casilla tiene su propia ventana (desde/hasta) y su cadencia (cada
     N minutos), configurables en su pantalla. El tick corre cada minuto y
     decide por casilla: en ventana Y con el intervalo cumplido desde el
     último intento → se revisa; si no, se saltea sin tocar nada.
+    Devuelve cuántas casillas revisó (para el log del tick).
     """
     if ahora is None:
         ahora = datetime.now(ARGENTINA)
@@ -10397,34 +10453,58 @@ def revisar_casillas_activas(ahora=None) -> None:
         casillas = listar_casillas_pedidos()
     except Exception:
         logger.exception("La revisión automática no pudo leer las casillas configuradas")
-        return
+        return 0
+    revisadas = 0
     for casilla in casillas:
         if not casilla["activa"] or casilla["fecha_activacion"] is None:
             continue
         if not _casilla_en_ventana(casilla, ahora) or not _le_toca_revision(casilla, ahora):
             continue
         _revisar_casilla_automaticamente(casilla)
+        revisadas += 1
+    return revisadas
+
+
+# Tope duro por tick: si un IMAP se cuelga (connect en blackhole, DNS
+# eterno — el bug del 25/08: el timeout de imaplib es por operación y por
+# IP, no cubre el peor caso), el tick se abandona y el bucle SIGUE. El
+# hilo colgado no se puede matar, pero termina solo cuando sus sockets
+# vencen — lo que no puede pasar nunca más es que bloquee el bucle.
+SEGUNDOS_TIMEOUT_TICK = 120
 
 
 async def _bucle_revision_casillas() -> None:
     """El task de fondo: mira el reloj cada minuto y revisa la casilla a la que le toca.
 
-    La revisión en sí corre en un hilo (asyncio.to_thread): el IMAP y la
-    base son bloqueantes y no tienen que frenar a la app. Cualquier
-    excepción se loguea y el bucle SIGUE — un tick fallido no mata la
-    revisión de mañana.
+    La revisión corre en un hilo (asyncio.to_thread) con TIMEOUT
+    ENVOLVENTE, y cada tick deja DOS rastros aunque no revise nada: el
+    latido en la base (revision_tick, lo que muestra Sistema) y una
+    línea de log (lo que se mira en Railway) — "sin novedades" y "el
+    bucle está muerto" no pueden volver a verse iguales. Cualquier
+    excepción se loguea y el bucle SIGUE.
     """
+    logger.info(
+        "El bucle de revisión de casillas arrancó (tick cada %s segundos, tope %s segundos por tick)",
+        SEGUNDOS_TICK_REVISION, SEGUNDOS_TIMEOUT_TICK,
+    )
     while True:
         try:
-            await asyncio.to_thread(revisar_casillas_activas)
+            await asyncio.to_thread(registrar_tick_revision)
+        except Exception:
+            logger.exception("No se pudo sellar el latido del tick — se sigue igual")
+        try:
+            revisadas = await asyncio.wait_for(
+                asyncio.to_thread(revisar_casillas_activas), timeout=SEGUNDOS_TIMEOUT_TICK
+            )
+            logger.info("Tick de revisión de casillas: %s revisada(s)", revisadas)
+        except asyncio.TimeoutError:
+            logger.error(
+                "El tick de revisión superó los %s segundos (¿IMAP colgado?) y se abandonó — el bucle sigue",
+                SEGUNDOS_TIMEOUT_TICK,
+            )
         except Exception:
             logger.exception("El bucle de revisión de casillas falló — sigue en el próximo ciclo")
         await asyncio.sleep(SEGUNDOS_TICK_REVISION)
-
-
-@app.on_event("startup")
-async def _arrancar_revision_casillas() -> None:
-    asyncio.create_task(_bucle_revision_casillas())
 
 
 @app.post("/sistema/casilla-pedidos/mails/{mail_id}/ignorar")

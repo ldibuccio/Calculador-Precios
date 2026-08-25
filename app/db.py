@@ -4306,7 +4306,8 @@ def listar_casillas_pedidos() -> list[dict]:
                        ca.asunto_filtro, ca.remitentes_permitidos,
                        ca.activa, ca.fecha_activacion, ca.auto_confirmar,
                        ca.revision_desde, ca.revision_hasta, ca.revision_cada_minutos,
-                       ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
+                       ca.ultima_revision_el, ca.ultima_revision_automatica_el,
+                       ca.ultimo_error, ca.ultimo_error_el,
                        c.nombre AS cliente_nombre
                 FROM casillas_pedidos ca
                 JOIN clientes c ON c.id = ca.cliente_id
@@ -4329,7 +4330,8 @@ def obtener_casilla_pedidos(casilla_id: int) -> dict | None:
                        ca.asunto_filtro, ca.remitentes_permitidos,
                        ca.activa, ca.fecha_activacion, ca.auto_confirmar,
                        ca.revision_desde, ca.revision_hasta, ca.revision_cada_minutos,
-                       ca.ultima_revision_el, ca.ultimo_error, ca.ultimo_error_el,
+                       ca.ultima_revision_el, ca.ultima_revision_automatica_el,
+                       ca.ultimo_error, ca.ultimo_error_el,
                        c.nombre AS cliente_nombre
                 FROM casillas_pedidos ca
                 JOIN clientes c ON c.id = ca.cliente_id
@@ -4459,17 +4461,26 @@ def guardar_horario_revision_casilla(casilla_id: int, desde, hasta, cada_minutos
         conexion.close()
 
 
-def registrar_revision_casilla(casilla_id: int, error: str | None = None) -> None:
+def registrar_revision_casilla(casilla_id: int, error: str | None = None, automatica: bool = False) -> None:
     """Deja rastro de cada revisión: la exitosa por un lado, el último error por el otro.
 
     Si el último error es más nuevo que la última revisión exitosa, la
-    casilla está fallando — eso es lo que la pantalla (y la futura alerta
-    de Auditoría) mira. Nunca se pisa una cosa con la otra.
+    casilla está fallando — eso mira la pantalla. Una revisión exitosa
+    AUTOMÁTICA además sella ultima_revision_automatica_el: el botón
+    manual NO la toca, y la alerta de Auditoría mira SOLO esa — así un
+    tick muerto se detecta aunque el dueño revise a mano todos los días
+    (el punto ciego del diagnóstico del 25/08). Nunca se pisa una cosa
+    con la otra.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            if error is None:
+            if error is None and automatica:
+                cursor.execute(
+                    "UPDATE casillas_pedidos SET ultima_revision_el = now(), ultima_revision_automatica_el = now() WHERE id = %s",
+                    (casilla_id,),
+                )
+            elif error is None:
                 cursor.execute(
                     "UPDATE casillas_pedidos SET ultima_revision_el = now() WHERE id = %s",
                     (casilla_id,),
@@ -4480,6 +4491,39 @@ def registrar_revision_casilla(casilla_id: int, error: str | None = None) -> Non
                     (error, casilla_id),
                 )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def registrar_tick_revision() -> None:
+    """El latido del bucle: se sella en CADA tick, aunque no toque revisar nada.
+
+    Es lo que separa "sin novedades" de "el bucle está muerto": si esta
+    marca queda vieja, el bucle no corre — visible en Sistema sin
+    deducir nada de los logs.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO revision_tick (id, ultimo_tick_el) VALUES (1, now())
+                ON CONFLICT (id) DO UPDATE SET ultimo_tick_el = now()
+                """
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def obtener_ultimo_tick_revision():
+    """Cuándo fue el último tick del bucle (None si nunca corrió), para la pantalla de Sistema."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT ultimo_tick_el FROM revision_tick WHERE id = 1")
+            fila = cursor.fetchone()
+        return fila[0] if fila else None
     finally:
         conexion.close()
 

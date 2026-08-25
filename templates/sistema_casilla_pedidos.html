@@ -53,6 +53,20 @@
   .pill-confirmado { background: #dcfce7; color: #166534; }
   .pill-ignorado { background: #e5e7eb; color: #4b5563; }
   .pill-error { background: #fee2e2; color: #991b1b; }
+  .estado-bucle {
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    background: #dcfce7;
+    color: #166534;
+  }
+  .estado-bucle.muerto {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 2px solid #dc2626;
+    font-weight: 700;
+  }
   .estado-error {
     background: #fee2e2;
     color: #991b1b;
@@ -164,6 +178,16 @@
     {% endif %}
   </div>
 
+  {% if tick_vencido %}
+  <div class="estado-bucle muerto">
+    El bucle de revisión automática NO está corriendo:
+    {% if ultimo_tick %}último tick {{ ultimo_tick|fecha_hora }}{% else %}nunca registró un tick{% endif %}.
+    Los mails no van a entrar solos hasta un redeploy — mientras tanto, "Revisar ahora" a mano.
+  </div>
+  {% else %}
+  <div class="estado-bucle">Bucle de revisión automática vivo: último tick {{ ultimo_tick|fecha_hora }}.</div>
+  {% endif %}
+
   {% for casilla in casillas %}
   <div class="tarjeta">
     <h2>{{ casilla.direccion }}
@@ -190,6 +214,11 @@
     <p class="dato">Última revisión OK:
       {% if casilla.ultima_revision_el %}<strong>{{ casilla.ultima_revision_el|fecha_hora }}</strong>
       {% else %}<em>nunca</em>{% endif %}
+    </p>
+    <p class="dato">Última revisión AUTOMÁTICA OK:
+      {% if casilla.ultima_revision_automatica_el %}<strong>{{ casilla.ultima_revision_automatica_el|fecha_hora }}</strong>
+      {% else %}<em>nunca</em>{% endif %}
+      (el botón manual no la mueve — es la que mira la alerta de Auditoría)
     </p>
     {% if casilla.ultimo_error_el and (not casilla.ultima_revision_el or casilla.ultimo_error_el > casilla.ultima_revision_el) %}
     <div class="estado-error"><strong>La última revisión falló</strong> ({{ casilla.ultimo_error_el|fecha_hora }}): {{ casilla.ultimo_error }}</div>

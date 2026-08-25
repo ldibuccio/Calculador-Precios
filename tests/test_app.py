@@ -11706,7 +11706,8 @@ CASILLA_DE_PRUEBA = {
     "id": 3, "direccion": "casilla@empresa.com", "servidor_imap": "imap.gmail.com",
     "cliente_id": 1, "asunto_filtro": "Pedido Dia", "remitentes_permitidos": "pedidos@dia.com.ar",
     "activa": True, "fecha_activacion": datetime(2026, 8, 22, 11, 0, tzinfo=ARGENTINA_TEST),
-    "auto_confirmar": False, "ultima_revision_el": None, "ultimo_error": None, "ultimo_error_el": None,
+    "auto_confirmar": False, "ultima_revision_el": None, "ultima_revision_automatica_el": None,
+    "ultimo_error": None, "ultimo_error_el": None,
     # Horario de revisión sin configurar: rigen los defaults (12-15, cada 15).
     "revision_desde": None, "revision_hasta": None, "revision_cada_minutos": None,
     "cliente_nombre": "Día",
@@ -11899,6 +11900,7 @@ def test_revisar_ahora_reporta_el_detalle_de_lo_que_encontro():
         CASILLA_DE_PRUEBA["fecha_activacion"], "Pedido Dia", ["pedidos@dia.com.ar"],
     )
     mock_registrar.assert_called_once()
+    # El botón MANUAL no sella la revisión automática (la alerta no lo cuenta).
     mock_revision.assert_called_once_with(3)
     # El detalle completo en el mensaje: total, por remitente, por asunto, nuevos.
     destino = respuesta.headers["location"]
@@ -12609,10 +12611,12 @@ def test_contar_casillas_sin_revisar_no_alerta_por_un_fallo_que_se_recupero_solo
     # la casilla.
     casillas = [
         dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
+             ultima_revision_automatica_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
              ultimo_error_el=datetime(2026, 8, 22, 12, 0, tzinfo=ARGENTINA_TEST)),
         # Y un error DESPUÉS del éxito de hoy tampoco alerta: los mails del
         # día ya se registraron a las 12:15.
         dict(CASILLA_DE_PRUEBA, id=2, ultima_revision_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
+             ultima_revision_automatica_el=datetime(2026, 8, 22, 12, 15, tzinfo=ARGENTINA_TEST),
              ultimo_error_el=datetime(2026, 8, 22, 14, 15, tzinfo=ARGENTINA_TEST)),
     ]
     with patch("app.main.listar_casillas_pedidos", return_value=casillas):
@@ -12625,6 +12629,7 @@ def test_contar_casillas_sin_revisar_alerta_desde_las_14_si_hoy_nunca_pudo():
     casillas = [
         # Viene fallando todo el día (último éxito AYER): problema real.
         dict(CASILLA_DE_PRUEBA, id=1, ultima_revision_el=datetime(2026, 8, 21, 13, 0, tzinfo=ARGENTINA_TEST),
+             ultima_revision_automatica_el=datetime(2026, 8, 21, 13, 0, tzinfo=ARGENTINA_TEST),
              ultimo_error_el=datetime(2026, 8, 22, 13, 45, tzinfo=ARGENTINA_TEST)),
         # Nunca corrió nada hoy (ni error registrado): también es problema —
         # el task puede estar muerto.
@@ -13075,7 +13080,7 @@ def test_tick_revisa_las_activas_y_auto_confirma_solo_los_nuevos():
 
     # Solo la activa se revisó (una conexión, no dos).
     mock_revisar.assert_called_once()
-    mock_revision.assert_called_once_with(3)
+    mock_revision.assert_called_once_with(3, automatica=True)
     # Auto-confirmar SOLO el mail nuevo, no el ya registrado.
     mock_obtener.assert_called_once_with(11)
     mock_auto.assert_called_once()
@@ -14863,3 +14868,95 @@ def test_exportar_rentabilidad_real_pdf_y_excel():
 def test_exportar_rentabilidad_real_sin_cliente_da_400():
     respuesta = cliente.get("/gerencia/rentabilidad-real/exportar-pdf")
     assert respuesta.status_code == 400
+
+
+# --- Fix del tick de la casilla: latido, origen automático y lifespan ---
+
+
+def test_la_app_usa_lifespan_y_no_quedan_handlers_on_event():
+    import app.main as m
+
+    # El on_event deprecado se fue: el bucle arranca por lifespan, con
+    # referencia FUERTE al task (pitfall de create_task documentado).
+    assert not m.app.router.on_startup
+    assert m.app.router.lifespan_context is not None
+
+
+def test_casilla_muestra_el_latido_vivo_del_bucle():
+    casilla = dict(CASILLA_DE_PRUEBA, ultima_revision_automatica_el=datetime(2026, 8, 25, 12, 30, tzinfo=ARGENTINA_TEST))
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[casilla]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.obtener_ultimo_tick_revision",
+              return_value=datetime(2026, 8, 25, 12, 30, 30, tzinfo=ARGENTINA_TEST)),
+        patch("app.main.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value = datetime(2026, 8, 25, 12, 31, tzinfo=ARGENTINA_TEST)
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert respuesta.status_code == 200
+    assert "Bucle de revisión automática vivo: último tick" in respuesta.text
+    # Y la última AUTOMÁTICA por casilla, separada de la manual.
+    assert "Última revisión AUTOMÁTICA OK" in respuesta.text
+    assert "el botón manual no la mueve" in respuesta.text
+
+
+def test_casilla_grita_en_rojo_si_el_bucle_esta_muerto():
+    # "Sin novedades" y "bucle muerto" no pueden verse iguales: con el
+    # latido viejo (más de 3 ticks + el tope de un tick colgado), la
+    # pantalla lo dice sin vueltas.
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.obtener_ultimo_tick_revision",
+              return_value=datetime(2026, 8, 25, 9, 0, tzinfo=ARGENTINA_TEST)),
+        patch("app.main.datetime") as mock_dt,
+    ):
+        mock_dt.now.return_value = datetime(2026, 8, 25, 12, 31, tzinfo=ARGENTINA_TEST)
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+
+    assert respuesta.status_code == 200
+    assert "El bucle de revisión automática NO está corriendo" in respuesta.text
+
+    # Sin ningún tick registrado jamás, también en rojo.
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.obtener_ultimo_tick_revision", return_value=None),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+    assert "nunca registró un tick" in respuesta.text
+
+
+def test_el_bucle_abandona_un_tick_colgado_y_sigue():
+    import asyncio
+    import app.main as m
+
+    # Un tick que se cuelga (el bug del 25/08: IMAP en blackhole) tiene
+    # que morir por el timeout envolvente SIN matar el bucle.
+    async def probar():
+        colgado = asyncio.Event()
+
+        def revision_colgada():
+            import time as t
+            t.sleep(10)
+
+        with (
+            patch.object(m, "SEGUNDOS_TIMEOUT_TICK", 0.2),
+            patch.object(m, "SEGUNDOS_TICK_REVISION", 0.05),
+            patch.object(m, "revisar_casillas_activas", revision_colgada),
+            patch.object(m, "registrar_tick_revision", lambda: None),
+        ):
+            tarea = asyncio.create_task(m._bucle_revision_casillas())
+            await asyncio.sleep(1)
+            # Tras varios ciclos con la revisión colgada, el bucle sigue vivo.
+            assert not tarea.done()
+            tarea.cancel()
+
+    asyncio.run(probar())
