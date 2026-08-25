@@ -1456,15 +1456,12 @@ def _insertar_compra_con_guia(
     (guia_id,) = cursor.fetchone()
 
     # La foto cuelga de la GUÍA, no del renglón: se registra una vez por
-    # guía (el ON CONFLICT absorbe los N renglones de la misma comanda) y
-    # compras.foto_ruta queda muerta (se escribe NULL; DROP pendiente,
-    # ver db/APLICADO.md).
+    # guía (el ON CONFLICT absorbe los N renglones de la misma comanda).
     if foto_ruta:
         cursor.execute(
             "INSERT INTO fotos_guia (guia_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
             (guia_id, foto_ruta),
         )
-        foto_ruta = None
 
     cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
     (cantidad_existente,) = cursor.fetchone()
@@ -1475,11 +1472,11 @@ def _insertar_compra_con_guia(
             """
             INSERT INTO compras
                 (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, estado, estado_retiro,
                  cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
                  procesada_el, retiro_procesado_el, retiro_origen)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     'recepcionado', 'retirado', %s, %s, %s, %s, now(), now(), 'ingreso_directo')
             """,
             (
@@ -1493,7 +1490,6 @@ def _insertar_compra_con_guia(
                 importe,
                 sena,
                 tipo_retiro,
-                foto_ruta,
                 guia_id,
                 guia_punto,
                 cantidad_cajones,
@@ -1507,9 +1503,9 @@ def _insertar_compra_con_guia(
             """
             INSERT INTO compras
                 (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, carga_token, estado, estado_retiro, retiro_procesado_el, retiro_origen)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
             """,
             (
                 fecha_operacion,
@@ -1522,7 +1518,6 @@ def _insertar_compra_con_guia(
                 importe,
                 sena,
                 tipo_retiro,
-                foto_ruta,
                 guia_id,
                 guia_punto,
                 carga_token,
@@ -1534,9 +1529,9 @@ def _insertar_compra_con_guia(
             """
             INSERT INTO compras
                 (fecha_operacion, articulo_id, proveedor_id, cantidad_cajones, contenido_por_cajon,
-                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro, foto_ruta,
+                 cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, carga_token, estado, estado_retiro)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
             """,
             (
                 fecha_operacion,
@@ -1549,7 +1544,6 @@ def _insertar_compra_con_guia(
                 importe,
                 sena,
                 tipo_retiro,
-                foto_ruta,
                 guia_id,
                 guia_punto,
                 carga_token,
@@ -2862,17 +2856,17 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
 
 
 def limpiar_foto_ruta_de_compras(foto_ruta: str) -> None:
-    """Borra los registros de un archivo ya eliminado del bucket: sus filas de fotos_guia, y la columna muerta.
+    """Borra los registros de un archivo ya eliminado del bucket: sus filas de fotos_guia.
 
     Se usa después de borrar el archivo del Storage (limpieza de fotos
-    viejas). El UPDATE de compras.foto_ruta es solo higiene de la columna
-    muerta mientras espera su DROP (ver db/APLICADO.md).
+    viejas). Las fotos viven SOLO en fotos_guia: compras.foto_ruta quedó
+    muerta tras agregar_fotos_guia.sql y su DROP es
+    db/drop_foto_ruta_compras.sql.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute("DELETE FROM fotos_guia WHERE foto_ruta = %s", (foto_ruta,))
-            cursor.execute("UPDATE compras SET foto_ruta = NULL WHERE foto_ruta = %s", (foto_ruta,))
         conexion.commit()
     finally:
         conexion.close()

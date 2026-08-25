@@ -194,7 +194,7 @@ create table fotos_guia (
     unique (guia_id, foto_ruta)
 );
 
-comment on table fotos_guia is 'Fotos/archivos de una guía (comanda de un proveedor en un día), en el bucket "comandas". Una guía puede tener varias; un mismo archivo (foto_ruta) puede colgar de varias guías (el Listado consolidado comparte una foto entre proveedores). Reemplaza a compras.foto_ruta, que queda muerta hasta su DROP (ver APLICADO.md).';
+comment on table fotos_guia is 'Fotos/archivos de una guía (comanda de un proveedor en un día), en el bucket "comandas". Una guía puede tener varias; un mismo archivo (foto_ruta) puede colgar de varias guías (el Listado consolidado comparte una foto entre proveedores). Reemplaza a la vieja compras.foto_ruta (borrada en drop_foto_ruta_compras.sql).';
 comment on column fotos_guia.foto_ruta is 'Ruta del archivo en el bucket "comandas". El archivo físico se borra del Storage solo cuando NINGUNA guía lo referencia.';
 
 create index fotos_guia_foto_ruta_idx on fotos_guia (foto_ruta);
@@ -228,7 +228,6 @@ create table compras (
     procesada_el               timestamptz,
     guia_id                    bigint references guias_compra (id),
     guia_punto                 integer,
-    foto_ruta                  text,
     estado_retiro              text check (estado_retiro in ('pendiente', 'retirado', 'cancelado')),
     retiro_procesado_el        timestamptz,
     retiro_origen              text check (retiro_origen in ('logistica', 'deposito', 'migracion', 'ingreso_directo', 'automatico_carro', 'automatico_cooperativa')),
@@ -247,7 +246,6 @@ comment on column compras.estado_retiro is 'pendiente/retirado/cancelado. Retiro
 comment on column compras.retiro_origen is 'Quién/qué lo marcó: logistica (a mano, desde /logistica), deposito (automático al recepcionar/rechazar algo que sí pasó por el puesto del Mercado), migracion (backfill de compras viejas) o ingreso_directo (nació directo en el depósito, cargada desde /deposito/ingresar, nunca pasó por Logística).';
 comment on column compras.guia_id is 'Guía de esta compra (proveedor+día). NULL en compras cargadas antes de este cambio.';
 comment on column compras.guia_punto is 'Punto dentro de la guía (105.1, 105.2, ...). Se fija una sola vez al cargar, no se renumera si se borra otro renglón.';
-comment on column compras.foto_ruta is 'Ruta de la foto de la comanda en el bucket privado "comandas" de Supabase Storage (NULL si la compra se cargó sin foto, o si la subida falló). Los renglones de una misma comanda comparten la misma ruta.';
 comment on column compras.cantidad_cajones_retirada is 'Cajones que Logística anotó como efectivamente retirados del puesto (opcional). Registro aparte: nunca pisa cantidad_cajones ni cantidad_cajones_real, y no entra en ningún cálculo.';
 comment on column compras.cantidad_cajones_rechazada is 'Bultos devueltos al proveedor en un rechazo parcial de Recepción. Solo registro: la cantidad aceptada ya queda en cantidad_cajones_real y es la que usa todo el costeo. No entra en ningún cálculo.';
 comment on column compras.motivo_rechazo is 'Motivo del rechazo parcial (texto libre, opcional).';
@@ -447,8 +445,6 @@ create index compras_retiro_procesado_el_idx
 create index compras_pendientes_retiro_idx
     on compras (tipo_retiro)
     where estado_retiro is distinct from 'retirado' and estado_retiro is distinct from 'cancelado';
-create index compras_foto_ruta_idx
-    on compras (foto_ruta, fecha_operacion) where foto_ruta is not null;
 create index vacios_recibidos_stock_idx
     on vacios_recibidos (proveedor_id, tipo_envase_id) include (cantidad)
     where anulado_el is null;

@@ -1418,18 +1418,17 @@ def test_listar_fotos_para_limpiar_vacio_da_lista_vacia():
     assert resultado == []
 
 
-def test_limpiar_foto_ruta_de_compras_actualiza_y_comitea():
+def test_limpiar_foto_ruta_de_compras_borra_solo_fotos_guia():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         limpiar_foto_ruta_de_compras("2020-01-01/a.jpg")
 
-    assert cursor.execute.call_count == 2
+    # Las fotos viven SOLO en fotos_guia: la vieja compras.foto_ruta ya no
+    # se toca (columna borrada por drop_foto_ruta_compras.sql).
+    assert cursor.execute.call_count == 1
     consulta_delete = cursor.execute.call_args_list[0].args[0]
     assert "DELETE FROM fotos_guia WHERE foto_ruta = %s" in consulta_delete
-    consulta_update = cursor.execute.call_args_list[1].args[0]
-    # Higiene de la columna muerta mientras espera su DROP.
-    assert "UPDATE compras SET foto_ruta = NULL" in consulta_update
     conexion.commit.assert_called_once()
     conexion.close.assert_called_once()
 
@@ -3512,3 +3511,17 @@ def test_salidas_stock_articulo_trae_cada_salida_tipada_de_toda_la_historia():
     assert "'reproceso_toma'" in consulta
     assert "rp.bultos_segunda" in consulta
     assert "ORDER BY 1, 2" in consulta
+
+
+def test_los_insert_de_compras_ya_no_nombran_la_columna_foto_ruta():
+    # La columna compras.foto_ruta se borra con drop_foto_ruta_compras.sql:
+    # si algún INSERT volviera a nombrarla, la carga de compras rompería
+    # en cuanto la columna no exista. Este test lo frena antes.
+    import inspect
+    import app.db as db
+
+    fuente = inspect.getsource(db)
+    for fragmento in fuente.split("INSERT INTO compras")[1:]:
+        columnas = fragmento.split("VALUES")[0]
+        assert "foto_ruta" not in columnas
+    assert "UPDATE compras SET foto_ruta" not in fuente

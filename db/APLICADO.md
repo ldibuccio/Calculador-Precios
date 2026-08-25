@@ -64,7 +64,7 @@ bases estén marcadas.
 
 | Qué | Por qué sigue ahí | Cuándo se resuelve |
 |---|---|---|
-| Columna `compras.foto_ruta` (MUERTA tras `agregar_fotos_guia.sql`) | Las fotos pasaron a `fotos_guia` (por guía, no por renglón). La columna quedó en la transición para poder volver atrás si algo falla en producción: el código ya no la escribe ni la lee. | DROP en una migración futura (`drop_foto_ruta_compras.sql`, a crear), cuando el dueño confirme que las fotos por guía andan bien en las dos empresas un tiempo prudencial. |
+| Columna `compras.foto_ruta` (MUERTA tras `agregar_fotos_guia.sql`) | Las fotos pasaron a `fotos_guia`. El código ya no la nombra en ningún lado (INSERTs y limpieza saneados en este commit). | `drop_foto_ruta_compras.sql` ya creada. ORDEN: correr el DROP recién DESPUÉS del deploy de este commit, con la verificación de lectura previa (0 fotos sin migrar). Al confirmarse en las dos bases, esta fila se borra y se agrega la fila ✅✅ de la migración. |
 
 ## Pasos manuales que NO son SQL (por base)
 
