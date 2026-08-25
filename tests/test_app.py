@@ -14755,6 +14755,10 @@ def test_rentabilidad_real_muestra_la_cuenta_y_el_afuera_protagonista():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main._datos_rentabilidad_real", return_value=dict(RESULTADO_REAL_DE_PRUEBA)) as mock_datos,
+        patch("app.main._datos_rentabilidad", return_value={"grupos": [], "totales": {
+            "bultos": 0, "venta_neta": 0, "costo_mercaderia": 0, "costo_envase": 0, "costo_total": 0,
+            "renta_pesos": 0, "utilidad_pct": None, "no_calculables_casos": 0, "no_calculables_bultos": 0,
+        }, "no_calculables": [], "fechas_incluidas": []}),
     ):
         respuesta = cliente.get("/gerencia/rentabilidad-real?cliente_id=1")
 
@@ -14800,3 +14804,62 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
     fila = resultado["grupos"][0]["filas"][0]
     assert fila["venta_neta"] == 64.0 * 100.0 * 0.9
     assert fila["costo_mercaderia"] == 4 * 500.0
+
+
+# --- Rentabilidad Real (tanda 2): comparativa y exports ---
+
+TOTALES_TEORICA_DE_PRUEBA = {
+    "bultos": 20.0, "venta_neta": 20000.0, "costo_mercaderia": 12000.0, "costo_envase": 500.0,
+    "costo_total": 12500.0, "renta_pesos": 7500.0, "utilidad_pct": 62.5,
+    "no_calculables_casos": 0, "no_calculables_bultos": 0.0,
+}
+
+
+def test_rentabilidad_real_muestra_la_comparativa_contra_la_teorica():
+    teorica = {"grupos": [], "totales": dict(TOTALES_TEORICA_DE_PRUEBA), "no_calculables": [],
+               "fechas_incluidas": []}
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main._datos_rentabilidad_real", return_value=dict(RESULTADO_REAL_DE_PRUEBA)),
+        patch("app.main._datos_rentabilidad", return_value=teorica) as mock_teorica,
+    ):
+        respuesta = cliente.get("/gerencia/rentabilidad-real?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # La teórica se calcula con LOS MISMOS filtros y rango.
+    mock_teorica.assert_called_once_with(1, date(2026, 8, 18), date(2026, 8, 25), None, None, [])
+    # Las tres celdas: teórica, real y la diferencia (real 7.580 − teórica
+    # 7.500 = +80) — "la lista de cosas a explicar".
+    assert "Teórica (lo pedido)" in respuesta.text
+    assert "Real (lo enviado)" in respuesta.text
+    assert "$7.500" in respuesta.text
+    assert "$7.580" in respuesta.text
+    assert "+$80" in respuesta.text
+    assert "la lista de cosas a explicar" in respuesta.text
+    # Los botones de export de la Real.
+    assert "/gerencia/rentabilidad-real/exportar-pdf?cliente_id=1" in respuesta.text
+    assert "/gerencia/rentabilidad-real/exportar-excel?cliente_id=1" in respuesta.text
+
+
+def test_exportar_rentabilidad_real_pdf_y_excel():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main._datos_rentabilidad_real", return_value=dict(RESULTADO_REAL_DE_PRUEBA)),
+    ):
+        pdf = cliente.get("/gerencia/rentabilidad-real/exportar-pdf?cliente_id=1")
+        excel = cliente.get("/gerencia/rentabilidad-real/exportar-excel?cliente_id=1")
+
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF")
+    assert "Rentabilidad_Real_" in pdf.headers["content-disposition"]
+    assert excel.status_code == 200
+    assert len(excel.content) > 1000
+
+
+def test_exportar_rentabilidad_real_sin_cliente_da_400():
+    respuesta = cliente.get("/gerencia/rentabilidad-real/exportar-pdf")
+    assert respuesta.status_code == 400

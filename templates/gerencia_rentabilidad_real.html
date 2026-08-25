@@ -60,6 +60,35 @@
     font-size: 0.95rem;
   }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .boton-exportar {
+    display: block;
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.8rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+  /* Teórica vs real: la diferencia ES la lista de cosas a explicar. */
+  .comparativa {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .comparativa .celdas { display: flex; gap: 0.5rem; text-align: center; }
+  .comparativa .celda { flex: 1; min-width: 0; }
+  .comparativa .etiqueta { display: block; color: #666; font-size: 0.78rem; }
+  .comparativa .valor { display: block; font-size: 1.1rem; font-weight: 800; }
+  .comparativa .valor.negativa { color: #dc2626; }
+  .comparativa .nota { color: #888; font-size: 0.82rem; margin: 0.5rem 0 0; }
   .total {
     background: #eff6ff;
     border: 1px solid #bfdbfe;
@@ -187,6 +216,10 @@
       {% endif %}
       <button type="submit" class="boton-buscar">Buscar</button>
     </form>
+    {% if resultado %}
+    <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
+    <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
+    {% endif %}
     <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Los rechazos se descontarán cuando exista el vínculo con el pedido. La teórica sigue en su propia pantalla, intacta.</p>
   </div>
 
@@ -209,6 +242,28 @@
   {% else %}
   <div class="tarjeta">
     <p class="vacio">Nada calculable en este rango{% if resultado.afuera_por_motivo %} — pero mirá lo que quedó afuera, abajo: esa es la lista de cosas a arreglar{% endif %}.</p>
+  </div>
+  {% endif %}
+
+  {% if comparativa %}
+  <div class="comparativa">
+    <div class="celdas">
+      <div class="celda">
+        <span class="etiqueta">Teórica (lo pedido)</span>
+        <span class="valor {% if comparativa.teorica.renta_pesos < 0 %}negativa{% endif %}">{{ comparativa.teorica.renta_pesos|moneda }}</span>
+        {% if comparativa.teorica.utilidad_pct is not none %}<span class="etiqueta">{{ "%.1f"|format(comparativa.teorica.utilidad_pct) }}%</span>{% endif %}
+      </div>
+      <div class="celda">
+        <span class="etiqueta">Real (lo enviado)</span>
+        <span class="valor {% if comparativa.real.renta_pesos < 0 %}negativa{% endif %}">{{ comparativa.real.renta_pesos|moneda }}</span>
+        {% if comparativa.real.utilidad_pct is not none %}<span class="etiqueta">{{ "%.1f"|format(comparativa.real.utilidad_pct) }}%</span>{% endif %}
+      </div>
+      <div class="celda">
+        <span class="etiqueta">Diferencia</span>
+        <span class="valor {% if comparativa.diferencia < 0 %}negativa{% endif %}">{% if comparativa.diferencia > 0 %}+{% endif %}{{ comparativa.diferencia|moneda }}</span>
+      </div>
+    </div>
+    <p class="nota">La diferencia es <strong>la lista de cosas a explicar</strong>: cuánto comieron la merma, el reproceso, los kilajes reales y lo que quedó afuera del cálculo. Las dos cuentas usan los mismos precios y costos anclados por fecha.</p>
   </div>
   {% endif %}
 

@@ -236,6 +236,7 @@ from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import calcular_rentabilidad_real
 from core.stock import repartir_fifo
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
+from core.exportar_rentabilidad_real import generar_excel_rentabilidad_real, generar_pdf_rentabilidad_real
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
 from core.precios_venta import calcular_cambios_de_precios
 from core.lector_archivos import comprimir_pdf, imagenes_desde_pdf, texto_desde_excel
@@ -7260,10 +7261,77 @@ def ver_rentabilidad_real(
         fichas = listar_fichas_por_cliente(cliente_valor)
         contexto["articulos_cliente"] = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
         contexto["resultado"] = _datos_rentabilidad_real(cliente_valor, desde, hasta, articulo_valor, grupo_valor)
+        # La comparativa: la TEÓRICA del mismo rango, al lado. Las dos
+        # salen del MISMO listado anclado, así que la diferencia es
+        # exactamente la lista de cosas a explicar (merma, reproceso,
+        # kilajes, lo que quedó afuera) — nunca ruido de cuentas distintas.
+        teorica = _datos_rentabilidad(cliente_valor, desde, hasta, articulo_valor, grupo_valor, fichas)
+        contexto["comparativa"] = {
+            "teorica": teorica["totales"],
+            "real": contexto["resultado"]["totales"],
+            "diferencia": contexto["resultado"]["totales"]["renta_pesos"] - teorica["totales"]["renta_pesos"],
+        }
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(request, "gerencia_rentabilidad_real.html", contexto)
+
+
+def _resultado_rentabilidad_real_para_exportar(cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo):
+    """Los datos + textos de filtros para los exports de la Real (mismos filtros que la pantalla)."""
+    cliente_valor, desde, hasta, articulo_valor, grupo_valor, error_fecha = _leer_filtros_rentabilidad(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+    if cliente_valor is None:
+        raise HTTPException(status_code=400, detail="Elegí el cliente antes de exportar.")
+    if error_fecha:
+        raise HTTPException(status_code=400, detail=error_fecha)
+
+    try:
+        cliente_fila = obtener_cliente(cliente_valor)
+        fichas = listar_fichas_por_cliente(cliente_valor)
+        resultado = _datos_rentabilidad_real(cliente_valor, desde, hasta, articulo_valor, grupo_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    articulos_cliente = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
+    nombre_cliente = cliente_fila["nombre"] if cliente_fila else f"#{cliente_valor}"
+    filtros_texto = _filtros_texto_rentabilidad(nombre_cliente, articulo_valor, grupo_valor, articulos_cliente)
+    return desde, hasta, filtros_texto, resultado
+
+
+@app.get("/gerencia/rentabilidad-real/exportar-pdf")
+def exportar_rentabilidad_real_pdf(
+    cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = "",
+):
+    """Genera la Rentabilidad Real (mismos filtros que la pantalla) en PDF — no se guarda en ningún lado."""
+    desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_real_para_exportar(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+    pdf_bytes = generar_pdf_rentabilidad_real(desde, hasta, filtros_texto, resultado)
+    nombre_archivo = f"Rentabilidad_Real_{desde.isoformat()}_a_{hasta.isoformat()}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+@app.get("/gerencia/rentabilidad-real/exportar-excel")
+def exportar_rentabilidad_real_excel(
+    cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = "",
+):
+    """Genera la Rentabilidad Real (mismos filtros que la pantalla) en Excel — no se guarda en ningún lado."""
+    desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_real_para_exportar(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+    excel_bytes = generar_excel_rentabilidad_real(desde, hasta, filtros_texto, resultado)
+    nombre_archivo = f"Rentabilidad_Real_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
 
 
 @app.get("/facturacion")
