@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock por Guía</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .resumen {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .resumen .numero { font-size: 1.5rem; font-weight: 800; color: #1d4ed8; }
+  .resumen.negativo .numero { color: #dc2626; }
+  .resumen .detalle { color: #666; font-size: 0.9rem; margin-top: 0.25rem; }
+  .tarjeta-sin-lote {
+    background: #fef2f2;
+    border: 2px solid #dc2626;
+    color: #991b1b;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .fila-lote {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.55rem 0;
+    border-top: 1px solid #eee;
+  }
+  .fila-lote:first-of-type { border-top: none; }
+  .fila-lote .etiqueta { font-weight: 600; font-size: 0.95rem; }
+  .fila-lote .motivo { display: block; color: #888; font-size: 0.8rem; font-weight: 400; margin-top: 0.1rem; }
+  .fila-lote .resto { white-space: nowrap; font-weight: 800; font-size: 0.95rem; }
+  .fila-lote .resto .de { font-weight: 500; color: #888; font-size: 0.82rem; }
+  .marca-reingreso {
+    display: inline-block;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  details.seccion-agotados { margin-top: 0.75rem; }
+  details.seccion-agotados summary {
+    background: #fff;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    font-weight: 700;
+    color: #2563eb;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  details.seccion-agotados .tarjeta { margin-top: 0.5rem; }
+  details.seccion-agotados .fila-lote { opacity: 0.55; }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Stock por Guía" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="resumen {% if stock < 0 %}negativo{% endif %}">
+    <div class="numero">{{ articulo.nombre }}: {{ stock|numero }} bultos</div>
+    <div class="detalle">Salieron {{ total_salidas|numero }} bultos en total (armado de pedidos, mermas y ajustes negativos).</div>
+  </div>
+
+  {% if sin_lote %}
+  <div class="tarjeta-sin-lote">
+    <strong>{{ sin_lote|numero }} bultos salieron sin lote:</strong> ninguna guía los cubre. Falta cargar el reproceso o el ajuste que los explique — no se cuelgan de una guía vacía para no falsear la trazabilidad.
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>Lo que queda, por lote (el más viejo primero)</h2>
+    {% if lotes %}
+      {% for l in lotes %}
+      <div class="fila-lote">
+        <div>
+          <span class="etiqueta">
+            {% if l.tipo_lote == "guia" %}Guía {{ (l.fecha_lote or l.fecha_orden)|fecha_corta }} · {{ l.detalle }}
+            {% elif l.tipo_lote == "reingreso_rechazo" %}<span class="marca-reingreso">reingreso por rechazo</span> {{ l.fecha_lote|fecha_corta }}{% if l.detalle %} · {{ l.detalle }}{% endif %}
+            {% else %}Ajuste {{ l.fecha_lote|fecha_corta }}{% endif %}
+          </span>
+          {% if l.motivo %}<span class="motivo">{{ l.motivo }}</span>{% endif %}
+        </div>
+        <div class="resto">{{ l.restante|numero }} <span class="de">de {{ l.cantidad|numero }}</span></div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">No queda nada de ningún lote.</p>
+    {% endif %}
+    <p class="ayuda">FIFO: las salidas consumen siempre del lote más viejo. Nadie elige lote — lo reparte el sistema, y se reacomoda solo si se corrige una recepción o se destilda un renglón.</p>
+  </div>
+
+  {% if agotados %}
+  <details class="seccion-agotados">
+    <summary>Lotes agotados ({{ agotados|length }})</summary>
+    <div class="tarjeta">
+    {% for l in agotados %}
+    <div class="fila-lote">
+      <div>
+        <span class="etiqueta">
+          {% if l.tipo_lote == "guia" %}Guía {{ (l.fecha_lote or l.fecha_orden)|fecha_corta }} · {{ l.detalle }}
+          {% elif l.tipo_lote == "reingreso_rechazo" %}Reingreso por rechazo {{ l.fecha_lote|fecha_corta }}{% if l.detalle %} · {{ l.detalle }}{% endif %}
+          {% else %}Ajuste {{ l.fecha_lote|fecha_corta }}{% endif %}
+        </span>
+        {% if l.motivo %}<span class="motivo">{{ l.motivo }}</span>{% endif %}
+      </div>
+      <div class="resto">0 <span class="de">de {{ l.cantidad|numero }}</span></div>
+    </div>
+    {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  <a class="volver" href="/deposito/stock/sistema">Volver al Stock del Sistema</a>
+</body>
+</html>

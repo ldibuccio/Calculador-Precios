@@ -4938,3 +4938,224 @@ def obtener_mail_de_pedido(pedido_id: int) -> dict | None:
         return dict(zip(columnas, fila))
     finally:
         conexion.close()
+
+
+# --- Stock del Depósito ---
+# El stock por artículo NUNCA se guarda: se calcula siempre, derivado de
+# compras recepcionadas (entradas), renglones armados de pedidos vigentes
+# (salidas) y movimientos_stock (ajustes, mermas, reingresos por rechazo).
+# Todo en BULTOS. Puede quedar negativo a propósito: el armado no se traba
+# por stock — el negativo es la señal de que falta un reproceso o un ajuste.
+
+_SQL_SUMAS_STOCK = """
+    WITH entradas AS (
+        SELECT articulo_id, SUM(cantidad_cajones_real) AS total
+        FROM compras WHERE estado = 'recepcionado' {filtro_articulo}
+        GROUP BY articulo_id
+    ), vigentes AS (
+        SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+        FROM pedidos WHERE anulado_el IS NULL
+        ORDER BY cliente_id, fecha_operacion, creado_en DESC
+    ), salidas AS (
+        SELECT r.articulo_id, SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+        WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+          AND r.articulo_id IS NOT NULL {filtro_r_articulo}
+        GROUP BY r.articulo_id
+    ), reingresos AS (
+        SELECT articulo_id, SUM(cantidad) AS total
+        FROM movimientos_stock
+        WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo' {filtro_articulo}
+        GROUP BY articulo_id
+    ), ajustes AS (
+        SELECT articulo_id, SUM(cantidad) AS total
+        FROM movimientos_stock
+        WHERE anulado_el IS NULL AND tipo <> 'reingreso_rechazo' {filtro_articulo}
+        GROUP BY articulo_id
+    )
+"""
+
+
+def _sql_sumas_stock(por_articulo: bool) -> str:
+    filtro = "AND articulo_id = %s" if por_articulo else ""
+    filtro_r = "AND r.articulo_id = %s" if por_articulo else ""
+    return _SQL_SUMAS_STOCK.format(filtro_articulo=filtro, filtro_r_articulo=filtro_r)
+
+
+def stock_deposito_por_articulo() -> list[dict]:
+    """El stock del sistema por artículo (bultos), calculado siempre — solo artículos con algún movimiento.
+
+    entradas = compras recepcionadas (cantidad_cajones_real, la cuenta REAL
+    de Depósito, ya neta del rechazo al proveedor). salidas = renglones
+    armados de pedidos VIGENTES (cantidad_armada si armó menos, sino la
+    pedida); los reemplazados y anulados no cuentan. reingresos va aparte
+    de los otros movimientos porque el dueño lo quiere ver como número
+    propio: es mercadería ya costeada y ya vendida que volvió (plata
+    perdida), no stock "normal".
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                _sql_sumas_stock(por_articulo=False)
+                + """
+                SELECT a.id AS articulo_id, a.nombre,
+                       COALESCE(e.total, 0) AS entradas,
+                       COALESCE(s.total, 0) AS salidas,
+                       COALESCE(r.total, 0) AS reingresos,
+                       COALESCE(aj.total, 0) AS ajustes
+                FROM articulos a
+                LEFT JOIN entradas e ON e.articulo_id = a.id
+                LEFT JOIN salidas s ON s.articulo_id = a.id
+                LEFT JOIN reingresos r ON r.articulo_id = a.id
+                LEFT JOIN ajustes aj ON aj.articulo_id = a.id
+                WHERE e.total IS NOT NULL OR s.total IS NOT NULL
+                   OR r.total IS NOT NULL OR aj.total IS NOT NULL
+                ORDER BY a.nombre
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+        for fila in filas:
+            fila["stock"] = (
+                float(fila["entradas"]) + float(fila["reingresos"]) + float(fila["ajustes"]) - float(fila["salidas"])
+            )
+        return filas
+    finally:
+        conexion.close()
+
+
+def _stock_deposito_actual(cursor, articulo_id: int) -> float:
+    """El stock actual de UN artículo, con el cursor abierto — para la foto (stock_sistema) de un movimiento nuevo."""
+    cursor.execute(
+        _sql_sumas_stock(por_articulo=True)
+        + """
+        SELECT COALESCE((SELECT total FROM entradas), 0)
+             + COALESCE((SELECT total FROM reingresos), 0)
+             + COALESCE((SELECT total FROM ajustes), 0)
+             - COALESCE((SELECT total FROM salidas), 0)
+        """,
+        (articulo_id, articulo_id, articulo_id, articulo_id),
+    )
+    return float(cursor.fetchone()[0])
+
+
+def stock_deposito_de_articulo(articulo_id: int) -> float:
+    """El stock actual de un artículo (para pantallas: precarga del ajuste desde el cotejo, avisos)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _stock_deposito_actual(cursor, articulo_id)
+    finally:
+        conexion.close()
+
+
+def crear_movimiento_stock(
+    articulo_id: int,
+    tipo: str,
+    cantidad: float,
+    motivo: str,
+    fecha_operacion,
+    cliente_id: int | None = None,
+) -> float:
+    """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
+
+    Guarda la foto del sistema del momento (stock_sistema, SIN este
+    movimiento) — igual que ajustes_vacios: sin ese rastro, cualquier
+    faltante se taparía con un ajuste y se acaba el control cruzado.
+    fecha_operacion es la fecha REAL del hecho (un reingreso puede
+    cargarse al día siguiente de que volvió el camión).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            stock_sistema = _stock_deposito_actual(cursor, articulo_id)
+            cursor.execute(
+                """
+                INSERT INTO movimientos_stock
+                    (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema),
+            )
+        conexion.commit()
+        return stock_sistema + float(cantidad)
+    finally:
+        conexion.close()
+
+
+def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float]:
+    """Los lotes de entrada de un artículo (orden FIFO) y el total de bultos salidos, para el detalle por guía.
+
+    Entradas: compras recepcionadas (el lote es la guía: fecha + proveedor),
+    reingresos por rechazo y ajustes positivos. Salidas (un total, se
+    reparten FIFO en core/stock.py): renglones armados de pedidos vigentes,
+    mermas y ajustes negativos. El orden de un movimiento es su
+    fecha_operacion (la REAL del hecho), con el momento de carga de
+    desempate; el de una compra, el instante de su recepción.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
+                       c.procesada_el AS momento_orden,
+                       'guia' AS tipo_lote,
+                       g.fecha_operacion AS fecha_lote,
+                       p.nombre AS detalle,
+                       NULL AS motivo,
+                       c.cantidad_cajones_real AS cantidad
+                FROM compras c
+                JOIN proveedores p ON p.id = c.proveedor_id
+                LEFT JOIN guias_compra g ON g.id = c.guia_id
+                WHERE c.estado = 'recepcionado' AND c.articulo_id = %s
+                UNION ALL
+                SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
+                       cl.nombre, m.motivo, m.cantidad
+                FROM movimientos_stock m
+                LEFT JOIN clientes cl ON cl.id = m.cliente_id
+                WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
+                ORDER BY 1, 2
+                """,
+                (articulo_id, articulo_id),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            entradas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT COALESCE((SELECT SUM(COALESCE(r.cantidad_armada, r.cantidad))
+                                 FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+                                 WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                                   AND r.articulo_id = %s), 0)
+                     + COALESCE((SELECT -SUM(cantidad) FROM movimientos_stock
+                                 WHERE anulado_el IS NULL AND cantidad < 0 AND articulo_id = %s), 0)
+                """,
+                (articulo_id, articulo_id),
+            )
+            total_salidas = float(cursor.fetchone()[0])
+        return entradas, total_salidas
+    finally:
+        conexion.close()
+
+
+def total_reingresos_rechazo() -> float:
+    """Total histórico de bultos reingresados por rechazo del cliente (plata perdida): el dueño lo quiere a la vista."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(cantidad), 0) FROM movimientos_stock
+                WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo'
+                """
+            )
+            return float(cursor.fetchone()[0])
+    finally:
+        conexion.close()

@@ -71,6 +71,7 @@ from app.db import (
     crear_casilla_pedidos,
     crear_cliente,
     crear_compra,
+    crear_movimiento_stock,
     crear_pedido,
     crear_ajuste_vacios,
     crear_compras_de_comanda,
@@ -89,6 +90,7 @@ from app.db import (
     deshacer_no_ingresado_compra,
     deshacer_retiro_compra,
     eliminar_compra,
+    entradas_y_salidas_stock_articulo,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
     guardar_disponible,
@@ -186,8 +188,11 @@ from app.db import (
     recepcionar_compra,
     rechazar_compra,
     registrar_costo_envase,
+    stock_deposito_de_articulo,
+    stock_deposito_por_articulo,
     stock_vacios,
     stock_vacios_de_tipo,
+    total_reingresos_rechazo,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
@@ -212,6 +217,7 @@ from core.casilla_pedidos import (
 )
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
+from core.stock import repartir_fifo
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
 from core.precios_venta import calcular_cambios_de_precios
@@ -5954,6 +5960,160 @@ def deshacer_no_ingreso_compra_ruta(request: Request, compra_id: int):
         return _renderizar_pantalla_recepcion(request, error=f"No se pudo deshacer: {error_db}", status_code=500)
 
     return RedirectResponse(url="/deposito/recepcion", status_code=303)
+
+
+# --- Stock del Depósito ---
+# El stock por artículo es DERIVADO, nunca guardado (ver app/db.py). Las
+# rutas van partidas desde el arranque: las de carga del operario
+# (fisico/merma/reingreso, tandas 2 y 3) separadas de las de control
+# (sistema/cotejo/ajustar/movimientos), para poder colgarles una clave
+# después sin mover nada — mismo esquema que Puesto → Envases.
+
+
+@app.get("/deposito/stock")
+def ver_stock_deposito(request: Request, aviso: str | None = None):
+    """El hub del stock: carga del operario arriba, control abajo. Lo que falta construir se ve atenuado."""
+    return templates.TemplateResponse(request, "deposito_stock.html", {"aviso": aviso})
+
+
+@app.get("/deposito/stock/sistema")
+def ver_stock_sistema_deposito(request: Request):
+    """Stock del Sistema por artículo (bultos), calculado siempre. Los negativos arriba, en rojo: son salidas sin explicar."""
+    try:
+        filas = stock_deposito_por_articulo()
+        reingresos_total = total_reingresos_rechazo()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    negativos = [f for f in filas if f["stock"] < 0]
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_sistema.html",
+        {
+            "filas": filas,
+            "articulos_negativos": len(negativos),
+            "bultos_sin_lote": -sum(f["stock"] for f in negativos),
+            "reingresos_total": reingresos_total,
+        },
+    )
+
+
+@app.get("/deposito/stock/sistema/{articulo_id}")
+def ver_stock_articulo_deposito(request: Request, articulo_id: int):
+    """El detalle FIFO de un artículo: qué queda de cada lote (guía, reingreso, ajuste) y cuánto salió sin lote.
+
+    El reparto se calcula acá, cada vez (core/stock.py): las salidas
+    consumen del lote más viejo primero. Nadie elige lote nunca.
+    """
+    try:
+        articulo = obtener_articulo(articulo_id)
+        if articulo is None:
+            raise HTTPException(status_code=404, detail="Artículo no encontrado")
+        entradas, total_salidas = entradas_y_salidas_stock_articulo(articulo_id)
+    except HTTPException:
+        raise
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    for e in entradas:
+        e["orden"] = (e["fecha_orden"], e["momento_orden"])
+    salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
+    reparto = repartir_fifo(entradas, salidas)
+    con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
+    agotados = [l for l in reparto["lotes"] if l["restante"] <= 0]
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_articulo.html",
+        {
+            "articulo": articulo,
+            "lotes": con_resto,
+            "agotados": agotados,
+            "sin_lote": reparto["sin_lote"],
+            "stock": reparto["stock"],
+            "total_salidas": total_salidas,
+        },
+    )
+
+
+def _renderizar_pantalla_ajustar_stock(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+    try:
+        articulos = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_ajustar.html",
+        {"articulos": articulos, "precarga": precarga or {}, "aviso": aviso, "error": error},
+        status_code=status_code,
+    )
+
+
+@app.get("/deposito/stock/ajustar")
+def ver_ajustar_stock_deposito(request: Request, aviso: str | None = None, motivo: str | None = None):
+    """Ajuste de stock, con el motivo precargable por query: al guardar se vuelve acá con el mismo motivo,
+    para cargar varios artículos en cadena (el caso real: el stock inicial, un ajuste por artículo)."""
+    precarga = {"motivo": motivo.strip()} if motivo and motivo.strip() else {}
+    return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, aviso=aviso)
+
+
+@app.post("/deposito/stock/ajustar")
+def ajustar_stock_deposito_ruta(
+    request: Request,
+    articulo_id: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+):
+    """Guarda un ajuste de stock: cantidad en bultos con signo (nunca 0) y motivo OBLIGATORIO. Nunca pisa: movimiento nuevo."""
+    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    error = None
+    cantidad_valor = None
+
+    texto_cantidad = cantidad.strip()
+    if not texto_cantidad:
+        error = "La cantidad del ajuste es obligatoria."
+    else:
+        try:
+            cantidad_valor = float(texto_cantidad)
+        except ValueError:
+            error = "La cantidad del ajuste tiene que ser un número (positivo o negativo)."
+        else:
+            if cantidad_valor == 0:
+                error = "Un ajuste de 0 no ajusta nada."
+
+    if not error and not motivo_limpio:
+        error = "El motivo es obligatorio: sin motivo no se guarda el ajuste."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        precarga = {"articulo_id": articulo_id, "cantidad": cantidad, "motivo": motivo_limpio}
+        return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, error=error, status_code=400)
+
+    try:
+        stock_nuevo = crear_movimiento_stock(
+            articulo["id"], "ajuste", cantidad_valor, motivo_limpio, _hoy_argentina()
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_ajustar_stock(
+            request, error=f"No se pudo guardar el ajuste: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Ajuste guardado: {'+' if cantidad_valor > 0 else ''}{_formatear_numero(cantidad_valor)} bultos de "
+        f"{articulo['nombre']}. El stock quedó en {_formatear_numero(stock_nuevo)}."
+    )
+    # El motivo vuelve en la URL para la carga en cadena (stock inicial).
+    return RedirectResponse(
+        url=f"/deposito/stock/ajustar?{urlencode({'aviso': aviso, 'motivo': motivo_limpio})}", status_code=303
+    )
 
 
 @app.get("/gerencia")

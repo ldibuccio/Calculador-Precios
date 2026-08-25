@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock del Sistema</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  /* La tarjeta roja de lo que falta explicar: ARRIBA de todo. */
+  .tarjeta-sin-lote {
+    background: #fef2f2;
+    border: 2px solid #dc2626;
+    color: #991b1b;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .tarjeta-sin-lote strong { font-size: 1.1rem; }
+  /* Reingresos por rechazo: número aparte, siempre visible — es plata
+     perdida, no stock "normal". */
+  .tarjeta-reingresos {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .tarjeta-reingresos .numero { font-size: 1.25rem; font-weight: 800; }
+  .fila-stock {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0;
+    border-top: 1px solid #eee;
+    text-decoration: none;
+    color: inherit;
+  }
+  .fila-stock:first-of-type { border-top: none; }
+  .fila-stock .nombre { font-size: 1.05rem; font-weight: 700; }
+  .fila-stock .detalle { display: block; color: #888; font-size: 0.8rem; font-weight: 400; margin-top: 0.1rem; }
+  .fila-stock .stock { font-size: 1.2rem; font-weight: 800; white-space: nowrap; color: #1d4ed8; }
+  .fila-stock .stock .unidad { font-size: 0.8rem; font-weight: 600; color: #888; }
+  .fila-stock.negativa .stock { color: #dc2626; }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Stock del Sistema" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if articulos_negativos %}
+  <div class="tarjeta-sin-lote">
+    <strong>Salidas sin lote: {{ bultos_sin_lote|numero }} bultos en {{ articulos_negativos }} artículo{{ "s" if articulos_negativos != 1 }}.</strong>
+    Salió mercadería que ninguna guía cubre: falta cargar un reproceso o un ajuste que la explique — o alguien sacó de más. No es un error del sistema: es la señal.
+  </div>
+  {% endif %}
+
+  <div class="tarjeta-reingresos">
+    <div class="numero">{{ reingresos_total|numero }} bultos reingresados por rechazo</div>
+    Mercadería que el cliente devolvió: ya se costeó y ya se vendió — casi siempre es plata perdida. Va aparte del stock normal.
+  </div>
+
+  <div class="tarjeta">
+    {% if filas %}
+      {% for f in filas %}
+      <a class="fila-stock {% if f.stock < 0 %}negativa{% endif %}" href="/deposito/stock/sistema/{{ f.articulo_id }}">
+        <div>
+          <span class="nombre">{{ f.nombre }}</span>
+          <span class="detalle">{{ f.entradas|numero }} entraron · {{ f.salidas|numero }} salieron{% if f.reingresos %} · {{ f.reingresos|numero }} reingresados{% endif %}{% if f.ajustes %} · {{ f.ajustes|numero }} ajustados{% endif %}</span>
+        </div>
+        <div class="stock">{{ f.stock|numero }} <span class="unidad">bultos</span></div>
+      </a>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin movimientos de stock todavía. El stock inicial se carga desde Ajustar Stock.</p>
+    {% endif %}
+    <p class="ayuda">El stock es <strong>calculado, en bultos</strong>: compras recepcionadas + reingresos + ajustes − renglones armados. Tocá un artículo para ver el detalle por guía (FIFO: siempre sale del lote más viejo).</p>
+  </div>
+</body>
+</html>

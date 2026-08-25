@@ -3078,3 +3078,111 @@ def test_listar_pedidos_vigentes_con_armado_no_cuenta_los_anulados():
     # Los anulados quedan fuera del progreso ("18 de 32 armados").
     assert consulta.count("r.anulado_el IS NULL") == 2
     assert "p.armado_cerrado_el" in consulta
+
+
+# --- Stock del Depósito ---
+
+from app.db import (  # noqa: E402
+    crear_movimiento_stock,
+    entradas_y_salidas_stock_articulo,
+    stock_deposito_de_articulo,
+    stock_deposito_por_articulo,
+    total_reingresos_rechazo,
+)
+
+
+def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",), ("ajustes",)]
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        filas = stock_deposito_por_articulo()
+
+    consulta = cursor.execute.call_args.args[0]
+    # Entradas: SOLO compras recepcionadas, con la cantidad REAL de Depósito.
+    assert "estado = 'recepcionado'" in consulta
+    assert "cantidad_cajones_real" in consulta
+    # Salidas: renglones armados de pedidos VIGENTES (reemplazados no
+    # cuentan doble), sin anulados, con la cantidad realmente armada.
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
+    assert "COALESCE(r.cantidad_armada, r.cantidad)" in consulta
+    assert "r.armado_el IS NOT NULL AND r.anulado_el IS NULL" in consulta
+    # Los reingresos por rechazo vienen APARTE de los otros movimientos.
+    assert "tipo = 'reingreso_rechazo'" in consulta
+    assert "tipo <> 'reingreso_rechazo'" in consulta
+    # El stock es la cuenta, hecha acá: nada de columnas cacheadas.
+    assert filas[0]["stock"] == 40 + 2 + (-3) - 15
+
+
+def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resultante():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(12.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = crear_movimiento_stock(7, "ajuste", -3.0, "rotura", date(2026, 8, 25))
+
+    insert = cursor.execute.call_args_list[-1]
+    assert "INSERT INTO movimientos_stock" in insert.args[0]
+    # La foto del stock SIN este movimiento, como en ajustes_vacios:
+    # sin ese rastro cualquier faltante se tapa con un ajuste.
+    assert insert.args[1] == (7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0)
+    assert resultado == 9.0
+    conexion.commit.assert_called_once()
+
+
+def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(7, "reingreso_rechazo", 4.0, "Devolvió Día", date(2026, 8, 24), cliente_id=1)
+
+    insert = cursor.execute.call_args_list[-1]
+    assert insert.args[1] == (7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0)
+
+
+def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(-5.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock = stock_deposito_de_articulo(2)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "AND articulo_id = %s" in consulta
+    assert cursor.execute.call_args.args[1] == (2, 2, 2, 2)
+    assert stock == -5.0
+
+
+def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(20.0,)])
+    cursor.description = [
+        ("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",),
+    ]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        entradas, salidas = entradas_y_salidas_stock_articulo(2)
+
+    consulta_entradas = cursor.execute.call_args_list[0].args[0]
+    # El lote de una compra es su guía; el orden, el instante de recepción.
+    assert "c.estado = 'recepcionado'" in consulta_entradas
+    assert "procesada_el" in consulta_entradas
+    # Un movimiento ordena por su fecha_operacion (la REAL del hecho: un
+    # reingreso cargado hoy con fecha de ayer entra en el FIFO de ayer).
+    assert "m.fecha_operacion, m.creado_en" in consulta_entradas
+    assert "m.cantidad > 0" in consulta_entradas
+
+    consulta_salidas = cursor.execute.call_args_list[1].args[0]
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta_salidas
+    assert "cantidad < 0" in consulta_salidas
+    assert salidas == 20.0
+
+
+def test_total_reingresos_rechazo_excluye_anulados():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(11.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        total = total_reingresos_rechazo()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "anulado_el IS NULL AND tipo = 'reingreso_rechazo'" in consulta
+    assert total == 11.0

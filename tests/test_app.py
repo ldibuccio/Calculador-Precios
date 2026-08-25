@@ -13929,3 +13929,168 @@ def test_ver_pedido_muestra_los_mails_trabados_del_cliente_con_revisar():
     assert 'href="/deposito/pedido/mails/8/revisar"' in texto
     # Con un error, la tarjeta se marca fuerte.
     assert "tarjeta-mails-trabados con-error" in texto
+
+
+# --- Stock del Depósito (tanda 1) ---
+
+FILAS_STOCK_DE_PRUEBA = [
+    {"articulo_id": 1, "nombre": "Banana", "entradas": 40.0, "salidas": 15.0,
+     "reingresos": 2.0, "ajustes": -3.0, "stock": 24.0},
+    {"articulo_id": 2, "nombre": "Anco", "entradas": 0.0, "salidas": 5.0,
+     "reingresos": 0.0, "ajustes": 0.0, "stock": -5.0},
+]
+
+
+def test_ver_deposito_muestra_el_acceso_a_stock():
+    respuesta = cliente.get("/deposito")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito/stock"' in respuesta.text
+
+
+def test_hub_stock_separa_la_carga_del_operario_del_control():
+    respuesta = cliente.get("/deposito/stock")
+
+    assert respuesta.status_code == 200
+    # Lo construido, activo; lo de tandas siguientes, atenuado y visible.
+    assert 'href="/deposito/stock/sistema"' in respuesta.text
+    assert 'href="/deposito/stock/ajustar"' in respuesta.text
+    assert "Carga del depósito" in respuesta.text
+    assert "Control" in respuesta.text
+    assert respuesta.text.count("(Próximamente)") == 5
+
+
+def test_stock_sistema_muestra_el_stock_calculado_por_articulo():
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
+        patch("app.main.total_reingresos_rechazo", return_value=2.0),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema")
+
+    assert respuesta.status_code == 200
+    assert "Banana" in respuesta.text
+    assert "24 <span" in respuesta.text
+    assert "40 entraron · 15 salieron · 2 reingresados · -3 ajustados" in respuesta.text
+    assert 'href="/deposito/stock/sistema/1"' in respuesta.text
+
+
+def test_stock_sistema_negativo_muestra_la_tarjeta_de_salidas_sin_lote():
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
+        patch("app.main.total_reingresos_rechazo", return_value=0.0),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema")
+
+    assert respuesta.status_code == 200
+    # El negativo NO es un error a esconder: tarjeta roja arriba con el
+    # total sin lote, y la fila del artículo marcada.
+    assert "Salidas sin lote: 5 bultos en 1 artículo." in respuesta.text
+    assert 'class="fila-stock negativa"' in respuesta.text
+
+
+def test_stock_sistema_muestra_los_reingresos_aparte_siempre():
+    # Plata perdida a la vista: el total de reingresos va aparte del stock
+    # normal, incluso en cero — el dueño tiene que ver que el número existe.
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.total_reingresos_rechazo", return_value=0.0),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema")
+
+    assert respuesta.status_code == 200
+    assert "0 bultos reingresados por rechazo" in respuesta.text
+
+
+def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
+    entradas = [
+        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+         "tipo_lote": "guia", "fecha_lote": date(2026, 8, 20), "detalle": "Norte 15",
+         "motivo": None, "cantidad": 8.0},
+        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10),
+         "tipo_lote": "guia", "fecha_lote": date(2026, 8, 22), "detalle": "Norte 15",
+         "motivo": None, "cantidad": 10.0},
+    ]
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 11.0)),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema/1")
+
+    assert respuesta.status_code == 200
+    # 11 salieron: la guía del 20 (8) se agotó y la del 22 quedó en 7.
+    assert "Banana: 7 bultos" in respuesta.text
+    assert "Guía 22/08 · Norte 15" in respuesta.text
+    assert "7 <span class=\"de\">de 10</span>" in respuesta.text
+    assert "Lotes agotados (1)" in respuesta.text
+    assert "Salieron 11 bultos en total" in respuesta.text
+
+
+def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 5.0)),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema/2")
+
+    assert respuesta.status_code == 200
+    assert "Anco: -5 bultos" in respuesta.text
+    # Sin lote, dicho tal cual: no se cuelga de ninguna guía.
+    assert "5 bultos salieron sin lote" in respuesta.text
+
+
+def test_stock_articulo_inexistente_da_404():
+    with patch("app.main.obtener_articulo", return_value=None):
+        respuesta = cliente.get("/deposito/stock/sistema/999")
+
+    assert respuesta.status_code == 404
+
+
+def test_ajustar_stock_guarda_el_movimiento_y_precarga_el_motivo_en_cadena():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_movimiento_stock", return_value=12.0) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/ajustar",
+            data={"articulo_id": "1", "cantidad": "12", "motivo": "stock inicial"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, "ajuste", 12.0, "stock inicial", date(2026, 8, 25))
+    # El motivo vuelve en la URL: el caso real es el stock inicial, un
+    # ajuste por artículo, uno atrás de otro sin retipear el motivo.
+    assert "motivo=stock+inicial" in respuesta.headers["location"]
+    assert "El+stock+qued%C3%B3+en+12" in respuesta.headers["location"]
+
+
+def test_ajustar_stock_sin_motivo_da_400():
+    with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post(
+            "/deposito/stock/ajustar",
+            data={"articulo_id": "1", "cantidad": "5", "motivo": "   "},
+        )
+
+    assert respuesta.status_code == 400
+    assert "El motivo es obligatorio" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_ajustar_stock_cantidad_cero_da_400():
+    with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post(
+            "/deposito/stock/ajustar",
+            data={"articulo_id": "1", "cantidad": "0", "motivo": "nada"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_ajustar_stock_muestra_el_motivo_precargado():
+    with patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]):
+        respuesta = cliente.get("/deposito/stock/ajustar?motivo=stock+inicial")
+
+    assert respuesta.status_code == 200
+    assert 'value="stock inicial"' in respuesta.text
