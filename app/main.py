@@ -72,6 +72,8 @@ from app.db import (
     crear_cliente,
     crear_compra,
     anular_movimiento_stock,
+    contar_stock_deposito_negativo,
+    crear_conteo_stock,
     crear_movimiento_stock,
     crear_pedido,
     crear_ajuste_vacios,
@@ -92,7 +94,9 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    listar_conteos_stock_de_fecha,
     listar_movimientos_stock_por_rango,
+    listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
     guardar_disponible,
@@ -6051,11 +6055,56 @@ def _renderizar_pantalla_ajustar_stock(request: Request, *, precarga=None, aviso
     )
 
 
+def _numero_query_o_none(texto: str | None) -> float | None:
+    if texto is None or not texto.strip():
+        return None
+    try:
+        return float(texto)
+    except ValueError:
+        return None
+
+
 @app.get("/deposito/stock/ajustar")
-def ver_ajustar_stock_deposito(request: Request, aviso: str | None = None, motivo: str | None = None):
-    """Ajuste de stock, con el motivo precargable por query: al guardar se vuelve acá con el mismo motivo,
-    para cargar varios artículos en cadena (el caso real: el stock inicial, un ajuste por artículo)."""
+def ver_ajustar_stock_deposito(
+    request: Request,
+    aviso: str | None = None,
+    motivo: str | None = None,
+    articulo_id: str | None = None,
+    contado: str | None = None,
+    stock_conteo: str | None = None,
+    fecha_conteo: str | None = None,
+):
+    """Ajuste de stock. Sin precarga: pantalla en blanco (o solo el motivo, para la carga en cadena del
+    stock inicial). Con precarga (viene del Cotejo): calcula el ajuste.
+
+    La cantidad precargada es contado − stock ACTUAL (no la diferencia
+    congelada del cotejo): "ajustar a lo contado" tiene que dejar el
+    stock en lo contado, aunque hayan entrado movimientos después del
+    conteo. Si el stock cambió desde el conteo, la pantalla lo dice con
+    todos los números ANTES de guardar — mismo diseño que Vacíos.
+    """
     precarga = {"motivo": motivo.strip()} if motivo and motivo.strip() else {}
+    contado_valor = _numero_query_o_none(contado)
+    if articulo_id and articulo_id.strip().isdigit() and contado_valor is not None:
+        try:
+            stock_actual = stock_deposito_de_articulo(int(articulo_id))
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+        precarga = {
+            "articulo_id": articulo_id,
+            "cantidad": round(contado_valor - stock_actual, 2),
+            "motivo": f"Ajuste a lo contado: conteo del {fecha_conteo or '?'} ({_formatear_numero(contado_valor)} contados)",
+        }
+        stock_foto = _numero_query_o_none(stock_conteo)
+        if stock_foto is not None and stock_foto != stock_actual:
+            precarga["aviso_conteo"] = (
+                f"Ojo: el conteo fue del {fecha_conteo or '?'} con {_formatear_numero(contado_valor)} contados y el "
+                f"sistema decía {_formatear_numero(stock_foto)}. Desde entonces hubo movimientos: el stock actual es "
+                f"{_formatear_numero(stock_actual)}, así que el ajuste sugerido para dejarlo en lo contado es "
+                f"{'+' if contado_valor - stock_actual > 0 else ''}{_formatear_numero(round(contado_valor - stock_actual, 2))} "
+                f"(no la diferencia que viste en el Cotejo)."
+            )
     return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, aviso=aviso)
 
 
@@ -6337,6 +6386,105 @@ def anular_movimiento_stock_ruta(
     )
 
 
+def _renderizar_pantalla_stock_fisico_deposito(request: Request, *, error=None, aviso=None, status_code: int = 200):
+    try:
+        articulos = listar_articulos()
+        # listar_conteos_stock_de_fecha NO trae stock_sistema, a propósito:
+        # esta pantalla la ve el operario y el número del sistema no puede
+        # viajar ni escondido en su HTML (control cruzado).
+        contados_hoy = listar_conteos_stock_de_fecha(_hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_fisico.html",
+        {"articulos": articulos, "contados_hoy": contados_hoy, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/deposito/stock/fisico")
+def ver_stock_fisico_deposito(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_stock_fisico_deposito(request, aviso=aviso)
+
+
+@app.post("/deposito/stock/fisico")
+def cargar_stock_fisico_deposito_ruta(
+    request: Request,
+    articulo_id: str = Form(""),
+    cantidad: str = Form(""),
+):
+    """El operario carga lo que CONTÓ. Se acepta 0 (contó y no hay ninguno). Si se equivoca, carga de nuevo: vale el último.
+
+    No es obligatorio todos los días: es un control disponible. El aviso
+    repite SOLO lo contado — jamás el stock del sistema.
+    """
+    texto_cantidad = cantidad.strip()
+    error = None
+    cantidad_valor = None
+    if not texto_cantidad:
+        error = "La cantidad contada es obligatoria."
+    else:
+        try:
+            cantidad_valor = float(texto_cantidad)
+        except ValueError:
+            error = "La cantidad contada tiene que ser un número."
+        else:
+            if cantidad_valor < 0:
+                error = "La cantidad contada no puede ser negativa."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        return _renderizar_pantalla_stock_fisico_deposito(request, error=error, status_code=400)
+
+    try:
+        crear_conteo_stock(articulo["id"], cantidad_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_stock_fisico_deposito(
+            request, error=f"No se pudo guardar el conteo: {error_db}", status_code=500
+        )
+
+    aviso = f"Conteo guardado: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']}."
+    return RedirectResponse(url=f"/deposito/stock/fisico?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.get("/deposito/stock/cotejo")
+def ver_cotejo_stock(request: Request):
+    """Cotejo (control): el último conteo físico por artículo contra la foto del sistema de ese instante."""
+    try:
+        conteos = listar_ultimos_conteos_stock()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    filas = []
+    for conteo in conteos:
+        fila = dict(conteo, diferencia=round(float(conteo["cantidad"]) - float(conteo["stock_sistema"]), 2))
+        # Con diferencia, botón directo a la pantalla de ajuste, precargada
+        # con este conteo (la cantidad final se calcula ahí contra el stock
+        # ACTUAL, no contra esta foto — ver ver_ajustar_stock_deposito).
+        if fila["diferencia"] != 0:
+            fila["query_ajuste"] = urlencode(
+                {
+                    "articulo_id": conteo["articulo_id"],
+                    "contado": conteo["cantidad"],
+                    "stock_conteo": conteo["stock_sistema"],
+                    "fecha_conteo": conteo["creado_en"].date().isoformat(),
+                }
+            )
+        filas.append(fila)
+
+    return templates.TemplateResponse(request, "deposito_stock_cotejo.html", {"filas": filas})
+
+
 @app.get("/gerencia")
 def ver_gerencia(request: Request):
     """Hub de Gerencia: por ahora solo Auditoría; acá se van colgando los tableros del dueño."""
@@ -6364,6 +6512,7 @@ def _alertas_auditoria() -> list[dict]:
     retiros = contar_retiros_pendientes_viejos(limite)
     recepciones = contar_recepciones_pendientes_viejas(limite)
     negativos = contar_stock_vacios_negativos()
+    negativos_deposito = contar_stock_deposito_negativo()
     incotizables = contar_articulos_comprados_incotizables(ventana_comprados, hoy)
     senas = contar_senas_pendientes_viejas(limite_senas)
     pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
@@ -6407,6 +6556,15 @@ def _alertas_auditoria() -> list[dict]:
             "mas_viejo": None,
             "url": "/puesto/envases/stock",
             "texto_link": "Ver en Stock del Sistema",
+        },
+        {
+            # Salió más de lo que entró: salidas sin lote que un reproceso
+            # o un ajuste tienen que explicar — o alguien sacó de más.
+            "titulo": "Stock de depósito en negativo (salidas sin explicar)",
+            "casos": negativos_deposito,
+            "mas_viejo": None,
+            "url": "/deposito/stock/sistema",
+            "texto_link": "Ver en Stock del Sistema del Depósito",
         },
         {
             "titulo": "Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",

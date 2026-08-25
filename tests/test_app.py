@@ -9062,6 +9062,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 7, "mas_viejo": date(2026, 8, 1)}) as mock_retiros,
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 3, "mas_viejo": date(2026, 8, 2)}) as mock_recepciones,
         patch("app.main.contar_stock_vacios_negativos", return_value=1),
+        patch("app.main.contar_stock_deposito_negativo", return_value=2),
         patch("app.main.contar_articulos_comprados_incotizables", return_value=4) as mock_incotizables,
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
@@ -9085,6 +9086,8 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert respuesta.text.index("Compras sin precio hace") < respuesta.text.index("Mercadería sin retirar hace")
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
     assert "Stock de vacíos negativo" in respuesta.text
+    assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
+    assert 'href="/deposito/stock/sistema"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
     assert "Pedidos con renglones sin identificar" in respuesta.text
@@ -9114,6 +9117,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_stock_vacios_negativos", return_value=0),
+        patch("app.main.contar_stock_deposito_negativo", return_value=0),
         patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
@@ -13958,10 +13962,12 @@ def test_hub_stock_separa_la_carga_del_operario_del_control():
     assert 'href="/deposito/stock/merma"' in respuesta.text
     assert 'href="/deposito/stock/reingreso"' in respuesta.text
     assert 'href="/deposito/stock/movimientos"' in respuesta.text
+    assert 'href="/deposito/stock/fisico"' in respuesta.text
+    assert 'href="/deposito/stock/cotejo"' in respuesta.text
     assert "Carga del depósito" in respuesta.text
     assert "Control" in respuesta.text
-    # Faltan Stock Físico y Cotejo (tanda 3).
-    assert respuesta.text.count("(Próximamente)") == 2
+    # Módulo completo: no queda nada "Próximamente".
+    assert "(Próximamente)" not in respuesta.text
 
 
 def test_stock_sistema_muestra_el_stock_calculado_por_articulo():
@@ -14270,3 +14276,123 @@ def test_anular_movimiento_stock_vuelve_al_rango():
     assert respuesta.status_code == 303
     mock_anular.assert_called_once_with(32)
     assert "fecha_desde=2026-08-18" in respuesta.headers["location"]
+
+
+# --- Stock del Depósito (tanda 3): Stock Físico, Cotejo, alerta ---
+
+
+def test_stock_fisico_guarda_el_conteo_y_el_aviso_no_muestra_el_sistema():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_conteo_stock") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "1", "cantidad": "12"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, 12.0)
+    # Pantalla de OPERARIO: el aviso repite SOLO lo contado.
+    destino = respuesta.headers["location"]
+    assert "Conteo+guardado%3A+12+bultos+de+Banana" in destino
+    assert "sistema" not in destino
+
+
+def test_stock_fisico_acepta_cero_pero_no_negativos():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_conteo_stock") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "1", "cantidad": "0"},
+            follow_redirects=False,
+        )
+    # 0 vale: contó y no hay ninguno.
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, 0.0)
+
+    with (
+        patch("app.main.crear_conteo_stock") as mock_crear,
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "1", "cantidad": "-2"},
+        )
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
+    contados = [{"id": 5, "cantidad": 12.0, "creado_en": datetime(2026, 8, 25, 10, 30),
+                 "articulo_nombre": "Banana"}]
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico")
+
+    assert respuesta.status_code == 200
+    assert "Contado hoy" in respuesta.text
+    assert "Banana" in respuesta.text
+    # Ni rastro del stock del sistema en el HTML del operario.
+    assert "stock_sistema" not in respuesta.text
+    assert "Sistema" not in respuesta.text
+
+
+def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste():
+    conteos = [
+        {"id": 5, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 15.0,
+         "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana"},
+        {"id": 6, "articulo_id": 2, "cantidad": 7.0, "stock_sistema": 7.0,
+         "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Anco"},
+    ]
+    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
+        respuesta = cliente.get("/deposito/stock/cotejo")
+
+    assert respuesta.status_code == 200
+    # La diferencia es contra la FOTO del conteo, resaltada.
+    assert "-3" in respuesta.text
+    assert 'class="tarjeta con-diferencia"' in respuesta.text
+    # Con diferencia: botón al ajuste precargado; sin diferencia, no.
+    assert "articulo_id=1&amp;contado=12.0&amp;stock_conteo=15.0&amp;fecha_conteo=2026-08-25" in respuesta.text
+    assert respuesta.text.count("Ajustar a lo contado") == 1
+    assert "diferencia-cero" in respuesta.text
+
+
+def test_ajustar_desde_cotejo_precarga_contra_el_stock_actual_y_avisa_si_se_movio():
+    # El conteo fue con el sistema en 15, pero el stock ACTUAL es 18: el
+    # ajuste para dejarlo en lo contado (12) es -6, no el -3 del cotejo —
+    # y la pantalla lo explica ANTES de guardar.
+    with (
+        patch("app.main.stock_deposito_de_articulo", return_value=18.0),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
+    ):
+        respuesta = cliente.get(
+            "/deposito/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
+        )
+
+    assert respuesta.status_code == 200
+    assert 'value="-6.0"' in respuesta.text
+    assert "Ajuste a lo contado: conteo del 2026-08-25 (12 contados)" in respuesta.text
+    assert "el stock actual es 18" in respuesta.text
+    assert "el ajuste sugerido para dejarlo en lo contado es -6" in respuesta.text
+
+
+def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
+    with (
+        patch("app.main.stock_deposito_de_articulo", return_value=15.0),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
+    ):
+        respuesta = cliente.get(
+            "/deposito/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
+        )
+
+    assert respuesta.status_code == 200
+    assert 'value="-3.0"' in respuesta.text
+    assert "Desde entonces hubo movimientos" not in respuesta.text

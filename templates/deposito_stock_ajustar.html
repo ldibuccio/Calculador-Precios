@@ -35,6 +35,15 @@
     margin-bottom: 1rem;
     font-size: 0.95rem;
   }
+  .aviso-conteo {
+    background: #fef9c3;
+    color: #713f12;
+    border: 2px solid #facc15;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
   label {
     display: block;
     margin-top: 0.7rem;
@@ -78,6 +87,10 @@
   {% endif %}
   {% if error %}
   <div class="error">{{ error }}</div>
+  {% endif %}
+  {% if precarga.aviso_conteo %}
+  {# El stock se movió desde el conteo: hay que entenderlo ANTES de guardar. #}
+  <div class="aviso-conteo">{{ precarga.aviso_conteo }}</div>
   {% endif %}
 
   <div class="tarjeta">

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cotejo de Stock</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 1rem; }
+  .encabezado {
+    font-weight: 700;
+    font-size: 0.98rem;
+    margin: 0 0 0.1rem;
+  }
+  .fecha-conteo { color: #888; font-size: 0.8rem; margin: 0 0 0.6rem; }
+  .numeros {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    text-align: center;
+  }
+  .numeros .celda { flex: 1; }
+  .numeros .etiqueta { display: block; color: #666; font-size: 0.78rem; }
+  .numeros .valor { display: block; font-size: 1.25rem; font-weight: 800; }
+  .diferencia-cero { color: #16a34a; }
+  .diferencia-distinta { color: #dc2626; }
+  .tarjeta.con-diferencia { border: 2px solid #fecaca; }
+  .boton-ajustar {
+    display: block;
+    margin-top: 0.75rem;
+    padding: 0.8rem;
+    background: #ea580c;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Cotejo de Stock" %}
+  {% include "_barra_navegacion.html" %}
+
+  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos).</p>
+
+  {% if filas %}
+    {% for f in filas %}
+    <div class="tarjeta {% if f.diferencia != 0 %}con-diferencia{% endif %}">
+      <p class="encabezado">{{ f.articulo_nombre }}</p>
+      <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
+      <div class="numeros">
+        <div class="celda">
+          <span class="etiqueta">Contado</span>
+          <span class="valor">{{ f.cantidad|numero }}</span>
+        </div>
+        <div class="celda">
+          <span class="etiqueta">Sistema</span>
+          <span class="valor">{{ f.stock_sistema|numero }}</span>
+        </div>
+        <div class="celda">
+          <span class="etiqueta">Diferencia</span>
+          <span class="valor {% if f.diferencia == 0 %}diferencia-cero{% else %}diferencia-distinta{% endif %}">
+            {% if f.diferencia > 0 %}+{% endif %}{{ f.diferencia|numero }}
+          </span>
+        </div>
+      </div>
+      {% if f.query_ajuste %}
+      {# La cantidad final se calcula en la pantalla de ajuste contra el
+         stock ACTUAL (con aviso si cambió desde este conteo). #}
+      <a class="boton-ajustar" href="/deposito/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="tarjeta">
+    <p class="vacio">Todavía no hay conteos físicos cargados. El operario los carga desde Stock → Stock Físico.</p>
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/deposito/stock">Volver a Stock</a>
+</body>
+</html>

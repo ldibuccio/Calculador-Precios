@@ -3221,3 +3221,69 @@ def test_anular_movimiento_stock_es_baja_logica_e_idempotente():
     assert "anulado_el IS NULL" in consulta
     assert cursor.execute.call_args.args[1] == (32,)
     conexion.commit.assert_called_once()
+
+
+def test_crear_conteo_stock_graba_la_foto_y_no_devuelve_nada():
+    from app.db import crear_conteo_stock
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = crear_conteo_stock(2, 4.0)
+
+    insert = cursor.execute.call_args_list[-1]
+    assert "INSERT INTO conteos_stock" in insert.args[0]
+    # La foto del sistema se graba del lado del server...
+    assert insert.args[1] == (2, 4.0, 7.0)
+    # ...y NUNCA se le devuelve al operario: si la ve, transcribe en vez
+    # de contar.
+    assert resultado is None
+    conexion.commit.assert_called_once()
+
+
+def test_listar_conteos_stock_de_fecha_no_trae_el_stock_del_sistema():
+    from app.db import listar_conteos_stock_de_fecha
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_conteos_stock_de_fecha(date(2026, 8, 25))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Esta lista la ve el operario: el número del sistema no puede viajar
+    # ni escondido en el HTML de su pantalla.
+    assert "stock_sistema" not in consulta
+
+
+def test_listar_ultimos_conteos_stock_trae_el_ultimo_por_articulo():
+    from app.db import listar_ultimos_conteos_stock
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("articulo_nombre",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ultimos_conteos_stock()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "DISTINCT ON (c.articulo_id)" in consulta
+    assert "c.stock_sistema" in consulta
+    assert "c.creado_en DESC" in consulta
+
+
+def test_contar_stock_deposito_negativo_hace_la_misma_cuenta_que_el_stock():
+    from app.db import contar_stock_deposito_negativo
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        casos = contar_stock_deposito_negativo()
+
+    consulta = cursor.execute.call_args.args[0]
+    # La misma cuenta que stock_deposito_por_articulo, solo el conteo.
+    assert "estado = 'recepcionado'" in consulta
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
+    assert "< 0" in consulta
+    assert casos == 2

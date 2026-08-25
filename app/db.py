@@ -5201,3 +5201,106 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
         conexion.commit()
     finally:
         conexion.close()
+
+
+def crear_conteo_stock(articulo_id: int, cantidad: float) -> None:
+    """Conteo físico del operario del depósito. El stock del sistema se graba acá, del lado del server — NUNCA se le devuelve.
+
+    A propósito no retorna nada: la pantalla de Stock Físico no puede
+    mostrar el número del sistema (si el operario lo ve, transcribe en
+    vez de contar — se pierde el control cruzado; mismo criterio que
+    Vacíos). El Cotejo compara después contra esta foto exacta. Si se
+    equivoca, carga de nuevo: en el Cotejo vale el último por artículo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            stock_sistema = _stock_deposito_actual(cursor, articulo_id)
+            cursor.execute(
+                """
+                INSERT INTO conteos_stock (articulo_id, cantidad, stock_sistema)
+                VALUES (%s, %s, %s)
+                """,
+                (articulo_id, cantidad, stock_sistema),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
+    """Conteos de un día para la lista "Contado hoy" del operario.
+
+    SIN stock_sistema en el SELECT, a propósito: esta lista la ve el
+    operario, y el número del sistema no puede viajar ni escondido en el
+    HTML de su pantalla.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.cantidad, c.creado_en, a.nombre AS articulo_nombre
+                FROM conteos_stock c
+                JOIN articulos a ON a.id = c.articulo_id
+                WHERE c.creado_en >= %s AND c.creado_en < %s::date + 1
+                ORDER BY c.creado_en DESC
+                """,
+                (fecha, fecha),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_ultimos_conteos_stock() -> list[dict]:
+    """El ÚLTIMO conteo por artículo, con su foto del stock del sistema, para el Cotejo (control)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT ON (c.articulo_id)
+                       c.id, c.articulo_id, c.cantidad, c.stock_sistema, c.creado_en,
+                       a.nombre AS articulo_nombre
+                FROM conteos_stock c
+                JOIN articulos a ON a.id = c.articulo_id
+                ORDER BY c.articulo_id, c.creado_en DESC
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+        filas.sort(key=lambda fila: fila["articulo_nombre"])
+        return filas
+    finally:
+        conexion.close()
+
+
+def contar_stock_deposito_negativo() -> int:
+    """Auditoría: cuántos artículos del depósito tienen stock por debajo de cero.
+
+    Negativo = salió más de lo que entró: salidas sin lote que un
+    reproceso o un ajuste tienen que explicar. No es un error del
+    sistema — es la señal para el dueño. Misma cuenta que
+    stock_deposito_por_articulo(), solo el conteo; los índices parciales
+    *_stock_idx cubren los SUM.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                _sql_sumas_stock(por_articulo=False)
+                + """
+                SELECT COUNT(*) FROM articulos a
+                LEFT JOIN entradas e ON e.articulo_id = a.id
+                LEFT JOIN salidas s ON s.articulo_id = a.id
+                LEFT JOIN reingresos r ON r.articulo_id = a.id
+                LEFT JOIN ajustes aj ON aj.articulo_id = a.id
+                WHERE COALESCE(e.total, 0) + COALESCE(r.total, 0)
+                    + COALESCE(aj.total, 0) - COALESCE(s.total, 0) < 0
+                """
+            )
+            return int(cursor.fetchone()[0])
+    finally:
+        conexion.close()

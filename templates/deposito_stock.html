@@ -44,9 +44,6 @@
     box-sizing: border-box;
   }
   .boton:first-of-type { margin-top: 0; }
-  /* "Próximamente": mismo criterio que en /precios — atenuado, se nota
-     a simple vista que todavía no hace nada. */
-  .boton-proximamente { opacity: 0.6; }
 </style>
 </head>
 <body>
@@ -61,7 +58,7 @@
   {# Carga del operario: nunca ve números del sistema (criterio Vacíos). #}
   <div class="tarjeta">
     <h2>Carga del depósito</h2>
-    <a class="boton boton-proximamente" href="/deposito/stock">Stock Físico (Próximamente)</a>
+    <a class="boton" href="/deposito/stock/fisico">Stock Físico</a>
     <a class="boton" href="/deposito/stock/merma">Merma</a>
     <a class="boton" href="/deposito/stock/reingreso">Reingreso por Rechazo</a>
   </div>
@@ -69,7 +66,7 @@
   <div class="tarjeta">
     <h2>Control</h2>
     <a class="boton" href="/deposito/stock/sistema">Stock del Sistema</a>
-    <a class="boton boton-proximamente" href="/deposito/stock">Cotejo (Próximamente)</a>
+    <a class="boton" href="/deposito/stock/cotejo">Cotejo</a>
     <a class="boton" href="/deposito/stock/ajustar">Ajustar Stock</a>
     <a class="boton" href="/deposito/stock/movimientos">Movimientos</a>
   </div>
