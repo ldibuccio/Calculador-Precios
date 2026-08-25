@@ -3469,3 +3469,46 @@ def test_anular_remito_segunda_es_baja_logica():
     consulta = cursor.execute.call_args.args[0]
     assert "UPDATE remitos_segunda SET anulado_el = now()" in consulta
     assert "anulado_el IS NULL" in consulta
+
+
+def test_articulos_con_salidas_stock_junta_armados_mermas_y_reprocesos():
+    from app.db import articulos_con_salidas_stock
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("articulo_id",), ("nombre",), ("grupo",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        articulos_con_salidas_stock(1, date(2026, 8, 18), date(2026, 8, 25))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Armados del cliente en el rango (pedidos vigentes) + mermas y
+    # reprocesos del depósito (no son de un cliente: entran igual).
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
+    assert "v.cliente_id = %s" in consulta
+    assert "tipo = 'merma'" in consulta
+    assert "FROM reprocesos" in consulta
+
+
+def test_salidas_stock_articulo_trae_cada_salida_tipada_de_toda_la_historia():
+    from app.db import salidas_stock_articulo
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("fecha_orden",), ("tipo",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        salidas_stock_articulo(2)
+
+    consulta = cursor.execute.call_args.args[0]
+    # SIN filtro de fechas: la atribución FIFO necesita el pasado entero.
+    assert "fecha_operacion >= " not in consulta.replace("v.fecha_operacion AS", "")
+    # El armado ancla el precio a la fecha del PEDIDO y trae los kilos
+    # enviados y el cliente; mermas/ajustes y tomas de reproceso, tipados.
+    assert "'armado' AS tipo" in consulta
+    assert "r.kilos_enviados AS unidades" in consulta
+    assert "v.cliente_id AS cliente_id" in consulta
+    assert "m.cantidad < 0" in consulta
+    assert "'reproceso_toma'" in consulta
+    assert "rp.bultos_segunda" in consulta
+    assert "ORDER BY 1, 2" in consulta

@@ -5646,3 +5646,101 @@ def contar_reprocesos_costo_incompleto() -> dict:
         return {"casos": int(casos), "mas_viejo": mas_viejo}
     finally:
         conexion.close()
+
+
+# --- Rentabilidad Real ---
+
+
+def articulos_con_salidas_stock(cliente_id: int, fecha_desde, fecha_hasta) -> list[dict]:
+    """Los artículos que la Rentabilidad Real tiene que mirar en el rango: con armados del cliente, mermas o reprocesos.
+
+    Mermas y reprocesos son del DEPÓSITO (no de un cliente): entran igual
+    — con un solo cliente todo cuadra; si algún día hay varios, se decide
+    el prorrateo en ese momento.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.id AS articulo_id, a.nombre, a.grupo
+                FROM articulos a
+                WHERE a.id IN (
+                    SELECT r.articulo_id
+                    FROM pedidos_renglones r
+                    JOIN (SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id, fecha_operacion
+                          FROM pedidos WHERE anulado_el IS NULL
+                          ORDER BY cliente_id, fecha_operacion, creado_en DESC) v ON v.id = r.pedido_id
+                    WHERE v.cliente_id = %s AND v.fecha_operacion >= %s AND v.fecha_operacion <= %s
+                      AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id IS NOT NULL
+                    UNION
+                    SELECT articulo_id FROM movimientos_stock
+                    WHERE anulado_el IS NULL AND tipo = 'merma'
+                      AND fecha_operacion >= %s AND fecha_operacion <= %s
+                    UNION
+                    SELECT articulo_id FROM reprocesos
+                    WHERE anulado_el IS NULL
+                      AND fecha_operacion >= %s AND fecha_operacion <= %s
+                )
+                ORDER BY a.nombre
+                """,
+                (cliente_id, fecha_desde, fecha_hasta, fecha_desde, fecha_hasta, fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def salidas_stock_articulo(articulo_id: int) -> list[dict]:
+    """CADA salida individual de un artículo, tipada y en orden cronológico — TODA la historia.
+
+    La atribución FIFO de la Rentabilidad Real necesita el pasado
+    completo (qué lote consumió cada salida depende de todas las
+    anteriores); el rango de la pantalla filtra después. Tipos: 'armado'
+    (renglón de pedido vigente, con la fecha del PEDIDO — la que ancla el
+    precio — y los kilos enviados), 'merma' y 'ajuste' (movimientos
+    negativos), 'reproceso_toma' (con la segunda del reproceso como dato).
+    El orden FIFO es el mismo del resto del módulo: fecha real del hecho
+    + momento de carga de desempate; el armado, por su instante de tilde.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id, fecha_operacion
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
+                       r.armado_el AS momento_orden,
+                       'armado' AS tipo,
+                       v.fecha_operacion AS fecha,
+                       COALESCE(r.cantidad_armada, r.cantidad) AS cantidad,
+                       r.kilos_enviados AS unidades,
+                       v.cliente_id AS cliente_id,
+                       NULL AS motivo,
+                       NULL::numeric AS bultos_segunda
+                FROM pedidos_renglones r
+                JOIN vigentes v ON v.id = r.pedido_id
+                WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = %s
+                UNION ALL
+                SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
+                       -m.cantidad, NULL, NULL, m.motivo, NULL
+                FROM movimientos_stock m
+                WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = %s
+                UNION ALL
+                SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
+                       rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda
+                FROM reprocesos rp
+                WHERE rp.anulado_el IS NULL AND rp.articulo_id = %s
+                ORDER BY 1, 2
+                """,
+                (articulo_id, articulo_id, articulo_id),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()

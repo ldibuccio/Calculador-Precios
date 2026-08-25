@@ -72,6 +72,7 @@ from app.db import (
     crear_cliente,
     crear_compra,
     anular_movimiento_stock,
+    articulos_con_salidas_stock,
     anular_remito_segunda,
     anular_reproceso,
     completar_costo_reproceso,
@@ -103,6 +104,7 @@ from app.db import (
     listar_conteos_stock_de_fecha,
     listar_movimientos_stock_por_rango,
     listar_remitos_segunda_por_rango,
+    salidas_stock_articulo,
     listar_reprocesos_por_rango,
     listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
@@ -231,6 +233,7 @@ from core.casilla_pedidos import (
 )
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
+from core.costo_real import calcular_rentabilidad_real
 from core.stock import repartir_fifo
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
@@ -7166,6 +7169,101 @@ def exportar_rentabilidad_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
+
+
+def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo) -> dict:
+    """Junta los datos y llama al motor puro de la Rentabilidad REAL (core/costo_real.py).
+
+    La TEÓRICA queda intacta (es la red del dueño); esta es la cuenta
+    exacta. Por artículo con movimiento en el rango se trae la HISTORIA
+    COMPLETA de entradas y salidas (la atribución FIFO necesita el pasado
+    entero), y los precios/tasas salen del MISMO listado anclado por
+    fecha que usan Márgenes y la teórica: donde las dos pantallas miran
+    lo mismo, dan lo mismo — la diferencia que quede es la lista de cosas
+    a explicar (merma, reproceso, kilajes), no ruido de cuentas distintas.
+    """
+    articulos = articulos_con_salidas_stock(cliente_id, fecha_desde, fecha_hasta)
+    if articulo_id is not None:
+        articulos = [a for a in articulos if a["articulo_id"] == articulo_id]
+    if grupo is not None:
+        articulos = [a for a in articulos if a["grupo"] == grupo]
+
+    articulos_datos = []
+    fechas_pedido = set()
+    for articulo in articulos:
+        entradas, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
+        salidas = salidas_stock_articulo(articulo["articulo_id"])
+        for e in entradas:
+            e["orden"] = (e["fecha_orden"], e["momento_orden"])
+        for s in salidas:
+            s["orden"] = (s["fecha_orden"], s["momento_orden"])
+            if (
+                s["tipo"] == "armado"
+                and s["cliente_id"] == cliente_id
+                and fecha_desde <= s["fecha"] <= fecha_hasta
+            ):
+                fechas_pedido.add(s["fecha"])
+        articulos_datos.append(dict(articulo, entradas=entradas, salidas=salidas))
+
+    margenes_por_fecha = {}
+    for fecha in sorted(fechas_pedido):
+        listado = calcular_listado_para_negociar_precios(
+            cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
+        )
+        margenes_por_fecha[fecha] = {fila["articulo_id"]: fila for fila in listado}
+
+    return calcular_rentabilidad_real(articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta)
+
+
+@app.get("/gerencia/rentabilidad-real")
+def ver_rentabilidad_real(
+    request: Request,
+    cliente_id: str | None = None,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    articulo_id: str | None = None,
+    grupo: str | None = None,
+):
+    """Rentabilidad Real: qué dejó DE VERDAD lo que salió del depósito — botón aparte de la teórica.
+
+    Venta = lo ENVIADO × precio de lista vigente (el precio que Día
+    paga); mercadería al costo FIFO real; mermas del período al costo de
+    su lote; la segunda en bultos, sin plata. El "afuera del cálculo" es
+    PROTAGONISTA por pedido del dueño: motivo por motivo, con bultos y
+    artículos — su hoja de ruta mientras la real se afina.
+    """
+    cliente_valor, desde, hasta, articulo_valor, grupo_valor, error_fecha = _leer_filtros_rentabilidad(
+        cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
+    )
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "clientes": clientes,
+        "cliente_id": cliente_valor,
+        "fecha_desde": desde.isoformat(),
+        "fecha_hasta": hasta.isoformat(),
+        "articulo_id": articulo_valor,
+        "grupo": grupo_valor,
+        "grupos_articulo": [(clave, ETIQUETAS_GRUPO[clave]) for clave in ("fruta", "hortaliza", "hoja", "pesada")],
+        "error_fecha": error_fecha,
+        "articulos_cliente": [],
+        "resultado": None,
+    }
+    if cliente_valor is None or error_fecha:
+        return templates.TemplateResponse(request, "gerencia_rentabilidad_real.html", contexto)
+
+    try:
+        fichas = listar_fichas_por_cliente(cliente_valor)
+        contexto["articulos_cliente"] = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
+        contexto["resultado"] = _datos_rentabilidad_real(cliente_valor, desde, hasta, articulo_valor, grupo_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(request, "gerencia_rentabilidad_real.html", contexto)
 
 
 @app.get("/facturacion")

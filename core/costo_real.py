@@ -1,0 +1,289 @@
+"""Rentabilidad REAL: qué dejó de verdad lo que salió del depósito — puro, sin tocar la base.
+
+La contracara de core/rentabilidad.py (la TEÓRICA, que queda intacta
+como red del dueño: bultos = lo pedido, costo de compra anclado). Esta
+es la cuenta exacta, mirando lo que pasó:
+
+    + venta real   = kilos/unidades ENVIADOS (lo que se factura) ×
+                     precio de lista vigente a la fecha del pedido ×
+                     (1 + Σ tasas del cliente) — MISMO listado anclado
+                     que Márgenes y la teórica.
+    − mercadería   = costo FIFO de los bultos que salieron por armado:
+                     lotes de compra a su importe, lotes de guía R a su
+                     costo de primera congelado.
+    − envase       = costo de envase × unidades realmente enviadas.
+    − mermas       = bultos tirados en el período × el costo FIFO de su
+                     lote.
+    = renta real   · utilidad % SOLO sobre mercadería (regla fija).
+
+El reproceso es NEUTRO acá: su toma consume lotes al costo y su primera
+vuelve a entrar como lote con ese mismo costo (todo a la primera) — la
+plata fluye con la mercadería, sin doble conteo. Su merma interna ya
+viene absorbida por la primera, y la segunda vale cero (se informa en
+bultos, sin plata). Los ajustes negativos consumen lotes en la
+atribución (son inventario que se fue) pero NO son pérdida del período:
+son correcciones de registro. Los rechazos del cliente se descontarán
+cuando exista el vínculo reingreso→pedido (diferido, decidido).
+
+Invariante duro, y acá es PROTAGONISTA: lo que no se puede calcular no
+suma como cero — va al reporte "afuera del cálculo" con motivo, bultos
+y artículos. Los primeros meses va a haber más ahí que en la cuenta
+(stock inicial sin costo, guías R incompletas, renglones sin kilaje):
+esa lista es la hoja de ruta del dueño, no una nota al pie. Una salida
+con UNA porción sin costo queda afuera ENTERA (venta incluida): mejor
+un número chico y cierto que uno grande y mentiroso.
+"""
+
+from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
+
+ETIQUETAS_MOTIVO_REAL = {
+    "sin_kilaje": "Renglón armado sin kilaje cargado",
+    "sin_precio": "Sin precio de venta vigente a la fecha del pedido",
+    "compra_sin_precio": "Consumió una compra sin precio cargado",
+    "ajuste_sin_costo": "Consumió stock inicial u otro ajuste (sin costo posible)",
+    "reingreso_sin_costo": "Consumió un reingreso por rechazo (sin costo por ahora)",
+    "guia_r_incompleta": "Consumió la primera de una guía R con costo incompleto",
+    "sin_lote": "Salida sin lote (salió más de lo que había en el sistema)",
+}
+
+_MOTIVO_POR_TIPO_LOTE = {
+    "guia": "compra_sin_precio",
+    "ajuste": "ajuste_sin_costo",
+    "reingreso_rechazo": "reingreso_sin_costo",
+    "reproceso": "guia_r_incompleta",
+}
+
+
+def _numero(valor):
+    return float(valor) if valor is not None else None
+
+
+def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict]:
+    """Atribuye CADA salida a los lotes que consumió, con su costo — la extensión del repartir_fifo total.
+
+    entradas: lotes con "orden", "cantidad", "tipo_lote" y "costo_bulto"
+    (None = sin precio). salidas: con "orden" y "cantidad". Se rejuega la
+    historia completa: lotes del más viejo al más nuevo, salidas en orden
+    cronológico, cada una consume del lote más viejo con resto.
+
+    A cada salida le agrega: "costo" ($ total, o None si alguna porción
+    no tiene precio), "bultos_sin_costo" y "motivos_sin_costo"
+    ({motivo: bultos}). Lo que excede los lotes es porción sin_lote.
+    Devuelve las salidas en orden cronológico.
+    """
+    lotes = [dict(e, restante=float(e["cantidad"])) for e in sorted(entradas, key=lambda e: e["orden"])]
+    resultado = sorted((dict(s) for s in salidas), key=lambda s: s["orden"])
+
+    indice = 0
+    for salida in resultado:
+        pendiente = float(salida["cantidad"])
+        costo = 0.0
+        sin_costo = 0.0
+        motivos: dict[str, float] = {}
+        while pendiente > 0 and indice < len(lotes):
+            lote = lotes[indice]
+            if lote["restante"] <= 0:
+                indice += 1
+                continue
+            bultos = min(lote["restante"], pendiente)
+            lote["restante"] -= bultos
+            pendiente = round(pendiente - bultos, 2)
+            if lote["costo_bulto"] is not None:
+                costo += bultos * float(lote["costo_bulto"])
+            else:
+                sin_costo += bultos
+                motivo = _MOTIVO_POR_TIPO_LOTE.get(lote["tipo_lote"], "ajuste_sin_costo")
+                motivos[motivo] = motivos.get(motivo, 0.0) + bultos
+        if pendiente > 0:
+            sin_costo += pendiente
+            motivos["sin_lote"] = motivos.get("sin_lote", 0.0) + pendiente
+
+        salida["bultos_sin_costo"] = round(sin_costo, 2)
+        salida["motivos_sin_costo"] = motivos
+        salida["costo"] = round(costo, 2) if sin_costo == 0 else None
+    return resultado
+
+
+def calcular_rentabilidad_real(
+    articulos_datos: list[dict],
+    margenes_por_fecha: dict,
+    cliente_id: int,
+    fecha_desde,
+    fecha_hasta,
+) -> dict:
+    """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
+
+    articulos_datos: [{articulo_id, nombre, grupo, entradas, salidas}] —
+    entradas y salidas de TODA la historia del artículo (la atribución
+    FIFO necesita el pasado completo; el rango solo filtra qué salidas se
+    reportan). Salidas tipadas: 'armado' (con fecha = la del PEDIDO, que
+    ancla el precio; unidades = kilos_enviados; cliente_id), 'merma',
+    'ajuste' (negativo) y 'reproceso_toma' (con bultos_segunda).
+    margenes_por_fecha: mismo formato que la teórica.
+    """
+    acumulado: dict = {}
+    afuera: dict = {}
+    fechas_incluidas = set()
+
+    def _sumar_afuera(motivo, articulo, bultos):
+        clave = (motivo, articulo["articulo_id"])
+        entrada = afuera.get(clave)
+        if entrada is None:
+            entrada = {
+                "motivo": motivo,
+                "motivo_etiqueta": ETIQUETAS_MOTIVO_REAL[motivo],
+                "articulo_id": articulo["articulo_id"],
+                "articulo_nombre": articulo["nombre"],
+                "bultos": 0.0,
+            }
+            afuera[clave] = entrada
+        entrada["bultos"] += bultos
+
+    def _fila(articulo):
+        fila = acumulado.get(articulo["articulo_id"])
+        if fila is None:
+            fila = {
+                "articulo_id": articulo["articulo_id"],
+                "articulo_nombre": articulo["nombre"],
+                "grupo": articulo["grupo"],
+                "bultos": 0.0,
+                "unidades": 0.0,
+                "venta_neta": 0.0,
+                "costo_mercaderia": 0.0,
+                "costo_envase": 0.0,
+                "costo_mermas": 0.0,
+                "bultos_mermados": 0.0,
+                "segunda_bultos": 0.0,
+            }
+            acumulado[articulo["articulo_id"]] = fila
+        return fila
+
+    for articulo in articulos_datos:
+        salidas = atribuir_costos_fifo(articulo["entradas"], articulo["salidas"])
+        for salida in salidas:
+            if not (fecha_desde <= salida["fecha"] <= fecha_hasta):
+                continue
+
+            if salida["tipo"] == "armado":
+                if salida.get("cliente_id") != cliente_id:
+                    continue  # venta de otro cliente: no es de esta pantalla
+                fechas_incluidas.add(salida["fecha"])
+                bultos = float(salida["cantidad"])
+                unidades = _numero(salida.get("unidades"))
+                if unidades is None:
+                    _sumar_afuera("sin_kilaje", articulo, bultos)
+                    continue
+                margen = margenes_por_fecha.get(salida["fecha"], {}).get(articulo["articulo_id"])
+                precio = _numero(margen.get("precio_vigente")) if margen else None
+                if precio is None:
+                    _sumar_afuera("sin_precio", articulo, bultos)
+                    continue
+                if salida["bultos_sin_costo"] > 0:
+                    # Una porción sin costo deja la salida ENTERA afuera
+                    # (venta incluida): número chico y cierto.
+                    for motivo, cuantos in salida["motivos_sin_costo"].items():
+                        _sumar_afuera(motivo, articulo, cuantos)
+                    continue
+                denominador = _numero(margen.get("denominador_tasas"))
+                if denominador is None:
+                    denominador = 1.0
+                envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
+                fila = _fila(articulo)
+                fila["bultos"] += bultos
+                fila["unidades"] += unidades
+                fila["venta_neta"] += unidades * precio * denominador
+                fila["costo_mercaderia"] += salida["costo"]
+                fila["costo_envase"] += unidades * envase_unidad
+
+            elif salida["tipo"] == "merma":
+                if salida["bultos_sin_costo"] > 0:
+                    for motivo, cuantos in salida["motivos_sin_costo"].items():
+                        _sumar_afuera(motivo, articulo, cuantos)
+                    continue
+                fila = _fila(articulo)
+                fila["costo_mermas"] += salida["costo"]
+                fila["bultos_mermados"] += float(salida["cantidad"])
+
+            elif salida["tipo"] == "reproceso_toma":
+                # Neutro en plata (el costo viaja a la primera); la
+                # segunda se informa en bultos, sin plata.
+                _fila(articulo)["segunda_bultos"] += _numero(salida.get("bultos_segunda")) or 0.0
+            # 'ajuste' negativo: consume lotes en la atribución pero no es
+            # pérdida del período — corrección de registro, no operación.
+
+    def _cerrar_cuenta(fila):
+        fila["costo_total"] = fila["costo_mercaderia"] + fila["costo_envase"] + fila["costo_mermas"]
+        fila["renta_pesos"] = fila["venta_neta"] - fila["costo_total"]
+        fila["utilidad_pct"] = (
+            fila["renta_pesos"] / fila["costo_mercaderia"] * 100 if fila["costo_mercaderia"] else None
+        )
+
+    filas_con_algo = [
+        f for f in acumulado.values()
+        if f["bultos"] or f["costo_mermas"] or f["bultos_mermados"] or f["segunda_bultos"]
+    ]
+    for fila in filas_con_algo:
+        _cerrar_cuenta(fila)
+
+    grupos = []
+    for clave_grupo in ORDEN_GRUPOS:
+        filas = sorted(
+            (f for f in filas_con_algo if f["grupo"] == clave_grupo),
+            key=lambda f: f["articulo_nombre"],
+        )
+        if not filas:
+            continue
+        subtotal = {
+            "bultos": sum(f["bultos"] for f in filas),
+            "venta_neta": sum(f["venta_neta"] for f in filas),
+            "costo_mercaderia": sum(f["costo_mercaderia"] for f in filas),
+            "costo_envase": sum(f["costo_envase"] for f in filas),
+            "costo_mermas": sum(f["costo_mermas"] for f in filas),
+        }
+        _cerrar_cuenta(subtotal)
+        grupos.append(
+            {
+                "grupo": clave_grupo,
+                "etiqueta": ETIQUETAS_GRUPO.get(clave_grupo, ETIQUETA_SIN_GRUPO),
+                "filas": filas,
+                "subtotal": subtotal,
+            }
+        )
+
+    # El "afuera del cálculo" agrupado POR MOTIVO, ordenado por peso: la
+    # hoja de ruta del dueño — qué arreglar primero y cuántos bultos mueve.
+    por_motivo: dict = {}
+    for entrada in afuera.values():
+        resumen = por_motivo.get(entrada["motivo"])
+        if resumen is None:
+            resumen = {
+                "motivo": entrada["motivo"],
+                "etiqueta": entrada["motivo_etiqueta"],
+                "bultos": 0.0,
+                "articulos": [],
+            }
+            por_motivo[entrada["motivo"]] = resumen
+        resumen["bultos"] += entrada["bultos"]
+        resumen["articulos"].append({"nombre": entrada["articulo_nombre"], "bultos": entrada["bultos"]})
+    afuera_por_motivo = sorted(por_motivo.values(), key=lambda r: -r["bultos"])
+    for resumen in afuera_por_motivo:
+        resumen["articulos"].sort(key=lambda a: -a["bultos"])
+
+    totales = {
+        "bultos": sum(g["subtotal"]["bultos"] for g in grupos),
+        "venta_neta": sum(g["subtotal"]["venta_neta"] for g in grupos),
+        "costo_mercaderia": sum(g["subtotal"]["costo_mercaderia"] for g in grupos),
+        "costo_envase": sum(g["subtotal"]["costo_envase"] for g in grupos),
+        "costo_mermas": sum(g["subtotal"]["costo_mermas"] for g in grupos),
+        "segunda_bultos": sum(f["segunda_bultos"] for f in filas_con_algo),
+        "afuera_bultos": sum(r["bultos"] for r in afuera_por_motivo),
+        "afuera_motivos": len(afuera_por_motivo),
+    }
+    _cerrar_cuenta(totales)
+
+    return {
+        "grupos": grupos,
+        "totales": totales,
+        "afuera_por_motivo": afuera_por_motivo,
+        "fechas_incluidas": sorted(fechas_incluidas),
+    }

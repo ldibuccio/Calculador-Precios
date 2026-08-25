@@ -14695,3 +14695,108 @@ def test_hub_stock_tiene_remitir_segunda():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/stock/remito-segunda"' in respuesta.text
+
+
+# --- Rentabilidad Real (tanda 1) ---
+
+
+def test_gerencia_muestra_el_boton_de_rentabilidad_real_aparte():
+    respuesta = cliente.get("/gerencia")
+
+    assert respuesta.status_code == 200
+    # Botón APARTE: la teórica sigue con el suyo, intacta.
+    assert 'href="/gerencia/rentabilidad"' in respuesta.text
+    assert 'href="/gerencia/rentabilidad-real"' in respuesta.text
+
+
+def test_rentabilidad_real_sin_cliente_muestra_solo_los_filtros():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+    ):
+        respuesta = cliente.get("/gerencia/rentabilidad-real")
+
+    assert respuesta.status_code == 200
+    assert "Elegí un cliente..." in respuesta.text
+    assert "Afuera del cálculo" not in respuesta.text
+
+
+RESULTADO_REAL_DE_PRUEBA = {
+    "grupos": [{
+        "grupo": "fruta", "etiqueta": "Fruta",
+        "filas": [{
+            "articulo_id": 1, "articulo_nombre": "Banana", "grupo": "fruta",
+            "bultos": 10.0, "unidades": 160.0, "venta_neta": 14400.0,
+            "costo_mercaderia": 5000.0, "costo_envase": 320.0,
+            "costo_mermas": 1500.0, "bultos_mermados": 3.0, "segunda_bultos": 2.0,
+            "costo_total": 6820.0, "renta_pesos": 7580.0, "utilidad_pct": 151.6,
+        }],
+        "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
+                     "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0,
+                     "renta_pesos": 7580.0, "utilidad_pct": 151.6},
+    }],
+    "totales": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
+                "costo_envase": 320.0, "costo_mermas": 1500.0, "segunda_bultos": 2.0,
+                "afuera_bultos": 42.0, "afuera_motivos": 2, "costo_total": 6820.0,
+                "renta_pesos": 7580.0, "utilidad_pct": 151.6},
+    "afuera_por_motivo": [
+        {"motivo": "ajuste_sin_costo", "etiqueta": "Consumió stock inicial u otro ajuste (sin costo posible)",
+         "bultos": 30.0, "articulos": [{"nombre": "Banana", "bultos": 30.0}]},
+        {"motivo": "sin_kilaje", "etiqueta": "Renglón armado sin kilaje cargado",
+         "bultos": 12.0, "articulos": [{"nombre": "Anco", "bultos": 12.0}]},
+    ],
+    "fechas_incluidas": [date(2026, 8, 25)],
+}
+
+
+def test_rentabilidad_real_muestra_la_cuenta_y_el_afuera_protagonista():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main._datos_rentabilidad_real", return_value=dict(RESULTADO_REAL_DE_PRUEBA)) as mock_datos,
+    ):
+        respuesta = cliente.get("/gerencia/rentabilidad-real?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    mock_datos.assert_called_once_with(1, date(2026, 8, 18), date(2026, 8, 25), None, None)
+    # La cuenta real: renta, mermas y segunda a la vista.
+    assert "$7.580" in respuesta.text
+    assert "mermas $1.500" in respuesta.text
+    assert "Segunda generada: 2 bultos (vale cero)." in respuesta.text
+    # El AFUERA protagonista: total en grande, bultos por motivo, artículos.
+    assert "Afuera del cálculo — no sumó como cero" in respuesta.text
+    assert "42 bultos afuera, por 2 motivos" in respuesta.text
+    assert "Consumió stock inicial u otro ajuste (sin costo posible)" in respuesta.text
+    assert "Banana (30)" in respuesta.text
+    assert "Anco (12)" in respuesta.text
+    # Y aparece ANTES que la tabla de grupos (arriba, no nota al pie).
+    assert respuesta.text.index("Afuera del cálculo") < respuesta.text.index("Subtotal Fruta")
+
+
+def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
+    entradas = [{"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+                 "tipo_lote": "guia", "origen_id": 9, "fecha_lote": date(2026, 8, 20),
+                 "detalle": "Norte", "motivo": None, "cantidad": 10.0, "costo_bulto": 500.0}]
+    salidas = [{"fecha_orden": date(2026, 8, 25), "momento_orden": datetime(2026, 8, 25, 13),
+                "tipo": "armado", "fecha": date(2026, 8, 25), "cantidad": 4.0,
+                "unidades": 64.0, "cliente_id": 1, "motivo": None, "bultos_segunda": None}]
+    with (
+        patch("app.main.articulos_con_salidas_stock",
+              return_value=[{"articulo_id": 1, "nombre": "Banana", "grupo": "fruta"}]) as mock_articulos,
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 4.0)),
+        patch("app.main.salidas_stock_articulo", return_value=salidas),
+        patch("app.main.calcular_listado_para_negociar_precios",
+              return_value=[{"articulo_id": 1, "precio_vigente": 100.0, "costo_actual": 60.0,
+                             "costo_envase_unidad_venta": 2.0, "denominador_tasas": 0.9}]) as mock_listado,
+    ):
+        resultado = __import__("app.main", fromlist=["x"])._datos_rentabilidad_real(
+            1, date(2026, 8, 18), date(2026, 8, 25), None, None
+        )
+
+    mock_articulos.assert_called_once_with(1, date(2026, 8, 18), date(2026, 8, 25))
+    # El listado anclado se pide UNA vez por fecha con armados del rango.
+    assert mock_listado.call_count == 1
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["venta_neta"] == 64.0 * 100.0 * 0.9
+    assert fila["costo_mercaderia"] == 4 * 500.0

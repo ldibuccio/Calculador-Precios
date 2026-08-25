@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rentabilidad Real</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .filtros label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  .filtros select, .filtros input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .filtros .fechas { display: flex; gap: 0.6rem; }
+  .filtros .fechas > div { flex: 1; min-width: 0; }
+  button.boton-buscar {
+    display: block;
+    width: 100%;
+    margin-top: 0.9rem;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .total {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .total .numero-grande { font-size: 1.5rem; font-weight: 800; color: #1d4ed8; }
+  .total .numero-grande.negativo { color: #dc2626; }
+  .total .detalle { color: #666; font-size: 0.9rem; margin-top: 0.25rem; }
+  /* El "afuera del cálculo" es PROTAGONISTA (pedido del dueño): grande,
+     arriba, con los bultos de cada motivo y sus artículos — la hoja de
+     ruta de lo que hay que ir arreglando, no una nota al pie. */
+  .tarjeta-afuera {
+    border: 3px solid #f59e0b;
+    background: #fffbeb;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .tarjeta-afuera h2 { color: #92400e; }
+  .tarjeta-afuera .resumen-afuera { font-size: 1.15rem; font-weight: 800; color: #92400e; margin: 0 0 0.75rem; }
+  .bloque-motivo {
+    border-top: 2px solid #fde68a;
+    padding: 0.7rem 0;
+  }
+  .bloque-motivo:first-of-type { border-top: none; padding-top: 0; }
+  .bloque-motivo .encabezado {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .bloque-motivo .motivo { font-weight: 700; font-size: 0.95rem; color: #713f12; }
+  .bloque-motivo .bultos-motivo { font-size: 1.25rem; font-weight: 800; color: #b45309; white-space: nowrap; }
+  .bloque-motivo .articulos { margin-top: 0.3rem; font-size: 0.88rem; color: #555; }
+  .fila-articulo {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.55rem 0;
+    border-top: 1px solid #eee;
+  }
+  .fila-articulo:first-of-type { border-top: none; }
+  .fila-articulo .nombre { font-weight: 700; font-size: 0.95rem; }
+  .fila-articulo .detalle { display: block; color: #666; font-size: 0.82rem; font-weight: 400; margin-top: 0.1rem; }
+  .fila-articulo .renta { text-align: right; white-space: nowrap; font-weight: 800; }
+  .fila-articulo .renta.negativa { color: #dc2626; }
+  .fila-articulo .renta .pct { display: block; font-size: 0.82rem; font-weight: 600; color: #666; }
+  .chip-merma {
+    display: inline-block;
+    background: #fecaca;
+    color: #991b1b;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .chip-segunda {
+    display: inline-block;
+    background: #ffedd5;
+    border: 1px solid #fdba74;
+    color: #c2410c;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .fila-subtotal {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 0.55rem;
+    margin-top: 0.35rem;
+    border-top: 2px solid #ddd;
+    font-weight: 800;
+    font-size: 0.95rem;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Rentabilidad Real" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error_fecha %}
+  <div class="error">{{ error_fecha }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/gerencia/rentabilidad-real">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()">
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <label for="grupo">Grupo</label>
+      <select id="grupo" name="grupo">
+        <option value="" {% if not grupo %}selected{% endif %}>Todos los grupos</option>
+        {% for clave, etiqueta in grupos_articulo %}
+        <option value="{{ clave }}" {% if grupo == clave %}selected{% endif %}>{{ etiqueta }}</option>
+        {% endfor %}
+      </select>
+      {% if cliente_id %}
+      <label for="articulo_id">Artículo</label>
+      <select id="articulo_id" name="articulo_id">
+        <option value="" {% if not articulo_id %}selected{% endif %}>Todos los artículos</option>
+        {% for a in articulos_cliente %}
+        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+    <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Los rechazos se descontarán cuando exista el vínculo con el pedido. La teórica sigue en su propia pantalla, intacta.</p>
+  </div>
+
+  {% if resultado %}
+
+  {% if resultado.grupos %}
+  <div class="total">
+    <div class="numero-grande {% if resultado.totales.renta_pesos < 0 %}negativo{% endif %}">
+      {{ resultado.totales.renta_pesos|moneda }}{% if resultado.totales.utilidad_pct is not none %} ({{ "%.1f"|format(resultado.totales.utilidad_pct) }}%){% endif %}
+    </div>
+    <div class="detalle">
+      Renta REAL de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con envíos —
+      venta {{ resultado.totales.venta_neta|moneda }}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
+      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }},
+      {{ resultado.totales.bultos|numero }} bultos enviados.
+      {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
+      La utilidad % es sobre la mercadería.
+    </div>
+  </div>
+  {% else %}
+  <div class="tarjeta">
+    <p class="vacio">Nada calculable en este rango{% if resultado.afuera_por_motivo %} — pero mirá lo que quedó afuera, abajo: esa es la lista de cosas a arreglar{% endif %}.</p>
+  </div>
+  {% endif %}
+
+  {% if resultado.afuera_por_motivo %}
+  {# PROTAGONISTA, no nota al pie: los primeros meses acá va a haber más
+     que en la cuenta, y esta lista es la hoja de ruta del dueño. #}
+  <div class="tarjeta-afuera">
+    <h2>Afuera del cálculo — no sumó como cero</h2>
+    <p class="resumen-afuera">{{ resultado.totales.afuera_bultos|numero }} bultos afuera, por {{ resultado.totales.afuera_motivos }} motivo{{ "s" if resultado.totales.afuera_motivos != 1 }}</p>
+    {% for r in resultado.afuera_por_motivo %}
+    <div class="bloque-motivo">
+      <div class="encabezado">
+        <span class="motivo">{{ r.etiqueta }}</span>
+        <span class="bultos-motivo">{{ r.bultos|numero }} bultos</span>
+      </div>
+      <div class="articulos">{% for a in r.articulos %}{{ a.nombre }} ({{ a.bultos|numero }}){% if not loop.last %} · {% endif %}{% endfor %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% for g in resultado.grupos %}
+  <div class="tarjeta">
+    <h2>{{ g.etiqueta }}</h2>
+    {% for f in g.filas %}
+    <div class="fila-articulo">
+      <div class="nombre">
+        {{ f.articulo_nombre }}
+        <span class="detalle">{{ f.bultos|numero }} bultos enviados · venta {{ f.venta_neta|moneda }} — mercadería {{ f.costo_mercaderia|moneda }}{% if f.costo_envase %} — envase {{ f.costo_envase|moneda }}{% endif %}</span>
+        {% if f.bultos_mermados or f.segunda_bultos %}
+        <span class="detalle">{% if f.bultos_mermados %}<span class="chip-merma">merma {{ f.bultos_mermados|numero }} bultos · {{ f.costo_mermas|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %}</span>
+        {% endif %}
+      </div>
+      <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">
+        {{ f.renta_pesos|moneda }}
+        {% if f.utilidad_pct is not none %}<span class="pct">{{ "%.1f"|format(f.utilidad_pct) }}%</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    <div class="fila-subtotal">
+      <span>Subtotal {{ g.etiqueta }}</span>
+      <span>{{ g.subtotal.renta_pesos|moneda }}{% if g.subtotal.utilidad_pct is not none %} ({{ "%.1f"|format(g.subtotal.utilidad_pct) }}%){% endif %}</span>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% elif cliente_id and not error_fecha %}
+  <div class="tarjeta">
+    <p class="vacio">Sin movimientos en este rango.</p>
+  </div>
+  {% endif %}
+</body>
+</html>
