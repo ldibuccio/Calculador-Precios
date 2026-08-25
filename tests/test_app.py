@@ -14083,6 +14083,32 @@ def test_armar_muestra_terminar_pedido_con_los_sin_tildar_avisados():
     assert 'action="/deposito/pedido/50/terminar"' in respuesta.text
 
 
+def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
+    # Bug del 25/08: "VL 21 de 21, BZ 22 de 22, GR 19 de 19 — Terminar
+    # pedido (10 sin tildar)". Los 10 eran renglones identificados SIN
+    # sucursal (vinieron sin cantidades en el mail, cantidad 0): no
+    # aparecen en ninguna sucursal y no se pueden tildar. El botón se suma
+    # DE LOS MISMOS conteos por sucursal — no puede contradecirlos.
+    renglones = [dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA] + [
+        {"id": 14, "sucursal": None, "articulo_id": 3, "articulo_nombre": "Kiwi",
+         "texto_codigo": "90103", "texto_descripcion": "KIWI", "cantidad": 0,
+         "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+
+    # Sigue habiendo UN solo pendiente real (Banana VL): el Kiwi sin
+    # sucursal no infla el contador.
+    assert "Terminar pedido (1 sin tildar)" in respuesta.text
+
+
 RENGLONES_BUSCAR_DE_PRUEBA = [
     {"fecha_operacion": date(2026, 8, 21), "id": 11, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 15.0, "cantidad_armada": 12.0,

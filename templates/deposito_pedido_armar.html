@@ -298,6 +298,22 @@
     text-decoration: none;
   }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  /* Los "Volver" de Armar como BOTÓN azul: un link gris de letras chicas
+     no se ve — pedido del dueño (25/08). */
+  .volver-boton {
+    display: block;
+    width: 100%;
+    margin-top: 0.75rem;
+    padding: 0.9rem;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
   .volver {
     display: block;
     margin-top: 0.75rem;
@@ -392,7 +408,7 @@
       <input type="hidden" name="fecha" value="{{ fecha }}">
       <button type="submit" class="boton-buscar-pedido">🔎 Buscar pedido en la casilla</button>
     </form>
-    <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
+    <a class="volver-boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
   </div>
   {% endif %}
 
@@ -440,7 +456,7 @@
       <button type="submit" class="boton-terminar">Terminar pedido{% if pendientes_totales %} ({{ pendientes_totales }} sin tildar){% endif %}</button>
     </form>
     {% endif %}
-    <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
+    <a class="volver-boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
   </div>
   {% endif %}
 
@@ -587,7 +603,7 @@
     }
   </script>
 
-  <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>
+  <a class="volver-boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>
   {% endif %}
 </body>
 </html>

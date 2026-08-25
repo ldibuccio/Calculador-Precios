@@ -4771,12 +4771,18 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
                 """
                 SELECT DISTINCT ON (p.fecha_operacion)
                        p.id, p.fecha_operacion, p.origen, p.creado_en, p.armado_cerrado_el,
+                       -- Solo renglones ARMABLES (con sucursal): un renglón
+                       -- identificado sin sucursal vino sin cantidades en el
+                       -- mail y no se arma jamás — contarlo dejaría el pedido
+                       -- "62 de 72" para siempre (mismo criterio que el botón
+                       -- Terminar y los conteos por sucursal de Armar).
                        (SELECT COUNT(*) FROM pedidos_renglones r
                         WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
-                          AND r.anulado_el IS NULL) AS renglones_totales,
+                          AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL) AS renglones_totales,
                        (SELECT COUNT(*) FROM pedidos_renglones r
                         WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
-                          AND r.anulado_el IS NULL AND r.armado_el IS NOT NULL) AS renglones_armados,
+                          AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+                          AND r.armado_el IS NOT NULL) AS renglones_armados,
                        (SELECT COUNT(*) FROM pedidos_renglones r
                         WHERE r.pedido_id = p.id AND r.articulo_id IS NULL) AS sin_identificar
                 FROM pedidos p

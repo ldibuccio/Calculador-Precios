@@ -9966,9 +9966,13 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
             "sucursales": sucursales,
             "sin_identificar": sin_identificar,
             "diff": diff,
-            # Para el confirm de "Terminar pedido": cuántos quedan sin
-            # tildar en TODO el pedido (todas las sucursales).
-            "pendientes_totales": sum(1 for r in identificados if r["armado_el"] is None),
+            # Para el botón "Terminar pedido": cuántos quedan sin tildar en
+            # TODO el pedido. Se suma DE LOS MISMOS conteos por sucursal que
+            # muestra la pantalla — así el botón jamás puede contradecirlos.
+            # Un renglón identificado SIN sucursal (vino sin cantidades en
+            # el mail: cantidad 0) no aparece en ninguna sucursal y no se
+            # puede tildar: no es un pendiente, no se cuenta.
+            "pendientes_totales": sum(s["total_renglones"] - s["armados"] for s in sucursales),
         }
     )
 
