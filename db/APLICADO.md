@@ -57,6 +57,7 @@ bases estén marcadas.
 | `agregar_condiciones_pedido.sql` | ✅ 2026-08-22 (verificado: 2 tablas creadas) | ✅ 2026-08-22 (verificado: 2 tablas creadas) |
 | `agregar_horario_revision_casilla.sql` | ✅ 2026-08-24 (verificado) | ✅ 2026-08-24 (verificado) |
 | `agregar_kilos_y_cierre_armado.sql` | ✅ 2026-08-24 (verificado: 3 columnas creadas) | ✅ 2026-08-24 (verificado: 3 columnas creadas) |
+| `agregar_stock_deposito.sql` | ✅ 2026-08-25 (verificado: 2 tablas y 3 índices) | ✅ 2026-08-25 (verificado: 2 tablas y 3 índices) |
 
 ## Deuda pendiente de limpieza
 
