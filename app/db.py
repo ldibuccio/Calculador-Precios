@@ -5121,6 +5121,8 @@ def crear_movimiento_stock(
     motivo: str,
     fecha_operacion,
     cliente_id: int | None = None,
+    pedido_renglon_id: int | None = None,
+    costo_por_bulto: float | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -5129,6 +5131,10 @@ def crear_movimiento_stock(
     faltante se taparía con un ajuste y se acaba el control cruzado.
     fecha_operacion es la fecha REAL del hecho (un reingreso puede
     cargarse al día siguiente de que volvió el camión).
+
+    Un reingreso VINCULADO lleva además el renglón de pedido que se
+    devolvió y el costo por bulto congelado del listado anclado a la
+    fecha del pedido de origen (lo calcula el server, jamás la pantalla).
     """
     conexion = obtener_conexion()
     try:
@@ -5137,13 +5143,173 @@ def crear_movimiento_stock(
             cursor.execute(
                 """
                 INSERT INTO movimientos_stock
-                    (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
+                     pedido_renglon_id, costo_por_bulto)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema),
+                (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
+                 pedido_renglon_id, costo_por_bulto),
             )
         conexion.commit()
         return stock_sistema + float(cantidad)
+    finally:
+        conexion.close()
+
+
+# El acumulado "ya devuelto" por renglón (solo reingresos no anulados):
+# el tope duro del server es armado − este número.
+_SQL_DEVUELTO_POR_RENGLON = """
+    SELECT pedido_renglon_id, SUM(cantidad) AS devuelto
+    FROM movimientos_stock
+    WHERE pedido_renglon_id IS NOT NULL AND anulado_el IS NULL
+    GROUP BY pedido_renglon_id
+"""
+
+
+def listar_pedidos_para_reingreso(oc: str | None = None, limite: int = 30) -> list[dict]:
+    """Los (pedido VIGENTE, sucursal) con renglones ARMADOS, del más nuevo al más viejo: el origen a elegir de un reingreso.
+
+    Pantalla de OPERARIO: solo datos operativos que él ya maneja en Armar
+    Pedido (fecha, cliente, sucursal, OC, cuántos renglones armó) — nada
+    de costos ni de stock del sistema. Con ``oc`` busca por número de
+    orden de compra exacto.
+    """
+    filtro_oc = "AND ps.orden_compra = %s" if oc else ""
+    parametros: list = [oc] if oc else []
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT p.id AS pedido_id, p.fecha_operacion, cl.nombre AS cliente_nombre,
+                       r.sucursal, ps.orden_compra,
+                       COUNT(*) AS renglones_armados
+                FROM pedidos_renglones r
+                JOIN vigentes v ON v.id = r.pedido_id
+                JOIN pedidos p ON p.id = r.pedido_id
+                JOIN clientes cl ON cl.id = p.cliente_id
+                LEFT JOIN pedidos_sucursales ps ON ps.pedido_id = p.id AND ps.sucursal = r.sucursal
+                WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                  AND r.articulo_id IS NOT NULL AND r.sucursal IS NOT NULL
+                  {filtro_oc}
+                GROUP BY p.id, p.fecha_operacion, cl.nombre, r.sucursal, ps.orden_compra
+                ORDER BY p.fecha_operacion DESC, cl.nombre, r.sucursal
+                LIMIT %s
+                """,
+                (*parametros, limite),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_renglones_para_reingreso(pedido_id: int, sucursal: str) -> list[dict]:
+    """Los renglones ARMADOS de esa sucursal del pedido, con lo ya devuelto acumulado (el tope es armado − devuelto)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT r.id, a.nombre AS articulo_nombre,
+                       COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
+                       COALESCE(d.devuelto, 0) AS ya_devuelto
+                FROM pedidos_renglones r
+                JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN ({_SQL_DEVUELTO_POR_RENGLON}) d ON d.pedido_renglon_id = r.id
+                WHERE r.pedido_id = %s AND r.sucursal = %s
+                  AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id IS NOT NULL
+                ORDER BY a.nombre
+                """,
+                (pedido_id, sucursal),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def obtener_renglon_para_reingreso(renglon_id: int) -> dict | None:
+    """El renglón ARMADO con todo lo que el reingreso necesita: pedido, cliente, artículo, OC, kilos y lo ya devuelto.
+
+    Solo de pedidos VIGENTES: un pedido anulado o reemplazado no aportó su
+    armado al stock, así que no se le puede devolver nada. El cliente y el
+    artículo salen de acá — la pantalla no los pide nunca.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT r.id, r.pedido_id, r.sucursal, r.articulo_id,
+                       a.nombre AS articulo_nombre,
+                       p.cliente_id, cl.nombre AS cliente_nombre,
+                       p.fecha_operacion AS fecha_pedido,
+                       ps.orden_compra,
+                       COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
+                       r.kilos_enviados,
+                       COALESCE(d.devuelto, 0) AS ya_devuelto
+                FROM pedidos_renglones r
+                JOIN vigentes v ON v.id = r.pedido_id
+                JOIN pedidos p ON p.id = r.pedido_id
+                JOIN clientes cl ON cl.id = p.cliente_id
+                JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN pedidos_sucursales ps ON ps.pedido_id = p.id AND ps.sucursal = r.sucursal
+                LEFT JOIN ({_SQL_DEVUELTO_POR_RENGLON}) d ON d.pedido_renglon_id = r.id
+                WHERE r.id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                """,
+                (renglon_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta) -> list[dict]:
+    """Las devoluciones VINCULADAS a pedido del cliente en el rango (por la fecha del reingreso).
+
+    La materia prima de la línea "− devoluciones" de la Rentabilidad REAL:
+    cada una con su renglón de origen (kilos enviados y bultos armados,
+    para pasar bultos a kilos), la fecha del PEDIDO (ancla el precio en el
+    mismo listado que todo lo demás) y el costo congelado. La TEÓRICA no
+    mira esta tabla jamás.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, m.cantidad AS bultos, m.fecha_operacion, m.costo_por_bulto,
+                       r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
+                       p.fecha_operacion AS fecha_pedido,
+                       a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo
+                FROM movimientos_stock m
+                JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
+                JOIN pedidos p ON p.id = r.pedido_id
+                JOIN articulos a ON a.id = m.articulo_id
+                WHERE m.anulado_el IS NULL AND m.pedido_renglon_id IS NOT NULL
+                  AND p.cliente_id = %s
+                  AND m.fecha_operacion >= %s AND m.fecha_operacion <= %s
+                ORDER BY m.fecha_operacion, m.creado_en
+                """,
+                (cliente_id, fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()
 
@@ -5166,8 +5332,11 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
         LEFT JOIN guias_compra g ON g.id = c.guia_id
         WHERE c.estado = 'recepcionado' AND c.articulo_id = %s
         UNION ALL
+        -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
+        -- congelado del listado anclado al pedido de origen); ajustes y
+        -- reingresos viejos sin vínculo siguen siendo lotes sin costo.
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
-               cl.nombre, m.motivo, m.cantidad, NULL
+               cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto
         FROM movimientos_stock m
         LEFT JOIN clientes cl ON cl.id = m.cliente_id
         WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
@@ -5253,10 +5422,14 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 """
                 SELECT m.id, m.tipo, m.cantidad, m.motivo, m.fecha_operacion,
                        m.stock_sistema, m.creado_en, m.anulado_el,
-                       a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre
+                       a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre,
+                       m.pedido_renglon_id,
+                       p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido
                 FROM movimientos_stock m
                 JOIN articulos a ON a.id = m.articulo_id
                 LEFT JOIN clientes cl ON cl.id = m.cliente_id
+                LEFT JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
+                LEFT JOIN pedidos p ON p.id = r.pedido_id
                 WHERE m.fecha_operacion >= %s AND m.fecha_operacion <= %s
                 ORDER BY m.fecha_operacion DESC, m.creado_en DESC
                 """,

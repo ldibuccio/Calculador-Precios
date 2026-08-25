@@ -22,8 +22,15 @@ plata fluye con la mercadería, sin doble conteo. Su merma interna ya
 viene absorbida por la primera, y la segunda vale cero (se informa en
 bultos, sin plata). Los ajustes negativos consumen lotes en la
 atribución (son inventario que se fue) pero NO son pérdida del período:
-son correcciones de registro. Los rechazos del cliente se descontarán
-cuando exista el vínculo reingreso→pedido (diferido, decidido).
+son correcciones de registro.
+
+Las DEVOLUCIONES vinculadas a pedido ("si le mandé 25 y me devolvió 5,
+vendí 20" — regla que aplica SOLO acá, la teórica no se toca): cada
+reingreso con vínculo resta su venta (bultos devueltos pasados a kilos
+por el propio renglón, al precio del listado anclado a la fecha del
+PEDIDO de origen) y acredita la mercadería al costo congelado del
+reingreso — el lote devuelto queda en el stock con ese costo y se vuelve
+a cargar recién cuando salga de nuevo, sin doble conteo.
 
 Invariante duro, y acá es PROTAGONISTA: lo que no se puede calcular no
 suma como cero — va al reporte "afuera del cálculo" con motivo, bultos
@@ -41,9 +48,10 @@ ETIQUETAS_MOTIVO_REAL = {
     "sin_precio": "Sin precio de venta vigente a la fecha del pedido",
     "compra_sin_precio": "Consumió una compra sin precio cargado",
     "ajuste_sin_costo": "Consumió stock inicial u otro ajuste (sin costo posible)",
-    "reingreso_sin_costo": "Consumió un reingreso por rechazo (sin costo por ahora)",
+    "reingreso_sin_costo": "Consumió un reingreso por rechazo sin costo (sin vínculo a pedido)",
     "guia_r_incompleta": "Consumió la primera de una guía R con costo incompleto",
     "sin_lote": "Salida sin lote (salió más de lo que había en el sistema)",
+    "devolucion_sin_valor": "Devolución vinculada que no se pudo valuar (renglón sin kilaje o sin precio a la fecha del pedido)",
 }
 
 _MOTIVO_POR_TIPO_LOTE = {
@@ -110,6 +118,7 @@ def calcular_rentabilidad_real(
     cliente_id: int,
     fecha_desde,
     fecha_hasta,
+    devoluciones: list[dict] | None = None,
 ) -> dict:
     """Arma el reporte real a partir de datos ya traídos (puro, testeable sin base).
 
@@ -120,6 +129,13 @@ def calcular_rentabilidad_real(
     ancla el precio; unidades = kilos_enviados; cliente_id), 'merma',
     'ajuste' (negativo) y 'reproceso_toma' (con bultos_segunda).
     margenes_por_fecha: mismo formato que la teórica.
+
+    devoluciones: los reingresos VINCULADOS del cliente en el rango, ya
+    filtrados — [{bultos, fecha_pedido, kilos_enviados, bultos_armados,
+    costo_por_bulto, articulo_id, articulo_nombre, grupo}]. Cada uno
+    resta la venta ("mandé 25, devolvió 5: vendí 20") y acredita la
+    mercadería al costo congelado; el que no se puede valuar va al
+    "afuera" con motivo, jamás suma cero en silencio.
     """
     acumulado: dict = {}
     afuera: dict = {}
@@ -154,6 +170,8 @@ def calcular_rentabilidad_real(
                 "costo_mermas": 0.0,
                 "bultos_mermados": 0.0,
                 "segunda_bultos": 0.0,
+                "devoluciones_bultos": 0.0,
+                "devoluciones_venta": 0.0,
             }
             acumulado[articulo["articulo_id"]] = fila
         return fila
@@ -211,16 +229,47 @@ def calcular_rentabilidad_real(
             # 'ajuste' negativo: consume lotes en la atribución pero no es
             # pérdida del período — corrección de registro, no operación.
 
+    for devolucion in devoluciones or []:
+        articulo = {
+            "articulo_id": devolucion["articulo_id"],
+            "nombre": devolucion["articulo_nombre"],
+            "grupo": devolucion["grupo"],
+        }
+        bultos = float(devolucion["bultos"])
+        kilos = _numero(devolucion.get("kilos_enviados"))
+        armados = _numero(devolucion.get("bultos_armados"))
+        margen = margenes_por_fecha.get(devolucion["fecha_pedido"], {}).get(devolucion["articulo_id"])
+        precio = _numero(margen.get("precio_vigente")) if margen else None
+        if kilos is None or not armados or precio is None:
+            _sumar_afuera("devolucion_sin_valor", articulo, bultos)
+            continue
+        denominador = _numero(margen.get("denominador_tasas"))
+        if denominador is None:
+            denominador = 1.0
+        # Los kilos del renglón, proporcionales: lo devuelto se valúa con
+        # el MISMO kilaje con el que se facturó lo enviado.
+        unidades = kilos / armados * bultos
+        fila = _fila(articulo)
+        fila["devoluciones_bultos"] += bultos
+        fila["devoluciones_venta"] += unidades * precio * denominador
+        costo = _numero(devolucion.get("costo_por_bulto"))
+        if costo is not None:
+            # El lote devuelto queda en el stock con su costo congelado:
+            # se acredita acá y se vuelve a cargar recién cuando salga de
+            # nuevo — sin doble conteo.
+            fila["costo_mercaderia"] -= bultos * costo
+
     def _cerrar_cuenta(fila):
         fila["costo_total"] = fila["costo_mercaderia"] + fila["costo_envase"] + fila["costo_mermas"]
-        fila["renta_pesos"] = fila["venta_neta"] - fila["costo_total"]
+        fila["renta_pesos"] = fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
         fila["utilidad_pct"] = (
-            fila["renta_pesos"] / fila["costo_mercaderia"] * 100 if fila["costo_mercaderia"] else None
+            fila["renta_pesos"] / fila["costo_mercaderia"] * 100 if fila["costo_mercaderia"] > 0 else None
         )
 
     filas_con_algo = [
         f for f in acumulado.values()
         if f["bultos"] or f["costo_mermas"] or f["bultos_mermados"] or f["segunda_bultos"]
+        or f["devoluciones_bultos"]
     ]
     for fila in filas_con_algo:
         _cerrar_cuenta(fila)
@@ -239,6 +288,8 @@ def calcular_rentabilidad_real(
             "costo_mercaderia": sum(f["costo_mercaderia"] for f in filas),
             "costo_envase": sum(f["costo_envase"] for f in filas),
             "costo_mermas": sum(f["costo_mermas"] for f in filas),
+            "devoluciones_bultos": sum(f["devoluciones_bultos"] for f in filas),
+            "devoluciones_venta": sum(f["devoluciones_venta"] for f in filas),
         }
         _cerrar_cuenta(subtotal)
         grupos.append(
@@ -275,6 +326,8 @@ def calcular_rentabilidad_real(
         "costo_mercaderia": sum(g["subtotal"]["costo_mercaderia"] for g in grupos),
         "costo_envase": sum(g["subtotal"]["costo_envase"] for g in grupos),
         "costo_mermas": sum(g["subtotal"]["costo_mermas"] for g in grupos),
+        "devoluciones_bultos": sum(g["subtotal"]["devoluciones_bultos"] for g in grupos),
+        "devoluciones_venta": sum(g["subtotal"]["devoluciones_venta"] for g in grupos),
         "segunda_bultos": sum(f["segunda_bultos"] for f in filas_con_algo),
         "afuera_bultos": sum(r["bultos"] for r in afuera_por_motivo),
         "afuera_motivos": len(afuera_por_motivo),

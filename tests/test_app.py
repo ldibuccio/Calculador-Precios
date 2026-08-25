@@ -14302,58 +14302,177 @@ def test_merma_cantidad_negativa_da_400():
     mock_crear.assert_not_called()
 
 
-def test_reingreso_guarda_con_cliente_y_fecha_editable():
+# El renglón armado que el reingreso vincula: 25 bultos armados con 500 kg
+# enviados (20 kg por bulto), 5 ya devueltos — el tope del server es 20.
+RENGLON_REINGRESO_DE_PRUEBA = {
+    "id": 77, "pedido_id": 40, "sucursal": "VL", "articulo_id": 2,
+    "articulo_nombre": "Anco", "cliente_id": 1, "cliente_nombre": "Día",
+    "fecha_pedido": date(2026, 8, 24), "orden_compra": "1257673",
+    "bultos_armados": 25.0, "kilos_enviados": 500.0, "ya_devuelto": 5.0,
+}
+
+
+def test_reingreso_paso_1_lista_pedidos_para_elegir_sin_numeros_del_sistema():
+    pedidos = [{"pedido_id": 40, "fecha_operacion": date(2026, 8, 24), "cliente_nombre": "Día",
+                "sucursal": "VL", "orden_compra": "1257673", "renglones_armados": 3}]
     with (
-        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
-        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
+        patch("app.main.listar_pedidos_para_reingreso", return_value=pedidos) as mock_pedidos,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/reingreso")
+
+    assert respuesta.status_code == 200
+    mock_pedidos.assert_called_once_with(oc=None)
+    texto = respuesta.text
+    assert "¿De qué pedido volvió la mercadería?" in texto
+    assert "Pedido del 24/08/2026 — VL" in texto
+    assert "OC 1257673" in texto
+    assert "3 renglones armados" in texto
+    # Búsqueda por OC, y nada de costos: pantalla de operario.
+    assert 'name="oc"' in texto
+
+
+def test_reingreso_paso_1_busca_por_oc():
+    with (
+        patch("app.main.listar_pedidos_para_reingreso", return_value=[]) as mock_pedidos,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/reingreso?oc=1257673")
+
+    assert respuesta.status_code == 200
+    mock_pedidos.assert_called_once_with(oc="1257673")
+    assert "No hay ningún pedido con renglones armados con esa OC" in respuesta.text
+
+
+def test_reingreso_paso_2_muestra_renglones_armados_con_su_tope():
+    pedidos = [{"pedido_id": 40, "fecha_operacion": date(2026, 8, 24), "cliente_nombre": "Día",
+                "sucursal": "VL", "orden_compra": "1257673", "renglones_armados": 2}]
+    renglones = [
+        {"id": 77, "articulo_nombre": "Anco", "bultos_armados": 25.0, "ya_devuelto": 5.0},
+        {"id": 78, "articulo_nombre": "Banana", "bultos_armados": 10.0, "ya_devuelto": 10.0},
+    ]
+    with (
+        patch("app.main.listar_pedidos_para_reingreso", return_value=pedidos),
+        patch("app.main.listar_renglones_para_reingreso", return_value=renglones) as mock_renglones,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/reingreso?pedido_id=40&sucursal=VL")
+
+    assert respuesta.status_code == 200
+    mock_renglones.assert_called_once_with(40, "VL")
+    texto = respuesta.text
+    assert "Armaste 25 bultos" in texto and "ya devolviste 5" in texto
+    assert 'href="/deposito/stock/reingreso?renglon_id=77"' in texto
+    # El renglón ya devuelto entero no es tocable: no queda nada por devolver.
+    assert "no queda nada por devolver" in texto
+    assert 'href="/deposito/stock/reingreso?renglon_id=78"' not in texto
+
+
+def test_reingreso_paso_3_precarga_el_tope_y_hoy_con_cliente_y_articulo_del_pedido():
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/reingreso?renglon_id=77")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    # El cliente y el artículo salen del pedido: son texto fijo, no selects.
+    assert "Anco — pedido del 24/08/2026 (VL)" in texto
+    assert "<strong>Día</strong>" in texto
+    assert "<select" not in texto
+    # Default = lo que queda por devolver (armado − ya devuelto), editable
+    # con el tope a la vista; fecha hoy por default y nunca futura.
+    assert "podés devolver hasta <strong>20</strong>" in texto
+    assert 'value="20"' in texto
+    assert 'max="20.0"' in texto
+    assert 'value="2026-08-25"' in texto
+    assert 'max="2026-08-25"' in texto
+
+
+def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
+    listado = [{"articulo_id": 2, "costo_actual": 100.0, "precio_vigente": 150.0}]
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=listado) as mock_listado,
         patch("app.main.crear_movimiento_stock", return_value=9.0) as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reingreso",
-            data={"cliente_id": "1", "articulo_id": "2", "cantidad": "4",
-                  "motivo": "rechazado por calidad", "fecha": "2026-08-24"},
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad", "fecha": "2026-08-24"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    # La fecha REAL del hecho (ayer), no la de carga: ordena el FIFO.
+    # El listado se ancla a la fecha del PEDIDO de origen (24/08), y el
+    # costo por unidad (100) se pasa a bultos con el kilaje real del
+    # renglón (500 kg / 25 bultos = 20): 2000 por bulto, congelado.
+    fecha_ancla = mock_listado.call_args.args[1]
+    assert fecha_ancla.date() == date(2026, 8, 24)
     mock_crear.assert_called_once_with(
-        2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24), cliente_id=1
+        2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
+        cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
     )
     destino = respuesta.headers["location"]
+    # El aviso repite lo cargado (fecha REAL del hecho incluida) y JAMÁS
+    # el costo ni el stock: pantalla de operario.
     assert "devolvi%C3%B3+D%C3%ADa+el+24%2F08" in destino
-    # Sin el stock resultante ("El stock quedó en X"): pantalla de operario.
+    assert "2000" not in destino
     assert "qued" not in destino
 
 
-def test_reingreso_sin_fecha_usa_hoy():
+def test_reingreso_tope_duro_del_server_no_deja_devolver_mas_de_lo_armado():
     with (
-        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
-        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "21", "motivo": "rechazo", "fecha": ""},
+        )
+
+    # Armados 25, ya devueltos 5: 21 pasa el tope de 20 — 400 del server,
+    # aunque el HTML se toque a mano.
+    assert respuesta.status_code == 400
+    assert "No se puede devolver más de lo armado" in respuesta.text
+    assert "el tope es 20" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_reingreso_sin_fecha_usa_hoy_y_sin_costo_posible_guarda_sin_costo():
+    # Sin costo en el listado a la fecha del pedido: el reingreso se guarda
+    # igual, con costo None — el lote queda visible como "sin costo" en la
+    # Real, nunca un número inventado.
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
         patch("app.main.crear_movimiento_stock", return_value=9.0) as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reingreso",
-            data={"cliente_id": "1", "articulo_id": "2", "cantidad": "4", "motivo": "rechazo", "fecha": ""},
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazo", "fecha": ""},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(2, "reingreso_rechazo", 4.0, "rechazo", date(2026, 8, 25), cliente_id=1)
+    mock_crear.assert_called_once_with(
+        2, "reingreso_rechazo", 4.0, "rechazo", date(2026, 8, 25),
+        cliente_id=1, pedido_renglon_id=77, costo_por_bulto=None,
+    )
 
 
 def test_reingreso_con_fecha_futura_da_400():
     with (
-        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
         patch("app.main.crear_movimiento_stock") as mock_crear,
-        patch("app.main.listar_articulos", return_value=[]),
-        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reingreso",
-            data={"cliente_id": "1", "articulo_id": "2", "cantidad": "4", "motivo": "x", "fecha": "2026-08-26"},
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "x", "fecha": "2026-08-26"},
         )
 
     assert respuesta.status_code == 400
@@ -14361,17 +14480,14 @@ def test_reingreso_con_fecha_futura_da_400():
     mock_crear.assert_not_called()
 
 
-def test_reingreso_muestra_hoy_por_default_en_el_formulario():
-    with (
-        patch("app.main.listar_articulos", return_value=[]),
-        patch("app.main.listar_clientes", return_value=[]),
-        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
-    ):
-        respuesta = cliente.get("/deposito/stock/reingreso")
-
-    assert respuesta.status_code == 200
-    assert 'value="2026-08-25"' in respuesta.text
-    assert 'max="2026-08-25"' in respuesta.text
+def test_reingreso_de_renglon_no_disponible_da_404():
+    # Un renglón de un pedido reemplazado/anulado (o un id inventado) no
+    # está disponible: su armado no aportó al stock.
+    with patch("app.main.obtener_renglon_para_reingreso", return_value=None):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso", data={"renglon_id": "999", "cantidad": "4", "motivo": "x"}
+        )
+    assert respuesta.status_code == 404
 
 
 MOVIMIENTOS_STOCK_DE_PRUEBA = [
@@ -14871,14 +14987,17 @@ RESULTADO_REAL_DE_PRUEBA = {
             "bultos": 10.0, "unidades": 160.0, "venta_neta": 14400.0,
             "costo_mercaderia": 5000.0, "costo_envase": 320.0,
             "costo_mermas": 1500.0, "bultos_mermados": 3.0, "segunda_bultos": 2.0,
+            "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
             "costo_total": 6820.0, "renta_pesos": 7580.0, "utilidad_pct": 151.6,
         }],
         "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                      "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0,
+                     "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
                      "renta_pesos": 7580.0, "utilidad_pct": 151.6},
     }],
     "totales": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                 "costo_envase": 320.0, "costo_mermas": 1500.0, "segunda_bultos": 2.0,
+                "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
                 "afuera_bultos": 42.0, "afuera_motivos": 2, "costo_total": 6820.0,
                 "renta_pesos": 7580.0, "utilidad_pct": 151.6},
     "afuera_por_motivo": [
@@ -14930,6 +15049,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
     with (
         patch("app.main.articulos_con_salidas_stock",
               return_value=[{"articulo_id": 1, "nombre": "Banana", "grupo": "fruta"}]) as mock_articulos,
+        patch("app.main.devoluciones_vinculadas_por_rango", return_value=[]),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 4.0)),
         patch("app.main.salidas_stock_articulo", return_value=salidas),
         patch("app.main.calcular_listado_para_negociar_precios",

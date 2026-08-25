@@ -240,9 +240,14 @@ def generar_pdf_rentabilidad_real(
             f" Segunda generada: {_formatear_numero(totales['segunda_bultos'])} bultos (vale cero)."
             if totales["segunda_bultos"] else ""
         )
+        devoluciones = (
+            f" − devoluciones {_formatear_moneda(totales['devoluciones_venta'])}"
+            f" ({_formatear_numero(totales['devoluciones_bultos'])} bultos que volvieron)"
+            if totales.get("devoluciones_bultos") else ""
+        )
         elementos.append(
             Paragraph(
-                f"Total REAL: venta {_formatear_moneda(totales['venta_neta'])} — mercadería {_formatear_moneda(totales['costo_mercaderia'])} "
+                f"Total REAL: venta {_formatear_moneda(totales['venta_neta'])}{devoluciones} — mercadería {_formatear_moneda(totales['costo_mercaderia'])} "
                 f"— envase {_formatear_moneda(totales['costo_envase'])} — mermas {_formatear_moneda(totales['costo_mermas'])} — "
                 f"renta {_formatear_moneda(totales['renta_pesos'])} (utilidad {_formatear_pct(totales['utilidad_pct'])} sobre mercadería)."
                 + segunda,
@@ -315,7 +320,8 @@ def generar_excel_rentabilidad_real(
 
     encabezados = (
         "Artículo", "Bultos enviados", "Unidades enviadas", "Venta real", "Mercadería (FIFO)",
-        "Envase", "Mermas $", "Mermas bultos", "Segunda bultos", "Renta $", "Utilidad %",
+        "Envase", "Mermas $", "Mermas bultos", "Segunda bultos", "Devol. bultos", "Devoluciones $",
+        "Renta $", "Utilidad %",
     )
     for grupo in grupos:
         hoja.cell(row=fila_actual, column=1, value=grupo["etiqueta"]).font = fuente_grupo
@@ -332,16 +338,18 @@ def generar_excel_rentabilidad_real(
             hoja.cell(row=fila_actual, column=2, value=float(fila["bultos"]))
             hoja.cell(row=fila_actual, column=3, value=round(float(fila["unidades"]), 2))
             for columna, valor in ((4, fila["venta_neta"]), (5, fila["costo_mercaderia"]),
-                                   (6, fila["costo_envase"]), (7, fila["costo_mermas"]), (10, fila["renta_pesos"])):
+                                   (6, fila["costo_envase"]), (7, fila["costo_mermas"]),
+                                   (11, fila["devoluciones_venta"]), (12, fila["renta_pesos"])):
                 celda = hoja.cell(row=fila_actual, column=columna, value=round(float(valor), 2))
                 celda.number_format = '"$"#,##0'
             hoja.cell(row=fila_actual, column=8, value=float(fila["bultos_mermados"]))
             hoja.cell(row=fila_actual, column=9, value=float(fila["segunda_bultos"]))
+            hoja.cell(row=fila_actual, column=10, value=float(fila["devoluciones_bultos"]))
             if fila["utilidad_pct"] is not None:
-                celda = hoja.cell(row=fila_actual, column=11, value=round(float(fila["utilidad_pct"]) / 100, 4))
+                celda = hoja.cell(row=fila_actual, column=13, value=round(float(fila["utilidad_pct"]) / 100, 4))
                 celda.number_format = "0.0%"
             if fila["renta_pesos"] < 0:
-                hoja.cell(row=fila_actual, column=10).font = fuente_marca
+                hoja.cell(row=fila_actual, column=12).font = fuente_marca
             fila_actual += 1
 
         subtotal = grupo["subtotal"]
@@ -350,12 +358,12 @@ def generar_excel_rentabilidad_real(
         celda.font = fuente_subtotal
         for columna, valor in ((4, subtotal["venta_neta"]), (5, subtotal["costo_mercaderia"]),
                                (6, subtotal["costo_envase"]), (7, subtotal["costo_mermas"]),
-                               (10, subtotal["renta_pesos"])):
+                               (11, subtotal["devoluciones_venta"]), (12, subtotal["renta_pesos"])):
             celda = hoja.cell(row=fila_actual, column=columna, value=round(float(valor), 2))
             celda.font = fuente_subtotal
             celda.number_format = '"$"#,##0'
         if subtotal["utilidad_pct"] is not None:
-            celda = hoja.cell(row=fila_actual, column=11, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
+            celda = hoja.cell(row=fila_actual, column=13, value=round(float(subtotal["utilidad_pct"]) / 100, 4))
             celda.font = fuente_subtotal
             celda.number_format = "0.0%"
         fila_actual += 2
@@ -364,17 +372,18 @@ def generar_excel_rentabilidad_real(
         hoja.cell(row=fila_actual, column=1, value="Total REAL").font = fuente_total
         for columna, valor in ((4, totales["venta_neta"]), (5, totales["costo_mercaderia"]),
                                (6, totales["costo_envase"]), (7, totales["costo_mermas"]),
-                               (10, totales["renta_pesos"])):
+                               (11, totales["devoluciones_venta"]), (12, totales["renta_pesos"])):
             celda = hoja.cell(row=fila_actual, column=columna, value=round(float(valor), 2))
             celda.font = fuente_total
             celda.number_format = '"$"#,##0'
         hoja.cell(row=fila_actual, column=9, value=float(totales["segunda_bultos"])).font = fuente_total
+        hoja.cell(row=fila_actual, column=10, value=float(totales["devoluciones_bultos"])).font = fuente_total
         if totales["utilidad_pct"] is not None:
-            celda = hoja.cell(row=fila_actual, column=11, value=round(float(totales["utilidad_pct"]) / 100, 4))
+            celda = hoja.cell(row=fila_actual, column=13, value=round(float(totales["utilidad_pct"]) / 100, 4))
             celda.font = fuente_total
             celda.number_format = "0.0%"
 
-    for columna, ancho in enumerate((26, 13, 14, 13, 15, 11, 11, 12, 13, 13, 11), start=1):
+    for columna, ancho in enumerate((26, 13, 14, 13, 15, 11, 11, 12, 13, 13, 14, 13, 11), start=1):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 
     buffer = BytesIO()

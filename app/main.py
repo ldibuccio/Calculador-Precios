@@ -102,6 +102,10 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    devoluciones_vinculadas_por_rango,
+    listar_pedidos_para_reingreso,
+    listar_renglones_para_reingreso,
+    obtener_renglon_para_reingreso,
     listar_conteos_stock_de_fecha,
     listar_movimientos_stock_por_rango,
     listar_remitos_segunda_por_rango,
@@ -6286,49 +6290,149 @@ def cargar_merma_stock_ruta(
     return RedirectResponse(url=f"/deposito/stock/merma?{urlencode({'aviso': aviso})}", status_code=303)
 
 
-def _renderizar_pantalla_reingreso(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
-    try:
-        articulos = listar_articulos()
-        clientes = listar_clientes()
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
+    """El costo por bulto del reingreso, CONGELADO del listado anclado a la fecha del pedido de origen.
 
+    El costo_actual del listado (el mismo de Márgenes y las dos
+    rentabilidades) es POR UNIDAD de venta: se pasa a bultos con el kilaje
+    REAL del renglón (kilos enviados / bultos armados) o, si el renglón no
+    tiene kilaje, con el contenido de la ficha. None si no hay costo o
+    kilaje posible: el lote queda como reingreso sin costo (visible en el
+    afuera de la Real) — nunca un número inventado.
+    """
+    try:
+        listado = calcular_listado_para_negociar_precios(
+            renglon["cliente_id"],
+            datetime.combine(renglon["fecha_pedido"], time(12, 0), tzinfo=ARGENTINA),
+        )
+        fila = next((f for f in listado if f["articulo_id"] == renglon["articulo_id"]), None)
+        costo_unidad = fila.get("costo_actual") if fila else None
+        if costo_unidad is None:
+            return None
+        kilos = renglon.get("kilos_enviados")
+        armados = renglon.get("bultos_armados")
+        if kilos is not None and armados:
+            kilos_por_bulto = float(kilos) / float(armados)
+        else:
+            fichas = listar_fichas_por_cliente(renglon["cliente_id"])
+            contenido = next(
+                (f.get("contenido_caja") for f in fichas if f["articulo_id"] == renglon["articulo_id"]), None
+            )
+            if not contenido:
+                return None
+            kilos_por_bulto = float(contenido)
+        return round(float(costo_unidad) * kilos_por_bulto, 2)
+    except Exception:
+        logger.exception("No se pudo congelar el costo del reingreso del renglón %s", renglon["id"])
+        return None
+
+
+def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None, error=None, status_code: int = 200):
+    """El paso 3 (la carga en sí) con el tope calculado por el server: armado − ya devuelto."""
     contexto = {
-        "articulos": articulos,
-        "clientes": clientes,
+        "paso": "form",
+        "renglon": renglon,
+        "tope": float(renglon["bultos_armados"]) - float(renglon["ya_devuelto"]),
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
-        "aviso": aviso,
+        "aviso": None,
         "error": error,
     }
     return templates.TemplateResponse(request, "deposito_stock_reingreso.html", contexto, status_code=status_code)
 
 
 @app.get("/deposito/stock/reingreso")
-def ver_reingreso_stock(request: Request, aviso: str | None = None):
-    return _renderizar_pantalla_reingreso(request, aviso=aviso)
+def ver_reingreso_stock(
+    request: Request,
+    pedido_id: str | None = None,
+    sucursal: str | None = None,
+    renglon_id: str | None = None,
+    oc: str | None = None,
+    aviso: str | None = None,
+):
+    """Reingreso por rechazo en tres pasos: pedido de origen → renglón armado → carga.
+
+    Pantalla de OPERARIO: todo lo que muestra (fecha, sucursal, OC,
+    renglones y bultos armados, lo ya devuelto) ya es suyo — es lo mismo
+    que ve en Armar Pedido más sus propias cargas. Ni costos ni stock del
+    sistema, nunca.
+    """
+    contexto_base = {"aviso": aviso, "error": None, "hoy": _hoy_argentina().isoformat(), "precarga": {}}
+
+    renglon_id_valor = _id_opcional_desde_query(renglon_id)
+    if renglon_id_valor is not None:
+        try:
+            renglon = obtener_renglon_para_reingreso(renglon_id_valor)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if renglon is None:
+            raise HTTPException(status_code=404, detail="Ese renglón no está disponible para reingreso (¿el pedido fue reemplazado o anulado?)")
+        return _renderizar_form_reingreso(request, renglon)
+
+    pedido_id_valor = _id_opcional_desde_query(pedido_id)
+    if pedido_id_valor is not None and (sucursal or "").strip():
+        try:
+            renglones = listar_renglones_para_reingreso(pedido_id_valor, sucursal.strip())
+            pedidos = listar_pedidos_para_reingreso()
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        pedido = next(
+            (p for p in pedidos if p["pedido_id"] == pedido_id_valor and p["sucursal"] == sucursal.strip()), None
+        )
+        if pedido is None or not renglones:
+            raise HTTPException(status_code=404, detail="Ese pedido no tiene renglones armados para reingreso.")
+        contexto = dict(contexto_base, paso="renglones", pedido=pedido, renglones=renglones)
+        return templates.TemplateResponse(request, "deposito_stock_reingreso.html", contexto)
+
+    oc_limpia = (oc or "").strip() or None
+    try:
+        pedidos = listar_pedidos_para_reingreso(oc=oc_limpia)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    contexto = dict(contexto_base, paso="pedidos", pedidos=pedidos, oc=oc_limpia)
+    return templates.TemplateResponse(request, "deposito_stock_reingreso.html", contexto)
 
 
 @app.post("/deposito/stock/reingreso")
 def cargar_reingreso_stock_ruta(
     request: Request,
-    cliente_id: str = Form(""),
-    articulo_id: str = Form(""),
+    renglon_id: str = Form(""),
     cantidad: str = Form(""),
     motivo: str = Form(""),
     fecha: str = Form(""),
 ):
-    """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo, nunca como compra.
+    """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo y VINCULADA a su renglón de pedido.
 
+    El cliente y el artículo salen del pedido (no se cargan a mano). Tope
+    DURO del server: armado − ya devuelto acumulado — se valida acá, no en
+    el HTML. El costo queda congelado del listado anclado a la fecha del
+    pedido de origen, calculado por el server: jamás pasa por la pantalla.
     La fecha es editable con hoy por default: el camión puede volver un
     día y cargarse al siguiente — con la fecha real no se desordena el
     FIFO ni el cotejo del día anterior. Pantalla de OPERARIO: el aviso
-    repite solo lo que cargó, jamás el stock resultante.
+    repite solo lo que cargó, jamás el stock resultante ni el costo.
     """
+    try:
+        renglon = obtener_renglon_para_reingreso(int(renglon_id)) if renglon_id.strip().isdigit() else None
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if renglon is None:
+        raise HTTPException(status_code=404, detail="Ese renglón no está disponible para reingreso (¿el pedido fue reemplazado o anulado?)")
+
     motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
     error, cantidad_valor = _validar_bultos_positivos(cantidad, "devueltos")
     if not error and not motivo_limpio:
         error = "El motivo es obligatorio: sin motivo no se guarda el reingreso."
+
+    tope = float(renglon["bultos_armados"]) - float(renglon["ya_devuelto"])
+    if not error and cantidad_valor > tope:
+        ya_devuelto = float(renglon["ya_devuelto"])
+        error = (
+            f"No se puede devolver más de lo armado: de {renglon['articulo_nombre']} se armaron "
+            f"{_formatear_numero(renglon['bultos_armados'])} bultos"
+            + (f" y ya se devolvieron {_formatear_numero(ya_devuelto)}" if ya_devuelto else "")
+            + f" — el tope es {_formatear_numero(tope)}."
+        )
 
     fecha_valor = None
     if not error:
@@ -6344,42 +6448,27 @@ def cargar_reingreso_stock_ruta(
                 if fecha_valor > hoy:
                     error = "La fecha del reingreso no puede ser futura."
 
-    cliente = None
-    articulo = None
-    if not error:
-        try:
-            cliente = obtener_cliente(int(cliente_id)) if cliente_id.strip().isdigit() else None
-            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
-        except Exception as error_db:
-            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-        if cliente is None:
-            error = "Elegí un cliente válido."
-        elif articulo is None:
-            error = "Elegí un artículo válido."
-
     if error:
-        precarga = {
-            "cliente_id": cliente_id,
-            "articulo_id": articulo_id,
-            "cantidad": cantidad,
-            "motivo": motivo_limpio,
-            "fecha": fecha,
-        }
-        return _renderizar_pantalla_reingreso(request, precarga=precarga, error=error, status_code=400)
+        precarga = {"cantidad": cantidad, "motivo": motivo_limpio, "fecha": fecha}
+        return _renderizar_form_reingreso(request, renglon, precarga=precarga, error=error, status_code=400)
 
+    costo_por_bulto = _costo_congelado_para_reingreso(renglon)
     try:
         crear_movimiento_stock(
-            articulo["id"], "reingreso_rechazo", cantidad_valor, motivo_limpio, fecha_valor,
-            cliente_id=cliente["id"],
+            renglon["articulo_id"], "reingreso_rechazo", cantidad_valor, motivo_limpio, fecha_valor,
+            cliente_id=renglon["cliente_id"],
+            pedido_renglon_id=renglon["id"],
+            costo_por_bulto=costo_por_bulto,
         )
     except Exception as error_db:
-        return _renderizar_pantalla_reingreso(
-            request, error=f"No se pudo guardar el reingreso: {error_db}", status_code=500
+        return _renderizar_form_reingreso(
+            request, renglon, error=f"No se pudo guardar el reingreso: {error_db}", status_code=500
         )
 
     aviso = (
-        f"Reingreso guardado: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']} "
-        f"que devolvió {cliente['nombre']} el {fecha_valor.strftime('%d/%m')} ({motivo_limpio})."
+        f"Reingreso guardado: {_formatear_numero(cantidad_valor)} bultos de {renglon['articulo_nombre']} "
+        f"del pedido del {renglon['fecha_pedido'].strftime('%d/%m')} ({renglon['sucursal']}) "
+        f"que devolvió {renglon['cliente_nombre']} el {fecha_valor.strftime('%d/%m')} ({motivo_limpio})."
     )
     return RedirectResponse(url=f"/deposito/stock/reingreso?{urlencode({'aviso': aviso})}", status_code=303)
 
@@ -7221,6 +7310,14 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     if grupo is not None:
         articulos = [a for a in articulos if a["grupo"] == grupo]
 
+    # Las devoluciones vinculadas del rango (la línea "− devoluciones"),
+    # con los MISMOS filtros de artículo/grupo que el resto.
+    devoluciones = devoluciones_vinculadas_por_rango(cliente_id, fecha_desde, fecha_hasta)
+    if articulo_id is not None:
+        devoluciones = [d for d in devoluciones if d["articulo_id"] == articulo_id]
+    if grupo is not None:
+        devoluciones = [d for d in devoluciones if d["grupo"] == grupo]
+
     articulos_datos = []
     fechas_pedido = set()
     for articulo in articulos:
@@ -7238,6 +7335,11 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
                 fechas_pedido.add(s["fecha"])
         articulos_datos.append(dict(articulo, entradas=entradas, salidas=salidas))
 
+    # La devolución se valúa al listado de la fecha de SU pedido de
+    # origen, que puede caer fuera del rango: esa fecha también ancla.
+    for devolucion in devoluciones:
+        fechas_pedido.add(devolucion["fecha_pedido"])
+
     margenes_por_fecha = {}
     for fecha in sorted(fechas_pedido):
         listado = calcular_listado_para_negociar_precios(
@@ -7245,7 +7347,10 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
         )
         margenes_por_fecha[fecha] = {fila["articulo_id"]: fila for fila in listado}
 
-    return calcular_rentabilidad_real(articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta)
+    return calcular_rentabilidad_real(
+        articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
+        devoluciones=devoluciones,
+    )
 
 
 @app.get("/gerencia/rentabilidad-real")

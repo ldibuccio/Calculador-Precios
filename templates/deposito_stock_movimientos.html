@@ -125,6 +125,10 @@
           {% if m.anulado_el %}<span class="marca-anulado">ANULADO</span>{% endif %}
           <span class="extra">
             {% if m.cliente_nombre %}Devolvió {{ m.cliente_nombre }} · {% endif %}<span class="motivo">{{ m.motivo }}</span>
+            {%- if m.tipo == "reingreso_rechazo" %}
+              {%- if m.pedido_renglon_id %} · del pedido del {{ m.fecha_pedido|fecha_corta }}{% if m.sucursal_pedido %} ({{ m.sucursal_pedido }}){% endif %}
+              {%- else %} · <strong>sin vínculo a pedido</strong> (viejo — corregir es anular y recargar){% endif %}
+            {%- endif %}
             {%- if m.stock_sistema is not none %} · el sistema decía {{ m.stock_sistema|numero }}{% endif %}
           </span>
         </div>

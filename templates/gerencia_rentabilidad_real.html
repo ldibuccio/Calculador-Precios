@@ -158,6 +158,16 @@
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
   }
+  .chip-devolucion {
+    display: inline-block;
+    background: #fef9c3;
+    border: 1px solid #fde047;
+    color: #713f12;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
   .fila-subtotal {
     display: flex;
     justify-content: space-between;
@@ -220,7 +230,7 @@
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Los rechazos se descontarán cuando exista el vínculo con el pedido. La teórica sigue en su propia pantalla, intacta.</p>
+    <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.</p>
   </div>
 
   {% if resultado %}
@@ -232,7 +242,7 @@
     </div>
     <div class="detalle">
       Renta REAL de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con envíos —
-      venta {{ resultado.totales.venta_neta|moneda }}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
+      venta {{ resultado.totales.venta_neta|moneda }}{% if resultado.totales.devoluciones_bultos %} − devoluciones {{ resultado.totales.devoluciones_venta|moneda }} ({{ resultado.totales.devoluciones_bultos|numero }} bultos que volvieron: se vendió lo enviado menos eso){% endif %}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
       envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }},
       {{ resultado.totales.bultos|numero }} bultos enviados.
       {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
@@ -293,8 +303,8 @@
       <div class="nombre">
         {{ f.articulo_nombre }}
         <span class="detalle">{{ f.bultos|numero }} bultos enviados · venta {{ f.venta_neta|moneda }} — mercadería {{ f.costo_mercaderia|moneda }}{% if f.costo_envase %} — envase {{ f.costo_envase|moneda }}{% endif %}</span>
-        {% if f.bultos_mermados or f.segunda_bultos %}
-        <span class="detalle">{% if f.bultos_mermados %}<span class="chip-merma">merma {{ f.bultos_mermados|numero }} bultos · {{ f.costo_mermas|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %}</span>
+        {% if f.bultos_mermados or f.segunda_bultos or f.devoluciones_bultos %}
+        <span class="detalle">{% if f.bultos_mermados %}<span class="chip-merma">merma {{ f.bultos_mermados|numero }} bultos · {{ f.costo_mermas|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %}</span>
         {% endif %}
       </div>
       <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">

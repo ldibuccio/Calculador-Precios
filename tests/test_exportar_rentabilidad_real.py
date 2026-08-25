@@ -16,18 +16,21 @@ RESULTADO_REAL = {
                     "bultos": 10.0, "unidades": 160.0, "venta_neta": 14400.0,
                     "costo_mercaderia": 5000.0, "costo_envase": 320.0,
                     "costo_mermas": 1500.0, "bultos_mermados": 3.0, "segunda_bultos": 2.0,
-                    "costo_total": 6820.0, "renta_pesos": 7580.0, "utilidad_pct": 151.6,
+                    "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
+                    "costo_total": 6820.0, "renta_pesos": 3080.0, "utilidad_pct": 61.6,
                 }
             ],
             "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                          "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0,
-                         "renta_pesos": 7580.0, "utilidad_pct": 151.6},
+                         "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
+                         "renta_pesos": 3080.0, "utilidad_pct": 61.6},
         }
     ],
     "totales": {
         "bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0, "costo_envase": 320.0,
         "costo_mermas": 1500.0, "segunda_bultos": 2.0, "costo_total": 6820.0,
-        "renta_pesos": 7580.0, "utilidad_pct": 151.6, "afuera_bultos": 18.0, "afuera_motivos": 2,
+        "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
+        "renta_pesos": 3080.0, "utilidad_pct": 61.6, "afuera_bultos": 18.0, "afuera_motivos": 2,
     },
     "afuera_por_motivo": [
         {"motivo": "ajuste_sin_costo", "etiqueta": "Consumió stock inicial u otro ajuste (sin costo posible)",
@@ -61,9 +64,11 @@ def test_generar_excel_rentabilidad_real_lleva_la_cuenta_y_el_afuera():
     assert "AFUERA DEL CÁLCULO" in texto
     assert "Consumió stock inicial u otro ajuste (sin costo posible)" in texto
     assert "Anco (14)" in texto
-    # La cuenta: mermas y segunda con sus columnas.
+    # La cuenta: mermas, segunda y devoluciones con sus columnas.
     assert "Mermas $" in texto
     assert "Segunda bultos" in texto
+    assert "Devol. bultos" in texto
+    assert "Devoluciones $" in texto
     assert "Banana" in texto
     assert "Total REAL" in texto
 

@@ -19,6 +19,7 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
+  h2 { font-size: 1rem; margin: 0 0 0.6rem; }
   .aviso {
     background: #dcfce7;
     color: #166534;
@@ -44,6 +45,47 @@
     margin-bottom: 1rem;
     font-size: 0.85rem;
   }
+  /* Botones grandes de elección (pedido y renglón): pantalla de operario, dedo y pulgar. */
+  .boton-eleccion {
+    display: block;
+    width: 100%;
+    padding: 0.9rem;
+    margin-top: 0.6rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: left;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+  .boton-eleccion .detalle {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 500;
+    opacity: 0.9;
+    margin-top: 0.15rem;
+  }
+  .boton-eleccion.agotado {
+    background: #e5e7eb;
+    color: #6b7280;
+  }
+  .filtros { display: flex; gap: 0.5rem; }
+  .filtros input { flex: 1; }
+  .filtros button {
+    padding: 0.8rem 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .dato { margin: 0.15rem 0; font-size: 0.95rem; color: #444; }
+  .dato strong { color: #222; }
   label {
     display: block;
     margin-top: 0.7rem;
@@ -74,6 +116,15 @@
     cursor: pointer;
   }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
 </style>
 </head>
 <body>
@@ -88,30 +139,70 @@
   <div class="error">{{ error }}</div>
   {% endif %}
 
-  <div class="marca-rechazo">Esto es mercadería que <strong>volvió del cliente</strong>: entra al stock marcada como rechazo, nunca como compra nueva.</div>
+  <div class="marca-rechazo">Esto es mercadería que <strong>volvió del cliente</strong>: entra al stock marcada como rechazo, nunca como compra nueva. Elegí de qué pedido volvió — el cliente y el artículo salen solos de ahí.</div>
 
-  {# Pantalla de OPERARIO: acá no se muestra ningún número del sistema. #}
+  {# Pantalla de OPERARIO: muestra solo lo que él ya maneja en Armar Pedido
+     (fecha, sucursal, OC, renglones y bultos armados, lo ya devuelto por
+     sus propias cargas). Nada de costos ni de stock del sistema: el costo
+     lo congela el server al guardar y jamás pasa por esta pantalla. #}
+
+  {% if paso == "pedidos" %}
   <div class="tarjeta">
-    <form method="post" action="/deposito/stock/reingreso">
-      <label for="cliente_id">Cliente que la devolvió</label>
-      <select id="cliente_id" name="cliente_id" required>
-        <option value="" {% if not precarga.cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
-        {% for c in clientes %}
-        <option value="{{ c.id }}" {% if precarga.cliente_id|string == c.id|string %}selected{% endif %}>{{ c.nombre }}</option>
-        {% endfor %}
-      </select>
+    <h2>¿De qué pedido volvió la mercadería?</h2>
+    <form class="filtros" method="get" action="/deposito/stock/reingreso">
+      <input type="text" name="oc" inputmode="numeric" placeholder="Buscar por N° de OC..." value="{{ oc or "" }}">
+      <button type="submit">Buscar</button>
+    </form>
+    {% if oc %}
+    <a class="volver" href="/deposito/stock/reingreso">Limpiar la búsqueda (ver los últimos pedidos)</a>
+    {% endif %}
+    {% if pedidos %}
+      {% for p in pedidos %}
+      <a class="boton-eleccion" href="/deposito/stock/reingreso?{{ {'pedido_id': p.pedido_id, 'sucursal': p.sucursal}|urlencode }}">
+        Pedido del {{ p.fecha_operacion.strftime("%d/%m/%Y") }} — {{ p.sucursal }}
+        <span class="detalle">{{ p.cliente_nombre }} · {% if p.orden_compra %}OC {{ p.orden_compra }}{% else %}sin OC{% endif %} · {% if p.renglones_armados == 1 %}1 renglón armado{% else %}{{ p.renglones_armados }} renglones armados{% endif %}</span>
+      </a>
+      {% endfor %}
+    {% elif oc %}
+    <p class="vacio">No hay ningún pedido con renglones armados con esa OC. Fijate el número, o buscá el pedido en la lista.</p>
+    {% else %}
+    <p class="vacio">No hay pedidos con renglones armados todavía: el reingreso se cuelga de lo que se armó.</p>
+    {% endif %}
+  </div>
 
-      <label for="articulo_id">Artículo</label>
-      <select id="articulo_id" name="articulo_id" required>
-        <option value="" {% if not precarga.articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>
-        {% for a in articulos %}
-        <option value="{{ a.id }}" {% if precarga.articulo_id|string == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
-        {% endfor %}
-      </select>
+  {% elif paso == "renglones" %}
+  <div class="tarjeta">
+    <h2>Pedido del {{ pedido.fecha_operacion.strftime("%d/%m/%Y") }} — {{ pedido.sucursal }}</h2>
+    <p class="dato">{{ pedido.cliente_nombre }} · {% if pedido.orden_compra %}OC {{ pedido.orden_compra }}{% else %}sin OC{% endif %}</p>
+    <p class="dato">¿Qué renglón devolvió?</p>
+    {% for r in renglones %}
+    {% set tope = r.bultos_armados - r.ya_devuelto %}
+    {% if tope > 0 %}
+    <a class="boton-eleccion" href="/deposito/stock/reingreso?{{ {'renglon_id': r.id}|urlencode }}">
+      {{ r.articulo_nombre }}
+      <span class="detalle">Armaste {{ r.bultos_armados|numero }} bultos{% if r.ya_devuelto %} · ya devolviste {{ r.ya_devuelto|numero }}{% endif %}</span>
+    </a>
+    {% else %}
+    <span class="boton-eleccion agotado">
+      {{ r.articulo_nombre }}
+      <span class="detalle">Armaste {{ r.bultos_armados|numero }} y ya devolviste {{ r.ya_devuelto|numero }}: no queda nada por devolver.</span>
+    </span>
+    {% endif %}
+    {% endfor %}
+    <a class="volver" href="/deposito/stock/reingreso">Volver a los pedidos</a>
+  </div>
+
+  {% elif paso == "form" %}
+  <div class="tarjeta">
+    <h2>{{ renglon.articulo_nombre }} — pedido del {{ renglon.fecha_pedido.strftime("%d/%m/%Y") }} ({{ renglon.sucursal }})</h2>
+    <p class="dato">Cliente: <strong>{{ renglon.cliente_nombre }}</strong>{% if renglon.orden_compra %} · OC {{ renglon.orden_compra }}{% endif %}</p>
+    <p class="dato">Armaste <strong>{{ renglon.bultos_armados|numero }}</strong> bultos{% if renglon.ya_devuelto %} y ya devolviste <strong>{{ renglon.ya_devuelto|numero }}</strong>{% endif %}: podés devolver hasta <strong>{{ tope|numero }}</strong>.</p>
+    <form method="post" action="/deposito/stock/reingreso">
+      <input type="hidden" name="renglon_id" value="{{ renglon.id }}">
 
       <label for="cantidad">Bultos devueltos</label>
-      <input type="number" id="cantidad" name="cantidad" min="0.01" step="0.01" required
-             placeholder="¿Cuántos volvieron?" value="{{ precarga.cantidad or "" }}">
+      <input type="number" id="cantidad" name="cantidad" min="0.01" max="{{ tope }}" step="0.01" required
+             value="{{ precarga.cantidad if precarga.cantidad is defined and precarga.cantidad else tope|numero }}">
 
       <label for="fecha">Fecha en que volvió</label>
       <input type="date" id="fecha" name="fecha" max="{{ hoy }}" value="{{ precarga.fecha or hoy }}">
@@ -123,6 +214,8 @@
       <button type="submit" class="boton-guardar">Guardar reingreso</button>
     </form>
     <p class="ayuda">Si el camión volvió ayer y lo cargás hoy, poné la fecha de ayer: con la fecha real no se desordena nada. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
+    <a class="volver" href="/deposito/stock/reingreso?{{ {'pedido_id': renglon.pedido_id, 'sucursal': renglon.sucursal}|urlencode }}">Volver a los renglones</a>
   </div>
+  {% endif %}
 </body>
 </html>

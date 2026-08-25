@@ -237,3 +237,96 @@ def test_el_ajuste_negativo_consume_lote_pero_no_es_perdida():
     # pérdida reportada) y el armado costea contra el caro.
     assert fila["costo_mermas"] == 0
     assert fila["costo_mercaderia"] == 5 * 800.0
+
+
+# --- devoluciones vinculadas ("si le mandé 25 y me devolvió 5, vendí 20") ---
+
+
+def _devolucion(bultos, fecha_pedido, costo_por_bulto=2000.0, kilos=500.0, armados=25.0):
+    return {
+        "bultos": bultos,
+        "fecha_pedido": fecha_pedido,
+        "kilos_enviados": kilos,
+        "bultos_armados": armados,
+        "costo_por_bulto": costo_por_bulto,
+        "articulo_id": 1,
+        "articulo_nombre": "Banana",
+        "grupo": "fruta",
+    }
+
+
+def test_devolucion_vinculada_resta_venta_y_acredita_mercaderia_al_costo_congelado():
+    fecha = date(2026, 8, 25)
+    salidas = [_armado(fecha, 25, 500.0)]
+    resultado = calcular_rentabilidad_real(
+        _datos(salidas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha)],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    # Venta de lo enviado: 500 kg × 100 × 0.9 = 45000. La devolución de 5
+    # bultos (a 20 kg/bulto del propio renglón) resta 100 kg × 100 × 0.9.
+    assert fila["venta_neta"] == 45000.0
+    assert fila["devoluciones_bultos"] == 5.0
+    assert fila["devoluciones_venta"] == 100 * 100.0 * 0.9
+    # La mercadería se acredita al costo congelado (el lote devuelto queda
+    # en stock con ese costo y se vuelve a cargar cuando salga de nuevo):
+    # 25 × 500 (FIFO) − 5 × 2000.
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+    # La renta descuenta la devolución entera.
+    assert fila["renta_pesos"] == (
+        fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
+    )
+    assert resultado["totales"]["devoluciones_bultos"] == 5.0
+
+
+def test_devolucion_sin_costo_congelado_solo_resta_venta():
+    fecha = date(2026, 8, 25)
+    salidas = [_armado(fecha, 25, 500.0)]
+    resultado = calcular_rentabilidad_real(
+        _datos(salidas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, costo_por_bulto=None)],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    # Sin costo congelado no se acredita mercadería (el lote sigue "sin
+    # costo" y se verá en el afuera cuando se consuma) — la venta sí baja.
+    assert fila["devoluciones_venta"] == 100 * 100.0 * 0.9
+    assert fila["costo_mercaderia"] == 25 * 500.0
+
+
+def test_devolucion_que_no_se_puede_valuar_va_afuera_con_motivo():
+    fecha = date(2026, 8, 25)
+    # Renglón sin kilaje y pedido sin precio a su fecha: dos devoluciones
+    # invaluables — van al afuera, jamás suman cero en silencio.
+    resultado = calcular_rentabilidad_real(
+        _datos([]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[
+            _devolucion(3.0, fecha, kilos=None),
+            _devolucion(2.0, date(2026, 8, 20)),
+        ],
+    )
+
+    assert resultado["grupos"] == []
+    afuera = resultado["afuera_por_motivo"]
+    assert len(afuera) == 1
+    assert afuera[0]["motivo"] == "devolucion_sin_valor"
+    assert afuera[0]["bultos"] == 5.0
+
+
+def test_devolucion_ancla_el_precio_a_la_fecha_del_pedido_de_origen():
+    fecha_pedido = date(2026, 8, 20)
+    fecha_rango = date(2026, 8, 25)
+    # El precio a la fecha del PEDIDO (80), no el del rango (100): la
+    # devolución deshace la venta al valor con el que se facturó.
+    margenes = {
+        fecha_pedido: {1: dict(MARGEN, precio_vigente=80.0)},
+        fecha_rango: {1: dict(MARGEN)},
+    }
+    resultado = calcular_rentabilidad_real(
+        _datos([]), margenes, 1, fecha_rango, fecha_rango,
+        devoluciones=[_devolucion(5.0, fecha_pedido)],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["devoluciones_venta"] == 100 * 80.0 * 0.9

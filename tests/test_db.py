@@ -3083,7 +3083,11 @@ def test_listar_pedidos_vigentes_con_armado_no_cuenta_los_anulados():
 
 from app.db import (  # noqa: E402
     crear_movimiento_stock,
+    devoluciones_vinculadas_por_rango,
     entradas_y_salidas_stock_articulo,
+    listar_pedidos_para_reingreso,
+    listar_renglones_para_reingreso,
+    obtener_renglon_para_reingreso,
     stock_deposito_de_articulo,
     stock_deposito_por_articulo,
     total_reingresos_rechazo,
@@ -3132,7 +3136,7 @@ def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resulta
     assert "INSERT INTO movimientos_stock" in insert.args[0]
     # La foto del stock SIN este movimiento, como en ajustes_vacios:
     # sin ese rastro cualquier faltante se tapa con un ajuste.
-    assert insert.args[1] == (7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0)
+    assert insert.args[1] == (7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None)
     assert resultado == 9.0
     conexion.commit.assert_called_once()
 
@@ -3144,7 +3148,22 @@ def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
         crear_movimiento_stock(7, "reingreso_rechazo", 4.0, "Devolvió Día", date(2026, 8, 24), cliente_id=1)
 
     insert = cursor.execute.call_args_list[-1]
-    assert insert.args[1] == (7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0)
+    assert insert.args[1] == (7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None)
+
+
+def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congelado():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(
+            7, "reingreso_rechazo", 4.0, "rechazo por calidad", date(2026, 8, 24),
+            cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+        )
+
+    insert = cursor.execute.call_args_list[-1]
+    # El vínculo al renglón y el costo congelado (los calcula el server):
+    # con esto el lote de reingreso deja de ser "sin costo" para la Real.
+    assert insert.args[1] == (7, "reingreso_rechazo", 4.0, "rechazo por calidad", 1, date(2026, 8, 24), 0.0, 77, 2000.0)
 
 
 def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
@@ -3557,3 +3576,74 @@ def test_registrar_tick_revision_es_un_upsert_de_una_fila():
     assert "INSERT INTO revision_tick" in consulta
     assert "ON CONFLICT (id) DO UPDATE" in consulta
     conexion.commit.assert_called_once()
+
+
+def test_listar_pedidos_para_reingreso_solo_vigentes_con_armados_y_busca_por_oc():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("pedido_id",), ("fecha_operacion",), ("cliente_nombre",),
+                          ("sucursal",), ("orden_compra",), ("renglones_armados",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_pedidos_para_reingreso(oc="1257673", limite=10)
+
+    consulta = cursor.execute.call_args.args[0]
+    # Solo pedidos VIGENTES (el último no anulado por cliente y fecha) y
+    # solo renglones ARMADOS identificados: el reingreso se cuelga del stock real.
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
+    assert "r.armado_el IS NOT NULL AND r.anulado_el IS NULL" in consulta
+    assert "ps.orden_compra = %s" in consulta
+    assert cursor.execute.call_args.args[1] == ("1257673", 10)
+
+
+def test_obtener_renglon_para_reingreso_trae_todo_y_el_devuelto_acumulado():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("pedido_id",), ("sucursal",), ("articulo_id",),
+                          ("articulo_nombre",), ("cliente_id",), ("cliente_nombre",),
+                          ("fecha_pedido",), ("orden_compra",), ("bultos_armados",),
+                          ("kilos_enviados",), ("ya_devuelto",)]
+    cursor.fetchone.return_value = (77, 40, "VL", 2, "Anco", 1, "Día",
+                                    date(2026, 8, 24), "1257673", 25.0, 500.0, 5.0)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        renglon = obtener_renglon_para_reingreso(77)
+
+    consulta = cursor.execute.call_args.args[0]
+    # El acumulado ya devuelto sale de los reingresos NO anulados del
+    # renglón (el tope del server), y el armado usa la cantidad real.
+    assert "pedido_renglon_id IS NOT NULL AND anulado_el IS NULL" in consulta
+    assert "COALESCE(r.cantidad_armada, r.cantidad)" in consulta
+    assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
+    assert renglon["bultos_armados"] == 25.0
+    assert renglon["ya_devuelto"] == 5.0
+
+
+def test_listar_renglones_para_reingreso_es_por_pedido_y_sucursal():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("articulo_nombre",), ("bultos_armados",), ("ya_devuelto",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_renglones_para_reingreso(40, "VL")
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "r.pedido_id = %s AND r.sucursal = %s" in consulta
+    assert cursor.execute.call_args.args[1] == (40, "VL")
+
+
+def test_devoluciones_vinculadas_por_rango_trae_el_renglon_y_la_fecha_del_pedido():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("bultos",), ("fecha_operacion",), ("costo_por_bulto",),
+                          ("kilos_enviados",), ("bultos_armados",), ("fecha_pedido",),
+                          ("articulo_id",), ("articulo_nombre",), ("grupo",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        devoluciones_vinculadas_por_rango(1, date(2026, 8, 18), date(2026, 8, 25))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Solo reingresos VINCULADOS y no anulados del cliente, por la fecha
+    # del reingreso; la fecha del PEDIDO viaja para anclar el precio.
+    assert "m.anulado_el IS NULL AND m.pedido_renglon_id IS NOT NULL" in consulta
+    assert "p.fecha_operacion AS fecha_pedido" in consulta
+    assert cursor.execute.call_args.args[1] == (1, date(2026, 8, 18), date(2026, 8, 25))
