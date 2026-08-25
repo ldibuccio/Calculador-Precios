@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reingreso por Rechazo</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .marca-rechazo {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+  }
+  label {
+    display: block;
+    margin-top: 0.7rem;
+    font-size: 0.95rem;
+    color: #444;
+  }
+  select, input {
+    width: 100%;
+    padding: 0.8rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button.boton-guardar {
+    display: block;
+    width: 100%;
+    margin-top: 1.1rem;
+    padding: 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Reingreso por Rechazo" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="marca-rechazo">Esto es mercadería que <strong>volvió del cliente</strong>: entra al stock marcada como rechazo, nunca como compra nueva.</div>
+
+  {# Pantalla de OPERARIO: acá no se muestra ningún número del sistema. #}
+  <div class="tarjeta">
+    <form method="post" action="/deposito/stock/reingreso">
+      <label for="cliente_id">Cliente que la devolvió</label>
+      <select id="cliente_id" name="cliente_id" required>
+        <option value="" {% if not precarga.cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if precarga.cliente_id|string == c.id|string %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="articulo_id">Artículo</label>
+      <select id="articulo_id" name="articulo_id" required>
+        <option value="" {% if not precarga.articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if precarga.articulo_id|string == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="cantidad">Bultos devueltos</label>
+      <input type="number" id="cantidad" name="cantidad" min="0.01" step="0.01" required
+             placeholder="¿Cuántos volvieron?" value="{{ precarga.cantidad or "" }}">
+
+      <label for="fecha">Fecha en que volvió</label>
+      <input type="date" id="fecha" name="fecha" max="{{ hoy }}" value="{{ precarga.fecha or hoy }}">
+
+      <label for="motivo">Motivo (obligatorio)</label>
+      <input type="text" id="motivo" name="motivo" required placeholder="Ej: rechazado por calidad"
+             value="{{ precarga.motivo or "" }}">
+
+      <button type="submit" class="boton-guardar">Guardar reingreso</button>
+    </form>
+    <p class="ayuda">Si el camión volvió ayer y lo cargás hoy, poné la fecha de ayer: con la fecha real no se desordena nada. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
+  </div>
+</body>
+</html>

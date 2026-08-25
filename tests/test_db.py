@@ -3186,3 +3186,38 @@ def test_total_reingresos_rechazo_excluye_anulados():
     consulta = cursor.execute.call_args.args[0]
     assert "anulado_el IS NULL AND tipo = 'reingreso_rechazo'" in consulta
     assert total == 11.0
+
+
+def test_listar_movimientos_stock_trae_anulados_marcados_por_fecha_real():
+    from app.db import listar_movimientos_stock_por_rango
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_movimientos_stock_por_rango(date(2026, 8, 18), date(2026, 8, 25))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Por fecha_operacion (la REAL del hecho) y SIN filtrar anulados: se
+    # muestran marcados — nunca desaparecen del listado.
+    assert "m.fecha_operacion >= %s AND m.fecha_operacion <= %s" in consulta
+    assert "anulado_el IS NULL" not in consulta
+    assert "m.anulado_el" in consulta
+    assert "cl.nombre AS cliente_nombre" in consulta
+
+
+def test_anular_movimiento_stock_es_baja_logica_e_idempotente():
+    from app.db import anular_movimiento_stock
+
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_movimiento_stock(32)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "SET anulado_el = now()" in consulta
+    # No re-pisa una anulación previa (el timestamp original se conserva).
+    assert "anulado_el IS NULL" in consulta
+    assert cursor.execute.call_args.args[1] == (32,)
+    conexion.commit.assert_called_once()

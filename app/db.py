@@ -5159,3 +5159,45 @@ def total_reingresos_rechazo() -> float:
             return float(cursor.fetchone()[0])
     finally:
         conexion.close()
+
+
+def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+    """Los movimientos de stock del rango (por fecha_operacion, la REAL del hecho), anulados incluidos y marcados.
+
+    Para la pantalla Movimientos (control): corregir = anular el movimiento
+    equivocado y cargarlo de nuevo bien — nunca editar ni borrar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, m.tipo, m.cantidad, m.motivo, m.fecha_operacion,
+                       m.stock_sistema, m.creado_en, m.anulado_el,
+                       a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre
+                FROM movimientos_stock m
+                JOIN articulos a ON a.id = m.articulo_id
+                LEFT JOIN clientes cl ON cl.id = m.cliente_id
+                WHERE m.fecha_operacion >= %s AND m.fecha_operacion <= %s
+                ORDER BY m.fecha_operacion DESC, m.creado_en DESC
+                """,
+                (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def anular_movimiento_stock(movimiento_id: int) -> None:
+    """Anula un movimiento de stock (baja lógica): queda visible como corrección, el stock y el FIFO lo excluyen solos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE movimientos_stock SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (movimiento_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()

@@ -71,6 +71,7 @@ from app.db import (
     crear_casilla_pedidos,
     crear_cliente,
     crear_compra,
+    anular_movimiento_stock,
     crear_movimiento_stock,
     crear_pedido,
     crear_ajuste_vacios,
@@ -91,6 +92,7 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    listar_movimientos_stock_por_rango,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
     guardar_disponible,
@@ -6113,6 +6115,225 @@ def ajustar_stock_deposito_ruta(
     # El motivo vuelve en la URL para la carga en cadena (stock inicial).
     return RedirectResponse(
         url=f"/deposito/stock/ajustar?{urlencode({'aviso': aviso, 'motivo': motivo_limpio})}", status_code=303
+    )
+
+
+def _validar_bultos_positivos(cantidad: str, que: str) -> tuple[str | None, float | None]:
+    """Bultos de merma/reingreso: número positivo obligatorio (acá el signo lo pone el tipo, no la persona)."""
+    texto = cantidad.strip()
+    if not texto:
+        return f"La cantidad de bultos {que} es obligatoria.", None
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "La cantidad de bultos tiene que ser un número.", None
+    if valor <= 0:
+        return "La cantidad de bultos tiene que ser mayor a cero.", None
+    return None, valor
+
+
+def _renderizar_pantalla_merma(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+    try:
+        articulos = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_merma.html",
+        {"articulos": articulos, "precarga": precarga or {}, "aviso": aviso, "error": error},
+        status_code=status_code,
+    )
+
+
+@app.get("/deposito/stock/merma")
+def ver_merma_stock(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_merma(request, aviso=aviso)
+
+
+@app.post("/deposito/stock/merma")
+def cargar_merma_stock_ruta(
+    request: Request,
+    articulo_id: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+):
+    """El operario da de baja cajones que se tiraron: siempre negativa, con motivo obligatorio.
+
+    Pantalla de OPERARIO: el aviso repite solo lo que cargó — jamás el
+    stock resultante (mismo criterio que el Stock Físico de Vacíos).
+    """
+    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    error, cantidad_valor = _validar_bultos_positivos(cantidad, "tirados")
+    if not error and not motivo_limpio:
+        error = "El motivo es obligatorio: sin motivo no se guarda la merma."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        precarga = {"articulo_id": articulo_id, "cantidad": cantidad, "motivo": motivo_limpio}
+        return _renderizar_pantalla_merma(request, precarga=precarga, error=error, status_code=400)
+
+    try:
+        crear_movimiento_stock(articulo["id"], "merma", -cantidad_valor, motivo_limpio, _hoy_argentina())
+    except Exception as error_db:
+        return _renderizar_pantalla_merma(
+            request, error=f"No se pudo guardar la merma: {error_db}", status_code=500
+        )
+
+    aviso = f"Merma guardada: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']} tirados ({motivo_limpio})."
+    return RedirectResponse(url=f"/deposito/stock/merma?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+def _renderizar_pantalla_reingreso(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+    try:
+        articulos = listar_articulos()
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "articulos": articulos,
+        "clientes": clientes,
+        "precarga": precarga or {},
+        "hoy": _hoy_argentina().isoformat(),
+        "aviso": aviso,
+        "error": error,
+    }
+    return templates.TemplateResponse(request, "deposito_stock_reingreso.html", contexto, status_code=status_code)
+
+
+@app.get("/deposito/stock/reingreso")
+def ver_reingreso_stock(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_reingreso(request, aviso=aviso)
+
+
+@app.post("/deposito/stock/reingreso")
+def cargar_reingreso_stock_ruta(
+    request: Request,
+    cliente_id: str = Form(""),
+    articulo_id: str = Form(""),
+    cantidad: str = Form(""),
+    motivo: str = Form(""),
+    fecha: str = Form(""),
+):
+    """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo, nunca como compra.
+
+    La fecha es editable con hoy por default: el camión puede volver un
+    día y cargarse al siguiente — con la fecha real no se desordena el
+    FIFO ni el cotejo del día anterior. Pantalla de OPERARIO: el aviso
+    repite solo lo que cargó, jamás el stock resultante.
+    """
+    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    error, cantidad_valor = _validar_bultos_positivos(cantidad, "devueltos")
+    if not error and not motivo_limpio:
+        error = "El motivo es obligatorio: sin motivo no se guarda el reingreso."
+
+    fecha_valor = None
+    if not error:
+        hoy = _hoy_argentina()
+        if not fecha.strip():
+            fecha_valor = hoy
+        else:
+            try:
+                fecha_valor = date.fromisoformat(fecha.strip())
+            except ValueError:
+                error = "La fecha del reingreso no es válida."
+            else:
+                if fecha_valor > hoy:
+                    error = "La fecha del reingreso no puede ser futura."
+
+    cliente = None
+    articulo = None
+    if not error:
+        try:
+            cliente = obtener_cliente(int(cliente_id)) if cliente_id.strip().isdigit() else None
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if cliente is None:
+            error = "Elegí un cliente válido."
+        elif articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        precarga = {
+            "cliente_id": cliente_id,
+            "articulo_id": articulo_id,
+            "cantidad": cantidad,
+            "motivo": motivo_limpio,
+            "fecha": fecha,
+        }
+        return _renderizar_pantalla_reingreso(request, precarga=precarga, error=error, status_code=400)
+
+    try:
+        crear_movimiento_stock(
+            articulo["id"], "reingreso_rechazo", cantidad_valor, motivo_limpio, fecha_valor,
+            cliente_id=cliente["id"],
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_reingreso(
+            request, error=f"No se pudo guardar el reingreso: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Reingreso guardado: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']} "
+        f"que devolvió {cliente['nombre']} el {fecha_valor.strftime('%d/%m')} ({motivo_limpio})."
+    )
+    return RedirectResponse(url=f"/deposito/stock/reingreso?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+ETIQUETAS_MOVIMIENTO_STOCK = {"ajuste": "Ajuste", "merma": "Merma", "reingreso_rechazo": "Reingreso"}
+
+
+@app.get("/deposito/stock/movimientos")
+def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None):
+    """Movimientos de stock (control): ajustes, mermas y reingresos de cualquier fecha, con anular por baja lógica.
+
+    Corregir = anular el movimiento equivocado y cargarlo de nuevo bien
+    desde su pantalla — nunca editar ni borrar. Acá SÍ se ve el stock
+    (la foto del sistema que quedó grabada en cada movimiento).
+    """
+    desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
+    try:
+        movimientos = listar_movimientos_stock_por_rango(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    for m in movimientos:
+        m["etiqueta_tipo"] = ETIQUETAS_MOVIMIENTO_STOCK.get(m["tipo"], m["tipo"])
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_movimientos.html",
+        {
+            "movimientos": movimientos,
+            "fecha_desde": desde.isoformat(),
+            "fecha_hasta": hasta.isoformat(),
+        },
+    )
+
+
+@app.post("/deposito/stock/movimientos/{movimiento_id}/anular")
+def anular_movimiento_stock_ruta(
+    movimiento_id: int,
+    fecha_desde: str = Form(""),
+    fecha_hasta: str = Form(""),
+):
+    try:
+        anular_movimiento_stock(movimiento_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
+
+    return RedirectResponse(
+        url=f"/deposito/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        status_code=303,
     )
 
 

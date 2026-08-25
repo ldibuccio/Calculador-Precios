@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movimientos de Stock</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  form.filtros label {
+    display: block;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form.filtros input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-bottom: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .fila-fechas { display: flex; gap: 0.75rem; }
+  .fila-fechas > div { flex: 1; min-width: 0; }
+  .boton-buscar {
+    width: 100%;
+    padding: 0.75rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .renglon {
+    padding: 0.7rem 0;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .renglon .detalle { font-size: 0.92rem; min-width: 0; }
+  .renglon .detalle .extra { display: block; color: #666; font-size: 0.82rem; margin-top: 0.15rem; }
+  .renglon .detalle .motivo { font-style: italic; }
+  .renglon.anulado .detalle { text-decoration: line-through; color: #999; }
+  .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 600; }
+  .cantidad-mov { font-weight: 800; font-size: 1.05rem; white-space: nowrap; }
+  /* El tipo se ve de un vistazo, como en Vacíos: pill por tipo. */
+  .pill {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    margin-right: 0.35rem;
+  }
+  .pill-ajuste { background: #facc15; color: #713f12; }
+  .pill-merma { background: #fecaca; color: #991b1b; }
+  .pill-reingreso_rechazo { background: #fed7aa; color: #9a3412; }
+  .boton-anular {
+    padding: 0.6rem 0.9rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .renglon form { margin: 0; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Movimientos de Stock" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/deposito/stock/movimientos">
+      <div class="fila-fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+  </div>
+
+  <div class="tarjeta">
+    {% if movimientos %}
+      {% for m in movimientos %}
+      <div class="renglon {% if m.anulado_el %}anulado{% endif %}">
+        <div class="detalle">
+          <span class="pill pill-{{ m.tipo }}">{{ m.etiqueta_tipo }}</span>
+          <strong>{{ m.articulo_nombre }}</strong> · {{ m.fecha_operacion|fecha_corta }}
+          {% if m.anulado_el %}<span class="marca-anulado">ANULADO</span>{% endif %}
+          <span class="extra">
+            {% if m.cliente_nombre %}Devolvió {{ m.cliente_nombre }} · {% endif %}<span class="motivo">{{ m.motivo }}</span>
+            · el sistema decía {{ m.stock_sistema|numero }}
+          </span>
+        </div>
+        <div class="cantidad-mov">{% if m.cantidad > 0 %}+{% endif %}{{ m.cantidad|numero }}</div>
+        {% if not m.anulado_el %}
+        <form method="post" action="/deposito/stock/movimientos/{{ m.id }}/anular"
+              onsubmit="return confirm('¿Anular este movimiento de {{ m.articulo_nombre }}? Queda registrado como anulado y el stock se reacomoda solo.');">
+          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+          <button type="submit" class="boton-anular">Anular</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin movimientos en este rango.</p>
+    {% endif %}
+    <p class="ayuda">Solo los movimientos cargados a mano (ajustes, mermas y reingresos) — las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>: nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.</p>
+  </div>
+</body>
+</html>

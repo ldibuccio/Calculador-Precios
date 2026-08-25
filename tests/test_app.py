@@ -13955,9 +13955,13 @@ def test_hub_stock_separa_la_carga_del_operario_del_control():
     # Lo construido, activo; lo de tandas siguientes, atenuado y visible.
     assert 'href="/deposito/stock/sistema"' in respuesta.text
     assert 'href="/deposito/stock/ajustar"' in respuesta.text
+    assert 'href="/deposito/stock/merma"' in respuesta.text
+    assert 'href="/deposito/stock/reingreso"' in respuesta.text
+    assert 'href="/deposito/stock/movimientos"' in respuesta.text
     assert "Carga del depósito" in respuesta.text
     assert "Control" in respuesta.text
-    assert respuesta.text.count("(Próximamente)") == 5
+    # Faltan Stock Físico y Cotejo (tanda 3).
+    assert respuesta.text.count("(Próximamente)") == 2
 
 
 def test_stock_sistema_muestra_el_stock_calculado_por_articulo():
@@ -14094,3 +14098,175 @@ def test_ajustar_stock_muestra_el_motivo_precargado():
 
     assert respuesta.status_code == 200
     assert 'value="stock inicial"' in respuesta.text
+
+
+# --- Stock del Depósito (tanda 2): Merma, Reingreso, Movimientos ---
+
+
+def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_movimiento_stock", return_value=17.0) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # Siempre negativa: el signo lo pone el tipo, no la persona.
+    mock_crear.assert_called_once_with(1, "merma", -3.0, "podrido", date(2026, 8, 25))
+    # Pantalla de OPERARIO: el aviso repite lo cargado, JAMÁS el stock
+    # resultante (17 no puede aparecer).
+    destino = respuesta.headers["location"]
+    assert "Merma+guardada%3A+3+bultos+de+Banana" in destino
+    assert "17" not in destino
+
+
+def test_merma_sin_motivo_da_400():
+    with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "1", "cantidad": "3", "motivo": " "},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_merma_cantidad_negativa_da_400():
+    # El operario carga bultos tirados (positivo): el signo no es cosa suya.
+    with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "1", "cantidad": "-3", "motivo": "podrido"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_reingreso_guarda_con_cliente_y_fecha_editable():
+    with (
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
+        patch("app.main.crear_movimiento_stock", return_value=9.0) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"cliente_id": "1", "articulo_id": "2", "cantidad": "4",
+                  "motivo": "rechazado por calidad", "fecha": "2026-08-24"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # La fecha REAL del hecho (ayer), no la de carga: ordena el FIFO.
+    mock_crear.assert_called_once_with(
+        2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24), cliente_id=1
+    )
+    destino = respuesta.headers["location"]
+    assert "devolvi%C3%B3+D%C3%ADa+el+24%2F08" in destino
+    # Sin el stock resultante ("El stock quedó en X"): pantalla de operario.
+    assert "qued" not in destino
+
+
+def test_reingreso_sin_fecha_usa_hoy():
+    with (
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
+        patch("app.main.crear_movimiento_stock", return_value=9.0) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"cliente_id": "1", "articulo_id": "2", "cantidad": "4", "motivo": "rechazo", "fecha": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(2, "reingreso_rechazo", 4.0, "rechazo", date(2026, 8, 25), cliente_id=1)
+
+
+def test_reingreso_con_fecha_futura_da_400():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"cliente_id": "1", "articulo_id": "2", "cantidad": "4", "motivo": "x", "fecha": "2026-08-26"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser futura" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_reingreso_muestra_hoy_por_default_en_el_formulario():
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/reingreso")
+
+    assert respuesta.status_code == 200
+    assert 'value="2026-08-25"' in respuesta.text
+    assert 'max="2026-08-25"' in respuesta.text
+
+
+MOVIMIENTOS_STOCK_DE_PRUEBA = [
+    {"id": 31, "tipo": "ajuste", "cantidad": 20.0, "motivo": "stock inicial",
+     "fecha_operacion": date(2026, 8, 25), "stock_sistema": -5.0,
+     "creado_en": datetime(2026, 8, 25, 10, 0), "anulado_el": None,
+     "articulo_nombre": "Anco", "cliente_nombre": None},
+    {"id": 32, "tipo": "merma", "cantidad": -3.0, "motivo": "podrido",
+     "fecha_operacion": date(2026, 8, 25), "stock_sistema": 15.0,
+     "creado_en": datetime(2026, 8, 25, 11, 0), "anulado_el": None,
+     "articulo_nombre": "Banana", "cliente_nombre": None},
+    {"id": 33, "tipo": "reingreso_rechazo", "cantidad": 4.0, "motivo": "rechazo calidad",
+     "fecha_operacion": date(2026, 8, 24), "stock_sistema": 12.0,
+     "creado_en": datetime(2026, 8, 25, 12, 0), "anulado_el": datetime(2026, 8, 25, 13, 0),
+     "articulo_nombre": "Banana", "cliente_nombre": "Día"},
+]
+
+
+def test_movimientos_stock_muestra_los_tipos_con_pill_y_la_foto_del_sistema():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_movimientos_stock_por_rango",
+              return_value=[dict(m) for m in MOVIMIENTOS_STOCK_DE_PRUEBA]) as mock_listar,
+    ):
+        respuesta = cliente.get("/deposito/stock/movimientos")
+
+    assert respuesta.status_code == 200
+    mock_listar.assert_called_once_with(date(2026, 8, 18), date(2026, 8, 25))
+    # El tipo de un vistazo, como en Vacíos.
+    assert 'class="pill pill-ajuste"' in respuesta.text
+    assert 'class="pill pill-merma"' in respuesta.text
+    assert 'class="pill pill-reingreso_rechazo"' in respuesta.text
+    assert ">Reingreso</span>" in respuesta.text
+    # Pantalla de CONTROL: acá sí se ve la foto del sistema.
+    assert "el sistema decía -5" in respuesta.text
+    assert "Devolvió Día" in respuesta.text
+    # El anulado queda visible y marcado, sin botón de anular.
+    assert "ANULADO" in respuesta.text
+    assert respuesta.text.count('class="boton-anular"') == 2
+
+
+def test_anular_movimiento_stock_vuelve_al_rango():
+    with patch("app.main.anular_movimiento_stock") as mock_anular:
+        respuesta = cliente.post(
+            "/deposito/stock/movimientos/32/anular",
+            data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_anular.assert_called_once_with(32)
+    assert "fecha_desde=2026-08-18" in respuesta.headers["location"]
