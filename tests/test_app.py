@@ -8835,14 +8835,103 @@ def test_ingresar_mercaderia_error_de_base_muestra_mensaje_claro():
     assert "No se pudo guardar la compra" in respuesta.text
 
 
-def test_ver_gerencia_es_un_hub_con_auditoria():
+def test_ver_gerencia_es_el_hub_del_dinero_sin_auditoria():
+    # Con Auditoría afuera (sector propio), en Gerencia queda solo el
+    # manejo del dinero: las dos rentabilidades y lo que venga.
     respuesta = cliente.get("/gerencia")
 
     assert respuesta.status_code == 200
-    assert 'href="/gerencia/auditoria"' in respuesta.text
-    assert "Auditoría" in respuesta.text
-    assert "En construcción" not in respuesta.text
+    assert 'href="/gerencia/rentabilidad"' in respuesta.text
+    assert 'href="/gerencia/rentabilidad-real"' in respuesta.text
+    assert "/auditoria" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
+
+
+def test_auditoria_tiene_sector_propio_y_la_url_vieja_redirige():
+    respuesta = cliente.get("/gerencia/auditoria", follow_redirects=False)
+    assert respuesta.status_code == 301
+    assert respuesta.headers["location"] == "/auditoria"
+
+    # Y la tarjeta propia en Inicio, junto a los demás sectores.
+    inicio = cliente.get("/inicio")
+    assert 'href="/auditoria"' in inicio.text
+
+
+# --- La clave de Gerencia: la zona del dinero pide su PROPIA clave ---
+
+
+def test_gerencia_sin_clave_configurada_no_tiene_puerta():
+    # Sin CLAVE_GERENCIA cargada en Railway no hay puerta: el deploy no
+    # traba nada hasta que la variable exista.
+    with patch("app.main._clave_gerencia", return_value=None):
+        assert cliente.get("/gerencia").status_code == 200
+
+
+def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        for url in ("/gerencia", "/gerencia/rentabilidad", "/gerencia/rentabilidad-real"):
+            respuesta = cliente.get(url)
+            assert respuesta.status_code == 401, url
+            assert "Gerencia pide clave" in respuesta.text
+            assert 'action="/gerencia/clave"' in respuesta.text
+        # Los exports sin acceso redirigen a su pantalla (que pide la clave).
+        for url in (
+            "/gerencia/rentabilidad/exportar-pdf",
+            "/gerencia/rentabilidad/exportar-excel",
+            "/gerencia/rentabilidad-real/exportar-pdf",
+            "/gerencia/rentabilidad-real/exportar-excel",
+        ):
+            respuesta = cliente.get(url, follow_redirects=False)
+            assert respuesta.status_code == 303, url
+
+
+def test_clave_gerencia_correcta_deja_cookie_y_bloquear_la_corta():
+    try:
+        with patch("app.main._clave_gerencia", return_value="secreta"):
+            respuesta = cliente.post(
+                "/gerencia/clave",
+                data={"clave": "secreta", "volver": "/gerencia/rentabilidad-real"},
+                follow_redirects=False,
+            )
+            assert respuesta.status_code == 303
+            assert respuesta.headers["location"] == "/gerencia/rentabilidad-real"
+            assert "acceso_gerencia" in respuesta.headers.get("set-cookie", "")
+
+            # Con la cookie, la zona abre y el botón Bloquear está a mano.
+            adentro = cliente.get("/gerencia")
+            assert adentro.status_code == 200
+            assert 'action="/gerencia/bloquear"' in adentro.text
+
+            # Bloquear borra la cookie: la zona vuelve a pedir la clave.
+            bloqueo = cliente.post("/gerencia/bloquear", follow_redirects=False)
+            assert bloqueo.status_code == 303
+            assert cliente.get("/gerencia").status_code == 401
+    finally:
+        cliente.cookies.clear()
+
+
+def test_clave_gerencia_incorrecta_no_entra_y_el_destino_es_solo_gerencia():
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        respuesta = cliente.post("/gerencia/clave", data={"clave": "nope", "volver": "/gerencia"})
+        assert respuesta.status_code == 401
+        assert "Clave incorrecta" in respuesta.text
+
+        # Un "volver" que apunta fuera de Gerencia se pisa: nada de usar la
+        # puerta como redirector abierto.
+        respuesta = cliente.post(
+            "/gerencia/clave", data={"clave": "secreta", "volver": "/compras"}, follow_redirects=False
+        )
+        assert respuesta.headers["location"] == "/gerencia"
+    cliente.cookies.clear()
+
+
+def test_la_firma_del_puesto_no_abre_gerencia():
+    # Misma clave en las dos zonas ≠ mismas cookies: los mensajes firmados
+    # son distintos, así que una cookie del control del Puesto jamás valida
+    # en Gerencia (ni al revés).
+    from app.main import _firma_acceso_control, _firma_acceso_gerencia
+
+    assert _firma_acceso_control("secreta") != _firma_acceso_gerencia("secreta")
 
 
 def test_ver_facturacion_es_un_hub_con_ingresos_a_deposito():
@@ -9073,7 +9162,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_pedidos_faltantes", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
         patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 1, "mas_viejo": None}),
     ):
-        respuesta = cliente.get("/gerencia/auditoria")
+        respuesta = cliente.get("/auditoria")
 
     assert respuesta.status_code == 200
     # "Más de 48 horas" = compras de anteayer para atrás; señas y ventana
@@ -9131,7 +9220,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
     ):
-        respuesta = cliente.get("/gerencia/auditoria")
+        respuesta = cliente.get("/auditoria")
 
     assert respuesta.status_code == 200
     assert "Todo en orden" in respuesta.text

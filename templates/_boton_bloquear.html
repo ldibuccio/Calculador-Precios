@@ -1,7 +1,9 @@
-{# Botón para cerrar la zona de control en el momento (borra la cookie de
+{# Botón para cerrar una zona con clave en el momento (borra la cookie de
    acceso), para no dejarla abierta en un celular suelto. Solo aparece si
-   hay clave configurada — sin clave no hay nada que bloquear. #}
-{% if clave_control_activa() %}
+   hay clave configurada — sin clave no hay nada que bloquear.
+   Por default es la zona de control del Puesto; una pantalla de otra zona
+   setea bloquear_action y bloquear_visible antes del include. #}
+{% if bloquear_visible | default(clave_control_activa()) %}
 <style>
   .fila-bloquear { display: flex; justify-content: flex-end; margin: 0 0 0.75rem; }
   .boton-bloquear {
@@ -16,7 +18,7 @@
   }
 </style>
 <div class="fila-bloquear">
-  <form method="post" action="/puesto/envases/bloquear">
+  <form method="post" action="{{ bloquear_action | default('/puesto/envases/bloquear') }}">
     <button type="submit" class="boton-bloquear">🔒 Bloquear</button>
   </form>
 </div>

@@ -185,6 +185,10 @@
   {% set barra_titulo = "Rentabilidad Real" %}
   {% include "_barra_navegacion.html" %}
 
+  {% set bloquear_visible = clave_gerencia_activa() %}
+  {% set bloquear_action = "/gerencia/bloquear" %}
+  {% include "_boton_bloquear.html" %}
+
   {% if error_fecha %}
   <div class="error">{{ error_fecha }}</div>
   {% endif %}

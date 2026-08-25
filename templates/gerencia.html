@@ -48,10 +48,12 @@
   {% set barra_titulo = "Gerencia" %}
   {% include "_barra_navegacion.html" %}
 
-  <div class="tarjeta">
-    <a class="boton" href="/gerencia/auditoria">Auditoría</a>
-  </div>
+  {% set bloquear_visible = clave_gerencia_activa() %}
+  {% set bloquear_action = "/gerencia/bloquear" %}
+  {% include "_boton_bloquear.html" %}
 
+  {# El manejo del dinero, con su clave. La Auditoría vive en su propio
+     sector (/auditoria), sin clave: es control operativo, no plata. #}
   <div class="tarjeta">
     <a class="boton" href="/gerencia/rentabilidad">Rentabilidad de Pedidos</a>
     <a class="boton" href="/gerencia/rentabilidad-real">Rentabilidad Real</a>

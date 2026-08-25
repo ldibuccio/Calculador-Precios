@@ -377,6 +377,60 @@ def _destino_control_seguro(volver: str) -> str:
     return volver if volver.startswith("/puesto/envases") else "/puesto/envases"
 
 
+# --- Clave de Gerencia: la zona del manejo del dinero (rentabilidades) ---
+# Clave PROPIA, aparte de la del control del Puesto: el que maneja los
+# vacíos del puesto no tiene por qué ver la rentabilidad. Mismo diseño
+# (cookie firmada por jornada, Bloquear, sin estado en server ni base).
+
+CLAVE_GERENCIA_ENV_VAR = "CLAVE_GERENCIA"
+COOKIE_ACCESO_GERENCIA = "acceso_gerencia"
+
+
+def _clave_gerencia() -> str | None:
+    """ÚNICA fuente de la clave de Gerencia — todo el resto del código pasa por acá.
+
+    Hoy sale de Railway (variable de entorno, una por empresa). Cuando
+    exista el módulo de Contraseñas en Sistema, el origen se cambia SOLO
+    en esta función (igual que _clave_control_puesto) y nada más se toca.
+    Se lee en cada request a propósito.
+
+    None = no hay clave configurada = no hay puerta (todo como siempre) —
+    así el deploy no traba nada hasta que la variable se cargue.
+    """
+    clave = os.environ.get(CLAVE_GERENCIA_ENV_VAR, "").strip()
+    return clave or None
+
+
+def _firma_acceso_gerencia(clave: str) -> str:
+    """La firma de la cookie de Gerencia (nunca la clave). Mensaje propio: una cookie del Puesto jamás valida acá."""
+    return hmac.new(clave.encode(), b"acceso-gerencia", hashlib.sha256).hexdigest()
+
+
+def _acceso_gerencia_valido(request: Request) -> bool:
+    clave = _clave_gerencia()
+    if clave is None:
+        return True
+    cookie = request.cookies.get(COOKIE_ACCESO_GERENCIA, "")
+    return hmac.compare_digest(cookie, _firma_acceso_gerencia(clave))
+
+
+def _destino_gerencia_seguro(volver: str) -> str:
+    """El destino post-clave solo puede ser una pantalla de Gerencia."""
+    return volver if volver.startswith("/gerencia") else "/gerencia"
+
+
+def _pantalla_clave_gerencia(request: Request, *, volver: str | None = None, error: str | None = None):
+    """La puerta de Gerencia: pide la clave y vuelve a la pantalla que se quería ver."""
+    if volver is None:
+        volver = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return templates.TemplateResponse(
+        request,
+        "clave_gerencia.html",
+        {"volver": _destino_gerencia_seguro(volver), "error": error},
+        status_code=401,
+    )
+
+
 def _pantalla_clave_control(request: Request, *, volver: str | None = None, error: str | None = None):
     """La puerta de la zona de control: pide la clave y vuelve a la pantalla que se quería ver."""
     if volver is None:
@@ -608,6 +662,15 @@ SECTORES = {
             "</svg>"
         ),
     },
+    "auditoria": {
+        "nombre": "Auditoría",
+        "url": "/auditoria",
+        "icono": (
+            '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">'
+            '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/>'
+            "</svg>"
+        ),
+    },
     "facturacion": {
         "nombre": "Facturación",
         "url": "/facturacion",
@@ -642,9 +705,10 @@ templates.env.globals["SECTORES"] = SECTORES
 templates.env.globals["ICONO_INICIO"] = _ICONO_INICIO
 templates.env.globals["NOMBRE_EMPRESA"] = NOMBRE_EMPRESA
 templates.env.globals["TIPO_RETIRO_DEFAULT"] = TIPO_RETIRO_DEFAULT
-# Callable a propósito (se evalúa en cada render, no al importar): el botón
-# Bloquear solo aparece si hay clave configurada.
+# Callables a propósito (se evalúan en cada render, no al importar): el
+# botón Bloquear solo aparece si la clave de esa zona está configurada.
 templates.env.globals["clave_control_activa"] = lambda: _clave_control_puesto() is not None
+templates.env.globals["clave_gerencia_activa"] = lambda: _clave_gerencia() is not None
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -6948,8 +7012,45 @@ def anular_reproceso_ruta(
 
 @app.get("/gerencia")
 def ver_gerencia(request: Request):
-    """Hub de Gerencia: por ahora solo Auditoría; acá se van colgando los tableros del dueño."""
+    """Hub de Gerencia: el manejo del dinero (las dos rentabilidades y lo que venga). TODA la zona pide la clave.
+
+    La Auditoría vive afuera, en su propio sector (/auditoria): es control
+    operativo, no plata — se mira sin clave.
+    """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
     return templates.TemplateResponse(request, "gerencia.html", {})
+
+
+@app.post("/gerencia/clave")
+def ingresar_clave_gerencia_ruta(request: Request, clave: str = Form(""), volver: str = Form("/gerencia")):
+    """Valida la clave de Gerencia y deja la cookie firmada: una vez por jornada, para toda la zona."""
+    destino = _destino_gerencia_seguro(volver)
+    clave_real = _clave_gerencia()
+    if clave_real is None:
+        # Sin clave configurada no hay puerta: nada que validar.
+        return RedirectResponse(url=destino, status_code=303)
+    if not hmac.compare_digest(clave.strip(), clave_real):
+        return _pantalla_clave_gerencia(request, volver=destino, error="Clave incorrecta.")
+
+    respuesta = RedirectResponse(url=destino, status_code=303)
+    respuesta.set_cookie(
+        COOKIE_ACCESO_GERENCIA,
+        _firma_acceso_gerencia(clave_real),
+        max_age=DURACION_ACCESO_CONTROL,
+        httponly=True,
+        samesite="lax",
+        path="/gerencia",
+    )
+    return respuesta
+
+
+@app.post("/gerencia/bloquear")
+def bloquear_gerencia_ruta(request: Request):
+    """Borra la cookie de acceso en el momento: para no dejar la rentabilidad abierta en un celular suelto."""
+    respuesta = RedirectResponse(url="/inicio", status_code=303)
+    respuesta.delete_cookie(COOKIE_ACCESO_GERENCIA, path="/gerencia")
+    return respuesta
 
 
 def _alertas_auditoria() -> list[dict]:
@@ -7110,8 +7211,19 @@ def _alertas_auditoria() -> list[dict]:
 
 
 @app.get("/gerencia/auditoria")
+def ver_auditoria_url_vieja():
+    """La URL vieja (cuando Auditoría vivía en Gerencia) sigue llegando: redirige a su sector propio."""
+    return RedirectResponse(url="/auditoria", status_code=301)
+
+
+@app.get("/auditoria")
 def ver_auditoria(request: Request):
-    """Tablero de cosas que están mal, de un pantallazo: solo aparecen los controles con casos."""
+    """Tablero de cosas que están mal, de un pantallazo: solo aparecen los controles con casos.
+
+    Sector PROPIO, fuera de Gerencia y SIN clave: es control operativo
+    (qué está trabado o mal cargado), no manejo de plata — en Gerencia
+    quedan solo las rentabilidades, detrás de su clave.
+    """
     try:
         alertas = _alertas_auditoria()
     except Exception as error_db:
@@ -7120,7 +7232,7 @@ def ver_auditoria(request: Request):
     con_casos = [a for a in alertas if a["casos"] > 0]
     return templates.TemplateResponse(
         request,
-        "gerencia_auditoria.html",
+        "auditoria.html",
         {"alertas": con_casos, "controles_corridos": len(alertas)},
     )
 
@@ -7202,6 +7314,8 @@ def ver_rentabilidad_pedidos(
     Los artículos que no se pueden calcular van APARTE con su motivo —
     jamás suman como cero en silencio.
     """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
     cliente_valor, desde, hasta, articulo_valor, grupo_valor, error_fecha = _leer_filtros_rentabilidad(
         cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
     )
@@ -7261,9 +7375,12 @@ def _resultado_rentabilidad_para_exportar(cliente_id, fecha_desde, fecha_hasta, 
 
 @app.get("/gerencia/rentabilidad/exportar-pdf")
 def exportar_rentabilidad_pdf(
+    request: Request,
     cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = ""
 ):
-    """Genera Rentabilidad de Pedidos (mismos filtros que la pantalla) en PDF — sin tope."""
+    """Genera Rentabilidad de Pedidos (mismos filtros que la pantalla) en PDF — sin tope. Zona con clave."""
+    if not _acceso_gerencia_valido(request):
+        return RedirectResponse(url="/gerencia/rentabilidad", status_code=303)
     desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_para_exportar(
         cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
     )
@@ -7278,9 +7395,12 @@ def exportar_rentabilidad_pdf(
 
 @app.get("/gerencia/rentabilidad/exportar-excel")
 def exportar_rentabilidad_excel(
+    request: Request,
     cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = ""
 ):
-    """Genera Rentabilidad de Pedidos (mismos filtros que la pantalla) en Excel — sin tope."""
+    """Genera Rentabilidad de Pedidos (mismos filtros que la pantalla) en Excel — sin tope. Zona con clave."""
+    if not _acceso_gerencia_valido(request):
+        return RedirectResponse(url="/gerencia/rentabilidad", status_code=303)
     desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_para_exportar(
         cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
     )
@@ -7370,6 +7490,8 @@ def ver_rentabilidad_real(
     PROTAGONISTA por pedido del dueño: motivo por motivo, con bultos y
     artículos — su hoja de ruta mientras la real se afina.
     """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
     cliente_valor, desde, hasta, articulo_valor, grupo_valor, error_fecha = _leer_filtros_rentabilidad(
         cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
     )
@@ -7439,9 +7561,12 @@ def _resultado_rentabilidad_real_para_exportar(cliente_id, fecha_desde, fecha_ha
 
 @app.get("/gerencia/rentabilidad-real/exportar-pdf")
 def exportar_rentabilidad_real_pdf(
+    request: Request,
     cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = "",
 ):
-    """Genera la Rentabilidad Real (mismos filtros que la pantalla) en PDF — no se guarda en ningún lado."""
+    """Genera la Rentabilidad Real (mismos filtros que la pantalla) en PDF — no se guarda en ningún lado. Zona con clave."""
+    if not _acceso_gerencia_valido(request):
+        return RedirectResponse(url="/gerencia/rentabilidad-real", status_code=303)
     desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_real_para_exportar(
         cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
     )
@@ -7456,9 +7581,12 @@ def exportar_rentabilidad_real_pdf(
 
 @app.get("/gerencia/rentabilidad-real/exportar-excel")
 def exportar_rentabilidad_real_excel(
+    request: Request,
     cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = "", articulo_id: str = "", grupo: str = "",
 ):
-    """Genera la Rentabilidad Real (mismos filtros que la pantalla) en Excel — no se guarda en ningún lado."""
+    """Genera la Rentabilidad Real (mismos filtros que la pantalla) en Excel — no se guarda en ningún lado. Zona con clave."""
+    if not _acceso_gerencia_valido(request):
+        return RedirectResponse(url="/gerencia/rentabilidad-real", status_code=303)
     desde, hasta, filtros_texto, resultado = _resultado_rentabilidad_real_para_exportar(
         cliente_id, fecha_desde, fecha_hasta, articulo_id, grupo
     )
