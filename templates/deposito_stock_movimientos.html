@@ -78,6 +78,7 @@
   .pill-ajuste { background: #facc15; color: #713f12; }
   .pill-merma { background: #fecaca; color: #991b1b; }
   .pill-reingreso_rechazo { background: #fed7aa; color: #9a3412; }
+  .pill-remito_segunda { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
   .boton-anular {
     padding: 0.6rem 0.9rem;
     background: #fff;
@@ -124,12 +125,12 @@
           {% if m.anulado_el %}<span class="marca-anulado">ANULADO</span>{% endif %}
           <span class="extra">
             {% if m.cliente_nombre %}Devolvió {{ m.cliente_nombre }} · {% endif %}<span class="motivo">{{ m.motivo }}</span>
-            · el sistema decía {{ m.stock_sistema|numero }}
+            {%- if m.stock_sistema is not none %} · el sistema decía {{ m.stock_sistema|numero }}{% endif %}
           </span>
         </div>
         <div class="cantidad-mov">{% if m.cantidad > 0 %}+{% endif %}{{ m.cantidad|numero }}</div>
         {% if not m.anulado_el %}
-        <form method="post" action="/deposito/stock/movimientos/{{ m.id }}/anular"
+        <form method="post" action="{{ m.url_anular }}"
               onsubmit="return confirm('¿Anular este movimiento de {{ m.articulo_nombre }}? Queda registrado como anulado y el stock se reacomoda solo.');">
           <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
           <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
@@ -141,7 +142,7 @@
     {% else %}
     <p class="vacio">Sin movimientos en este rango.</p>
     {% endif %}
-    <p class="ayuda">Solo los movimientos cargados a mano (ajustes, mermas y reingresos) — las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>: nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.</p>
+    <p class="ayuda">Solo los movimientos cargados a mano (ajustes, mermas, reingresos y remitos de segunda) — las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>: nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.</p>
   </div>
 </body>
 </html>

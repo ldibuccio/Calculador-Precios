@@ -9063,6 +9063,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 3, "mas_viejo": date(2026, 8, 2)}) as mock_recepciones,
         patch("app.main.contar_stock_vacios_negativos", return_value=1),
         patch("app.main.contar_stock_deposito_negativo", return_value=2),
+        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
         patch("app.main.contar_articulos_comprados_incotizables", return_value=4) as mock_incotizables,
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
@@ -9088,6 +9089,8 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Stock de vacíos negativo" in respuesta.text
     assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
     assert 'href="/deposito/stock/sistema"' in respuesta.text
+    assert "Guías R con costo incompleto" in respuesta.text
+    assert 'href="/deposito/stock/guias-r"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
     assert "Pedidos con renglones sin identificar" in respuesta.text
@@ -9118,6 +9121,7 @@ def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_stock_vacios_negativos", return_value=0),
         patch("app.main.contar_stock_deposito_negativo", return_value=0),
+        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
         patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
@@ -13939,9 +13943,11 @@ def test_ver_pedido_muestra_los_mails_trabados_del_cliente_con_revisar():
 
 FILAS_STOCK_DE_PRUEBA = [
     {"articulo_id": 1, "nombre": "Banana", "entradas": 40.0, "salidas": 15.0,
-     "reingresos": 2.0, "ajustes": -3.0, "stock": 24.0},
+     "reingresos": 2.0, "ajustes": -3.0, "reproceso_primera": 0.0,
+     "reproceso_tomados": 0.0, "segunda": 0.0, "stock": 24.0},
     {"articulo_id": 2, "nombre": "Anco", "entradas": 0.0, "salidas": 5.0,
-     "reingresos": 0.0, "ajustes": 0.0, "stock": -5.0},
+     "reingresos": 0.0, "ajustes": 0.0, "reproceso_primera": 0.0,
+     "reproceso_tomados": 0.0, "segunda": 0.0, "stock": -5.0},
 ]
 
 
@@ -14247,6 +14253,7 @@ def test_movimientos_stock_muestra_los_tipos_con_pill_y_la_foto_del_sistema():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_movimientos_stock_por_rango",
               return_value=[dict(m) for m in MOVIMIENTOS_STOCK_DE_PRUEBA]) as mock_listar,
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
     ):
         respuesta = cliente.get("/deposito/stock/movimientos")
 
@@ -14556,3 +14563,135 @@ def test_hub_stock_tiene_reproceso_y_guias_r():
     assert respuesta.status_code == 200
     assert 'href="/deposito/stock/reproceso"' in respuesta.text
     assert 'href="/deposito/stock/guias-r"' in respuesta.text
+
+
+# --- Reproceso (tanda 2): segunda, remito al Puesto, completar costo ---
+
+
+def test_stock_sistema_muestra_la_segunda_como_pool_aparte():
+    filas = [dict(FILAS_STOCK_DE_PRUEBA[0], segunda=3.0)]
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=filas),
+        patch("app.main.total_reingresos_rechazo", return_value=0.0),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema")
+
+    assert respuesta.status_code == 200
+    assert "3 bultos de segunda en el depósito" in respuesta.text
+    assert '<span class="chip-segunda">3 de segunda</span>' in respuesta.text
+
+
+def test_remito_segunda_lista_solo_articulos_con_segunda_y_guarda():
+    filas = [
+        dict(FILAS_STOCK_DE_PRUEBA[0], segunda=3.0),
+        dict(FILAS_STOCK_DE_PRUEBA[1], segunda=0.0),
+    ]
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=filas),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/remito-segunda")
+
+    assert respuesta.status_code == 200
+    assert "Banana" in respuesta.text
+    assert "Anco" not in respuesta.text
+
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_remito_segunda") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/remito-segunda",
+            data={"articulo_id": "1", "cantidad": "2", "fecha": "2026-08-24"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, 2.0, date(2026, 8, 24))
+    destino = respuesta.headers["location"]
+    assert "2+bultos+de+segunda+de+Banana" in destino
+    assert "al+Puesto" in destino
+
+
+def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
+    remitos = [{"id": 7, "bultos": 2.0, "fecha_operacion": date(2026, 8, 25),
+                "creado_en": datetime(2026, 8, 25, 14, 0), "anulado_el": None,
+                "articulo_nombre": "Banana"}]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=remitos),
+    ):
+        respuesta = cliente.get("/deposito/stock/movimientos")
+
+    assert respuesta.status_code == 200
+    assert "Remito 2ª" in respuesta.text
+    assert "Segunda remitida al Puesto" in respuesta.text
+    assert 'action="/deposito/stock/movimientos/remitos/7/anular"' in respuesta.text
+    # Sale del pool: cantidad negativa; y no tiene foto del sistema.
+    assert "-2" in respuesta.text
+    assert "el sistema decía" not in respuesta.text
+
+
+def test_anular_remito_segunda_vuelve_al_rango():
+    with patch("app.main.anular_remito_segunda") as mock_anular:
+        respuesta = cliente.post(
+            "/deposito/stock/movimientos/remitos/7/anular",
+            data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_anular.assert_called_once_with(7)
+    assert "fecha_desde=2026-08-18" in respuesta.headers["location"]
+
+
+def test_completar_costo_avisa_si_completo_o_que_sigue_incompleto():
+    with patch("app.main.completar_costo_reproceso", return_value={"completado": True, "sin_precio": 0}) as mock_completar:
+        respuesta = cliente.post(
+            "/deposito/stock/guias-r/12/completar-costo",
+            data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_completar.assert_called_once_with(12)
+    assert "completado" in respuesta.headers["location"]
+
+    with patch("app.main.completar_costo_reproceso", return_value={"completado": False, "sin_precio": 2}):
+        respuesta = cliente.post(
+            "/deposito/stock/guias-r/13/completar-costo",
+            data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
+            follow_redirects=False,
+        )
+    assert "sigue+con+costo+incompleto" in respuesta.headers["location"]
+    assert "2+consumos+sin+precio" in respuesta.headers["location"]
+
+
+def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    assert respuesta.status_code == 200
+    # La R12 tiene costo completo y la R13 está ANULADA: ninguna lo lleva.
+    assert "Completar costo" not in respuesta.text
+
+    con_incompleta = [dict(GUIAS_R_DE_PRUEBA[1], anulado_el=None)]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    assert respuesta.text.count("Completar costo") == 1
+    assert 'action="/deposito/stock/guias-r/13/completar-costo"' in respuesta.text
+
+
+def test_hub_stock_tiene_remitir_segunda():
+    respuesta = cliente.get("/deposito/stock")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito/stock/remito-segunda"' in respuesta.text

@@ -3094,8 +3094,9 @@ from app.db import (  # noqa: E402
 def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     conexion, cursor = _conexion_falsa()
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
-                          ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",)]
-    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10)]
+                          ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
+                          ("segunda_producida",), ("segunda_remitida",)]
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_deposito_por_articulo()
@@ -3117,6 +3118,9 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     assert "SUM(bultos_tomados)" in consulta
     # El stock es la cuenta, hecha acá: nada de columnas cacheadas.
     assert filas[0]["stock"] == 40 + 2 + (-3) + 6 - 10 - 15
+    # La segunda es un pool APARTE: producida − remitida, nunca en el stock.
+    assert filas[0]["segunda"] == 5 - 2
+    assert "SUM(bultos_segunda)" in consulta
 
 
 def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resultante():
@@ -3406,3 +3410,62 @@ def test_la_cotizacion_no_lee_el_costo_del_reproceso():
     fuente = pathlib.Path("app/costeo.py").read_text()
     assert "reproceso" not in fuente.lower()
     assert "remitos_segunda" not in fuente.lower()
+
+
+def test_completar_costo_solo_rellena_los_null_y_recalcula_si_quedo_completo():
+    from app.db import completar_costo_reproceso
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0, 16500.0)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = completar_costo_reproceso(12)
+
+    llamadas = [c.args[0] for c in cursor.execute.call_args_list]
+    # SOLO los consumos sin costo, y solo con compras que YA tienen precio:
+    # jamás pisa un costo congelado.
+    assert "rc.costo_por_bulto IS NULL AND c.importe IS NOT NULL" in llamadas[0]
+    # Quedó completo: recalcula y graba el total y el por-caja (guardado
+    # con WHERE costo_total IS NULL: tampoco pisa una guía ya cerrada).
+    assert "WHERE id = %s AND costo_total IS NULL" in llamadas[2]
+    assert resultado == {"completado": True, "sin_precio": 0}
+    conexion.commit.assert_called_once()
+
+
+def test_completar_costo_sigue_incompleto_si_hay_consumos_sin_precio_posible():
+    from app.db import completar_costo_reproceso
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(2, 5000.0)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = completar_costo_reproceso(13)
+
+    # Con consumos sin precio posible (stock inicial, reingreso, sin lote)
+    # NO se graba ningún total: mejor incompleto visible que un invento.
+    assert len(cursor.execute.call_args_list) == 2
+    assert resultado == {"completado": False, "sin_precio": 2}
+
+
+def test_contar_reprocesos_costo_incompleto_solo_vigentes():
+    from app.db import contar_reprocesos_costo_incompleto
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 8, 25))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_reprocesos_costo_incompleto()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "anulado_el IS NULL AND costo_total IS NULL" in consulta
+    assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 25)}
+
+
+def test_anular_remito_segunda_es_baja_logica():
+    from app.db import anular_remito_segunda
+
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_remito_segunda(7)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "UPDATE remitos_segunda SET anulado_el = now()" in consulta
+    assert "anulado_el IS NULL" in consulta

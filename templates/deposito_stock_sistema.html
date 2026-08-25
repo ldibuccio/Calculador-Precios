@@ -56,6 +56,26 @@
   .fila-stock .nombre { font-size: 1.05rem; font-weight: 700; }
   .fila-stock .detalle { display: block; color: #888; font-size: 0.8rem; font-weight: 400; margin-top: 0.1rem; }
   .fila-stock .stock { font-size: 1.2rem; font-weight: 800; white-space: nowrap; color: #1d4ed8; }
+  .chip-segunda {
+    display: inline-block;
+    background: #ffedd5;
+    border: 1px solid #fdba74;
+    color: #c2410c;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .tarjeta-segunda {
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    color: #c2410c;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .tarjeta-segunda .numero { font-size: 1.25rem; font-weight: 800; }
   .fila-stock .stock .unidad { font-size: 0.8rem; font-weight: 600; color: #888; }
   .fila-stock.negativa .stock { color: #dc2626; }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
@@ -79,13 +99,20 @@
     Mercadería que el cliente devolvió: ya se costeó y ya se vendió — casi siempre es plata perdida. Va aparte del stock normal.
   </div>
 
+  {# La SEGUNDA es un pool aparte: no es vendible por pedidos, se remite
+     al Puesto. No infla el stock normal. #}
+  <div class="tarjeta-segunda">
+    <div class="numero">{{ segunda_total|numero }} bultos de segunda en el depósito</div>
+    Salió de los reprocesos y espera el remito al Puesto. Va aparte del stock normal (vale cero: todo el costo fue a la primera).
+  </div>
+
   <div class="tarjeta">
     {% if filas %}
       {% for f in filas %}
       <a class="fila-stock {% if f.stock < 0 %}negativa{% endif %}" href="/deposito/stock/sistema/{{ f.articulo_id }}">
         <div>
           <span class="nombre">{{ f.nombre }}</span>
-          <span class="detalle">{{ f.entradas|numero }} entraron · {{ f.salidas|numero }} salieron{% if f.reingresos %} · {{ f.reingresos|numero }} reingresados{% endif %}{% if f.ajustes %} · {{ f.ajustes|numero }} ajustados{% endif %}</span>
+          <span class="detalle">{{ f.entradas|numero }} entraron · {{ f.salidas|numero }} salieron{% if f.reingresos %} · {{ f.reingresos|numero }} reingresados{% endif %}{% if f.ajustes %} · {{ f.ajustes|numero }} ajustados{% endif %}{% if f.reproceso_tomados or f.reproceso_primera %} · reproceso −{{ f.reproceso_tomados|numero }} +{{ f.reproceso_primera|numero }}{% endif %}{% if f.segunda %} <span class="chip-segunda">{{ f.segunda|numero }} de segunda</span>{% endif %}</span>
         </div>
         <div class="stock">{{ f.stock|numero }} <span class="unidad">bultos</span></div>
       </a>

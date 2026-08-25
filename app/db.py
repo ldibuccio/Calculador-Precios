@@ -5004,19 +5004,30 @@ def stock_deposito_por_articulo() -> list[dict]:
             cursor.execute(
                 _sql_sumas_stock(por_articulo=False)
                 + """
+                , segunda AS (
+                    SELECT articulo_id, SUM(bultos_segunda) AS total
+                    FROM reprocesos WHERE anulado_el IS NULL GROUP BY articulo_id
+                ), remitida AS (
+                    SELECT articulo_id, SUM(bultos) AS total
+                    FROM remitos_segunda WHERE anulado_el IS NULL GROUP BY articulo_id
+                )
                 SELECT a.id AS articulo_id, a.nombre,
                        COALESCE(e.total, 0) AS entradas,
                        COALESCE(s.total, 0) AS salidas,
                        COALESCE(r.total, 0) AS reingresos,
                        COALESCE(aj.total, 0) AS ajustes,
                        COALESCE(rp.entradas, 0) AS reproceso_primera,
-                       COALESCE(rp.salidas, 0) AS reproceso_tomados
+                       COALESCE(rp.salidas, 0) AS reproceso_tomados,
+                       COALESCE(sg.total, 0) AS segunda_producida,
+                       COALESCE(rm.total, 0) AS segunda_remitida
                 FROM articulos a
                 LEFT JOIN entradas e ON e.articulo_id = a.id
                 LEFT JOIN salidas s ON s.articulo_id = a.id
                 LEFT JOIN reingresos r ON r.articulo_id = a.id
                 LEFT JOIN ajustes aj ON aj.articulo_id = a.id
                 LEFT JOIN reproc rp ON rp.articulo_id = a.id
+                LEFT JOIN segunda sg ON sg.articulo_id = a.id
+                LEFT JOIN remitida rm ON rm.articulo_id = a.id
                 WHERE e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
                    OR rp.articulo_id IS NOT NULL
@@ -5030,6 +5041,9 @@ def stock_deposito_por_articulo() -> list[dict]:
                 float(fila["entradas"]) + float(fila["reingresos"]) + float(fila["ajustes"])
                 + float(fila["reproceso_primera"]) - float(fila["reproceso_tomados"]) - float(fila["salidas"])
             )
+            # La SEGUNDA es un pool aparte: no es vendible por pedidos y no
+            # infla el stock normal — lo que se produjo menos lo remitido.
+            fila["segunda"] = float(fila["segunda_producida"]) - float(fila["segunda_remitida"])
         return filas
     finally:
         conexion.close()
@@ -5499,5 +5513,136 @@ def anular_reproceso(reproceso_id: int) -> None:
                 (reproceso_id,),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def crear_remito_segunda(articulo_id: int, bultos: float, fecha_operacion) -> None:
+    """Remito de segunda al Puesto (destino fijo): sale del pool de segunda y deja de ser problema del depósito.
+
+    A propósito no devuelve nada: la pantalla es de operario y el pool no
+    se le muestra. El recupero económico va aparte, más adelante.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO remitos_segunda (articulo_id, bultos, fecha_operacion) VALUES (%s, %s, %s)",
+                (articulo_id, bultos, fecha_operacion),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_remitos_segunda_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+    """Los remitos de segunda del rango (por fecha_operacion), anulados incluidos y marcados — para Movimientos."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.id, r.bultos, r.fecha_operacion, r.creado_en, r.anulado_el,
+                       a.nombre AS articulo_nombre
+                FROM remitos_segunda r
+                JOIN articulos a ON a.id = r.articulo_id
+                WHERE r.fecha_operacion >= %s AND r.fecha_operacion <= %s
+                ORDER BY r.fecha_operacion DESC, r.creado_en DESC
+                """,
+                (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def anular_remito_segunda(remito_id: int) -> None:
+    """Anula un remito de segunda (baja lógica): la segunda vuelve al pool sola."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE remitos_segunda SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (remito_id,),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def completar_costo_reproceso(reproceso_id: int) -> dict:
+    """Rellena los costos que faltaban en una guía R con los precios ya cargados — SOLO los NULL, jamás pisa.
+
+    El caso real: se reprocesó a la tarde consumiendo la compra de la
+    mañana, que todavía no tenía precio. Cuando el precio se carga, este
+    botón completa los consumos 'compra' sin costo con el importe actual
+    de esa compra. Si con eso TODOS los consumos quedan con costo, se
+    calculan y graban costo_total y costo_por_bulto_primera (todo a la
+    primera). Los consumos de ajuste/reingreso/sin_lote no tienen precio
+    posible: si los hay, la guía sigue incompleta y se dice.
+
+    Devuelve {"completado": bool, "sin_precio": cuántos consumos siguen
+    sin costo}.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE reprocesos_consumos rc
+                SET costo_por_bulto = c.importe
+                FROM compras c
+                WHERE c.id = rc.compra_id AND rc.reproceso_id = %s
+                  AND rc.costo_por_bulto IS NULL AND c.importe IS NOT NULL
+                """,
+                (reproceso_id,),
+            )
+            cursor.execute(
+                """
+                SELECT COUNT(*) FILTER (WHERE costo_por_bulto IS NULL),
+                       COALESCE(SUM(bultos * costo_por_bulto), 0)
+                FROM reprocesos_consumos WHERE reproceso_id = %s
+                """,
+                (reproceso_id,),
+            )
+            sin_precio, costo_total = cursor.fetchone()
+            completado = int(sin_precio) == 0
+            if completado:
+                cursor.execute(
+                    """
+                    UPDATE reprocesos
+                    SET costo_total = %s,
+                        costo_por_bulto_primera = CASE WHEN bultos_primera > 0
+                                                       THEN round(%s / bultos_primera, 2) END
+                    WHERE id = %s AND costo_total IS NULL
+                    """,
+                    (round(float(costo_total), 2), round(float(costo_total), 2), reproceso_id),
+                )
+        conexion.commit()
+        return {"completado": completado, "sin_precio": int(sin_precio)}
+    finally:
+        conexion.close()
+
+
+def contar_reprocesos_costo_incompleto() -> dict:
+    """Auditoría: guías R vigentes con el costo sin cerrar (algún lote sin precio), y la más vieja.
+
+    Mientras haya una, la rentabilidad real de ese reproceso no se puede
+    calcular: o falta cargar el precio de una compra (se arregla con
+    "Completar costo"), o consumió stock inicial/reingreso/sin lote (no
+    hay precio posible y hay que saberlo).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos
+                WHERE anulado_el IS NULL AND costo_total IS NULL
+                """
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
     finally:
         conexion.close()

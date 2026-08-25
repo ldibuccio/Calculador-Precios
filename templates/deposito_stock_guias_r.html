@@ -20,6 +20,26 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .boton-completar {
+    margin-top: 0.6rem;
+    margin-right: 0.5rem;
+    padding: 0.6rem 0.9rem;
+    background: #fff;
+    color: #b45309;
+    border: 1px solid #d97706;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
   form.filtros label {
     display: block;
     font-size: 0.85rem;
@@ -105,6 +125,10 @@
   {% set barra_titulo = "Guías R" %}
   {% include "_barra_navegacion.html" %}
 
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
   <div class="tarjeta">
     <form class="filtros" method="get" action="/deposito/stock/guias-r">
       <div class="fila-fechas">
@@ -149,8 +173,17 @@
       </div>
       {% endfor %}
     </div>
+    {% if not g.anulado_el and g.costo_total is none %}
+    {# Rellena SOLO los costos que faltaban con precios ya cargados —
+       jamás pisa un costo congelado. #}
+    <form method="post" action="/deposito/stock/guias-r/{{ g.id }}/completar-costo" style="display: inline;">
+      <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+      <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <button type="submit" class="boton-completar">Completar costo</button>
+    </form>
+    {% endif %}
     {% if not g.anulado_el %}
-    <form method="post" action="/deposito/stock/guias-r/{{ g.id }}/anular"
+    <form method="post" action="/deposito/stock/guias-r/{{ g.id }}/anular" style="display: inline;"
           onsubmit="return confirm('¿Anular la guía R{{ g.id }}? Lo tomado vuelve a sus lotes y la primera sale del stock. Queda registrada como anulada.');">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">

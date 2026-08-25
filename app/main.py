@@ -72,11 +72,15 @@ from app.db import (
     crear_cliente,
     crear_compra,
     anular_movimiento_stock,
+    anular_remito_segunda,
     anular_reproceso,
+    completar_costo_reproceso,
+    contar_reprocesos_costo_incompleto,
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
     crear_pedido,
+    crear_remito_segunda,
     crear_reproceso,
     crear_ajuste_vacios,
     crear_compras_de_comanda,
@@ -98,6 +102,7 @@ from app.db import (
     entradas_y_salidas_stock_articulo,
     listar_conteos_stock_de_fecha,
     listar_movimientos_stock_por_rango,
+    listar_remitos_segunda_por_rango,
     listar_reprocesos_por_rango,
     listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
@@ -6003,6 +6008,7 @@ def ver_stock_sistema_deposito(request: Request):
             "articulos_negativos": len(negativos),
             "bultos_sin_lote": -sum(f["stock"] for f in negativos),
             "reingresos_total": reingresos_total,
+            "segunda_total": sum(f.get("segunda", 0) for f in filas),
         },
     )
 
@@ -6356,11 +6362,28 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
     desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
     try:
         movimientos = listar_movimientos_stock_por_rango(desde, hasta)
+        remitos = listar_remitos_segunda_por_rango(desde, hasta)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     for m in movimientos:
         m["etiqueta_tipo"] = ETIQUETAS_MOVIMIENTO_STOCK.get(m["tipo"], m["tipo"])
+        m["url_anular"] = f"/deposito/stock/movimientos/{m['id']}/anular"
+    # Los remitos de segunda entran al mismo listado, con su propia pill y
+    # su propio anular: un solo lugar de control para todo lo cargado a mano.
+    for r in remitos:
+        r.update(
+            tipo="remito_segunda",
+            etiqueta_tipo="Remito 2ª",
+            cantidad=-float(r["bultos"]),
+            motivo="Segunda remitida al Puesto",
+            cliente_nombre=None,
+            stock_sistema=None,
+            url_anular=f"/deposito/stock/movimientos/remitos/{r['id']}/anular",
+        )
+    movimientos = sorted(
+        movimientos + remitos, key=lambda m: (m["fecha_operacion"], m["creado_en"]), reverse=True
+    )
     return templates.TemplateResponse(
         request,
         "deposito_stock_movimientos.html",
@@ -6382,6 +6405,23 @@ def anular_movimiento_stock_ruta(
         anular_movimiento_stock(movimiento_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
+
+    return RedirectResponse(
+        url=f"/deposito/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        status_code=303,
+    )
+
+
+@app.post("/deposito/stock/movimientos/remitos/{remito_id}/anular")
+def anular_remito_segunda_ruta(
+    remito_id: int,
+    fecha_desde: str = Form(""),
+    fecha_hasta: str = Form(""),
+):
+    try:
+        anular_remito_segunda(remito_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el remito: {error_db}") from error_db
 
     return RedirectResponse(
         url=f"/deposito/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
@@ -6635,7 +6675,7 @@ def cargar_reproceso_ruta(
 
 
 @app.get("/deposito/stock/guias-r")
-def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None):
+def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None, aviso: str | None = None):
     """Guías R (control): la trazabilidad hacia atrás y el costo del reproceso. Acá SÍ se ven costos.
 
     Este costo NUNCA alimenta la cotización (que solo lee compras): se
@@ -6651,7 +6691,116 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     return templates.TemplateResponse(
         request,
         "deposito_stock_guias_r.html",
-        {"guias": guias, "fecha_desde": desde.isoformat(), "fecha_hasta": hasta.isoformat()},
+        {"guias": guias, "fecha_desde": desde.isoformat(), "fecha_hasta": hasta.isoformat(), "aviso": aviso},
+    )
+
+
+def _renderizar_pantalla_remito_segunda(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+    try:
+        # Solo artículos con segunda disponible, POR NOMBRE, sin números:
+        # mismo criterio que el reproceso — el pool no viaja a la pantalla.
+        con_segunda = [
+            {"id": f["articulo_id"], "nombre": f["nombre"]}
+            for f in stock_deposito_por_articulo()
+            if f["segunda"] > 0
+        ]
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "articulos": con_segunda,
+        "precarga": precarga or {},
+        "hoy": _hoy_argentina().isoformat(),
+        "aviso": aviso,
+        "error": error,
+    }
+    return templates.TemplateResponse(request, "deposito_stock_remito_segunda.html", contexto, status_code=status_code)
+
+
+@app.get("/deposito/stock/remito-segunda")
+def ver_remito_segunda(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_remito_segunda(request, aviso=aviso)
+
+
+@app.post("/deposito/stock/remito-segunda")
+def cargar_remito_segunda_ruta(
+    request: Request,
+    articulo_id: str = Form(""),
+    cantidad: str = Form(""),
+    fecha: str = Form(""),
+):
+    """La segunda se manda al Puesto (destino fijo): sale del pool y deja de ser problema del depósito.
+
+    Pantalla de OPERARIO: el aviso repite solo lo cargado. No traba si
+    remite más de lo que el pool dice — el piso es su verdad; el pool en
+    negativo se ve en Stock del Sistema.
+    """
+    error, cantidad_valor = _validar_bultos_positivos(cantidad, "remitidos")
+
+    fecha_valor = None
+    if not error:
+        hoy = _hoy_argentina()
+        if not fecha.strip():
+            fecha_valor = hoy
+        else:
+            try:
+                fecha_valor = date.fromisoformat(fecha.strip())
+            except ValueError:
+                error = "La fecha del remito no es válida."
+            else:
+                if fecha_valor > hoy:
+                    error = "La fecha del remito no puede ser futura."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        precarga = {"articulo_id": articulo_id, "cantidad": cantidad, "fecha": fecha}
+        return _renderizar_pantalla_remito_segunda(request, precarga=precarga, error=error, status_code=400)
+
+    try:
+        crear_remito_segunda(articulo["id"], cantidad_valor, fecha_valor)
+    except Exception as error_db:
+        return _renderizar_pantalla_remito_segunda(
+            request, error=f"No se pudo guardar el remito: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Remito guardado: {_formatear_numero(cantidad_valor)} bultos de segunda de {articulo['nombre']} "
+        f"al Puesto ({fecha_valor.strftime('%d/%m')})."
+    )
+    return RedirectResponse(url=f"/deposito/stock/remito-segunda?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.post("/deposito/stock/guias-r/{reproceso_id}/completar-costo")
+def completar_costo_reproceso_ruta(
+    reproceso_id: int,
+    fecha_desde: str = Form(""),
+    fecha_hasta: str = Form(""),
+):
+    """Rellena SOLO los costos que faltaban (compras que ya tienen precio) — jamás pisa un costo congelado."""
+    try:
+        resultado = completar_costo_reproceso(reproceso_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo completar el costo: {error_db}") from error_db
+
+    if resultado["completado"]:
+        aviso = f"Costo de la guía R{reproceso_id} completado con los precios ya cargados."
+    else:
+        aviso = (
+            f"La guía R{reproceso_id} sigue con costo incompleto: {resultado['sin_precio']} "
+            f"{'consumo' if resultado['sin_precio'] == 1 else 'consumos'} sin precio posible "
+            f"(compra sin precio aún, stock inicial, reingreso o sin lote)."
+        )
+    return RedirectResponse(
+        url=f"/deposito/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta, 'aviso': aviso})}",
+        status_code=303,
     )
 
 
@@ -6700,6 +6849,7 @@ def _alertas_auditoria() -> list[dict]:
     recepciones = contar_recepciones_pendientes_viejas(limite)
     negativos = contar_stock_vacios_negativos()
     negativos_deposito = contar_stock_deposito_negativo()
+    guias_costo_incompleto = contar_reprocesos_costo_incompleto()
     incotizables = contar_articulos_comprados_incotizables(ventana_comprados, hoy)
     senas = contar_senas_pendientes_viejas(limite_senas)
     pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
@@ -6752,6 +6902,16 @@ def _alertas_auditoria() -> list[dict]:
             "mas_viejo": None,
             "url": "/deposito/stock/sistema",
             "texto_link": "Ver en Stock del Sistema del Depósito",
+        },
+        {
+            # Sin costo cerrado no hay rentabilidad real de ese reproceso:
+            # o falta el precio de una compra ("Completar costo" lo
+            # arregla), o consumió stock inicial/reingreso/sin lote.
+            "titulo": "Guías R con costo incompleto",
+            "casos": guias_costo_incompleto["casos"],
+            "mas_viejo": guias_costo_incompleto["mas_viejo"],
+            "url": "/deposito/stock/guias-r",
+            "texto_link": "Ver en Guías R",
         },
         {
             "titulo": "Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",
