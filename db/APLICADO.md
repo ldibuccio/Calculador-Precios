@@ -59,12 +59,12 @@ bases estén marcadas.
 | `agregar_kilos_y_cierre_armado.sql` | ✅ 2026-08-24 (verificado: 3 columnas creadas) | ✅ 2026-08-24 (verificado: 3 columnas creadas) |
 | `agregar_stock_deposito.sql` | ✅ 2026-08-25 (verificado: 2 tablas y 3 índices) | ✅ 2026-08-25 (verificado: 2 tablas y 3 índices) |
 | `agregar_reprocesos.sql` | ✅ 2026-08-25 (verificado: 3 tablas creadas) | ✅ 2026-08-25 (verificado: 3 tablas creadas) |
+| `drop_foto_ruta_compras.sql` | ✅ 2026-08-25 (verificado: fotos en fotos_guia intactas y visibles) | ✅ 2026-08-25 (verificado: fotos en fotos_guia intactas y visibles) |
 
 ## Deuda pendiente de limpieza
 
-| Qué | Por qué sigue ahí | Cuándo se resuelve |
-|---|---|---|
-| Columna `compras.foto_ruta` (MUERTA tras `agregar_fotos_guia.sql`) | Las fotos pasaron a `fotos_guia`. El código ya no la nombra en ningún lado (INSERTs y limpieza saneados en este commit). | `drop_foto_ruta_compras.sql` ya creada. ORDEN: correr el DROP recién DESPUÉS del deploy de este commit, con la verificación de lectura previa (0 fotos sin migrar). Al confirmarse en las dos bases, esta fila se borra y se agrega la fila ✅✅ de la migración. |
+Sin deudas pendientes. (La histórica `compras.foto_ruta` se saldó el
+2026-08-25 con `drop_foto_ruta_compras.sql`, corrida en las dos bases.)
 
 ## Pasos manuales que NO son SQL (por base)
 
