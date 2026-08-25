@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan de Cuentas</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.25rem 0 0.75rem; }
+  .fila-subcuenta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.45rem 0;
+    border-top: 1px solid #eee;
+  }
+  .fila-subcuenta:first-of-type { border-top: none; }
+  .fila-subcuenta .codigo { color: #888; font-size: 0.85rem; margin-right: 0.35rem; }
+  .boton-cargar {
+    padding: 0.6rem 0.9rem;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .marca-baja {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  details { margin-top: 0.5rem; }
+  summary { font-weight: 700; color: #2563eb; cursor: pointer; padding: 0.35rem 0; }
+  label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  input, select {
+    width: 100%;
+    padding: 0.7rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button[type="submit"] {
+    display: block;
+    width: 100%;
+    margin-top: 0.8rem;
+    padding: 0.85rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver-boton {
+    display: block;
+    width: 100%;
+    margin-top: 0.75rem;
+    padding: 0.9rem;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Plan de Cuentas" %}
+  {% set barra_atras = "/gerencia/costos-fijos" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <p class="ayuda">Los números los ponés vos (por eso están espaciados: 10, 20... y adentro 10.1, 10.2...). Un grupo nuevo o una subcuenta nueva se dan de alta acá, sin tocar código. "Cargar" guarda la foto del importe de esa subcuenta.</p>
+
+  {% for g in grupos %}
+  <div class="tarjeta">
+    <h2>{{ g.numero }} {{ g.nombre }}{% if g.baja_el %} <span class="marca-baja">DE BAJA</span>{% endif %}</h2>
+    {% for s in g.subcuentas %}
+    <div class="fila-subcuenta">
+      <span><span class="codigo">{{ g.numero }}.{{ s.numero }}</span>{{ s.nombre }}
+        {% if s.baja_desde %}<span class="marca-baja">baja desde {{ s.baja_desde.strftime("%m/%Y") }}</span>{% endif %}
+      </span>
+      <a class="boton-cargar" href="/gerencia/costos-fijos/subcuentas/{{ s.id }}/cargar">Cargar</a>
+    </div>
+    {% else %}
+    <p class="vacio">Sin subcuentas todavía — dala de alta abajo (ej: {{ g.numero }}.1).</p>
+    {% endfor %}
+    <details>
+      <summary>＋ Subcuenta nueva en {{ g.nombre }}</summary>
+      <form method="post" action="/gerencia/costos-fijos/subcuentas">
+        <input type="hidden" name="grupo_id" value="{{ g.id }}">
+        <label>Número (el {{ g.numero }}.<strong>x</strong>)</label>
+        <input type="number" name="numero" min="1" step="1" required placeholder="Ej: {{ (g.subcuentas | map(attribute='numero') | max | default(0)) + 1 }}">
+        <label>Nombre</label>
+        <input type="text" name="nombre" required placeholder="Ej: Sdo Christian">
+        <button type="submit">Crear subcuenta</button>
+      </form>
+    </details>
+  </div>
+  {% endfor %}
+
+  <div class="tarjeta">
+    <h2>Grupo nuevo</h2>
+    <form method="post" action="/gerencia/costos-fijos/grupos">
+      <label>Número (espaciado: 90, 100...)</label>
+      <input type="number" name="numero" min="1" step="1" required placeholder="Ej: 90">
+      <label>Nombre</label>
+      <input type="text" name="nombre" required placeholder="Ej: Informática">
+      <button type="submit">Crear grupo</button>
+    </form>
+  </div>
+
+  <a class="volver-boton" href="/gerencia/costos-fijos">Volver a Costos Fijos</a>
+</body>
+</html>

@@ -5961,3 +5961,185 @@ def salidas_stock_articulo(articulo_id: int) -> list[dict]:
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()
+
+
+# --- Costos Fijos (Gerencia): plan de cuentas, fotos de importe e índices ---
+
+
+def listar_grupos_costos_fijos() -> list[dict]:
+    """Los grupos del plan de cuentas (bajas incluidas: el motor y las pantallas deciden qué mostrar)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, numero, nombre, creado_en, baja_el FROM grupos_costos_fijos ORDER BY numero"
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def crear_grupo_costos_fijos(numero: int, nombre: str) -> int:
+    """Alta de grupo con el número que ELIGIÓ el dueño (el sistema jamás genera números)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO grupos_costos_fijos (numero, nombre) VALUES (%s, %s) RETURNING id",
+                (numero, nombre),
+            )
+            grupo_id = cursor.fetchone()[0]
+        conexion.commit()
+        return grupo_id
+    finally:
+        conexion.close()
+
+
+def listar_subcuentas_costos_fijos() -> list[dict]:
+    """Todas las subcuentas con su grupo (número y nombre), para el plan, el motor y los selectores."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.id, s.grupo_id, s.numero, s.nombre, s.creado_en, s.baja_desde,
+                       g.numero AS grupo_numero, g.nombre AS grupo_nombre
+                FROM subcuentas_costos_fijos s
+                JOIN grupos_costos_fijos g ON g.id = s.grupo_id
+                ORDER BY g.numero, s.numero
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def obtener_subcuenta_costos_fijos(subcuenta_id: int) -> dict | None:
+    """Una subcuenta con su grupo, para la pantalla de carga de importes."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.id, s.grupo_id, s.numero, s.nombre, s.baja_desde,
+                       g.numero AS grupo_numero, g.nombre AS grupo_nombre
+                FROM subcuentas_costos_fijos s
+                JOIN grupos_costos_fijos g ON g.id = s.grupo_id
+                WHERE s.id = %s
+                """,
+                (subcuenta_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return dict(zip(columnas, fila))
+    finally:
+        conexion.close()
+
+
+def crear_subcuenta_costos_fijos(grupo_id: int, numero: int, nombre: str) -> int:
+    """Alta de subcuenta con el número que ELIGIÓ el dueño, dentro de su grupo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO subcuentas_costos_fijos (grupo_id, numero, nombre) VALUES (%s, %s, %s) RETURNING id",
+                (grupo_id, numero, nombre),
+            )
+            subcuenta_id = cursor.fetchone()[0]
+        conexion.commit()
+        return subcuenta_id
+    finally:
+        conexion.close()
+
+
+def listar_importes_costos_fijos() -> list[dict]:
+    """TODAS las fotos de importe no anuladas: el valor de cada mes se deriva siempre de acá (regla 1)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, subcuenta_id, mes_desde, importe, alcance, creado_en
+                FROM importes_costos_fijos
+                WHERE anulado_el IS NULL
+                ORDER BY subcuenta_id, mes_desde, creado_en
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_importes_de_subcuenta(subcuenta_id: int) -> list[dict]:
+    """El historial de fotos de UNA subcuenta (anuladas incluidas y marcadas), para la pantalla de carga."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, mes_desde, importe, alcance, creado_en, anulado_el
+                FROM importes_costos_fijos
+                WHERE subcuenta_id = %s
+                ORDER BY mes_desde DESC, creado_en DESC
+                """,
+                (subcuenta_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def crear_importe_costos_fijos(subcuenta_id: int, mes_desde, importe: float, alcance: str = "en_adelante") -> None:
+    """Una foto nueva (carga o corrección): SIEMPRE fila nueva, jamás UPDATE — la serie es el historial."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO importes_costos_fijos (subcuenta_id, mes_desde, importe, alcance)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (subcuenta_id, mes_desde, importe, alcance),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_indices_inflacion() -> list[dict]:
+    """La tabla de índices completa, del mes más nuevo al más viejo."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT mes, porcentaje, actualizado_en FROM indices_inflacion ORDER BY mes DESC"
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def guardar_indice_inflacion(mes, porcentaje: float) -> None:
+    """El índice de un mes (upsert): es un PARÁMETRO editable, no un hecho — editar un mes pasado recalcula lo que lo usa (decisión del dueño, 25/08)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO indices_inflacion (mes, porcentaje)
+                VALUES (%s, %s)
+                ON CONFLICT (mes) DO UPDATE
+                    SET porcentaje = EXCLUDED.porcentaje, actualizado_en = now()
+                """,
+                (mes, porcentaje),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()

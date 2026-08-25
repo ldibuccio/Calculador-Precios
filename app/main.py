@@ -102,6 +102,16 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    crear_grupo_costos_fijos,
+    crear_importe_costos_fijos,
+    crear_subcuenta_costos_fijos,
+    guardar_indice_inflacion,
+    listar_grupos_costos_fijos,
+    listar_importes_costos_fijos,
+    listar_importes_de_subcuenta,
+    listar_indices_inflacion,
+    listar_subcuentas_costos_fijos,
+    obtener_subcuenta_costos_fijos,
     devoluciones_vinculadas_por_rango,
     listar_pedidos_para_reingreso,
     listar_renglones_para_reingreso,
@@ -241,6 +251,7 @@ from core.casilla_pedidos import (
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import calcular_rentabilidad_real
+from core.costos_fijos import calcular_costos_fijos
 from core.stock import repartir_fifo
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_rentabilidad_real import generar_excel_rentabilidad_real, generar_pdf_rentabilidad_real
@@ -7596,6 +7607,274 @@ def exportar_rentabilidad_real_excel(
         content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Costos Fijos (Gerencia): cuánto cuesta operar, por mes. El valor de cada
+# mes se DERIVA siempre (foto + índices, core/costos_fijos.py) — regla 1
+# del dueño: jamás se guarda un valor inflado. Toda la zona tras la clave.
+# ---------------------------------------------------------------------------
+
+
+def _mes_costos_fijos(texto: str | None):
+    """El mes elegido ("YYYY-MM" del input month) o el actual; siempre día 1."""
+    if texto:
+        try:
+            return date.fromisoformat(texto.strip() + "-01")
+        except ValueError:
+            pass
+    hoy = _hoy_argentina()
+    return date(hoy.year, hoy.month, 1)
+
+
+def _datos_plan_costos_fijos():
+    grupos = listar_grupos_costos_fijos()
+    subcuentas = listar_subcuentas_costos_fijos()
+    return grupos, subcuentas
+
+
+@app.get("/gerencia/costos-fijos")
+def ver_costos_fijos(request: Request, mes: str | None = None, grupo: str | None = None, aviso: str | None = None):
+    """El costo fijo del mes: total, desglose por grupo y subcuenta, y lo que falta a la vista.
+
+    Si falta el índice de algún mes del tramo de una foto, esa subcuenta
+    NO entra al total y lo dice una tarjeta roja protagonista — regla 3:
+    avisar, jamás usar el índice anterior en silencio.
+    """
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    mes_valor = _mes_costos_fijos(mes)
+    grupo_numero = _id_opcional_desde_query(grupo)
+    try:
+        grupos, subcuentas = _datos_plan_costos_fijos()
+        importes = listar_importes_costos_fijos()
+        indices = {i["mes"]: float(i["porcentaje"]) for i in listar_indices_inflacion()}
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    resultado = calcular_costos_fijos(grupos, subcuentas, importes, indices, mes_valor, grupo_numero)
+    contexto = {
+        "resultado": resultado,
+        "mes": mes_valor.strftime("%Y-%m"),
+        "mes_mostrar": mes_valor.strftime("%m/%Y"),
+        "grupo": grupo_numero,
+        "grupos_para_filtro": [g for g in grupos if g.get("baja_el") is None],
+        "aviso": aviso,
+    }
+    return templates.TemplateResponse(request, "gerencia_costos_fijos.html", contexto)
+
+
+@app.get("/gerencia/costos-fijos/plan")
+def ver_plan_costos_fijos(request: Request, aviso: str | None = None, error: str | None = None):
+    """El plan de cuentas: los grupos con sus subcuentas y las altas — los números los elige el dueño."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    try:
+        grupos, subcuentas = _datos_plan_costos_fijos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    por_grupo: dict = {}
+    for subcuenta in subcuentas:
+        por_grupo.setdefault(subcuenta["grupo_id"], []).append(subcuenta)
+    contexto = {
+        "grupos": [dict(g, subcuentas=por_grupo.get(g["id"], [])) for g in grupos],
+        "aviso": aviso,
+        "error": error,
+    }
+    return templates.TemplateResponse(request, "gerencia_costos_fijos_plan.html", contexto)
+
+
+def _redirigir_a_plan(aviso: str | None = None, error: str | None = None):
+    parametros = {}
+    if aviso:
+        parametros["aviso"] = aviso
+    if error:
+        parametros["error"] = error
+    return RedirectResponse(url=f"/gerencia/costos-fijos/plan?{urlencode(parametros)}", status_code=303)
+
+
+def _numero_de_cuenta(texto: str) -> int | None:
+    texto = texto.strip()
+    if not texto.isdigit() or int(texto) <= 0:
+        return None
+    return int(texto)
+
+
+@app.post("/gerencia/costos-fijos/grupos")
+def crear_grupo_costos_fijos_ruta(request: Request, numero: str = Form(""), nombre: str = Form("")):
+    """Alta de grupo. El número lo pone el dueño (numeración espaciada, 10, 20...): el sistema no genera números."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    numero_valor = _numero_de_cuenta(numero)
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if numero_valor is None:
+        return _redirigir_a_plan(error="El número del grupo tiene que ser un entero positivo (ej: 90).")
+    if not nombre_limpio:
+        return _redirigir_a_plan(error="El nombre del grupo es obligatorio.")
+    try:
+        grupos = listar_grupos_costos_fijos()
+        if any(g["numero"] == numero_valor for g in grupos):
+            ocupado = next(g for g in grupos if g["numero"] == numero_valor)
+            return _redirigir_a_plan(error=f"El número {numero_valor} ya es de \"{ocupado['nombre']}\": elegí otro.")
+        crear_grupo_costos_fijos(numero_valor, nombre_limpio)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo crear el grupo: {error_db}") from error_db
+    return _redirigir_a_plan(aviso=f"Grupo {numero_valor} {nombre_limpio} creado.")
+
+
+@app.post("/gerencia/costos-fijos/subcuentas")
+def crear_subcuenta_costos_fijos_ruta(
+    request: Request, grupo_id: str = Form(""), numero: str = Form(""), nombre: str = Form("")
+):
+    """Alta de subcuenta dentro de su grupo (10.1, 10.2...): el decimal también lo elige el dueño."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    numero_valor = _numero_de_cuenta(numero)
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if not grupo_id.strip().isdigit():
+        return _redirigir_a_plan(error="Elegí el grupo de la subcuenta.")
+    if numero_valor is None:
+        return _redirigir_a_plan(error="El número de la subcuenta tiene que ser un entero positivo (el 1 de 10.1).")
+    if not nombre_limpio:
+        return _redirigir_a_plan(error="El nombre de la subcuenta es obligatorio.")
+    try:
+        grupos = listar_grupos_costos_fijos()
+        grupo = next((g for g in grupos if g["id"] == int(grupo_id)), None)
+        if grupo is None:
+            return _redirigir_a_plan(error="Ese grupo no existe.")
+        subcuentas = listar_subcuentas_costos_fijos()
+        ocupada = next(
+            (s for s in subcuentas if s["grupo_id"] == grupo["id"] and s["numero"] == numero_valor), None
+        )
+        if ocupada is not None:
+            return _redirigir_a_plan(
+                error=f"El número {grupo['numero']}.{numero_valor} ya es de \"{ocupada['nombre']}\": elegí otro."
+            )
+        crear_subcuenta_costos_fijos(grupo["id"], numero_valor, nombre_limpio)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo crear la subcuenta: {error_db}") from error_db
+    return _redirigir_a_plan(aviso=f"Subcuenta {grupo['numero']}.{numero_valor} {nombre_limpio} creada.")
+
+
+@app.get("/gerencia/costos-fijos/indices")
+def ver_indices_inflacion(request: Request, aviso: str | None = None, error: str | None = None):
+    """La tabla de índices mensuales: editable (es un parámetro), con los meses faltantes a cargar."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    try:
+        indices = listar_indices_inflacion()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    hoy = _hoy_argentina()
+    contexto = {
+        "indices": indices,
+        "mes_actual": date(hoy.year, hoy.month, 1).strftime("%Y-%m"),
+        "aviso": aviso,
+        "error": error,
+    }
+    return templates.TemplateResponse(request, "gerencia_costos_fijos_indices.html", contexto)
+
+
+@app.post("/gerencia/costos-fijos/indices")
+def guardar_indice_inflacion_ruta(request: Request, mes: str = Form(""), porcentaje: str = Form("")):
+    """Carga o corrige el índice de UN mes. Editar un mes pasado recalcula los meses que lo usan (decisión del dueño)."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    try:
+        mes_valor = date.fromisoformat(mes.strip() + "-01")
+    except ValueError:
+        return RedirectResponse(
+            url=f"/gerencia/costos-fijos/indices?{urlencode({'error': 'El mes del índice no es válido.'})}",
+            status_code=303,
+        )
+    try:
+        porcentaje_valor = float(porcentaje.strip().replace(",", "."))
+    except ValueError:
+        return RedirectResponse(
+            url=f"/gerencia/costos-fijos/indices?{urlencode({'error': 'El porcentaje tiene que ser un número (puede ser negativo).'})}",
+            status_code=303,
+        )
+    try:
+        guardar_indice_inflacion(mes_valor, porcentaje_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el índice: {error_db}") from error_db
+    aviso = f"Índice de {mes_valor.strftime('%m/%Y')} guardado: {_formatear_numero(porcentaje_valor)}%."
+    return RedirectResponse(
+        url=f"/gerencia/costos-fijos/indices?{urlencode({'aviso': aviso})}", status_code=303
+    )
+
+
+@app.get("/gerencia/costos-fijos/subcuentas/{subcuenta_id}/cargar")
+def ver_cargar_importe_costos_fijos(request: Request, subcuenta_id: int, error: str | None = None, precarga_importe: str | None = None, precarga_mes: str | None = None):
+    """La carga de la foto de una subcuenta: importe + mes. La corrección es OTRA foto (vale de ahí en adelante)."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    try:
+        subcuenta = obtener_subcuenta_costos_fijos(subcuenta_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if subcuenta is None:
+        raise HTTPException(status_code=404, detail="Esa subcuenta no existe.")
+    try:
+        historial = listar_importes_de_subcuenta(subcuenta_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    hoy = _hoy_argentina()
+    contexto = {
+        "subcuenta": subcuenta,
+        "historial": historial,
+        "mes_actual": date(hoy.year, hoy.month, 1).strftime("%Y-%m"),
+        "error": error,
+        "precarga_importe": precarga_importe or "",
+        "precarga_mes": precarga_mes or "",
+    }
+    return templates.TemplateResponse(request, "gerencia_costos_fijos_cargar.html", contexto)
+
+
+@app.post("/gerencia/costos-fijos/subcuentas/{subcuenta_id}/cargar")
+def cargar_importe_costos_fijos_ruta(
+    request: Request, subcuenta_id: int, importe: str = Form(""), mes: str = Form("")
+):
+    """Guarda la foto: importe base con su mes. El valor de cada mes se CALCULA siempre — nada inflado se guarda."""
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    try:
+        subcuenta = obtener_subcuenta_costos_fijos(subcuenta_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if subcuenta is None:
+        raise HTTPException(status_code=404, detail="Esa subcuenta no existe.")
+
+    def _volver_con_error(mensaje):
+        parametros = {"error": mensaje, "precarga_importe": importe, "precarga_mes": mes}
+        return RedirectResponse(
+            url=f"/gerencia/costos-fijos/subcuentas/{subcuenta_id}/cargar?{urlencode(parametros)}",
+            status_code=303,
+        )
+
+    try:
+        importe_valor = float(importe.strip().replace(",", "."))
+    except ValueError:
+        return _volver_con_error("El importe tiene que ser un número.")
+    if importe_valor < 0:
+        return _volver_con_error("El importe no puede ser negativo.")
+    try:
+        mes_valor = date.fromisoformat(mes.strip() + "-01")
+    except ValueError:
+        return _volver_con_error("El mes de la foto no es válido.")
+
+    try:
+        crear_importe_costos_fijos(subcuenta_id, mes_valor, importe_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el importe: {error_db}") from error_db
+    aviso = (
+        f"Foto guardada: {subcuenta['grupo_numero']}.{subcuenta['numero']} {subcuenta['nombre']} = "
+        f"${_formatear_numero(importe_valor)} desde {mes_valor.strftime('%m/%Y')} — de ahí en adelante infla por índice."
+    )
+    return RedirectResponse(
+        url=f"/gerencia/costos-fijos?{urlencode({'mes': mes_valor.strftime('%Y-%m'), 'aviso': aviso})}",
+        status_code=303,
     )
 
 

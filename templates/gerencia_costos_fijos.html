@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Costos Fijos</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .filtros label {
+    display: block;
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  .filtros input, .filtros select {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button.boton-buscar {
+    display: block;
+    width: 100%;
+    margin-top: 0.9rem;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .total {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .total .numero-grande { font-size: 1.5rem; font-weight: 800; color: #1d4ed8; }
+  .total .detalle { color: #666; font-size: 0.9rem; margin-top: 0.25rem; }
+  .total.incompleto { border: 2px solid #dc2626; background: #fef2f2; }
+  .total.incompleto .numero-grande { color: #991b1b; }
+  /* El índice que falta es PROTAGONISTA: sin él el total miente. */
+  .tarjeta-faltantes {
+    border: 3px solid #dc2626;
+    background: #fef2f2;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .tarjeta-faltantes h2 { color: #991b1b; }
+  .tarjeta-faltantes .detalle-faltante { font-size: 0.9rem; color: #7f1d1d; margin: 0.25rem 0; }
+  .tarjeta-faltantes .link-indices {
+    display: block;
+    margin-top: 0.7rem;
+    padding: 0.8rem;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+  }
+  .fila-subcuenta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.45rem 0;
+    border-top: 1px solid #eee;
+  }
+  .fila-subcuenta:first-of-type { border-top: none; }
+  .fila-subcuenta .codigo { color: #888; font-size: 0.85rem; margin-right: 0.35rem; }
+  .fila-subcuenta .nombre { font-size: 0.95rem; }
+  .fila-subcuenta .valor { font-weight: 700; white-space: nowrap; }
+  .fila-subcuenta .detalle-foto { display: block; color: #888; font-size: 0.78rem; }
+  .marca-puntual {
+    display: inline-block;
+    background: #fef9c3;
+    color: #713f12;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .fila-subtotal {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 0.55rem;
+    margin-top: 0.35rem;
+    border-top: 2px solid #ddd;
+    font-weight: 800;
+    font-size: 0.95rem;
+  }
+  .sin-importe { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .botonera { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .boton-secundario {
+    flex: 1;
+    min-width: 9rem;
+    padding: 0.8rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Costos Fijos" %}
+  {% set barra_atras = "/gerencia" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% set bloquear_visible = clave_gerencia_activa() %}
+  {% set bloquear_action = "/gerencia/bloquear" %}
+  {% include "_boton_bloquear.html" %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/gerencia/costos-fijos">
+      <label for="mes">Mes</label>
+      <input type="month" id="mes" name="mes" value="{{ mes }}">
+      <label for="grupo">Grupo</label>
+      <select id="grupo" name="grupo">
+        <option value="" {% if not grupo %}selected{% endif %}>Todos los grupos</option>
+        {% for g in grupos_para_filtro %}
+        <option value="{{ g.numero }}" {% if grupo == g.numero %}selected{% endif %}>{{ g.numero }} {{ g.nombre }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="boton-buscar">Ver</button>
+    </form>
+  </div>
+
+  {% if resultado.sin_calcular %}
+  <div class="tarjeta-faltantes">
+    <h2>FALTA EL ÍNDICE DE INFLACIÓN{% if resultado.indices_faltantes|length == 1 %} DE {{ resultado.indices_faltantes[0].strftime("%m/%Y") }}{% endif %}</h2>
+    <p class="detalle-faltante">Sin el índice no se proyectan estos importes — el total de abajo está INCOMPLETO (no se usa el índice anterior ni se inventa):</p>
+    {% for s in resultado.sin_calcular %}
+    <p class="detalle-faltante">· {{ s.codigo }} {{ s.nombre }} — falta {% for f in s.faltan %}{{ f.strftime("%m/%Y") }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endfor %}
+    <a class="link-indices" href="/gerencia/costos-fijos/indices">Cargar el índice que falta</a>
+  </div>
+  {% endif %}
+
+  <div class="total {% if resultado.incompleto %}incompleto{% endif %}">
+    <div class="numero-grande">{{ resultado.total|moneda }}{% if resultado.incompleto %} — INCOMPLETO{% endif %}</div>
+    <div class="detalle">Costo fijo de {{ mes_mostrar }}{% if grupo %} (solo el grupo elegido){% endif %}. El valor de cada subcuenta es su foto inflada por el índice de cada mes — calculado siempre, nunca guardado.</div>
+  </div>
+
+  {% for g in resultado.grupos %}
+  <div class="tarjeta">
+    <h2>{{ g.numero }} {{ g.nombre }}</h2>
+    {% if g.filas %}
+      {% for f in g.filas %}
+      <div class="fila-subcuenta">
+        <span class="nombre"><span class="codigo">{{ f.codigo }}</span>{{ f.nombre }}
+          <span class="detalle-foto">foto de {{ f.mes_foto.strftime("%m/%Y") }}{% if f.puntual %} <span class="marca-puntual">corregido este mes</span>{% endif %}</span>
+        </span>
+        <span class="valor">{{ f.valor|moneda }}</span>
+      </div>
+      {% endfor %}
+      <div class="fila-subtotal"><span>Subtotal {{ g.nombre }}</span><span>{{ g.subtotal|moneda }}</span></div>
+    {% else %}
+    <p class="vacio">Sin importes cargados en este grupo todavía.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if resultado.sin_importe %}
+  <div class="tarjeta">
+    <p class="sin-importe">Sin foto de importe todavía (no suman): {% for s in resultado.sin_importe %}{{ s.codigo }} {{ s.nombre }}{% if not loop.last %} · {% endif %}{% endfor %}. Se cargan desde el Plan de cuentas.</p>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <div class="botonera">
+      <a class="boton-secundario" href="/gerencia/costos-fijos/plan">Plan de cuentas y carga</a>
+      <a class="boton-secundario" href="/gerencia/costos-fijos/indices">Índices de inflación</a>
+    </div>
+  </div>
+
+  <a class="volver" href="/gerencia">Volver a Gerencia</a>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar Importe</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.4rem 0 0; }
+  label {
+    display: block;
+    margin-top: 0.7rem;
+    font-size: 0.95rem;
+    color: #444;
+  }
+  input {
+    width: 100%;
+    padding: 0.8rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    box-sizing: border-box;
+  }
+  button.boton-guardar {
+    display: block;
+    width: 100%;
+    margin-top: 1rem;
+    padding: 0.95rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.05rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .fila-foto {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.45rem 0;
+    border-top: 1px solid #eee;
+    font-size: 0.92rem;
+  }
+  .fila-foto:first-of-type { border-top: none; }
+  .fila-foto .importe { font-weight: 700; white-space: nowrap; }
+  .fila-foto.anulada { opacity: 0.55; text-decoration: line-through; }
+  .marca-puntual {
+    display: inline-block;
+    background: #fef9c3;
+    color: #713f12;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver-boton {
+    display: block;
+    width: 100%;
+    margin-top: 0.75rem;
+    padding: 0.9rem;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "gerencia" %}
+  {% set barra_titulo = "Cargar Importe" %}
+  {% set barra_atras = "/gerencia/costos-fijos/plan" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>{{ subcuenta.grupo_numero }}.{{ subcuenta.numero }} {{ subcuenta.nombre }} <span style="color:#888; font-weight:400;">({{ subcuenta.grupo_nombre }})</span></h2>
+    <form method="post" action="/gerencia/costos-fijos/subcuentas/{{ subcuenta.id }}/cargar">
+      <label for="importe">Importe del mes ($)</label>
+      <input type="number" id="importe" name="importe" min="0" step="0.01" required
+             value="{{ precarga_importe }}" placeholder="La foto: lo que vale HOY">
+      <label for="mes">Mes de la foto</label>
+      <input type="month" id="mes" name="mes" value="{{ precarga_mes or mes_actual }}" required>
+      <button type="submit" class="boton-guardar">Guardar la foto</button>
+    </form>
+    <p class="ayuda">Se carga una vez y el sistema lo infla mes a mes con el índice. Corregir es cargar una foto nueva: vale de ese mes en adelante — los meses anteriores quedan con lo que decía el índice de entonces.</p>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Historial de fotos</h2>
+    {% if historial %}
+      {% for h in historial %}
+      <div class="fila-foto {% if h.anulado_el %}anulada{% endif %}">
+        <span>desde {{ h.mes_desde.strftime("%m/%Y") }}{% if h.alcance == "solo_este_mes" %} <span class="marca-puntual">solo ese mes</span>{% endif %}</span>
+        <span class="importe">{{ h.importe|moneda }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Sin fotos todavía: hasta la primera carga, esta subcuenta no suma al mes.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver-boton" href="/gerencia/costos-fijos/plan">Volver al Plan de cuentas</a>
+</body>
+</html>

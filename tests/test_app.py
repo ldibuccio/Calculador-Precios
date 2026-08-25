@@ -8870,7 +8870,14 @@ def test_gerencia_sin_clave_configurada_no_tiene_puerta():
 
 def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
     with patch("app.main._clave_gerencia", return_value="secreta"):
-        for url in ("/gerencia", "/gerencia/rentabilidad", "/gerencia/rentabilidad-real"):
+        for url in (
+            "/gerencia",
+            "/gerencia/rentabilidad",
+            "/gerencia/rentabilidad-real",
+            "/gerencia/costos-fijos",
+            "/gerencia/costos-fijos/plan",
+            "/gerencia/costos-fijos/indices",
+        ):
             respuesta = cliente.get(url)
             assert respuesta.status_code == 401, url
             assert "Gerencia pide clave" in respuesta.text
@@ -15370,3 +15377,190 @@ def test_el_bucle_abandona_un_tick_colgado_y_sigue():
             tarea.cancel()
 
     asyncio.run(probar())
+
+
+# --- Costos Fijos (Gerencia): el gasto de operar, derivado siempre ---
+
+GRUPOS_CF_DE_PRUEBA = [
+    {"id": 1, "numero": 10, "nombre": "Sueldos", "creado_en": datetime(2026, 8, 25, 12, 0), "baja_el": None},
+    {"id": 2, "numero": 40, "nombre": "Ocupación", "creado_en": datetime(2026, 8, 25, 12, 0), "baja_el": None},
+]
+SUBCUENTAS_CF_DE_PRUEBA = [
+    {"id": 1, "grupo_id": 1, "numero": 1, "nombre": "Sdo Christian", "creado_en": datetime(2026, 8, 25, 12, 0),
+     "baja_desde": None, "grupo_numero": 10, "grupo_nombre": "Sueldos"},
+    {"id": 2, "grupo_id": 2, "numero": 2, "nombre": "Luz", "creado_en": datetime(2026, 8, 25, 12, 0),
+     "baja_desde": None, "grupo_numero": 40, "grupo_nombre": "Ocupación"},
+]
+IMPORTES_CF_DE_PRUEBA = [
+    {"id": 1, "subcuenta_id": 1, "mes_desde": date(2026, 7, 1), "importe": 1000.0,
+     "alcance": "en_adelante", "creado_en": datetime(2026, 7, 1, 12, 0)},
+    {"id": 2, "subcuenta_id": 2, "mes_desde": date(2026, 8, 1), "importe": 200.0,
+     "alcance": "en_adelante", "creado_en": datetime(2026, 8, 1, 12, 0)},
+]
+INDICES_CF_DE_PRUEBA = [
+    {"mes": date(2026, 8, 1), "porcentaje": 10.0, "actualizado_en": datetime(2026, 8, 1, 12, 0)},
+]
+
+
+def _patches_costos_fijos(indices=None):
+    return (
+        patch("app.main.listar_grupos_costos_fijos", return_value=[dict(g) for g in GRUPOS_CF_DE_PRUEBA]),
+        patch("app.main.listar_subcuentas_costos_fijos", return_value=[dict(s) for s in SUBCUENTAS_CF_DE_PRUEBA]),
+        patch("app.main.listar_importes_costos_fijos", return_value=[dict(i) for i in IMPORTES_CF_DE_PRUEBA]),
+        patch("app.main.listar_indices_inflacion",
+              return_value=[dict(i) for i in (INDICES_CF_DE_PRUEBA if indices is None else indices)]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    )
+
+
+def test_costos_fijos_muestra_el_mes_derivado_con_desglose_por_grupo():
+    with ExitStack() as stack:
+        for parche in _patches_costos_fijos():
+            stack.enter_context(parche)
+        respuesta = cliente.get("/gerencia/costos-fijos")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    # Agosto: la foto de julio (1000) inflada por el índice de agosto
+    # (10%) = 1100, más la foto de agosto tal cual (200) = 1300.
+    assert "$1.300" in texto
+    assert "Costo fijo de 08/2026" in texto
+    assert "10.1" in texto and "Sdo Christian" in texto and "$1.100" in texto
+    assert "foto de 07/2026" in texto
+    assert "40.2" in texto and "$200" in texto
+    # Nada de INCOMPLETO ni tarjeta roja: el índice está.
+    assert "INCOMPLETO" not in texto
+    # Los accesos del módulo y el botón en el hub de Gerencia.
+    assert 'href="/gerencia/costos-fijos/plan"' in texto
+    assert 'href="/gerencia/costos-fijos/indices"' in texto
+    hub = cliente.get("/gerencia")
+    assert 'href="/gerencia/costos-fijos"' in hub.text
+
+
+def test_costos_fijos_sin_indice_grita_y_marca_el_total_incompleto():
+    with ExitStack() as stack:
+        for parche in _patches_costos_fijos(indices=[]):
+            stack.enter_context(parche)
+        respuesta = cliente.get("/gerencia/costos-fijos")
+
+    texto = respuesta.text
+    # Sin el índice de agosto, la foto de julio no se proyecta: tarjeta
+    # roja con el mes que falta, la subcuenta afectada y el link a cargar.
+    assert "FALTA EL ÍNDICE DE INFLACIÓN DE 08/2026" in texto
+    assert "10.1 Sdo Christian" in texto
+    assert "INCOMPLETO" in texto
+    assert 'href="/gerencia/costos-fijos/indices"' in texto
+    # La foto de agosto (200) sí entra: el total parcial se muestra COMO parcial.
+    assert "$200" in texto
+
+
+def test_costos_fijos_filtra_por_grupo():
+    with ExitStack() as stack:
+        for parche in _patches_costos_fijos():
+            stack.enter_context(parche)
+        respuesta = cliente.get("/gerencia/costos-fijos?grupo=40")
+
+    assert "Luz" in respuesta.text
+    assert "Sdo Christian" not in respuesta.text
+
+
+def test_plan_de_cuentas_crea_grupo_con_numero_del_dueno_y_rechaza_repetido():
+    with (
+        patch("app.main.listar_grupos_costos_fijos", return_value=[dict(g) for g in GRUPOS_CF_DE_PRUEBA]),
+        patch("app.main.crear_grupo_costos_fijos", return_value=9) as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/grupos", data={"numero": "90", "nombre": "Informática"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(90, "Informática")
+
+    # El número lo elige el dueño, pero repetido no: error con el dueño actual.
+    with (
+        patch("app.main.listar_grupos_costos_fijos", return_value=[dict(g) for g in GRUPOS_CF_DE_PRUEBA]),
+        patch("app.main.crear_grupo_costos_fijos") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/grupos", data={"numero": "10", "nombre": "Otro"},
+            follow_redirects=False,
+        )
+    mock_crear.assert_not_called()
+    assert "ya+es+de" in respuesta.headers["location"]
+
+
+def test_plan_de_cuentas_crea_subcuenta_y_rechaza_decimal_repetido():
+    with (
+        patch("app.main.listar_grupos_costos_fijos", return_value=[dict(g) for g in GRUPOS_CF_DE_PRUEBA]),
+        patch("app.main.listar_subcuentas_costos_fijos", return_value=[dict(s) for s in SUBCUENTAS_CF_DE_PRUEBA]),
+        patch("app.main.crear_subcuenta_costos_fijos", return_value=9) as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/subcuentas",
+            data={"grupo_id": "1", "numero": "2", "nombre": "Sdo Camila"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, 2, "Sdo Camila")
+
+    with (
+        patch("app.main.listar_grupos_costos_fijos", return_value=[dict(g) for g in GRUPOS_CF_DE_PRUEBA]),
+        patch("app.main.listar_subcuentas_costos_fijos", return_value=[dict(s) for s in SUBCUENTAS_CF_DE_PRUEBA]),
+        patch("app.main.crear_subcuenta_costos_fijos") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/subcuentas",
+            data={"grupo_id": "1", "numero": "1", "nombre": "Otro"},
+            follow_redirects=False,
+        )
+    mock_crear.assert_not_called()
+    assert "10.1+ya+es+de" in respuesta.headers["location"]
+
+
+def test_indice_de_inflacion_se_guarda_por_mes_y_acepta_negativo():
+    with patch("app.main.guardar_indice_inflacion") as mock_guardar:
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/indices", data={"mes": "2026-09", "porcentaje": "-1,5"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(date(2026, 9, 1), -1.5)
+
+    with patch("app.main.guardar_indice_inflacion") as mock_guardar:
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/indices", data={"mes": "2026-09", "porcentaje": "tres"},
+            follow_redirects=False,
+        )
+    mock_guardar.assert_not_called()
+    assert "porcentaje" in respuesta.headers["location"]
+
+
+def test_cargar_importe_guarda_la_foto_y_avisa_que_infla_de_ahi_en_adelante():
+    with (
+        patch("app.main.obtener_subcuenta_costos_fijos", return_value=dict(SUBCUENTAS_CF_DE_PRUEBA[0])),
+        patch("app.main.crear_importe_costos_fijos") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/subcuentas/1/cargar",
+            data={"importe": "1500,50", "mes": "2026-08"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, date(2026, 8, 1), 1500.5)
+    destino = respuesta.headers["location"]
+    assert destino.startswith("/gerencia/costos-fijos?")
+    assert "de+ah%C3%AD+en+adelante+infla" in destino
+
+
+def test_cargar_importe_invalido_no_guarda():
+    with (
+        patch("app.main.obtener_subcuenta_costos_fijos", return_value=dict(SUBCUENTAS_CF_DE_PRUEBA[0])),
+        patch("app.main.crear_importe_costos_fijos") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/costos-fijos/subcuentas/1/cargar",
+            data={"importe": "mil", "mes": "2026-08"},
+            follow_redirects=False,
+        )
+    mock_crear.assert_not_called()
+    assert "error" in respuesta.headers["location"]
