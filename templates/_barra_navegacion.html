@@ -3,11 +3,28 @@
   <div class="barra-grupo-izquierda">
     <a class="barra-boton" href="/inicio" aria-label="Ir a Inicio">{{ ICONO_INICIO|safe }}</a>
     <a class="barra-boton" href="{{ _sector.url }}" aria-label="Ir a {{ _sector.nombre }}">{{ _sector.icono|safe }}</a>
+    {# Dos modos del botón de atrás:
+       - Con barra_atras definido por la pantalla, el botón SUBE un nivel en
+         la jerarquía del sistema (href fijo, calculado por el server con el
+         estado real). Sin importar cuántos POST+redirect hubo en el medio
+         (cada tilde de armado es una entrada de historial), "atrás" te saca
+         de la pantalla, no del último tilde. "Volver por donde vine" lo
+         sigue dando el gesto nativo del navegador, que nadie pisa.
+       - Sin barra_atras, history.back() como siempre (las pantallas se
+         migran de a una, declarando su padre). #}
+    {% if barra_atras %}
+    <a class="barra-boton" href="{{ barra_atras }}" aria-label="Volver atrás">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/>
+      </svg>
+    </a>
+    {% else %}
     <button class="barra-boton" type="button" onclick="history.back()" aria-label="Volver atrás">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"/>
       </svg>
     </button>
+    {% endif %}
   </div>
   <div class="barra-titulo">{{ barra_titulo }}</div>
   <span class="barra-empresa">{{ NOMBRE_EMPRESA }}</span>

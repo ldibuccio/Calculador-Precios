@@ -311,6 +311,16 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Armar Pedido" %}
+  {# El atrás SUBE en la jerarquía, sin importar cuántos tildes (cada uno
+     es un POST+redirect que ensucia el historial del navegador):
+     sucursal → el pedido, pedido → el listado, listado → Depósito. #}
+  {% if sucursal_elegida %}
+    {% set barra_atras = "/deposito/pedido/armar?cliente_id=" ~ cliente_id ~ "&fecha=" ~ fecha %}
+  {% elif cliente_id and not modo_lista %}
+    {% set barra_atras = "/deposito/pedido/armar?cliente_id=" ~ cliente_id %}
+  {% else %}
+    {% set barra_atras = "/deposito" %}
+  {% endif %}
   {% include "_barra_navegacion.html" %}
 
   {% if modo_lista %}

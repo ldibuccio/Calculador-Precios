@@ -1,5 +1,6 @@
 import base64
 import io
+from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import patch
 
@@ -11679,6 +11680,43 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
     assert 'action="/deposito/pedido/50/renglones/12/desarmar"' in respuesta.text
     # El gesto secundario para el incompleto.
     assert "Armé menos" in respuesta.text
+
+
+def test_armar_el_atras_de_la_barra_sube_en_la_jerarquia_no_en_el_historial():
+    # Cada tilde es un POST+redirect que mete una entrada en el historial
+    # del navegador: history.back() devolvía al tilde anterior. El atrás de
+    # Armar ahora es un LINK al padre del sistema, calculado por estado.
+    ancla = '<a class="barra-boton" href="{destino}" aria-label="Volver atrás">'
+    patches = dict(
+        _hoy_argentina=date(2026, 8, 21),
+        listar_clientes=CLIENTES_PARA_SELECTOR,
+        listar_pedidos_vigentes_con_armado=[],
+        obtener_pedido_vigente=PEDIDO_VIGENTE_DE_PRUEBA,
+        listar_sucursales_pedido=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA],
+        listar_renglones_pedido=RENGLONES_ARMADO_DE_PRUEBA,
+        listar_fichas_por_cliente=FICHAS_PEDIDO_DE_PRUEBA,
+        listar_mails_pedido_sin_procesar_de_cliente=[],
+    )
+    with ExitStack() as stack:
+        for nombre, valor in patches.items():
+            stack.enter_context(patch(f"app.main.{nombre}", return_value=valor))
+
+        # Armando la sucursal VL → atrás = el pedido (lista de sucursales).
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+        assert ancla.format(destino="/deposito/pedido/armar?cliente_id=1&amp;fecha=2026-08-21") in respuesta.text
+
+        # En el pedido → atrás = el listado de pedidos.
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+        assert ancla.format(destino="/deposito/pedido/armar?cliente_id=1") in respuesta.text
+
+        # En el listado → atrás = el hub de Depósito.
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+        assert ancla.format(destino="/deposito") in respuesta.text
+
+    # Las pantallas que todavía no declaran su padre siguen con
+    # history.back(), sin cambios.
+    respuesta = cliente.get("/deposito")
+    assert 'onclick="history.back()"' in respuesta.text
 
 
 def test_armar_pedido_corregido_muestra_el_diff_contra_el_anterior():
