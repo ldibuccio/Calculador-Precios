@@ -60,6 +60,7 @@ bases estén marcadas.
 | `agregar_stock_deposito.sql` | ✅ 2026-08-25 (verificado: 2 tablas y 3 índices) | ✅ 2026-08-25 (verificado: 2 tablas y 3 índices) |
 | `agregar_reprocesos.sql` | ✅ 2026-08-25 (verificado: 3 tablas creadas) | ✅ 2026-08-25 (verificado: 3 tablas creadas) |
 | `drop_foto_ruta_compras.sql` | ✅ 2026-08-25 (verificado: fotos en fotos_guia intactas y visibles) | ✅ 2026-08-25 (verificado: fotos en fotos_guia intactas y visibles) |
+| `agregar_observabilidad_revision.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
 
 ## Deuda pendiente de limpieza
 
