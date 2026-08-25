@@ -62,6 +62,7 @@ bases estén marcadas.
 | `drop_foto_ruta_compras.sql` | ✅ 2026-08-25 (verificado: fotos en fotos_guia intactas y visibles) | ✅ 2026-08-25 (verificado: fotos en fotos_guia intactas y visibles) |
 | `agregar_observabilidad_revision.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
 | `agregar_reingreso_vinculado.sql` | ✅ 2026-08-25 (verificado: 2 columnas creadas) | ✅ 2026-08-25 (verificado: 2 columnas creadas) |
+| `agregar_costos_fijos.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
 
 ## Deuda pendiente de limpieza
 
