@@ -9673,6 +9673,19 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     if cliente_id_valor is None:
         return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
 
+    # Los mails de pedido pendientes del cliente, acá mismo: si "Buscar
+    # pedido" trajo uno, el que arma lo confirma sin ir a otra pantalla.
+    # No fatal: el armado del día no se cae por este listado auxiliar.
+    contexto["mails_sin_confirmar"] = []
+    try:
+        for mail_trabado in listar_mails_pedido_sin_procesar_de_cliente(cliente_id_valor):
+            llegada = mail_trabado["recibido_el"].astimezone(ARGENTINA).date()
+            fecha_estimada = fecha_de_pedido_del_asunto(mail_trabado["asunto"], llegada) or llegada
+            mail_trabado["fecha_estimada_mostrar"] = fecha_estimada.strftime("%d/%m/%Y")
+            contexto["mails_sin_confirmar"].append(mail_trabado)
+    except Exception:
+        logger.exception("No se pudieron listar los mails pendientes del cliente %s en Armar Pedido", cliente_id_valor)
+
     if modo_lista:
         try:
             contexto["pedidos_listado"] = _listado_de_pedidos(cliente_id_valor, _hoy_argentina())
@@ -10082,14 +10095,14 @@ def cambiar_fecha_activacion_ruta(request: Request, casilla_id: int, fecha_activ
 
 @app.post("/sistema/casilla-pedidos/{casilla_id}/auto-confirmar")
 def auto_confirmar_casilla_ruta(casilla_id: int, valor: str = Form("")):
-    """El toggle de auto-confirmar (tramo 2: confirmar solo el pedido que cuadra 100% y no reemplaza a nadie)."""
+    """El toggle de auto-confirmar (tramo 2: confirmar solo el pedido con todos los candados cerrados y que no reemplaza a nadie)."""
     activar = valor.strip() == "si"
     try:
         fijar_auto_confirmar_casilla(casilla_id, activar)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo cambiar auto-confirmar: {error_db}") from error_db
     if activar:
-        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: la revisión automática (en el horario configurado de la casilla) confirma sola el pedido que cuadra al 100% — todo lo demás queda pendiente para revisar a mano.")
+        return _redirigir_a_casilla(mensaje="Auto-confirmar prendido: la revisión automática (en el horario configurado de la casilla) confirma solo el pedido leído por estructura con todos los renglones identificados — todo lo demás queda pendiente para revisar a mano.")
     return _redirigir_a_casilla(mensaje="Auto-confirmar apagado: todos los mails quedan pendientes para confirmar a mano.")
 
 
@@ -10135,6 +10148,52 @@ def cambiar_horario_revision_ruta(
     )
 
 
+def _revision_manual_de_casilla(casilla: dict) -> dict:
+    """La revisión a mano de UNA casilla ya validada: conecta, registra lo nuevo y cuenta.
+
+    El mismo circuito para "Revisar ahora" de Sistema y "Buscar pedido" de
+    Armar Pedido. Devuelve {"error": texto o None, "resultado": lo del
+    buzón o None, "nuevos": int, "ya_registrados": int}; un error de
+    conexión queda registrado en la casilla, como siempre.
+    """
+    clave = clave_casilla_configurada()
+    remitentes = separar_remitentes(casilla["remitentes_permitidos"])
+    try:
+        resultado = revisar_casilla(
+            casilla["direccion"], clave, casilla["servidor_imap"], casilla["fecha_activacion"],
+            casilla["asunto_filtro"], remitentes,
+        )
+    except ErrorCasilla as error_casilla:
+        try:
+            registrar_revision_casilla(casilla["id"], error=str(error_casilla))
+        except Exception:
+            logger.exception("No se pudo registrar el error de revisión de la casilla %s", casilla["id"])
+        return {"error": str(error_casilla), "resultado": None, "nuevos": 0, "ya_registrados": 0}
+
+    try:
+        nuevos = 0
+        ya_registrados = 0
+        for mail in resultado["mails"]:
+            mail_id = registrar_mail_pedido(
+                casilla["id"],
+                casilla["cliente_id"],
+                mail["message_id"],
+                mail["remitente"],
+                mail["asunto"],
+                mail["recibido_el"],
+                mail["cuerpo_crudo"],
+                mail["cuerpo_texto"],
+            )
+            if mail_id is None:
+                ya_registrados += 1
+            else:
+                nuevos += 1
+        registrar_revision_casilla(casilla["id"])
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Se leyó el buzón pero falló el registro en la base: {error_db}") from error_db
+    return {"error": None, "resultado": resultado, "nuevos": nuevos, "ya_registrados": ya_registrados}
+
+
 @app.post("/sistema/casilla-pedidos/{casilla_id}/revisar")
 def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
     """Revisar ahora: conecta al buzón en solo lectura, registra lo nuevo y CUENTA lo que vio.
@@ -10152,8 +10211,7 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
     if casilla is None:
         raise HTTPException(status_code=404, detail="Casilla no encontrada")
 
-    clave = clave_casilla_configurada()
-    if clave is None:
+    if clave_casilla_configurada() is None:
         return _redirigir_a_casilla(
             error=f"Falta la clave de la casilla: cargá la variable {CLAVE_CASILLA_ENV_VAR} en Railway (clave de aplicación de Gmail) y redeployá."
         )
@@ -10165,39 +10223,12 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
         )
     remitentes = separar_remitentes(casilla["remitentes_permitidos"])
 
-    try:
-        resultado = revisar_casilla(
-            casilla["direccion"], clave, casilla["servidor_imap"], casilla["fecha_activacion"],
-            casilla["asunto_filtro"], remitentes,
-        )
-    except ErrorCasilla as error_casilla:
-        try:
-            registrar_revision_casilla(casilla_id, error=str(error_casilla))
-        except Exception:
-            logger.exception("No se pudo registrar el error de revisión de la casilla %s", casilla_id)
-        return _redirigir_a_casilla(error=f"La casilla no se pudo revisar: {error_casilla}")
-
-    try:
-        nuevos = 0
-        ya_registrados = 0
-        for mail in resultado["mails"]:
-            mail_id = registrar_mail_pedido(
-                casilla_id,
-                casilla["cliente_id"],
-                mail["message_id"],
-                mail["remitente"],
-                mail["asunto"],
-                mail["recibido_el"],
-                mail["cuerpo_crudo"],
-                mail["cuerpo_texto"],
-            )
-            if mail_id is None:
-                ya_registrados += 1
-            else:
-                nuevos += 1
-        registrar_revision_casilla(casilla_id)
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Se leyó el buzón pero falló el registro en la base: {error_db}") from error_db
+    revision = _revision_manual_de_casilla(casilla)
+    if revision["error"] is not None:
+        return _redirigir_a_casilla(error=f"La casilla no se pudo revisar: {revision['error']}")
+    resultado = revision["resultado"]
+    nuevos = revision["nuevos"]
+    ya_registrados = revision["ya_registrados"]
 
     # El detalle por filtro es para AFINAR: cuántos había, cuántos pasaron
     # el remitente (si está configurado) y cuántos contienen el asunto.
@@ -10220,11 +10251,82 @@ def revisar_casilla_ahora_ruta(request: Request, casilla_id: int):
     return _redirigir_a_casilla(mensaje=mensaje)
 
 
+@app.post("/deposito/pedido/armar/buscar-pedido")
+def buscar_pedido_en_casilla_ruta(
+    cliente_id: str = Form(""),
+    fecha: str = Form(""),
+    sucursal: str = Form(""),
+):
+    """"Buscar pedido" de Armar Pedido: fuerza la revisión de la casilla sin pasar por Sistema.
+
+    Si el que arma no ve el pedido del día, lo trae él mismo: hace LO
+    MISMO que "Revisar ahora" (misma conexión en solo lectura, mismo
+    registro) sobre las casillas activas del cliente, y VUELVE a la
+    pantalla de Armar donde estaba, con el aviso de qué encontró. Un mail
+    nuevo queda pendiente y se ve ahí mismo para confirmarlo.
+    """
+    try:
+        cliente_id_valor = int(cliente_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cliente inválido")
+
+    def _volver_a_armar(aviso: str):
+        parametros: dict = {"cliente_id": cliente_id_valor}
+        if fecha.strip():
+            parametros["fecha"] = fecha.strip()
+        if sucursal.strip():
+            parametros["sucursal"] = sucursal.strip()
+        parametros["aviso"] = aviso
+        return RedirectResponse(url=f"/deposito/pedido/armar?{urlencode(parametros)}", status_code=303)
+
+    if clave_casilla_configurada() is None:
+        return _volver_a_armar(
+            f"No se pudo revisar la casilla: falta la clave ({CLAVE_CASILLA_ENV_VAR}) en Railway — avisale al que administra Sistema."
+        )
+
+    try:
+        casillas = [
+            c for c in listar_casillas_pedidos()
+            if c["cliente_id"] == cliente_id_valor
+            and c["activa"]
+            and c["fecha_activacion"] is not None
+            and (c["asunto_filtro"] or "").strip()
+        ]
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if not casillas:
+        return _volver_a_armar(
+            "Este cliente no tiene ninguna casilla activa y configurada para buscar pedidos: se configura en Sistema → Casilla de Pedidos."
+        )
+
+    nuevos = 0
+    errores = []
+    for casilla in casillas:
+        revision = _revision_manual_de_casilla(casilla)
+        if revision["error"] is not None:
+            errores.append(revision["error"])
+        else:
+            nuevos += revision["nuevos"]
+
+    if errores and not nuevos:
+        return _volver_a_armar(f"La casilla no se pudo revisar: {errores[0]}")
+    if nuevos:
+        aviso = (
+            f"Casilla revisada: llegó 1 mail nuevo por confirmar — está abajo, en \"Mails de pedido por confirmar\"."
+            if nuevos == 1
+            else f"Casilla revisada: llegaron {nuevos} mails nuevos por confirmar — están abajo, en \"Mails de pedido por confirmar\"."
+        )
+        if errores:
+            aviso += f" Ojo: otra casilla no se pudo revisar: {errores[0]}"
+        return _volver_a_armar(aviso)
+    return _volver_a_armar("Casilla revisada: sin novedades (ningún mail nuevo).")
+
+
 # ---------------------------------------------------------------------------
 # Revisión automática de casillas (tramo 2): un task que corre solo entre las
 # 12:00 y las 15:00 argentinas, hace lo mismo que "Revisar ahora" por cada
 # casilla activa, y (si la casilla lo tiene prendido) intenta auto-confirmar
-# los mails NUEVOS que cuadran al 100%. Todo lo que falla queda registrado en
+# los mails NUEVOS con todos los candados cerrados. Todo lo que falla queda registrado en
 # la casilla o en el mail — nunca en un log que nadie mira.
 # ---------------------------------------------------------------------------
 

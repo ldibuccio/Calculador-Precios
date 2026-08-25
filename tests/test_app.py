@@ -11993,6 +11993,143 @@ def test_revisar_ahora_con_error_imap_lo_registra_y_lo_muestra():
     mock_registrar.assert_not_called()
 
 
+# --- "Buscar pedido" en Armar Pedido: la misma revisión de la casilla, sin ir a Sistema ---
+
+
+def test_armar_lista_muestra_el_boton_buscar_pedido_y_los_mails_pendientes():
+    # Si el que arma no ve el pedido del día, lo busca él mismo desde acá;
+    # y un mail pendiente se confirma acá mismo, sin ir a otra pantalla.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente",
+              return_value=[dict(MAIL_PEDIDO_DE_PRUEBA)]) as mock_mails,
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    mock_mails.assert_called_once_with(1)
+    texto = respuesta.text
+    assert 'action="/deposito/pedido/armar/buscar-pedido"' in texto
+    assert "Buscar pedido en la casilla" in texto
+    # El mail pendiente, visible y confirmable ahí mismo.
+    assert "Mails de pedido por confirmar (1)" in texto
+    assert 'href="/deposito/pedido/mails/9/revisar"' in texto
+    assert "pedido estimado del 22/08/2026" in texto
+
+
+def test_armar_sin_pedido_para_la_fecha_ofrece_buscarlo_en_la_casilla():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    assert 'action="/deposito/pedido/armar/buscar-pedido"' in texto
+    # El botón vuelve a ESTA fecha después de revisar.
+    assert '<input type="hidden" name="fecha" value="2026-08-21">' in texto
+
+
+def test_buscar_pedido_revisa_solo_las_casillas_activas_del_cliente_y_vuelve_a_armar():
+    mail_leido = {
+        "message_id": "<pedido-1@dia.com.ar>", "remitente": "pedidos@dia.com.ar",
+        "asunto": "Pedido del dia", "recibido_el": datetime(2026, 8, 22, 12, 5, tzinfo=ARGENTINA_TEST),
+        "cuerpo_crudo": "<html>...</html>", "cuerpo_texto": "texto",
+    }
+    casillas = [
+        dict(CASILLA_DE_PRUEBA),
+        # De OTRO cliente y una inactiva: no se tocan.
+        dict(CASILLA_DE_PRUEBA, id=4, cliente_id=2),
+        dict(CASILLA_DE_PRUEBA, id=5, activa=False),
+    ]
+    with (
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.revisar_casilla",
+              return_value={"total_desde": 3, "candidatos": 1, "con_asunto": 1, "mails": [mail_leido]}) as mock_revisar,
+        patch("app.main.registrar_mail_pedido", return_value=9),
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/armar/buscar-pedido", data={"cliente_id": "1"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    # Una sola revisión: la casilla activa del cliente 1 (misma conexión
+    # que "Revisar ahora", solo lectura).
+    mock_revisar.assert_called_once_with(
+        "casilla@empresa.com", "clave", "imap.gmail.com",
+        CASILLA_DE_PRUEBA["fecha_activacion"], "Pedido Dia", ["pedidos@dia.com.ar"],
+    )
+    # Manual: NO sella la revisión automática (la alerta no lo cuenta).
+    mock_revision.assert_called_once_with(3)
+    destino = respuesta.headers["location"]
+    assert destino.startswith("/deposito/pedido/armar?")
+    assert "cliente_id=1" in destino
+    assert "1+mail+nuevo+por+confirmar" in destino
+
+
+def test_buscar_pedido_sin_novedades_lo_dice_y_vuelve_a_donde_estaba():
+    with (
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.revisar_casilla",
+              return_value={"total_desde": 3, "candidatos": 0, "con_asunto": 0, "mails": []}),
+        patch("app.main.registrar_revision_casilla"),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/armar/buscar-pedido",
+            data={"cliente_id": "1", "fecha": "2026-08-22", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+
+    destino = respuesta.headers["location"]
+    # Vuelve EXACTAMENTE a donde estaba: misma fecha y misma sucursal.
+    assert "fecha=2026-08-22" in destino
+    assert "sucursal=VL" in destino
+    assert "sin+novedades" in destino
+
+
+def test_buscar_pedido_sin_casilla_activa_del_cliente_avisa_sin_conectar():
+    casillas = [dict(CASILLA_DE_PRUEBA, cliente_id=2), dict(CASILLA_DE_PRUEBA, id=5, activa=False)]
+    with (
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.listar_casillas_pedidos", return_value=casillas),
+        patch("app.main.revisar_casilla") as mock_revisar,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/armar/buscar-pedido", data={"cliente_id": "1"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    mock_revisar.assert_not_called()
+    assert "ninguna+casilla+activa" in respuesta.headers["location"]
+
+
+def test_buscar_pedido_con_error_imap_lo_registra_y_lo_muestra_en_armar():
+    with (
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.listar_casillas_pedidos", return_value=[dict(CASILLA_DE_PRUEBA)]),
+        patch("app.main.revisar_casilla", side_effect=ErrorCasilla("IMAP deshabilitado")),
+        patch("app.main.registrar_revision_casilla") as mock_revision,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/armar/buscar-pedido", data={"cliente_id": "1"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    # El error queda GRABADO en la casilla (alimenta la alerta), como siempre.
+    mock_revision.assert_called_once_with(3, error="IMAP deshabilitado")
+    destino = respuesta.headers["location"]
+    assert destino.startswith("/deposito/pedido/armar?")
+    assert "IMAP+deshabilitado" in destino
+
+
 def test_revisar_mail_pendiente_precarga_la_revision_con_el_cuerpo_guardado():
     datos_leidos = {
         "bloques": [

@@ -252,6 +252,51 @@
     margin-bottom: 1rem;
     font-size: 0.9rem;
   }
+  /* "Buscar pedido": fuerza la revisión de la casilla desde acá, sin ir a Sistema. */
+  .boton-buscar-pedido {
+    display: block;
+    width: 100%;
+    margin-top: 0.75rem;
+    padding: 0.85rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 2px solid #2563eb;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  /* Mails de pedido pendientes (los trae "Buscar pedido"): visibles ACÁ. */
+  .tarjeta-mails-trabados { border: 2px solid #f59e0b; background: #fffbeb; }
+  .tarjeta-mails-trabados.con-error { border-color: #dc2626; background: #fef2f2; }
+  .mail-trabado { border-top: 1px solid #fde68a; padding: 0.6rem 0; }
+  .mail-trabado:first-of-type { border-top: none; }
+  .mail-trabado .asunto { font-weight: 700; font-size: 0.95rem; }
+  .mail-trabado .detalle { color: #713f12; font-size: 0.85rem; margin: 0.15rem 0 0.2rem; }
+  .mail-trabado .motivo-error { color: #991b1b; font-size: 0.85rem; font-weight: 600; margin: 0.1rem 0 0.2rem; }
+  .pill-mail {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+  .pill-mail.pendiente { background: #fef9c3; color: #713f12; }
+  .pill-mail.error { background: #fee2e2; color: #991b1b; }
+  .mail-trabado .boton-revisar {
+    display: block;
+    margin-top: 0.4rem;
+    padding: 0.7rem;
+    background: #16a34a;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+  }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -286,6 +331,26 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
+  {% if mails_sin_confirmar and not pedido %}
+  <div class="tarjeta tarjeta-mails-trabados {% if mails_sin_confirmar | selectattr("estado", "equalto", "error") | list %}con-error{% endif %}">
+    <h2>Mails de pedido por confirmar ({{ mails_sin_confirmar|length }})</h2>
+    <p class="sub">Llegaron a la casilla y todavía no son pedido: confirmalos acá y quedan listos para armar.</p>
+    {% for m in mails_sin_confirmar %}
+    <div class="mail-trabado">
+      <div class="asunto">{{ m.asunto or "(sin asunto)" }}
+        {% if m.estado == "error" %}<span class="pill-mail error">Error de lectura</span>
+        {% else %}<span class="pill-mail pendiente">Pendiente</span>{% endif %}
+      </div>
+      <div class="detalle">Llegó {{ m.recibido_el|fecha_hora }} · pedido estimado del {{ m.fecha_estimada_mostrar }}</div>
+      {% if m.estado == "error" and m.motivo %}
+      <div class="motivo-error">{{ m.motivo }}</div>
+      {% endif %}
+      <a class="boton-revisar" href="/deposito/pedido/mails/{{ m.id }}/revisar">Revisar y confirmar</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if modo_lista and cliente_id %}
   <div class="tarjeta">
     <h2>Pedidos para armar</h2>
@@ -300,12 +365,23 @@
     {% else %}
     <p class="vacio">No hay pedidos cargados (últimos 7 días ni próximos). Cargalos desde Cargar Pedido.</p>
     {% endif %}
+    {# El mismo "Revisar ahora" de Sistema, pero acá: si el pedido del día
+       no aparece, el que arma lo busca él mismo en la casilla. #}
+    <form method="post" action="/deposito/pedido/armar/buscar-pedido">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <button type="submit" class="boton-buscar-pedido">🔎 Buscar pedido en la casilla</button>
+    </form>
   </div>
   {% endif %}
 
   {% if cliente_id and not pedido and not modo_lista %}
   <div class="tarjeta">
-    <p class="vacio">No hay pedido cargado para el {{ fecha_mostrar }}. Cargalo primero desde Cargar Pedido.</p>
+    <p class="vacio">No hay pedido cargado para el {{ fecha_mostrar }}. Cargalo primero desde Cargar Pedido — o buscalo en la casilla.</p>
+    <form method="post" action="/deposito/pedido/armar/buscar-pedido">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <input type="hidden" name="fecha" value="{{ fecha }}">
+      <button type="submit" class="boton-buscar-pedido">🔎 Buscar pedido en la casilla</button>
+    </form>
     <a class="volver" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}">Volver a los pedidos</a>
   </div>
   {% endif %}

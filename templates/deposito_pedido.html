@@ -60,16 +60,6 @@
     margin-bottom: 1rem;
     font-size: 0.9rem;
   }
-  .descuadre {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 2px solid #dc2626;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
-    font-weight: 700;
-  }
   .aviso-reemplazo {
     background: #fef9c3;
     color: #713f12;
@@ -394,7 +384,7 @@
   {% if pedido %}
 
   {% if confirmado_automaticamente %}
-  <div class="aviso-auto">🤖 Confirmado automáticamente {{ confirmado_automaticamente.procesado_el|fecha_hora }} desde el mail de la casilla (“{{ confirmado_automaticamente.asunto }}”): la lectura por estructura cuadró al 100% con los totales del mail. Nadie lo revisó a mano.</div>
+  <div class="aviso-auto">🤖 Confirmado automáticamente {{ confirmado_automaticamente.procesado_el|fecha_hora }} desde el mail de la casilla (“{{ confirmado_automaticamente.asunto }}”): lo leyó el parser por estructura y todos los renglones matchearon solos. Nadie lo revisó a mano.</div>
   {% endif %}
 
   {% if pedido.reemplaza_a_pedido_id %}
