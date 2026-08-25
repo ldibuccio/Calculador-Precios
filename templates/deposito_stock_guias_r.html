@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guías R</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+  form.filtros label {
+    display: block;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  form.filtros input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-bottom: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .fila-fechas { display: flex; gap: 0.75rem; }
+  .fila-fechas > div { flex: 1; min-width: 0; }
+  .boton-buscar {
+    width: 100%;
+    padding: 0.75rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .encabezado-guia {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .numero-guia { font-size: 1.1rem; font-weight: 800; color: #7c3aed; }
+  .fecha-guia { color: #888; font-size: 0.85rem; white-space: nowrap; }
+  .transformacion { font-size: 0.95rem; margin: 0.35rem 0 0; }
+  .costo {
+    background: #f5f3ff;
+    border: 1px solid #ddd6fe;
+    color: #5b21b6;
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.55rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+  .costo-incompleto {
+    background: #fef9c3;
+    border: 1px solid #facc15;
+    color: #713f12;
+  }
+  .consumos { margin-top: 0.55rem; border-top: 1px solid #eee; }
+  .consumo {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.35rem 0;
+    font-size: 0.85rem;
+    color: #444;
+  }
+  .consumo .sin-costo { color: #b45309; font-weight: 700; }
+  .tarjeta.anulada { opacity: 0.6; }
+  .tarjeta.anulada .numero-guia { text-decoration: line-through; }
+  .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 700; }
+  .boton-anular {
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.9rem;
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Guías R" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/deposito/stock/guias-r">
+      <div class="fila-fechas">
+        <div>
+          <label for="fecha_desde">Desde</label>
+          <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
+        </div>
+        <div>
+          <label for="fecha_hasta">Hasta</label>
+          <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
+        </div>
+      </div>
+      <button type="submit" class="boton-buscar">Buscar</button>
+    </form>
+    <p class="ayuda">El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero. Corregir una guía es anularla y cargarla de nuevo.</p>
+  </div>
+
+  {% if guias %}
+  {% for g in guias %}
+  <div class="tarjeta {% if g.anulado_el %}anulada{% endif %}">
+    <div class="encabezado-guia">
+      <span class="numero-guia">Guía R{{ g.id }} — {{ g.articulo_nombre }}</span>
+      <span class="fecha-guia">{{ g.fecha_operacion|fecha_corta }}{% if g.anulado_el %} <span class="marca-anulado">ANULADA</span>{% endif %}</span>
+    </div>
+    <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
+    {% if g.costo_total is not none %}
+    <div class="costo">Costo: {{ g.costo_total|moneda }} total{% if g.costo_por_bulto_primera is not none %} · {{ g.costo_por_bulto_primera|moneda }} por caja de primera{% endif %}</div>
+    {% else %}
+    <div class="costo costo-incompleto">COSTO INCOMPLETO: algún lote consumido no tiene precio (compra sin precio, stock inicial o reingreso).</div>
+    {% endif %}
+    <div class="consumos">
+      {% for c in g.consumos %}
+      <div class="consumo">
+        <span>
+          {% if c.origen == "compra" %}De la guía {{ c.guia_fecha|fecha_corta }} · {{ c.proveedor_nombre }}
+          {% elif c.origen == "ajuste" %}De un ajuste (ej. stock inicial)
+          {% elif c.origen == "reingreso_rechazo" %}De un reingreso por rechazo
+          {% elif c.origen == "reproceso" %}De la guía R{{ c.origen_id }}
+          {% else %}<span class="sin-costo">Sin lote (se tomó más de lo que había en el sistema)</span>{% endif %}
+        </span>
+        <span>{{ c.bultos|numero }} bultos{% if c.costo_por_bulto is not none %} · {{ c.costo_por_bulto|moneda }}/bulto{% elif c.origen != "sin_lote" %} · <span class="sin-costo">sin precio</span>{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% if not g.anulado_el %}
+    <form method="post" action="/deposito/stock/guias-r/{{ g.id }}/anular"
+          onsubmit="return confirm('¿Anular la guía R{{ g.id }}? Lo tomado vuelve a sus lotes y la primera sale del stock. Queda registrada como anulada.');">
+      <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+      <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <button type="submit" class="boton-anular">Anular guía</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="tarjeta">
+    <p class="vacio">Sin guías R en este rango. Los reprocesos se cargan desde Stock → Reproceso.</p>
+  </div>
+  {% endif %}
+</body>
+</html>

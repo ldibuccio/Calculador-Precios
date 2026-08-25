@@ -4972,6 +4972,11 @@ _SQL_SUMAS_STOCK = """
         FROM movimientos_stock
         WHERE anulado_el IS NULL AND tipo <> 'reingreso_rechazo' {filtro_articulo}
         GROUP BY articulo_id
+    ), reproc AS (
+        SELECT articulo_id, SUM(bultos_primera) AS entradas, SUM(bultos_tomados) AS salidas
+        FROM reprocesos
+        WHERE anulado_el IS NULL {filtro_articulo}
+        GROUP BY articulo_id
     )
 """
 
@@ -5003,14 +5008,18 @@ def stock_deposito_por_articulo() -> list[dict]:
                        COALESCE(e.total, 0) AS entradas,
                        COALESCE(s.total, 0) AS salidas,
                        COALESCE(r.total, 0) AS reingresos,
-                       COALESCE(aj.total, 0) AS ajustes
+                       COALESCE(aj.total, 0) AS ajustes,
+                       COALESCE(rp.entradas, 0) AS reproceso_primera,
+                       COALESCE(rp.salidas, 0) AS reproceso_tomados
                 FROM articulos a
                 LEFT JOIN entradas e ON e.articulo_id = a.id
                 LEFT JOIN salidas s ON s.articulo_id = a.id
                 LEFT JOIN reingresos r ON r.articulo_id = a.id
                 LEFT JOIN ajustes aj ON aj.articulo_id = a.id
+                LEFT JOIN reproc rp ON rp.articulo_id = a.id
                 WHERE e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
+                   OR rp.articulo_id IS NOT NULL
                 ORDER BY a.nombre
                 """
             )
@@ -5018,7 +5027,8 @@ def stock_deposito_por_articulo() -> list[dict]:
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
         for fila in filas:
             fila["stock"] = (
-                float(fila["entradas"]) + float(fila["reingresos"]) + float(fila["ajustes"]) - float(fila["salidas"])
+                float(fila["entradas"]) + float(fila["reingresos"]) + float(fila["ajustes"])
+                + float(fila["reproceso_primera"]) - float(fila["reproceso_tomados"]) - float(fila["salidas"])
             )
         return filas
     finally:
@@ -5033,9 +5043,11 @@ def _stock_deposito_actual(cursor, articulo_id: int) -> float:
         SELECT COALESCE((SELECT total FROM entradas), 0)
              + COALESCE((SELECT total FROM reingresos), 0)
              + COALESCE((SELECT total FROM ajustes), 0)
+             + COALESCE((SELECT entradas FROM reproc), 0)
+             - COALESCE((SELECT salidas FROM reproc), 0)
              - COALESCE((SELECT total FROM salidas), 0)
         """,
-        (articulo_id, articulo_id, articulo_id, articulo_id),
+        (articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
     )
     return float(cursor.fetchone()[0])
 
@@ -5084,63 +5096,78 @@ def crear_movimiento_stock(
         conexion.close()
 
 
+def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], float]:
+    """La cuenta interna de lotes y salidas, con el cursor abierto — la comparten el detalle FIFO y crear_reproceso."""
+    cursor.execute(
+        """
+        SELECT (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
+               c.procesada_el AS momento_orden,
+               'guia' AS tipo_lote,
+               c.id AS origen_id,
+               g.fecha_operacion AS fecha_lote,
+               p.nombre AS detalle,
+               NULL AS motivo,
+               c.cantidad_cajones_real AS cantidad,
+               c.importe AS costo_bulto
+        FROM compras c
+        JOIN proveedores p ON p.id = c.proveedor_id
+        LEFT JOIN guias_compra g ON g.id = c.guia_id
+        WHERE c.estado = 'recepcionado' AND c.articulo_id = %s
+        UNION ALL
+        SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
+               cl.nombre, m.motivo, m.cantidad, NULL
+        FROM movimientos_stock m
+        LEFT JOIN clientes cl ON cl.id = m.cliente_id
+        WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
+        UNION ALL
+        SELECT rp.fecha_operacion, rp.creado_en, 'reproceso', rp.id, rp.fecha_operacion,
+               NULL, NULL, rp.bultos_primera, rp.costo_por_bulto_primera
+        FROM reprocesos rp
+        WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = %s
+        ORDER BY 1, 2
+        """,
+        (articulo_id, articulo_id, articulo_id),
+    )
+    columnas = [descripcion[0] for descripcion in cursor.description]
+    entradas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+    cursor.execute(
+        """
+        WITH vigentes AS (
+            SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+            FROM pedidos WHERE anulado_el IS NULL
+            ORDER BY cliente_id, fecha_operacion, creado_en DESC
+        )
+        SELECT COALESCE((SELECT SUM(COALESCE(r.cantidad_armada, r.cantidad))
+                         FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+                         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                           AND r.articulo_id = %s), 0)
+             + COALESCE((SELECT -SUM(cantidad) FROM movimientos_stock
+                         WHERE anulado_el IS NULL AND cantidad < 0 AND articulo_id = %s), 0)
+             + COALESCE((SELECT SUM(bultos_tomados) FROM reprocesos
+                         WHERE anulado_el IS NULL AND articulo_id = %s), 0)
+        """,
+        (articulo_id, articulo_id, articulo_id),
+    )
+    total_salidas = float(cursor.fetchone()[0])
+    return entradas, total_salidas
+
+
 def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float]:
     """Los lotes de entrada de un artículo (orden FIFO) y el total de bultos salidos, para el detalle por guía.
 
     Entradas: compras recepcionadas (el lote es la guía: fecha + proveedor),
-    reingresos por rechazo y ajustes positivos. Salidas (un total, se
-    reparten FIFO en core/stock.py): renglones armados de pedidos vigentes,
-    mermas y ajustes negativos. El orden de un movimiento es su
-    fecha_operacion (la REAL del hecho), con el momento de carga de
-    desempate; el de una compra, el instante de su recepción.
+    reingresos por rechazo, ajustes positivos y la primera de las guías R.
+    Salidas (un total, se reparten FIFO en core/stock.py): renglones armados
+    de pedidos vigentes, mermas, ajustes negativos y lo tomado por
+    reprocesos. El orden de un movimiento es su fecha_operacion (la REAL
+    del hecho), con el momento de carga de desempate; el de una compra, el
+    instante de su recepción.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
-                       c.procesada_el AS momento_orden,
-                       'guia' AS tipo_lote,
-                       g.fecha_operacion AS fecha_lote,
-                       p.nombre AS detalle,
-                       NULL AS motivo,
-                       c.cantidad_cajones_real AS cantidad
-                FROM compras c
-                JOIN proveedores p ON p.id = c.proveedor_id
-                LEFT JOIN guias_compra g ON g.id = c.guia_id
-                WHERE c.estado = 'recepcionado' AND c.articulo_id = %s
-                UNION ALL
-                SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
-                       cl.nombre, m.motivo, m.cantidad
-                FROM movimientos_stock m
-                LEFT JOIN clientes cl ON cl.id = m.cliente_id
-                WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
-                ORDER BY 1, 2
-                """,
-                (articulo_id, articulo_id),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            entradas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-
-            cursor.execute(
-                """
-                WITH vigentes AS (
-                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id
-                    FROM pedidos WHERE anulado_el IS NULL
-                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
-                )
-                SELECT COALESCE((SELECT SUM(COALESCE(r.cantidad_armada, r.cantidad))
-                                 FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
-                                 WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
-                                   AND r.articulo_id = %s), 0)
-                     + COALESCE((SELECT -SUM(cantidad) FROM movimientos_stock
-                                 WHERE anulado_el IS NULL AND cantidad < 0 AND articulo_id = %s), 0)
-                """,
-                (articulo_id, articulo_id),
-            )
-            total_salidas = float(cursor.fetchone()[0])
-        return entradas, total_salidas
+            return _entradas_y_salidas_stock(cursor, articulo_id)
     finally:
         conexion.close()
 
@@ -5297,10 +5324,180 @@ def contar_stock_deposito_negativo() -> int:
                 LEFT JOIN salidas s ON s.articulo_id = a.id
                 LEFT JOIN reingresos r ON r.articulo_id = a.id
                 LEFT JOIN ajustes aj ON aj.articulo_id = a.id
+                LEFT JOIN reproc rp ON rp.articulo_id = a.id
                 WHERE COALESCE(e.total, 0) + COALESCE(r.total, 0)
-                    + COALESCE(aj.total, 0) - COALESCE(s.total, 0) < 0
+                    + COALESCE(aj.total, 0) + COALESCE(rp.entradas, 0)
+                    - COALESCE(rp.salidas, 0) - COALESCE(s.total, 0) < 0
                 """
             )
             return int(cursor.fetchone()[0])
+    finally:
+        conexion.close()
+
+
+# --- Reproceso (Guías R) ---
+
+
+def crear_reproceso(
+    articulo_id: int,
+    bultos_tomados: float,
+    bultos_primera: float,
+    bultos_segunda: float,
+    bultos_merma: float,
+    fecha_operacion,
+) -> int:
+    """Carga una guía R: el SERVER corre el FIFO acá y congela consumos y costo. Devuelve el número de guía.
+
+    Los consumos salen de repartir lo tomado entre los lotes con resto,
+    del más viejo primero — el operario no elige lote jamás. Si lo tomado
+    supera lo que los lotes cubren, el resto queda como consumo
+    'sin_lote' (el piso es la verdad: no se traba, y la diferencia queda
+    a la vista). El costo por bulto se congela del importe de la compra
+    de cada lote (o del costo de primera si el lote es de otra guía R);
+    un lote sin precio deja el consumo sin costo, y con UN consumo sin
+    costo la guía queda con costo_total NULL = "costo incompleto" —
+    nunca se promedia con números inventados. Todo en UNA transacción.
+    """
+    from core.stock import repartir_fifo
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            entradas, total_salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            for e in entradas:
+                e["orden"] = (e["fecha_orden"], e["momento_orden"])
+            salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
+            lotes = repartir_fifo(entradas, salidas)["lotes"]
+
+            consumos = []
+            pendiente = float(bultos_tomados)
+            for lote in lotes:
+                if pendiente <= 0:
+                    break
+                if lote["restante"] <= 0:
+                    continue
+                bultos = min(lote["restante"], pendiente)
+                pendiente = round(pendiente - bultos, 2)
+                origen = "compra" if lote["tipo_lote"] == "guia" else lote["tipo_lote"]
+                consumos.append(
+                    {
+                        "origen": origen,
+                        "compra_id": lote["origen_id"] if origen == "compra" else None,
+                        "origen_id": lote["origen_id"],
+                        "bultos": bultos,
+                        "costo_por_bulto": float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None,
+                    }
+                )
+            if pendiente > 0:
+                consumos.append(
+                    {"origen": "sin_lote", "compra_id": None, "origen_id": None,
+                     "bultos": pendiente, "costo_por_bulto": None}
+                )
+
+            costo_total = None
+            costo_por_bulto_primera = None
+            if all(c["costo_por_bulto"] is not None for c in consumos):
+                costo_total = round(sum(c["bultos"] * c["costo_por_bulto"] for c in consumos), 2)
+                if float(bultos_primera) > 0:
+                    # TODO el costo va a la primera: segunda y merma valen cero.
+                    costo_por_bulto_primera = round(costo_total / float(bultos_primera), 2)
+
+            cursor.execute(
+                """
+                INSERT INTO reprocesos
+                    (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                     bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                 bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera),
+            )
+            reproceso_id = cursor.fetchone()[0]
+            for c in consumos:
+                cursor.execute(
+                    """
+                    INSERT INTO reprocesos_consumos
+                        (reproceso_id, origen, compra_id, origen_id, bultos, costo_por_bulto)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (reproceso_id, c["origen"], c["compra_id"], c["origen_id"],
+                     c["bultos"], c["costo_por_bulto"]),
+                )
+        conexion.commit()
+        return reproceso_id
+    finally:
+        conexion.close()
+
+
+def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+    """Las guías R del rango (por fecha_operacion), anuladas incluidas y marcadas, con sus consumos adentro.
+
+    Cada guía trae "consumos": de qué lote salió cada bulto, con la guía
+    de compra y el proveedor cuando el lote es una compra — la
+    trazabilidad hacia atrás completa ("de la 105 tomé 30...").
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT rp.id, rp.articulo_id, rp.fecha_operacion, rp.bultos_tomados,
+                       rp.bultos_primera, rp.bultos_segunda, rp.bultos_merma,
+                       rp.costo_total, rp.costo_por_bulto_primera, rp.creado_en,
+                       rp.anulado_el, a.nombre AS articulo_nombre
+                FROM reprocesos rp
+                JOIN articulos a ON a.id = rp.articulo_id
+                WHERE rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s
+                ORDER BY rp.fecha_operacion DESC, rp.id DESC
+                """,
+                (fecha_desde, fecha_hasta),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            guias = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+            if not guias:
+                return []
+
+            cursor.execute(
+                """
+                SELECT rc.reproceso_id, rc.origen, rc.origen_id, rc.bultos, rc.costo_por_bulto,
+                       g.fecha_operacion AS guia_fecha, p.nombre AS proveedor_nombre
+                FROM reprocesos_consumos rc
+                LEFT JOIN compras c ON c.id = rc.compra_id
+                LEFT JOIN guias_compra g ON g.id = c.guia_id
+                LEFT JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE rc.reproceso_id = ANY(%s)
+                ORDER BY rc.id
+                """,
+                ([g["id"] for g in guias],),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            consumos = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+        por_guia = {}
+        for c in consumos:
+            por_guia.setdefault(c["reproceso_id"], []).append(c)
+        for g in guias:
+            g["consumos"] = por_guia.get(g["id"], [])
+        return guias
+    finally:
+        conexion.close()
+
+
+def anular_reproceso(reproceso_id: int) -> None:
+    """Anula una guía R (baja lógica): lo tomado vuelve a sus lotes y la primera sale del stock, solos.
+
+    Como el stock y el FIFO vivos nunca guardaron asignaciones, no hay
+    nada que descoser: excluir la guía de las sumas alcanza, y la
+    repetición reasigna en la próxima consulta. Los consumos quedan como
+    registro de la guía anulada. Corregir = anular y cargar de nuevo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE reprocesos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                (reproceso_id,),
+            )
+        conexion.commit()
     finally:
         conexion.close()

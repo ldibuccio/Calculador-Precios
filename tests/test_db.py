@@ -3093,8 +3093,9 @@ from app.db import (  # noqa: E402
 
 def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",), ("ajustes",)]
-    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3)]
+    cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
+                          ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",)]
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_deposito_por_articulo()
@@ -3111,8 +3112,11 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     # Los reingresos por rechazo vienen APARTE de los otros movimientos.
     assert "tipo = 'reingreso_rechazo'" in consulta
     assert "tipo <> 'reingreso_rechazo'" in consulta
+    # El reproceso también deriva: + primera armada, − bultos tomados.
+    assert "SUM(bultos_primera)" in consulta
+    assert "SUM(bultos_tomados)" in consulta
     # El stock es la cuenta, hecha acá: nada de columnas cacheadas.
-    assert filas[0]["stock"] == 40 + 2 + (-3) - 15
+    assert filas[0]["stock"] == 40 + 2 + (-3) + 6 - 10 - 15
 
 
 def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resultante():
@@ -3148,7 +3152,7 @@ def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
 
     consulta = cursor.execute.call_args.args[0]
     assert "AND articulo_id = %s" in consulta
-    assert cursor.execute.call_args.args[1] == (2, 2, 2, 2)
+    assert cursor.execute.call_args.args[1] == (2, 2, 2, 2, 2)
     assert stock == -5.0
 
 
@@ -3287,3 +3291,118 @@ def test_contar_stock_deposito_negativo_hace_la_misma_cuenta_que_el_stock():
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta
     assert "< 0" in consulta
     assert casos == 2
+
+
+# --- Reproceso (Guías R) ---
+
+from app.db import (  # noqa: E402
+    anular_reproceso,
+    crear_reproceso,
+    listar_reprocesos_por_rango,
+)
+
+COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
+                  ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",)]
+
+
+def _lote_compra(origen_id, fecha, cantidad, costo):
+    return (fecha, datetime(2026, 8, fecha.day, 10), "guia", origen_id, fecha, "Norte 15", None, cantidad, costo)
+
+
+def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
+    # Lotes: compra 101 (8 bultos a $1000, viejo) y 102 (10 a $1200). Ya
+    # salieron 5 → restos 3 y 10. Tomo 6: 3 del 101 y 3 del 102 (FIFO).
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(5.0,), (12,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.return_value = [
+        _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+        _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25))
+
+    assert numero == 12
+    inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    # Cabecera: costo_total = 3×1000 + 3×1200 = 6600, TODO a la primera:
+    # 6600 / 4 cajas = 1650. Segunda y merma no llevan nada.
+    assert "INSERT INTO reprocesos" in inserts[0].args[0]
+    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0)
+    # Consumos congelados, del lote más viejo primero, con su costo.
+    assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
+    assert inserts[2].args[1] == (12, "compra", 102, 102, 3.0, 1200.0)
+    # El reproceso JAMÁS toca compras: su costo no puede llegar a la cotización.
+    assert all("compras" not in c.args[0].split("FROM")[0] for c in inserts)
+    conexion.commit.assert_called_once()
+
+
+def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
+    # Un lote sin importe (compra de la mañana sin precio, o stock
+    # inicial): NO se promedia con números inventados — costo NULL.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,), (13,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.return_value = [
+        _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+        _lote_compra(102, date(2026, 8, 22), 10.0, None),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_reproceso(1, 10, 8, 0, 0, date(2026, 8, 25))
+
+    inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    assert inserts[0].args[1][6] is None
+    assert inserts[0].args[1][7] is None
+    assert inserts[2].args[1][5] is None
+
+
+def test_crear_reproceso_lo_que_excede_los_lotes_queda_sin_lote():
+    # El piso es la verdad: si tomó 5 y los lotes cubren 3, no se traba —
+    # los 2 de más quedan como consumo sin_lote, a la vista.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,), (14,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.return_value = [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))
+
+    inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    assert inserts[1].args[1] == (14, "compra", 101, 101, 3.0, 1000.0)
+    assert inserts[2].args[1] == (14, "sin_lote", None, None, 2.0, None)
+    # Con un consumo sin costo, la guía queda con costo incompleto.
+    assert inserts[0].args[1][6] is None
+
+
+def test_anular_reproceso_es_baja_logica():
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_reproceso(12)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "UPDATE reprocesos SET anulado_el = now()" in consulta
+    assert "anulado_el IS NULL" in consulta
+    conexion.commit.assert_called_once()
+
+
+def test_listar_reprocesos_trae_las_guias_con_sus_consumos():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("articulo_nombre",)]
+    cursor.fetchall.side_effect = [[], []]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert listar_reprocesos_por_rango(date(2026, 8, 18), date(2026, 8, 25)) == []
+
+    consulta = cursor.execute.call_args.args[0]
+    # Anuladas incluidas (marcadas): el listado no las esconde.
+    assert "anulado_el IS NULL" not in consulta
+
+
+def test_la_cotizacion_no_lee_el_costo_del_reproceso():
+    # La garantía es estructural: el costeo (la cotización de la mañana)
+    # reconstruye el costo SOLO desde compras — si alguna vez alguien le
+    # mete el costo del reproceso, este test lo frena.
+    import pathlib
+
+    fuente = pathlib.Path("app/costeo.py").read_text()
+    assert "reproceso" not in fuente.lower()
+    assert "remitos_segunda" not in fuente.lower()

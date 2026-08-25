@@ -111,6 +111,7 @@
           <span class="etiqueta">
             {% if l.tipo_lote == "guia" %}Guía {{ (l.fecha_lote or l.fecha_orden)|fecha_corta }} · {{ l.detalle }}
             {% elif l.tipo_lote == "reingreso_rechazo" %}<span class="marca-reingreso">reingreso por rechazo</span> {{ l.fecha_lote|fecha_corta }}{% if l.detalle %} · {{ l.detalle }}{% endif %}
+            {% elif l.tipo_lote == "reproceso" %}Guía R{{ l.origen_id }} {{ l.fecha_lote|fecha_corta }} (primera de reproceso)
             {% else %}Ajuste {{ l.fecha_lote|fecha_corta }}{% endif %}
           </span>
           {% if l.motivo %}<span class="motivo">{{ l.motivo }}</span>{% endif %}
@@ -134,6 +135,7 @@
         <span class="etiqueta">
           {% if l.tipo_lote == "guia" %}Guía {{ (l.fecha_lote or l.fecha_orden)|fecha_corta }} · {{ l.detalle }}
           {% elif l.tipo_lote == "reingreso_rechazo" %}Reingreso por rechazo {{ l.fecha_lote|fecha_corta }}{% if l.detalle %} · {{ l.detalle }}{% endif %}
+          {% elif l.tipo_lote == "reproceso" %}Guía R{{ l.origen_id }} {{ l.fecha_lote|fecha_corta }} (primera de reproceso)
           {% else %}Ajuste {{ l.fecha_lote|fecha_corta }}{% endif %}
         </span>
         {% if l.motivo %}<span class="motivo">{{ l.motivo }}</span>{% endif %}

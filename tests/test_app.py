@@ -14396,3 +14396,163 @@ def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
     assert respuesta.status_code == 200
     assert 'value="-3.0"' in respuesta.text
     assert "Desde entonces hubo movimientos" not in respuesta.text
+
+
+# --- Reproceso (tanda 1): pantalla de operario y Guías R ---
+
+
+def _get_reproceso(articulos_stock=None, fichas=None):
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=articulos_stock or []),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=fichas or []),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        return cliente.get("/deposito/stock/reproceso")
+
+
+def test_reproceso_lista_solo_articulos_con_stock_y_sin_numeros():
+    respuesta = _get_reproceso(articulos_stock=[
+        {"articulo_id": 1, "nombre": "Banana", "stock": 37.5},
+        {"articulo_id": 2, "nombre": "Anco", "stock": -5.0},
+        {"articulo_id": 3, "nombre": "Kiwi", "stock": 0.0},
+    ])
+
+    assert respuesta.status_code == 200
+    # Solo lo que hay para tomar, POR NOMBRE: sin stock no aparece...
+    assert "Banana" in respuesta.text
+    assert "Anco" not in respuesta.text
+    assert "Kiwi" not in respuesta.text
+    # ...y el número del sistema no viaja a la pantalla del operario.
+    assert "37.5" not in respuesta.text and "37,5" not in respuesta.text
+
+
+def test_reproceso_muestra_el_kilaje_de_la_ficha_como_ayuda():
+    # Dato de FICHA (no de stock): se le puede mostrar al operario. El
+    # fixture tiene dos clientes con la misma ficha: se listan los dos.
+    fichas = [{"articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
+    respuesta = _get_reproceso(
+        articulos_stock=[{"articulo_id": 1, "nombre": "Tomate Perita", "stock": 30.0}],
+        fichas=fichas,
+    )
+
+    assert respuesta.status_code == 200
+    assert 'data-ayuda="Según ficha — Día: 6 kg por caja · Vea: 6 kg por caja."' in respuesta.text
+
+
+def test_reproceso_guarda_y_el_aviso_repite_solo_lo_cargado():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Perita"}),
+        patch("app.main.crear_reproceso", return_value=12) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reproceso",
+            data={"articulo_id": "1", "bultos_tomados": "30", "bultos_primera": "20",
+                  "bultos_segunda": "5", "bultos_merma": "5", "fecha": "2026-08-25"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25))
+    destino = respuesta.headers["location"]
+    # "Guía R12: tomé 30..." — lo cargado, jamás costos ni stock.
+    assert "Gu%C3%ADa+R12" in destino
+    assert "tom%C3%A9+30+bultos" in destino
+    assert "costo" not in destino.lower()
+    assert "qued" not in destino
+
+
+def test_reproceso_sin_nada_producido_da_400():
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+        respuesta = cliente.post(
+            "/deposito/stock/reproceso",
+            data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
+                  "bultos_segunda": "", "bultos_merma": ""},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Cargá en qué se transformó" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_reproceso_fecha_futura_da_400():
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+        respuesta = cliente.post(
+            "/deposito/stock/reproceso",
+            data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",
+                  "fecha": "2026-08-26"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser futura" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+GUIAS_R_DE_PRUEBA = [
+    {"id": 12, "articulo_id": 1, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 30.0,
+     "bultos_primera": 20.0, "bultos_segunda": 5.0, "bultos_merma": 5.0,
+     "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
+     "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
+     "articulo_nombre": "Tomate Perita",
+     "consumos": [
+         {"origen": "compra", "origen_id": 101, "bultos": 20.0, "costo_por_bulto": 1000.0,
+          "guia_fecha": date(2026, 8, 24), "proveedor_nombre": "Norte 15"},
+         {"origen": "compra", "origen_id": 102, "bultos": 10.0, "costo_por_bulto": 1300.0,
+          "guia_fecha": date(2026, 8, 25), "proveedor_nombre": "Sur 3"},
+     ]},
+    {"id": 13, "articulo_id": 2, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 4.0,
+     "bultos_primera": 6.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
+     "costo_total": None, "costo_por_bulto_primera": None,
+     "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
+     "articulo_nombre": "Anco",
+     "consumos": [
+         {"origen": "ajuste", "origen_id": 1, "bultos": 4.0, "costo_por_bulto": None,
+          "guia_fecha": None, "proveedor_nombre": None},
+     ]},
+]
+
+
+def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    assert respuesta.status_code == 200
+    assert "Guía R12 — Tomate Perita" in respuesta.text
+    assert "Tomó 30 bultos" in respuesta.text
+    # La trazabilidad hacia atrás: de qué guías de compra consumió.
+    assert "De la guía 24/08 · Norte 15" in respuesta.text
+    assert "De la guía 25/08 · Sur 3" in respuesta.text
+    # El costo, TODO a la primera: $33.000 total, $1.650 por caja.
+    assert "$33.000 total" in respuesta.text
+    assert "$1.650 por caja de primera" in respuesta.text
+    # La guía sin precio en algún lote: COSTO INCOMPLETO, no un invento.
+    assert "COSTO INCOMPLETO" in respuesta.text
+    assert "De un ajuste (ej. stock inicial)" in respuesta.text
+    # La anulada queda visible, marcada y sin botón de anular.
+    assert "ANULADA" in respuesta.text
+    assert respuesta.text.count("Anular guía") == 1
+
+
+def test_anular_guia_r_vuelve_al_rango():
+    with patch("app.main.anular_reproceso") as mock_anular:
+        respuesta = cliente.post(
+            "/deposito/stock/guias-r/12/anular",
+            data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_anular.assert_called_once_with(12)
+    assert "fecha_desde=2026-08-18" in respuesta.headers["location"]
+
+
+def test_hub_stock_tiene_reproceso_y_guias_r():
+    respuesta = cliente.get("/deposito/stock")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito/stock/reproceso"' in respuesta.text
+    assert 'href="/deposito/stock/guias-r"' in respuesta.text

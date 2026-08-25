@@ -72,10 +72,12 @@ from app.db import (
     crear_cliente,
     crear_compra,
     anular_movimiento_stock,
+    anular_reproceso,
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
     crear_pedido,
+    crear_reproceso,
     crear_ajuste_vacios,
     crear_compras_de_comanda,
     crear_conteo_vacios,
@@ -96,6 +98,7 @@ from app.db import (
     entradas_y_salidas_stock_articulo,
     listar_conteos_stock_de_fecha,
     listar_movimientos_stock_por_rango,
+    listar_reprocesos_por_rango,
     listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
@@ -6483,6 +6486,190 @@ def ver_cotejo_stock(request: Request):
         filas.append(fila)
 
     return templates.TemplateResponse(request, "deposito_stock_cotejo.html", {"filas": filas})
+
+
+# --- Reproceso (Guías R) ---
+
+SUFIJOS_FICHA_REPROCESO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
+
+
+def _ayudas_ficha_por_articulo() -> dict[int, str]:
+    """Por artículo, el kilaje de la caja armada según la ficha de cada cliente ("Día: 6 kg por caja").
+
+    Es dato de FICHA, no de stock: se le puede mostrar al operario.
+    """
+    ayudas: dict[int, list[str]] = {}
+    for cliente_fila in listar_clientes():
+        for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
+            if not ficha.get("contenido_caja"):
+                continue
+            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+            texto = f"{cliente_fila['nombre']}: {_formatear_numero(ficha['contenido_caja'])} {sufijo} por caja".strip()
+            ayudas.setdefault(ficha["articulo_id"], []).append(texto)
+    return {articulo_id: "Según ficha — " + " · ".join(textos) + "." for articulo_id, textos in ayudas.items()}
+
+
+def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+    try:
+        # El selector lista SOLO los artículos con stock disponible, POR
+        # NOMBRE, SIN cantidades: saber que "hay tomate" no es un número
+        # del sistema — los números no viajan a la pantalla del operario.
+        con_stock = [
+            {"id": f["articulo_id"], "nombre": f["nombre"]}
+            for f in stock_deposito_por_articulo()
+            if f["stock"] > 0
+        ]
+        ayudas = _ayudas_ficha_por_articulo()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    for a in con_stock:
+        a["ayuda_ficha"] = ayudas.get(a["id"], "")
+    contexto = {
+        "articulos": con_stock,
+        "precarga": precarga or {},
+        "hoy": _hoy_argentina().isoformat(),
+        "aviso": aviso,
+        "error": error,
+    }
+    return templates.TemplateResponse(request, "deposito_stock_reproceso.html", contexto, status_code=status_code)
+
+
+@app.get("/deposito/stock/reproceso")
+def ver_reproceso_stock(request: Request, aviso: str | None = None):
+    return _renderizar_pantalla_reproceso(request, aviso=aviso)
+
+
+def _numero_form_o_cero(texto: str, que: str) -> tuple[str | None, float | None]:
+    """Bultos producidos del reproceso: vacío vale 0 (no armó de eso), negativo no existe."""
+    if not texto.strip():
+        return None, 0.0
+    try:
+        valor = float(texto)
+    except ValueError:
+        return f"La cantidad de {que} tiene que ser un número.", None
+    if valor < 0:
+        return f"La cantidad de {que} no puede ser negativa.", None
+    return None, valor
+
+
+@app.post("/deposito/stock/reproceso")
+def cargar_reproceso_ruta(
+    request: Request,
+    articulo_id: str = Form(""),
+    bultos_tomados: str = Form(""),
+    bultos_primera: str = Form(""),
+    bultos_segunda: str = Form(""),
+    bultos_merma: str = Form(""),
+    fecha: str = Form(""),
+):
+    """El operario declara la transformación; el server corre el FIFO y congela consumos y costo.
+
+    Pantalla de OPERARIO: nunca traba por stock (el piso es su verdad —
+    si tomó más de lo que el sistema cree, queda sin_lote y la alerta
+    avisa), y el aviso repite solo lo que cargó — jamás costos ni números
+    del sistema. Sin correlación entre tomado y producido: un cajón de 16
+    puede dar tres cajas de 6.
+    """
+    error, tomados_valor = _validar_bultos_positivos(bultos_tomados, "tomados")
+
+    primera_valor = segunda_valor = merma_valor = None
+    if not error:
+        error, primera_valor = _numero_form_o_cero(bultos_primera, "cajas armadas")
+    if not error:
+        error, segunda_valor = _numero_form_o_cero(bultos_segunda, "segunda")
+    if not error:
+        error, merma_valor = _numero_form_o_cero(bultos_merma, "merma")
+    if not error and primera_valor == 0 and segunda_valor == 0 and merma_valor == 0:
+        error = "Cargá en qué se transformó: cajas armadas, segunda o merma (si fue todo merma, cargala como merma)."
+
+    fecha_valor = None
+    if not error:
+        hoy = _hoy_argentina()
+        if not fecha.strip():
+            fecha_valor = hoy
+        else:
+            try:
+                fecha_valor = date.fromisoformat(fecha.strip())
+            except ValueError:
+                error = "La fecha del reproceso no es válida."
+            else:
+                if fecha_valor > hoy:
+                    error = "La fecha del reproceso no puede ser futura."
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        precarga = {
+            "articulo_id": articulo_id,
+            "bultos_tomados": bultos_tomados,
+            "bultos_primera": bultos_primera,
+            "bultos_segunda": bultos_segunda,
+            "bultos_merma": bultos_merma,
+            "fecha": fecha,
+        }
+        return _renderizar_pantalla_reproceso(request, precarga=precarga, error=error, status_code=400)
+
+    try:
+        numero_guia = crear_reproceso(
+            articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_reproceso(
+            request, error=f"No se pudo guardar el reproceso: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Guía R{numero_guia}: tomé {_formatear_numero(tomados_valor)} bultos de {articulo['nombre']}, "
+        f"armé {_formatear_numero(primera_valor)} cajas, {_formatear_numero(segunda_valor)} de segunda "
+        f"y {_formatear_numero(merma_valor)} de merma."
+    )
+    return RedirectResponse(url=f"/deposito/stock/reproceso?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+@app.get("/deposito/stock/guias-r")
+def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None):
+    """Guías R (control): la trazabilidad hacia atrás y el costo del reproceso. Acá SÍ se ven costos.
+
+    Este costo NUNCA alimenta la cotización (que solo lee compras): se
+    conoce a la tarde, y la cotización de la mañana se hizo con el costo
+    de compra — viven separados a propósito.
+    """
+    desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
+    try:
+        guias = listar_reprocesos_por_rango(desde, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "deposito_stock_guias_r.html",
+        {"guias": guias, "fecha_desde": desde.isoformat(), "fecha_hasta": hasta.isoformat()},
+    )
+
+
+@app.post("/deposito/stock/guias-r/{reproceso_id}/anular")
+def anular_reproceso_ruta(
+    reproceso_id: int,
+    fecha_desde: str = Form(""),
+    fecha_hasta: str = Form(""),
+):
+    try:
+        anular_reproceso(reproceso_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular la guía: {error_db}") from error_db
+
+    return RedirectResponse(
+        url=f"/deposito/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        status_code=303,
+    )
 
 
 @app.get("/gerencia")
