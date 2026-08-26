@@ -101,6 +101,7 @@
 <body>
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Agregar ficha" if modo == "nueva" else "Editar ficha" %}
+  {% set barra_atras = "/fichas" %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}

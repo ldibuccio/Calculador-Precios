@@ -86,6 +86,7 @@
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Corregir recepción" %}
+  {% set barra_atras = "/compras/" ~ compra.id ~ "/detalle" %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}

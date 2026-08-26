@@ -130,6 +130,7 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Reingreso por Rechazo" %}
+  {% if paso == "form" %}{% set barra_atras = "/deposito/stock/reingreso?pedido_id=" ~ renglon.pedido_id ~ "&sucursal=" ~ renglon.sucursal %}{% elif paso == "renglones" %}{% set barra_atras = "/deposito/stock/reingreso" %}{% else %}{% set barra_atras = "/deposito/stock" %}{% endif %}
   {% include "_barra_navegacion.html" %}
 
   {% if aviso %}

@@ -124,6 +124,7 @@
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Nueva compra" if modo == "nueva" else "Editar compra" %}
+  {% set barra_atras = "/compras/nueva/listado" if modo == "nueva" else "/compras/buscar" %}
   {% include "_barra_navegacion.html" %}
 
   {% if modo == "nueva" %}

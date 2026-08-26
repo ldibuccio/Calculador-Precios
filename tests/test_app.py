@@ -9111,12 +9111,14 @@ def test_barra_navegacion_en_compras_apunta_a_compras_y_a_inicio():
 
 
 def test_barra_navegacion_tiene_boton_de_volver_atras():
-    # Tercer botón junto a la casita y al módulo: atrás del navegador.
+    # Tercer botón junto a la casita y al módulo: SUBE en la jerarquía del
+    # sistema (padre declarado por pantalla) — un hub sube a Inicio. El
+    # history.back() del navegador queda para el gesto nativo.
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert 'onclick="history.back()"' in respuesta.text
-    assert 'aria-label="Volver atrás"' in respuesta.text
+    assert '<a class="barra-boton" href="/inicio" aria-label="Volver atrás">' in respuesta.text
+    assert 'onclick="history.back()"' not in respuesta.text
 
 
 def test_el_titulo_de_la_barra_se_autoajusta_y_no_se_recorta():
@@ -11720,10 +11722,9 @@ def test_armar_el_atras_de_la_barra_sube_en_la_jerarquia_no_en_el_historial():
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
         assert ancla.format(destino="/deposito") in respuesta.text
 
-    # Las pantallas que todavía no declaran su padre siguen con
-    # history.back(), sin cambios.
+    # Los hubs también declaran su padre: Depósito sube a Inicio.
     respuesta = cliente.get("/deposito")
-    assert 'onclick="history.back()"' in respuesta.text
+    assert ancla.format(destino="/inicio") in respuesta.text
 
 
 def test_armar_pedido_corregido_muestra_el_diff_contra_el_anterior():
@@ -15757,3 +15758,68 @@ def test_auditoria_incluye_la_alerta_de_cruce_de_primera():
     assert respuesta.status_code == 200
     assert "Primera de reproceso armada para un cliente salió en pedidos de otro" in respuesta.text
     assert 'href="/deposito/stock/guias-r"' in respuesta.text
+
+
+def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
+    # Muestra representativa de cada zona: el botón de atrás es un LINK al
+    # padre del sistema (nunca history.back(), que queda para el gesto
+    # nativo del navegador).
+    ancla = '<a class="barra-boton" href="{destino}" aria-label="Volver atrás">'
+
+    # Hubs → Inicio; hijos → su hub; nietos → su padre intermedio.
+    directas = [
+        ("/puesto", "/inicio"),
+        ("/logistica", "/inicio"),
+        ("/puesto/envases", "/puesto"),
+        ("/deposito/stock", "/deposito"),
+    ]
+    for url, padre in directas:
+        respuesta = cliente.get(url)
+        assert ancla.format(destino=padre) in respuesta.text, url
+        assert 'onclick="history.back()"' not in respuesta.text, url
+
+    # Vacíos: el hub del empleado cuelga de Envases Puesto; Recibir, de Vacíos.
+    respuesta = cliente.get("/puesto/envases/vacios")
+    assert ancla.format(destino="/puesto/envases") in respuesta.text
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/vacios/recibir")
+    assert ancla.format(destino="/puesto/envases/vacios") in respuesta.text
+
+    # Retiro: el padre es el hub DESDE el que se entró (origen en la URL).
+    with patch("app.main.listar_compras_pendientes_retiro", return_value=[]):
+        desde_logistica = cliente.get("/logistica/retiro/Clark")
+        desde_deposito = cliente.get("/logistica/retiro/Pases?origen=deposito")
+    assert ancla.format(destino="/logistica") in desde_logistica.text
+    assert ancla.format(destino="/deposito") in desde_deposito.text
+
+    # Recepción → Depósito.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+    assert ancla.format(destino="/deposito") in respuesta.text
+
+    # El detalle FIFO cuelga del Stock del Sistema.
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0)),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema/2")
+    assert ancla.format(destino="/deposito/stock/sistema") in respuesta.text
+
+    # La casilla cuelga de Sistema.
+    with (
+        patch("app.main.listar_casillas_pedidos", return_value=[]),
+        patch("app.main.listar_mails_pedido", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.clave_casilla_configurada", return_value="clave"),
+        patch("app.main.obtener_ultimo_tick_revision", return_value=None),
+    ):
+        respuesta = cliente.get("/sistema/casilla-pedidos")
+    assert ancla.format(destino="/sistema") in respuesta.text

@@ -162,6 +162,7 @@
 <body>
   {% set barra_sector = origen %}
   {% set barra_titulo = "Retiro " + tipo_retiro %}
+  {% set barra_atras = SECTORES[origen].url %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}

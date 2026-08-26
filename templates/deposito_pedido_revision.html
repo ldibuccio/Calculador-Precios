@@ -103,6 +103,7 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Revisar Pedido" %}
+  {% set barra_atras = "/sistema/casilla-pedidos" if mail else "/deposito/pedido/cargar?cliente_id=" ~ cliente_id ~ "&fecha=" ~ fecha %}
   {% include "_barra_navegacion.html" %}
 
   {% if metodo_lectura == "estructura" %}

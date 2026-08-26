@@ -89,6 +89,7 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Stock por Guía" %}
+  {% set barra_atras = "/deposito/stock/sistema" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="resumen {% if stock < 0 %}negativo{% endif %}">

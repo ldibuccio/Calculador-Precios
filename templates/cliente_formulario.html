@@ -151,6 +151,7 @@
 <body>
   {% set barra_sector = "comercial" %}
   {% set barra_titulo = "Agregar cliente" if modo == "alta" else "Editar cliente" %}
+  {% set barra_atras = "/clientes" %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
