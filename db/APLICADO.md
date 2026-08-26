@@ -64,6 +64,7 @@ bases estén marcadas.
 | `agregar_reingreso_vinculado.sql` | ✅ 2026-08-25 (verificado: 2 columnas creadas) | ✅ 2026-08-25 (verificado: 2 columnas creadas) |
 | `agregar_costos_fijos.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
 | `agregar_cliente_reproceso.sql` | ✅ 2026-08-26 (verificado) | ✅ 2026-08-26 (verificado) |
+| `agregar_destino_rechazo_y_merma_por_lote.sql` | ✅ 2026-08-26 (verificado: 4 columnas creadas) | ✅ 2026-08-26 (verificado: 4 columnas creadas) |
 
 ## Deuda pendiente de limpieza
 
