@@ -90,6 +90,17 @@
   .marca-sin-precio { color: #991b1b; font-weight: 700; font-size: 0.78rem; }
   .marca-estado { color: #991b1b; font-weight: 600; font-size: 0.78rem; }
   .estado-ok { color: #666; font-size: 0.78rem; }
+  .desglose-subtotal {
+    text-align: right;
+    color: #666;
+    font-size: 0.8rem;
+    margin-top: 0.1rem;
+  }
+  .desglose-total {
+    color: #1d4ed8;
+    font-size: 0.85rem;
+    margin: 0.3rem 0 0;
+  }
   .fila-subtotal {
     display: flex;
     justify-content: space-between;
@@ -180,7 +191,7 @@
   <div class="error">{{ aviso_tope }}</div>
   {% endif %}
 
-  <p class="ayuda">Lo que realmente entró al depósito (cantidades REALES que pesó/contó Depósito, no las del comprador), agrupado por proveedor para facturar. Las fechas filtran por el día de la recepción.</p>
+  <p class="ayuda">Lo que realmente entró al depósito (cantidades REALES que pesó/contó Depósito, no las del comprador), agrupado por proveedor para facturar. El total de cada renglón es lo que hay que depositarle: la mercadería más la seña de sus cajones — así se concilia contra la cuenta del proveedor. Las fechas filtran por el día de la recepción.</p>
 
   {% if grupos %}
     {% for g in grupos %}
@@ -196,7 +207,7 @@
               <th>Cant. real</th>
               <th>Precio</th>
               <th>Seña</th>
-              <th>Total</th>
+              <th>Total a depositar</th>
               <th>Estado</th>
             </tr>
           </thead>
@@ -210,7 +221,8 @@
               <td>{% if f.sin_precio %}<span class="marca-sin-precio">Sin precio</span>{% elif f.importe is not none %}{{ f.importe|moneda }}{% else %}—{% endif %}</td>
               {# Seña por cajón y, al lado, lo señado por los cajones reales. #}
               <td>{% if f.sena is not none %}{{ f.sena|moneda }}{% if f.total_sena is not none %} ({{ f.total_sena|moneda }}){% endif %}{% else %}—{% endif %}</td>
-              <td class="numero">{% if f.total is not none %}{{ f.total|moneda }}{% else %}—{% endif %}</td>
+              {# Lo que se le deposita por este renglón: mercadería + seña. #}
+              <td class="numero">{% if f.total_a_depositar is not none %}{{ f.total_a_depositar|moneda }}{% else %}—{% endif %}</td>
               <td>
                 {% if f.estado_etiqueta == "Recepcionada" %}<span class="estado-ok">Recepcionada</span>
                 {% else %}<span class="marca-estado">{{ f.estado_etiqueta }}{% if f.cantidad_cajones_rechazada is not none %} ({{ f.cantidad_cajones_rechazada|numero }} rech.){% endif %}</span>{% endif %}
@@ -224,6 +236,9 @@
         <span>Subtotal {{ g.proveedor_nombre }}</span>
         <span>{{ g.subtotal|moneda }}</span>
       </div>
+      {% if g.subtotal_senas %}
+      <div class="desglose-subtotal">mercadería {{ g.subtotal_mercaderia|moneda }} + señas {{ g.subtotal_senas|moneda }}</div>
+      {% endif %}
     </div>
     {% endfor %}
 
@@ -231,7 +246,10 @@
        de arriba, que es como se factura proveedor por proveedor). #}
     {% if not aviso_tope %}
     <div class="total">
-      <span class="numero-grande">Total general: {{ total_general|moneda }}</span>
+      <span class="numero-grande">Total a depositar: {{ total_general|moneda }}</span>
+      {% if total_senas %}
+      <p class="desglose-total">mercadería {{ total_mercaderia|moneda }} + señas de los cajones {{ total_senas|moneda }}</p>
+      {% endif %}
       {% if cantidad_sin_precio > 0 %}
       <p class="aviso-sin-precio">Ojo: {{ cantidad_sin_precio }} compra{{ "s" if cantidad_sin_precio != 1 else "" }} sin precio cargado (en amarillo) — no suman al total, completalas antes de facturar.</p>
       {% endif %}

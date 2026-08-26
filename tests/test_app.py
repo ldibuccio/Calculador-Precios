@@ -9087,13 +9087,18 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
     # El rechazo parcial se ve aparte, para explicar la diferencia: se
     # facturan los 8 aceptados y se muestra que 2 se devolvieron.
     assert "Rechazo parcial (2 rech.)" in respuesta.text
-    # Subtotal por proveedor (así se factura): 8×5000 + 8×3000 = 64000.
+    # El subtotal es lo que hay que DEPOSITARLE al proveedor: mercadería
+    # (8×5000 + 8×3000 = 64000) + las señas de sus cajones (8×500 = 4000).
     assert "Subtotal Saturno" in respuesta.text
-    assert "$64.000" in respuesta.text
+    assert "$68.000" in respuesta.text
+    assert "mercadería $64.000 + señas $4.000" in respuesta.text
+    # Verdurin no tiene señas: su subtotal es la mercadería sola.
     assert "Subtotal Verdurin" in respuesta.text
     assert "$20.000" in respuesta.text
-    # Total general al final: 64000 + 20000 (la sin precio no suma).
-    assert "Total general: $84.000" in respuesta.text
+    # Total al final: 84000 de mercadería + 4000 de señas (la compra sin
+    # precio no suma).
+    assert "Total a depositar: $88.000" in respuesta.text
+    assert "mercadería $84.000 + señas de los cajones $4.000" in respuesta.text
     # La compra sin precio queda marcada: hay que completarla antes de facturar.
     assert "Sin precio" in respuesta.text
     assert "1 compra sin precio cargado" in respuesta.text
@@ -9157,9 +9162,11 @@ def test_exportar_ingresos_deposito_pdf_sin_tope_con_subtotales_y_marcas():
     texto = _texto_del_pdf_de_respuesta(respuesta.content)
     assert "Ingresos a Depósito" in texto
     assert "Saturno (N07P41)" in texto
+    # El subtotal del PDF es lo a depositar, con las dos partes al lado.
     assert "Subtotal" in texto
-    assert "$64.000" in texto
-    assert "Total general: $84.000" in texto
+    assert "$68.000" in texto
+    assert "mercadería $64.000 + señas $4.000" in " ".join(texto.split())
+    assert "Total a depositar: $88.000" in texto
     assert "SIN PRECIO" in texto
     # El texto puede quebrarse en dos renglones dentro de la columna: se
     # compara con los espacios normalizados.

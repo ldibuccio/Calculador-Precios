@@ -8212,16 +8212,23 @@ ETIQUETAS_ESTADO_INGRESO = {
 def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
     """Agrupa los ingresos por proveedor con su subtotal (así se factura), y arma el total general.
 
-    Por fila: total = cantidad_cajones_real × importe (el precio es por
-    bulto). Sin precio cargado no hay total — la fila queda marcada
-    (sin_precio) porque es lo que falta completar antes de facturar; una
-    rechazada total o no ingresada sin precio NO se marca (no se paga,
-    no hay nada que completar). Las cantidades son SIEMPRE las reales
-    que pesó/contó Depósito, nunca las del comprador.
+    Por fila: mercadería = cantidad_cajones_real × importe (el precio es
+    por bulto) y señas = cantidad_cajones_real × seña. El TOTAL de la
+    fila es lo que hay que depositarle al proveedor: mercadería + señas
+    de los cajones — con eso se concilia contra la cuenta del proveedor
+    sin sacar cuentas aparte. Los subtotales y el total general llevan
+    las dos partes desglosadas, para poder cruzarlas por separado.
+
+    Sin precio cargado no hay total — la fila queda marcada (sin_precio)
+    porque es lo que falta completar antes de facturar; una rechazada
+    total o no ingresada sin precio NO se marca (no se paga, no hay nada
+    que completar). Las cantidades son SIEMPRE las reales que pesó/contó
+    Depósito, nunca las del comprador.
     """
     grupos: list[dict] = []
     grupos_por_proveedor: dict[str, dict] = {}
-    total_general = 0.0
+    total_mercaderia = 0.0
+    total_senas = 0.0
     cantidad_sin_precio = 0
 
     for ingreso in ingresos:
@@ -8233,6 +8240,8 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
                 "proveedor_codigo_puesto": clave,
                 "filas": [],
                 "subtotal": 0.0,
+                "subtotal_mercaderia": 0.0,
+                "subtotal_senas": 0.0,
                 "sin_precio": 0,
             }
             grupos_por_proveedor[clave] = grupo
@@ -8247,9 +8256,19 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
         sena = float(ingreso["sena"]) if ingreso.get("sena") is not None else None
         total_sena = cajones * sena if cajones is not None and sena is not None else None
 
+        # El total de la fila es lo que se le deposita al proveedor por
+        # ese renglón: la mercadería más la seña de sus cajones.
+        total_a_depositar = None
+        if total is not None or total_sena is not None:
+            total_a_depositar = (total or 0.0) + (total_sena or 0.0)
         if total is not None:
-            grupo["subtotal"] += total
-            total_general += total
+            grupo["subtotal_mercaderia"] += total
+            total_mercaderia += total
+        if total_sena is not None:
+            grupo["subtotal_senas"] += total_sena
+            total_senas += total_sena
+        if total_a_depositar is not None:
+            grupo["subtotal"] += total_a_depositar
         if sin_precio:
             grupo["sin_precio"] += 1
             cantidad_sin_precio += 1
@@ -8260,10 +8279,15 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
 
         grupo["filas"].append(
             {**ingreso, "total": total, "sin_precio": sin_precio, "estado_etiqueta": etiqueta,
-             "sena": sena, "total_sena": total_sena}
+             "sena": sena, "total_sena": total_sena, "total_a_depositar": total_a_depositar}
         )
 
-    totales = {"total_general": total_general, "cantidad_sin_precio": cantidad_sin_precio}
+    totales = {
+        "total_general": total_mercaderia + total_senas,
+        "total_mercaderia": total_mercaderia,
+        "total_senas": total_senas,
+        "cantidad_sin_precio": cantidad_sin_precio,
+    }
     return grupos, totales
 
 

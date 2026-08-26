@@ -7,6 +7,12 @@ pesó/contó Depósito; el rechazo parcial se muestra aparte para explicar
 por qué el número no coincide con lo comprado, y las compras sin precio
 van marcadas (falta completarlas antes de facturar).
 
+El total de cada renglón es lo que hay que DEPOSITARLE al proveedor:
+mercadería + seña de los cajones. Con eso el listado se concilia contra
+la cuenta del proveedor sin sacar cuentas aparte; las dos partes van
+igual desglosadas en cada subtotal y en el total, para poder cruzarlas
+por separado.
+
 grupos/totales: los mismos que arma _grupos_ingresos_deposito en
 app/main.py — esto solo arma bytes en memoria, nunca guarda nada.
 """
@@ -156,7 +162,7 @@ def generar_pdf_ingresos_deposito(
     if not grupos:
         elementos.append(Paragraph("No se encontraron ingresos con estos filtros.", estilo_vacio))
 
-    encabezados = ("Recepción", "Guía", "Artículo", "Cantidad real", "Precio", "Seña", "Total", "Estado")
+    encabezados = ("Recepción", "Guía", "Artículo", "Cantidad real", "Precio", "Seña", "A depositar", "Estado")
     anchos = [
         ancho_util * 0.11, ancho_util * 0.07, ancho_util * 0.18, ancho_util * 0.14,
         ancho_util * 0.11, ancho_util * 0.13, ancho_util * 0.12, ancho_util * 0.14,
@@ -181,7 +187,7 @@ def generar_pdf_ingresos_deposito(
                     Paragraph(_texto_cantidad_real(fila), estilo_dato),
                     Paragraph(precio, estilo_dato),
                     Paragraph(_texto_sena(fila), estilo_dato),
-                    Paragraph(_formatear_moneda(fila["total"]), estilo_numero),
+                    Paragraph(_formatear_moneda(fila["total_a_depositar"]), estilo_numero),
                     Paragraph(_texto_estado(fila), estilo_marca if fila["estado_etiqueta"] != "Recepcionada" else estilo_dato_gris),
                 ]
             )
@@ -189,6 +195,8 @@ def generar_pdf_ingresos_deposito(
                 estilos_filas.append(("BACKGROUND", (0, indice + 2), (-1, indice + 2), GRIS_FILA_ALTERNADA))
 
         indice_subtotal = len(datos_tabla)
+        # El subtotal es lo que hay que depositarle a ESTE proveedor; el
+        # desglose va abajo de la tabla, donde entra sin cortar palabras.
         datos_tabla.append(
             [
                 Paragraph("Subtotal", estilo_subtotal), "", "", "", "", "",
@@ -215,10 +223,29 @@ def generar_pdf_ingresos_deposito(
             )
         )
         elementos.append(tabla)
+        if grupo["subtotal_senas"]:
+            elementos.append(
+                Paragraph(
+                    f"mercadería {_formatear_moneda(grupo['subtotal_mercaderia'])} + "
+                    f"señas {_formatear_moneda(grupo['subtotal_senas'])}",
+                    estilo_dato_gris,
+                )
+            )
 
     if grupos:
         elementos.append(Spacer(1, 16))
-        elementos.append(Paragraph(f"Total general: {_formatear_moneda(totales['total_general'])}", estilo_total))
+        elementos.append(
+            Paragraph(f"Total a depositar: {_formatear_moneda(totales['total_general'])}", estilo_total)
+        )
+        if totales["total_senas"]:
+            elementos.append(Spacer(1, 4))
+            elementos.append(
+                Paragraph(
+                    f"mercadería {_formatear_moneda(totales['total_mercaderia'])} + "
+                    f"señas de los cajones {_formatear_moneda(totales['total_senas'])}",
+                    estilo_dato_gris,
+                )
+            )
         if totales["cantidad_sin_precio"] > 0:
             elementos.append(Spacer(1, 5))
             elementos.append(
@@ -253,7 +280,7 @@ def generar_excel_ingresos_deposito(
 
     fila_actual = 1
     hoja.cell(row=fila_actual, column=1, value="Ingresos a Depósito")
-    for columna in range(1, 13):
+    for columna in range(1, 14):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde
         if columna == 1:
@@ -268,7 +295,8 @@ def generar_excel_ingresos_deposito(
 
     encabezados = (
         "Fecha", "Hora", "Guía", "Artículo", "Cajones reales", "Contenido real",
-        "Rechazados", "Precio por bulto", "Seña por bulto", "Total seña", "Total", "Estado",
+        "Rechazados", "Precio por bulto", "Seña por bulto", "Total seña", "Total mercadería",
+        "A depositar", "Estado",
     )
     for grupo in grupos:
         hoja.cell(
@@ -308,22 +336,27 @@ def generar_excel_ingresos_deposito(
             if fila["total"] is not None:
                 celda_total = hoja.cell(row=fila_actual, column=11, value=float(fila["total"]))
                 celda_total.number_format = '"$"#,##0'
-            celda_estado = hoja.cell(row=fila_actual, column=12, value=_texto_estado(fila))
+            if fila["total_a_depositar"] is not None:
+                celda_depositar = hoja.cell(row=fila_actual, column=12, value=float(fila["total_a_depositar"]))
+                celda_depositar.number_format = '"$"#,##0'
+            celda_estado = hoja.cell(row=fila_actual, column=13, value=_texto_estado(fila))
             if fila["estado_etiqueta"] != "Recepcionada":
                 celda_estado.font = fuente_marca
             fila_actual += 1
 
         hoja.cell(row=fila_actual, column=1, value="Subtotal").font = fuente_subtotal
-        celda_subtotal = hoja.cell(row=fila_actual, column=11, value=float(grupo["subtotal"]))
-        celda_subtotal.font = fuente_subtotal
-        celda_subtotal.number_format = '"$"#,##0'
+        for columna, valor in ((11, grupo["subtotal_mercaderia"]), (12, grupo["subtotal"])):
+            celda_subtotal = hoja.cell(row=fila_actual, column=columna, value=float(valor))
+            celda_subtotal.font = fuente_subtotal
+            celda_subtotal.number_format = '"$"#,##0'
         fila_actual += 2
 
     if grupos:
-        hoja.cell(row=fila_actual, column=1, value="Total general").font = fuente_total
-        celda_total_general = hoja.cell(row=fila_actual, column=11, value=float(totales["total_general"]))
-        celda_total_general.font = fuente_total
-        celda_total_general.number_format = '"$"#,##0'
+        hoja.cell(row=fila_actual, column=1, value="Total a depositar").font = fuente_total
+        for columna, valor in ((11, totales["total_mercaderia"]), (12, totales["total_general"])):
+            celda_total_general = hoja.cell(row=fila_actual, column=columna, value=float(valor))
+            celda_total_general.font = fuente_total
+            celda_total_general.number_format = '"$"#,##0'
         fila_actual += 1
         if totales["cantidad_sin_precio"] > 0:
             hoja.cell(
@@ -332,7 +365,7 @@ def generar_excel_ingresos_deposito(
                 "completalas antes de facturar.",
             ).font = fuente_marca
 
-    for columna, ancho in enumerate((12, 8, 9, 22, 14, 14, 12, 15, 14, 12, 13, 24), start=1):
+    for columna, ancho in enumerate((12, 8, 9, 22, 14, 14, 12, 15, 14, 12, 15, 13, 24), start=1):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 
     buffer = BytesIO()
