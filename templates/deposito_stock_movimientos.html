@@ -129,7 +129,10 @@
             {%- if m.tipo == "reingreso_rechazo" %}
               {%- if m.pedido_renglon_id %} · del pedido del {{ m.fecha_pedido|fecha_corta }}{% if m.sucursal_pedido %} ({{ m.sucursal_pedido }}){% endif %}
               {%- else %} · <strong>sin vínculo a pedido</strong> (viejo — corregir es anular y recargar){% endif %}
+              {%- if m.destino_rechazo == "segunda" %} · <strong>pasó a segunda</strong> ({{ m.bultos_segunda|numero }} bultos al pool)
+              {%- elif m.destino_rechazo == "reproceso" %} · <strong>volvió a cajón grande</strong> ({{ m.bultos_segunda|numero }} cajones al pool de segunda){% endif %}
             {%- endif %}
+            {%- if m.lote_tipo %} · mermado de un lote elegido a mano{% endif %}
             {%- if m.stock_sistema is not none %} · el sistema decía {{ m.stock_sistema|numero }}{% endif %}
           </span>
         </div>

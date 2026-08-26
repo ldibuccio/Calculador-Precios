@@ -168,6 +168,18 @@
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
   }
+  /* Rechazo perdido: rojo, es plata que no vuelve — distinto del
+     amarillo de la devolución, que puede volver a venderse. */
+  .chip-rechazo {
+    display: inline-block;
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
   .fila-subtotal {
     display: flex;
     justify-content: space-between;
@@ -248,7 +260,7 @@
     <div class="detalle">
       Renta REAL de {{ resultado.fechas_incluidas|length }} día{{ "s" if resultado.fechas_incluidas|length != 1 }} con envíos —
       venta {{ resultado.totales.venta_neta|moneda }}{% if resultado.totales.devoluciones_bultos %} − devoluciones {{ resultado.totales.devoluciones_venta|moneda }} ({{ resultado.totales.devoluciones_bultos|numero }} bultos que volvieron: se vendió lo enviado menos eso){% endif %}, mercadería {{ resultado.totales.costo_mercaderia|moneda }},
-      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }},
+      envase {{ resultado.totales.costo_envase|moneda }}, mermas {{ resultado.totales.costo_mermas|moneda }}{% if resultado.totales.rechazos_bultos %}, − rechazos perdidos {{ resultado.totales.rechazos_perdidos|moneda }} ({{ resultado.totales.rechazos_bultos|numero }} bultos que volvieron y se fueron a segunda: mercadería + envase, pérdida entera){% endif %},
       {{ resultado.totales.bultos|numero }} bultos enviados.
       {% if resultado.totales.segunda_bultos %}Segunda generada: {{ resultado.totales.segunda_bultos|numero }} bultos (vale cero).{% endif %}
       La utilidad % es sobre la mercadería.
@@ -309,7 +321,7 @@
         {{ f.articulo_nombre }}
         <span class="detalle">{{ f.bultos|numero }} bultos enviados · venta {{ f.venta_neta|moneda }} — mercadería {{ f.costo_mercaderia|moneda }}{% if f.costo_envase %} — envase {{ f.costo_envase|moneda }}{% endif %}</span>
         {% if f.bultos_mermados or f.segunda_bultos or f.devoluciones_bultos %}
-        <span class="detalle">{% if f.bultos_mermados %}<span class="chip-merma">merma {{ f.bultos_mermados|numero }} bultos · {{ f.costo_mermas|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %}</span>
+        <span class="detalle">{% if f.bultos_mermados %}<span class="chip-merma">merma {{ f.bultos_mermados|numero }} bultos · {{ f.costo_mermas|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %}</span>
         {% endif %}
       </div>
       <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">

@@ -242,13 +242,14 @@ def test_el_ajuste_negativo_consume_lote_pero_no_es_perdida():
 # --- devoluciones vinculadas ("si le mandé 25 y me devolvió 5, vendí 20") ---
 
 
-def _devolucion(bultos, fecha_pedido, costo_por_bulto=2000.0, kilos=500.0, armados=25.0):
+def _devolucion(bultos, fecha_pedido, costo_por_bulto=2000.0, kilos=500.0, armados=25.0, destino="stock"):
     return {
         "bultos": bultos,
         "fecha_pedido": fecha_pedido,
         "kilos_enviados": kilos,
         "bultos_armados": armados,
         "costo_por_bulto": costo_por_bulto,
+        "destino_rechazo": destino,
         "articulo_id": 1,
         "articulo_nombre": "Banana",
         "grupo": "fruta",
@@ -330,3 +331,128 @@ def test_devolucion_ancla_el_precio_a_la_fecha_del_pedido_de_origen():
 
     fila = resultado["grupos"][0]["filas"][0]
     assert fila["devoluciones_venta"] == 100 * 80.0 * 0.9
+
+
+# --- Destino del rechazo: la línea "− rechazos perdidos" ---
+
+
+def test_rechazo_a_segunda_es_perdida_entera_de_mercaderia_mas_envase():
+    # No vuelve al stock: no queda primera que absorba el costo (a
+    # diferencia del reproceso normal). Mercadería congelada + envase.
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="segunda")],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    # 5 bultos a 20 kg/bulto = 100 kg de envase a $2 = 200, + 5 × 2000.
+    assert fila["rechazos_bultos"] == 5.0
+    assert fila["rechazos_perdidos"] == 5 * 2000.0 + 100 * 2.0
+    # Sale de la operación normal y entra en su línea propia: la
+    # mercadería y el envase se acreditan para no contarlo dos veces.
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+    assert fila["costo_envase"] == 500.0 * 2.0 - 100 * 2.0
+    # La renta es la misma que si nada se hubiera acreditado: lo que
+    # cambia es que la pérdida ahora tiene nombre.
+    assert fila["costo_total"] == 25 * 500.0 + 500.0 * 2.0 + fila["costo_mermas"]
+    assert resultado["totales"]["rechazos_perdidos"] == fila["rechazos_perdidos"]
+    assert resultado["totales"]["rechazos_bultos"] == 5.0
+
+
+def test_rechazo_que_vuelve_a_cajon_grande_se_pierde_igual():
+    # El destino "reproceso" (cajas chicas de vuelta a cajón) es la misma
+    # pérdida: lo que cambia es el envase en que queda la segunda.
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="reproceso")],
+    )
+
+    assert resultado["grupos"][0]["filas"][0]["rechazos_perdidos"] == 5 * 2000.0 + 100 * 2.0
+
+
+def test_rechazo_que_queda_en_stock_no_es_perdida():
+    # Solo se perdió la venta del día: la mercadería vuelve y se va a
+    # vender, así que no hay línea de rechazos perdidos.
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="stock")],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["rechazos_perdidos"] == 0.0
+    assert fila["rechazos_bultos"] == 0.0
+    assert fila["costo_envase"] == 500.0 * 2.0  # el envase no se toca
+
+
+def test_rechazo_parcial_solo_pierde_lo_que_se_fue_a_segunda():
+    # Dos cargas del mismo renglón: 3 quedan en stock y 2 van a segunda.
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[
+            _devolucion(3.0, fecha, destino="stock"),
+            _devolucion(2.0, fecha, destino="segunda"),
+        ],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["rechazos_bultos"] == 2.0
+    assert fila["rechazos_perdidos"] == 2 * 2000.0 + 40 * 2.0
+    # La venta se resta por los 5, sin importar el destino.
+    assert fila["devoluciones_bultos"] == 5.0
+
+
+def test_rechazo_a_segunda_sin_costo_congelado_va_afuera_con_motivo():
+    # Se sabe que se perdió pero no cuánto: número chico y cierto.
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(4.0, fecha, costo_por_bulto=None, destino="segunda")],
+    )
+
+    motivos = {r["motivo"]: r["bultos"] for r in resultado["afuera_por_motivo"]}
+    assert motivos["rechazo_sin_costo"] == 4.0
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["rechazos_perdidos"] == 0.0
+    assert fila["devoluciones_bultos"] == 0.0
+
+
+# --- Merma dirigida: se cuesta al lote elegido, no al más viejo ---
+
+
+def test_merma_dirigida_se_cuesta_al_costo_de_su_lote():
+    # El cajón viejo vale $500 y la guía R $1800. Si se pudre la guía R,
+    # la pérdida es la de la guía R — no la del cajón que el FIFO elegiría.
+    fecha = date(2026, 8, 25)
+    entradas = [
+        dict(_lote(1, 80, 500.0), origen_id=55),
+        dict(_lote(2, 40, 1800.0, tipo_lote="reproceso"), origen_id=9),
+    ]
+    merma = {
+        "orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 10,
+        "lote_tipo": "reproceso", "lote_origen_id": 9,
+    }
+    resultado = calcular_rentabilidad_real(
+        _datos([merma], entradas=entradas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["costo_mermas"] == 10 * 1800.0
+    assert fila["bultos_mermados"] == 10.0
+
+
+def test_merma_sin_lote_elegido_sigue_saliendo_del_mas_viejo():
+    fecha = date(2026, 8, 25)
+    entradas = [
+        dict(_lote(1, 80, 500.0), origen_id=55),
+        dict(_lote(2, 40, 1800.0, tipo_lote="reproceso"), origen_id=9),
+    ]
+    merma = {"orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 10}
+    resultado = calcular_rentabilidad_real(
+        _datos([merma], entradas=entradas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+    )
+
+    assert resultado["grupos"][0]["filas"][0]["costo_mermas"] == 10 * 500.0

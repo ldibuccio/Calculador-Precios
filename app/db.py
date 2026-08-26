@@ -5049,9 +5049,14 @@ _SQL_SUMAS_STOCK = """
           AND r.articulo_id IS NOT NULL {filtro_r_articulo}
         GROUP BY r.articulo_id
     ), reingresos AS (
+        -- Solo los que QUEDAN en stock: un rechazo mandado a segunda (o
+        -- pasado de vuelta a cajón grande) sale del stock normal y suma
+        -- al pool de segunda. NULL = los reingresos viejos, que quedaban
+        -- en stock por definición.
         SELECT articulo_id, SUM(cantidad) AS total
         FROM movimientos_stock
-        WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo' {filtro_articulo}
+        WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo'
+          AND (destino_rechazo IS NULL OR destino_rechazo = 'stock') {filtro_articulo}
         GROUP BY articulo_id
     ), ajustes AS (
         SELECT articulo_id, SUM(cantidad) AS total
@@ -5093,6 +5098,13 @@ def stock_deposito_por_articulo() -> list[dict]:
                 , segunda AS (
                     SELECT articulo_id, SUM(bultos_segunda) AS total
                     FROM reprocesos WHERE anulado_el IS NULL GROUP BY articulo_id
+                ), segunda_rechazo AS (
+                    -- Los rechazos que no volvieron al stock: entran al
+                    -- mismo pool que la segunda de los reprocesos.
+                    SELECT articulo_id, SUM(bultos_segunda) AS total
+                    FROM movimientos_stock
+                    WHERE anulado_el IS NULL AND destino_rechazo IN ('segunda', 'reproceso')
+                    GROUP BY articulo_id
                 ), remitida AS (
                     SELECT articulo_id, SUM(bultos) AS total
                     FROM remitos_segunda WHERE anulado_el IS NULL GROUP BY articulo_id
@@ -5105,6 +5117,7 @@ def stock_deposito_por_articulo() -> list[dict]:
                        COALESCE(rp.entradas, 0) AS reproceso_primera,
                        COALESCE(rp.salidas, 0) AS reproceso_tomados,
                        COALESCE(sg.total, 0) AS segunda_producida,
+                       COALESCE(sr.total, 0) AS segunda_de_rechazos,
                        COALESCE(rm.total, 0) AS segunda_remitida
                 FROM articulos a
                 LEFT JOIN entradas e ON e.articulo_id = a.id
@@ -5113,10 +5126,11 @@ def stock_deposito_por_articulo() -> list[dict]:
                 LEFT JOIN ajustes aj ON aj.articulo_id = a.id
                 LEFT JOIN reproc rp ON rp.articulo_id = a.id
                 LEFT JOIN segunda sg ON sg.articulo_id = a.id
+                LEFT JOIN segunda_rechazo sr ON sr.articulo_id = a.id
                 LEFT JOIN remitida rm ON rm.articulo_id = a.id
                 WHERE e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
-                   OR rp.articulo_id IS NOT NULL
+                   OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
                 ORDER BY a.nombre
                 """
             )
@@ -5128,8 +5142,12 @@ def stock_deposito_por_articulo() -> list[dict]:
                 + float(fila["reproceso_primera"]) - float(fila["reproceso_tomados"]) - float(fila["salidas"])
             )
             # La SEGUNDA es un pool aparte: no es vendible por pedidos y no
-            # infla el stock normal — lo que se produjo menos lo remitido.
-            fila["segunda"] = float(fila["segunda_producida"]) - float(fila["segunda_remitida"])
+            # infla el stock normal — lo que se produjo (en reprocesos y en
+            # rechazos que no volvieron al stock) menos lo remitido.
+            fila["segunda"] = (
+                float(fila["segunda_producida"]) + float(fila["segunda_de_rechazos"])
+                - float(fila["segunda_remitida"])
+            )
         return filas
     finally:
         conexion.close()
@@ -5171,6 +5189,10 @@ def crear_movimiento_stock(
     cliente_id: int | None = None,
     pedido_renglon_id: int | None = None,
     costo_por_bulto: float | None = None,
+    destino_rechazo: str | None = None,
+    bultos_segunda: float | None = None,
+    lote_tipo: str | None = None,
+    lote_origen_id: int | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -5182,7 +5204,14 @@ def crear_movimiento_stock(
 
     Un reingreso VINCULADO lleva además el renglón de pedido que se
     devolvió y el costo por bulto congelado del listado anclado a la
-    fecha del pedido de origen (lo calcula el server, jamás la pantalla).
+    fecha del pedido de origen (lo calcula el server, jamás la pantalla),
+    y el DESTINO elegido al cargarlo: queda en stock, va a segunda tal
+    cual, o vuelve a cajón grande y esos cajones (bultos_segunda) van al
+    pool de segunda.
+
+    Una merma puede venir DIRIGIDA a un lote (lote_tipo + lote_origen_id):
+    el operario sabe cuál se pudrió y esa merma sale de ese lote, no del
+    más viejo. Sin lote, todo sigue como siempre.
     """
     conexion = obtener_conexion()
     try:
@@ -5192,13 +5221,19 @@ def crear_movimiento_stock(
                 """
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
-                     pedido_renglon_id, costo_por_bulto)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
+                     lote_tipo, lote_origen_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
-                 pedido_renglon_id, costo_por_bulto),
+                 pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
+                 lote_tipo, lote_origen_id),
             )
         conexion.commit()
+        # Un rechazo que se va a segunda no toca el stock normal: entró y
+        # salió en el mismo acto.
+        if destino_rechazo in ("segunda", "reproceso"):
+            return stock_sistema
         return stock_sistema + float(cantidad)
     finally:
         conexion.close()
@@ -5342,6 +5377,7 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
             cursor.execute(
                 """
                 SELECT m.id, m.cantidad AS bultos, m.fecha_operacion, m.costo_por_bulto,
+                       m.destino_rechazo,
                        r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        p.fecha_operacion AS fecha_pedido,
                        a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo
@@ -5362,7 +5398,7 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
         conexion.close()
 
 
-def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], float]:
+def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], float, list[dict]]:
     """La cuenta interna de lotes y salidas, con el cursor abierto — la comparten el detalle FIFO y crear_reproceso."""
     cursor.execute(
         """
@@ -5384,11 +5420,15 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
         -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
         -- congelado del listado anclado al pedido de origen); ajustes y
         -- reingresos viejos sin vínculo siguen siendo lotes sin costo.
+        -- Un rechazo mandado a segunda NO es un lote de stock: salió del
+        -- circuito normal al pool de segunda, y su costo ya se imputó
+        -- entero como pérdida en la Rentabilidad Real.
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
                cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint
         FROM movimientos_stock m
         LEFT JOIN clientes cl ON cl.id = m.cliente_id
         WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
+          AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
         UNION ALL
         -- La primera lleva PARA QUIÉN se armó (dato de trazabilidad: el
         -- stock sigue sin dueño); cliente_lote_id alimenta la alerta de
@@ -5424,19 +5464,39 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
         (articulo_id, articulo_id, articulo_id),
     )
     total_salidas = float(cursor.fetchone()[0])
-    return entradas, total_salidas
+
+    # Las mermas DIRIGIDAS a un lote viajan aparte del total (ya están
+    # sumadas adentro): el reparto necesita saber a qué lote va cada una
+    # para descontarla de ahí y no del más viejo.
+    cursor.execute(
+        """
+        SELECT -cantidad AS cantidad, lote_tipo, lote_origen_id
+        FROM movimientos_stock
+        WHERE anulado_el IS NULL AND articulo_id = %s AND lote_tipo IS NOT NULL
+        ORDER BY fecha_operacion, creado_en
+        """,
+        (articulo_id,),
+    )
+    columnas = [descripcion[0] for descripcion in cursor.description]
+    dirigidas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    # El total NO puede contarlas dos veces: se restan del bloque general.
+    total_salidas -= sum(float(d["cantidad"]) for d in dirigidas)
+    return entradas, total_salidas, dirigidas
 
 
-def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float]:
-    """Los lotes de entrada de un artículo (orden FIFO) y el total de bultos salidos, para el detalle por guía.
+def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float, list[dict]]:
+    """Los lotes de entrada de un artículo (orden FIFO), el total de bultos salidos y las mermas dirigidas a un lote.
 
     Entradas: compras recepcionadas (el lote es la guía: fecha + proveedor),
-    reingresos por rechazo, ajustes positivos y la primera de las guías R.
-    Salidas (un total, se reparten FIFO en core/stock.py): renglones armados
-    de pedidos vigentes, mermas, ajustes negativos y lo tomado por
-    reprocesos. El orden de un movimiento es su fecha_operacion (la REAL
-    del hecho), con el momento de carga de desempate; el de una compra, el
-    instante de su recepción.
+    reingresos por rechazo que quedaron en stock, ajustes positivos y la
+    primera de las guías R. Salidas (un total, se reparten FIFO en
+    core/stock.py): renglones armados de pedidos vigentes, mermas, ajustes
+    negativos y lo tomado por reprocesos. El orden de un movimiento es su
+    fecha_operacion (la REAL del hecho), con el momento de carga de
+    desempate; el de una compra, el instante de su recepción.
+
+    Las mermas con lote elegido salen aparte (y ya descontadas del total):
+    esas no van al lote más viejo sino al que el operario marcó.
     """
     conexion = obtener_conexion()
     try:
@@ -5476,7 +5536,7 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 SELECT m.id, m.tipo, m.cantidad, m.motivo, m.fecha_operacion,
                        m.stock_sistema, m.creado_en, m.anulado_el,
                        a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre,
-                       m.pedido_renglon_id,
+                       m.pedido_renglon_id, m.destino_rechazo, m.bultos_segunda, m.lote_tipo,
                        p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido
                 FROM movimientos_stock m
                 JOIN articulos a ON a.id = m.articulo_id
@@ -5637,16 +5697,15 @@ def crear_reproceso(
     costo la guía queda con costo_total NULL = "costo incompleto" —
     nunca se promedia con números inventados. Todo en UNA transacción.
     """
-    from core.stock import repartir_fifo
+    from core.stock import repartir_fifo, salidas_para_reparto
 
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            entradas, total_salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            entradas, total_salidas, dirigidas = _entradas_y_salidas_stock(cursor, articulo_id)
             for e in entradas:
                 e["orden"] = (e["fecha_orden"], e["momento_orden"])
-            salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
-            lotes = repartir_fifo(entradas, salidas)["lotes"]
+            lotes = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))["lotes"]
 
             consumos = []
             pendiente = float(bultos_tomados)
@@ -5970,6 +6029,8 @@ def salidas_stock_articulo(articulo_id: int) -> list[dict]:
     (renglón de pedido vigente, con la fecha del PEDIDO — la que ancla el
     precio — y los kilos enviados), 'merma' y 'ajuste' (movimientos
     negativos), 'reproceso_toma' (con la segunda del reproceso como dato).
+    Una merma DIRIGIDA trae su lote_tipo/lote_origen_id: se cuesta al lote
+    que el operario marcó, no al más viejo.
     El orden FIFO es el mismo del resto del módulo: fecha real del hecho
     + momento de carga de desempate; el armado, por su instante de tilde.
     """
@@ -5991,18 +6052,22 @@ def salidas_stock_articulo(articulo_id: int) -> list[dict]:
                        r.kilos_enviados AS unidades,
                        v.cliente_id AS cliente_id,
                        NULL AS motivo,
-                       NULL::numeric AS bultos_segunda
+                       NULL::numeric AS bultos_segunda,
+                       NULL AS lote_tipo,
+                       NULL::bigint AS lote_origen_id
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
                 WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = %s
                 UNION ALL
                 SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
-                       -m.cantidad, NULL, NULL, m.motivo, NULL
+                       -m.cantidad, NULL, NULL, m.motivo, NULL,
+                       m.lote_tipo, m.lote_origen_id
                 FROM movimientos_stock m
                 WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = %s
                 UNION ALL
                 SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
-                       rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda
+                       rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
+                       NULL, NULL
                 FROM reprocesos rp
                 WHERE rp.anulado_el IS NULL AND rp.articulo_id = %s
                 ORDER BY 1, 2

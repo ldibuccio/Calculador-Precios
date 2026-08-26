@@ -3098,8 +3098,8 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     conexion, cursor = _conexion_falsa()
     cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
                           ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
-                          ("segunda_producida",), ("segunda_remitida",)]
-    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 2)]
+                          ("segunda_producida",), ("segunda_de_rechazos",), ("segunda_remitida",)]
+    cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = stock_deposito_por_articulo()
@@ -3121,8 +3121,12 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     assert "SUM(bultos_tomados)" in consulta
     # El stock es la cuenta, hecha acá: nada de columnas cacheadas.
     assert filas[0]["stock"] == 40 + 2 + (-3) + 6 - 10 - 15
-    # La segunda es un pool APARTE: producida − remitida, nunca en el stock.
-    assert filas[0]["segunda"] == 5 - 2
+    # La segunda es un pool APARTE: lo producido en reprocesos + lo que
+    # entró por rechazos que no volvieron al stock, − lo remitido.
+    assert filas[0]["segunda"] == 5 + 4 - 2
+    # Un rechazo mandado a segunda no suma al stock normal.
+    assert "destino_rechazo IS NULL OR destino_rechazo = 'stock'" in consulta
+    assert "destino_rechazo IN ('segunda', 'reproceso')" in consulta
     assert "SUM(bultos_segunda)" in consulta
 
 
@@ -3136,7 +3140,9 @@ def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resulta
     assert "INSERT INTO movimientos_stock" in insert.args[0]
     # La foto del stock SIN este movimiento, como en ajustes_vacios:
     # sin ese rastro cualquier faltante se tapa con un ajuste.
-    assert insert.args[1] == (7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None)
+    assert insert.args[1] == (
+        7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None, None, None, None, None
+    )
     assert resultado == 9.0
     conexion.commit.assert_called_once()
 
@@ -3148,7 +3154,9 @@ def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
         crear_movimiento_stock(7, "reingreso_rechazo", 4.0, "Devolvió Día", date(2026, 8, 24), cliente_id=1)
 
     insert = cursor.execute.call_args_list[-1]
-    assert insert.args[1] == (7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None)
+    assert insert.args[1] == (
+        7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None, None, None, None, None
+    )
 
 
 def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congelado():
@@ -3163,7 +3171,46 @@ def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congel
     insert = cursor.execute.call_args_list[-1]
     # El vínculo al renglón y el costo congelado (los calcula el server):
     # con esto el lote de reingreso deja de ser "sin costo" para la Real.
-    assert insert.args[1] == (7, "reingreso_rechazo", 4.0, "rechazo por calidad", 1, date(2026, 8, 24), 0.0, 77, 2000.0)
+    assert insert.args[1] == (
+        7, "reingreso_rechazo", 4.0, "rechazo por calidad", 1, date(2026, 8, 24), 0.0, 77, 2000.0,
+        None, None, None, None,
+    )
+
+
+def test_crear_movimiento_stock_rechazo_a_segunda_no_toca_el_stock_normal():
+    # El destino se decide al cargar: lo que va a segunda entra y sale en
+    # el mismo acto, así que el stock del artículo no se mueve.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = crear_movimiento_stock(
+            7, "reingreso_rechazo", 40.0, "rechazado por calidad", date(2026, 8, 24),
+            cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+            destino_rechazo="reproceso", bultos_segunda=12.0,
+        )
+
+    insert = cursor.execute.call_args_list[-1]
+    assert insert.args[1] == (
+        7, "reingreso_rechazo", 40.0, "rechazado por calidad", 1, date(2026, 8, 24), 30.0, 77, 2000.0,
+        "reproceso", 12.0, None, None,
+    )
+    assert resultado == 30.0
+
+
+def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(
+            7, "merma", -3.0, "se pudrió", date(2026, 8, 26),
+            lote_tipo="reproceso", lote_origen_id=9,
+        )
+
+    insert = cursor.execute.call_args_list[-1]
+    assert insert.args[1] == (
+        7, "merma", -3.0, "se pudrió", None, date(2026, 8, 26), 30.0, None, None,
+        None, None, "reproceso", 9,
+    )
 
 
 def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
@@ -3186,7 +3233,7 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        entradas, salidas = entradas_y_salidas_stock_articulo(2)
+        entradas, salidas, dirigidas = entradas_y_salidas_stock_articulo(2)
 
     consulta_entradas = cursor.execute.call_args_list[0].args[0]
     # El lote de una compra es su guía; el orden, el instante de recepción.
@@ -3197,10 +3244,19 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     assert "m.fecha_operacion, m.creado_en" in consulta_entradas
     assert "m.cantidad > 0" in consulta_entradas
 
+    # Un rechazo mandado a segunda no es lote de stock: no entra al FIFO.
+    assert "m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock'" in consulta_entradas
+
     consulta_salidas = cursor.execute.call_args_list[1].args[0]
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta_salidas
     assert "cantidad < 0" in consulta_salidas
     assert salidas == 20.0
+
+    # Las mermas dirigidas a un lote salen aparte, para que el reparto
+    # sepa de qué lote descontarlas (acá no hay ninguna).
+    consulta_dirigidas = cursor.execute.call_args_list[2].args[0]
+    assert "lote_tipo IS NOT NULL" in consulta_dirigidas
+    assert dirigidas == []
 
 
 def test_total_reingresos_rechazo_excluye_anulados():
@@ -3337,9 +3393,13 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # salieron 5 → restos 3 y 10. Tomo 6: 3 del 101 y 3 del 102 (FIFO).
     conexion, cursor = _conexion_falsa(filas_fetchone=[(5.0,), (12,)])
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.return_value = [
-        _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
-        _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
+    # La 2ª tanda de fetchall es la de mermas dirigidas: acá no hay.
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+            _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
+        ],
+        [],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -3365,9 +3425,12 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     # inicial): NO se promedia con números inventados — costo NULL.
     conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,), (13,)])
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.return_value = [
-        _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
-        _lote_compra(102, date(2026, 8, 22), 10.0, None),
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+            _lote_compra(102, date(2026, 8, 22), 10.0, None),
+        ],
+        [],  # sin mermas dirigidas
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -3384,7 +3447,7 @@ def test_crear_reproceso_lo_que_excede_los_lotes_queda_sin_lote():
     # los 2 de más quedan como consumo sin_lote, a la vista.
     conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,), (14,)])
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.return_value = [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)]
+    cursor.fetchall.side_effect = [[_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)], []]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))

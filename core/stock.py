@@ -15,8 +15,48 @@ es mercadería que salió y que un reproceso (módulo 2) o un ajuste tiene
 que explicar. El stock del artículo puede quedar negativo a propósito:
 el armado jamás se traba por stock.
 
+La ÚNICA excepción al "más viejo primero" es la salida DIRIGIDA a un
+lote: una merma que el operario cargó sabiendo cuál se pudrió ("la guía
+R que armé hace dos días"). Esa salida descuenta primero de su lote y
+recién el excedente cae al FIFO de siempre — registra y delata, jamás
+traba. Sin lote elegido (el default), todo funciona como antes.
+
 Todo en BULTOS (lo que se cuenta en el piso).
 """
+
+
+def salidas_para_reparto(total_salidas: float, dirigidas: list[dict] | None = None) -> list[dict]:
+    """Arma la lista de salidas del reparto: el total de siempre + las mermas dirigidas a un lote.
+
+    Las dirigidas viajan aparte del total (no están sumadas adentro)
+    porque el reparto tiene que saber a qué lote va cada una.
+    """
+    salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
+    for dirigida in dirigidas or []:
+        salidas.append(
+            {
+                "orden": 0,
+                "cantidad": float(dirigida["cantidad"]),
+                "lote_tipo": dirigida["lote_tipo"],
+                "lote_origen_id": dirigida["lote_origen_id"],
+            }
+        )
+    return salidas
+
+
+def lote_dirigido(lotes: list[dict], salida: dict) -> dict | None:
+    """El lote al que apunta una salida dirigida, o None si no dirige a ninguno (o ese lote ya no existe)."""
+    if salida.get("lote_tipo") is None:
+        return None
+    return next(
+        (
+            lote
+            for lote in lotes
+            if lote.get("tipo_lote") == salida["lote_tipo"]
+            and lote.get("origen_id") == salida.get("lote_origen_id")
+        ),
+        None,
+    )
 
 
 def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
@@ -26,7 +66,9 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
     una es un lote (guía, reingreso o ajuste positivo). Se les agrega
     "restante" (lo que queda del lote) y "consumido".
     salidas: [{"orden": comparable, "cantidad": > 0, ...}, ...] (tildes de
-    armado, mermas, ajustes negativos — ya en valor absoluto).
+    armado, mermas, ajustes negativos — ya en valor absoluto). Una salida
+    con "lote_tipo" y "lote_origen_id" es DIRIGIDA: sale de ese lote y no
+    del más viejo.
 
     Devuelve {"lotes": entradas con restante/consumido (más vieja primero),
     "sin_lote": bultos salidos que ningún lote cubre (0 si alcanzó),
@@ -35,12 +77,25 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
     lotes = [dict(e, restante=float(e["cantidad"]), consumido=0.0) for e in sorted(entradas, key=lambda e: e["orden"])]
     total_salidas = sum(float(s["cantidad"]) for s in salidas)
 
-    pendiente = total_salidas
+    # Primero las dirigidas: cada una tiene prioridad sobre SU lote (el
+    # operario vio qué se pudrió). Lo que ese lote no cubre cae al FIFO.
+    pendiente = 0.0
+    for salida in salidas:
+        cantidad = float(salida["cantidad"])
+        lote = lote_dirigido(lotes, salida)
+        if lote is None:
+            pendiente += cantidad
+            continue
+        consumo = min(lote["restante"], cantidad)
+        lote["consumido"] += consumo
+        lote["restante"] -= consumo
+        pendiente += cantidad - consumo
+
     for lote in lotes:
         if pendiente <= 0:
             break
         consumo = min(lote["restante"], pendiente)
-        lote["consumido"] = consumo
+        lote["consumido"] += consumo
         lote["restante"] -= consumo
         pendiente -= consumo
 

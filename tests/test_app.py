@@ -14477,7 +14477,7 @@ def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
     ]
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 11.0)),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 11.0, [])),
     ):
         respuesta = cliente.get("/deposito/stock/sistema/1")
 
@@ -14493,7 +14493,7 @@ def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
 def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 5.0)),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 5.0, [])),
     ):
         respuesta = cliente.get("/deposito/stock/sistema/2")
 
@@ -14578,7 +14578,10 @@ def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
 
     assert respuesta.status_code == 303
     # Siempre negativa: el signo lo pone el tipo, no la persona.
-    mock_crear.assert_called_once_with(1, "merma", -3.0, "podrido", date(2026, 8, 25))
+    # Sin lote elegido: el FIFO de siempre (lote en None).
+    mock_crear.assert_called_once_with(
+        1, "merma", -3.0, "podrido", date(2026, 8, 25), lote_tipo=None, lote_origen_id=None
+    )
     # Pantalla de OPERARIO: el aviso repite lo cargado, JAMÁS el stock
     # resultante (17 no puede aparecer).
     destino = respuesta.headers["location"]
@@ -14587,7 +14590,12 @@ def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
 
 
 def test_merma_sin_motivo_da_400():
-    with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+    with (
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+    ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
             data={"articulo_id": "1", "cantidad": "3", "motivo": " "},
@@ -14599,7 +14607,12 @@ def test_merma_sin_motivo_da_400():
 
 def test_merma_cantidad_negativa_da_400():
     # El operario carga bultos tirados (positivo): el signo no es cosa suya.
-    with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
+    with (
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+    ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
             data={"articulo_id": "1", "cantidad": "-3", "motivo": "podrido"},
@@ -14617,6 +14630,171 @@ RENGLON_REINGRESO_DE_PRUEBA = {
     "fecha_pedido": date(2026, 8, 24), "orden_compra": "1257673",
     "bultos_armados": 25.0, "kilos_enviados": 500.0, "ya_devuelto": 5.0,
 }
+
+
+def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
+    # El destino se elige al cargar: "pasa a segunda tal cual" manda los
+    # mismos bultos al pool, con su caja y su kilaje.
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "segunda"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(
+        2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
+        cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+        destino_rechazo="segunda", bultos_segunda=4.0,
+    )
+    destino = respuesta.headers["location"]
+    assert "Pas%C3%B3+a+segunda+tal+cual" in destino
+    assert "4+bultos+al+pool" in destino
+
+
+def test_reingreso_a_cajon_grande_carga_los_cajones_que_salieron():
+    # Las palabras del dueño: yo cargo cuántos cajones grandes salieron, y
+    # eso entra al pool de segunda.
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "20", "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": "reproceso", "cajones": "6"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["destino_rechazo"] == "reproceso"
+    assert mock_crear.call_args.kwargs["bultos_segunda"] == 6.0
+    destino = respuesta.headers["location"]
+    assert "Volvi%C3%B3+a+caj%C3%B3n+grande" in destino
+    assert "salieron+6+cajones" in destino
+    assert "pool+de+segunda" in destino
+
+
+def test_reingreso_a_cajon_grande_sin_cajones_da_400():
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "20", "motivo": "rechazado",
+                  "fecha": "2026-08-24", "destino": "reproceso", "cajones": ""},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_el_form_del_reingreso_ofrece_los_tres_destinos():
+    with patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)):
+        respuesta = cliente.get("/deposito/stock/reingreso?renglon_id=77")
+
+    assert respuesta.status_code == 200
+    assert "¿Qué se hace con esta mercadería?" in respuesta.text
+    assert 'value="stock"' in respuesta.text and "Queda en stock" in respuesta.text
+    assert 'value="segunda"' in respuesta.text and "Pasa a segunda tal cual" in respuesta.text
+    assert 'value="reproceso"' in respuesta.text and "Vuelve a cajón grande" in respuesta.text
+    assert "¿Cuántos cajones grandes salieron?" in respuesta.text
+
+
+LOTES_MERMA_DE_PRUEBA = [
+    {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+     "tipo_lote": "guia", "origen_id": 55, "fecha_lote": date(2026, 8, 20),
+     "detalle": "Norte 15", "motivo": None, "cantidad": 80.0, "costo_bulto": 500.0,
+     "cliente_lote_id": None},
+    {"fecha_orden": date(2026, 8, 24), "momento_orden": datetime(2026, 8, 24, 10),
+     "tipo_lote": "reproceso", "origen_id": 9, "fecha_lote": date(2026, 8, 24),
+     "detalle": "Día", "motivo": None, "cantidad": 40.0, "costo_bulto": 1800.0,
+     "cliente_lote_id": 1},
+]
+
+
+def test_merma_ofrece_los_lotes_del_articulo_con_el_mas_viejo_por_default():
+    # El operario no tiene que pensar salvo que sepa cuál se pudrió: el
+    # default es "el más viejo (como siempre)".
+    with (
+        patch("app.main.listar_articulos", return_value=[{"id": 2, "nombre": "Tomate Perita"}]),
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, 0.0, [])),
+    ):
+        respuesta = cliente.get("/deposito/stock/merma?articulo_id=2")
+
+    assert respuesta.status_code == 200
+    assert "El más viejo (como siempre)" in respuesta.text
+    # Cada lote se describe con lo que el operario reconoce en el piso.
+    assert 'value="guia:55"' in respuesta.text
+    assert "Compra de Norte 15" in respuesta.text
+    assert 'value="reproceso:9"' in respuesta.text
+    assert "Guía R9 armada para Día" in respuesta.text
+    assert "quedan 40" in respuesta.text
+
+
+def test_merma_lista_un_lote_de_compra_sin_guia_con_la_fecha_del_hecho():
+    # Una compra cargada sin guía no tiene fecha de guía: se muestra con
+    # la de su recepción, en vez de romper la pantalla.
+    sin_guia = [dict(LOTES_MERMA_DE_PRUEBA[0], fecha_lote=None)]
+    with (
+        patch("app.main.listar_articulos", return_value=[{"id": 2, "nombre": "Tomate Perita"}]),
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(sin_guia, 0.0, [])),
+    ):
+        respuesta = cliente.get("/deposito/stock/merma?articulo_id=2")
+
+    assert respuesta.status_code == 200
+    assert "Compra de Norte 15 — 20/08" in respuesta.text
+
+
+def test_merma_dirigida_a_un_lote_guarda_el_lote_y_lo_dice_en_el_aviso():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, 0.0, [])),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 26)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "2", "cantidad": "10", "motivo": "se pudrió", "lote": "reproceso:9"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(
+        2, "merma", -10.0, "se pudrió", date(2026, 8, 26),
+        lote_tipo="reproceso", lote_origen_id=9,
+    )
+    assert "Salieron+de%3A+Gu%C3%ADa+R9+armada+para+D%C3%ADa" in respuesta.headers["location"]
+
+
+def test_merma_a_un_lote_que_ya_no_tiene_bultos_da_400():
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, 200.0, [])),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "2", "cantidad": "10", "motivo": "se pudrió", "lote": "reproceso:9"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Ese lote ya no tiene bultos" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def test_reingreso_paso_1_lista_pedidos_para_elegir_sin_numeros_del_sistema():
@@ -14720,6 +14898,7 @@ def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
     mock_crear.assert_called_once_with(
         2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+        destino_rechazo="stock", bultos_segunda=None,
     )
     destino = respuesta.headers["location"]
     # El aviso repite lo cargado (fecha REAL del hecho incluida) y JAMÁS
@@ -14768,6 +14947,7 @@ def test_reingreso_sin_fecha_usa_hoy_y_sin_costo_posible_guarda_sin_costo():
     mock_crear.assert_called_once_with(
         2, "reingreso_rechazo", 4.0, "rechazo", date(2026, 8, 25),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=None,
+        destino_rechazo="stock", bultos_segunda=None,
     )
 
 
@@ -15206,7 +15386,7 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
     with (
         patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas_fifo, 20.0)) as mock_fifo,
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas_fifo, 20.0, [])) as mock_fifo,
         patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Día"}]),
         patch("app.main.listar_fichas_por_cliente", return_value=fichas_dia),
     ):
@@ -15389,16 +15569,19 @@ RESULTADO_REAL_DE_PRUEBA = {
             "costo_mercaderia": 5000.0, "costo_envase": 320.0,
             "costo_mermas": 1500.0, "bultos_mermados": 3.0, "segunda_bultos": 2.0,
             "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
+            "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
             "costo_total": 6820.0, "renta_pesos": 7580.0, "utilidad_pct": 151.6,
         }],
         "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                      "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0,
                      "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
+                     "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
                      "renta_pesos": 7580.0, "utilidad_pct": 151.6},
     }],
     "totales": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                 "costo_envase": 320.0, "costo_mermas": 1500.0, "segunda_bultos": 2.0,
                 "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
+                "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
                 "afuera_bultos": 42.0, "afuera_motivos": 2, "costo_total": 6820.0,
                 "renta_pesos": 7580.0, "utilidad_pct": 151.6},
     "afuera_por_motivo": [
@@ -15451,7 +15634,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.articulos_con_salidas_stock",
               return_value=[{"articulo_id": 1, "nombre": "Banana", "grupo": "fruta"}]) as mock_articulos,
         patch("app.main.devoluciones_vinculadas_por_rango", return_value=[]),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 4.0)),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 4.0, [])),
         patch("app.main.salidas_stock_articulo", return_value=salidas),
         patch("app.main.calcular_listado_para_negociar_precios",
               return_value=[{"articulo_id": 1, "precio_vigente": 100.0, "costo_actual": 60.0,
@@ -15835,7 +16018,7 @@ def test_cruce_de_primera_detecta_bultos_que_salieron_a_otro_cliente():
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0)),
+              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])),
         patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(2, 4.0)]),
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
@@ -15855,7 +16038,7 @@ def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0)),
+              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])),
         patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(1, 4.0)]),
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
@@ -15879,7 +16062,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0)),
+              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])),
         patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(2, 4.0)]),
     ):
         respuesta = cliente.get("/deposito/stock/guias-r")
@@ -15971,7 +16154,7 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
     # El detalle FIFO cuelga del Stock del Sistema.
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0)),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
     ):
         respuesta = cliente.get("/deposito/stock/sistema/2")
     assert ancla.format(destino="/deposito/stock/sistema") in respuesta.text

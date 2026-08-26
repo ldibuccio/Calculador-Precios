@@ -17,12 +17,14 @@ RESULTADO_REAL = {
                     "costo_mercaderia": 5000.0, "costo_envase": 320.0,
                     "costo_mermas": 1500.0, "bultos_mermados": 3.0, "segunda_bultos": 2.0,
                     "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
+                    "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
                     "costo_total": 6820.0, "renta_pesos": 3080.0, "utilidad_pct": 61.6,
                 }
             ],
             "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
                          "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0,
                          "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
+                         "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
                          "renta_pesos": 3080.0, "utilidad_pct": 61.6},
         }
     ],
@@ -30,6 +32,7 @@ RESULTADO_REAL = {
         "bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0, "costo_envase": 320.0,
         "costo_mermas": 1500.0, "segunda_bultos": 2.0, "costo_total": 6820.0,
         "devoluciones_bultos": 5.0, "devoluciones_venta": 4500.0,
+        "rechazos_perdidos": 900.0, "rechazos_bultos": 2.0,
         "renta_pesos": 3080.0, "utilidad_pct": 61.6, "afuera_bultos": 18.0, "afuera_motivos": 2,
     },
     "afuera_por_motivo": [

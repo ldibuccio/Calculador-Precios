@@ -80,16 +80,25 @@
   <div class="error">{{ error }}</div>
   {% endif %}
 
-  {# Pantalla de OPERARIO: acá no se muestra ningún número del sistema. #}
+  {# Pantalla de OPERARIO: acá no se muestra ningún número del sistema,
+     salvo los bultos que quedan de cada lote — que es justo lo que hace
+     falta para poder decir cuál se pudrió. #}
   <div class="tarjeta">
-    <form method="post" action="/deposito/stock/merma">
+    {# El artículo se elige aparte y recarga: con el artículo el server
+       sabe qué lotes tiene y recién ahí puede ofrecerlos. #}
+    <form method="get" action="/deposito/stock/merma">
       <label for="articulo_id">Artículo</label>
-      <select id="articulo_id" name="articulo_id" required>
-        <option value="" {% if not precarga.articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>
+      <select id="articulo_id" name="articulo_id" required onchange="this.form.submit()">
+        <option value="" {% if not articulo_elegido %}selected{% endif %} disabled>Elegí un artículo...</option>
         {% for a in articulos %}
-        <option value="{{ a.id }}" {% if precarga.articulo_id|string == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
+        <option value="{{ a.id }}" {% if articulo_elegido and articulo_elegido.id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
       </select>
+    </form>
+
+    {% if articulo_elegido %}
+    <form method="post" action="/deposito/stock/merma">
+      <input type="hidden" name="articulo_id" value="{{ articulo_elegido.id }}">
 
       <label for="cantidad">Bultos tirados</label>
       <input type="number" id="cantidad" name="cantidad" min="0.01" step="0.01" required
@@ -99,9 +108,25 @@
       <input type="text" id="motivo" name="motivo" required placeholder="Ej: podrido, se rompió el cajón"
              value="{{ precarga.motivo or "" }}">
 
+      {# El lote es OPCIONAL y arranca en el más viejo: el operario no
+         tiene que pensar salvo que sepa exactamente cuál se pudrió. #}
+      <label for="lote">¿De qué lote?</label>
+      <select id="lote" name="lote">
+        <option value="" {% if not precarga.lote %}selected{% endif %}>El más viejo (como siempre)</option>
+        {% for l in lotes %}
+        {% set valor = l.tipo ~ ":" ~ l.origen_id %}
+        <option value="{{ valor }}" {% if precarga.lote == valor %}selected{% endif %}>
+          {{ l.etiqueta }} — {{ l.fecha.strftime("%d/%m") }} · quedan {{ l.restante|numero }}
+        </option>
+        {% endfor %}
+      </select>
+
       <button type="submit" class="boton-guardar">Dar de baja</button>
     </form>
-    <p class="ayuda">La merma queda registrada y sale del stock — siempre del lote más viejo, como todo. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
+    <p class="ayuda">La merma queda registrada y sale del stock. Si no elegís lote sale del más viejo, como siempre; si elegís uno sale de ese. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
+    {% else %}
+    <p class="ayuda">Elegí el artículo y después cargás cuántos bultos se tiraron.</p>
+    {% endif %}
   </div>
 </body>
 </html>

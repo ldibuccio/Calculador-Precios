@@ -14,6 +14,9 @@ es la cuenta exacta, mirando lo que pasó:
     − envase       = costo de envase × unidades realmente enviadas.
     − mermas       = bultos tirados en el período × el costo FIFO de su
                      lote.
+    − rechazos     = los rechazos que NO volvieron al stock (fueron a
+      perdidos      segunda, con o sin cambio de envase): mercadería al
+                    costo congelado + envase, todo pérdida directa.
     = renta real   · utilidad % SOLO sobre mercadería (regla fija).
 
 El reproceso es NEUTRO acá: su toma consume lotes al costo y su primera
@@ -32,6 +35,16 @@ PEDIDO de origen) y acredita la mercadería al costo congelado del
 reingreso — el lote devuelto queda en el stock con ese costo y se vuelve
 a cargar recién cuando salga de nuevo, sin doble conteo.
 
+El DESTINO del rechazo (elegido al cargarlo) parte esa cuenta en dos. Si
+queda en stock, es lo de arriba: solo se perdió la venta del día. Si va
+a segunda (tal cual, o pasando las cajas chicas de vuelta a cajón
+grande), no vuelve al stock y no queda primera que absorba su costo —
+como sí pasa en el reproceso normal, donde el costo viaja a la primera.
+Entonces mercadería + envase de esos bultos se descuentan de la
+operación normal y se imputan a la línea propia "− rechazos perdidos":
+la renta da el mismo número, pero la pérdida queda nombrada en vez de
+escondida adentro del costo de mercadería.
+
 Invariante duro, y acá es PROTAGONISTA: lo que no se puede calcular no
 suma como cero — va al reporte "afuera del cálculo" con motivo, bultos
 y artículos. Los primeros meses va a haber más ahí que en la cuenta
@@ -42,6 +55,7 @@ un número chico y cierto que uno grande y mentiroso.
 """
 
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
+from core.stock import lote_dirigido
 
 ETIQUETAS_MOTIVO_REAL = {
     "sin_kilaje": "Renglón armado sin kilaje cargado",
@@ -52,7 +66,12 @@ ETIQUETAS_MOTIVO_REAL = {
     "guia_r_incompleta": "Consumió la primera de una guía R con costo incompleto",
     "sin_lote": "Salida sin lote (salió más de lo que había en el sistema)",
     "devolucion_sin_valor": "Devolución vinculada que no se pudo valuar (renglón sin kilaje o sin precio a la fecha del pedido)",
+    "rechazo_sin_costo": "Rechazo mandado a segunda sin costo congelado (no se puede valuar la pérdida)",
 }
+
+# Destinos del rechazo que NO vuelven al stock: su costo entero es
+# pérdida (no queda primera que lo absorba, a diferencia del reproceso).
+DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
 _MOTIVO_POR_TIPO_LOTE = {
     "guia": "compra_sin_precio",
@@ -74,6 +93,12 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     historia completa: lotes del más viejo al más nuevo, salidas en orden
     cronológico, cada una consume del lote más viejo con resto.
 
+    Una salida DIRIGIDA (con "lote_tipo" y "lote_origen_id": la merma que
+    el operario cargó sabiendo qué lote se pudrió) sale primero de SU
+    lote, y por lo tanto se cuesta al costo de ESE lote — el de la guía R
+    que se pudrió, no el del cajón viejo que el FIFO hubiera elegido. Lo
+    que su lote no cubre cae al FIFO de siempre.
+
     A cada salida le agrega: "costo" ($ total, o None si alguna porción
     no tiene precio), "bultos_sin_costo", "motivos_sin_costo"
     ({motivo: bultos}) y "consumos_lotes" (qué lote cubrió cada porción,
@@ -91,14 +116,10 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
         sin_costo = 0.0
         motivos: dict[str, float] = {}
         consumos: list[dict] = []
-        while pendiente > 0 and indice < len(lotes):
-            lote = lotes[indice]
-            if lote["restante"] <= 0:
-                indice += 1
-                continue
-            bultos = min(lote["restante"], pendiente)
+
+        def _consumir(lote, bultos):
+            nonlocal costo, sin_costo
             lote["restante"] -= bultos
-            pendiente = round(pendiente - bultos, 2)
             consumos.append(
                 {
                     "tipo_lote": lote["tipo_lote"],
@@ -114,6 +135,21 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
                 sin_costo += bultos
                 motivo = _MOTIVO_POR_TIPO_LOTE.get(lote["tipo_lote"], "ajuste_sin_costo")
                 motivos[motivo] = motivos.get(motivo, 0.0) + bultos
+
+        elegido = lote_dirigido(lotes, salida)
+        if elegido is not None and elegido["restante"] > 0:
+            bultos = min(elegido["restante"], pendiente)
+            pendiente = round(pendiente - bultos, 2)
+            _consumir(elegido, bultos)
+
+        while pendiente > 0 and indice < len(lotes):
+            lote = lotes[indice]
+            if lote["restante"] <= 0:
+                indice += 1
+                continue
+            bultos = min(lote["restante"], pendiente)
+            pendiente = round(pendiente - bultos, 2)
+            _consumir(lote, bultos)
         if pendiente > 0:
             sin_costo += pendiente
             motivos["sin_lote"] = motivos.get("sin_lote", 0.0) + pendiente
@@ -185,6 +221,8 @@ def calcular_rentabilidad_real(
                 "segunda_bultos": 0.0,
                 "devoluciones_bultos": 0.0,
                 "devoluciones_venta": 0.0,
+                "rechazos_perdidos": 0.0,
+                "rechazos_bultos": 0.0,
             }
             acumulado[articulo["articulo_id"]] = fila
         return fila
@@ -262,18 +300,39 @@ def calcular_rentabilidad_real(
         # Los kilos del renglón, proporcionales: lo devuelto se valúa con
         # el MISMO kilaje con el que se facturó lo enviado.
         unidades = kilos / armados * bultos
+        costo = _numero(devolucion.get("costo_por_bulto"))
+        envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
+        perdido = devolucion.get("destino_rechazo") in DESTINOS_RECHAZO_PERDIDO
+
+        if perdido and costo is None:
+            # Se sabe que se perdió pero no cuánto: número chico y cierto.
+            _sumar_afuera("rechazo_sin_costo", articulo, bultos)
+            continue
+
         fila = _fila(articulo)
         fila["devoluciones_bultos"] += bultos
         fila["devoluciones_venta"] += unidades * precio * denominador
-        costo = _numero(devolucion.get("costo_por_bulto"))
-        if costo is not None:
-            # El lote devuelto queda en el stock con su costo congelado:
-            # se acredita acá y se vuelve a cargar recién cuando salga de
-            # nuevo — sin doble conteo.
+        if perdido:
+            # No vuelve al stock (va a segunda, con o sin cambio de
+            # envase): no queda primera que absorba el costo, así que
+            # mercadería + envase de esos bultos son pérdida directa. Se
+            # descuentan de la operación normal y se imputan a su línea
+            # propia: la renta da igual, pero la pérdida queda NOMBRADA
+            # en vez de escondida adentro del costo de mercadería.
+            fila["costo_mercaderia"] -= bultos * costo
+            fila["costo_envase"] -= unidades * envase_unidad
+            fila["rechazos_perdidos"] += bultos * costo + unidades * envase_unidad
+            fila["rechazos_bultos"] += bultos
+        elif costo is not None:
+            # Queda en stock con su costo congelado: se acredita acá y se
+            # vuelve a cargar recién cuando salga de nuevo — sin doble
+            # conteo. Solo se perdió la venta de ese día.
             fila["costo_mercaderia"] -= bultos * costo
 
     def _cerrar_cuenta(fila):
-        fila["costo_total"] = fila["costo_mercaderia"] + fila["costo_envase"] + fila["costo_mermas"]
+        fila["costo_total"] = (
+            fila["costo_mercaderia"] + fila["costo_envase"] + fila["costo_mermas"] + fila["rechazos_perdidos"]
+        )
         fila["renta_pesos"] = fila["venta_neta"] - fila["devoluciones_venta"] - fila["costo_total"]
         fila["utilidad_pct"] = (
             fila["renta_pesos"] / fila["costo_mercaderia"] * 100 if fila["costo_mercaderia"] > 0 else None
@@ -282,7 +341,7 @@ def calcular_rentabilidad_real(
     filas_con_algo = [
         f for f in acumulado.values()
         if f["bultos"] or f["costo_mermas"] or f["bultos_mermados"] or f["segunda_bultos"]
-        or f["devoluciones_bultos"]
+        or f["devoluciones_bultos"] or f["rechazos_bultos"]
     ]
     for fila in filas_con_algo:
         _cerrar_cuenta(fila)
@@ -303,6 +362,8 @@ def calcular_rentabilidad_real(
             "costo_mermas": sum(f["costo_mermas"] for f in filas),
             "devoluciones_bultos": sum(f["devoluciones_bultos"] for f in filas),
             "devoluciones_venta": sum(f["devoluciones_venta"] for f in filas),
+            "rechazos_perdidos": sum(f["rechazos_perdidos"] for f in filas),
+            "rechazos_bultos": sum(f["rechazos_bultos"] for f in filas),
         }
         _cerrar_cuenta(subtotal)
         grupos.append(
@@ -341,6 +402,8 @@ def calcular_rentabilidad_real(
         "costo_mermas": sum(g["subtotal"]["costo_mermas"] for g in grupos),
         "devoluciones_bultos": sum(g["subtotal"]["devoluciones_bultos"] for g in grupos),
         "devoluciones_venta": sum(g["subtotal"]["devoluciones_venta"] for g in grupos),
+        "rechazos_perdidos": sum(g["subtotal"]["rechazos_perdidos"] for g in grupos),
+        "rechazos_bultos": sum(g["subtotal"]["rechazos_bultos"] for g in grupos),
         "segunda_bultos": sum(f["segunda_bultos"] for f in filas_con_algo),
         "afuera_bultos": sum(r["bultos"] for r in afuera_por_motivo),
         "afuera_motivos": len(afuera_por_motivo),

@@ -254,7 +254,7 @@ from core.pedido_estructura import parsear_pedido_estructurado
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
 from core.costos_fijos import calcular_costos_fijos
-from core.stock import repartir_fifo
+from core.stock import repartir_fifo, salidas_para_reparto
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
 from core.exportar_rentabilidad_real import generar_excel_rentabilidad_real, generar_pdf_rentabilidad_real
 from core.exportar_pedidos import generar_excel_pedidos, generar_pdf_pedidos
@@ -6158,11 +6158,10 @@ def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str]) -> list[
     distintos, salen separadas). Es el mismo reparto del detalle por
     artículo, subido al listado: nada se guarda, se calcula cada vez.
     """
-    entradas, total_salidas = entradas_y_salidas_stock_articulo(fila["articulo_id"])
+    entradas, total_salidas, dirigidas = entradas_y_salidas_stock_articulo(fila["articulo_id"])
     for e in entradas:
         e["orden"] = (e["fecha_orden"], e["momento_orden"])
-    salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
-    reparto = repartir_fifo(entradas, salidas)
+    reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
 
     armados = []
     for lote in reparto["lotes"]:
@@ -6232,7 +6231,7 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         articulo = obtener_articulo(articulo_id)
         if articulo is None:
             raise HTTPException(status_code=404, detail="Artículo no encontrado")
-        entradas, total_salidas = entradas_y_salidas_stock_articulo(articulo_id)
+        entradas, total_salidas, dirigidas = entradas_y_salidas_stock_articulo(articulo_id)
     except HTTPException:
         raise
     except Exception as error_db:
@@ -6240,8 +6239,7 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
 
     for e in entradas:
         e["orden"] = (e["fecha_orden"], e["momento_orden"])
-    salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
-    reparto = repartir_fifo(entradas, salidas)
+    reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
     con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
     agotados = [l for l in reparto["lotes"] if l["restante"] <= 0]
     return templates.TemplateResponse(
@@ -6398,23 +6396,83 @@ def _validar_bultos_positivos(cantidad: str, que: str) -> tuple[str | None, floa
     return None, valor
 
 
-def _renderizar_pantalla_merma(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+# Los tipos de lote del detalle FIFO por artículo, para validar a mano a
+# cuál se dirige una merma (el value del selector es "tipo:id").
+TIPOS_LOTE_STOCK = ("guia", "reproceso", "reingreso_rechazo", "ajuste")
+
+
+def _renderizar_pantalla_merma(
+    request: Request, *, precarga=None, aviso=None, error=None, articulo_id=None, status_code: int = 200
+):
+    """La pantalla de merma. Con artículo elegido trae sus lotes con resto, para poder dirigir la merma a uno."""
+    articulo_elegido = None
+    lotes: list[dict] = []
     try:
         articulos = listar_articulos()
+        if articulo_id is not None and str(articulo_id).strip().isdigit():
+            articulo_elegido = obtener_articulo(int(articulo_id))
+            if articulo_elegido is not None:
+                lotes = _lotes_con_resto(articulo_elegido["id"])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
         "deposito_stock_merma.html",
-        {"articulos": articulos, "precarga": precarga or {}, "aviso": aviso, "error": error},
+        {
+            "articulos": articulos,
+            "articulo_elegido": articulo_elegido,
+            "lotes": lotes,
+            "precarga": precarga or {},
+            "aviso": aviso,
+            "error": error,
+        },
         status_code=status_code,
     )
 
 
+def _lotes_con_resto(articulo_id: int) -> list[dict]:
+    """Los lotes de un artículo que todavía tienen bultos, para elegir a mano cuál se pudrió.
+
+    Rejuega el FIFO como todo el módulo (nada guardado) y describe cada
+    lote con lo que el operario reconoce en el piso: la guía y el
+    proveedor, o la guía R con el cliente para el que se armó.
+    """
+    entradas, total_salidas, dirigidas = entradas_y_salidas_stock_articulo(articulo_id)
+    for e in entradas:
+        e["orden"] = (e["fecha_orden"], e["momento_orden"])
+    reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
+
+    lotes = []
+    for lote in reparto["lotes"]:
+        if lote["restante"] <= 0:
+            continue
+        if lote["tipo_lote"] == "reproceso":
+            etiqueta = f"Guía R{lote['origen_id']}"
+            if lote.get("detalle"):
+                etiqueta += f" armada para {lote['detalle']}"
+        elif lote["tipo_lote"] == "guia":
+            etiqueta = f"Compra de {lote.get('detalle') or 'proveedor sin nombre'}"
+        else:
+            etiqueta = ETIQUETAS_MOVIMIENTO_STOCK.get(lote["tipo_lote"], lote["tipo_lote"])
+        lotes.append(
+            {
+                "tipo": lote["tipo_lote"],
+                "origen_id": lote["origen_id"],
+                "restante": lote["restante"],
+                # Una compra sin guía no tiene fecha de guía: vale la del
+                # hecho (su recepción), igual que en el detalle por lote.
+                "fecha": lote["fecha_lote"] or lote["fecha_orden"],
+                "etiqueta": etiqueta,
+            }
+        )
+    return lotes
+
+
 @app.get("/deposito/stock/merma")
-def ver_merma_stock(request: Request, aviso: str | None = None):
-    return _renderizar_pantalla_merma(request, aviso=aviso)
+def ver_merma_stock(request: Request, aviso: str | None = None, articulo_id: str | None = None):
+    """La carga de merma. Con un artículo elegido, muestra además sus lotes para poder dirigir la merma a uno."""
+    return _renderizar_pantalla_merma(request, aviso=aviso, articulo_id=articulo_id)
 
 
 @app.post("/deposito/stock/merma")
@@ -6423,8 +6481,16 @@ def cargar_merma_stock_ruta(
     articulo_id: str = Form(""),
     cantidad: str = Form(""),
     motivo: str = Form(""),
+    lote: str = Form(""),
 ):
     """El operario da de baja cajones que se tiraron: siempre negativa, con motivo obligatorio.
+
+    lote es opcional ("tipo:id"): con el default vacío la merma sale del
+    lote más viejo, como siempre — el operario no tiene que pensar salvo
+    que sepa exactamente cuál se pudrió. Elegido, la merma se descuenta
+    de ESE lote (y se cuesta al costo de ese lote en la Rentabilidad
+    Real); lo que el lote no cubra cae al FIFO: registra y delata, jamás
+    traba.
 
     Pantalla de OPERARIO: el aviso repite solo lo que cargó — jamás el
     stock resultante (mismo criterio que el Stock Físico de Vacíos).
@@ -6443,18 +6509,44 @@ def cargar_merma_stock_ruta(
         if articulo is None:
             error = "Elegí un artículo válido."
 
+    lote_tipo, lote_origen_id, lote_etiqueta = None, None, None
+    if not error and lote.strip():
+        tipo, _, origen = lote.partition(":")
+        if tipo not in TIPOS_LOTE_STOCK or not origen.isdigit():
+            error = "Ese lote no es válido: elegí uno de la lista o dejá el más viejo."
+        else:
+            lote_tipo, lote_origen_id = tipo, int(origen)
+            elegido = next(
+                (l for l in _lotes_con_resto(articulo["id"])
+                 if l["tipo"] == lote_tipo and l["origen_id"] == lote_origen_id),
+                None,
+            )
+            if elegido is None:
+                error = "Ese lote ya no tiene bultos: volvé a elegir."
+            else:
+                lote_etiqueta = elegido["etiqueta"]
+
     if error:
-        precarga = {"articulo_id": articulo_id, "cantidad": cantidad, "motivo": motivo_limpio}
-        return _renderizar_pantalla_merma(request, precarga=precarga, error=error, status_code=400)
+        precarga = {
+            "articulo_id": articulo_id, "cantidad": cantidad, "motivo": motivo_limpio, "lote": lote,
+        }
+        return _renderizar_pantalla_merma(
+            request, precarga=precarga, articulo_id=articulo_id, error=error, status_code=400
+        )
 
     try:
-        crear_movimiento_stock(articulo["id"], "merma", -cantidad_valor, motivo_limpio, _hoy_argentina())
+        crear_movimiento_stock(
+            articulo["id"], "merma", -cantidad_valor, motivo_limpio, _hoy_argentina(),
+            lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
+        )
     except Exception as error_db:
         return _renderizar_pantalla_merma(
-            request, error=f"No se pudo guardar la merma: {error_db}", status_code=500
+            request, articulo_id=articulo_id, error=f"No se pudo guardar la merma: {error_db}", status_code=500
         )
 
     aviso = f"Merma guardada: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']} tirados ({motivo_limpio})."
+    if lote_etiqueta:
+        aviso += f" Salieron de: {lote_etiqueta}."
     return RedirectResponse(url=f"/deposito/stock/merma?{urlencode({'aviso': aviso})}", status_code=303)
 
 
@@ -6493,6 +6585,9 @@ def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
     except Exception:
         logger.exception("No se pudo congelar el costo del reingreso del renglón %s", renglon["id"])
         return None
+
+
+DESTINOS_REINGRESO = ("stock", "segunda", "reproceso")
 
 
 def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None, error=None, status_code: int = 200):
@@ -6568,6 +6663,8 @@ def cargar_reingreso_stock_ruta(
     cantidad: str = Form(""),
     motivo: str = Form(""),
     fecha: str = Form(""),
+    destino: str = Form("stock"),
+    cajones: str = Form(""),
 ):
     """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo y VINCULADA a su renglón de pedido.
 
@@ -6616,8 +6713,21 @@ def cargar_reingreso_stock_ruta(
                 if fecha_valor > hoy:
                     error = "La fecha del reingreso no puede ser futura."
 
+    # El DESTINO se decide acá, al cargar, no después: queda en stock (el
+    # costo no se pierde, se va a vender), pasa a segunda tal cual, o
+    # vuelve a cajón grande y esos cajones van a segunda.
+    destino_valor = destino if destino in DESTINOS_REINGRESO else "stock"
+    bultos_segunda = None
+    if not error and destino_valor == "segunda":
+        bultos_segunda = cantidad_valor  # la misma caja, sin tocar
+    elif not error and destino_valor == "reproceso":
+        error, bultos_segunda = _validar_bultos_positivos(cajones, "cajones que salieron")
+
     if error:
-        precarga = {"cantidad": cantidad, "motivo": motivo_limpio, "fecha": fecha}
+        precarga = {
+            "cantidad": cantidad, "motivo": motivo_limpio, "fecha": fecha,
+            "destino": destino_valor, "cajones": cajones,
+        }
         return _renderizar_form_reingreso(request, renglon, precarga=precarga, error=error, status_code=400)
 
     costo_por_bulto = _costo_congelado_para_reingreso(renglon)
@@ -6627,16 +6737,29 @@ def cargar_reingreso_stock_ruta(
             cliente_id=renglon["cliente_id"],
             pedido_renglon_id=renglon["id"],
             costo_por_bulto=costo_por_bulto,
+            destino_rechazo=destino_valor,
+            bultos_segunda=bultos_segunda,
         )
     except Exception as error_db:
         return _renderizar_form_reingreso(
             request, renglon, error=f"No se pudo guardar el reingreso: {error_db}", status_code=500
         )
 
+    # El aviso repite lo que cargó y QUÉ SE HIZO con la mercadería, con
+    # las palabras de la pantalla — nunca el stock resultante ni el costo.
+    cierres = {
+        "stock": "Queda en stock para volver a mandarla.",
+        "segunda": f"Pasó a segunda tal cual: {_formatear_numero(bultos_segunda or 0)} bultos al pool, para remitir al Puesto.",
+        "reproceso": (
+            f"Volvió a cajón grande: salieron {_formatear_numero(bultos_segunda or 0)} cajones, "
+            "que entran al pool de segunda para remitir al Puesto."
+        ),
+    }
     aviso = (
         f"Reingreso guardado: {_formatear_numero(cantidad_valor)} bultos de {renglon['articulo_nombre']} "
         f"del pedido del {renglon['fecha_pedido'].strftime('%d/%m')} ({renglon['sucursal']}) "
-        f"que devolvió {renglon['cliente_nombre']} el {fecha_valor.strftime('%d/%m')} ({motivo_limpio})."
+        f"que devolvió {renglon['cliente_nombre']} el {fecha_valor.strftime('%d/%m')} ({motivo_limpio}). "
+        + cierres[destino_valor]
     )
     return RedirectResponse(url=f"/deposito/stock/reingreso?{urlencode({'aviso': aviso})}", status_code=303)
 
@@ -7002,7 +7125,7 @@ def _cruces_primera_reproceso() -> list[dict]:
     cruces = []
     for articulo in articulos:
         try:
-            entradas, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
+            entradas, _, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
             salidas = salidas_stock_articulo(articulo["articulo_id"])
         except Exception:
             logger.exception("No se pudo rejugar el FIFO del artículo %s para la alerta de cruce", articulo["articulo_id"])
@@ -7645,7 +7768,7 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     articulos_datos = []
     fechas_pedido = set()
     for articulo in articulos:
-        entradas, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
+        entradas, _, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
         salidas = salidas_stock_articulo(articulo["articulo_id"])
         for e in entradas:
             e["orden"] = (e["fecha_orden"], e["momento_orden"])

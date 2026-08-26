@@ -1,6 +1,6 @@
 """Tests del reparto FIFO del stock del depósito (core/stock.py) — puro, sin base."""
 
-from core.stock import repartir_fifo
+from core.stock import repartir_fifo, salidas_para_reparto
 
 
 def _lote(orden, cantidad, **extra):
@@ -80,3 +80,68 @@ def test_fifo_redondea_a_dos_decimales():
 
     assert reparto["sin_lote"] == 0.1
     assert reparto["stock"] == -0.1
+
+
+# --- Merma dirigida a un lote (el operario sabe cuál se pudrió) ---
+
+
+def test_merma_dirigida_sale_de_su_lote_y_no_del_mas_viejo():
+    # La guía R armada hace dos días se pudrió: esa merma no puede
+    # comerse el cajón viejo, que sigue sano.
+    entradas = [
+        _lote(1, 80, tipo_lote="guia", origen_id=55, nombre="cajones viejos"),
+        _lote(2, 40, tipo_lote="reproceso", origen_id=9, nombre="guia R"),
+    ]
+    salidas = salidas_para_reparto(0, [{"cantidad": 10, "lote_tipo": "reproceso", "lote_origen_id": 9}])
+    reparto = repartir_fifo(entradas, salidas)
+
+    por_nombre = {l["nombre"]: l for l in reparto["lotes"]}
+    assert por_nombre["cajones viejos"]["restante"] == 80
+    assert por_nombre["guia R"]["restante"] == 30
+    assert reparto["sin_lote"] == 0
+
+
+def test_merma_dirigida_que_no_entra_en_su_lote_cae_al_fifo():
+    # Registra y delata, jamás traba: lo que el lote elegido no cubre
+    # sigue el camino de siempre.
+    entradas = [
+        _lote(1, 80, tipo_lote="guia", origen_id=55, nombre="cajones viejos"),
+        _lote(2, 4, tipo_lote="reproceso", origen_id=9, nombre="guia R"),
+    ]
+    salidas = salidas_para_reparto(0, [{"cantidad": 10, "lote_tipo": "reproceso", "lote_origen_id": 9}])
+    reparto = repartir_fifo(entradas, salidas)
+
+    por_nombre = {l["nombre"]: l for l in reparto["lotes"]}
+    assert por_nombre["guia R"]["restante"] == 0
+    assert por_nombre["cajones viejos"]["restante"] == 74  # los 6 que sobraron
+    assert reparto["stock"] == 74
+
+
+def test_merma_dirigida_a_un_lote_que_ya_no_existe_cae_al_fifo():
+    entradas = [_lote(1, 80, tipo_lote="guia", origen_id=55, nombre="cajones viejos")]
+    salidas = salidas_para_reparto(0, [{"cantidad": 10, "lote_tipo": "reproceso", "lote_origen_id": 999}])
+    reparto = repartir_fifo(entradas, salidas)
+
+    assert reparto["lotes"][0]["restante"] == 70
+
+
+def test_la_dirigida_tiene_prioridad_sobre_las_salidas_comunes():
+    # El armado del día consume FIFO, pero la merma dirigida se cobra
+    # primero de SU lote: si no, el FIFO podría vaciarlo antes.
+    entradas = [
+        _lote(1, 5, tipo_lote="guia", origen_id=55, nombre="vieja"),
+        _lote(2, 5, tipo_lote="reproceso", origen_id=9, nombre="guia R"),
+    ]
+    salidas = salidas_para_reparto(5, [{"cantidad": 5, "lote_tipo": "reproceso", "lote_origen_id": 9}])
+    reparto = repartir_fifo(entradas, salidas)
+
+    por_nombre = {l["nombre"]: l for l in reparto["lotes"]}
+    assert por_nombre["guia R"]["restante"] == 0
+    assert por_nombre["vieja"]["restante"] == 0
+    assert reparto["stock"] == 0
+
+
+def test_sin_dirigidas_el_reparto_es_el_de_siempre():
+    salidas = salidas_para_reparto(5)
+    assert salidas == [{"orden": 0, "cantidad": 5}]
+    assert salidas_para_reparto(0) == []
