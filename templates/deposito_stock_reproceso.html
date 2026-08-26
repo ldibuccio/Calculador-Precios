@@ -84,11 +84,22 @@
      lista solo artículos con stock, por nombre — sin cantidades. #}
   <div class="tarjeta">
     <form method="post" action="/deposito/stock/reproceso">
+      {# El cliente PRIMERO: la primera se arma para alguien, y la ayuda
+         de kilaje muestra SOLO la ficha de ese cliente. Queda en la guía
+         R como dato — el stock sigue sin dueño. #}
+      <label for="cliente_id">Para qué cliente armo</label>
+      <select id="cliente_id" name="cliente_id" required onchange="mostrarAyudaFicha()">
+        <option value="" {% if not precarga.cliente_id %}selected{% endif %} disabled>Elegí el cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if precarga.cliente_id|string == c.id|string %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+
       <label for="articulo_id">De qué artículo tomé</label>
       <select id="articulo_id" name="articulo_id" required onchange="mostrarAyudaFicha()">
         <option value="" {% if not precarga.articulo_id %}selected{% endif %} disabled>Elegí un artículo con stock...</option>
         {% for a in articulos %}
-        <option value="{{ a.id }}" data-ayuda="{{ a.ayuda_ficha }}" {% if precarga.articulo_id|string == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
+        <option value="{{ a.id }}" {% if precarga.articulo_id|string == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
       </select>
 
@@ -118,12 +129,15 @@
   </div>
 
   <script>
-    // La ayuda del kilaje por caja sale de la FICHA del cliente (dato de
-    // ficha, no de stock): se puede mostrar al operario.
+    // La ayuda del kilaje por caja sale de la FICHA del cliente elegido
+    // (dato de ficha, no de stock): SOLO la de ese cliente — todas juntas
+    // no servían.
+    var AYUDAS_FICHA = {{ ayudas_ficha|tojson }};
     function mostrarAyudaFicha() {
-      const select = document.getElementById("articulo_id");
-      const opcion = select.options[select.selectedIndex];
-      document.getElementById("ayuda-ficha").textContent = (opcion && opcion.dataset.ayuda) || "";
+      const cliente = document.getElementById("cliente_id").value;
+      const articulo = document.getElementById("articulo_id").value;
+      const texto = (cliente && articulo && AYUDAS_FICHA[cliente + ":" + articulo]) || "";
+      document.getElementById("ayuda-ficha").textContent = texto;
     }
     mostrarAyudaFicha();
   </script>

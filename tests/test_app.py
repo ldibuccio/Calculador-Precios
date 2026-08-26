@@ -14897,9 +14897,10 @@ def test_reproceso_lista_solo_articulos_con_stock_y_sin_numeros():
     assert "37.5" not in respuesta.text and "37,5" not in respuesta.text
 
 
-def test_reproceso_muestra_el_kilaje_de_la_ficha_como_ayuda():
-    # Dato de FICHA (no de stock): se le puede mostrar al operario. El
-    # fixture tiene dos clientes con la misma ficha: se listan los dos.
+def test_reproceso_pide_el_cliente_primero_y_la_ayuda_es_solo_de_su_ficha():
+    # El cliente va PRIMERO (la primera se arma para alguien) y la ayuda
+    # de kilaje muestra SOLO la ficha de ese cliente — todas juntas no
+    # servían (pedido del dueño 25/08).
     fichas = [{"articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
     respuesta = _get_reproceso(
         articulos_stock=[{"articulo_id": 1, "nombre": "Tomate Perita", "stock": 30.0}],
@@ -14907,30 +14908,61 @@ def test_reproceso_muestra_el_kilaje_de_la_ficha_como_ayuda():
     )
 
     assert respuesta.status_code == 200
-    assert 'data-ayuda="Según ficha — Día: 6 kg por caja · Vea: 6 kg por caja."' in respuesta.text
+    texto = respuesta.text
+    assert 'name="cliente_id"' in texto
+    assert "Para qué cliente armo" in texto
+    # El selector de cliente aparece ANTES que el de artículo.
+    assert texto.index('name="cliente_id"') < texto.index('name="articulo_id"')
+    # Las ayudas viajan por (cliente, artículo): el JS muestra solo la del elegido.
+    assert '"1:1": "6 kg por caja, seg\\u00fan la ficha de D\\u00eda."' in texto
+    assert '"2:1": "6 kg por caja, seg\\u00fan la ficha de Vea."' in texto
 
 
-def test_reproceso_guarda_y_el_aviso_repite_solo_lo_cargado():
+def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
     with (
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Perita"}),
         patch("app.main.crear_reproceso", return_value=12) as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
-            data={"articulo_id": "1", "bultos_tomados": "30", "bultos_primera": "20",
-                  "bultos_segunda": "5", "bultos_merma": "5", "fecha": "2026-08-25"},
+            data={"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+                  "bultos_primera": "20", "bultos_segunda": "5", "bultos_merma": "5",
+                  "fecha": "2026-08-25"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25))
+    # El cliente queda en la guía R como DATO (el stock sigue sin dueño).
+    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1)
     destino = respuesta.headers["location"]
-    # "Guía R12: tomé 30..." — lo cargado, jamás costos ni stock.
+    # "Guía R12: tomé 30... para Día..." — lo cargado, jamás costos ni stock.
     assert "Gu%C3%ADa+R12" in destino
     assert "tom%C3%A9+30+bultos" in destino
+    assert "para+D%C3%ADa" in destino
     assert "costo" not in destino.lower()
     assert "qued" not in destino
+
+
+def test_reproceso_sin_cliente_da_400():
+    with (
+        patch("app.main.obtener_cliente", return_value=None),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Perita"}),
+        patch("app.main.crear_reproceso") as mock_crear,
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reproceso",
+            data={"cliente_id": "", "articulo_id": "1", "bultos_tomados": "30",
+                  "bultos_primera": "20", "bultos_segunda": "", "bultos_merma": ""},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí para qué cliente estás armando" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def test_reproceso_sin_nada_producido_da_400():
@@ -15609,3 +15641,119 @@ def test_cargar_importe_invalido_no_guarda():
         )
     mock_crear.assert_not_called()
     assert "error" in respuesta.headers["location"]
+
+
+# --- El cruce de primera de reproceso: armada para uno, salió a otro ---
+
+
+def _entrada_reproceso_cruce(reproceso_id, cliente_id, cliente_nombre, bultos):
+    return {
+        "fecha_orden": date(2026, 8, 24), "momento_orden": datetime(2026, 8, 24, 10),
+        "tipo_lote": "reproceso", "origen_id": reproceso_id, "fecha_lote": date(2026, 8, 24),
+        "detalle": cliente_nombre, "motivo": None, "cantidad": bultos, "costo_bulto": 1000.0,
+        "cliente_lote_id": cliente_id,
+    }
+
+
+def _salida_armado_cruce(cliente_id, bultos):
+    return {
+        "fecha_orden": date(2026, 8, 25), "momento_orden": datetime(2026, 8, 25, 13),
+        "tipo": "armado", "fecha": date(2026, 8, 25), "cantidad": bultos,
+        "unidades": None, "cliente_id": cliente_id, "motivo": None, "bultos_segunda": None,
+    }
+
+
+def test_cruce_de_primera_detecta_bultos_que_salieron_a_otro_cliente():
+    # La guía R12 se armó para Día (10 cajas) y un pedido de Vea se llevó
+    # 4 por FIFO: el cruce se delata con guía, clientes, bultos y fecha.
+    with (
+        patch("app.main.listar_articulos_con_primera_de_cliente",
+              return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.entradas_y_salidas_stock_articulo",
+              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0)),
+        patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(2, 4.0)]),
+    ):
+        cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
+
+    assert len(cruces) == 1
+    cruce = cruces[0]
+    assert cruce["reproceso_id"] == 12
+    assert cruce["cliente_lote_nombre"] == "Día"
+    assert cruce["cliente_salida_nombre"] == "Vea"
+    assert cruce["bultos"] == 4.0
+    assert cruce["fecha"] == date(2026, 8, 25)
+
+
+def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
+    with (
+        patch("app.main.listar_articulos_con_primera_de_cliente",
+              return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.entradas_y_salidas_stock_articulo",
+              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0)),
+        patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(1, 4.0)]),
+    ):
+        cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
+    assert cruces == []
+
+
+def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
+    guia = {
+        "id": 12, "articulo_id": 1, "fecha_operacion": date(2026, 8, 24),
+        "bultos_tomados": 12.0, "bultos_primera": 10.0, "bultos_segunda": 1.0,
+        "bultos_merma": 1.0, "costo_total": 12000.0, "costo_por_bulto_primera": 1200.0,
+        "creado_en": datetime(2026, 8, 24, 10, 0), "anulado_el": None,
+        "articulo_nombre": "Tomate Perita", "cliente_id": 1, "cliente_nombre": "Día",
+        "consumos": [],
+    }
+    guia_vieja = dict(guia, id=9, cliente_id=None, cliente_nombre=None)
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
+        patch("app.main.listar_articulos_con_primera_de_cliente",
+              return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.entradas_y_salidas_stock_articulo",
+              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0)),
+        patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(2, 4.0)]),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    assert "Primera armada para <strong>Día</strong>" in texto
+    # La guía vieja queda marcada, no acusada.
+    assert "Sin cliente (guía vieja, anterior al dato)" in texto
+    # El cruce, con los datos: aviso — jamás traba.
+    assert "CRUCE DE CLIENTE" in texto
+    assert "4 bultos salieron en pedidos de Vea" in texto
+
+
+def test_auditoria_incluye_la_alerta_de_cruce_de_primera():
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_stock_vacios_negativos", return_value=0),
+        patch("app.main.contar_stock_deposito_negativo", return_value=0),
+        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
+        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main._cruces_primera_reproceso",
+              return_value=[{"articulo_nombre": "Tomate", "reproceso_id": 12,
+                             "cliente_lote_nombre": "Día", "cliente_salida_nombre": "Vea",
+                             "bultos": 4.0, "fecha": date(2026, 8, 25)}]),
+    ):
+        respuesta = cliente.get("/auditoria")
+
+    assert respuesta.status_code == 200
+    assert "Primera de reproceso armada para un cliente salió en pedidos de otro" in respuesta.text
+    assert 'href="/deposito/stock/guias-r"' in respuesta.text

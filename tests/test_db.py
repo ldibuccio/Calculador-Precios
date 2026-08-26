@@ -3324,11 +3324,12 @@ from app.db import (  # noqa: E402
 )
 
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
-                  ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",)]
+                  ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",),
+                  ("cliente_lote_id",)]
 
 
 def _lote_compra(origen_id, fecha, cantidad, costo):
-    return (fecha, datetime(2026, 8, fecha.day, 10), "guia", origen_id, fecha, "Norte 15", None, cantidad, costo)
+    return (fecha, datetime(2026, 8, fecha.day, 10), "guia", origen_id, fecha, "Norte 15", None, cantidad, costo, None)
 
 
 def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
@@ -3342,14 +3343,15 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25))
+        numero = crear_reproceso(1, 6, 4, 1, 1, date(2026, 8, 25), cliente_id=7)
 
     assert numero == 12
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
     # Cabecera: costo_total = 3×1000 + 3×1200 = 6600, TODO a la primera:
-    # 6600 / 4 cajas = 1650. Segunda y merma no llevan nada.
+    # 6600 / 4 cajas = 1650. Segunda y merma no llevan nada. El cliente
+    # queda como DATO de la guía (para quién se armó la primera).
     assert "INSERT INTO reprocesos" in inserts[0].args[0]
-    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0)
+    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7)
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
     assert inserts[2].args[1] == (12, "compra", 102, 102, 3.0, 1200.0)

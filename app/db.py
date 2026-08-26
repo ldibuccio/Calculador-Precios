@@ -5332,7 +5332,8 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
                p.nombre AS detalle,
                NULL AS motivo,
                c.cantidad_cajones_real AS cantidad,
-               c.importe AS costo_bulto
+               c.importe AS costo_bulto,
+               NULL::bigint AS cliente_lote_id
         FROM compras c
         JOIN proveedores p ON p.id = c.proveedor_id
         LEFT JOIN guias_compra g ON g.id = c.guia_id
@@ -5342,14 +5343,18 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
         -- congelado del listado anclado al pedido de origen); ajustes y
         -- reingresos viejos sin vínculo siguen siendo lotes sin costo.
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
-               cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto
+               cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint
         FROM movimientos_stock m
         LEFT JOIN clientes cl ON cl.id = m.cliente_id
         WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
         UNION ALL
+        -- La primera lleva PARA QUIÉN se armó (dato de trazabilidad: el
+        -- stock sigue sin dueño); cliente_lote_id alimenta la alerta de
+        -- cruce y el detalle muestra "armada para X".
         SELECT rp.fecha_operacion, rp.creado_en, 'reproceso', rp.id, rp.fecha_operacion,
-               NULL, NULL, rp.bultos_primera, rp.costo_por_bulto_primera
+               cl.nombre, NULL, rp.bultos_primera, rp.costo_por_bulto_primera, rp.cliente_id
         FROM reprocesos rp
+        LEFT JOIN clientes cl ON cl.id = rp.cliente_id
         WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = %s
         ORDER BY 1, 2
         """,
@@ -5576,6 +5581,7 @@ def crear_reproceso(
     bultos_segunda: float,
     bultos_merma: float,
     fecha_operacion,
+    cliente_id: int | None = None,
 ) -> int:
     """Carga una guía R: el SERVER corre el FIFO acá y congela consumos y costo. Devuelve el número de guía.
 
@@ -5637,12 +5643,14 @@ def crear_reproceso(
                 """
                 INSERT INTO reprocesos
                     (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
-                     bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
+                     cliente_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
-                 bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera),
+                 bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
+                 cliente_id),
             )
             reproceso_id = cursor.fetchone()[0]
             for c in consumos:
@@ -5676,9 +5684,11 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 SELECT rp.id, rp.articulo_id, rp.fecha_operacion, rp.bultos_tomados,
                        rp.bultos_primera, rp.bultos_segunda, rp.bultos_merma,
                        rp.costo_total, rp.costo_por_bulto_primera, rp.creado_en,
-                       rp.anulado_el, a.nombre AS articulo_nombre
+                       rp.anulado_el, a.nombre AS articulo_nombre,
+                       rp.cliente_id, cl.nombre AS cliente_nombre
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
+                LEFT JOIN clientes cl ON cl.id = rp.cliente_id
                 WHERE rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s
                 ORDER BY rp.fecha_operacion DESC, rp.id DESC
                 """,
@@ -6141,5 +6151,30 @@ def guardar_indice_inflacion(mes, porcentaje: float) -> None:
                 (mes, porcentaje),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_articulos_con_primera_de_cliente() -> list[dict]:
+    """Los artículos con alguna guía R VIGENTE armada para un cliente: los únicos donde puede haber cruce.
+
+    Acota la alerta de Auditoría: la atribución FIFO se rejuega solo para
+    estos artículos, no para todo el catálogo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT rp.articulo_id, a.nombre AS articulo_nombre
+                FROM reprocesos rp
+                JOIN articulos a ON a.id = rp.articulo_id
+                WHERE rp.anulado_el IS NULL AND rp.cliente_id IS NOT NULL
+                  AND rp.bultos_primera > 0
+                ORDER BY a.nombre
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()

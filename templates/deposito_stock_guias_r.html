@@ -154,6 +154,13 @@
       <span class="fecha-guia">{{ g.fecha_operacion|fecha_corta }}{% if g.anulado_el %} <span class="marca-anulado">ANULADA</span>{% endif %}</span>
     </div>
     <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
+    <p class="transformacion">{% if g.cliente_nombre %}Primera armada para <strong>{{ g.cliente_nombre }}</strong>{% else %}<em>Sin cliente (guía vieja, anterior al dato)</em>{% endif %}</p>
+    {% if cruces_por_guia.get(g.id) %}
+    {# El cruce que delata la alerta de Auditoría: cajas de presentación
+       equivocada. Aviso con datos — jamás traba. #}
+    <div class="costo costo-incompleto">⚠ CRUCE DE CLIENTE: de esta primera (armada para {{ g.cliente_nombre }}), según el FIFO
+      {% for cliente_nombre, bultos in cruces_por_guia.get(g.id).items() %}{{ bultos|numero }} bultos salieron en pedidos de {{ cliente_nombre }}{% if not loop.last %}, {% endif %}{% endfor %}.</div>
+    {% endif %}
     {% if g.costo_total is not none %}
     <div class="costo">Costo: {{ g.costo_total|moneda }} total{% if g.costo_por_bulto_primera is not none %} · {{ g.costo_por_bulto_primera|moneda }} por caja de primera{% endif %}</div>
     {% else %}

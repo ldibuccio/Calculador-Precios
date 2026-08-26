@@ -75,9 +75,11 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     cronológico, cada una consume del lote más viejo con resto.
 
     A cada salida le agrega: "costo" ($ total, o None si alguna porción
-    no tiene precio), "bultos_sin_costo" y "motivos_sin_costo"
-    ({motivo: bultos}). Lo que excede los lotes es porción sin_lote.
-    Devuelve las salidas en orden cronológico.
+    no tiene precio), "bultos_sin_costo", "motivos_sin_costo"
+    ({motivo: bultos}) y "consumos_lotes" (qué lote cubrió cada porción,
+    con su tipo, origen y cliente del lote si lo tiene — la materia prima
+    de la alerta de cruce de primera de reproceso). Lo que excede los
+    lotes es porción sin_lote. Devuelve las salidas en orden cronológico.
     """
     lotes = [dict(e, restante=float(e["cantidad"])) for e in sorted(entradas, key=lambda e: e["orden"])]
     resultado = sorted((dict(s) for s in salidas), key=lambda s: s["orden"])
@@ -88,6 +90,7 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
         costo = 0.0
         sin_costo = 0.0
         motivos: dict[str, float] = {}
+        consumos: list[dict] = []
         while pendiente > 0 and indice < len(lotes):
             lote = lotes[indice]
             if lote["restante"] <= 0:
@@ -96,6 +99,15 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
             bultos = min(lote["restante"], pendiente)
             lote["restante"] -= bultos
             pendiente = round(pendiente - bultos, 2)
+            consumos.append(
+                {
+                    "tipo_lote": lote["tipo_lote"],
+                    "origen_id": lote.get("origen_id"),
+                    "cliente_lote_id": lote.get("cliente_lote_id"),
+                    "detalle": lote.get("detalle"),
+                    "bultos": bultos,
+                }
+            )
             if lote["costo_bulto"] is not None:
                 costo += bultos * float(lote["costo_bulto"])
             else:
@@ -108,6 +120,7 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
 
         salida["bultos_sin_costo"] = round(sin_costo, 2)
         salida["motivos_sin_costo"] = motivos
+        salida["consumos_lotes"] = consumos
         salida["costo"] = round(costo, 2) if sin_costo == 0 else None
     return resultado
 

@@ -102,6 +102,7 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    listar_articulos_con_primera_de_cliente,
     crear_grupo_costos_fijos,
     crear_importe_costos_fijos,
     crear_subcuenta_costos_fijos,
@@ -250,7 +251,7 @@ from core.casilla_pedidos import (
 )
 from core.pedido_estructura import parsear_pedido_estructurado
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
-from core.costo_real import calcular_rentabilidad_real
+from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
 from core.costos_fijos import calcular_costos_fijos
 from core.stock import repartir_fifo
 from core.exportar_rentabilidad import generar_excel_rentabilidad, generar_pdf_rentabilidad
@@ -6733,20 +6734,24 @@ def ver_cotejo_stock(request: Request):
 SUFIJOS_FICHA_REPROCESO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
 
 
-def _ayudas_ficha_por_articulo() -> dict[int, str]:
-    """Por artículo, el kilaje de la caja armada según la ficha de cada cliente ("Día: 6 kg por caja").
+def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
+    """El kilaje de la caja armada según la ficha, por (cliente, artículo): "6 kg por caja según la ficha de Día".
 
-    Es dato de FICHA, no de stock: se le puede mostrar al operario.
+    Es dato de FICHA, no de stock: se le puede mostrar al operario. La
+    clave es "cliente_id:articulo_id" — la ayuda muestra SOLO la ficha del
+    cliente elegido (todas juntas no servían, pedido del dueño 25/08).
     """
-    ayudas: dict[int, list[str]] = {}
+    ayudas: dict[str, str] = {}
     for cliente_fila in listar_clientes():
         for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
             if not ficha.get("contenido_caja"):
                 continue
             sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-            texto = f"{cliente_fila['nombre']}: {_formatear_numero(ficha['contenido_caja'])} {sufijo} por caja".strip()
-            ayudas.setdefault(ficha["articulo_id"], []).append(texto)
-    return {articulo_id: "Según ficha — " + " · ".join(textos) + "." for articulo_id, textos in ayudas.items()}
+            ayudas[f"{cliente_fila['id']}:{ficha['articulo_id']}"] = (
+                f"{_formatear_numero(ficha['contenido_caja'])} {sufijo} por caja, "
+                f"según la ficha de {cliente_fila['nombre']}."
+            )
+    return ayudas
 
 
 def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
@@ -6759,14 +6764,15 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
             for f in stock_deposito_por_articulo()
             if f["stock"] > 0
         ]
-        ayudas = _ayudas_ficha_por_articulo()
+        clientes = listar_clientes()
+        ayudas = _ayudas_ficha_por_cliente_y_articulo()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    for a in con_stock:
-        a["ayuda_ficha"] = ayudas.get(a["id"], "")
     contexto = {
         "articulos": con_stock,
+        "clientes": clientes,
+        "ayudas_ficha": ayudas,
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "aviso": aviso,
@@ -6796,6 +6802,7 @@ def _numero_form_o_cero(texto: str, que: str) -> tuple[str | None, float | None]
 @app.post("/deposito/stock/reproceso")
 def cargar_reproceso_ruta(
     request: Request,
+    cliente_id: str = Form(""),
     articulo_id: str = Form(""),
     bultos_tomados: str = Form(""),
     bultos_primera: str = Form(""),
@@ -6805,11 +6812,14 @@ def cargar_reproceso_ruta(
 ):
     """El operario declara la transformación; el server corre el FIFO y congela consumos y costo.
 
-    Pantalla de OPERARIO: nunca traba por stock (el piso es su verdad —
-    si tomó más de lo que el sistema cree, queda sin_lote y la alerta
-    avisa), y el aviso repite solo lo que cargó — jamás costos ni números
-    del sistema. Sin correlación entre tomado y producido: un cajón de 16
-    puede dar tres cajas de 6.
+    El cliente para el que se arma la primera queda en la guía R como
+    DATO (trazabilidad + la alerta de cruce de Auditoría): el stock sigue
+    sin dueño y el armado no se restringe — el sistema registra y delata,
+    no traba. Pantalla de OPERARIO: nunca traba por stock (el piso es su
+    verdad — si tomó más de lo que el sistema cree, queda sin_lote y la
+    alerta avisa), y el aviso repite solo lo que cargó — jamás costos ni
+    números del sistema. Sin correlación entre tomado y producido: un
+    cajón de 16 puede dar tres cajas de 6.
     """
     error, tomados_valor = _validar_bultos_positivos(bultos_tomados, "tomados")
 
@@ -6837,17 +6847,22 @@ def cargar_reproceso_ruta(
                 if fecha_valor > hoy:
                     error = "La fecha del reproceso no puede ser futura."
 
+    cliente = None
     articulo = None
     if not error:
         try:
+            cliente = obtener_cliente(int(cliente_id)) if cliente_id.strip().isdigit() else None
             articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-        if articulo is None:
+        if cliente is None:
+            error = "Elegí para qué cliente estás armando."
+        elif articulo is None:
             error = "Elegí un artículo válido."
 
     if error:
         precarga = {
+            "cliente_id": cliente_id,
             "articulo_id": articulo_id,
             "bultos_tomados": bultos_tomados,
             "bultos_primera": bultos_primera,
@@ -6859,7 +6874,8 @@ def cargar_reproceso_ruta(
 
     try:
         numero_guia = crear_reproceso(
-            articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor
+            articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
+            cliente_id=cliente["id"],
         )
     except Exception as error_db:
         return _renderizar_pantalla_reproceso(
@@ -6868,10 +6884,65 @@ def cargar_reproceso_ruta(
 
     aviso = (
         f"Guía R{numero_guia}: tomé {_formatear_numero(tomados_valor)} bultos de {articulo['nombre']}, "
-        f"armé {_formatear_numero(primera_valor)} cajas, {_formatear_numero(segunda_valor)} de segunda "
-        f"y {_formatear_numero(merma_valor)} de merma."
+        f"armé {_formatear_numero(primera_valor)} cajas para {cliente['nombre']}, "
+        f"{_formatear_numero(segunda_valor)} de segunda y {_formatear_numero(merma_valor)} de merma."
     )
     return RedirectResponse(url=f"/deposito/stock/reproceso?{urlencode({'aviso': aviso})}", status_code=303)
+
+
+def _cruces_primera_reproceso() -> list[dict]:
+    """Los bultos de una primera armada para un cliente que el FIFO atribuye a pedidos de OTRO.
+
+    Rejuega la atribución SOLO para los artículos con guías R de cliente
+    (pocos): el resto del catálogo no puede tener cruce. Es AVISO con
+    datos, jamás traba — el cruce ya pasó en el galpón; acá se delata
+    (guía, cliente del armado, cliente que se lo llevó, bultos y fecha).
+    """
+    try:
+        articulos = listar_articulos_con_primera_de_cliente()
+        if not articulos:
+            return []
+        nombres_clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+    except Exception:
+        logger.exception("No se pudieron listar los artículos con primera de cliente")
+        return []
+
+    cruces = []
+    for articulo in articulos:
+        try:
+            entradas, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
+            salidas = salidas_stock_articulo(articulo["articulo_id"])
+        except Exception:
+            logger.exception("No se pudo rejugar el FIFO del artículo %s para la alerta de cruce", articulo["articulo_id"])
+            continue
+        for e in entradas:
+            e["orden"] = (e["fecha_orden"], e["momento_orden"])
+        for s in salidas:
+            s["orden"] = (s["fecha_orden"], s["momento_orden"])
+        for salida in atribuir_costos_fifo(entradas, salidas):
+            if salida["tipo"] != "armado" or salida.get("cliente_id") is None:
+                continue
+            for consumo in salida["consumos_lotes"]:
+                cliente_lote = consumo.get("cliente_lote_id")
+                if (
+                    consumo["tipo_lote"] == "reproceso"
+                    and cliente_lote is not None
+                    and cliente_lote != salida["cliente_id"]
+                ):
+                    cruces.append(
+                        {
+                            "articulo_nombre": articulo["articulo_nombre"],
+                            "reproceso_id": consumo["origen_id"],
+                            "cliente_lote_nombre": consumo.get("detalle")
+                            or nombres_clientes.get(cliente_lote, f"cliente #{cliente_lote}"),
+                            "cliente_salida_nombre": nombres_clientes.get(
+                                salida["cliente_id"], f"cliente #{salida['cliente_id']}"
+                            ),
+                            "bultos": float(consumo["bultos"]),
+                            "fecha": salida["fecha"],
+                        }
+                    )
+    return cruces
 
 
 @app.get("/deposito/stock/guias-r")
@@ -6880,7 +6951,9 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
 
     Este costo NUNCA alimenta la cotización (que solo lee compras): se
     conoce a la tarde, y la cotización de la mañana se hizo con el costo
-    de compra — viven separados a propósito.
+    de compra — viven separados a propósito. Cada guía dice para quién se
+    armó, y si el FIFO detectó que parte de esa primera salió en pedidos
+    de OTRO cliente, lo canta acá con los bultos.
     """
     desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
     try:
@@ -6888,10 +6961,24 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    # El detalle del cruce por guía: "N bultos salieron en pedidos de X".
+    cruces_por_guia: dict = {}
+    for cruce in _cruces_primera_reproceso():
+        por_cliente = cruces_por_guia.setdefault(cruce["reproceso_id"], {})
+        por_cliente[cruce["cliente_salida_nombre"]] = (
+            por_cliente.get(cruce["cliente_salida_nombre"], 0.0) + cruce["bultos"]
+        )
+
     return templates.TemplateResponse(
         request,
         "deposito_stock_guias_r.html",
-        {"guias": guias, "fecha_desde": desde.isoformat(), "fecha_hasta": hasta.isoformat(), "aviso": aviso},
+        {
+            "guias": guias,
+            "cruces_por_guia": cruces_por_guia,
+            "fecha_desde": desde.isoformat(),
+            "fecha_hasta": hasta.isoformat(),
+            "aviso": aviso,
+        },
     )
 
 
@@ -7097,6 +7184,9 @@ def _alertas_auditoria() -> list[dict]:
     mails_leidos_con_ia = contar_mails_pedido_leidos_con_ia(hoy - timedelta(days=7))
     pedidos_faltantes = contar_pedidos_faltantes()
     casillas_sin_revisar = contar_casillas_sin_revisar()
+    # El cruce de primera de reproceso: rejuega el FIFO solo de los
+    # artículos con guías R de cliente (pocos) — aviso, jamás traba.
+    cruces_primera = _cruces_primera_reproceso()
 
     return [
         {
@@ -7149,6 +7239,17 @@ def _alertas_auditoria() -> list[dict]:
             "mas_viejo": guias_costo_incompleto["mas_viejo"],
             "url": "/deposito/stock/guias-r",
             "texto_link": "Ver en Guías R",
+        },
+        {
+            # La primera se armó para un cliente y el FIFO dice que parte
+            # salió en pedidos de OTRO: cajas de presentación equivocada.
+            # Aviso con datos (el detalle por guía está en Guías R), nunca
+            # traba — el galpón ya lo hizo; acá se delata.
+            "titulo": "Primera de reproceso armada para un cliente salió en pedidos de otro",
+            "casos": len(cruces_primera),
+            "mas_viejo": min((c["fecha"] for c in cruces_primera), default=None),
+            "url": "/deposito/stock/guias-r",
+            "texto_link": "Ver el detalle en Guías R",
         },
         {
             "titulo": "Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",
