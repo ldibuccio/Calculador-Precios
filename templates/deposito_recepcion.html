@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Recepción</title>
+<title>Recepción Compras</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -167,7 +167,7 @@
 </head>
 <body>
   {% set barra_sector = "deposito" %}
-  {% set barra_titulo = "Recepción" %}
+  {% set barra_titulo = "Recepción Compras" %}
   {% set barra_atras = "/deposito" %}
   {% include "_barra_navegacion.html" %}
 
@@ -209,6 +209,9 @@
       <div class="renglon-procesado">
         <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
         <p class="cantidad">{{ p.estado_label }} a las {{ p.procesada_el|hora }}</p>
+        {% if p.estado == "recepcionado" and p.cantidad_cajones_real is not none and p.contenido_por_cajon_real is not none %}
+        <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|kilos }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|kilos }}{{ p.unidad_compra|sufijo_unidad }}</p>
+        {% endif %}
         {% if p.deshacer_bloqueado %}
         <p class="aviso-bloqueo">No se puede deshacer.</p>
         {% else %}

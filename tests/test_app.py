@@ -4479,6 +4479,23 @@ def test_ver_recepcion_panel_procesados_hoy_muestra_hora_y_deshacer_solo_no_ingr
     assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
 
 
+def test_ver_recepcion_panel_procesados_hoy_muestra_cantidad_y_kilos_recibidos():
+    # Lo recepcionado muestra con qué números reales se recibió: cajones,
+    # contenido por cajón y el total. Lo no ingresado (o sin contenido real
+    # cargado) no muestra la línea — no hay nada recibido que contar.
+    recibido = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[0], estado="recepcionado")
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[recibido, PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1]]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Recibido: 38 cajones × 19k = 722k" in respuesta.text
+    # El Mango se recepcionó sin contenido real: sin línea de Recibido.
+    assert "Recibido: 10 cajones" not in respuesta.text
+
+
 def test_ver_recepcion_panel_procesados_hoy_rechazado_muestra_aviso_no_boton():
     procesado_rechazado = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1], estado="rechazado")
     with (
