@@ -148,6 +148,40 @@
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
   }
+  /* La merma trabajada se distingue de la cruda a simple vista: es la
+     cara, y es la que hay que mirar primero. */
+  .chip-merma-trabajada {
+    display: inline-block;
+    background: #991b1b;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .tarjeta-mermas {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-left: 5px solid #991b1b;
+  }
+  .tarjeta-mermas h2 { margin: 0 0 0.2rem; font-size: 1.05rem; }
+  .tarjeta-mermas .total-mermas { font-size: 0.9rem; color: #666; margin: 0 0 0.75rem; }
+  .fila-merma {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+    border-top: 1px solid #eee;
+  }
+  .fila-merma .que { font-weight: 700; font-size: 0.95rem; }
+  .fila-merma .que .aclaracion { display: block; color: #666; font-size: 0.82rem; font-weight: 400; margin-top: 0.1rem; }
+  .fila-merma .plata { text-align: right; white-space: nowrap; font-weight: 800; font-size: 1.05rem; }
+  .fila-merma .plata .bultos-merma { display: block; font-size: 0.82rem; font-weight: 600; color: #666; }
+  .fila-merma.trabajada .plata { color: #991b1b; }
   .chip-segunda {
     display: inline-block;
     background: #ffedd5;
@@ -247,7 +281,7 @@
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar PDF</a>
     <a class="boton-exportar" href="/gerencia/rentabilidad-real/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&grupo={{ grupo or '' }}">Exportar Excel</a>
     {% endif %}
-    <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.</p>
+    <p class="ayuda">La cuenta <strong>real</strong>: venta = lo <strong>enviado</strong> × precio de lista vigente con las tasas del cliente; mercadería al <strong>costo FIFO del lote que salió</strong> (compras a su importe, guías R a su costo de primera); menos el <strong>envase</strong> y las <strong>mermas</strong> del período a su costo, abiertas en <strong>cruda</strong> (cajones de compra) y <strong>ya trabajada</strong> (guías R y rechazos que volvieron), para ver si se está tirando materia prima o trabajo. El reproceso es neutro (su costo viaja a la primera) y la segunda vale cero. Las <strong>devoluciones vinculadas a pedido restan su venta</strong> ("si le mandé 25 y me devolvió 5, vendí 20") al precio de la fecha del pedido de origen. La teórica sigue en su propia pantalla, intacta.</p>
   </div>
 
   {% if resultado %}
@@ -269,6 +303,33 @@
   {% else %}
   <div class="tarjeta">
     <p class="vacio">Nada calculable en este rango{% if resultado.afuera_por_motivo %} — pero mirá lo que quedó afuera, abajo: esa es la lista de cosas a arreglar{% endif %}.</p>
+  </div>
+  {% endif %}
+
+  {# La merma abierta en dos: lo que importa no es cuánto se tiró, sino QUÉ
+     se tiró. Un cajón crudo cuesta lo que se pagó; un bulto ya trabajado
+     cuesta eso más el laburo, y es la pérdida cara. Es el mismo total de
+     arriba, abierto — no una cuenta nueva. #}
+  {% if resultado.totales.costo_mermas %}
+  <div class="tarjeta-mermas">
+    <h2>Mermas: ¿materia prima o trabajo?</h2>
+    <p class="total-mermas">{{ resultado.totales.costo_mermas|moneda }} en total, abierto por lo que se tiró.</p>
+    <div class="fila-merma">
+      <span class="que">Mercadería cruda
+        <span class="aclaracion">Cajones como vinieron de la compra.</span>
+      </span>
+      <span class="plata">{{ resultado.totales.costo_mermas_cruda|moneda }}
+        <span class="bultos-merma">{{ resultado.totales.bultos_mermados_cruda|numero }} bulto{{ "s" if resultado.totales.bultos_mermados_cruda != 1 }}</span>
+      </span>
+    </div>
+    <div class="fila-merma trabajada">
+      <span class="que">Mercadería ya trabajada
+        <span class="aclaracion">Guías R y rechazos que volvieron: ya tienen el laburo puesto encima.</span>
+      </span>
+      <span class="plata">{{ resultado.totales.costo_mermas_trabajada|moneda }}
+        <span class="bultos-merma">{{ resultado.totales.bultos_mermados_trabajada|numero }} bulto{{ "s" if resultado.totales.bultos_mermados_trabajada != 1 }}</span>
+      </span>
+    </div>
   </div>
   {% endif %}
 
@@ -321,7 +382,10 @@
         {{ f.articulo_nombre }}
         <span class="detalle">{{ f.bultos|numero }} bultos enviados · venta {{ f.venta_neta|moneda }} — mercadería {{ f.costo_mercaderia|moneda }}{% if f.costo_envase %} — envase {{ f.costo_envase|moneda }}{% endif %}</span>
         {% if f.bultos_mermados or f.segunda_bultos or f.devoluciones_bultos %}
-        <span class="detalle">{% if f.bultos_mermados %}<span class="chip-merma">merma {{ f.bultos_mermados|numero }} bultos · {{ f.costo_mermas|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %}</span>
+        {# Un chip por tipo de merma, y SOLO los que tienen algo: el
+           artículo que se mermó todo crudo no tiene por qué arrastrar un
+           chip de trabajada en cero. #}
+        <span class="detalle">{% if f.bultos_mermados_cruda %}<span class="chip-merma">merma cruda {{ f.bultos_mermados_cruda|numero }} bulto{{ "s" if f.bultos_mermados_cruda != 1 }} · {{ f.costo_mermas_cruda|moneda }}</span>{% endif %} {% if f.bultos_mermados_trabajada %}<span class="chip-merma-trabajada">merma trabajada {{ f.bultos_mermados_trabajada|numero }} bulto{{ "s" if f.bultos_mermados_trabajada != 1 }} · {{ f.costo_mermas_trabajada|moneda }}</span>{% endif %} {% if f.segunda_bultos %}<span class="chip-segunda">{{ f.segunda_bultos|numero }} de segunda</span>{% endif %} {% if f.devoluciones_bultos %}<span class="chip-devolucion">devolvió {{ f.devoluciones_bultos|numero }} bultos · −{{ f.devoluciones_venta|moneda }} de venta</span>{% endif %} {% if f.rechazos_bultos %}<span class="chip-rechazo">rechazo perdido {{ f.rechazos_bultos|numero }} bultos · {{ f.rechazos_perdidos|moneda }}</span>{% endif %}</span>
         {% endif %}
       </div>
       <div class="renta {% if f.renta_pesos < 0 %}negativa{% endif %}">

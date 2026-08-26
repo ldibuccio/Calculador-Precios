@@ -138,6 +138,107 @@ def test_la_merma_del_periodo_resta_al_costo_de_su_lote():
     assert fila["renta_pesos"] == fila["venta_neta"] - fila["costo_mercaderia"] - fila["costo_envase"] - 1500.0
 
 
+# --- la merma abierta: materia prima o trabajo ---
+
+
+def test_la_merma_de_un_cajon_de_compra_es_cruda():
+    fecha = date(2026, 8, 25)
+    salidas = [{"orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 3}]
+    resultado = calcular_rentabilidad_real(_datos(salidas), {}, 1, fecha, fecha)
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["costo_mermas_cruda"] == 1500.0
+    assert fila["bultos_mermados_cruda"] == 3
+    assert fila["costo_mermas_trabajada"] == 0
+    assert fila["bultos_mermados_trabajada"] == 0
+
+
+def test_la_merma_dirigida_a_una_guia_r_es_trabajada_y_al_costo_de_esa_guia():
+    # El caso que motivó el corte: tirar un bulto ya reprocesado sale mucho
+    # más caro que tirar el cajón crudo del que salió, y en el reporte tiene
+    # que verse por separado — no promediado adentro de "mermas".
+    fecha = date(2026, 8, 25)
+    entradas = [_lote(1, 10, 500.0), dict(_lote(2, 5, 1800.0, tipo_lote="reproceso"), origen_id=7)]
+    salidas = [
+        {"orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 2,
+         "lote_tipo": "reproceso", "lote_origen_id": 7},
+    ]
+    resultado = calcular_rentabilidad_real(_datos(salidas, entradas=entradas), {}, 1, fecha, fecha)
+
+    fila = resultado["grupos"][0]["filas"][0]
+    # Al costo de la guía R ($1.800), no al del cajón viejo que el FIFO
+    # hubiera elegido ($500).
+    assert fila["costo_mermas_trabajada"] == 3600.0
+    assert fila["bultos_mermados_trabajada"] == 2
+    assert fila["costo_mermas_cruda"] == 0
+    # Y sigue siendo "− mermas", no "− rechazos perdidos".
+    assert fila["costo_mermas"] == 3600.0
+    assert fila["rechazos_perdidos"] == 0
+
+
+def test_la_merma_de_un_reingreso_es_trabajada_y_la_de_un_ajuste_es_cruda():
+    # Un reingreso ya salió armado y volvió: es trabajo. Un ajuste (stock
+    # inicial, corrección de registro) es mercadería sin procesar.
+    fecha = date(2026, 8, 25)
+    entradas = [
+        dict(_lote(1, 2, 900.0, tipo_lote="reingreso_rechazo"), origen_id=11),
+        dict(_lote(2, 4, 300.0, tipo_lote="ajuste"), origen_id=12),
+    ]
+    salidas = [
+        {"orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 2,
+         "lote_tipo": "reingreso_rechazo", "lote_origen_id": 11},
+        {"orden": (fecha, 2), "tipo": "merma", "fecha": fecha, "cantidad": 4,
+         "lote_tipo": "ajuste", "lote_origen_id": 12},
+    ]
+    resultado = calcular_rentabilidad_real(_datos(salidas, entradas=entradas), {}, 1, fecha, fecha)
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["costo_mermas_trabajada"] == 1800.0
+    assert fila["bultos_mermados_trabajada"] == 2
+    assert fila["costo_mermas_cruda"] == 1200.0
+    assert fila["bultos_mermados_cruda"] == 4
+
+
+def test_una_merma_sin_dirigir_que_cruza_dos_lotes_se_parte_por_porcion():
+    # El corte va por PORCIÓN, no por movimiento: sin lote elegido la merma
+    # la reparte el FIFO, y acá se come lo que queda del cajón crudo y sigue
+    # con la guía R. Imputarla entera a uno de los dos sería mentira.
+    fecha = date(2026, 8, 25)
+    entradas = [_lote(1, 2, 500.0), _lote(2, 5, 1800.0, tipo_lote="reproceso")]
+    salidas = [{"orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 5}]
+    resultado = calcular_rentabilidad_real(_datos(salidas, entradas=entradas), {}, 1, fecha, fecha)
+
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["costo_mermas_cruda"] == 2 * 500.0
+    assert fila["bultos_mermados_cruda"] == 2
+    assert fila["costo_mermas_trabajada"] == 3 * 1800.0
+    assert fila["bultos_mermados_trabajada"] == 3
+
+
+def test_la_merma_abierta_siempre_cierra_contra_el_total_de_mermas():
+    # El invariante: no es una cuenta nueva, es la misma abierta. Si las dos
+    # partes no suman el total, algo se está contando mal o dos veces.
+    fecha = date(2026, 8, 25)
+    entradas = [_lote(1, 10, 500.0), _lote(2, 5, 1800.0, tipo_lote="reproceso")]
+    salidas = [
+        _armado(fecha, 4, 60.0, orden=(fecha, 1)),
+        {"orden": (fecha, 2), "tipo": "merma", "fecha": fecha, "cantidad": 3},
+        {"orden": (fecha, 3), "tipo": "merma", "fecha": fecha, "cantidad": 6},
+    ]
+    resultado = calcular_rentabilidad_real(
+        _datos(salidas, entradas=entradas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha
+    )
+
+    for cuenta in (resultado["grupos"][0]["filas"][0], resultado["grupos"][0]["subtotal"], resultado["totales"]):
+        assert cuenta["costo_mermas_cruda"] + cuenta["costo_mermas_trabajada"] == cuenta["costo_mermas"]
+    fila = resultado["grupos"][0]["filas"][0]
+    assert fila["bultos_mermados_cruda"] + fila["bultos_mermados_trabajada"] == fila["bultos_mermados"]
+    # Y la renta no se movió por abrirla: sigue restando el mismo total.
+    assert fila["renta_pesos"] == (
+        fila["venta_neta"] - fila["costo_mercaderia"] - fila["costo_envase"] - fila["costo_mermas"]
+    )
+
+
 def test_el_reproceso_es_neutro_y_la_segunda_se_informa_sin_plata():
     fecha = date(2026, 8, 25)
     salidas = [

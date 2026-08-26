@@ -15674,19 +15674,28 @@ RESULTADO_REAL_DE_PRUEBA = {
             "articulo_id": 1, "articulo_nombre": "Banana", "grupo": "fruta",
             "bultos": 10.0, "unidades": 160.0, "venta_neta": 14400.0,
             "costo_mercaderia": 5000.0, "costo_envase": 320.0,
-            "costo_mermas": 1500.0, "bultos_mermados": 3.0, "segunda_bultos": 2.0,
+            # Los $1.500 de merma, abiertos: 2 bultos crudos a $350 y 1 ya
+            # trabajado a $800 — el trabajado sale más caro por bulto.
+            "costo_mermas": 1500.0, "bultos_mermados": 3.0,
+            "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
+            "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0,
+            "segunda_bultos": 2.0,
             "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
             "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
             "costo_total": 6820.0, "renta_pesos": 7580.0, "utilidad_pct": 151.6,
         }],
         "subtotal": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
-                     "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0,
+                     "costo_envase": 320.0, "costo_mermas": 1500.0, "costo_total": 6820.0, "bultos_mermados": 3.0,
+                     "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
+                     "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0,
                      "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
                      "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
                      "renta_pesos": 7580.0, "utilidad_pct": 151.6},
     }],
     "totales": {"bultos": 10.0, "venta_neta": 14400.0, "costo_mercaderia": 5000.0,
-                "costo_envase": 320.0, "costo_mermas": 1500.0, "segunda_bultos": 2.0,
+                "costo_envase": 320.0, "costo_mermas": 1500.0, "segunda_bultos": 2.0, "bultos_mermados": 3.0,
+                "costo_mermas_cruda": 700.0, "bultos_mermados_cruda": 2.0,
+                "costo_mermas_trabajada": 800.0, "bultos_mermados_trabajada": 1.0,
                 "devoluciones_bultos": 0.0, "devoluciones_venta": 0.0,
                 "rechazos_perdidos": 0.0, "rechazos_bultos": 0.0,
                 "afuera_bultos": 42.0, "afuera_motivos": 2, "costo_total": 6820.0,
@@ -15728,6 +15737,52 @@ def test_rentabilidad_real_muestra_la_cuenta_y_el_afuera_protagonista():
     assert "Anco (12)" in respuesta.text
     # Y aparece ANTES que la tabla de grupos (arriba, no nota al pie).
     assert respuesta.text.index("Afuera del cálculo") < respuesta.text.index("Subtotal Fruta")
+
+
+def test_rentabilidad_real_abre_la_merma_en_cruda_y_trabajada():
+    # Lo que se quiere saber mirando la pantalla no es cuánto se tiró, sino
+    # QUÉ se tiró: materia prima o trabajo. El total sigue siendo el mismo.
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main._datos_rentabilidad_real", return_value=dict(RESULTADO_REAL_DE_PRUEBA)),
+        patch("app.main._datos_rentabilidad", return_value={"grupos": [], "totales": {
+            "bultos": 0, "venta_neta": 0, "costo_mercaderia": 0, "costo_envase": 0, "costo_total": 0,
+            "renta_pesos": 0, "utilidad_pct": None, "no_calculables_casos": 0, "no_calculables_bultos": 0,
+        }, "no_calculables": [], "fechas_incluidas": []}),
+    ):
+        respuesta = cliente.get("/gerencia/rentabilidad-real?cliente_id=1")
+
+    assert "Mermas: ¿materia prima o trabajo?" in respuesta.text
+    assert "Mercadería cruda" in respuesta.text
+    assert "Mercadería ya trabajada" in respuesta.text
+    # $700 en 2 bultos crudos y $800 en 1 trabajado, del mismo total de $1.500.
+    assert "$700" in respuesta.text and "$800" in respuesta.text
+    assert "$1.500 en total, abierto por lo que se tiró." in respuesta.text
+    # Y el artículo lleva un chip por cada tipo, con sus propios bultos.
+    assert "merma cruda 2 bultos · $700" in respuesta.text
+    assert "merma trabajada 1 bulto · $800" in respuesta.text
+
+
+def test_rentabilidad_real_sin_mermas_no_muestra_el_bloque_de_mermas():
+    # Nada de renglones vacíos: si no se tiró nada, el bloque no va.
+    sin_mermas = dict(RESULTADO_REAL_DE_PRUEBA)
+    sin_mermas["totales"] = dict(RESULTADO_REAL_DE_PRUEBA["totales"], costo_mermas=0.0,
+                                 costo_mermas_cruda=0.0, costo_mermas_trabajada=0.0)
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main._datos_rentabilidad_real", return_value=sin_mermas),
+        patch("app.main._datos_rentabilidad", return_value={"grupos": [], "totales": {
+            "bultos": 0, "venta_neta": 0, "costo_mercaderia": 0, "costo_envase": 0, "costo_total": 0,
+            "renta_pesos": 0, "utilidad_pct": None, "no_calculables_casos": 0, "no_calculables_bultos": 0,
+        }, "no_calculables": [], "fechas_incluidas": []}),
+    ):
+        respuesta = cliente.get("/gerencia/rentabilidad-real?cliente_id=1")
+
+    assert "Mermas: ¿materia prima o trabajo?" not in respuesta.text
 
 
 def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():

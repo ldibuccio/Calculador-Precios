@@ -13,7 +13,14 @@ es la cuenta exacta, mirando lo que pasó:
                      costo de primera congelado.
     − envase       = costo de envase × unidades realmente enviadas.
     − mermas       = bultos tirados en el período × el costo FIFO de su
-                     lote.
+                     lote, partido en DOS: mercadería cruda (lotes de
+                     compra y ajustes) y mercadería ya trabajada (guías R
+                     y reingresos por rechazo, que ya salieron armados y
+                     volvieron). No es un total nuevo — es el mismo,
+                     abierto para poder ver si se está tirando materia
+                     prima o trabajo, que cuesta mucho más caro. El corte
+                     va por PORCIÓN consumida: una misma merma puede
+                     comerse la punta de un cajón y seguir con una guía R.
     − rechazos     = los rechazos que NO volvieron al stock (fueron a
       perdidos      segunda, con o sin cambio de envase): mercadería al
                     costo congelado + envase, todo pérdida directa.
@@ -73,6 +80,20 @@ ETIQUETAS_MOTIVO_REAL = {
 # pérdida (no queda primera que lo absorba, a diferencia del reproceso).
 DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
+# La merma parte en dos: qué se está tirando, materia prima o trabajo.
+# Tirar un cajón crudo cuesta lo que costó comprarlo; tirar un bulto que
+# ya pasó por la mesa cuesta eso MÁS el laburo que se le puso, y el costo
+# del lote ya lo refleja. Un lote de compra es el cajón como vino, y un
+# ajuste (stock inicial, corrección de registro) se cuenta igual: es
+# mercadería sin procesar. Una guía R ya pasó por la mesa, y un reingreso
+# por rechazo también — salió armado y volvió.
+TIPOS_LOTE_TRABAJADO = ("reproceso", "reingreso_rechazo")
+
+
+def _es_trabajado(tipo_lote) -> bool:
+    return tipo_lote in TIPOS_LOTE_TRABAJADO
+
+
 _MOTIVO_POR_TIPO_LOTE = {
     "guia": "compra_sin_precio",
     "ajuste": "ajuste_sin_costo",
@@ -120,6 +141,7 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
         def _consumir(lote, bultos):
             nonlocal costo, sin_costo
             lote["restante"] -= bultos
+            costo_porcion = bultos * float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None
             consumos.append(
                 {
                     "tipo_lote": lote["tipo_lote"],
@@ -127,6 +149,10 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
                     "cliente_lote_id": lote.get("cliente_lote_id"),
                     "detalle": lote.get("detalle"),
                     "bultos": bultos,
+                    # El costo de ESTA porción: es lo que permite partir la
+                    # merma en cruda y trabajada cuando una sola salida
+                    # consumió lotes de los dos tipos.
+                    "costo": costo_porcion,
                 }
             )
             if lote["costo_bulto"] is not None:
@@ -227,6 +253,12 @@ def calcular_rentabilidad_real(
                 "costo_envase": 0.0,
                 "costo_mermas": 0.0,
                 "bultos_mermados": 0.0,
+                # La misma merma, partida por lo que se tiró: mercadería
+                # cruda o mercadería ya trabajada. Las dos suman el total.
+                "costo_mermas_cruda": 0.0,
+                "bultos_mermados_cruda": 0.0,
+                "costo_mermas_trabajada": 0.0,
+                "bultos_mermados_trabajada": 0.0,
                 "segunda_bultos": 0.0,
                 "devoluciones_bultos": 0.0,
                 "devoluciones_venta": 0.0,
@@ -283,6 +315,14 @@ def calcular_rentabilidad_real(
                 fila = _fila(articulo)
                 fila["costo_mermas"] += salida["costo"]
                 fila["bultos_mermados"] += float(salida["cantidad"])
+                # El corte va por PORCIÓN consumida, no por movimiento: una
+                # merma que no se cargó dirigida a un lote la reparte el
+                # FIFO, y puede comerse la punta de un cajón crudo y seguir
+                # con una guía R. Cada porción se imputa a lo que era.
+                for consumo in salida["consumos_lotes"]:
+                    lado = "trabajada" if _es_trabajado(consumo["tipo_lote"]) else "cruda"
+                    fila[f"costo_mermas_{lado}"] += consumo["costo"]
+                    fila[f"bultos_mermados_{lado}"] += consumo["bultos"]
 
             elif salida["tipo"] == "reproceso_toma":
                 # Neutro en plata (el costo viaja a la primera); la
@@ -371,6 +411,11 @@ def calcular_rentabilidad_real(
             "costo_mercaderia": sum(f["costo_mercaderia"] for f in filas),
             "costo_envase": sum(f["costo_envase"] for f in filas),
             "costo_mermas": sum(f["costo_mermas"] for f in filas),
+            "bultos_mermados": sum(f["bultos_mermados"] for f in filas),
+            "costo_mermas_cruda": sum(f["costo_mermas_cruda"] for f in filas),
+            "bultos_mermados_cruda": sum(f["bultos_mermados_cruda"] for f in filas),
+            "costo_mermas_trabajada": sum(f["costo_mermas_trabajada"] for f in filas),
+            "bultos_mermados_trabajada": sum(f["bultos_mermados_trabajada"] for f in filas),
             "devoluciones_bultos": sum(f["devoluciones_bultos"] for f in filas),
             "devoluciones_venta": sum(f["devoluciones_venta"] for f in filas),
             "rechazos_perdidos": sum(f["rechazos_perdidos"] for f in filas),
@@ -411,6 +456,11 @@ def calcular_rentabilidad_real(
         "costo_mercaderia": sum(g["subtotal"]["costo_mercaderia"] for g in grupos),
         "costo_envase": sum(g["subtotal"]["costo_envase"] for g in grupos),
         "costo_mermas": sum(g["subtotal"]["costo_mermas"] for g in grupos),
+        "bultos_mermados": sum(g["subtotal"]["bultos_mermados"] for g in grupos),
+        "costo_mermas_cruda": sum(g["subtotal"]["costo_mermas_cruda"] for g in grupos),
+        "bultos_mermados_cruda": sum(g["subtotal"]["bultos_mermados_cruda"] for g in grupos),
+        "costo_mermas_trabajada": sum(g["subtotal"]["costo_mermas_trabajada"] for g in grupos),
+        "bultos_mermados_trabajada": sum(g["subtotal"]["bultos_mermados_trabajada"] for g in grupos),
         "devoluciones_bultos": sum(g["subtotal"]["devoluciones_bultos"] for g in grupos),
         "devoluciones_venta": sum(g["subtotal"]["devoluciones_venta"] for g in grupos),
         "rechazos_perdidos": sum(g["subtotal"]["rechazos_perdidos"] for g in grupos),
