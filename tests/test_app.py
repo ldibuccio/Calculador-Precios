@@ -14182,6 +14182,51 @@ def test_exportar_buscar_pedidos_pdf_y_excel():
     assert "spreadsheetml" in excel.headers["content-type"]
 
 
+def test_armar_esconde_los_terminados_en_una_seccion_plegada():
+    # El que arma ve SOLO lo pendiente. Terminado = tocó "Terminar pedido"
+    # (armado_cerrado_el), NO "todo tildado": el completo sin cerrar sigue
+    # arriba. Los terminados quedan plegados abajo, entrables para reabrir.
+    listado = [
+        # Completo pero SIN cerrar: sigue en la lista principal.
+        {"id": 48, "fecha_operacion": date(2026, 8, 20), "origen": "texto",
+         "creado_en": datetime(2026, 8, 19, 12, 0), "armado_cerrado_el": None,
+         "renglones_totales": 30, "renglones_armados": 30, "sin_identificar": 0},
+        # CERRADO (aunque incompleto): va plegado abajo.
+        {"id": 50, "fecha_operacion": date(2026, 8, 21), "origen": "mail",
+         "creado_en": datetime(2026, 8, 21, 12, 0),
+         "armado_cerrado_el": datetime(2026, 8, 21, 18, 0),
+         "renglones_totales": 32, "renglones_armados": 18, "sin_identificar": 0},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=listado),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+    texto = respuesta.text
+    # El pendiente (completo sin cerrar) arriba; el terminado, solo en la
+    # sección plegada con su acceso para reabrir.
+    assert "Ver terminados (1)" in texto
+    assert texto.index("Pedido del 20/08/2026") < texto.index("Ver terminados (1)")
+    assert texto.index("Ver terminados (1)") < texto.index("Pedido del 21/08/2026")
+    assert "COMPLETO ✔" in texto
+    assert "TERMINADO ✔ — entrá para reabrirlo" in texto
+
+    # Todo terminado: la lista principal lo dice y apunta a la sección.
+    todos_cerrados = [dict(listado[1])]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=todos_cerrados),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1")
+    assert "Nada pendiente de armar" in respuesta.text
+    assert "Ver terminados (1)" in respuesta.text
+
+
 def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
     listado = [{
         "id": 50, "fecha_operacion": date(2026, 8, 21), "origen": "texto",

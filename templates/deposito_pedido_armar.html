@@ -378,16 +378,24 @@
   {% endif %}
 
   {% if modo_lista and cliente_id %}
+  {# El que arma ve SOLO lo pendiente de armado (terminado = tocó
+     "Terminar pedido", no "todo tildado"). Los terminados quedan
+     plegados abajo, accesibles para reabrir si Día reclama — y la
+     pantalla Pedido (consulta) los sigue mostrando todos, siempre. #}
+  {% set pendientes_listado = pedidos_listado | rejectattr("cerrado") | list %}
+  {% set terminados_listado = pedidos_listado | selectattr("cerrado") | list %}
   <div class="tarjeta">
     <h2>Pedidos para armar</h2>
-    {% if pedidos_listado %}
-      {% for p in pedidos_listado %}
+    {% if pendientes_listado %}
+      {% for p in pendientes_listado %}
       <a class="boton-sucursal {% if p.completo %}completa{% endif %}"
          href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
         Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.cerrado %} · TERMINADO ✔{% elif p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
       </a>
       {% endfor %}
+    {% elif terminados_listado %}
+    <p class="vacio">Nada pendiente de armar: los {{ terminados_listado|length }} pedidos de la semana están terminados (abajo, en "Ver terminados").</p>
     {% else %}
     <p class="vacio">No hay pedidos cargados (últimos 7 días ni próximos). Cargalos desde Cargar Pedido.</p>
     {% endif %}
@@ -398,6 +406,21 @@
       <button type="submit" class="boton-buscar-pedido">🔎 Buscar pedido en la casilla</button>
     </form>
   </div>
+
+  {% if terminados_listado %}
+  <details class="seccion-cerrados">
+    <summary>Ver terminados ({{ terminados_listado|length }})</summary>
+    <div class="tarjeta">
+      {% for p in terminados_listado %}
+      <a class="boton-sucursal completa"
+         href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
+        Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% endif %}
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados · TERMINADO ✔ — entrá para reabrirlo si hace falta</span>
+      </a>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
   {% endif %}
 
   {% if cliente_id and not pedido and not modo_lista %}
