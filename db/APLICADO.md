@@ -68,18 +68,19 @@ bases estén marcadas.
 | `agregar_ficha_a_precios_venta.sql` | ✅ 2026-08-26 (verificado: 54 precios con ficha, 0 huérfanos) | ✅ 2026-08-26 (verificado: 38 precios con ficha, 0 huérfanos) |
 | `agregar_ficha_a_pedidos_renglones.sql` | ✅ 2026-08-26 (verificado: 418 de 418 renglones con ficha, 0 sin identificar, 0 identificados sin ficha) | ✅ 2026-08-26 (verificado: 232 de 232 renglones con ficha, 0 sin identificar, 0 identificados sin ficha) |
 | `permitir_varias_fichas_por_articulo.sql` | ✅ 2026-08-26 (verificado: unique viejo dropeado, los 2 índices nuevos creados; cero códigos repetidos en la verificación previa) | ✅ 2026-08-26 (verificado: unique viejo dropeado, los 2 índices nuevos creados; cero códigos repetidos en la verificación previa) |
+| `drop_indice_viejo_precios_venta_historial.sql` | ✅ 2026-08-26 (verificado: índice viejo dropeado, quedan los 3 correctos — la primary key, `precios_venta_historial_ficha_vigente_idx` y el unique `precios_venta_historial_ficha_vigente_key`) | ✅ 2026-08-26 (verificado: índice viejo dropeado, quedan los 3 correctos — la primary key, `precios_venta_historial_ficha_vigente_idx` y el unique `precios_venta_historial_ficha_vigente_key`) |
 
 ## Deuda pendiente de limpieza
 
-- `precios_venta_historial`: el índice viejo por `(cliente_id,
-  articulo_id, vigente_desde)` quedó sin uso desde que el precio
-  cuelga de la ficha (`agregar_ficha_a_precios_venta.sql`). Se dropea
-  en la limpieza, cuando las tres partes del cambio estén andando —
-  la columna `articulo_id` en cambio SE QUEDA: la usa el chequeo de
-  Disponibles.
+No queda ninguna.
 
-(La histórica `compras.foto_ruta` se saldó el 2026-08-25 con
-`drop_foto_ruta_compras.sql`, corrida en las dos bases.)
+(Las saldadas: `compras.foto_ruta` el 2026-08-25 con
+`drop_foto_ruta_compras.sql`, y el índice viejo de
+`precios_venta_historial` por `(cliente_id, articulo_id,
+vigente_desde)` el 2026-08-26 con
+`drop_indice_viejo_precios_venta_historial.sql` — las dos corridas en
+las dos bases. De aquella limpieza la columna `articulo_id` SE QUEDÓ,
+como estaba previsto: la usa el chequeo de Disponibles.)
 
 ## Pasos manuales que NO son SQL (por base)
 
