@@ -3868,7 +3868,9 @@ def crear_pedido(
 
     sucursales: [{"sucursal", "orden_compra", "total_bultos_declarado"}].
     renglones: [{"sucursal", "articulo_id" (None = sin identificar),
-    "texto_codigo", "texto_descripcion", "cantidad"}].
+    "ficha_id" (con qué ficha del cliente se vende: la clave de VENTA —
+    precio, kilaje y envase salen de ahí), "texto_codigo",
+    "texto_descripcion", "cantidad"}].
 
     Si reemplaza_a_pedido_id viene, el pedido viejo se ANULA en la misma
     transacción (baja lógica, nunca DELETE): el corregido manda, el viejo
@@ -3907,13 +3909,15 @@ def crear_pedido(
                 cursor.execute(
                     """
                     INSERT INTO pedidos_renglones
-                        (pedido_id, sucursal, articulo_id, texto_codigo, texto_descripcion, cantidad)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (pedido_id, sucursal, articulo_id, ficha_id, texto_codigo,
+                         texto_descripcion, cantidad)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         pedido_id,
                         renglon.get("sucursal"),
                         renglon.get("articulo_id"),
+                        renglon.get("ficha_id"),
                         renglon.get("texto_codigo"),
                         renglon.get("texto_descripcion"),
                         renglon.get("cantidad", 0),
@@ -4953,13 +4957,13 @@ def listar_renglones_pedidos_vigentes(cliente_id: int, fecha_desde, fecha_hasta)
                       AND fecha_operacion >= %s AND fecha_operacion <= %s
                     ORDER BY fecha_operacion, creado_en DESC
                 )
-                SELECT v.fecha_operacion, r.articulo_id,
+                SELECT v.fecha_operacion, r.ficha_id, r.articulo_id,
                        a.nombre AS articulo_nombre, a.grupo AS articulo_grupo,
                        SUM(r.cantidad) AS bultos
                 FROM vigentes v
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
-                GROUP BY v.fecha_operacion, r.articulo_id, a.nombre, a.grupo
+                GROUP BY v.fecha_operacion, r.ficha_id, r.articulo_id, a.nombre, a.grupo
                 ORDER BY v.fecha_operacion, a.nombre
                 """,
                 (cliente_id, fecha_desde, fecha_hasta),
@@ -5352,7 +5356,7 @@ def obtener_renglon_para_reingreso(renglon_id: int) -> dict | None:
                     FROM pedidos WHERE anulado_el IS NULL
                     ORDER BY cliente_id, fecha_operacion, creado_en DESC
                 )
-                SELECT r.id, r.pedido_id, r.sucursal, r.articulo_id,
+                SELECT r.id, r.pedido_id, r.sucursal, r.articulo_id, r.ficha_id,
                        a.nombre AS articulo_nombre,
                        p.cliente_id, cl.nombre AS cliente_nombre,
                        p.fecha_operacion AS fecha_pedido,
@@ -5395,7 +5399,7 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
             cursor.execute(
                 """
                 SELECT m.id, m.cantidad AS bultos, m.fecha_operacion, m.costo_por_bulto,
-                       m.destino_rechazo,
+                       m.destino_rechazo, r.ficha_id,
                        r.kilos_enviados, COALESCE(r.cantidad_armada, r.cantidad) AS bultos_armados,
                        p.fecha_operacion AS fecha_pedido,
                        a.id AS articulo_id, a.nombre AS articulo_nombre, a.grupo
@@ -6072,20 +6076,21 @@ def salidas_stock_articulo(articulo_id: int) -> list[dict]:
                        NULL AS motivo,
                        NULL::numeric AS bultos_segunda,
                        NULL AS lote_tipo,
-                       NULL::bigint AS lote_origen_id
+                       NULL::bigint AS lote_origen_id,
+                       r.ficha_id
                 FROM pedidos_renglones r
                 JOIN vigentes v ON v.id = r.pedido_id
                 WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = %s
                 UNION ALL
                 SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                        -m.cantidad, NULL, NULL, m.motivo, NULL,
-                       m.lote_tipo, m.lote_origen_id
+                       m.lote_tipo, m.lote_origen_id, NULL
                 FROM movimientos_stock m
                 WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = %s
                 UNION ALL
                 SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
                        rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
-                       NULL, NULL
+                       NULL, NULL, NULL
                 FROM reprocesos rp
                 WHERE rp.anulado_el IS NULL AND rp.articulo_id = %s
                 ORDER BY 1, 2

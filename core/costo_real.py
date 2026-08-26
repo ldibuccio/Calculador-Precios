@@ -175,9 +175,18 @@ def calcular_rentabilidad_real(
     entradas y salidas de TODA la historia del artículo (la atribución
     FIFO necesita el pasado completo; el rango solo filtra qué salidas se
     reportan). Salidas tipadas: 'armado' (con fecha = la del PEDIDO, que
-    ancla el precio; unidades = kilos_enviados; cliente_id), 'merma',
-    'ajuste' (negativo) y 'reproceso_toma' (con bultos_segunda).
-    margenes_por_fecha: mismo formato que la teórica.
+    ancla el precio; unidades = kilos_enviados; cliente_id; ficha_id, que
+    es lo que ancla QUÉ precio — dos fichas del mismo artículo se venden
+    a precios distintos), 'merma', 'ajuste' (negativo) y 'reproceso_toma'
+    (con bultos_segunda).
+    margenes_por_fecha: mismo formato que la teórica, por ficha.
+
+    La fila del reporte es por ARTÍCULO, no por ficha: es donde vive el
+    stock, y la merma y la segunda son del artículo — no de una venta
+    puntual, así que atribuirlas a una de dos fichas sería arbitrario. Lo
+    que sí es por ficha es el PRECIO con que se valúa cada venta: si
+    Banana Bolivia y Banana Ecuador salen el mismo día, cada una entra a
+    la misma fila de Banana con su propio precio.
 
     devoluciones: los reingresos VINCULADOS del cliente en el rango, ya
     filtrados — [{bultos, fecha_pedido, kilos_enviados, bultos_armados,
@@ -242,7 +251,9 @@ def calcular_rentabilidad_real(
                 if unidades is None:
                     _sumar_afuera("sin_kilaje", articulo, bultos)
                     continue
-                margen = margenes_por_fecha.get(salida["fecha"], {}).get(articulo["articulo_id"])
+                # El precio lo ancla la FICHA con la que se vendió, no el
+                # artículo: es lo que separa Banana Bolivia de Banana Ecuador.
+                margen = margenes_por_fecha.get(salida["fecha"], {}).get(salida.get("ficha_id"))
                 precio = _numero(margen.get("precio_vigente")) if margen else None
                 if precio is None:
                     _sumar_afuera("sin_precio", articulo, bultos)
@@ -289,7 +300,7 @@ def calcular_rentabilidad_real(
         bultos = float(devolucion["bultos"])
         kilos = _numero(devolucion.get("kilos_enviados"))
         armados = _numero(devolucion.get("bultos_armados"))
-        margen = margenes_por_fecha.get(devolucion["fecha_pedido"], {}).get(devolucion["articulo_id"])
+        margen = margenes_por_fecha.get(devolucion["fecha_pedido"], {}).get(devolucion.get("ficha_id"))
         precio = _numero(margen.get("precio_vigente")) if margen else None
         if kilos is None or not armados or precio is None:
             _sumar_afuera("devolucion_sin_valor", articulo, bultos)

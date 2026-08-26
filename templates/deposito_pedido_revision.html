@@ -168,7 +168,7 @@
 
       {% for r in renglones %}
       <div class="renglon {% if r.advertencia %}advertencia{% endif %}">
-        {% if r.articulo_id is none %}<span class="marca">Sin match — asignar a mano</span>
+        {% if r.ficha_id is none %}<span class="marca">Sin match — asignar a mano</span>
         {% elif r.match_por == "sugerencia" %}<span class="marca marca-sugerencia">Sugerencia — confirmar</span>{% endif %}
         <div class="crudo">{{ r.texto_codigo or "—" }} · {{ r.texto_descripcion or "—" }}</div>
         <div class="cantidades">
@@ -182,14 +182,17 @@
         <input type="hidden" name="renglon_{{ indice_renglon }}_cant_{{ loop.index0 }}"
                value="{{ r.cantidades.get(s.sucursal) if r.cantidades.get(s.sucursal) is not none else '' }}">
         {% endfor %}
-        <select name="renglon_{{ loop.index0 }}_articulo_id">
-          <option value="" {% if r.articulo_id is none %}selected{% endif %}>Sin identificar (asignar después)</option>
+        {# La opción es la FICHA (con qué se le vende a este cliente): el
+           artículo, que es lo que descuenta stock, lo saca el server de
+           la ficha elegida. #}
+        <select name="renglon_{{ loop.index0 }}_ficha_id">
+          <option value="" {% if r.ficha_id is none %}selected{% endif %}>Sin identificar (asignar después)</option>
           {% for a in articulos_cliente %}
-          <option value="{{ a.id }}" {% if r.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          <option value="{{ a.id }}" {% if r.ficha_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
           {% endfor %}
         </select>
         <div class="opciones-renglon">
-          {% if r.articulo_id is none or r.match_por == "sugerencia" %}
+          {% if r.ficha_id is none or r.match_por == "sugerencia" %}
           <label><input type="checkbox" name="renglon_{{ loop.index0 }}_guardar_alias" value="si"> Guardar este código en la ficha (la próxima matchea solo)</label>
           {% endif %}
           <label><input type="checkbox" name="renglon_{{ loop.index0 }}_descartar" value="si" onchange="recalcularControl()"> No es mío (descartar este renglón)</label>

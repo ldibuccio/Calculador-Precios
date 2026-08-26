@@ -51,9 +51,13 @@ def calcular_rentabilidad_de_pedidos(
 ) -> dict:
     """Arma el reporte de rentabilidad a partir de datos ya traídos (puro, testeable sin base).
 
-    renglones: [{fecha_operacion, articulo_id (None = sin identificar),
-    articulo_nombre, articulo_grupo, bultos}] — una fila por fecha y artículo.
-    margenes_por_fecha: {fecha: {articulo_id: fila de
+    renglones: [{fecha_operacion, ficha_id (None = sin identificar),
+    articulo_id, articulo_nombre, articulo_grupo, bultos}] — una fila por
+    fecha y FICHA. La ficha es la clave de VENTA: dos fichas del mismo
+    artículo y cliente ("Banana Bolivia" y "Banana Ecuador" para Día) son
+    dos filas, cada una con su precio, su kilaje y su envase. El artículo
+    viaja al lado porque es lo que agrupa y filtra por grupo.
+    margenes_por_fecha: {fecha: {ficha_id: fila de
     calcular_listado_para_negociar_precios anclado a ESA fecha}} — de cada
     fila se usan precio_vigente, costo_actual, costo_envase_unidad_venta y
     denominador_tasas (todos por unidad de venta del cliente). Usar el
@@ -71,18 +75,18 @@ def calcular_rentabilidad_de_pedidos(
     utilidad_pct (renta sobre MERCADERÍA, como Márgenes). Renglones con 0
     bultos no aportan nada y se saltean.
     """
-    contenido_por_articulo = {}
-    unidad_por_articulo = {}
+    contenido_por_ficha = {}
+    unidad_por_ficha = {}
     for ficha in fichas:
-        contenido_por_articulo[ficha["articulo_id"]] = _numero(ficha.get("contenido_caja"))
-        unidad_por_articulo[ficha["articulo_id"]] = ficha.get("unidad_venta")
+        contenido_por_ficha[ficha["id"]] = _numero(ficha.get("contenido_caja"))
+        unidad_por_ficha[ficha["id"]] = ficha.get("unidad_venta")
 
-    acumulado: dict = {}  # articulo_id -> fila calculable en armado
-    no_calculables: dict = {}  # (motivo, articulo_id) -> {bultos, dias}
+    acumulado: dict = {}  # ficha_id -> fila calculable en armado
+    no_calculables: dict = {}  # (motivo, ficha_id) -> {bultos, dias}
     fechas_incluidas = set()
 
     def _sumar_no_calculable(motivo, renglon, bultos):
-        clave = (motivo, renglon["articulo_id"])
+        clave = (motivo, renglon.get("ficha_id"), renglon["articulo_id"])
         entrada = no_calculables.get(clave)
         if entrada is None:
             entrada = {
@@ -104,9 +108,11 @@ def calcular_rentabilidad_de_pedidos(
         fecha = renglon["fecha_operacion"]
         fechas_incluidas.add(fecha)
 
-        if renglon["articulo_id"] is None:
+        if renglon.get("ficha_id") is None:
             # Sin identificar: fuera de cualquier filtro (no se sabe qué
-            # es), pero SIEMPRE a la vista en los no calculables.
+            # es), pero SIEMPRE a la vista en los no calculables. También
+            # cae acá un renglón cuyo artículo se sabe pero cuya ficha ya
+            # no existe: sin ficha no hay precio ni kilaje con qué medir.
             _sumar_no_calculable("sin_identificar", renglon, bultos)
             continue
 
@@ -115,14 +121,14 @@ def calcular_rentabilidad_de_pedidos(
         if grupo is not None and renglon["articulo_grupo"] != grupo:
             continue
 
-        contenido = contenido_por_articulo.get(renglon["articulo_id"])
+        contenido = contenido_por_ficha.get(renglon["ficha_id"])
         if contenido is None or contenido <= 0:
             _sumar_no_calculable("sin_conversion", renglon, bultos)
             continue
         # La fila de Márgenes por Artículo anclada a la fecha del pedido:
         # si el artículo no está (sin compras recientes) o está sin costo,
         # no hay contra qué medir — mismo veredicto que daría esa pantalla.
-        margen = margenes_por_fecha.get(fecha, {}).get(renglon["articulo_id"])
+        margen = margenes_por_fecha.get(fecha, {}).get(renglon["ficha_id"])
         costo_unidad = _numero(margen.get("costo_actual")) if margen else None
         if costo_unidad is None:
             _sumar_no_calculable("sin_costo", renglon, bultos)
@@ -137,13 +143,13 @@ def calcular_rentabilidad_de_pedidos(
             denominador_tasas = 1.0
 
         unidades = bultos * contenido
-        fila = acumulado.get(renglon["articulo_id"])
+        fila = acumulado.get(renglon["ficha_id"])
         if fila is None:
             fila = {
                 "articulo_id": renglon["articulo_id"],
                 "articulo_nombre": renglon["articulo_nombre"],
                 "grupo": renglon["articulo_grupo"],
-                "unidad_venta": unidad_por_articulo.get(renglon["articulo_id"]),
+                "unidad_venta": unidad_por_ficha.get(renglon["ficha_id"]),
                 "bultos": 0.0,
                 "unidades": 0.0,
                 "venta_lista": 0.0,
@@ -151,7 +157,7 @@ def calcular_rentabilidad_de_pedidos(
                 "costo_mercaderia": 0.0,
                 "costo_envase": 0.0,
             }
-            acumulado[renglon["articulo_id"]] = fila
+            acumulado[renglon["ficha_id"]] = fila
         fila["bultos"] += bultos
         fila["unidades"] += unidades
         fila["venta_lista"] += unidades * precio_lista

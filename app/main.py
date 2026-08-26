@@ -6588,7 +6588,7 @@ def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
             renglon["cliente_id"],
             datetime.combine(renglon["fecha_pedido"], time(12, 0), tzinfo=ARGENTINA),
         )
-        fila = next((f for f in listado if f["articulo_id"] == renglon["articulo_id"]), None)
+        fila = next((f for f in listado if f["ficha_id"] == renglon["ficha_id"]), None)
         costo_unidad = fila.get("costo_actual") if fila else None
         if costo_unidad is None:
             return None
@@ -6599,7 +6599,7 @@ def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
         else:
             fichas = listar_fichas_por_cliente(renglon["cliente_id"])
             contenido = next(
-                (f.get("contenido_caja") for f in fichas if f["articulo_id"] == renglon["articulo_id"]), None
+                (f.get("contenido_caja") for f in fichas if f["id"] == renglon["ficha_id"]), None
             )
             if not contenido:
                 return None
@@ -7607,7 +7607,7 @@ def _datos_rentabilidad(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, 
         listado = calcular_listado_para_negociar_precios(
             cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
         )
-        margenes_por_fecha[fecha] = {fila["articulo_id"]: fila for fila in listado}
+        margenes_por_fecha[fecha] = {fila["ficha_id"]: fila for fila in listado}
     return calcular_rentabilidad_de_pedidos(renglones, fichas, margenes_por_fecha, articulo_id, grupo)
 
 
@@ -7815,7 +7815,7 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
         listado = calcular_listado_para_negociar_precios(
             cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
         )
-        margenes_por_fecha[fecha] = {fila["articulo_id"]: fila for fila in listado}
+        margenes_por_fecha[fecha] = {fila["ficha_id"]: fila for fila in listado}
 
     return calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,
@@ -9492,12 +9492,19 @@ def dar_de_baja_proveedor_puesto_ruta(request: Request, proveedor_id: int):
 
 
 def _alias_de_fichas(fichas: list[dict]) -> tuple[dict, dict]:
-    """Los alias del cliente, normalizados, para el matcheo determinista: codigo -> articulo_id y nombre -> articulo_id."""
+    """Los alias del cliente, normalizados, para el matcheo determinista: codigo -> ficha_id y nombre -> ficha_id.
+
+    Apuntan a la FICHA, no al artículo: el código con el que pide el
+    cliente identifica CON QUÉ FICHA se le vende (precio, kilaje, envase
+    y el nombre que ve el que arma), y el artículo sale después de la
+    propia ficha. Con dos fichas del mismo artículo —"Banana Bolivia" y
+    "Banana Ecuador" para Día— cada código cae en la suya.
+    """
     por_codigo = {
-        normalizar_texto(f["codigo_cliente"]): f["articulo_id"] for f in fichas if f.get("codigo_cliente")
+        normalizar_texto(f["codigo_cliente"]): f["id"] for f in fichas if f.get("codigo_cliente")
     }
     por_nombre = {
-        normalizar_texto(f["nombre_cliente"]): f["articulo_id"] for f in fichas if f.get("nombre_cliente")
+        normalizar_texto(f["nombre_cliente"]): f["id"] for f in fichas if f.get("nombre_cliente")
     }
     return por_codigo, por_nombre
 
@@ -9534,26 +9541,38 @@ def _elegir_bloque_pedido(bloques: list[dict], alias_por_codigo: dict) -> dict |
 def _armar_renglones_pedido_desde_bloque(bloque: dict, fichas: list[dict], alias_por_codigo: dict, alias_por_nombre: dict) -> list[dict]:
     """Los renglones del bloque con su matcheo: código exacto -> nombre exacto -> sugerencia difusa (marcada).
 
+    El match cae en una FICHA (con qué se le vende a este cliente) y el
+    artículo sale de ella. Los alias exactos —código y nombre— son de la
+    ficha y no tienen ambigüedad. La sugerencia difusa, en cambio, compara
+    contra los nombres del CATÁLOGO, así que devuelve un artículo: se
+    traduce a su ficha después.
+
     Cada renglón conserva SIEMPRE el texto crudo del mail y las cantidades
-    por sucursal tal como vinieron. Sin match, articulo_id None: en la
-    revisión va arriba, marcado, para asignar a mano.
+    por sucursal tal como vinieron. Sin match, ficha y artículo en None:
+    en la revisión va arriba, marcado, para asignar a mano.
     """
     candidatos = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
     conversiones = [f for f in fichas if f.get("nombre_cliente")]
+    ficha_por_id = {f["id"]: f for f in fichas}
+    ficha_por_articulo = _ficha_por_articulo(fichas)
 
     renglones = []
     for renglon in bloque.get("renglones") or []:
         codigo = (renglon.get("codigo") or "").strip()
         descripcion = (renglon.get("descripcion") or "").strip()
 
-        articulo_id = alias_por_codigo.get(normalizar_texto(codigo)) if codigo else None
-        match_por = "codigo" if articulo_id is not None else None
-        if articulo_id is None and descripcion:
-            articulo_id = alias_por_nombre.get(normalizar_texto(descripcion))
-            match_por = "nombre" if articulo_id is not None else None
-        if articulo_id is None and descripcion:
-            articulo_id = adivinar_articulo(descripcion, {}, candidatos, conversiones)
-            match_por = "sugerencia" if articulo_id is not None else None
+        ficha_id = alias_por_codigo.get(normalizar_texto(codigo)) if codigo else None
+        match_por = "codigo" if ficha_id is not None else None
+        if ficha_id is None and descripcion:
+            ficha_id = alias_por_nombre.get(normalizar_texto(descripcion))
+            match_por = "nombre" if ficha_id is not None else None
+        if ficha_id is None and descripcion:
+            articulo_sugerido = adivinar_articulo(descripcion, {}, candidatos, conversiones)
+            ficha_id = ficha_por_articulo.get(articulo_sugerido) if articulo_sugerido is not None else None
+            match_por = "sugerencia" if ficha_id is not None else None
+
+        ficha = ficha_por_id.get(ficha_id) if ficha_id is not None else None
+        articulo_id = ficha["articulo_id"] if ficha else None
 
         cantidades = renglon.get("cantidades") or {}
         renglones.append(
@@ -9562,8 +9581,9 @@ def _armar_renglones_pedido_desde_bloque(bloque: dict, fichas: list[dict], alias
                 "texto_descripcion": descripcion or None,
                 "cantidades": {s: c for s, c in cantidades.items() if c is not None},
                 "articulo_id": articulo_id,
+                "ficha_id": ficha_id,
                 "match_por": match_por,
-                "advertencia": articulo_id is None or match_por == "sugerencia" or renglon.get("confianza") == "baja",
+                "advertencia": ficha_id is None or match_por == "sugerencia" or renglon.get("confianza") == "baja",
             }
         )
     # Los sin match / dudosos arriba: son los que hay que mirar sí o sí.
@@ -9792,7 +9812,7 @@ def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, te
         "empresa_bloque": bloque.get("empresa") or "",
         "sucursales": sucursales,
         "renglones": renglones,
-        "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
+        "articulos_cliente": [{"id": f["id"], "nombre": f["articulo_nombre"]} for f in fichas],
         "texto_original": texto_original,
         "fotos_data": fotos_data,
         "pedido_vigente": pedido_vigente,
@@ -9919,7 +9939,7 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
             "sin_identificar": sin_identificar,
             "renglones_por_sucursal": renglones_por_sucursal,
             "fotos": fotos,
-            "articulos_cliente": [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas],
+            "articulos_cliente": [{"id": f["id"], "nombre": f["articulo_nombre"]} for f in fichas],
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
@@ -10220,6 +10240,15 @@ async def confirmar_pedido(request: Request):
     fecha_valor = _fecha_pedido_o_hoy(str(form.get("fecha", "")))
     texto_original = str(form.get("texto_original", "")) or None
 
+    # Las fichas del cliente: la pantalla manda cuál eligió para cada
+    # renglón y de acá sale el artículo. Una ficha que no sea de ESTE
+    # cliente no existe para este pedido — el renglón queda sin
+    # identificar, como cualquier otro que no matcheó.
+    try:
+        ficha_por_id = {f["id"]: f for f in listar_fichas_por_cliente(cliente_id)}
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
     # Si la revisión vino de un mail registrado de la casilla, el guardado
     # además confirma ese mail (y el pedido nace con origen 'mail' y su
     # Message-ID: la idempotencia de la etapa 3).
@@ -10264,8 +10293,15 @@ async def confirmar_pedido(request: Request):
             continue  # "No es mío": el rastro queda en texto_original
         texto_codigo = str(form.get(f"renglon_{indice}_codigo", "")).strip() or None
         texto_descripcion = str(form.get(f"renglon_{indice}_descripcion", "")).strip() or None
-        articulo_id_texto = str(form.get(f"renglon_{indice}_articulo_id", "")).strip()
-        articulo_id = int(articulo_id_texto) if articulo_id_texto else None
+        # La pantalla elige la FICHA (con qué se le vende a este cliente);
+        # el artículo, que es lo que descuenta stock, sale de la ficha acá
+        # en el server y jamás viaja por el formulario.
+        ficha_id_texto = str(form.get(f"renglon_{indice}_ficha_id", "")).strip()
+        ficha_id = int(ficha_id_texto) if ficha_id_texto else None
+        ficha = ficha_por_id.get(ficha_id)
+        if ficha is None:
+            ficha_id = None
+        articulo_id = ficha["articulo_id"] if ficha else None
 
         if articulo_id is not None and str(form.get(f"renglon_{indice}_guardar_alias", "")).strip():
             alias_a_guardar.append((articulo_id, texto_codigo, texto_descripcion))
@@ -10280,6 +10316,7 @@ async def confirmar_pedido(request: Request):
                 {
                     "sucursal": nombre,
                     "articulo_id": articulo_id,
+                    "ficha_id": ficha_id,
                     "texto_codigo": texto_codigo,
                     "texto_descripcion": texto_descripcion,
                     "cantidad": cantidad,
@@ -10292,6 +10329,7 @@ async def confirmar_pedido(request: Request):
                 {
                     "sucursal": None,
                     "articulo_id": articulo_id,
+                    "ficha_id": ficha_id,
                     "texto_codigo": texto_codigo,
                     "texto_descripcion": texto_descripcion,
                     "cantidad": 0,

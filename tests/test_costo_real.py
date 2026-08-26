@@ -9,7 +9,9 @@ def _lote(orden, cantidad, costo, tipo_lote="guia"):
     return {"orden": orden, "cantidad": cantidad, "costo_bulto": costo, "tipo_lote": tipo_lote}
 
 
-def _armado(fecha, cantidad, unidades, cliente_id=1, orden=None):
+def _armado(fecha, cantidad, unidades, cliente_id=1, orden=None, ficha_id=901):
+    """Una salida de armado. ficha_id es la clave de VENTA (ancla el precio);
+    901 es la ficha del artículo 1, la convención de los fixtures."""
     return {
         "orden": orden if orden is not None else (fecha, 0),
         "tipo": "armado",
@@ -17,6 +19,7 @@ def _armado(fecha, cantidad, unidades, cliente_id=1, orden=None):
         "cantidad": cantidad,
         "unidades": unidades,
         "cliente_id": cliente_id,
+        "ficha_id": ficha_id,
     }
 
 
@@ -99,7 +102,7 @@ def test_venta_real_es_lo_enviado_por_precio_vigente_con_tasas_y_costo_fifo():
     fecha = date(2026, 8, 25)
     resultado = calcular_rentabilidad_real(
         _datos([_armado(fecha, 10, 160.0)]),
-        {fecha: {1: dict(MARGEN)}},
+        {fecha: {901: dict(MARGEN)}},
         cliente_id=1,
         fecha_desde=fecha,
         fecha_hasta=fecha,
@@ -124,7 +127,7 @@ def test_la_merma_del_periodo_resta_al_costo_de_su_lote():
         {"orden": (fecha, 2), "tipo": "merma", "fecha": fecha, "cantidad": 3},
     ]
     resultado = calcular_rentabilidad_real(
-        _datos(salidas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha
+        _datos(salidas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha
     )
 
     fila = resultado["grupos"][0]["filas"][0]
@@ -158,7 +161,7 @@ def test_una_porcion_sin_costo_deja_la_salida_entera_afuera_con_su_motivo():
     # no costear → ENTERA afuera (venta incluida), nunca a medias.
     resultado = calcular_rentabilidad_real(
         _datos([_armado(fecha, 10, 160.0)], entradas=[_lote(1, 100, None, tipo_lote="ajuste")]),
-        {fecha: {1: dict(MARGEN)}},
+        {fecha: {901: dict(MARGEN)}},
         1, fecha, fecha,
     )
 
@@ -197,7 +200,7 @@ def test_la_atribucion_usa_la_historia_completa_pero_reporta_solo_el_rango():
     ]
     resultado = calcular_rentabilidad_real(
         _datos(salidas, entradas=entradas),
-        {fecha: {1: dict(MARGEN)}},
+        {fecha: {901: dict(MARGEN)}},
         1, fecha, fecha,
     )
 
@@ -214,7 +217,7 @@ def test_los_armados_de_otro_cliente_no_entran_a_esta_pantalla():
         _armado(fecha, 10, 160.0, cliente_id=2),
     ]
     resultado = calcular_rentabilidad_real(
-        _datos(salidas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha
+        _datos(salidas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha
     )
 
     assert resultado["grupos"] == []
@@ -229,7 +232,7 @@ def test_el_ajuste_negativo_consume_lote_pero_no_es_perdida():
     ]
     entradas = [_lote(1, 4, 500.0), _lote(2, 10, 800.0)]
     resultado = calcular_rentabilidad_real(
-        _datos(salidas, entradas=entradas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha
+        _datos(salidas, entradas=entradas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha
     )
 
     fila = resultado["grupos"][0]["filas"][0]
@@ -250,6 +253,7 @@ def _devolucion(bultos, fecha_pedido, costo_por_bulto=2000.0, kilos=500.0, armad
         "bultos_armados": armados,
         "costo_por_bulto": costo_por_bulto,
         "destino_rechazo": destino,
+        "ficha_id": 901,
         "articulo_id": 1,
         "articulo_nombre": "Banana",
         "grupo": "fruta",
@@ -260,7 +264,7 @@ def test_devolucion_vinculada_resta_venta_y_acredita_mercaderia_al_costo_congela
     fecha = date(2026, 8, 25)
     salidas = [_armado(fecha, 25, 500.0)]
     resultado = calcular_rentabilidad_real(
-        _datos(salidas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos(salidas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[_devolucion(5.0, fecha)],
     )
 
@@ -285,7 +289,7 @@ def test_devolucion_sin_costo_congelado_solo_resta_venta():
     fecha = date(2026, 8, 25)
     salidas = [_armado(fecha, 25, 500.0)]
     resultado = calcular_rentabilidad_real(
-        _datos(salidas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos(salidas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[_devolucion(5.0, fecha, costo_por_bulto=None)],
     )
 
@@ -301,7 +305,7 @@ def test_devolucion_que_no_se_puede_valuar_va_afuera_con_motivo():
     # Renglón sin kilaje y pedido sin precio a su fecha: dos devoluciones
     # invaluables — van al afuera, jamás suman cero en silencio.
     resultado = calcular_rentabilidad_real(
-        _datos([]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[
             _devolucion(3.0, fecha, kilos=None),
             _devolucion(2.0, date(2026, 8, 20)),
@@ -321,8 +325,8 @@ def test_devolucion_ancla_el_precio_a_la_fecha_del_pedido_de_origen():
     # El precio a la fecha del PEDIDO (80), no el del rango (100): la
     # devolución deshace la venta al valor con el que se facturó.
     margenes = {
-        fecha_pedido: {1: dict(MARGEN, precio_vigente=80.0)},
-        fecha_rango: {1: dict(MARGEN)},
+        fecha_pedido: {901: dict(MARGEN, precio_vigente=80.0)},
+        fecha_rango: {901: dict(MARGEN)},
     }
     resultado = calcular_rentabilidad_real(
         _datos([]), margenes, 1, fecha_rango, fecha_rango,
@@ -341,7 +345,7 @@ def test_rechazo_a_segunda_es_perdida_entera_de_mercaderia_mas_envase():
     # diferencia del reproceso normal). Mercadería congelada + envase.
     fecha = date(2026, 8, 25)
     resultado = calcular_rentabilidad_real(
-        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[_devolucion(5.0, fecha, destino="segunda")],
     )
 
@@ -365,7 +369,7 @@ def test_rechazo_que_vuelve_a_cajon_grande_se_pierde_igual():
     # pérdida: lo que cambia es el envase en que queda la segunda.
     fecha = date(2026, 8, 25)
     resultado = calcular_rentabilidad_real(
-        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[_devolucion(5.0, fecha, destino="reproceso")],
     )
 
@@ -377,7 +381,7 @@ def test_rechazo_que_queda_en_stock_no_es_perdida():
     # vender, así que no hay línea de rechazos perdidos.
     fecha = date(2026, 8, 25)
     resultado = calcular_rentabilidad_real(
-        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[_devolucion(5.0, fecha, destino="stock")],
     )
 
@@ -391,7 +395,7 @@ def test_rechazo_parcial_solo_pierde_lo_que_se_fue_a_segunda():
     # Dos cargas del mismo renglón: 3 quedan en stock y 2 van a segunda.
     fecha = date(2026, 8, 25)
     resultado = calcular_rentabilidad_real(
-        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[
             _devolucion(3.0, fecha, destino="stock"),
             _devolucion(2.0, fecha, destino="segunda"),
@@ -409,7 +413,7 @@ def test_rechazo_a_segunda_sin_costo_congelado_va_afuera_con_motivo():
     # Se sabe que se perdió pero no cuánto: número chico y cierto.
     fecha = date(2026, 8, 25)
     resultado = calcular_rentabilidad_real(
-        _datos([_armado(fecha, 25, 500.0)]), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
         devoluciones=[_devolucion(4.0, fecha, costo_por_bulto=None, destino="segunda")],
     )
 
@@ -436,7 +440,7 @@ def test_merma_dirigida_se_cuesta_al_costo_de_su_lote():
         "lote_tipo": "reproceso", "lote_origen_id": 9,
     }
     resultado = calcular_rentabilidad_real(
-        _datos([merma], entradas=entradas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([merma], entradas=entradas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
     )
 
     fila = resultado["grupos"][0]["filas"][0]
@@ -452,7 +456,7 @@ def test_merma_sin_lote_elegido_sigue_saliendo_del_mas_viejo():
     ]
     merma = {"orden": (fecha, 1), "tipo": "merma", "fecha": fecha, "cantidad": 10}
     resultado = calcular_rentabilidad_real(
-        _datos([merma], entradas=entradas), {fecha: {1: dict(MARGEN)}}, 1, fecha, fecha,
+        _datos([merma], entradas=entradas), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
     )
 
     assert resultado["grupos"][0]["filas"][0]["costo_mermas"] == 10 * 500.0

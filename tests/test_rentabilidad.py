@@ -9,15 +9,20 @@ FECHA_1 = date(2026, 8, 21)
 FECHA_2 = date(2026, 8, 22)
 
 FICHAS = [
-    {"articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta", "contenido_caja": 20.0, "unidad_venta": "kilo"},
-    {"articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza", "contenido_caja": 18.0, "unidad_venta": "kilo"},
-    {"articulo_id": 3, "articulo_nombre": "Rúcula", "articulo_grupo": "hoja", "contenido_caja": None, "unidad_venta": "unidad"},
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta", "contenido_caja": 20.0, "unidad_venta": "kilo"},
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza", "contenido_caja": 18.0, "unidad_venta": "kilo"},
+    {"id": 903, "articulo_id": 3, "articulo_nombre": "Rúcula", "articulo_grupo": "hoja", "contenido_caja": None, "unidad_venta": "unidad"},
 ]
 
 
-def _renglon(fecha, articulo_id, nombre, grupo, bultos):
+def _renglon(fecha, articulo_id, nombre, grupo, bultos, ficha_id=None):
+    """Un renglón agrupado por fecha y FICHA. Sin ficha_id explícito, la de
+    su artículo (900 + articulo_id, la convención de los fixtures); con
+    articulo_id None es un renglón sin identificar, que tampoco tiene ficha."""
+    if ficha_id is None and articulo_id is not None:
+        ficha_id = 900 + articulo_id
     return {
-        "fecha_operacion": fecha, "articulo_id": articulo_id,
+        "fecha_operacion": fecha, "articulo_id": articulo_id, "ficha_id": ficha_id,
         "articulo_nombre": nombre, "articulo_grupo": grupo, "bultos": bultos,
     }
 
@@ -37,7 +42,7 @@ def test_rentabilidad_aplica_tasas_y_envase_no_el_precio_de_lista_crudo():
     # neta $80. Costo $60 + $4 de envase. La venta NUNCA es la lista cruda
     # (estaría sobrevaluada) y el envase SIEMPRE suma al costo.
     renglones = [_renglon(FECHA_1, 1, "Banana", "fruta", 10)]
-    margenes = {FECHA_1: {1: _margen(100.0, 60.0, envase=4.0, denominador=0.8)}}
+    margenes = {FECHA_1: {901: _margen(100.0, 60.0, envase=4.0, denominador=0.8)}}
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
 
@@ -62,7 +67,7 @@ def test_rentabilidad_da_exactamente_lo_mismo_que_margenes_por_articulo():
     precio, costo, envase = 500.0, 250.0, 12.5
 
     renglones = [_renglon(FECHA_1, 1, "Banana", "fruta", 7)]
-    margenes = {FECHA_1: {1: _margen(precio, costo, envase=envase, denominador=denominador)}}
+    margenes = {FECHA_1: {901: _margen(precio, costo, envase=envase, denominador=denominador)}}
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
 
     utilidad_margenes = utilidad_real_multi_concepto(
@@ -83,8 +88,8 @@ def test_rentabilidad_cada_fecha_usa_su_propio_margen():
         _renglon(FECHA_2, 1, "Banana", "fruta", 5),
     ]
     margenes = {
-        FECHA_1: {1: _margen(100.0, 80.0)},
-        FECHA_2: {1: _margen(120.0, 80.0)},
+        FECHA_1: {901: _margen(100.0, 80.0)},
+        FECHA_2: {901: _margen(120.0, 80.0)},
     }
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
@@ -102,7 +107,7 @@ def test_rentabilidad_agrupa_por_grupo_con_subtotales_y_orden_fijo():
         _renglon(FECHA_1, 2, "Batata", "hortaliza", 4),
         _renglon(FECHA_1, 1, "Banana", "fruta", 10),
     ]
-    margenes = {FECHA_1: {1: _margen(100.0, 80.0), 2: _margen(50.0, 30.0)}}
+    margenes = {FECHA_1: {901: _margen(100.0, 80.0), 902: _margen(50.0, 30.0)}}
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
 
@@ -128,7 +133,7 @@ def test_rentabilidad_los_no_calculables_van_aparte_con_su_motivo():
         _renglon(FECHA_1, 2, "Batata", "hortaliza", 4),  # con costo pero sin precio vigente
         _renglon(FECHA_1, 1, "Banana", "fruta", 10),     # sin fila de Márgenes (sin compras)
     ]
-    margenes = {FECHA_1: {2: _margen(None, 30.0)}}
+    margenes = {FECHA_1: {902: _margen(None, 30.0)}}
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
 
@@ -151,7 +156,7 @@ def test_rentabilidad_filtro_por_grupo_y_por_articulo():
         _renglon(FECHA_1, 2, "Batata", "hortaliza", 4),
         _renglon(FECHA_1, None, None, None, 3),
     ]
-    margenes = {FECHA_1: {1: _margen(100.0, 80.0), 2: _margen(50.0, 30.0)}}
+    margenes = {FECHA_1: {901: _margen(100.0, 80.0), 902: _margen(50.0, 30.0)}}
 
     por_grupo = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes, grupo="fruta")
     assert [g["grupo"] for g in por_grupo["grupos"]] == ["fruta"]
@@ -181,7 +186,7 @@ def test_rentabilidad_renglones_sin_bultos_no_aportan_nada():
 def test_rentabilidad_renta_negativa_se_calcula_igual():
     # Vender abajo del costo no se esconde: renta en rojo, no un error.
     renglones = [_renglon(FECHA_1, 1, "Banana", "fruta", 10)]
-    margenes = {FECHA_1: {1: _margen(70.0, 80.0)}}
+    margenes = {FECHA_1: {901: _margen(70.0, 80.0)}}
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
 
@@ -199,8 +204,8 @@ def test_rentabilidad_articulo_calculable_un_dia_y_no_el_otro_se_parte():
         _renglon(FECHA_2, 1, "Banana", "fruta", 5),
     ]
     margenes = {
-        FECHA_1: {1: _margen(100.0, 80.0)},
-        FECHA_2: {1: _margen(None, 80.0)},
+        FECHA_1: {901: _margen(100.0, 80.0)},
+        FECHA_2: {901: _margen(None, 80.0)},
     }
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, FICHAS, margenes)
@@ -218,13 +223,13 @@ def test_rentabilidad_articulo_calculable_un_dia_y_no_el_otro_se_parte():
 
 def test_rentabilidad_articulo_sin_grupo_va_en_su_seccion_al_final():
     fichas = FICHAS + [
-        {"articulo_id": 9, "articulo_nombre": "Zapallo", "articulo_grupo": None, "contenido_caja": 10.0, "unidad_venta": "kilo"},
+        {"id": 909, "articulo_id": 9, "articulo_nombre": "Zapallo", "articulo_grupo": None, "contenido_caja": 10.0, "unidad_venta": "kilo"},
     ]
     renglones = [
         _renglon(FECHA_1, 9, "Zapallo", None, 2),
         _renglon(FECHA_1, 1, "Banana", "fruta", 10),
     ]
-    margenes = {FECHA_1: {1: _margen(100.0, 80.0), 9: _margen(40.0, 20.0)}}
+    margenes = {FECHA_1: {901: _margen(100.0, 80.0), 909: _margen(40.0, 20.0)}}
 
     resultado = calcular_rentabilidad_de_pedidos(renglones, fichas, margenes)
 

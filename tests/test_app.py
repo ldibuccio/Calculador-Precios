@@ -11462,12 +11462,15 @@ RENGLONES_PEDIDO_DE_PRUEBA = [
 ]
 
 FICHAS_PEDIDO_DE_PRUEBA = [
-    {"id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
      "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
      "envase_variable": False, "nombre_cliente": "BANANA", "codigo_cliente": "90101"},
-    {"id": 2, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza",
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza",
      "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
      "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "90102"},
+    {"id": 903, "articulo_id": 3, "articulo_nombre": "Zapallo", "articulo_grupo": "hortaliza",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": None, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": None, "codigo_cliente": None},
 ]
 
 
@@ -11578,6 +11581,7 @@ def test_confirmar_pedido_expande_por_sucursal_y_guarda_el_alias_pedido():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.crear_pedido", return_value=51) as mock_crear,
         patch("app.main.guardar_alias_en_ficha") as mock_alias,
     ):
@@ -11591,14 +11595,14 @@ def test_confirmar_pedido_expande_por_sucursal_y_guarda_el_alias_pedido():
                 "cantidad_renglones": "3",
                 # Banana: cantidades en las dos sucursales -> DOS renglones.
                 "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
-                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "225", "renglon_0_cant_1": "40",
+                "renglon_0_ficha_id": "901", "renglon_0_cant_0": "225", "renglon_0_cant_1": "40",
                 # Radicheta: sin match, asignada a mano con "guardar alias".
                 "renglon_1_codigo": "99999", "renglon_1_descripcion": "RADICHETA",
-                "renglon_1_articulo_id": "3", "renglon_1_guardar_alias": "si",
+                "renglon_1_ficha_id": "903", "renglon_1_guardar_alias": "si",
                 "renglon_1_cant_0": "10", "renglon_1_cant_1": "",
                 # Renglón sin ninguna cantidad: se guarda igual, en 0.
                 "renglon_2_codigo": "77777", "renglon_2_descripcion": "SIN CANTIDAD",
-                "renglon_2_articulo_id": "", "renglon_2_cant_0": "", "renglon_2_cant_1": "",
+                "renglon_2_ficha_id": "", "renglon_2_cant_0": "", "renglon_2_cant_1": "",
             },
             follow_redirects=False,
         )
@@ -11611,9 +11615,12 @@ def test_confirmar_pedido_expande_por_sucursal_y_guarda_el_alias_pedido():
     assert sucursales_arg[0] == {"sucursal": "VL", "orden_compra": "1257673", "total_bultos_declarado": 235.0}
     # Banana en dos sucursales = dos renglones; el sin cantidad se guarda
     # igual (invariante: nada del mail se pierde).
-    assert {"sucursal": "VL", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0} in renglones_arg
-    assert {"sucursal": "BZ", "articulo_id": 1, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0} in renglones_arg
-    assert {"sucursal": None, "articulo_id": None, "texto_codigo": "77777", "texto_descripcion": "SIN CANTIDAD", "cantidad": 0} in renglones_arg
+    # Cada renglón lleva la FICHA con la que se vende (901 = Banana para
+    # este cliente) y el artículo que sale de ella. El sin identificar no
+    # tiene ninguna de las dos.
+    assert {"sucursal": "VL", "articulo_id": 1, "ficha_id": 901, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0} in renglones_arg
+    assert {"sucursal": "BZ", "articulo_id": 1, "ficha_id": 901, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0} in renglones_arg
+    assert {"sucursal": None, "articulo_id": None, "ficha_id": None, "texto_codigo": "77777", "texto_descripcion": "SIN CANTIDAD", "cantidad": 0} in renglones_arg
     assert kwargs == {"reemplaza_a_pedido_id": None, "mail_message_id": None, "recibido_el": None}
     mock_alias.assert_called_once_with(1, 3, "99999", "RADICHETA")
 
@@ -11622,6 +11629,7 @@ def test_confirmar_pedido_con_uno_vigente_lo_reemplaza():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.crear_pedido", return_value=52) as mock_crear,
     ):
         respuesta = cliente.post(
@@ -11631,7 +11639,7 @@ def test_confirmar_pedido_con_uno_vigente_lo_reemplaza():
                 "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
                 "cantidad_renglones": "1",
                 "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
-                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "60",
+                "renglon_0_ficha_id": "901", "renglon_0_cant_0": "60",
             },
             follow_redirects=False,
         )
@@ -11717,6 +11725,7 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
         patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.crear_pedido", return_value=60),
         patch("app.main.subir_foto_comanda", return_value="2026/pedido-60-abc.jpg") as mock_subir,
         patch("app.main.agregar_foto_pedido") as mock_foto,
@@ -11729,7 +11738,7 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
                 "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
                 "cantidad_renglones": "1",
                 "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
-                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "225",
+                "renglon_0_ficha_id": "901", "renglon_0_cant_0": "225",
             },
             follow_redirects=False,
         )
@@ -12420,6 +12429,7 @@ def test_confirmar_pedido_desde_mail_lo_marca_confirmado_y_guarda_el_origen():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_mail_pedido", return_value=dict(MAIL_PEDIDO_DE_PRUEBA)),
         patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.crear_pedido", return_value=61) as mock_crear,
         patch("app.main.marcar_mail_pedido_confirmado") as mock_confirmar,
     ):
@@ -12430,7 +12440,7 @@ def test_confirmar_pedido_desde_mail_lo_marca_confirmado_y_guarda_el_origen():
                 "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "1257673", "sucursal_0_total": "235",
                 "cantidad_renglones": "1",
                 "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
-                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "235",
+                "renglon_0_ficha_id": "901", "renglon_0_cant_0": "235",
             },
             follow_redirects=False,
         )
@@ -12451,6 +12461,7 @@ def test_confirmar_pedido_de_un_mail_ya_procesado_no_guarda_nada():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_mail_pedido", return_value=mail_confirmado),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.crear_pedido") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -12460,7 +12471,7 @@ def test_confirmar_pedido_de_un_mail_ya_procesado_no_guarda_nada():
                 "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
                 "cantidad_renglones": "1",
                 "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
-                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "235",
+                "renglon_0_ficha_id": "901", "renglon_0_cant_0": "235",
             },
             follow_redirects=False,
         )
@@ -12557,6 +12568,7 @@ def test_confirmar_pedido_de_un_mail_con_error_previo_lo_confirma_igual():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_mail_pedido", return_value=mail_con_error),
         patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
         patch("app.main.crear_pedido", return_value=61) as mock_crear,
         patch("app.main.marcar_mail_pedido_confirmado") as mock_confirmar,
     ):
@@ -12567,7 +12579,7 @@ def test_confirmar_pedido_de_un_mail_con_error_previo_lo_confirma_igual():
                 "cantidad_sucursales": "1", "sucursal_0_nombre": "VL", "sucursal_0_oc": "", "sucursal_0_total": "",
                 "cantidad_renglones": "1",
                 "renglon_0_codigo": "90101", "renglon_0_descripcion": "BANANA",
-                "renglon_0_articulo_id": "1", "renglon_0_cant_0": "235",
+                "renglon_0_ficha_id": "901", "renglon_0_cant_0": "235",
             },
             follow_redirects=False,
         )
@@ -13579,16 +13591,16 @@ def test_tick_no_revisa_fuera_de_la_ventana_de_la_casilla_ni_antes_de_la_cadenci
 # --- Rentabilidad de Pedidos (Gerencia) ---
 
 RENGLONES_RENTABILIDAD_DE_PRUEBA = [
-    {"fecha_operacion": date(2026, 8, 21), "articulo_id": 1, "articulo_nombre": "Banana",
-     "articulo_grupo": "fruta", "bultos": 10.0},
-    {"fecha_operacion": date(2026, 8, 22), "articulo_id": 1, "articulo_nombre": "Banana",
-     "articulo_grupo": "fruta", "bultos": 5.0},
-    {"fecha_operacion": date(2026, 8, 22), "articulo_id": None, "articulo_nombre": None,
-     "articulo_grupo": None, "bultos": 3.0},
+    {"fecha_operacion": date(2026, 8, 21), "ficha_id": 901, "articulo_id": 1,
+     "articulo_nombre": "Banana", "articulo_grupo": "fruta", "bultos": 10.0},
+    {"fecha_operacion": date(2026, 8, 22), "ficha_id": 901, "articulo_id": 1,
+     "articulo_nombre": "Banana", "articulo_grupo": "fruta", "bultos": 5.0},
+    {"fecha_operacion": date(2026, 8, 22), "ficha_id": None, "articulo_id": None,
+     "articulo_nombre": None, "articulo_grupo": None, "bultos": 3.0},
 ]
 
 FICHAS_RENTABILIDAD_DE_PRUEBA = [
-    {"id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
      "envase_id": None, "envase_nombre": None, "contenido_caja": 20.0, "unidad_venta": "kilo",
      "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "90101"},
 ]
@@ -13599,7 +13611,7 @@ def _patches_rentabilidad():
     # lista $100, denominador de tasas 0.8 (neta $80), costo $60 + $4 de
     # envase por kilo.
     fila_margenes = {
-        "id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
+        "ficha_id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
         "precio_vigente": 100.0, "costo_actual": 60.0,
         "costo_envase_unidad_venta": 4.0, "denominador_tasas": 0.8,
         "utilidad_aproximada": 0.2666, "precio_sugerido": None, "fresco": True,
@@ -14632,7 +14644,7 @@ def test_merma_cantidad_negativa_da_400():
 # El renglón armado que el reingreso vincula: 25 bultos armados con 500 kg
 # enviados (20 kg por bulto), 5 ya devueltos — el tope del server es 20.
 RENGLON_REINGRESO_DE_PRUEBA = {
-    "id": 77, "pedido_id": 40, "sucursal": "VL", "articulo_id": 2,
+    "id": 77, "pedido_id": 40, "sucursal": "VL", "articulo_id": 2, "ficha_id": 902,
     "articulo_nombre": "Anco", "cliente_id": 1, "cliente_nombre": "Día",
     "fecha_pedido": date(2026, 8, 24), "orden_compra": "1257673",
     "bultos_armados": 25.0, "kilos_enviados": 500.0, "ya_devuelto": 5.0,
@@ -14883,7 +14895,8 @@ def test_reingreso_paso_3_precarga_el_tope_y_hoy_con_cliente_y_articulo_del_pedi
 
 
 def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
-    listado = [{"articulo_id": 2, "costo_actual": 100.0, "precio_vigente": 150.0}]
+    # El costo congelado sale de la fila de la FICHA con la que se vendió.
+    listado = [{"ficha_id": 902, "articulo_id": 2, "costo_actual": 100.0, "precio_vigente": 150.0}]
     with (
         patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=listado) as mock_listado,
@@ -15634,9 +15647,11 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
     entradas = [{"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
                  "tipo_lote": "guia", "origen_id": 9, "fecha_lote": date(2026, 8, 20),
                  "detalle": "Norte", "motivo": None, "cantidad": 10.0, "costo_bulto": 500.0}]
+    # La salida de armado lleva su FICHA: es lo que ancla el precio.
     salidas = [{"fecha_orden": date(2026, 8, 25), "momento_orden": datetime(2026, 8, 25, 13),
                 "tipo": "armado", "fecha": date(2026, 8, 25), "cantidad": 4.0,
-                "unidades": 64.0, "cliente_id": 1, "motivo": None, "bultos_segunda": None}]
+                "unidades": 64.0, "cliente_id": 1, "motivo": None, "bultos_segunda": None,
+                "ficha_id": 901}]
     with (
         patch("app.main.articulos_con_salidas_stock",
               return_value=[{"articulo_id": 1, "nombre": "Banana", "grupo": "fruta"}]) as mock_articulos,
@@ -15644,8 +15659,9 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 4.0, [])),
         patch("app.main.salidas_stock_articulo", return_value=salidas),
         patch("app.main.calcular_listado_para_negociar_precios",
-              return_value=[{"articulo_id": 1, "precio_vigente": 100.0, "costo_actual": 60.0,
-                             "costo_envase_unidad_venta": 2.0, "denominador_tasas": 0.9}]) as mock_listado,
+              return_value=[{"ficha_id": 901, "articulo_id": 1, "precio_vigente": 100.0,
+                             "costo_actual": 60.0, "costo_envase_unidad_venta": 2.0,
+                             "denominador_tasas": 0.9}]) as mock_listado,
     ):
         resultado = __import__("app.main", fromlist=["x"])._datos_rentabilidad_real(
             1, date(2026, 8, 18), date(2026, 8, 25), None, None
