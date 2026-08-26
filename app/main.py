@@ -144,6 +144,7 @@ from app.db import (
     listar_fechas_con_pedido_vigente,
     listar_mails_pedido,
     listar_mails_pedido_sin_procesar_de_cliente,
+    listar_pedidos_incompletos_recientes,
     listar_pedidos_vigentes_con_armado,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
@@ -1811,19 +1812,49 @@ def ver_compras(request: Request, aviso: str | None = None):
 
     aviso viene por la URL cuando otra pantalla redirige acá con algo
     para contar (hoy: Cancelar en la carga manual, con cuántas compras se
-    cancelaron y cuántas no se pudieron). El cartel de "compras sin
-    precio" es el mismo aviso que en /comercial: el comprador tiene
-    pendiente cargar precios. Es un aviso, no algo crítico para poder
-    navegar — si la consulta del conteo falla, se pisa en 0 (sin cartel)
-    en vez de romper toda la pantalla por algo accesorio.
+    cancelaron y cuántas no se pudieron). Arriba de los botones corre el
+    banner de notificaciones: compras sin precio de compra y pedidos de
+    las últimas 48 horas que salieron con mercadería incompleta. Son
+    avisos, no algo crítico para poder navegar — si una consulta falla,
+    esa notificación no aparece en vez de romper toda la pantalla por
+    algo accesorio.
     """
+    notificaciones = []
     try:
         compras_sin_precio = contar_compras_sin_precio()
     except Exception:
         compras_sin_precio = 0
+    if compras_sin_precio:
+        plural = "compra" if compras_sin_precio == 1 else "compras"
+        notificaciones.append({
+            "texto": f"Hay {compras_sin_precio} {plural} sin precio de compra cargado",
+            "url": "/compras/pendientes",
+        })
+
+    try:
+        incompletos = listar_pedidos_incompletos_recientes(_hoy_argentina() - timedelta(days=2))
+    except Exception:
+        incompletos = []
+    for pedido in incompletos:
+        partes = []
+        if pedido["renglones_cortos"]:
+            if pedido["renglones_cortos"] == 1:
+                partes.append("1 renglón con menos de lo pedido")
+            else:
+                partes.append(f"{pedido['renglones_cortos']} renglones con menos de lo pedido")
+        if pedido["armado_cerrado_el"] and pedido["renglones_sin_armar"]:
+            if pedido["renglones_sin_armar"] == 1:
+                partes.append("1 sin armar")
+            else:
+                partes.append(f"{pedido['renglones_sin_armar']} sin armar")
+        fecha = pedido["fecha_operacion"].strftime("%d/%m")
+        notificaciones.append({
+            "texto": f"El pedido de {pedido['cliente_nombre']} del {fecha} salió incompleto: {' y '.join(partes)}",
+            "url": "/deposito/pedido",
+        })
 
     return templates.TemplateResponse(
-        request, "compras.html", {"compras_sin_precio": compras_sin_precio, "aviso": aviso}
+        request, "compras.html", {"notificaciones": notificaciones, "aviso": aviso}
     )
 
 

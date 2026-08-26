@@ -4797,6 +4797,48 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
         conexion.close()
 
 
+def listar_pedidos_incompletos_recientes(fecha_desde) -> list[dict]:
+    """Pedidos vigentes desde una fecha que salieron con mercadería incompleta, para el banner de Compras.
+
+    Incompleto = algún renglón armado con menos bultos que los pedidos, o
+    renglones sin armar en un pedido ya cerrado con Terminar (un pedido a
+    medio armar todavía no es noticia). Solo renglones armables (con
+    sucursal e identificados), mismo criterio que los conteos de Armar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM (
+                    SELECT DISTINCT ON (p.cliente_id, p.fecha_operacion)
+                           p.id, c.nombre AS cliente_nombre, p.fecha_operacion, p.armado_cerrado_el,
+                           (SELECT COUNT(*) FROM pedidos_renglones r
+                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                              AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+                              AND r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
+                              AND r.cantidad_armada < r.cantidad) AS renglones_cortos,
+                           (SELECT COUNT(*) FROM pedidos_renglones r
+                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                              AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+                              AND r.armado_el IS NULL) AS renglones_sin_armar
+                    FROM pedidos p
+                    JOIN clientes c ON c.id = p.cliente_id
+                    WHERE p.anulado_el IS NULL AND p.fecha_operacion >= %s
+                    ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC
+                ) vigentes
+                WHERE renglones_cortos > 0
+                   OR (armado_cerrado_el IS NOT NULL AND renglones_sin_armar > 0)
+                ORDER BY fecha_operacion DESC, cliente_nombre
+                """,
+                (fecha_desde,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def obtener_condiciones_pedido(cliente_id: int) -> dict | None:
     """Las condiciones de pedido de un cliente, o None si nunca se configuraron (= esporádico)."""
     conexion = obtener_conexion()

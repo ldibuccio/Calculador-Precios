@@ -7923,9 +7923,12 @@ def test_ver_comercial_error_al_contar_no_rompe_la_pantalla():
 
 
 def test_ver_compras_con_compras_sin_precio_muestra_el_cartel():
-    # Mismo cartel que en /comercial, arriba de todo: el comprador tiene
+    # En el banner de notificaciones, arriba de todo: el comprador tiene
     # pendiente cargar precios y lo ve apenas entra a su módulo.
-    with patch("app.main.contar_compras_sin_precio", return_value=4):
+    with (
+        patch("app.main.contar_compras_sin_precio", return_value=4),
+        patch("app.main.listar_pedidos_incompletos_recientes", return_value=[]),
+    ):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
@@ -7936,11 +7939,74 @@ def test_ver_compras_con_compras_sin_precio_muestra_el_cartel():
 
 
 def test_ver_compras_sin_compras_sin_precio_no_muestra_cartel():
-    with patch("app.main.contar_compras_sin_precio", return_value=0):
+    with (
+        patch("app.main.contar_compras_sin_precio", return_value=0),
+        patch("app.main.listar_pedidos_incompletos_recientes", return_value=[]),
+    ):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     assert "sin precio de compra cargado" not in respuesta.text
+    assert 'class="banner-avisos"' not in respuesta.text
+
+
+PEDIDOS_INCOMPLETOS_DE_PRUEBA = [
+    {
+        "id": 7, "cliente_nombre": "Día", "fecha_operacion": date(2026, 8, 25),
+        "armado_cerrado_el": datetime(2026, 8, 25, 18, 0, tzinfo=timezone.utc),
+        "renglones_cortos": 2, "renglones_sin_armar": 1,
+    },
+    {
+        "id": 8, "cliente_nombre": "Vea", "fecha_operacion": date(2026, 8, 24),
+        "armado_cerrado_el": None,
+        "renglones_cortos": 1, "renglones_sin_armar": 3,
+    },
+]
+
+
+def test_ver_compras_pedido_incompleto_de_las_ultimas_48_horas_aparece_en_el_banner():
+    # El comprador se entera apenas entra de que un pedido salió con menos
+    # mercadería de la pedida. Un pedido SIN cerrar solo cuenta los
+    # renglones cortos: los sin armar todavía pueden armarse.
+    with (
+        patch("app.main.contar_compras_sin_precio", return_value=0),
+        patch("app.main.listar_pedidos_incompletos_recientes", return_value=PEDIDOS_INCOMPLETOS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "El pedido de Día del 25/08 salió incompleto: 2 renglones con menos de lo pedido y 1 sin armar" in respuesta.text
+    assert "El pedido de Vea del 24/08 salió incompleto: 1 renglón con menos de lo pedido" in respuesta.text
+    assert "3 sin armar" not in respuesta.text
+    assert 'href="/deposito/pedido"' in respuesta.text
+
+
+def test_ver_compras_banner_corre_y_duplica_el_contenido_para_el_loop():
+    # La cinta se anima proporcional a cuántas notificaciones lleva, y el
+    # contenido va dos veces (la copia oculta a lectores de pantalla) para
+    # que el corte del loop no se note.
+    with (
+        patch("app.main.contar_compras_sin_precio", return_value=4),
+        patch("app.main.listar_pedidos_incompletos_recientes", return_value=PEDIDOS_INCOMPLETOS_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert 'class="banner-cinta" style="animation-duration: 36s;"' in respuesta.text
+    assert respuesta.text.count("Hay 4 compras sin precio de compra cargado") == 2
+    assert '<span class="copia" aria-hidden="true">' in respuesta.text
+
+
+def test_ver_compras_error_al_buscar_incompletos_no_rompe_la_pantalla():
+    with (
+        patch("app.main.contar_compras_sin_precio", return_value=0),
+        patch("app.main.listar_pedidos_incompletos_recientes", side_effect=Exception("no se pudo conectar")),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "salió incompleto" not in respuesta.text
+    assert 'href="/compras/nueva/manual"' in respuesta.text
 
 
 def test_ver_compras_muestra_el_aviso_cuando_viene_en_la_url():
