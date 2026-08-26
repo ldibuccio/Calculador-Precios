@@ -195,6 +195,7 @@
               <th>Artículo</th>
               <th>Cant. real</th>
               <th>Precio</th>
+              <th>Seña</th>
               <th>Total</th>
               <th>Estado</th>
             </tr>
@@ -207,6 +208,8 @@
               <td>{{ f.articulo_nombre }}</td>
               <td>{% if f.cantidad_cajones_real is not none %}{{ f.cantidad_cajones_real|numero }} × {{ f.contenido_por_cajon_real|kilos }}{{ f.unidad_compra|sufijo_unidad }}{% else %}—{% endif %}</td>
               <td>{% if f.sin_precio %}<span class="marca-sin-precio">Sin precio</span>{% elif f.importe is not none %}{{ f.importe|moneda }}{% else %}—{% endif %}</td>
+              {# Seña por cajón y, al lado, lo señado por los cajones reales. #}
+              <td>{% if f.sena is not none %}{{ f.sena|moneda }}{% if f.total_sena is not none %} ({{ f.total_sena|moneda }}){% endif %}{% else %}—{% endif %}</td>
               <td class="numero">{% if f.total is not none %}{{ f.total|moneda }}{% else %}—{% endif %}</td>
               <td>
                 {% if f.estado_etiqueta == "Recepcionada" %}<span class="estado-ok">Recepcionada</span>

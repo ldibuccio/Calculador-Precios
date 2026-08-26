@@ -9042,25 +9042,25 @@ INGRESOS_DEPOSITO_DE_PRUEBA = [
     {"id": 1, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 14, 30),
      "guia_id": 105, "guia_punto": 1, "estado": "recepcionado",
      "cantidad_cajones_real": 8.0, "contenido_por_cajon_real": 20.0,
-     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 5000.0,
+     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 5000.0, "sena": 500.0,
      "articulo_nombre": "Kiwi", "unidad_compra": "kilo",
      "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
     {"id": 2, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 15, 0),
      "guia_id": 105, "guia_punto": 2, "estado": "recepcionado",
      "cantidad_cajones_real": 8.0, "contenido_por_cajon_real": 10.0,
-     "cantidad_cajones_rechazada": 2.0, "motivo_rechazo": "Podrido", "importe": 3000.0,
+     "cantidad_cajones_rechazada": 2.0, "motivo_rechazo": "Podrido", "importe": 3000.0, "sena": None,
      "articulo_nombre": "Mango", "unidad_compra": "unidad",
      "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
     {"id": 3, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 15, 30),
      "guia_id": 105, "guia_punto": 3, "estado": "recepcionado",
      "cantidad_cajones_real": 5.0, "contenido_por_cajon_real": 6.0,
-     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": None,
+     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": None, "sena": None,
      "articulo_nombre": "Palta", "unidad_compra": "kilo",
      "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41"},
     {"id": 4, "fecha_operacion": date(2026, 8, 18), "procesada_el": datetime(2026, 8, 18, 16, 0),
      "guia_id": 106, "guia_punto": 1, "estado": "recepcionado",
      "cantidad_cajones_real": 10.0, "contenido_por_cajon_real": 16.0,
-     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 2000.0,
+     "cantidad_cajones_rechazada": None, "motivo_rechazo": None, "importe": 2000.0, "sena": None,
      "articulo_nombre": "Limón", "unidad_compra": "kilo",
      "proveedor_nombre": "Verdurin", "proveedor_codigo_puesto": "N03P12"},
 ]
@@ -9097,6 +9097,10 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
     # La compra sin precio queda marcada: hay que completarla antes de facturar.
     assert "Sin precio" in respuesta.text
     assert "1 compra sin precio cargado" in respuesta.text
+    # La seña: por cajón y, al lado, lo señado por los cajones reales
+    # (500 × 8 = 4000). Las filas sin seña van con "—".
+    assert "<th>Seña</th>" in respuesta.text
+    assert "$500 ($4.000)" in respuesta.text
     # Export con los mismos filtros.
     assert "/facturacion/ingresos/exportar-pdf?" in respuesta.text
     assert "/facturacion/ingresos/exportar-excel?" in respuesta.text
@@ -9161,6 +9165,8 @@ def test_exportar_ingresos_deposito_pdf_sin_tope_con_subtotales_y_marcas():
     # compara con los espacios normalizados.
     assert "Rechazo parcial (2 rech.)" in " ".join(texto.split())
     assert "105.2" in texto  # número de guía y punto
+    # La seña del Kiwi: por cajón y el total señado.
+    assert "$500 ($4.000)" in " ".join(texto.split())
 
 
 def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
@@ -9175,6 +9181,18 @@ def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
     assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert "Ingresos_Deposito_2026-08-17_a_2026-08-18" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"PK")  # xlsx es un zip
+
+    # La seña viaja en sus dos columnas propias: por bulto y el total señado.
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    valores = [celda.value for fila in hoja.iter_rows() for celda in fila]
+    assert "Seña por bulto" in valores
+    assert "Total seña" in valores
+    assert 500.0 in valores
+    assert 4000.0 in valores
 
 
 def test_exportar_ingresos_deposito_pdf_fecha_invalida_da_400():
@@ -11743,8 +11761,8 @@ def test_armar_pedido_muestra_las_sucursales_con_progreso_y_oc():
 
     assert respuesta.status_code == 200
     # Una sucursal a la vez: botones grandes con progreso y OC.
-    assert "VL — 1 de 2 armados" in respuesta.text
-    assert "BZ — 1 de 1 armados" in respuesta.text
+    assert "VL — 1 de 2 artículos armados" in respuesta.text
+    assert "BZ — 1 de 1 artículos armados" in respuesta.text
     assert "OC 1257673" in respuesta.text
     assert "1 incompleto" in respuesta.text
 
@@ -11762,7 +11780,7 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
 
     assert respuesta.status_code == 200
-    assert "VL: 1 de 2 armados" in respuesta.text
+    assert "VL: 1 de 2 artículos armados" in respuesta.text
     # Banana pendiente arriba con su tilde; Batata armada abajo, atenuada,
     # con la marca de incompleto y el botón para destildar.
     assert "Falta armar (1)" in respuesta.text
@@ -12813,9 +12831,9 @@ def test_armar_pedido_sin_fecha_lista_los_pedidos_hoy_primero():
     # Hoy primero, después el próximo, después el pasado.
     assert texto.index("Pedido del 22/08/2026 — HOY") < texto.index("Pedido del 23/08/2026 — próximo") < texto.index("Pedido del 20/08/2026")
     # El estado de un vistazo, sin entrar: armados, completo, sin identificar.
-    assert "18 de 32 armados" in texto
-    assert "30 de 30 armados · COMPLETO ✔" in texto
-    assert "0 de 28 armados" in texto and "2 sin identificar" in texto
+    assert "18 de 32 artículos armados" in texto
+    assert "30 de 30 artículos armados · COMPLETO ✔" in texto
+    assert "0 de 28 artículos armados" in texto and "2 sin identificar" in texto
     # Cada uno entra a su fecha.
     assert 'href="/deposito/pedido/armar?cliente_id=1&fecha=2026-08-23"' in texto
 
@@ -14098,7 +14116,7 @@ def test_armar_separa_anulados_en_su_seccion_y_los_saca_del_progreso():
     assert respuesta.status_code == 200
     # El anulado NO está en pendientes ni cuenta en el progreso.
     assert "Falta armar (1)" in respuesta.text
-    assert "VL: 0 de 1 armados" in respuesta.text
+    assert "VL: 0 de 1 artículos armados" in respuesta.text
     # Sección propia, distinta del completado, con Reponer.
     assert "Anulados (1)" in respuesta.text
     assert "anulado (no se armó)" in respuesta.text

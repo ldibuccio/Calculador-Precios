@@ -8058,6 +8058,10 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
         importe = float(ingreso["importe"]) if ingreso["importe"] is not None else None
         total = cajones * importe if cajones is not None and importe is not None else None
         sin_precio = importe is None and ingreso["estado"] == "recepcionado"
+        # La seña es por cajón (como el importe): el total señado sale de
+        # los cajones REALES que entraron, igual que el total a pagar.
+        sena = float(ingreso["sena"]) if ingreso.get("sena") is not None else None
+        total_sena = cajones * sena if cajones is not None and sena is not None else None
 
         if total is not None:
             grupo["subtotal"] += total
@@ -8071,7 +8075,8 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
             etiqueta = "Rechazo parcial"
 
         grupo["filas"].append(
-            {**ingreso, "total": total, "sin_precio": sin_precio, "estado_etiqueta": etiqueta}
+            {**ingreso, "total": total, "sin_precio": sin_precio, "estado_etiqueta": etiqueta,
+             "sena": sena, "total_sena": total_sena}
         )
 
     totales = {"total_general": total_general, "cantidad_sin_precio": cantidad_sin_precio}

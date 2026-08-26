@@ -391,7 +391,7 @@
       <a class="boton-sucursal {% if p.completo %}completa{% endif %}"
          href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
         Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
       </a>
       {% endfor %}
     {% elif terminados_listado %}
@@ -415,7 +415,7 @@
       <a class="boton-sucursal completa"
          href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
         Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% endif %}
-        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados · TERMINADO ✔ — entrá para reabrirlo si hace falta</span>
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados · TERMINADO ✔ — entrá para reabrirlo si hace falta</span>
       </a>
       {% endfor %}
     </div>
@@ -465,7 +465,7 @@
     {% for s in sucursales %}
     <a class="boton-sucursal {% if s.total_renglones > 0 and s.armados == s.total_renglones %}completa{% endif %}"
        href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}&sucursal={{ s.sucursal }}">
-      {{ s.sucursal }} — {{ s.armados }} de {{ s.total_renglones }} armados
+      {{ s.sucursal }} — {{ s.armados }} de {{ s.total_renglones }} artículos armados
       <span class="detalle">{% if s.orden_compra %}OC {{ s.orden_compra }}{% else %}sin OC{% endif %}{% if s.incompletos %} · {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>
     </a>
     {% endfor %}
@@ -485,7 +485,7 @@
 
   {% if sucursal_elegida %}
   <div class="progreso">
-    <div class="numeros">{{ sucursal_elegida.sucursal }}: {{ sucursal_elegida.armados }} de {{ sucursal_elegida.total_renglones }} armados</div>
+    <div class="numeros">{{ sucursal_elegida.sucursal }}: {{ sucursal_elegida.armados }} de {{ sucursal_elegida.total_renglones }} artículos armados</div>
     <div class="oc">Pedido del {{ fecha_mostrar }} · {% if sucursal_elegida.orden_compra %}OC {{ sucursal_elegida.orden_compra }}{% else %}sin OC{% endif %}</div>
     {% if sucursal_elegida.incompletos %}
     <div class="incompletos">{{ sucursal_elegida.incompletos }} {% if sucursal_elegida.incompletos == 1 %}renglón incompleto{% else %}renglones incompletos{% endif %} (se armó menos de lo pedido)</div>

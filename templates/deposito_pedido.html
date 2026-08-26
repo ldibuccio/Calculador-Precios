@@ -360,7 +360,7 @@
     <a class="item-pedido {% if p.completo %}completo{% endif %} {% if p.fecha == fecha %}abierto{% endif %}"
        href="/deposito/pedido?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
       Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} armados{% if p.cerrado %} · TERMINADO ✔{% elif p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados{% if p.cerrado %} · TERMINADO ✔{% elif p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
     </a>
     {% endfor %}
     {% for m in dias_marcados | default([]) %}

@@ -73,6 +73,16 @@ def _texto_cantidad_real(fila: dict) -> str:
     return f"{_formatear_numero(fila['cantidad_cajones_real'])} × {_formatear_numero(fila['contenido_por_cajon_real'])}{sufijo}"
 
 
+def _texto_sena(fila: dict) -> str:
+    """La seña por cajón y, entre paréntesis, lo señado por los cajones reales ("$500 ($4.000)")."""
+    if fila.get("sena") is None:
+        return "—"
+    texto = _formatear_moneda(fila["sena"])
+    if fila.get("total_sena") is not None:
+        texto += f" ({_formatear_moneda(fila['total_sena'])})"
+    return texto
+
+
 def _texto_estado(fila: dict) -> str:
     estado = fila["estado_etiqueta"]
     if fila["cantidad_cajones_rechazada"] is not None:
@@ -146,10 +156,10 @@ def generar_pdf_ingresos_deposito(
     if not grupos:
         elementos.append(Paragraph("No se encontraron ingresos con estos filtros.", estilo_vacio))
 
-    encabezados = ("Recepción", "Guía", "Artículo", "Cantidad real", "Precio", "Total", "Estado")
+    encabezados = ("Recepción", "Guía", "Artículo", "Cantidad real", "Precio", "Seña", "Total", "Estado")
     anchos = [
-        ancho_util * 0.12, ancho_util * 0.08, ancho_util * 0.2, ancho_util * 0.16,
-        ancho_util * 0.12, ancho_util * 0.13, ancho_util * 0.19,
+        ancho_util * 0.11, ancho_util * 0.07, ancho_util * 0.18, ancho_util * 0.14,
+        ancho_util * 0.11, ancho_util * 0.13, ancho_util * 0.12, ancho_util * 0.14,
     ]
     for indice_grupo, grupo in enumerate(grupos):
         if indice_grupo > 0:
@@ -170,6 +180,7 @@ def generar_pdf_ingresos_deposito(
                     Paragraph(fila["articulo_nombre"], estilo_dato),
                     Paragraph(_texto_cantidad_real(fila), estilo_dato),
                     Paragraph(precio, estilo_dato),
+                    Paragraph(_texto_sena(fila), estilo_dato),
                     Paragraph(_formatear_moneda(fila["total"]), estilo_numero),
                     Paragraph(_texto_estado(fila), estilo_marca if fila["estado_etiqueta"] != "Recepcionada" else estilo_dato_gris),
                 ]
@@ -180,7 +191,7 @@ def generar_pdf_ingresos_deposito(
         indice_subtotal = len(datos_tabla)
         datos_tabla.append(
             [
-                Paragraph("Subtotal", estilo_subtotal), "", "", "", "",
+                Paragraph("Subtotal", estilo_subtotal), "", "", "", "", "",
                 Paragraph(_formatear_moneda(grupo["subtotal"]), estilo_subtotal), "",
             ]
         )
@@ -242,7 +253,7 @@ def generar_excel_ingresos_deposito(
 
     fila_actual = 1
     hoja.cell(row=fila_actual, column=1, value="Ingresos a Depósito")
-    for columna in range(1, 11):
+    for columna in range(1, 13):
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.fill = relleno_verde
         if columna == 1:
@@ -257,7 +268,7 @@ def generar_excel_ingresos_deposito(
 
     encabezados = (
         "Fecha", "Hora", "Guía", "Artículo", "Cajones reales", "Contenido real",
-        "Rechazados", "Precio por bulto", "Total", "Estado",
+        "Rechazados", "Precio por bulto", "Seña por bulto", "Total seña", "Total", "Estado",
     )
     for grupo in grupos:
         hoja.cell(
@@ -288,23 +299,29 @@ def generar_excel_ingresos_deposito(
             elif fila["importe"] is not None:
                 celda_precio = hoja.cell(row=fila_actual, column=8, value=float(fila["importe"]))
                 celda_precio.number_format = '"$"#,##0'
+            if fila.get("sena") is not None:
+                celda_sena = hoja.cell(row=fila_actual, column=9, value=float(fila["sena"]))
+                celda_sena.number_format = '"$"#,##0'
+            if fila.get("total_sena") is not None:
+                celda_total_sena = hoja.cell(row=fila_actual, column=10, value=float(fila["total_sena"]))
+                celda_total_sena.number_format = '"$"#,##0'
             if fila["total"] is not None:
-                celda_total = hoja.cell(row=fila_actual, column=9, value=float(fila["total"]))
+                celda_total = hoja.cell(row=fila_actual, column=11, value=float(fila["total"]))
                 celda_total.number_format = '"$"#,##0'
-            celda_estado = hoja.cell(row=fila_actual, column=10, value=_texto_estado(fila))
+            celda_estado = hoja.cell(row=fila_actual, column=12, value=_texto_estado(fila))
             if fila["estado_etiqueta"] != "Recepcionada":
                 celda_estado.font = fuente_marca
             fila_actual += 1
 
         hoja.cell(row=fila_actual, column=1, value="Subtotal").font = fuente_subtotal
-        celda_subtotal = hoja.cell(row=fila_actual, column=9, value=float(grupo["subtotal"]))
+        celda_subtotal = hoja.cell(row=fila_actual, column=11, value=float(grupo["subtotal"]))
         celda_subtotal.font = fuente_subtotal
         celda_subtotal.number_format = '"$"#,##0'
         fila_actual += 2
 
     if grupos:
         hoja.cell(row=fila_actual, column=1, value="Total general").font = fuente_total
-        celda_total_general = hoja.cell(row=fila_actual, column=9, value=float(totales["total_general"]))
+        celda_total_general = hoja.cell(row=fila_actual, column=11, value=float(totales["total_general"]))
         celda_total_general.font = fuente_total
         celda_total_general.number_format = '"$"#,##0'
         fila_actual += 1
@@ -315,7 +332,7 @@ def generar_excel_ingresos_deposito(
                 "completalas antes de facturar.",
             ).font = fuente_marca
 
-    for columna, ancho in enumerate((12, 8, 9, 22, 14, 14, 12, 15, 13, 24), start=1):
+    for columna, ancho in enumerate((12, 8, 9, 22, 14, 14, 12, 15, 14, 12, 13, 24), start=1):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
 
     buffer = BytesIO()

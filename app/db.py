@@ -2298,7 +2298,7 @@ def buscar_ingresos_deposito(
                 f"""
                 SELECT c.id, c.fecha_operacion, c.procesada_el, c.guia_id, c.guia_punto, c.estado,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real,
-                       c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe,
+                       c.cantidad_cajones_rechazada, c.motivo_rechazo, c.importe, c.sena,
                        a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto
                 FROM compras c
