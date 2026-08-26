@@ -262,7 +262,8 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     la utilidad objetivo del cliente.
 
     Devuelve una lista de dicts (frescos primero, después por nombre) con:
-    articulo_id, articulo_nombre, unidad_venta, fresco, costo_actual,
+    ficha_id (la clave de VENTA: el precio cuelga de la ficha, no del
+    artículo), articulo_id, articulo_nombre, unidad_venta, fresco, costo_actual,
     costo_anterior (o None), variacion ("subio"/"bajo"/"igual"/None),
     fecha_ultima_compra, precio_vigente (o None), precio_sugerido (o None),
     utilidad_aproximada (o None), compras_sin_precio_excluidas,
@@ -283,7 +284,9 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     # float(...): precio (numeric) viene de la base como Decimal — hace
     # falta castear antes de usarlo en la cuenta de utilidad_aproximada más
     # abajo (antes solo se mostraba, nunca se operaba con él).
-    precio_vigente_por_articulo = {p["articulo_id"]: float(p["precio"]) for p in precios_vigentes}
+    # La clave de venta es la FICHA: dos fichas del mismo artículo y cliente
+    # (Banana Bolivia y Banana Ecuador) tienen su propio precio.
+    precio_vigente_por_ficha = {p["ficha_id"]: float(p["precio"]) for p in precios_vigentes}
 
     costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
@@ -386,7 +389,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
         # de ser una aproximación. Se calcula por bulto (contenido de la
         # ficha), aunque el resultado da igual por kilo — es un cociente,
         # la unidad se cancela (ver core.motor_costeo.utilidad_real_multi_concepto).
-        precio_vigente = precio_vigente_por_articulo.get(articulo_id)
+        precio_vigente = precio_vigente_por_ficha.get(ficha["id"])
         utilidad_aproximada = None
         if costo_actual is not None and precio_vigente is not None:
             contenido_caja = float(ficha["contenido_caja"]) if ficha["contenido_caja"] else 1.0
@@ -402,6 +405,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
 
         resultado.append(
             {
+                "ficha_id": ficha["id"],
                 "articulo_id": articulo_id,
                 "articulo_nombre": ficha["articulo_nombre"],
                 "unidad_venta": ficha["unidad_venta"],
@@ -522,7 +526,9 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
     denominador_tasas = 1 + sum(conceptos_cliente["tasas_suman"]) - sum(conceptos_cliente["tasas_restan"])
 
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
-    precio_vigente_por_articulo = {p["articulo_id"]: float(p["precio"]) for p in precios_vigentes}
+    # La clave de venta es la FICHA: dos fichas del mismo artículo y cliente
+    # (Banana Bolivia y Banana Ecuador) tienen su propio precio.
+    precio_vigente_por_ficha = {p["ficha_id"]: float(p["precio"]) for p in precios_vigentes}
 
     costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
@@ -558,7 +564,7 @@ def calcular_objetivos_de_compra(cliente_id: int, momento_referencia: datetime |
         if costo_ultima_por_unidad is None:
             continue
 
-        precio_vigente = precio_vigente_por_articulo.get(articulo_id)
+        precio_vigente = precio_vigente_por_ficha.get(ficha["id"])
         if precio_vigente is None:
             sin_precio_vigente.append(
                 {"articulo_nombre": ficha["articulo_nombre"], "fecha_ultima_compra": ultima["fecha_operacion"]}

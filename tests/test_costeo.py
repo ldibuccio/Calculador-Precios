@@ -22,8 +22,8 @@ CLIENTE_ID_DE_PRUEBA = 1
 # Cherry (articulo_id 21) y Mango (22) tienen ficha para este cliente.
 # Morrón Rojo (29) NO tiene ficha — a propósito, para probar "sin ficha".
 FICHAS_DE_PRUEBA = [
-    {"articulo_id": 21, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
-    {"articulo_id": 22, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
+    {"id": 921, "articulo_id": 21, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
+    {"id": 922, "articulo_id": 22, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
 ]
 
 COMPRAS_DE_PRUEBA = [
@@ -191,7 +191,7 @@ def test_calcular_costo_por_unidad_venta_usa_ahora_si_no_le_pasan_momento():
 # si falta descuento/utilidad, o se calcula sin costo de envase).
 FICHAS_NEGOCIACION = [
     {
-        "articulo_id": 1,
+        "id": 901, "articulo_id": 1,
         "articulo_nombre": "Articulo A",
         "unidad_venta": "kilo",
         "envase_id": None,
@@ -199,7 +199,7 @@ FICHAS_NEGOCIACION = [
         "envase_variable": False,
     },
     {
-        "articulo_id": 2,
+        "id": 902, "articulo_id": 2,
         "articulo_nombre": "Articulo B",
         "unidad_venta": "kilo",
         "envase_id": None,
@@ -207,7 +207,7 @@ FICHAS_NEGOCIACION = [
         "envase_variable": False,
     },
     {
-        "articulo_id": 3,
+        "id": 903, "articulo_id": 3,
         "articulo_nombre": "Articulo C",
         "unidad_venta": "kilo",
         "envase_id": None,
@@ -215,7 +215,7 @@ FICHAS_NEGOCIACION = [
         "envase_variable": False,
     },
     {
-        "articulo_id": 4,
+        "id": 904, "articulo_id": 4,
         "articulo_nombre": "Articulo D",
         "unidad_venta": "kilo",
         "envase_id": None,
@@ -223,7 +223,7 @@ FICHAS_NEGOCIACION = [
         "envase_variable": False,
     },
     {
-        "articulo_id": 5,
+        "id": 905, "articulo_id": 5,
         "articulo_nombre": "Articulo E",
         "unidad_venta": "kilo",
         "envase_id": None,
@@ -321,7 +321,7 @@ COMPRAS_NEGOCIACION = [
 ]
 
 PRECIOS_VIGENTES_NEGOCIACION = [
-    {"articulo_id": 1, "precio": 250},
+    {"ficha_id": 901, "articulo_id": 1, "precio": 250},
 ]
 
 
@@ -505,7 +505,7 @@ def test_envases_ponderado_funciona_con_decimal_como_devuelve_psycopg2():
 # --- precio_sugerido de punta a punta, vía calcular_listado_para_negociar_precios ---
 
 FICHA_MORRON_ROJO = {
-    "articulo_id": 29,
+    "id": 929, "articulo_id": 29,
     "articulo_nombre": "Morrón Rojo",
     "unidad_venta": "kilo",
     "envase_id": 100,
@@ -601,7 +601,7 @@ def test_precio_sugerido_con_iva_tasa_que_suma():
 
 
 FICHA_CHERRY_VARIABLE = {
-    "articulo_id": 21,
+    "id": 921, "articulo_id": 21,
     "articulo_nombre": "Tomate Cherry",
     "unidad_venta": "kilo",
     "envase_id": 200,
@@ -709,7 +709,7 @@ def test_utilidad_aproximada_morron_rojo():
             "importe": 20000,  # costo_actual = 20000*10/(10*8) = 2500
         },
     ]
-    precios_vigentes = [{"articulo_id": 29, "precio": 4400}]
+    precios_vigentes = [{"ficha_id": 929, "articulo_id": 29, "precio": 4400}]
     resultado, _, _ = _calcular_negociacion(
         compras=compras,
         fichas=[FICHA_MORRON_ROJO],
@@ -760,7 +760,7 @@ def test_utilidad_aproximada_precio_vigente_por_debajo_del_costo_da_negativa():
         },
     ]
     # Precio vigente desactualizado, muy por debajo del costo.
-    precios_vigentes = [{"articulo_id": 29, "precio": 1875}]  # 1875/kg
+    precios_vigentes = [{"ficha_id": 929, "articulo_id": 29, "precio": 1875}]  # 1875/kg
     resultado, _, _ = _calcular_negociacion(
         compras=compras,
         fichas=[FICHA_MORRON_ROJO],
@@ -776,7 +776,7 @@ def test_utilidad_aproximada_precio_vigente_por_debajo_del_costo_da_negativa():
 # --- calcular_precio_sugerido_desglosado ---
 
 FICHA_MORRON_ROJO_CON_NOMBRE = {
-    "articulo_id": 29,
+    "id": 929, "articulo_id": 29,
     "articulo_nombre": "Morrón Rojo",
     "unidad_venta": "kilo",
     "envase_id": 100,
@@ -861,7 +861,7 @@ def test_desglose_utilidad_aproximada_morron_rojo():
             "importe": 20000,
         },
     ]
-    precios_vigentes = [{"articulo_id": 29, "precio": 4400}]
+    precios_vigentes = [{"ficha_id": 929, "articulo_id": 29, "precio": 4400}]
 
     resultado = _calcular_desglose(compras=compras, precios_vigentes=precios_vigentes)
 
@@ -1035,13 +1035,13 @@ def test_agrupar_todos_no_depende_de_la_utilidad_objetivo_del_cliente():
 # --- calcular_objetivos_de_compra: la Rutina A al revés (Objetivo de Compra) ---
 
 FICHAS_OBJETIVO = [
-    {"articulo_id": 1, "articulo_nombre": "Manzana Roja", "unidad_venta": "kilo",
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Manzana Roja", "unidad_venta": "kilo",
      "contenido_caja": Decimal("16"), "envase_variable": False, "envase_id": 7, "envase_nombre": "Caja Grande"},
-    {"articulo_id": 2, "articulo_nombre": "Kiwi", "unidad_venta": "kilo",
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Kiwi", "unidad_venta": "kilo",
      "contenido_caja": None, "envase_variable": False, "envase_id": None, "envase_nombre": None},
-    {"articulo_id": 3, "articulo_nombre": "Banana", "unidad_venta": "kilo",
+    {"id": 903, "articulo_id": 3, "articulo_nombre": "Banana", "unidad_venta": "kilo",
      "contenido_caja": None, "envase_variable": False, "envase_id": None, "envase_nombre": None},
-    {"articulo_id": 4, "articulo_nombre": "Pera", "unidad_venta": "kilo",
+    {"id": 904, "articulo_id": 4, "articulo_nombre": "Pera", "unidad_venta": "kilo",
      "contenido_caja": None, "envase_variable": False, "envase_id": None, "envase_nombre": None},
 ]
 
@@ -1083,9 +1083,9 @@ COMPRAS_OBJETIVO = [
 
 CONCEPTOS_OBJETIVO = {"tasas_suman": [0.105], "tasas_restan": [0.23, 0.03], "utilidad": 0.2}
 PRECIOS_OBJETIVO = [
-    {"articulo_id": 1, "precio": Decimal("900")},
-    {"articulo_id": 2, "precio": Decimal("2000")},
-    {"articulo_id": 3, "precio": Decimal("1300")},
+    {"ficha_id": 901, "articulo_id": 1, "precio": Decimal("900")},
+    {"ficha_id": 902, "articulo_id": 2, "precio": Decimal("2000")},
+    {"ficha_id": 903, "articulo_id": 3, "precio": Decimal("1300")},
 ]
 ENVASES_OBJETIVO = [{"envase_id": 7, "costo": Decimal("650")}]
 

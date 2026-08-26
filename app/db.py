@@ -1097,28 +1097,37 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
 
 
 def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
-    """Precio vigente de cada artículo para un cliente, a una fecha dada.
+    """Precio vigente de cada FICHA de un cliente, a una fecha dada.
+
+    La clave de venta es la ficha, no el artículo: dos fichas del mismo
+    artículo y cliente (Banana Bolivia y Banana Ecuador para Día) tienen
+    su propio precio. Mientras haya una sola ficha por artículo, esto
+    devuelve exactamente lo mismo que cuando la clave era el artículo.
 
     "Vigente" es la fila de precios_venta_historial con vigente_desde más
     reciente que ya llegó a fecha_referencia (mismo patrón que el
-    descuento/utilidad vigente de clientes_parametros_historial). Un
-    artículo sin ninguna fila con vigente_desde <= fecha_referencia
+    descuento/utilidad vigente de clientes_parametros_historial). Una
+    ficha sin ninguna fila con vigente_desde <= fecha_referencia
     simplemente no aparece en el resultado — no tiene precio vigente todavía.
 
-    Trae también vigente_desde (aparte de articulo_id y precio) — lo usa
-    la exportación a PDF/Excel para saber si un precio es "nuevo" (cambió
-    justo en la fecha consultada). Los demás llamadores lo ignoran, leen
-    por clave de diccionario.
+    Los precios huérfanos (ficha_id NULL: su ficha se borró o cambió de
+    artículo) quedan afuera — hoy tampoco se leían, porque nadie los
+    buscaba por un artículo que ya ninguna ficha usa.
+
+    Trae articulo_id y vigente_desde además de ficha_id y precio: el
+    artículo lo usan las pantallas para mostrar y agrupar, y vigente_desde
+    lo usa la exportación a PDF/Excel para saber si un precio es "nuevo"
+    (cambió justo en la fecha consultada).
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT DISTINCT ON (articulo_id) articulo_id, precio, vigente_desde
+                SELECT DISTINCT ON (ficha_id) ficha_id, articulo_id, precio, vigente_desde
                 FROM precios_venta_historial
-                WHERE cliente_id = %s AND vigente_desde <= %s
-                ORDER BY articulo_id, vigente_desde DESC
+                WHERE cliente_id = %s AND vigente_desde <= %s AND ficha_id IS NOT NULL
+                ORDER BY ficha_id, vigente_desde DESC
                 """,
                 (cliente_id, fecha_referencia),
             )
@@ -1130,14 +1139,14 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
 
 
 def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
-    """El precio que tenía cada artículo ANTES del que hoy está vigente (para la columna "Precio anterior"
+    """El precio que tenía cada FICHA ANTES del que hoy está vigente (para la columna "Precio anterior"
     de la Lista de Precios en Excel — ver core.exportar_precios).
 
     Mismo criterio de "vigente" que listar_precios_vigentes_por_cliente,
     pero un escalón atrás: de las filas de precios_venta_historial con
     vigente_desde <= fecha_referencia, la vigente es la de vigente_desde
     más reciente (fila #1) — esto devuelve la fila #2, la que regía justo
-    antes de esa. Un artículo con una sola fila cargada (nunca cambió de
+    antes de esa. Una ficha con una sola fila cargada (nunca cambió de
     precio) o sin ninguna simplemente no aparece — no hay "anterior" que
     mostrar.
     """
@@ -1146,11 +1155,11 @@ def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> 
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT articulo_id, precio FROM (
-                    SELECT articulo_id, precio,
-                           ROW_NUMBER() OVER (PARTITION BY articulo_id ORDER BY vigente_desde DESC) AS orden
+                SELECT ficha_id, articulo_id, precio FROM (
+                    SELECT ficha_id, articulo_id, precio,
+                           ROW_NUMBER() OVER (PARTITION BY ficha_id ORDER BY vigente_desde DESC) AS orden
                     FROM precios_venta_historial
-                    WHERE cliente_id = %s AND vigente_desde <= %s
+                    WHERE cliente_id = %s AND vigente_desde <= %s AND ficha_id IS NOT NULL
                 ) filas_ordenadas
                 WHERE orden = 2
                 """,
@@ -1166,12 +1175,18 @@ def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> 
 def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str | None = None) -> None:
     """Agrega a precios_venta_historial SOLO las filas de precio que realmente cambiaron.
 
-    cambios: [{"articulo_id", "precio"}, ...] — ya calculado por
+    cambios: [{"ficha_id", "precio"}, ...] — ya calculado por
     core.precios_venta.calcular_cambios_de_precios a partir de lo que
-    cambió en el formulario. Cada uno se inserta con vigente_desde = hoy;
-    el precio viejo NUNCA se pisa. Si ya existe una fila de HOY para ese
-    mismo (articulo_id, cliente_id) -- segunda edición el mismo día -- se
-    actualiza esa en vez de duplicarla.
+    cambió en el formulario. El precio es de la FICHA (la clave de venta):
+    dos fichas del mismo artículo y cliente tienen precios distintos.
+
+    El articulo_id de la fila NO viaja desde la pantalla: sale de la
+    propia ficha dentro del INSERT, así no puede quedar apuntando a un
+    artículo que no es el de su ficha.
+
+    Cada uno se inserta con vigente_desde = hoy; el precio viejo NUNCA se
+    pisa. Si ya existe una fila de HOY para esa misma ficha -- segunda
+    edición el mismo día -- se actualiza esa en vez de duplicarla.
 
     foto_ruta es la ruta del archivo (foto/PDF/Excel) del bucket "comandas"
     del que salieron estos precios (ver "Cargar Foto Precios") — None para
@@ -1189,14 +1204,17 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
             for cambio in cambios:
                 cursor.execute(
                     """
-                    INSERT INTO precios_venta_historial (articulo_id, cliente_id, precio, vigente_desde, foto_ruta)
-                    VALUES (%s, %s, %s, CURRENT_DATE, %s)
-                    ON CONFLICT (articulo_id, cliente_id, vigente_desde)
+                    INSERT INTO precios_venta_historial
+                        (ficha_id, articulo_id, cliente_id, precio, vigente_desde, foto_ruta)
+                    SELECT fl.id, fl.articulo_id, %s, %s, CURRENT_DATE, %s
+                    FROM fichas_logistica fl
+                    WHERE fl.id = %s AND fl.cliente_id = %s
+                    ON CONFLICT (ficha_id, vigente_desde)
                     DO UPDATE SET
                         precio = EXCLUDED.precio,
                         foto_ruta = COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)
                     """,
-                    (cambio["articulo_id"], cliente_id, cambio["precio"], foto_ruta),
+                    (cliente_id, cambio["precio"], foto_ruta, cambio["ficha_id"], cliente_id),
                 )
         conexion.commit()
     finally:

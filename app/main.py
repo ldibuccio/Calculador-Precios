@@ -4473,6 +4473,19 @@ def _respuesta_listado_generado(cliente: dict, cambios: list[dict], tipo: str) -
     )
 
 
+def _ficha_por_articulo(fichas: list[dict]) -> dict[int, int]:
+    """{articulo_id: ficha_id} — el único punto donde una pantalla que habla de artículos toca la clave de venta.
+
+    El precio es de la FICHA (ver guardar_precios_cliente). Las pantallas
+    de precios todavía identifican cada renglón por su artículo, y esto
+    traduce al guardar. Hoy la correspondencia es 1 a 1 porque
+    fichas_logistica tiene unique (articulo_id, cliente_id); cuando ese
+    unique se saque (Parte 3), las pantallas pasan a mandar la ficha y
+    esta función desaparece.
+    """
+    return {ficha["articulo_id"]: ficha["id"] for ficha in fichas}
+
+
 def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
     """Valida cada precio tipeado (número positivo) y arma las filas para calcular_cambios_de_precios."""
     filas_validas = []
@@ -4489,7 +4502,7 @@ def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
                 return f'El precio de "{fila["articulo_nombre"]}" tiene que ser mayor a 0.', []
 
         filas_validas.append(
-            {"articulo_id": fila["articulo_id"], "precio_original": precio_original, "precio_nuevo": precio_nuevo}
+            {"ficha_id": fila["ficha_id"], "precio_original": precio_original, "precio_nuevo": precio_nuevo}
         )
     return None, filas_validas
 
@@ -4624,10 +4637,15 @@ def _guardar_pendientes_carga_manual(form) -> tuple[dict, list[dict]]:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    ficha_por_articulo = _ficha_por_articulo(fichas)
 
     filas_crudas = _leer_pendientes_del_form(form)
     for fila in filas_crudas:
         fila["articulo_nombre"] = nombre_por_articulo.get(fila["articulo_id"], f"Artículo #{fila['articulo_id']}")
+        fila["ficha_id"] = ficha_por_articulo.get(fila["articulo_id"])
+    # Un artículo sin ficha de este cliente no tiene precio que cargar
+    # (el precio cuelga de la ficha): se ignora en vez de romper.
+    filas_crudas = [fila for fila in filas_crudas if fila["ficha_id"] is not None]
 
     error, filas_para_diff = _validar_precios(filas_crudas)
     if error:
@@ -4945,6 +4963,7 @@ def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     nombre_por_articulo = {f["articulo_id"]: f["articulo_nombre"] for f in fichas}
+    ficha_por_articulo = _ficha_por_articulo(fichas)
 
     filas_crudas = []
     for indice in range(cantidad_renglones):
@@ -4957,9 +4976,13 @@ def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
             articulo_id = int(articulo_id_texto)
         except ValueError:
             continue
+        ficha_id = ficha_por_articulo.get(articulo_id)
+        if ficha_id is None:
+            continue  # sin ficha de este cliente no hay precio que cargar
         filas_crudas.append(
             {
                 "articulo_id": articulo_id,
+                "ficha_id": ficha_id,
                 "articulo_nombre": nombre_por_articulo.get(articulo_id, f"Artículo #{articulo_id}"),
                 "original_texto": str(form.get(f"item_{indice}_precio_original", "")).strip(),
                 "nuevo_texto": str(form.get(f"item_{indice}_precio_nuevo", "")).strip(),

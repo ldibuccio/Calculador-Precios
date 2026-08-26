@@ -1568,32 +1568,38 @@ def test_listar_precios_vigentes_por_cliente_trae_vigente_desde():
     # La exportación a PDF/Excel necesita vigente_desde para saber si un
     # precio es "nuevo" (cambió justo en la fecha exportada).
     conexion, cursor = _conexion_falsa(
-        filas_fetchall=[(1, 500.0, date(2026, 8, 16)), (2, 350.0, date(2026, 8, 10))]
+        filas_fetchall=[(901, 1, 500.0, date(2026, 8, 16)), (902, 2, 350.0, date(2026, 8, 10))]
     )
-    cursor.description = [("articulo_id",), ("precio",), ("vigente_desde",)]
+    cursor.description = [("ficha_id",), ("articulo_id",), ("precio",), ("vigente_desde",)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = listar_precios_vigentes_por_cliente(1, date(2026, 8, 16))
 
     assert resultado == [
-        {"articulo_id": 1, "precio": 500.0, "vigente_desde": date(2026, 8, 16)},
-        {"articulo_id": 2, "precio": 350.0, "vigente_desde": date(2026, 8, 10)},
+        {"ficha_id": 901, "articulo_id": 1, "precio": 500.0, "vigente_desde": date(2026, 8, 16)},
+        {"ficha_id": 902, "articulo_id": 2, "precio": 350.0, "vigente_desde": date(2026, 8, 10)},
     ]
     consulta = cursor.execute.call_args[0][0]
     assert "vigente_desde" in consulta
+    # El precio es de la FICHA, no del artículo: es lo que permite que dos
+    # fichas del mismo artículo y cliente tengan precios distintos.
+    assert "DISTINCT ON (ficha_id)" in consulta
+    # Un precio huérfano (su ficha se borró o cambió de artículo) no se lee.
+    assert "ficha_id IS NOT NULL" in consulta
 
 
 def test_listar_precios_anteriores_por_cliente_trae_la_fila_previa_a_la_vigente():
     # Para la columna "Precio anterior" del Excel: la fila #2 (orden = 2 en
     # el ROW_NUMBER, la que regía justo antes de la vigente), no la #1.
-    conexion, cursor = _conexion_falsa(filas_fetchall=[(2, 350.0)])
-    cursor.description = [("articulo_id",), ("precio",)]
+    conexion, cursor = _conexion_falsa(filas_fetchall=[(902, 2, 350.0)])
+    cursor.description = [("ficha_id",), ("articulo_id",), ("precio",)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = listar_precios_anteriores_por_cliente(1, date(2026, 8, 16))
 
-    assert resultado == [{"articulo_id": 2, "precio": 350.0}]
+    assert resultado == [{"ficha_id": 902, "articulo_id": 2, "precio": 350.0}]
     consulta, parametros = cursor.execute.call_args[0]
+    assert "PARTITION BY ficha_id" in consulta
     assert "ROW_NUMBER()" in consulta
     assert "WHERE orden = 2" in consulta
     assert parametros == (1, date(2026, 8, 16))
@@ -1603,7 +1609,7 @@ def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viej
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_precios_cliente(1, [{"articulo_id": 7, "precio": 550.0}, {"articulo_id": 3, "precio": 900.0}])
+        guardar_precios_cliente(1, [{"ficha_id": 907, "precio": 550.0}, {"ficha_id": 903, "precio": 900.0}])
 
     assert cursor.execute.call_count == 2
     for llamada in cursor.execute.call_args_list:
@@ -1611,10 +1617,14 @@ def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viej
         assert "INSERT INTO precios_venta_historial" in consulta
         assert "vigente_desde" in consulta
         assert "CURRENT_DATE" in consulta
-        assert "ON CONFLICT (articulo_id, cliente_id, vigente_desde)" in consulta
+        # El precio cuelga de la FICHA (dos fichas del mismo artículo y
+        # cliente tienen precios distintos), y el artículo NO viaja desde
+        # la pantalla: sale de la propia ficha adentro del INSERT.
+        assert "ON CONFLICT (ficha_id, vigente_desde)" in consulta
+        assert "SELECT fl.id, fl.articulo_id" in consulta
         assert "DO UPDATE" in consulta
-    assert cursor.execute.call_args_list[0].args[1] == (7, 1, 550.0, None)
-    assert cursor.execute.call_args_list[1].args[1] == (3, 1, 900.0, None)
+    assert cursor.execute.call_args_list[0].args[1] == (1, 550.0, None, 907, 1)
+    assert cursor.execute.call_args_list[1].args[1] == (1, 900.0, None, 903, 1)
     conexion.commit.assert_called_once()
 
 
@@ -1632,12 +1642,12 @@ def test_guardar_precios_cliente_con_foto_ruta_la_guarda_en_cada_fila():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_precios_cliente(1, [{"articulo_id": 7, "precio": 550.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+        guardar_precios_cliente(1, [{"ficha_id": 907, "precio": 550.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
 
     consulta, parametros = cursor.execute.call_args_list[0].args
     assert "foto_ruta" in consulta
     assert "COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)" in consulta
-    assert parametros == (7, 1, 550.0, "2026-08-16/dia-123-abc.jpg")
+    assert parametros == (1, 550.0, "2026-08-16/dia-123-abc.jpg", 907, 1)
 
 
 def test_obtener_borrador_disponible_devuelve_la_fila():

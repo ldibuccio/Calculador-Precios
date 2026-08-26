@@ -6378,13 +6378,13 @@ def test_ver_precios_guardado_cero_y_listado_muestra_mensaje_igual():
 # --- /precios/consultar: consulta de precios vigentes (por cliente+fecha, o cliente+articulo+fecha) ---
 
 FICHAS_PRECIOS_DE_PRUEBA = [
-    {"id": 1, "articulo_id": 1, "articulo_nombre": "Tomate Cherry"},
-    {"id": 2, "articulo_id": 2, "articulo_nombre": "Mango"},
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Tomate Cherry"},
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Mango"},
 ]
 
 PRECIOS_VIGENTES_DE_PRUEBA = [
-    {"articulo_id": 1, "precio": 500.0},
-    {"articulo_id": 2, "precio": 350.0},
+    {"ficha_id": 901, "articulo_id": 1, "precio": 500.0},
+    {"ficha_id": 902, "articulo_id": 2, "precio": 350.0},
 ]
 
 
@@ -6644,8 +6644,8 @@ def _texto_sin_leyenda_de_respuesta(pdf_bytes: bytes) -> str:
 
 
 FICHAS_EXPORTACION_DE_PRUEBA = [
-    {"id": 1, "articulo_id": 1, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
-    {"id": 2, "articulo_id": 2, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
 ]
 
 ARTICULOS_EXPORTACION_DE_PRUEBA = [
@@ -6656,8 +6656,8 @@ ARTICULOS_EXPORTACION_DE_PRUEBA = [
 
 def _precios_vigentes_exportacion(vigente_desde_articulo_1):
     return [
-        {"articulo_id": 1, "precio": 500.0, "vigente_desde": vigente_desde_articulo_1},
-        {"articulo_id": 2, "precio": 350.0, "vigente_desde": date(2026, 1, 1)},
+        {"ficha_id": 901, "articulo_id": 1, "precio": 500.0, "vigente_desde": vigente_desde_articulo_1},
+        {"ficha_id": 902, "articulo_id": 2, "precio": 350.0, "vigente_desde": date(2026, 1, 1)},
     ]
 
 
@@ -6743,9 +6743,9 @@ def test_exportar_precios_pdf_separa_por_grupo():
 FICHAS_EXPORTACION_NOMBRE_CLIENTE_DE_PRUEBA = [
     # Con nombre_cliente cargado: la lista exportada tiene que usar ESE
     # nombre, no el interno del catálogo (articulo_nombre).
-    {"id": 1, "articulo_id": 1, "articulo_nombre": "Mzn Red", "unidad_venta": "kilo", "nombre_cliente": "Manzana Red Elegida"},
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Mzn Red", "unidad_venta": "kilo", "nombre_cliente": "Manzana Red Elegida"},
     # Sin nombre_cliente cargado: se cae al nombre del catálogo.
-    {"id": 2, "articulo_id": 2, "articulo_nombre": "Anana", "unidad_venta": "unidad", "nombre_cliente": None},
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Anana", "unidad_venta": "unidad", "nombre_cliente": None},
 ]
 
 
@@ -6825,7 +6825,7 @@ def test_exportar_precios_excel_usa_el_formato_de_planilla_del_dueno():
         ),
         # Mango (articulo_id 2) tenía $300 antes; Tomate Cherry (1) nunca
         # tuvo un precio previo cargado.
-        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[{"articulo_id": 2, "precio": 300.0}]),
+        patch("app.main.listar_precios_anteriores_por_cliente", return_value=[{"ficha_id": 902, "articulo_id": 2, "precio": 300.0}]),
     ):
         respuesta = cliente.get(f"/precios/consultar/exportar-excel?cliente_id=1&fecha={HOY_DE_PRUEBA.isoformat()}")
 
@@ -6873,8 +6873,8 @@ def test_exportar_precios_excel_cliente_inexistente_da_404():
 
 def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo():
     precios_tras_guardar = [
-        {"articulo_id": 1, "precio": 500.0, "vigente_desde": date(2026, 1, 1)},
-        {"articulo_id": 2, "precio": 400.0, "vigente_desde": HOY_DE_PRUEBA},
+        {"ficha_id": 901, "articulo_id": 1, "precio": 500.0, "vigente_desde": date(2026, 1, 1)},
+        {"ficha_id": 902, "articulo_id": 2, "precio": 400.0, "vigente_desde": HOY_DE_PRUEBA},
     ]
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -6895,7 +6895,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo(
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"%PDF")
     assert respuesta.headers["x-cantidad-guardada"] == "1"
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 2, "precio": 400.0}])
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 400.0}])
 
     # El archivo generado tiene que reflejar lo recién guardado: Mango
     # (el que se acaba de pactar) resaltado, Tomate Cherry (sin tocar) no.
@@ -7232,7 +7232,7 @@ def test_cargar_precios_guarda_los_pendientes_y_redirige_con_cantidad():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=1"
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 2, "precio": 380.0}])
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 380.0}])
 
 
 def test_cargar_precios_varios_pendientes_se_guardan_todos_juntos():
@@ -7256,8 +7256,8 @@ def test_cargar_precios_varios_pendientes_se_guardan_todos_juntos():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=2"
     cambios_guardados = mock_guardar.call_args[0][1]
-    assert {"articulo_id": 1, "precio": 520.0} in cambios_guardados
-    assert {"articulo_id": 2, "precio": 380.0} in cambios_guardados
+    assert {"ficha_id": 901, "precio": 520.0} in cambios_guardados
+    assert {"ficha_id": 902, "precio": 380.0} in cambios_guardados
 
 
 def test_cargar_precios_articulo_sin_precio_previo_genera_alta():
@@ -7273,7 +7273,7 @@ def test_cargar_precios_articulo_sin_precio_previo_genera_alta():
         )
 
     assert respuesta.status_code == 303
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 2, "precio": 380.0}])
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 380.0}])
 
 
 def test_cargar_precios_pendiente_igual_al_vigente_no_genera_fila():
@@ -7567,7 +7567,7 @@ def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=1"
     mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg")
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 1, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
 
 
 def test_confirmar_carga_foto_precios_renglon_descartado_no_se_guarda():
@@ -7619,7 +7619,7 @@ def test_confirmar_carga_foto_precios_error_al_subir_archivo_guarda_igual_sin_ar
         )
 
     assert respuesta.status_code == 303
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 1, "precio": 520.0}], foto_ruta=None)
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta=None)
 
 
 def test_confirmar_carga_foto_precios_pdf_sube_con_extension_y_content_type_correctos():
@@ -7665,7 +7665,7 @@ def test_confirmar_carga_foto_precios_cliente_inexistente_da_404():
 
 
 def test_guardar_y_exportar_precios_cargar_foto_pdf_guarda_y_devuelve_archivo():
-    precios_tras_guardar = [{"articulo_id": 1, "precio": 520.0, "vigente_desde": HOY_DE_PRUEBA}]
+    precios_tras_guardar = [{"ficha_id": 901, "articulo_id": 1, "precio": 520.0, "vigente_desde": HOY_DE_PRUEBA}]
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -7692,7 +7692,7 @@ def test_guardar_y_exportar_precios_cargar_foto_pdf_guarda_y_devuelve_archivo():
     assert respuesta.headers["content-type"] == "application/pdf"
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.headers["x-cantidad-guardada"] == "1"
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 1, "precio": 520.0}], foto_ruta=None)
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta=None)
 
     texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
     assert "Tomate Cherry" in texto
@@ -7731,7 +7731,7 @@ def test_guardar_y_exportar_precios_cargar_foto_excel_sube_el_archivo_y_devuelve
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.headers["x-cantidad-guardada"] == "1"
     mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg")
-    mock_guardar.assert_called_once_with(1, [{"articulo_id": 1, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
 
 
 def test_guardar_y_exportar_precios_cargar_foto_pdf_cliente_invalido_da_400():
@@ -9773,7 +9773,7 @@ def test_guardar_y_exportar_disponible_excel_error_de_base_da_500():
 OBJETIVOS_DE_PRUEBA = {
     "articulos": [
         {
-            "articulo_id": 1,
+            "id": 901, "articulo_id": 1,
             "articulo_nombre": "Manzana Roja",
             "unidad_venta": "kilo",
             "fecha_ultima_compra": date(2026, 8, 10),
@@ -13599,7 +13599,7 @@ def _patches_rentabilidad():
     # lista $100, denominador de tasas 0.8 (neta $80), costo $60 + $4 de
     # envase por kilo.
     fila_margenes = {
-        "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
+        "id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
         "precio_vigente": 100.0, "costo_actual": 60.0,
         "costo_envase_unidad_venta": 4.0, "denominador_tasas": 0.8,
         "utilidad_aproximada": 0.2666, "precio_sugerido": None, "fresco": True,
@@ -15190,7 +15190,7 @@ def test_reproceso_pide_el_cliente_primero_y_la_ayuda_es_solo_de_su_ficha():
     # El cliente va PRIMERO (la primera se arma para alguien) y la ayuda
     # de kilaje muestra SOLO la ficha de ese cliente — todas juntas no
     # servían (pedido del dueño 25/08).
-    fichas = [{"articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
+    fichas = [{"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
     respuesta = _get_reproceso(
         articulos_stock=[{"articulo_id": 1, "nombre": "Tomate Perita", "stock": 30.0}],
         fichas=fichas,
@@ -15389,7 +15389,7 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
          "tipo_lote": "reproceso", "origen_id": 7, "fecha_lote": date(2026, 8, 22),
          "detalle": "Día", "motivo": None, "cantidad": 40.0, "cliente_lote_id": 1},
     ]
-    fichas_dia = [{"articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
+    fichas_dia = [{"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
     with (
         patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),

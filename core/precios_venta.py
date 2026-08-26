@@ -13,13 +13,15 @@ def calcular_cambios_de_precios(filas: list[dict]) -> list[dict]:
     """Compara cada precio tipeado contra su valor original (vigente al cargar la pantalla).
 
     Cada fila de "filas" trae:
-      - "articulo_id": int.
+      - "ficha_id": int — la clave de VENTA (el precio es de la ficha,
+        no del artículo: dos fichas del mismo artículo y cliente tienen
+        precios distintos).
       - "precio_original": el precio vigente tal cual estaba al cargar la
         pantalla, o None si el artículo no tenía precio cargado todavía.
       - "precio_nuevo": lo que quedó tipeado al guardar, o None si el
         campo quedó vacío.
 
-    Devuelve una lista de {"articulo_id", "precio"} — las filas que hay
+    Devuelve una lista de {"ficha_id", "precio"} — las filas que hay
     que INSERTAR con vigente_desde = hoy (esa fecha la agrega quien
     escriba a la base, acá no se sabe la fecha). Si nada cambió, devuelve
     lista vacía.
@@ -41,5 +43,5 @@ def calcular_cambios_de_precios(filas: list[dict]) -> list[dict]:
             continue
         if precio_nuevo == fila.get("precio_original"):
             continue
-        cambios.append({"articulo_id": fila["articulo_id"], "precio": precio_nuevo})
+        cambios.append({"ficha_id": fila["ficha_id"], "precio": precio_nuevo})
     return cambios
