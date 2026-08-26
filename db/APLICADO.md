@@ -65,11 +65,19 @@ bases estén marcadas.
 | `agregar_costos_fijos.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
 | `agregar_cliente_reproceso.sql` | ✅ 2026-08-26 (verificado) | ✅ 2026-08-26 (verificado) |
 | `agregar_destino_rechazo_y_merma_por_lote.sql` | ✅ 2026-08-26 (verificado: 4 columnas creadas) | ✅ 2026-08-26 (verificado: 4 columnas creadas) |
+| `agregar_ficha_a_precios_venta.sql` | ✅ 2026-08-26 (verificado: 54 precios con ficha, 0 huérfanos) | ✅ 2026-08-26 (verificado: 38 precios con ficha, 0 huérfanos) |
 
 ## Deuda pendiente de limpieza
 
-Sin deudas pendientes. (La histórica `compras.foto_ruta` se saldó el
-2026-08-25 con `drop_foto_ruta_compras.sql`, corrida en las dos bases.)
+- `precios_venta_historial`: el índice viejo por `(cliente_id,
+  articulo_id, vigente_desde)` quedó sin uso desde que el precio
+  cuelga de la ficha (`agregar_ficha_a_precios_venta.sql`). Se dropea
+  en la limpieza, cuando las tres partes del cambio estén andando —
+  la columna `articulo_id` en cambio SE QUEDA: la usa el chequeo de
+  Disponibles.
+
+(La histórica `compras.foto_ruta` se saldó el 2026-08-25 con
+`drop_foto_ruta_compras.sql`, corrida en las dos bases.)
 
 ## Pasos manuales que NO son SQL (por base)
 
