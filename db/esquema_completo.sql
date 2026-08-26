@@ -17,8 +17,11 @@
 --     (recepciones, pedidos_supermercado, precios_dia, parametros_historial,
 --     aprendizaje_proveedores, resultados, conversion_articulos_cliente).
 --     En Frutamax existen por historia; una base nueva no las necesita.
---   - Ningún dato: el catálogo inicial se copia desde la base de la otra
---     empresa con scripts/copiar_catalogo_empresa.py.
+--   - Ningún dato de ninguna empresa: el catálogo inicial se copia desde
+--     la base de la otra con scripts/copiar_catalogo_empresa.py. La ÚNICA
+--     excepción es el plan de cuentas de Costos Fijos (sección 18): es un
+--     esqueleto genérico, sin un solo importe, y sin él esa pantalla
+--     arranca vacía y no se puede cargar nada.
 --   - El bucket "comandas" de Storage: eso NO es SQL — se crea a mano en
 --     el proyecto nuevo de Supabase (Storage -> New bucket -> "comandas",
 --     privado), igual que se hizo en Frutamax.
@@ -33,6 +36,23 @@
 --
 -- Después de correr esto, verificar contra la base de Frutamax con
 -- db/verificar_esquema.sql (la consulta corta en las dos bases, comparar).
+-- Ojo: esa consulta mira 13 tablas, no todas — las de las secciones 13 a 18
+-- (pedidos, casilla, stock, reprocesos, costos fijos) quedan afuera.
+--
+-- ----------------------------------------------------------------------------
+-- MANTENIMIENTO — esto es lo que se olvida y hace que el archivo se pudra
+-- ----------------------------------------------------------------------------
+-- Este archivo tiene que reflejar SIEMPRE el estado final de Frutamax. Cada
+-- vez que se agrega una migración a db/ y se corre en las dos bases, hay que
+-- reflejarla acá EN EL MISMO COMMIT que la marca de APLICADO.md. Si no, una
+-- empresa nueva arranca con el esquema viejo y roto — que es exactamente lo
+-- que pasó entre el 2026-08-19 y el 2026-08-26, cuando quedaron afuera seis
+-- subsistemas enteros.
+--
+-- Cómo se comprueba, sin tocar ninguna base real (así se saldó aquella
+-- deuda): en un Postgres local, crear una base con este archivo y otra con
+-- este archivo + las migraciones que falten, y comparar los dos pg_dump -s.
+-- Tienen que salir idénticos.
 -- ============================================================================
 
 begin;
@@ -141,12 +161,31 @@ create table fichas_logistica (
     creado_en         timestamptz not null default now(),
     actualizado_en    timestamptz not null default now(),
     nombre_cliente    text,
-    codigo_cliente    text,
-    unique (articulo_id, cliente_id)
+    codigo_cliente    text
 );
 
 comment on table fichas_logistica is 'Ficha de logistica por articulo y cliente: unidad de venta, que envase usa (fijo o variable), contenido solicitado, y el alias con el que ese cliente conoce al articulo (nombre_cliente/codigo_cliente).';
 comment on column fichas_logistica.envase_variable is 'Si es true, el envase de la ficha es solo referencia/default: se decide por compra. Si es false, el envase es fijo.';
+
+-- Un cliente PUEDE tener varias fichas del mismo artículo: Banana Bolivia y
+-- Banana Ecuador salen del mismo stock de Banana, con nombre, kilaje, envase
+-- y precio propios. Por eso acá no hay unique (articulo_id, cliente_id) —
+-- lo hubo hasta permitir_varias_fichas_por_articulo.sql. El índice va con el
+-- cliente primero: sirve igual para "la ficha de este cliente para este
+-- artículo" y para "todas las fichas de este cliente", que es lo más pedido.
+create index fichas_logistica_cliente_articulo_idx
+    on fichas_logistica (cliente_id, articulo_id);
+
+-- La contracara de sacar esa pared: con varias fichas por artículo, el código
+-- del cliente es LO que decide a qué ficha va cada renglón del pedido.
+-- Normalizado (lower + trim) porque el matcheo también normaliza. Las fichas
+-- sin código quedan afuera: no tener código es normal (se matchea por nombre).
+create unique index fichas_logistica_codigo_cliente_unico
+    on fichas_logistica (cliente_id, lower(trim(codigo_cliente)))
+    where codigo_cliente is not null and trim(codigo_cliente) <> '';
+
+comment on index fichas_logistica_codigo_cliente_unico is
+    'Dos fichas del mismo cliente no pueden compartir el código: desde que un cliente puede tener varias fichas del mismo artículo, el código es lo que decide a cuál de ellas va el renglón del pedido. Repetido, el sistema elegiría una en silencio.';
 
 -- Bitácora append-only de fichas: foto completa en cada alta/edición/borrado,
 -- escrita por la app en la misma transacción. Nada la lee para calcular.
@@ -265,14 +304,21 @@ create table precios_venta_historial (
     vigente_desde   date not null,
     creado_en       timestamptz not null default now(),
     foto_ruta       text,
-    unique (articulo_id, cliente_id, vigente_desde)
+    ficha_id        bigint references fichas_logistica (id) on delete set null,
+    constraint precios_venta_historial_ficha_vigente_key unique (ficha_id, vigente_desde)
 );
 
 comment on table precios_venta_historial is 'Precio de venta por artículo y cliente, con historial por fecha de vigencia. El vigente es la fila con vigente_desde más reciente que ya llegó.';
 comment on column precios_venta_historial.foto_ruta is 'Ruta del archivo (foto/PDF/Excel) del que salió este precio, en el bucket privado "comandas" de Supabase Storage (NULL si se cargó a mano, o si la subida falló).';
+comment on column precios_venta_historial.ficha_id is 'La ficha a la que pertenece este precio: la clave de VENTA. Dos fichas del mismo artículo y cliente (Banana Bolivia y Banana Ecuador) tienen precios distintos porque son fichas distintas. NULL = precio huérfano (su ficha se borró o cambió de artículo): queda de historia y no se lee.';
 
-create index precios_venta_historial_vigente_idx
-    on precios_venta_historial (cliente_id, articulo_id, vigente_desde desc);
+-- La clave de venta es la FICHA, no el artículo. articulo_id se queda igual:
+-- lo usa el chequeo de Disponibles ("¿este artículo tiene precio cargado?") y
+-- es la referencia histórica de a qué artículo apuntaba el precio.
+-- ON DELETE SET NULL a propósito: borrar una ficha (o cambiarle el artículo,
+-- que la borra y crea otra) deja el precio huérfano, con su historia intacta.
+create index precios_venta_historial_ficha_vigente_idx
+    on precios_venta_historial (cliente_id, ficha_id, vigente_desde desc);
 
 -- ----------------------------------------------------------------------------
 -- 9. DISPONIBLES — planilla de stock por cliente (cabecera + detalle)
@@ -379,7 +425,7 @@ create table vacios_recibidos (
 
 comment on table vacios_recibidos is 'Entrada: un cliente trae cajones vacíos al puesto. La seña se le devuelve después (ver sena_pagada_el/sena_vale_el/sena_anulada_el).';
 comment on column vacios_recibidos.sena_pagada_el is 'La seña se le pagó al cliente (fecha). Uno de los tres cierres posibles del pendiente de pago; los otros dos son sena_vale_el y sena_anulada_el. NULL en los tres = seña pendiente.';
-comment on column vacios_recibidos.sena_vale_el is 'El pendiente se cerró con un vale (fecha). Por ahora es solo el dato "se cerró con vale" — sin numeración, cobro ni vencimiento.';
+comment on column vacios_recibidos.sena_vale_el is 'El pendiente se cerró con un vale (fecha). Por ahora es solo el dato "se hizo vale" — sin numeración, cobro ni vencimiento.';
 comment on column vacios_recibidos.sena_anulada_el is 'La seña se anuló: no se paga, decidido (fecha). NO anula el movimiento — los cajones entraron y siguen en el stock; para una entrada errónea está el Anular de Movimientos.';
 comment on column vacios_recibidos.anulado_el is 'NULL = movimiento vigente. Los movimientos nunca se borran físicamente: anular deja el registro visible como corrección y el stock lo excluye.';
 
@@ -468,10 +514,12 @@ create table pedidos (
     mail_message_id        text,
     reemplaza_a_pedido_id  bigint references pedidos (id),
     creado_en              timestamptz not null default now(),
-    anulado_el             timestamptz
+    anulado_el             timestamptz,
+    armado_cerrado_el      timestamptz
 );
 
 comment on table pedidos is 'Cabecera del pedido diario de un cliente. Demanda pura: sin FK contra compras. Un pedido corregido es una fila nueva con reemplaza_a_pedido_id; el viejo se anula (anulado_el), nunca se pisa.';
+comment on column pedidos.armado_cerrado_el is 'Cierre explícito del armado ("Terminar pedido"). NULL = abierto; se puede reabrir.';
 
 create unique index pedidos_mail_message_id_unico
     on pedidos (mail_message_id) where mail_message_id is not null;
@@ -498,14 +546,27 @@ create table pedidos_renglones (
     cantidad          numeric not null default 0,
     armado_el         timestamptz,
     cantidad_armada   numeric,
-    creado_en         timestamptz not null default now()
+    creado_en         timestamptz not null default now(),
+    kilos_enviados    numeric,
+    anulado_el        timestamptz,
+    ficha_id          bigint references fichas_logistica (id) on delete set null,
+    -- Sin artículo no hay ficha: un renglón sin identificar no puede traer
+    -- una ficha colgada (y al revés sí: identificado sin ficha es posible).
+    constraint pedidos_renglones_ficha_solo_identificados
+        check (articulo_id is not null or ficha_id is null)
 );
 
 comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. articulo_id NULL = sin identificar, con el texto crudo conservado. armado_el: tilde de armado del deposito (= termine con este renglon); cantidad_armada: cuantos bultos se armaron realmente si fue menos que lo pedido (NULL = completo).';
 
+comment on column pedidos_renglones.kilos_enviados is 'Kilos REALES con los que el depósito mandó el renglón (se cargan al tildar; editables). NULL = sin armar. Es el número que se factura.';
+comment on column pedidos_renglones.anulado_el is 'Renglón que no se va a armar: anulado (baja lógica), fuera del progreso, nunca borrado.';
+comment on column pedidos_renglones.ficha_id is 'La ficha con la que el cliente pidió este renglón: la clave de VENTA (precio, kilaje, envase y el nombre que ve el que arma). Sale del código del cliente al matchear. articulo_id sigue al lado como clave de COMPRA — es lo que descuenta stock, y dos fichas del mismo artículo descuentan del mismo stock. NULL = renglón sin identificar, o ficha borrada después.';
+
 create index pedidos_renglones_pedido_idx on pedidos_renglones (pedido_id);
 create index pedidos_renglones_sin_identificar_idx
     on pedidos_renglones (pedido_id) where articulo_id is null;
+create index pedidos_renglones_ficha_idx
+    on pedidos_renglones (ficha_id) where ficha_id is not null;
 
 create table fotos_pedido (
     id         bigint generated always as identity primary key,
@@ -534,10 +595,20 @@ create table casillas_pedidos (
     ultimo_error          text,
     ultimo_error_el       timestamptz,
     creado_en             timestamptz not null default now(),
+    revision_desde        time not null default '12:00',
+    revision_hasta        time not null default '15:00',
+    revision_cada_minutos integer not null default 15
+                          constraint casillas_revision_cada_minutos_check
+                          check (revision_cada_minutos between 5 and 240),
+    ultima_revision_automatica_el timestamptz,
     unique (direccion, cliente_id)
 );
 
 comment on table casillas_pedidos is 'Configuración de lectura de la casilla de pedidos: una fila por casilla+cliente con sus remitentes permitidos. Solo lectura estricta del buzón; la clave IMAP vive en la variable de Railway CLAVE_CASILLA_PEDIDOS, jamás acá.';
+comment on column casillas_pedidos.revision_desde is 'Hora argentina desde la que la revisión automática chequea el buzón cada día.';
+comment on column casillas_pedidos.revision_hasta is 'Hora argentina de cierre de la ventana de revisión automática (no inclusive).';
+comment on column casillas_pedidos.revision_cada_minutos is 'Cada cuántos minutos se chequea el buzón dentro de la ventana (5 a 240).';
+comment on column casillas_pedidos.ultima_revision_automatica_el is 'Última revisión EXITOSA hecha por el tick automático (el botón manual no la toca). La alerta de Auditoría mira SOLO esta: un tick muerto se detecta aunque el dueño revise a mano todos los días.';
 
 create table mails_pedido (
     id            bigint generated always as identity primary key,
@@ -563,5 +634,326 @@ comment on table mails_pedido is 'Un registro por mail detectado en la casilla d
 create index mails_pedido_pendientes_idx
     on mails_pedido (creado_en) where estado = 'pendiente';
 create index mails_pedido_casilla_idx on mails_pedido (casilla_id);
+
+-- El latido del bucle de revisión automática. Una sola fila, id = 1.
+create table revision_tick (
+    id              integer primary key check (id = 1),
+    ultimo_tick_el  timestamptz not null
+);
+
+comment on table revision_tick is
+    'El latido del bucle de revisión automática (una sola fila, id = 1): se actualiza en cada tick, aunque no toque revisar nada. Si quedó viejo, el bucle no está corriendo — visible en Sistema sin deducir nada de logs.';
+
+-- ----------------------------------------------------------------------------
+-- 15. CONDICIONES DE PEDIDO — qué días se espera pedido de cada cliente
+-- ----------------------------------------------------------------------------
+create table clientes_condiciones_pedido (
+    cliente_id      bigint primary key references clientes (id),
+    -- Días de la semana en que se espera pedido, separados por coma
+    -- (1=lunes ... 7=domingo), ej. '1,2,3,4,5,6'. NULL = cliente
+    -- esporádico: la alerta de pedidos faltantes no aplica y no aparece.
+    dias_esperados  text,
+    actualizado_en  timestamptz not null default now()
+);
+
+comment on table clientes_condiciones_pedido is
+    'Condiciones de pedido por cliente (hoy: solo los días esperados, para la alerta de faltantes). Solo condiciones que dirigen comportamiento: lo que el dato mismo ya dice no se duplica en flags.';
+
+create table dias_sin_pedido (
+    id             bigint generated always as identity primary key,
+    cliente_id     bigint not null references clientes (id),
+    fecha          date not null,
+    -- Por qué no hubo pedido ese día (feriado, el cliente no pidió). Opcional.
+    motivo         text,
+    registrado_en  timestamptz not null default now(),
+    unique (cliente_id, fecha)
+);
+
+comment on table dias_sin_pedido is
+    'Cierre manual de un día esperado SIN pedido: la alerta de faltantes deja de contarlo. Si después aparece un pedido para esa fecha, el pedido manda y la marca queda de registro sin efecto. Marca administrativa: se puede deshacer (borrar) mientras no haya pedido.';
+
+-- ----------------------------------------------------------------------------
+-- 16. STOCK DE DEPÓSITO — lo que no sale de compras ni de pedidos
+-- ----------------------------------------------------------------------------
+-- El stock por artículo NUNCA se guarda: se calcula siempre (compras
+-- recepcionadas + estos movimientos − renglones armados − reprocesos).
+create table movimientos_stock (
+    id bigint generated always as identity primary key,
+    articulo_id bigint not null references articulos (id),
+    tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo')),
+    cantidad numeric not null check (cantidad <> 0),
+    motivo text not null check (btrim(motivo) <> ''),
+    cliente_id bigint references clientes (id),
+    fecha_operacion date not null,
+    stock_sistema numeric not null,
+    creado_en timestamptz not null default now(),
+    anulado_el timestamptz,
+    -- Reingreso por rechazo: de qué renglón armado volvió y a qué costo.
+    pedido_renglon_id bigint references pedidos_renglones (id),
+    costo_por_bulto numeric check (costo_por_bulto is null or costo_por_bulto >= 0),
+    -- Reingreso por rechazo: qué se hizo con lo que volvió.
+    destino_rechazo text
+        check (destino_rechazo is null or destino_rechazo in ('stock', 'segunda', 'reproceso')),
+    bultos_segunda numeric check (bultos_segunda is null or bultos_segunda > 0),
+    -- Merma dirigida a un lote puntual (NULL = FIFO, el default).
+    lote_tipo text
+        check (lote_tipo is null or lote_tipo in ('guia', 'reproceso', 'reingreso_rechazo', 'ajuste')),
+    lote_origen_id bigint,
+    constraint movimientos_stock_merma_negativa
+        check (tipo <> 'merma' or cantidad < 0),
+    constraint movimientos_stock_reingreso_positivo
+        check (tipo <> 'reingreso_rechazo' or cantidad > 0),
+    constraint movimientos_stock_cliente_solo_reingreso
+        check (tipo = 'reingreso_rechazo' or cliente_id is null),
+    constraint movimientos_stock_vinculo_solo_reingreso
+        check (tipo = 'reingreso_rechazo' or (pedido_renglon_id is null and costo_por_bulto is null)),
+    constraint movimientos_stock_destino_solo_reingreso
+        check (tipo = 'reingreso_rechazo' or (destino_rechazo is null and bultos_segunda is null)),
+    constraint movimientos_stock_segunda_segun_destino
+        check (
+            case
+                when destino_rechazo in ('segunda', 'reproceso')
+                    then bultos_segunda is not null
+                else bultos_segunda is null
+            end
+        ),
+    constraint movimientos_stock_lote_dirigido_solo_merma
+        check (tipo = 'merma' or (lote_tipo is null and lote_origen_id is null)),
+    constraint movimientos_stock_lote_dirigido_completo
+        check ((lote_tipo is null) = (lote_origen_id is null))
+);
+
+comment on table movimientos_stock is
+    'Movimientos de stock del depósito que no salen de otra tabla: ajustes (incluido el stock inicial), mermas y reingresos por rechazo del cliente. En BULTOS. Nunca pisan el stock: el stock por artículo se calcula siempre (compras recepcionadas + estos movimientos − renglones armados).';
+comment on column movimientos_stock.cantidad is
+    'Bultos, con signo: ajuste ±, merma siempre negativa, reingreso siempre positivo.';
+comment on column movimientos_stock.fecha_operacion is
+    'Fecha REAL del hecho (puede no ser la de carga): ordena el FIFO y el cotejo.';
+comment on column movimientos_stock.stock_sistema is
+    'Foto del stock del sistema del artículo al momento de cargar el movimiento, SIN este movimiento. Rastro para el control cruzado.';
+comment on column movimientos_stock.cliente_id is
+    'Solo para reingreso_rechazo: qué cliente devolvió la mercadería.';
+comment on column movimientos_stock.pedido_renglon_id is
+    'Solo reingreso_rechazo: el renglón ARMADO del pedido de origen que el cliente devolvió. Da la trazabilidad, el tope (armado − ya devuelto) y la línea "− devoluciones" de la Rentabilidad Real. NULL en reingresos viejos = sin vínculo (corregir = anular y recargar).';
+comment on column movimientos_stock.costo_por_bulto is
+    'Solo reingreso_rechazo: costo por bulto CONGELADO por el server al cargar, del listado anclado a la fecha del pedido de origen. NULL = no había costo a esa fecha (el lote sigue como reingreso sin costo).';
+comment on column movimientos_stock.destino_rechazo is
+    'Solo reingreso_rechazo: qué se hizo con lo que volvió — stock (queda para volver a mandarla, el costo no se pierde), segunda (al pool tal cual) o reproceso (vuelve a cajón grande y esos cajones van al pool). NULL en los reingresos viejos = stock. Segunda y reproceso salen del stock normal y su costo entero es pérdida ("− rechazos perdidos" en la Real).';
+comment on column movimientos_stock.bultos_segunda is
+    'Solo reingreso_rechazo con destino segunda/reproceso: cuántos bultos entran al pool de segunda. En segunda es la cantidad devuelta (misma caja); en reproceso son los cajones grandes que salieron (la diferencia con lo devuelto es cambio de envase, no merma).';
+comment on column movimientos_stock.lote_tipo is
+    'Solo merma: a qué tipo de lote se dirige (guia, reproceso, reingreso_rechazo, ajuste). NULL = FIFO como siempre, del lote más viejo — es el default de la pantalla y de todas las mermas viejas.';
+comment on column movimientos_stock.lote_origen_id is
+    'Solo merma: id del lote elegido en la tabla de su lote_tipo (compras, reprocesos o movimientos_stock). Polimórfico a propósito, sin FK: el lote se resuelve rejugando el FIFO. Si el lote no cubre la merma, el excedente cae a FIFO — nunca traba.';
+
+create table conteos_stock (
+    id bigint generated always as identity primary key,
+    articulo_id bigint not null references articulos (id),
+    cantidad numeric not null check (cantidad >= 0),
+    stock_sistema numeric not null,
+    creado_en timestamptz not null default now()
+);
+
+comment on table conteos_stock is
+    'Stock Físico del depósito: lo que el operario contó (en bultos), sin ver el sistema. stock_sistema es la foto del sistema en el instante del conteo, para el Cotejo.';
+
+-- Los tres índices del cálculo de stock: cada uno cubre una de las patas de
+-- la cuenta, con INCLUDE para que salga sin tocar la tabla.
+create index movimientos_stock_stock_idx
+    on movimientos_stock (articulo_id) include (cantidad)
+    where anulado_el is null;
+create index compras_stock_deposito_idx
+    on compras (articulo_id) include (cantidad_cajones_real)
+    where estado = 'recepcionado';
+create index pedidos_renglones_stock_idx
+    on pedidos_renglones (articulo_id)
+    where armado_el is not null and anulado_el is null;
+create index movimientos_stock_devueltos_idx
+    on movimientos_stock (pedido_renglon_id) include (cantidad)
+    where pedido_renglon_id is not null and anulado_el is null;
+create index movimientos_stock_rechazo_segunda_idx
+    on movimientos_stock (articulo_id) include (bultos_segunda)
+    where destino_rechazo in ('segunda', 'reproceso') and anulado_el is null;
+
+-- ----------------------------------------------------------------------------
+-- 17. REPROCESOS (Guías R) y SEGUNDA
+-- ----------------------------------------------------------------------------
+create table reprocesos (
+    id bigint generated always as identity primary key,
+    articulo_id bigint not null references articulos (id),
+    fecha_operacion date not null,
+    bultos_tomados numeric not null check (bultos_tomados > 0),
+    bultos_primera numeric not null check (bultos_primera >= 0),
+    bultos_segunda numeric not null check (bultos_segunda >= 0),
+    bultos_merma numeric not null check (bultos_merma >= 0),
+    costo_total numeric,
+    costo_por_bulto_primera numeric,
+    creado_en timestamptz not null default now(),
+    anulado_el timestamptz,
+    cliente_id bigint references clientes (id)
+);
+
+comment on table reprocesos is
+    'Guías R: transformaciones del depósito (tomo bultos del stock, armo cajas de primera + segunda + merma, mismo artículo). El id es el número de guía. El stock se deriva de acá (− tomados, + primera); la segunda es un pool aparte.';
+comment on column reprocesos.costo_total is
+    'Costo congelado al cargar: Σ (bultos × costo_por_bulto) de los consumos. NULL = costo incompleto (algún lote sin precio). TODO el costo va a la primera; segunda y merma valen cero. NUNCA lo lee la cotización.';
+comment on column reprocesos.costo_por_bulto_primera is
+    'costo_total / bultos_primera, congelado. NULL si el costo está incompleto o no hubo primera.';
+comment on column reprocesos.cliente_id is
+    'Para quién se armó la primera (dato de trazabilidad: el stock sigue sin dueño). NULL = guía vieja, sin cliente. La alerta de Auditoría cruza este cliente contra el de los pedidos que el FIFO atribuye a esta primera.';
+
+create table reprocesos_consumos (
+    id bigint generated always as identity primary key,
+    reproceso_id bigint not null references reprocesos (id),
+    origen text not null check (origen in ('compra', 'ajuste', 'reingreso_rechazo', 'reproceso', 'sin_lote')),
+    compra_id bigint references compras (id),
+    origen_id bigint,
+    bultos numeric not null check (bultos > 0),
+    costo_por_bulto numeric,
+    constraint reprocesos_consumos_compra_coherente
+        check ((origen = 'compra') = (compra_id is not null))
+);
+
+comment on table reprocesos_consumos is
+    'De qué lote salió cada bulto tomado, escrito por el server corriendo FIFO al cargar (el operario no elige lote). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
+comment on column reprocesos_consumos.origen is
+    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), o sin_lote (se tomó más de lo que los lotes cubrían: el piso es la verdad, no se traba).';
+
+create table remitos_segunda (
+    id bigint generated always as identity primary key,
+    articulo_id bigint not null references articulos (id),
+    bultos numeric not null check (bultos > 0),
+    fecha_operacion date not null,
+    creado_en timestamptz not null default now(),
+    anulado_el timestamptz
+);
+
+comment on table remitos_segunda is
+    'Segunda remitida al Puesto (destino fijo): sale del pool de segunda y deja de ser problema del depósito. El recupero económico va aparte, más adelante.';
+
+create index reprocesos_stock_idx
+    on reprocesos (articulo_id)
+    include (bultos_tomados, bultos_primera, bultos_segunda)
+    where anulado_el is null;
+create index reprocesos_consumos_reproceso_idx
+    on reprocesos_consumos (reproceso_id);
+create index remitos_segunda_stock_idx
+    on remitos_segunda (articulo_id) include (bultos)
+    where anulado_el is null;
+
+-- ----------------------------------------------------------------------------
+-- 18. COSTOS FIJOS — plan de cuentas, fotos de importe e inflación
+-- ----------------------------------------------------------------------------
+create table grupos_costos_fijos (
+    id bigint generated always as identity primary key,
+    numero integer not null unique check (numero > 0),
+    nombre text not null check (btrim(nombre) <> ''),
+    creado_en timestamptz not null default now(),
+    baja_el timestamptz
+);
+
+comment on table grupos_costos_fijos is
+    'Plan de cuentas de Costos Fijos, nivel padre. El número lo elige el dueño (10 = Sueldos): espaciado para que entren grupos nuevos sin renumerar.';
+
+create table subcuentas_costos_fijos (
+    id bigint generated always as identity primary key,
+    grupo_id bigint not null references grupos_costos_fijos (id),
+    numero integer not null check (numero > 0),
+    nombre text not null check (btrim(nombre) <> ''),
+    creado_en timestamptz not null default now(),
+    -- Primer día del MES desde el que ya no cuenta (baja lógica con mes).
+    baja_desde date check (baja_desde is null or extract(day from baja_desde) = 1),
+    unique (grupo_id, numero)
+);
+
+comment on table subcuentas_costos_fijos is
+    'Plan de cuentas de Costos Fijos, nivel hijo (10.1 = grupo 10, subcuenta 1). Los importes viven SOLO acá; el grupo agrega. baja_desde: primer mes que ya no cuenta (baja lógica con mes, nunca DELETE).';
+
+create table importes_costos_fijos (
+    id bigint generated always as identity primary key,
+    subcuenta_id bigint not null references subcuentas_costos_fijos (id),
+    -- Primer día del mes de la foto: el importe vale tal cual en ese mes.
+    mes_desde date not null check (extract(day from mes_desde) = 1),
+    importe numeric not null check (importe >= 0),
+    alcance text not null default 'en_adelante'
+        check (alcance in ('en_adelante', 'solo_este_mes')),
+    creado_en timestamptz not null default now(),
+    anulado_el timestamptz
+);
+
+comment on table importes_costos_fijos is
+    'Las FOTOS de importe de cada subcuenta. El valor de un mes se CALCULA siempre: última foto en_adelante <= mes, inflada por los índices posteriores; una foto solo_este_mes pisa únicamente su mes. Corregir = foto nueva (la serie es el historial); error = anular y recargar.';
+
+create table indices_inflacion (
+    -- Primer día del mes. El % es la inflación DE ese mes (respecto del
+    -- anterior): la foto de agosto se multiplica por el % de septiembre
+    -- para valer en septiembre. Puede ser negativo.
+    mes date primary key check (extract(day from mes) = 1),
+    porcentaje numeric not null,
+    actualizado_en timestamptz not null default now()
+);
+
+comment on table indices_inflacion is
+    'Índice de inflación mensual, cargado por el dueño (editable: es un parámetro, no un hecho — editar un mes pasado recalcula los meses que lo usan). Si falta el de un mes, el sistema AVISA y no calcula: jamás inventa.';
+
+create index importes_costos_fijos_subcuenta_idx
+    on importes_costos_fijos (subcuenta_id, mes_desde)
+    where anulado_el is null;
+
+-- El plan de cuentas de arranque. Es lo ÚNICO que este archivo carga como
+-- dato, y va a propósito: no es historia de ninguna empresa (no lleva un
+-- solo importe), es el esqueleto genérico sin el cual la pantalla de Costos
+-- Fijos arranca vacía y no se puede cargar nada. Igual que en las dos bases
+-- de hoy, que salieron de agregar_costos_fijos.sql. El dueño lo edita: los
+-- números están espaciados justamente para eso.
+insert into grupos_costos_fijos (numero, nombre) values
+    (10, 'Sueldos'),
+    (20, 'Cargas sociales'),
+    (30, 'Impuestos'),
+    (40, 'Ocupación'),
+    (50, 'Servicios profesionales'),
+    (60, 'Insumos y consumos'),
+    (70, 'Mantenimiento y equipos'),
+    (80, 'Varios');
+
+insert into subcuentas_costos_fijos (grupo_id, numero, nombre)
+select g.id, s.numero, s.nombre
+from (values
+    (20, 1, 'Cargas sociales'),
+    (20, 2, 'Aguinaldos'),
+    (20, 3, 'Sindicato'),
+    (20, 4, 'Indemnizaciones'),
+    (20, 5, 'Extra empleados'),
+    (30, 1, 'IIBB'),
+    (30, 2, 'Retenciones IIBB'),
+    (30, 3, 'IVA'),
+    (30, 4, 'Autónomos'),
+    (30, 5, 'Moratorias'),
+    (30, 6, 'Impuestos varios'),
+    (40, 1, 'Canon y tasa'),
+    (40, 2, 'Luz'),
+    (40, 3, 'Seguridad'),
+    (40, 4, 'Teléfono'),
+    (40, 5, 'Internet'),
+    (50, 1, 'Contador'),
+    (50, 2, 'Sistemas de computación'),
+    (50, 3, 'Sistema Market'),
+    (50, 4, 'Seguros'),
+    (60, 1, 'Limpieza'),
+    (60, 2, 'Alimentos'),
+    (60, 3, 'Farmacia'),
+    (60, 4, 'Librería'),
+    (60, 5, 'Imprenta'),
+    (60, 6, 'Embalajes'),
+    (60, 7, 'Ropa de trabajo'),
+    (70, 1, 'Mantenimiento'),
+    (70, 2, 'Clark'),
+    (70, 3, 'Aserradero'),
+    (70, 4, 'Muebles y frío'),
+    (70, 5, 'Biodomo'),
+    (80, 1, 'Representación'),
+    (80, 2, 'Varios')
+) as s (grupo_numero, numero, nombre)
+join grupos_costos_fijos g on g.numero = s.grupo_numero;
 
 commit;
