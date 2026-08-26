@@ -63,6 +63,7 @@ bases estén marcadas.
 | `agregar_observabilidad_revision.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
 | `agregar_reingreso_vinculado.sql` | ✅ 2026-08-25 (verificado: 2 columnas creadas) | ✅ 2026-08-25 (verificado: 2 columnas creadas) |
 | `agregar_costos_fijos.sql` | ✅ 2026-08-25 | ✅ 2026-08-25 |
+| `agregar_cliente_reproceso.sql` | ✅ 2026-08-26 (verificado) | ✅ 2026-08-26 (verificado) |
 
 ## Deuda pendiente de limpieza
 
