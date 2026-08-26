@@ -15166,6 +15166,8 @@ def test_hub_stock_tiene_reproceso_y_guias_r():
 
 
 def test_stock_sistema_muestra_la_segunda_como_pool_aparte():
+    # La segunda desglosa la fila del artículo: renglón propio y total al
+    # final — ya no un chip escondido en la letra chica.
     filas = [dict(FILAS_STOCK_DE_PRUEBA[0], segunda=3.0)]
     with (
         patch("app.main.stock_deposito_por_articulo", return_value=filas),
@@ -15175,7 +15177,67 @@ def test_stock_sistema_muestra_la_segunda_como_pool_aparte():
 
     assert respuesta.status_code == 200
     assert "3 bultos de segunda en el depósito" in respuesta.text
-    assert '<span class="chip-segunda">3 de segunda</span>' in respuesta.text
+    assert "Segunda (va al Puesto)" in respuesta.text
+    texto_plano = " ".join(respuesta.text.split())
+    assert "Sin procesar</span><span class=\"numero\">24" in texto_plano
+    # Total = stock (24) + segunda (3), aunque sume cosas distintas.
+    assert ">Total</span>" in respuesta.text and ">27 <span" in respuesta.text
+
+
+def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
+    # El ejemplo del dueño (26/08): 100 cajones de guía, 20 tomados, 40
+    # cajas de 6 kg armadas para Día → "120 bultos" no sirve. El listado
+    # muestra: Sin procesar 80, Armado 40 cajas de 6 kg para Día (por
+    # guía R), Segunda 3 y el Total 123.
+    fila = dict(
+        FILAS_STOCK_DE_PRUEBA[0],
+        entradas=100.0, salidas=0.0, reingresos=0.0, ajustes=0.0,
+        reproceso_primera=40.0, reproceso_tomados=20.0, segunda=3.0, stock=120.0,
+    )
+    entradas_fifo = [
+        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+         "tipo_lote": "guia", "origen_id": 55, "fecha_lote": date(2026, 8, 20),
+         "detalle": "Norte 15", "motivo": None, "cantidad": 100.0, "cliente_lote_id": None},
+        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10),
+         "tipo_lote": "reproceso", "origen_id": 7, "fecha_lote": date(2026, 8, 22),
+         "detalle": "Día", "motivo": None, "cantidad": 40.0, "cliente_lote_id": 1},
+    ]
+    fichas_dia = [{"articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
+        patch("app.main.total_reingresos_rechazo", return_value=0.0),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas_fifo, 20.0)) as mock_fifo,
+        patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Día"}]),
+        patch("app.main.listar_fichas_por_cliente", return_value=fichas_dia),
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema")
+
+    assert respuesta.status_code == 200
+    mock_fifo.assert_called_once_with(1)
+    texto_plano = " ".join(respuesta.text.split())
+    # Los 20 tomados salieron FIFO de la guía: quedan 80 sin procesar.
+    assert "Sin procesar</span><span class=\"numero\">80" in texto_plano
+    assert "Armado: 40 cajas de 6 kg para Día" in respuesta.text
+    assert "R7 · 22/08" in respuesta.text
+    assert "Segunda (va al Puesto)" in respuesta.text
+    assert ">123 <span" in respuesta.text
+
+
+def test_stock_sistema_sin_reprocesos_ni_segunda_muestra_solo_el_numero():
+    # Pedido explícito del dueño: un artículo común no se llena de
+    # renglones vacíos — número a la derecha y listo, como siempre.
+    with (
+        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
+        patch("app.main.total_reingresos_rechazo", return_value=0.0),
+        patch("app.main.entradas_y_salidas_stock_articulo") as mock_fifo,
+    ):
+        respuesta = cliente.get("/deposito/stock/sistema")
+
+    assert respuesta.status_code == 200
+    mock_fifo.assert_not_called()
+    assert "Sin procesar" not in respuesta.text
+    assert ">Total</span>" not in respuesta.text
+    assert "24 <span" in respuesta.text
 
 
 def test_remito_segunda_lista_solo_articulos_con_segunda_y_guarda():

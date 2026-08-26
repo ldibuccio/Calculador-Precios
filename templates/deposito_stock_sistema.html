@@ -43,29 +43,46 @@
   }
   .tarjeta-reingresos .numero { font-size: 1.25rem; font-weight: 800; }
   .fila-stock {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
+    display: block;
     padding: 0.65rem 0;
     border-top: 1px solid #eee;
     text-decoration: none;
     color: inherit;
   }
   .fila-stock:first-of-type { border-top: none; }
+  .fila-stock .encabezado {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
   .fila-stock .nombre { font-size: 1.05rem; font-weight: 700; }
   .fila-stock .detalle { display: block; color: #888; font-size: 0.8rem; font-weight: 400; margin-top: 0.1rem; }
   .fila-stock .stock { font-size: 1.2rem; font-weight: 800; white-space: nowrap; color: #1d4ed8; }
-  .chip-segunda {
-    display: inline-block;
-    background: #ffedd5;
-    border: 1px solid #fdba74;
-    color: #c2410c;
-    font-size: 0.78rem;
-    font-weight: 800;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
+  /* El desglose de un artículo con guías R o segunda: sin procesar,
+     cada guía R con resto, la segunda y el total — renglones chicos
+     con el número a la derecha, como una mini cuenta. */
+  .desglose { margin: 0.35rem 0 0.15rem; }
+  .desglose .linea {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: 0.88rem;
+    color: #444;
+    padding: 0.12rem 0;
   }
+  .desglose .linea .numero { font-weight: 700; white-space: nowrap; }
+  .desglose .linea .ref { color: #888; font-size: 0.78rem; }
+  .desglose .linea.segunda { color: #c2410c; }
+  .desglose .linea.total {
+    border-top: 1px solid #eee;
+    margin-top: 0.15rem;
+    padding-top: 0.3rem;
+    font-weight: 800;
+    color: #1d4ed8;
+  }
+  .desglose .linea.total .numero { font-size: 1.05rem; }
   .tarjeta-segunda {
     background: #fff7ed;
     border: 1px solid #fdba74;
@@ -111,11 +128,27 @@
     {% if filas %}
       {% for f in filas %}
       <a class="fila-stock {% if f.stock < 0 %}negativa{% endif %}" href="/deposito/stock/sistema/{{ f.articulo_id }}">
-        <div>
+        <div class="encabezado">
           <span class="nombre">{{ f.nombre }}</span>
-          <span class="detalle">{{ f.entradas|numero }} entraron · {{ f.salidas|numero }} salieron{% if f.reingresos %} · {{ f.reingresos|numero }} reingresados{% endif %}{% if f.ajustes %} · {{ f.ajustes|numero }} ajustados{% endif %}{% if f.reproceso_tomados or f.reproceso_primera %} · reproceso −{{ f.reproceso_tomados|numero }} +{{ f.reproceso_primera|numero }}{% endif %}{% if f.segunda %} <span class="chip-segunda">{{ f.segunda|numero }} de segunda</span>{% endif %}</span>
+          {# Sin guías R ni segunda: solo el número, sin renglones de más. #}
+          {% if not f.desglosada %}<span class="stock">{{ f.stock|numero }} <span class="unidad">bultos</span></span>{% endif %}
         </div>
-        <div class="stock">{{ f.stock|numero }} <span class="unidad">bultos</span></div>
+        {% if f.desglosada %}
+        <div class="desglose">
+          <div class="linea"><span>Sin procesar</span><span class="numero">{{ f.sin_procesar|numero }}</span></div>
+          {% for arm in f.armados %}
+          <div class="linea">
+            <span>Armado: {{ arm.bultos|numero }} caja{{ "s" if arm.bultos != 1 }}{% if arm.tamano %} de {{ arm.tamano }}{% endif %}{% if arm.cliente %} para {{ arm.cliente }}{% endif %} <span class="ref">R{{ arm.guia }} · {{ arm.fecha.strftime("%d/%m") }}</span></span>
+            <span class="numero">{{ arm.bultos|numero }}</span>
+          </div>
+          {% endfor %}
+          {% if f.segunda %}
+          <div class="linea segunda"><span>Segunda (va al Puesto)</span><span class="numero">{{ f.segunda|numero }}</span></div>
+          {% endif %}
+          <div class="linea total"><span>Total</span><span class="numero">{{ f.total_con_segunda|numero }} <span class="unidad">bultos</span></span></div>
+        </div>
+        {% endif %}
+        <span class="detalle">{{ f.entradas|numero }} entraron · {{ f.salidas|numero }} salieron{% if f.reingresos %} · {{ f.reingresos|numero }} reingresados{% endif %}{% if f.ajustes %} · {{ f.ajustes|numero }} ajustados{% endif %}{% if f.reproceso_tomados or f.reproceso_primera %} · reproceso −{{ f.reproceso_tomados|numero }} +{{ f.reproceso_primera|numero }}{% endif %}</span>
       </a>
       {% endfor %}
     {% else %}

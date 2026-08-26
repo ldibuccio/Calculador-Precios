@@ -6137,14 +6137,75 @@ def ver_stock_deposito(request: Request, aviso: str | None = None):
     return templates.TemplateResponse(request, "deposito_stock.html", {"aviso": aviso})
 
 
+def _tamanos_de_caja_por_ficha() -> dict[str, str]:
+    """El tamaño de la caja armada según la ficha, por "cliente_id:articulo_id" ("6 kg") — para el desglose del stock."""
+    tamanos: dict[str, str] = {}
+    for cliente_fila in listar_clientes():
+        for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
+            if not ficha.get("contenido_caja"):
+                continue
+            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+            tamanos[f"{cliente_fila['id']}:{ficha['articulo_id']}"] = (
+                f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+            )
+    return tamanos
+
+
+def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str]) -> list[dict]:
+    """Las guías R con primera restante de un artículo, rejugando el FIFO: qué cajas armadas hay hoy, para quién y de qué tamaño.
+
+    Cada línea es una guía R con resto (si hay varias de tamaños
+    distintos, salen separadas). Es el mismo reparto del detalle por
+    artículo, subido al listado: nada se guarda, se calcula cada vez.
+    """
+    entradas, total_salidas = entradas_y_salidas_stock_articulo(fila["articulo_id"])
+    for e in entradas:
+        e["orden"] = (e["fecha_orden"], e["momento_orden"])
+    salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
+    reparto = repartir_fifo(entradas, salidas)
+
+    armados = []
+    for lote in reparto["lotes"]:
+        if lote.get("tipo_lote") != "reproceso" or lote["restante"] <= 0:
+            continue
+        clave_ficha = f"{lote['cliente_lote_id']}:{fila['articulo_id']}" if lote.get("cliente_lote_id") else None
+        armados.append({
+            "bultos": lote["restante"],
+            "cliente": lote.get("detalle"),
+            "tamano": tamanos_ficha.get(clave_ficha) if clave_ficha else None,
+            "guia": lote["origen_id"],
+            "fecha": lote["fecha_lote"],
+        })
+    return armados
+
+
 @app.get("/deposito/stock/sistema")
 def ver_stock_sistema_deposito(request: Request):
-    """Stock del Sistema por artículo (bultos), calculado siempre. Los negativos arriba, en rojo: son salidas sin explicar."""
+    """Stock del Sistema por artículo (bultos), calculado siempre. Los negativos arriba, en rojo: son salidas sin explicar.
+
+    Un artículo con guías R vivas o segunda se muestra DESGLOSADO en el
+    listado (pedido del dueño 26/08: 80 cajones sin procesar + 40 cajas
+    armadas no son "120 bultos"): sin procesar, cada guía R con resto
+    (cliente y tamaño de caja según la ficha) y la segunda, con el total
+    al final. Un artículo sin nada de eso muestra solo su número.
+    """
     try:
         filas = stock_deposito_por_articulo()
         reingresos_total = total_reingresos_rechazo()
+        # Las fichas se cargan una sola vez, y solo si algún artículo tiene
+        # primera de reproceso para desglosar.
+        tamanos_ficha = (
+            _tamanos_de_caja_por_ficha() if any(f["reproceso_primera"] for f in filas) else {}
+        )
+        for fila in filas:
+            fila["armados"] = _desglose_stock_articulo(fila, tamanos_ficha) if fila["reproceso_primera"] else []
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    for fila in filas:
+        fila["sin_procesar"] = fila["stock"] - sum(a["bultos"] for a in fila["armados"])
+        fila["total_con_segunda"] = fila["stock"] + fila["segunda"]
+        fila["desglosada"] = bool(fila["armados"]) or bool(fila["segunda"])
 
     negativos = [f for f in filas if f["stock"] < 0]
     return templates.TemplateResponse(
