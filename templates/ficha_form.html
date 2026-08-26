@@ -110,7 +110,7 @@
 
   <div class="tarjeta">
     {% if modo == "nueva" and not articulos %}
-    <p class="vacio">Todos los artículos activos ya tienen ficha para este cliente.</p>
+    <p class="vacio">No hay artículos activos en el catálogo.</p>
     <a class="volver" href="/fichas?cliente_id={{ cliente_id }}">Volver a fichas</a>
     {% else %}
     <form method="post" action="{% if modo == 'nueva' %}/fichas/nueva{% else %}/fichas/{{ ficha.id }}/editar{% endif %}">
@@ -120,10 +120,14 @@
       <label for="articulo_id">Artículo *</label>
       <select id="articulo_id" name="articulo_id" required>
         <option value="" selected disabled>Elegí un artículo...</option>
+        {# Los que ya tienen ficha de este cliente aparecen igual, avisados:
+           un cliente puede tener dos fichas del mismo artículo (Banana
+           Bolivia y Banana Ecuador), pero si es sin querer hay que verlo. #}
         {% for a in articulos %}
-        <option value="{{ a.id }}">{{ a.nombre }}</option>
+        <option value="{{ a.id }}">{{ a.nombre }}{% if a.fichas_existentes %} — ya tiene {{ a.fichas_existentes }} ficha{{ "s" if a.fichas_existentes != 1 }}{% endif %}</option>
         {% endfor %}
       </select>
+      <p class="ayuda">Podés hacer una segunda ficha de un artículo que ya tenés: es el caso de dos presentaciones para el mismo cliente (por ejemplo Banana Bolivia y Banana Ecuador). Ponele un <strong>nombre</strong> y un <strong>código</strong> distintos, que son los que las diferencian en el pedido y en el armado.</p>
       {% else %}
       <label>Artículo</label>
       <div class="campo-fijo">{{ ficha.articulo_nombre }}</div>
@@ -174,16 +178,19 @@
   <div class="tarjeta">
     <h3>Cambiar artículo</h3>
     <p class="ayuda">La ficha pasa a apuntar a otro artículo conservando envase, contenido, unidad y alias.
-      Los precios ya negociados no cambian; de acá en adelante se cotiza contra el artículo nuevo.
       El cambio queda registrado en el historial de fichas.</p>
+    <p class="ayuda"><strong>Ojo:</strong> esto cierra la ficha y abre una nueva, así que su historial de precios
+      y los renglones de pedidos viejos quedan desenganchados. Si lo que querés es tener <strong>dos
+      presentaciones del mismo artículo</strong> para este cliente, no cambies esta: creá una ficha nueva
+      desde "Fichas", que ahora se puede.</p>
     {% if articulos_para_cambio %}
     <form method="post" action="/fichas/{{ ficha.id }}/cambiar-articulo" id="form-cambiar-articulo">
       <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-      <label for="articulo_nuevo_id">Artículo nuevo (solo los que todavía no tienen ficha de este cliente)</label>
+      <label for="articulo_nuevo_id">Artículo nuevo</label>
       <select id="articulo_nuevo_id" name="articulo_nuevo_id" required>
         <option value="" selected disabled>Elegí el artículo nuevo...</option>
         {% for a in articulos_para_cambio %}
-        <option value="{{ a.id }}">{{ a.nombre }}</option>
+        <option value="{{ a.id }}">{{ a.nombre }}{% if a.fichas_existentes %} — ya tiene {{ a.fichas_existentes }} ficha{{ "s" if a.fichas_existentes != 1 }}{% endif %}</option>
         {% endfor %}
       </select>
 

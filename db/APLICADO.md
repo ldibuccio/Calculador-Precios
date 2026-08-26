@@ -67,6 +67,7 @@ bases estén marcadas.
 | `agregar_destino_rechazo_y_merma_por_lote.sql` | ✅ 2026-08-26 (verificado: 4 columnas creadas) | ✅ 2026-08-26 (verificado: 4 columnas creadas) |
 | `agregar_ficha_a_precios_venta.sql` | ✅ 2026-08-26 (verificado: 54 precios con ficha, 0 huérfanos) | ✅ 2026-08-26 (verificado: 38 precios con ficha, 0 huérfanos) |
 | `agregar_ficha_a_pedidos_renglones.sql` | ✅ 2026-08-26 (verificado: 418 de 418 renglones con ficha, 0 sin identificar, 0 identificados sin ficha) | ✅ 2026-08-26 (verificado: 232 de 232 renglones con ficha, 0 sin identificar, 0 identificados sin ficha) |
+| `permitir_varias_fichas_por_articulo.sql` | ✅ 2026-08-26 (verificado: unique viejo dropeado, los 2 índices nuevos creados; cero códigos repetidos en la verificación previa) | ✅ 2026-08-26 (verificado: unique viejo dropeado, los 2 índices nuevos creados; cero códigos repetidos en la verificación previa) |
 
 ## Deuda pendiente de limpieza
 

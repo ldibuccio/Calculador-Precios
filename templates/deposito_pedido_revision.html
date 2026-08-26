@@ -187,8 +187,8 @@
            la ficha elegida. #}
         <select name="renglon_{{ loop.index0 }}_ficha_id">
           <option value="" {% if r.ficha_id is none %}selected{% endif %}>Sin identificar (asignar después)</option>
-          {% for a in articulos_cliente %}
-          <option value="{{ a.id }}" {% if r.ficha_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          {% for f in fichas_cliente %}
+          <option value="{{ f.id }}" {% if r.ficha_id == f.id %}selected{% endif %}>{{ f.nombre }}</option>
           {% endfor %}
         </select>
         <div class="opciones-renglon">

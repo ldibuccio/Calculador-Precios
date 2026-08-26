@@ -885,13 +885,21 @@ def test_ver_fichas_error_al_leer_fichas_muestra_error_claro():
     assert "No se pudieron leer las fichas" in respuesta.text
 
 
-ARTICULOS_SIN_FICHA = [{"id": 5, "nombre": "Kiwi"}]
+# El catálogo pelado, para lo que solo necesita id y nombre (compras).
+ARTICULOS_DEL_CATALOGO = [{"id": 5, "nombre": "Kiwi"}]
+
+# La lista que ofrece el form de ficha: TODOS los artículos activos, cada
+# uno diciendo cuántas fichas ya tiene este cliente (0 = ninguna todavía).
+ARTICULOS_PARA_FICHA = [
+    {"id": 5, "nombre": "Kiwi", "fichas_existentes": 0},
+    {"id": 6, "nombre": "Banana", "fichas_existentes": 1},
+]
 ENVASES_DEL_CLIENTE = [{"id": 100, "nombre": "Caja Chica Día"}]
 
 
 def test_ver_nueva_ficha_muestra_formulario():
     with (
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.get("/fichas/nueva?cliente_id=1")
@@ -908,19 +916,37 @@ def test_ver_nueva_ficha_sin_cliente_id_da_422():
     assert respuesta.status_code == 422
 
 
-def test_ver_nueva_ficha_sin_articulos_disponibles_muestra_mensaje():
+def test_ver_nueva_ficha_sin_articulos_en_el_catalogo_muestra_mensaje():
+    # El único caso en que no hay nada para elegir es que el catálogo esté
+    # vacío: que el artículo ya tenga ficha dejó de esconderlo (un cliente
+    # puede tener dos fichas del mismo artículo).
     with (
-        patch("app.main.listar_articulos_sin_ficha", return_value=[]),
+        patch("app.main._articulos_para_ficha", return_value=[]),
         patch("app.main.listar_envases", return_value=[]),
     ):
         respuesta = cliente.get("/fichas/nueva?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert "ya tienen ficha para este cliente" in respuesta.text
+    assert "No hay artículos activos en el catálogo." in respuesta.text
+
+
+def test_ver_nueva_ficha_ofrece_los_articulos_que_ya_tienen_ficha_avisando():
+    # Lo que antes estaba prohibido ahora es un aviso: "Banana" aparece en
+    # la lista aunque ya tenga ficha, porque cargar la segunda es el caso
+    # que este cambio vino a habilitar.
+    with (
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
+        patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
+    ):
+        respuesta = cliente.get("/fichas/nueva?cliente_id=1")
+
+    assert "Banana — ya tiene 1 ficha<" in respuesta.text
+    assert ">Kiwi<" in respuesta.text  # sin ficha todavía: sin aviso
+    assert "Banana Bolivia y Banana Ecuador" in respuesta.text
 
 
 def test_ver_nueva_ficha_error_de_base_da_500():
-    with patch("app.main.listar_articulos_sin_ficha", side_effect=Exception("no se pudo conectar")):
+    with patch("app.main._articulos_para_ficha", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/fichas/nueva?cliente_id=1")
 
     assert respuesta.status_code == 500
@@ -964,7 +990,7 @@ def test_agregar_ficha_sin_envase_con_contenido_caja_exitosa():
 def test_agregar_ficha_sin_envase_sin_contenido_caja_muestra_error():
     with (
         patch("app.main.crear_ficha") as mock_crear,
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -980,7 +1006,7 @@ def test_agregar_ficha_sin_envase_sin_contenido_caja_muestra_error():
 def test_agregar_ficha_sin_articulo_muestra_error():
     with (
         patch("app.main.crear_ficha") as mock_crear,
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -996,7 +1022,7 @@ def test_agregar_ficha_sin_articulo_muestra_error():
 def test_agregar_ficha_con_envase_sin_contenido_caja_muestra_error():
     with (
         patch("app.main.crear_ficha") as mock_crear,
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -1012,7 +1038,7 @@ def test_agregar_ficha_con_envase_sin_contenido_caja_muestra_error():
 def test_agregar_ficha_contenido_caja_no_numerico_muestra_error():
     with (
         patch("app.main.crear_ficha") as mock_crear,
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -1028,7 +1054,7 @@ def test_agregar_ficha_contenido_caja_no_numerico_muestra_error():
 def test_agregar_ficha_contenido_caja_cero_muestra_error():
     with (
         patch("app.main.crear_ficha") as mock_crear,
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -1044,7 +1070,7 @@ def test_agregar_ficha_contenido_caja_cero_muestra_error():
 def test_agregar_ficha_unidad_venta_invalida_muestra_error():
     with (
         patch("app.main.crear_ficha") as mock_crear,
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -1060,7 +1086,7 @@ def test_agregar_ficha_unidad_venta_invalida_muestra_error():
 def test_agregar_ficha_error_de_base_muestra_mensaje_claro():
     with (
         patch("app.main.crear_ficha", side_effect=Exception("no se pudo conectar")),
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
     ):
         respuesta = cliente.post(
@@ -1091,7 +1117,7 @@ def test_ver_editar_ficha_muestra_datos_precargados():
     with (
         patch("app.main.obtener_ficha", return_value=FICHA_DE_PRUEBA),
         patch("app.main.listar_envases", return_value=ENVASES_DEL_CLIENTE),
-        patch("app.main.listar_articulos_sin_ficha", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main._articulos_para_ficha", return_value=ARTICULOS_PARA_FICHA),
     ):
         respuesta = cliente.get("/fichas/10/editar")
 
@@ -2932,7 +2958,7 @@ COMPRA_DETALLE_DE_PRUEBA = {
 def test_ver_editar_compra_muestra_datos_precargados():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3512,7 +3538,7 @@ def test_editar_compra_agregar_articulo_error_de_base_muestra_mensaje_claro():
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.crear_compra", side_effect=Exception("no se pudo conectar")),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.post(
             "/compras/30/editar",
@@ -3553,7 +3579,7 @@ def test_editar_compra_sin_cantidad_de_cajones_muestra_error():
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
         patch("app.main.actualizar_precio_compra") as mock_actualizar_precio,
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.post(
             "/compras/30/editar",
@@ -3578,7 +3604,7 @@ def test_editar_compra_error_de_base_muestra_mensaje_claro():
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
         patch("app.main.actualizar_cantidad_compra", side_effect=Exception("no se pudo conectar")),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.post(
             "/compras/30/editar",
@@ -3628,7 +3654,7 @@ def test_ver_editar_compra_recepcionada_bloquea_cantidad_pero_deja_precio_habili
     compra_recepcionada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
     with (
         patch("app.main.obtener_compra", return_value=compra_recepcionada),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3647,7 +3673,7 @@ def test_ver_editar_compra_no_ingresada_bloquea_todo_aunque_nunca_se_haya_retira
     compra_no_ingresada = dict(COMPRA_DE_PRUEBA, estado="no_ingresado", estado_retiro="pendiente")
     with (
         patch("app.main.obtener_compra", return_value=compra_no_ingresada),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3665,7 +3691,7 @@ def test_ver_editar_compra_rechazada_bloquea_todo_aunque_nunca_se_haya_retirado(
     compra_rechazada = dict(COMPRA_DE_PRUEBA, estado="rechazado", estado_retiro="cancelado")
     with (
         patch("app.main.obtener_compra", return_value=compra_rechazada),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3680,7 +3706,7 @@ def test_ver_editar_compra_rechazada_bloquea_todo_aunque_nunca_se_haya_retirado(
 def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3694,7 +3720,7 @@ def test_ver_editar_compra_sin_procesar_no_muestra_aviso_ni_deshabilita():
 def test_ver_editar_compra_muestra_boton_volver_rojo():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3708,7 +3734,7 @@ def test_ver_editar_compra_recepcionada_marca_la_bandera_js_para_el_aviso_de_pre
     compra_recepcionada = dict(COMPRA_DE_PRUEBA, estado="recepcionado", estado_retiro="retirado")
     with (
         patch("app.main.obtener_compra", return_value=compra_recepcionada),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3719,7 +3745,7 @@ def test_ver_editar_compra_recepcionada_marca_la_bandera_js_para_el_aviso_de_pre
 def test_ver_editar_compra_no_recepcionada_no_marca_la_bandera_js():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar")
 
@@ -3797,7 +3823,7 @@ def test_editar_compra_exitosa_conserva_los_filtros_de_la_busqueda():
 def test_ver_editar_compra_con_filtros_los_lleva_en_el_form_y_en_volver():
     with (
         patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
-        patch("app.main.listar_articulos", return_value=ARTICULOS_SIN_FICHA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_DEL_CATALOGO),
     ):
         respuesta = cliente.get("/compras/30/editar?fecha_desde=2026-07-28&fecha_hasta=2026-07-29")
 
@@ -6518,7 +6544,7 @@ def test_ver_precios_consultar_articulo_puntual_filtra_a_ese_solo():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/precios/consultar?cliente_id=1&articulo_id=2")
+        respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
 
     assert respuesta.status_code == 200
     # El selector de artículo sigue listando todos (para poder elegir
@@ -6536,7 +6562,7 @@ def test_ver_precios_consultar_articulo_puntual_sin_precio_vigente_muestra_mensa
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
     ):
-        respuesta = cliente.get("/precios/consultar?cliente_id=1&articulo_id=2")
+        respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
 
     assert respuesta.status_code == 200
     assert "no tiene precio vigente" in respuesta.text
@@ -6640,8 +6666,10 @@ def test_ver_precios_consultar_incluye_buscador_de_articulo():
 
     assert 'id="articulo_texto"' in respuesta.text
     assert "actualizarListaArticulos" in respuesta.text
-    assert '{ id: 1, nombre: "Tomate Cherry" }' in respuesta.text
-    assert '{ id: 2, nombre: "Mango" }' in respuesta.text
+    # El buscador lista FICHAS (901/902), no artículos: es la ficha la que
+    # tiene precio, y dos del mismo artículo se llamarían igual.
+    assert '{ id: 901, nombre: "Tomate Cherry" }' in respuesta.text
+    assert '{ id: 902, nombre: "Mango" }' in respuesta.text
 
 
 def test_ver_precios_consultar_articulo_elegido_muestra_boton_para_limpiar():
@@ -6650,7 +6678,7 @@ def test_ver_precios_consultar_articulo_elegido_muestra_boton_para_limpiar():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/precios/consultar?cliente_id=1&articulo_id=2")
+        respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
 
     assert "Ver todos los artículos" in respuesta.text
     assert 'value="Mango"' in respuesta.text
@@ -6962,7 +6990,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo(
     ):
         respuesta = cliente.post(
             "/precios/cargar/guardar-y-exportar-pdf",
-            data={"cliente_id": "1", "pendiente_precio_2": "400", "pendiente_original_2": "350"},
+            data={"cliente_id": "1", "pendiente_precio_902": "400", "pendiente_original_902": "350"},
         )
 
     assert respuesta.status_code == 200
@@ -6996,7 +7024,7 @@ def test_guardar_y_exportar_precios_cargar_manual_excel_guarda_y_devuelve_archiv
     ):
         respuesta = cliente.post(
             "/precios/cargar/guardar-y-exportar-excel",
-            data={"cliente_id": "1", "pendiente_precio_2": "400", "pendiente_original_2": "350"},
+            data={"cliente_id": "1", "pendiente_precio_902": "400", "pendiente_original_902": "350"},
         )
 
     assert respuesta.status_code == 200
@@ -7022,7 +7050,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_usa_nombre_cliente_de_la_f
     ):
         respuesta = cliente.post(
             "/precios/cargar/guardar-y-exportar-pdf",
-            data={"cliente_id": "1", "pendiente_precio_1": "950", "pendiente_original_1": "890"},
+            data={"cliente_id": "1", "pendiente_precio_901": "950", "pendiente_original_901": "890"},
         )
 
     texto = _texto_del_pdf_de_respuesta(respuesta.content)
@@ -7052,7 +7080,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_precio_invalido_da_400_y_n
     ):
         respuesta = cliente.post(
             "/precios/cargar/guardar-y-exportar-pdf",
-            data={"cliente_id": "1", "pendiente_precio_2": "no-es-un-numero"},
+            data={"cliente_id": "1", "pendiente_precio_902": "no-es-un-numero"},
         )
 
     assert respuesta.status_code == 400
@@ -7082,8 +7110,10 @@ def test_ver_cargar_precios_embebe_el_catalogo_con_precio_vigente():
     assert respuesta.status_code == 200
     assert 'id="articulo_texto"' in respuesta.text
     assert "actualizarListaArticulos" in respuesta.text
-    assert 'id: 1,\n        nombre: "Tomate Cherry",\n        precioVigente: 500.0,' in respuesta.text
-    assert 'id: 2,\n        nombre: "Mango",\n        precioVigente: 350.0,' in respuesta.text
+    # La lista embebida es de FICHAS (901/902), no de artículos (1/2):
+    # el precio cuelga de la ficha.
+    assert 'id: 901,\n        nombre: "Tomate Cherry",\n        precioVigente: 500.0,' in respuesta.text
+    assert 'id: 902,\n        nombre: "Mango",\n        precioVigente: 350.0,' in respuesta.text
 
 
 def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
@@ -7096,7 +7126,7 @@ def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert 'id: 1,\n        nombre: "Tomate Cherry",\n        precioVigente: null,' in respuesta.text
+    assert 'id: 901,\n        nombre: "Tomate Cherry",\n        precioVigente: null,' in respuesta.text
 
 
 def test_ver_cargar_precios_embebe_costo_y_denominador_para_simulacion():
@@ -7118,7 +7148,7 @@ def test_ver_cargar_precios_embebe_costo_y_denominador_para_simulacion():
         in respuesta.text
     )
     assert (
-        'id: 2,\n        nombre: "Mango",\n        precioVigente: 350.0,\n        '
+        'id: 902,\n        nombre: "Mango",\n        precioVigente: 350.0,\n        '
         'costoProductoUnidadVenta: null,\n        costoEnvaseUnidadVenta: null,\n        denominadorTasas: null,'
     ) in respuesta.text
 
@@ -7288,8 +7318,8 @@ def test_ver_cargar_precios_error_de_base_da_500():
 def _datos_pendientes_cargar_precios(**overrides):
     datos = {
         "cliente_id": "1",
-        "pendiente_precio_2": "380",
-        "pendiente_original_2": "350.0",
+        "pendiente_precio_902": "380",
+        "pendiente_original_902": "350.0",
     }
     datos.update(overrides)
     return datos
@@ -7320,10 +7350,10 @@ def test_cargar_precios_varios_pendientes_se_guardan_todos_juntos():
             "/precios/cargar",
             data={
                 "cliente_id": "1",
-                "pendiente_precio_1": "520",
-                "pendiente_original_1": "500.0",
-                "pendiente_precio_2": "380",
-                "pendiente_original_2": "350.0",
+                "pendiente_precio_901": "520",
+                "pendiente_original_901": "500.0",
+                "pendiente_precio_902": "380",
+                "pendiente_original_902": "350.0",
             },
             follow_redirects=False,
         )
@@ -7362,7 +7392,7 @@ def test_cargar_precios_pendiente_igual_al_vigente_no_genera_fila():
     ):
         respuesta = cliente.post(
             "/precios/cargar",
-            data=_datos_pendientes_cargar_precios(pendiente_precio_2="350.0"),
+            data=_datos_pendientes_cargar_precios(pendiente_precio_902="350.0"),
             follow_redirects=False,
         )
 
@@ -7391,7 +7421,7 @@ def test_cargar_precios_invalido_da_400():
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
-            "/precios/cargar", data=_datos_pendientes_cargar_precios(pendiente_precio_2="abc")
+            "/precios/cargar", data=_datos_pendientes_cargar_precios(pendiente_precio_902="abc")
         )
 
     assert respuesta.status_code == 400
@@ -7405,7 +7435,7 @@ def test_cargar_precios_cero_o_negativo_da_400():
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
-            "/precios/cargar", data=_datos_pendientes_cargar_precios(pendiente_precio_2="0")
+            "/precios/cargar", data=_datos_pendientes_cargar_precios(pendiente_precio_902="0")
         )
 
     assert respuesta.status_code == 400
@@ -7632,7 +7662,7 @@ def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
                 "cantidad_renglones": "1",
                 "tipo_archivo": "foto",
                 "archivo_preview": "data:image/jpeg;base64,QUJD",
-                "item_0_articulo_id": "1",
+                "item_0_ficha_id": "901",
                 "item_0_precio_original": "500.0",
                 "item_0_precio_nuevo": "520",
             },
@@ -7659,7 +7689,7 @@ def test_confirmar_carga_foto_precios_renglon_descartado_no_se_guarda():
                 "cantidad_renglones": "1",
                 "tipo_archivo": "foto",
                 "archivo_preview": "",
-                "item_0_articulo_id": "1",
+                "item_0_ficha_id": "901",
                 "item_0_precio_original": "500.0",
                 "item_0_precio_nuevo": "520",
                 "item_0_descartar": "on",
@@ -7686,7 +7716,7 @@ def test_confirmar_carga_foto_precios_error_al_subir_archivo_guarda_igual_sin_ar
                 "cantidad_renglones": "1",
                 "tipo_archivo": "foto",
                 "archivo_preview": "data:image/jpeg;base64,QUJD",
-                "item_0_articulo_id": "1",
+                "item_0_ficha_id": "901",
                 "item_0_precio_original": "500.0",
                 "item_0_precio_nuevo": "520",
             },
@@ -7711,7 +7741,7 @@ def test_confirmar_carga_foto_precios_pdf_sube_con_extension_y_content_type_corr
                 "cantidad_renglones": "1",
                 "tipo_archivo": "pdf",
                 "archivo_preview": "data:application/pdf;base64,QUJD",
-                "item_0_articulo_id": "1",
+                "item_0_ficha_id": "901",
                 "item_0_precio_original": "",
                 "item_0_precio_nuevo": "520",
             },
@@ -7757,7 +7787,7 @@ def test_guardar_y_exportar_precios_cargar_foto_pdf_guarda_y_devuelve_archivo():
                 "cantidad_renglones": "1",
                 "tipo_archivo": "foto",
                 "archivo_preview": "",
-                "item_0_articulo_id": "1",
+                "item_0_ficha_id": "901",
                 "item_0_precio_original": "500.0",
                 "item_0_precio_nuevo": "520",
             },
@@ -7795,7 +7825,7 @@ def test_guardar_y_exportar_precios_cargar_foto_excel_sube_el_archivo_y_devuelve
                 "cantidad_renglones": "1",
                 "tipo_archivo": "foto",
                 "archivo_preview": "data:image/jpeg;base64,QUJD",
-                "item_0_articulo_id": "1",
+                "item_0_ficha_id": "901",
                 "item_0_precio_original": "500.0",
                 "item_0_precio_nuevo": "520",
             },
@@ -11525,13 +11555,13 @@ SUCURSALES_PEDIDO_DE_PRUEBA = [
 ]
 
 RENGLONES_PEDIDO_DE_PRUEBA = [
-    {"id": 10, "sucursal": "VL", "articulo_id": None, "articulo_nombre": None,
+    {"id": 10, "sucursal": "VL", "articulo_id": None, "articulo_nombre": None, "ficha_id": None, "nombre_venta": None,
      "texto_codigo": "99999", "texto_descripcion": "RADICHETA", "cantidad": 5.0, "armado_el": None, "cantidad_armada": None,
      "kilos_enviados": None, "anulado_el": None},
-    {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
+    {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana", "ficha_id": 901, "nombre_venta": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 225.0, "armado_el": None, "cantidad_armada": None,
      "kilos_enviados": None, "anulado_el": None},
-    {"id": 12, "sucursal": "BZ", "articulo_id": 2, "articulo_nombre": "Batata",
+    {"id": 12, "sucursal": "BZ", "articulo_id": 2, "articulo_nombre": "Batata", "ficha_id": 902, "nombre_venta": "Batata",
      "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 40.0, "armado_el": None, "cantidad_armada": None,
      "kilos_enviados": None, "anulado_el": None},
 ]
@@ -11697,7 +11727,8 @@ def test_confirmar_pedido_expande_por_sucursal_y_guarda_el_alias_pedido():
     assert {"sucursal": "BZ", "articulo_id": 1, "ficha_id": 901, "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0} in renglones_arg
     assert {"sucursal": None, "articulo_id": None, "ficha_id": None, "texto_codigo": "77777", "texto_descripcion": "SIN CANTIDAD", "cantidad": 0} in renglones_arg
     assert kwargs == {"reemplaza_a_pedido_id": None, "mail_message_id": None, "recibido_el": None}
-    mock_alias.assert_called_once_with(1, 3, "99999", "RADICHETA")
+    # El alias va a LA FICHA con la que se pidió (903), no a (cliente, artículo).
+    mock_alias.assert_called_once_with(903, "99999", "RADICHETA")
 
 
 def test_confirmar_pedido_con_uno_vigente_lo_reemplaza():
@@ -11724,22 +11755,26 @@ def test_confirmar_pedido_con_uno_vigente_lo_reemplaza():
     assert mock_crear.call_args.kwargs == {"reemplaza_a_pedido_id": 50, "mail_message_id": None, "recibido_el": None}
 
 
-def test_asignar_renglon_de_pedido_guarda_y_opcionalmente_el_alias():
+def test_asignar_renglon_de_pedido_guarda_la_ficha_y_opcionalmente_el_alias():
+    # Se asigna la FICHA (907), no el artículo: el artículo lo deriva la
+    # base de ella, y el alias se guarda en ESA ficha — con dos fichas del
+    # mismo artículo, guardarlo por (cliente, artículo) se lo pegaba a las
+    # dos.
     with (
-        patch("app.main.asignar_articulo_a_renglon_pedido") as mock_asignar,
+        patch("app.main.asignar_ficha_a_renglon_pedido") as mock_asignar,
         patch("app.main.guardar_alias_en_ficha") as mock_alias,
     ):
         respuesta = cliente.post(
             "/deposito/pedido/50/renglones/10/asignar",
-            data={"cliente_id": "1", "fecha": "2026-08-21", "articulo_id": "7",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "ficha_id": "907",
                   "guardar_alias": "si", "texto_codigo": "99999", "texto_descripcion": "RADICHETA"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     assert "/deposito/pedido?" in respuesta.headers["location"]
-    mock_asignar.assert_called_once_with(10, 7)
-    mock_alias.assert_called_once_with(1, 7, "99999", "RADICHETA")
+    mock_asignar.assert_called_once_with(10, 907)
+    mock_alias.assert_called_once_with(907, "99999", "RADICHETA")
 
 
 def test_leer_pedido_con_capturas_lee_los_originales_y_arrastra_el_respaldo():
@@ -11827,13 +11862,13 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
 
 
 RENGLONES_ARMADO_DE_PRUEBA = [
-    {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
+    {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana", "ficha_id": 901, "nombre_venta": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 15.0,
      "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
-    {"id": 12, "sucursal": "VL", "articulo_id": 2, "articulo_nombre": "Batata",
+    {"id": 12, "sucursal": "VL", "articulo_id": 2, "articulo_nombre": "Batata", "ficha_id": 902, "nombre_venta": "Batata",
      "texto_codigo": "90102", "texto_descripcion": "BATATA", "cantidad": 20.0,
      "armado_el": datetime(2026, 8, 21, 13, 0), "cantidad_armada": 12.0, "kilos_enviados": 120.0, "anulado_el": None},
-    {"id": 13, "sucursal": "BZ", "articulo_id": 1, "articulo_nombre": "Banana",
+    {"id": 13, "sucursal": "BZ", "articulo_id": 1, "articulo_nombre": "Banana", "ficha_id": 901, "nombre_venta": "Banana",
      "texto_codigo": "90101", "texto_descripcion": "BANANA", "cantidad": 40.0,
      "armado_el": datetime(2026, 8, 21, 13, 5), "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
 ]
@@ -14293,7 +14328,7 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
     # aparecen en ninguna sucursal y no se pueden tildar. El botón se suma
     # DE LOS MISMOS conteos por sucursal — no puede contradecirlos.
     renglones = [dict(r) for r in RENGLONES_ARMADO_DE_PRUEBA] + [
-        {"id": 14, "sucursal": None, "articulo_id": 3, "articulo_nombre": "Kiwi",
+        {"id": 14, "sucursal": None, "articulo_id": 3, "articulo_nombre": "Kiwi", "ficha_id": 903, "nombre_venta": "Kiwi",
          "texto_codigo": "90103", "texto_descripcion": "KIWI", "cantidad": 0,
          "armado_el": None, "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None},
     ]

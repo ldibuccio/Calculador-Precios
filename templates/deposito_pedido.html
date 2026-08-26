@@ -405,10 +405,11 @@
         <input type="hidden" name="fecha" value="{{ fecha }}">
         <input type="hidden" name="texto_codigo" value="{{ r.texto_codigo or '' }}">
         <input type="hidden" name="texto_descripcion" value="{{ r.texto_descripcion or '' }}">
-        <select name="articulo_id" required>
+        {# Se elige la FICHA: el artículo lo deriva el server de ella. #}
+        <select name="ficha_id" required>
           <option value="" selected disabled>Elegí el artículo...</option>
-          {% for a in articulos_cliente %}
-          <option value="{{ a.id }}">{{ a.nombre }}</option>
+          {% for f in fichas_cliente %}
+          <option value="{{ f.id }}">{{ f.nombre }}</option>
           {% endfor %}
         </select>
         <label><input type="checkbox" name="guardar_alias" value="si" checked> Guardar este código en la ficha (la próxima matchea solo)</label>
@@ -427,7 +428,7 @@
     {% if filas %}
       {% for r in filas %}
       <div class="renglon">
-        <span>{{ r.articulo_nombre }}</span>
+        <span>{{ r.nombre_venta }}</span>
         <span class="cantidad">
           {% if r.armado_el and r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
           <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>

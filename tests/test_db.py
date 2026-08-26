@@ -2546,18 +2546,23 @@ def test_listar_renglones_pedido_pone_los_sin_identificar_primero():
 
 def test_guardar_alias_en_ficha_solo_completa_vacios_y_deja_bitacora():
     # La ficha tenía nombre pero no código: el UPDATE completa solo el
-    # código, y la bitácora recibe la foto de la edición.
-    conexion, cursor = _conexion_falsa([(2, None, None, "kilo", False, "BATATA", "90102")])
+    # código, y la bitácora recibe la foto de la edición. El RETURNING trae
+    # cliente y artículo (ya no viajan como parámetro: la ficha los sabe).
+    conexion, cursor = _conexion_falsa([(1, 2, None, None, "kilo", False, "BATATA", "90102")])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_alias_en_ficha(1, 2, "90102", "BATATA")
+        guardar_alias_en_ficha(903, "90102", "BATATA")
 
-    consulta_update, _ = cursor.execute.call_args_list[0].args
+    consulta_update, parametros_update = cursor.execute.call_args_list[0].args
     assert "COALESCE(codigo_cliente, %s)" in consulta_update
     assert "COALESCE(nombre_cliente, %s)" in consulta_update
+    # Va por id de ficha, no por (cliente, artículo): con dos fichas del
+    # mismo artículo esa clave pisaba las dos.
+    assert "WHERE id = %s" in consulta_update
+    assert parametros_update == ("90102", "BATATA", 903, "90102", "BATATA")
     consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
     assert "INSERT INTO fichas_logistica_historial" in consulta_foto
-    assert parametros_foto == (2, 1, 2, None, None, "kilo", False, "BATATA", "90102", "edicion")
+    assert parametros_foto == (903, 1, 2, None, None, "kilo", False, "BATATA", "90102", "edicion")
     conexion.commit.assert_called_once()
 
 
@@ -2565,7 +2570,7 @@ def test_guardar_alias_en_ficha_sin_cambios_no_escribe_bitacora():
     conexion, cursor = _conexion_falsa([None])  # el UPDATE no tocó ninguna fila
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_alias_en_ficha(1, 2, "90102", "BATATA")
+        guardar_alias_en_ficha(903, "90102", "BATATA")
 
     assert cursor.execute.call_count == 1
 

@@ -408,6 +408,13 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
                 "ficha_id": ficha["id"],
                 "articulo_id": articulo_id,
                 "articulo_nombre": ficha["articulo_nombre"],
+                # El nombre con el que el CLIENTE lo pide, que es lo que
+                # distingue dos fichas del mismo artículo ("Banana Bolivia"
+                # y "Banana Ecuador"): sin esto las dos filas del cuadro de
+                # negociación dirían "Banana" y no habría cómo saber cuál
+                # es cuál. articulo_nombre se queda al lado, intacto, para
+                # todo lo que agrupa y ordena por artículo.
+                "ficha_nombre": (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"],
                 "unidad_venta": ficha["unidad_venta"],
                 "fresco": fresco,
                 "costo_actual": costo_actual,
@@ -423,7 +430,9 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
             }
         )
 
-    resultado.sort(key=lambda fila: (not fila["fresco"], fila["articulo_nombre"]))
+    # Dos fichas del mismo artículo salen juntas y en orden estable: el
+    # desempate por nombre de ficha evita que se turnen entre pantallas.
+    resultado.sort(key=lambda fila: (not fila["fresco"], fila["articulo_nombre"], fila["ficha_nombre"]))
     return resultado
 
 

@@ -185,14 +185,17 @@
       {% endif %}
       <p class="texto-leido">Texto leído: "{{ r.texto_leido or "(sin leer)" }}"</p>
 
-      <label for="item_{{ loop.index0 }}_articulo_id">Artículo *</label>
-      <select id="item_{{ loop.index0 }}_articulo_id" name="item_{{ loop.index0 }}_articulo_id"
+      {# Se elige la FICHA, no el artículo: el precio cuelga de la ficha, y
+         con dos del mismo artículo ("Banana Bolivia" y "Banana Ecuador")
+         el nombre del catálogo no alcanzaría para saber cuál es cuál. #}
+      <label for="item_{{ loop.index0 }}_ficha_id">Artículo *</label>
+      <select id="item_{{ loop.index0 }}_ficha_id" name="item_{{ loop.index0 }}_ficha_id"
               onchange="actualizarPrecioVigente({{ loop.index0 }}, this)" required>
-        <option value="" {% if not r.articulo_id %}selected{% endif %}>Elegí un artículo...</option>
-        {% for a in articulos %}
-        <option value="{{ a.articulo_id }}"
-                data-precio-vigente="{% if a.precio_vigente is not none %}{{ a.precio_vigente }}{% endif %}"
-                {% if r.articulo_id == a.articulo_id %}selected{% endif %}>{{ a.articulo_nombre }}</option>
+        <option value="" {% if not r.ficha_id %}selected{% endif %}>Elegí un artículo...</option>
+        {% for f in fichas %}
+        <option value="{{ f.ficha_id }}"
+                data-precio-vigente="{% if f.precio_vigente is not none %}{{ f.precio_vigente }}{% endif %}"
+                {% if r.ficha_id == f.ficha_id %}selected{% endif %}>{{ f.nombre }}</option>
         {% endfor %}
       </select>
 
@@ -258,7 +261,7 @@
     // de ESE renglón, aunque no se vaya a guardar.
     function alternarDescarte(indice, checkbox) {
       const campos = [
-        document.getElementById("item_" + indice + "_articulo_id"),
+        document.getElementById("item_" + indice + "_ficha_id"),
         document.getElementById("item_" + indice + "_precio_nuevo"),
       ];
       campos.forEach(function (campo) {

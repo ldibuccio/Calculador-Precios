@@ -387,7 +387,13 @@ def desactivar_cliente(cliente_id: int) -> None:
 
 
 def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
-    """Devuelve las fichas de logística de un cliente, ordenadas por nombre de artículo."""
+    """Devuelve las fichas de logística de un cliente, ordenadas por nombre de artículo.
+
+    Un cliente puede tener VARIAS fichas del mismo artículo (Banana Bolivia
+    y Banana Ecuador para Día): el desempate por nombre_cliente y por id
+    deja el orden estable, para que las dos no se turnen entre pantalla y
+    pantalla.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -400,7 +406,7 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
                 JOIN articulos a ON a.id = fl.articulo_id
                 LEFT JOIN envases e ON e.id = fl.envase_id
                 WHERE fl.cliente_id = %s
-                ORDER BY a.nombre
+                ORDER BY a.nombre, COALESCE(fl.nombre_cliente, ''), fl.id
                 """,
                 (cliente_id,),
             )
@@ -438,27 +444,28 @@ def obtener_ficha(ficha_id: int) -> dict | None:
         conexion.close()
 
 
-def listar_articulos_sin_ficha(cliente_id: int) -> list[dict]:
-    """Artículos activos que todavía no tienen ficha de logística para este cliente."""
+def contar_fichas_por_articulo(cliente_id: int) -> dict[int, int]:
+    """{articulo_id: cuántas fichas tiene ya este cliente} — para avisar al dar de alta una nueva.
+
+    Reemplaza al viejo listar_articulos_sin_ficha: desde que un cliente
+    puede tener varias fichas del mismo artículo, esconder los que ya
+    tienen una sería justo lo que impedía cargar Banana Ecuador. Se
+    ofrecen TODOS los artículos activos (listar_articulos) y esto se usa
+    para decir en la pantalla cuáles ya tienen ficha, que ahora es un
+    aviso y no una prohibición: con la pared abajo, lo único que evita
+    crear dos fichas iguales sin querer es que se vea.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT a.id, a.nombre
-                FROM articulos a
-                WHERE a.activo = true
-                  AND NOT EXISTS (
-                      SELECT 1 FROM fichas_logistica fl
-                      WHERE fl.articulo_id = a.id AND fl.cliente_id = %s
-                  )
-                ORDER BY a.nombre
+                SELECT articulo_id, COUNT(*) FROM fichas_logistica
+                WHERE cliente_id = %s GROUP BY articulo_id
                 """,
                 (cliente_id,),
             )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
+            return {fila[0]: fila[1] for fila in cursor.fetchall()}
     finally:
         conexion.close()
 
@@ -771,17 +778,26 @@ def cambiar_articulo_de_ficha(
 ) -> int | None:
     """Cambia el artículo al que apunta una ficha: borrado + alta en UNA transacción, conservando el resto.
 
-    Conceptualmente no se "edita" el artículo (el unique articulo+cliente lo
-    dice): se cierra la ficha vieja y se abre una nueva con el mismo envase,
-    contenido y unidad. El alias (nombre_cliente/codigo_cliente) viene de la
-    pantalla: precargado con el de la ficha vieja pero editable, porque si
-    el artículo destino es OTRO producto (no otra presentación del mismo),
-    el alias viejo quedaría mal. En la bitácora quedan los dos eventos, así
-    se ve a qué artículo (y con qué alias) apuntaba antes.
+    No se "edita" el artículo: se cierra la ficha vieja y se abre una nueva
+    con el mismo envase, contenido y unidad. El alias
+    (nombre_cliente/codigo_cliente) viene de la pantalla: precargado con el
+    de la ficha vieja pero editable, porque si el artículo destino es OTRO
+    producto (no otra presentación del mismo), el alias viejo quedaría mal.
+    En la bitácora quedan los dos eventos, así se ve a qué artículo (y con
+    qué alias) apuntaba antes.
 
-    Devuelve el id de la ficha nueva, o None si la ficha no existe. Si el
-    artículo nuevo ya tiene ficha para ese cliente, el unique de la tabla
-    corta todo (no se pierde nada: el DELETE se deshace con el rollback).
+    OJO, y por eso este camino ya casi no hace falta: la ficha nueva tiene
+    id NUEVO, y los precios y los renglones de pedido cuelgan de la ficha
+    con ON DELETE SET NULL. Cambiar el artículo DESCONECTA el historial de
+    precios y los renglones viejos de esa ficha. Para tener dos
+    presentaciones del mismo artículo (Banana Bolivia y Banana Ecuador) ya
+    NO se muda esta ficha: se CREA una segunda, que es exactamente lo que
+    habilitó sacar el unique (ver db/permitir_varias_fichas_por_articulo.sql).
+
+    Devuelve el id de la ficha nueva, o None si la ficha no existe. Desde
+    que un cliente puede tener varias fichas del mismo artículo, apuntar a
+    un artículo que ya tiene otra ficha ya no lo corta la base — queda como
+    dos fichas de ese artículo, que puede ser justo lo buscado.
     """
     conexion = obtener_conexion()
     try:
@@ -4003,7 +4019,14 @@ def listar_sucursales_pedido(pedido_id: int) -> list[dict]:
 
 
 def listar_renglones_pedido(pedido_id: int) -> list[dict]:
-    """Los renglones de un pedido, con el nombre del artículo si está identificado (NULL si no).
+    """Los renglones de un pedido, con el nombre de la FICHA con la que se pidió (NULL si no está identificado).
+
+    nombre_venta es lo que hay que mostrarle al que arma: "Banana Ecuador",
+    no "Banana" — con dos fichas del mismo artículo, el nombre del catálogo
+    no le dice qué caja usar. Sale de nombre_cliente de la ficha y cae al
+    nombre del artículo cuando la ficha no tiene nombre propio (o cuando la
+    ficha se borró después). articulo_nombre viaja al lado, intacto, para
+    lo que sigue hablando del artículo.
 
     Ordenados para la pantalla del depósito: los SIN identificar primero
     (hay que resolverlos), después por sucursal y nombre.
@@ -4014,12 +4037,15 @@ def listar_renglones_pedido(pedido_id: int) -> list[dict]:
             cursor.execute(
                 """
                 SELECT r.id, r.sucursal, r.articulo_id, a.nombre AS articulo_nombre,
+                       r.ficha_id, COALESCE(NULLIF(TRIM(fl.nombre_cliente), ''), a.nombre) AS nombre_venta,
                        r.texto_codigo, r.texto_descripcion, r.cantidad, r.armado_el, r.cantidad_armada,
                        r.kilos_enviados, r.anulado_el
                 FROM pedidos_renglones r
                 LEFT JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN fichas_logistica fl ON fl.id = r.ficha_id
                 WHERE r.pedido_id = %s
-                ORDER BY (r.articulo_id IS NULL) DESC, r.sucursal, COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
+                ORDER BY (r.articulo_id IS NULL) DESC, r.sucursal,
+                         COALESCE(NULLIF(TRIM(fl.nombre_cliente), ''), a.nombre, r.texto_descripcion, r.texto_codigo)
                 """,
                 (pedido_id,),
             )
@@ -4030,28 +4056,45 @@ def listar_renglones_pedido(pedido_id: int) -> list[dict]:
         conexion.close()
 
 
-def asignar_articulo_a_renglon_pedido(renglon_id: int, articulo_id: int) -> None:
-    """Asigna a mano el artículo de un renglón "sin identificar" (o corrige uno mal asignado)."""
+def asignar_ficha_a_renglon_pedido(renglon_id: int, ficha_id: int) -> None:
+    """Asigna a mano la FICHA de un renglón "sin identificar" (o corrige uno mal asignado).
+
+    El artículo sale de la ficha en el mismo UPDATE, sin viajar por el
+    formulario: la ficha es la clave de venta (precio, kilaje, envase y el
+    nombre que ve el que arma) y el artículo, el de compra. Asignar solo el
+    artículo dejaba el renglón sin saber con cuál de las fichas de ese
+    artículo se le vende.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE pedidos_renglones SET articulo_id = %s WHERE id = %s",
-                (articulo_id, renglon_id),
+                """
+                UPDATE pedidos_renglones r
+                   SET ficha_id = fl.id, articulo_id = fl.articulo_id
+                  FROM fichas_logistica fl
+                 WHERE fl.id = %s AND r.id = %s
+                """,
+                (ficha_id, renglon_id),
             )
         conexion.commit()
     finally:
         conexion.close()
 
 
-def guardar_alias_en_ficha(cliente_id: int, articulo_id: int, texto_codigo: str | None, texto_descripcion: str | None) -> None:
-    """Guarda el código/nombre con el que el cliente pidió, en su ficha, para que la próxima matchee solo.
+def guardar_alias_en_ficha(ficha_id: int, texto_codigo: str | None, texto_descripcion: str | None) -> None:
+    """Guarda el código/nombre con el que el cliente pidió, en LA ficha con la que pidió, para que la próxima matchee sola.
+
+    Va por ficha_id, no por (cliente, artículo): con dos fichas del mismo
+    artículo (Banana Bolivia y Banana Ecuador) esa clave devolvía las dos
+    y el alias de una terminaba pegado en la otra — justo el dato que las
+    distingue.
 
     SOLO completa los campos vacíos de la ficha — nunca pisa un alias ya
     cargado (si el que está difiere del que llegó, se corrige a mano desde
     Editar Ficha, no desde acá). Deja la foto en la bitácora, como
-    cualquier edición de ficha. Sin ficha del artículo para ese cliente,
-    no hace nada (el alias vive en la ficha; primero hay que crearla).
+    cualquier edición de ficha. Sin ficha (renglón sin identificar) no se
+    llama: el alias vive en la ficha, primero hay que crearla.
     """
     conexion = obtener_conexion()
     try:
@@ -4062,17 +4105,17 @@ def guardar_alias_en_ficha(cliente_id: int, articulo_id: int, texto_codigo: str 
                 SET codigo_cliente = COALESCE(codigo_cliente, %s),
                     nombre_cliente = COALESCE(nombre_cliente, %s),
                     actualizado_en = now()
-                WHERE cliente_id = %s AND articulo_id = %s
+                WHERE id = %s
                   AND (codigo_cliente IS DISTINCT FROM COALESCE(codigo_cliente, %s)
                        OR nombre_cliente IS DISTINCT FROM COALESCE(nombre_cliente, %s))
-                RETURNING id, envase_id, contenido_caja, unidad_venta, envase_variable,
-                          nombre_cliente, codigo_cliente
+                RETURNING cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta,
+                          envase_variable, nombre_cliente, codigo_cliente
                 """,
-                (texto_codigo, texto_descripcion, cliente_id, articulo_id, texto_codigo, texto_descripcion),
+                (texto_codigo, texto_descripcion, ficha_id, texto_codigo, texto_descripcion),
             )
             fila = cursor.fetchone()
             if fila is not None:
-                ficha_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente = fila
+                cliente_id, articulo_id, envase_id, contenido_caja, unidad_venta, envase_variable, nombre_cliente, codigo_cliente = fila
                 _registrar_foto_ficha(
                     cursor,
                     "edicion",

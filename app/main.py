@@ -130,7 +130,7 @@ from app.db import (
     agregar_foto_guia,
     agregar_foto_guia_del_dia,
     agregar_foto_pedido,
-    asignar_articulo_a_renglon_pedido,
+    asignar_ficha_a_renglon_pedido,
     borrar_dia_sin_pedido,
     borrar_foto_guia,
     borrar_foto_pedido,
@@ -172,7 +172,7 @@ from app.db import (
     listar_ajustes_vacios_por_rango,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
-    listar_articulos_sin_ficha,
+    contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
     listar_compras_pendientes_recepcion,
@@ -1450,6 +1450,22 @@ def ver_fichas(request: Request, cliente_id: int | None = None, error: str | Non
     )
 
 
+def _articulos_para_ficha(cliente_id: int) -> list[dict]:
+    """Todos los artículos activos, cada uno diciendo cuántas fichas ya tiene este cliente.
+
+    Antes esta lista escondía los artículos que ya tenían ficha, y eso era
+    justo lo que impedía dar de alta "Banana Ecuador" cuando ya existía
+    "Banana Bolivia". Ahora se ofrecen todos y el que ya tiene ficha se
+    muestra AVISADO: con la pared abajo, lo único que evita crear dos
+    fichas iguales sin querer es que se vea en la pantalla.
+    """
+    cuantas = contar_fichas_por_articulo(cliente_id)
+    return [
+        {"id": articulo["id"], "nombre": articulo["nombre"], "fichas_existentes": cuantas.get(articulo["id"], 0)}
+        for articulo in listar_articulos()
+    ]
+
+
 @app.get("/fichas/historial")
 def ver_historial_fichas(request: Request, cliente_id: int):
     """Bitácora de fichas de un cliente: cada alta, edición, borrado y cambio de artículo, de lo más nuevo a lo más viejo."""
@@ -1477,7 +1493,7 @@ def ver_historial_fichas(request: Request, cliente_id: int):
 @app.get("/fichas/nueva")
 def ver_nueva_ficha(request: Request, cliente_id: int, error: str | None = None):
     try:
-        articulos = listar_articulos_sin_ficha(cliente_id)
+        articulos = _articulos_para_ficha(cliente_id)
         envases = listar_envases()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
@@ -1534,7 +1550,7 @@ def agregar_ficha(
     codigo_cliente_valor = codigo_cliente.strip() or None
 
     if error:
-        articulos = listar_articulos_sin_ficha(cliente_id)
+        articulos = _articulos_para_ficha(cliente_id)
         envases = listar_envases()
         return templates.TemplateResponse(
             request,
@@ -1562,7 +1578,7 @@ def agregar_ficha(
             codigo_cliente_valor,
         )
     except Exception as error_db:
-        articulos = listar_articulos_sin_ficha(cliente_id)
+        articulos = _articulos_para_ficha(cliente_id)
         envases = listar_envases()
         return templates.TemplateResponse(
             request,
@@ -1593,9 +1609,12 @@ def ver_editar_ficha(request: Request, ficha_id: int, error: str | None = None):
 
     try:
         envases = listar_envases()
-        # Para "Cambiar artículo": solo artículos SIN ficha de este cliente,
-        # así no se puede pisar una existente sin querer.
-        articulos_para_cambio = listar_articulos_sin_ficha(ficha["cliente_id"])
+        # Para "Cambiar artículo": TODOS los artículos activos. Antes se
+        # escondían los que ya tenían ficha "para no pisar una existente",
+        # pero desde que un cliente puede tener varias fichas del mismo
+        # artículo eso ya no pisa nada — y los que ya tienen ficha van
+        # avisados en la propia lista.
+        articulos_para_cambio = _articulos_para_ficha(ficha["cliente_id"])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4249,17 +4268,20 @@ def ver_precios(request: Request, guardado: str | None = None, listado: str | No
 
 
 @app.get("/precios/consultar")
-def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha: str | None = None, articulo_id: str | None = None):
+def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha: str | None = None, ficha_id: str | None = None):
     """Consulta de precios vigentes de un cliente a una fecha (todos, o uno puntual). Solo lectura.
 
     Mismo patrón de selector que /fichas y /negociar: sin cliente_id en la
     URL, se muestra solo el selector. "Vigente a una fecha" usa
     listar_precios_vigentes_por_cliente tal cual (mismo patrón vigente_desde
-    que ya usa la Rutina A) — acá solo se cruza con los artículos del
-    cliente para mostrar el nombre y, si se pidió, filtrar a uno puntual.
+    que ya usa la Rutina A) — acá solo se cruza con las FICHAS del cliente
+    para mostrar el nombre y, si se pidió, filtrar a una puntual. Se filtra
+    por ficha y no por artículo porque es la ficha la que tiene precio: con
+    dos del mismo artículo, filtrar por artículo devolvía las dos juntas y
+    las dos se llamaban igual en pantalla.
     """
     cliente_id = _id_opcional_desde_query(cliente_id)
-    articulo_id = _id_opcional_desde_query(articulo_id)
+    ficha_id = _id_opcional_desde_query(ficha_id)
 
     try:
         clientes = listar_clientes()
@@ -4287,11 +4309,19 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
+    # El nombre que se muestra es el de la FICHA: con dos del mismo artículo
+    # ("Anco" y "Anco Ecuador"), el del catálogo repetiría el mismo texto en
+    # los dos renglones y no habría cómo saber cuál es cuál.
+    ficha_por_id = {ficha["id"]: ficha for ficha in fichas}
     filas = [
         {
             "articulo_id": precio["articulo_id"],
-            "articulo_nombre": nombre_por_articulo.get(precio["articulo_id"], f"Artículo #{precio['articulo_id']}"),
+            "ficha_id": precio["ficha_id"],
+            "articulo_nombre": (
+                _nombre_de_ficha(ficha_por_id[precio["ficha_id"]])
+                if precio["ficha_id"] in ficha_por_id
+                else f"Artículo #{precio['articulo_id']}"
+            ),
             "precio": precio["precio"],
             # Mismo criterio que el PDF y el Excel: empezó a regir en la
             # fecha consultada. Sirve para facturar — si venía todo igual y
@@ -4300,8 +4330,8 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
         }
         for precio in precios_vigentes
     ]
-    if articulo_id is not None:
-        filas = [fila for fila in filas if fila["articulo_id"] == articulo_id]
+    if ficha_id is not None:
+        filas = [fila for fila in filas if fila["ficha_id"] == ficha_id]
     filas.sort(key=lambda fila: fila["articulo_nombre"])
 
     return templates.TemplateResponse(
@@ -4311,9 +4341,9 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
             "clientes": clientes,
             "cliente_id": cliente_id,
             "cliente_nombre": cliente["nombre"],
-            "articulos_cliente": fichas,
-            "articulo_id": articulo_id,
-            "articulo_nombre_actual": nombre_por_articulo.get(articulo_id) if articulo_id is not None else None,
+            "fichas_cliente": [{"ficha_id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas],
+            "ficha_id": ficha_id,
+            "ficha_nombre_actual": _nombre_de_ficha(ficha_por_id[ficha_id]) if ficha_id in ficha_por_id else None,
             "fecha": fecha_consulta.isoformat(),
             "fecha_mostrar": fecha_consulta.strftime("%d/%m/%Y"),
             "fecha_error": fecha_error,
@@ -4480,17 +4510,16 @@ def _respuesta_listado_generado(cliente: dict, cambios: list[dict], tipo: str) -
     )
 
 
-def _ficha_por_articulo(fichas: list[dict]) -> dict[int, int]:
-    """{articulo_id: ficha_id} — el único punto donde una pantalla que habla de artículos toca la clave de venta.
+def _nombre_de_ficha(ficha: dict) -> str:
+    """El nombre con el que EL CLIENTE conoce este producto, cayendo al del catálogo.
 
-    El precio es de la FICHA (ver guardar_precios_cliente). Las pantallas
-    de precios todavía identifican cada renglón por su artículo, y esto
-    traduce al guardar. Hoy la correspondencia es 1 a 1 porque
-    fichas_logistica tiene unique (articulo_id, cliente_id); cuando ese
-    unique se saque (Parte 3), las pantallas pasan a mandar la ficha y
-    esta función desaparece.
+    Es lo que distingue dos fichas del mismo artículo: "Banana Bolivia" y
+    "Banana Ecuador" son las dos el artículo Banana, y mostrar "Banana" en
+    las dos dejaría al que arma sin saber qué caja usar. La ficha sin
+    nombre propio cargado se sigue mostrando con el nombre del catálogo,
+    igual que siempre.
     """
-    return {ficha["articulo_id"]: ficha["id"] for ficha in fichas}
+    return (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"]
 
 
 def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
@@ -4548,7 +4577,10 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
+    # El precio cuelga de la FICHA: dos fichas del mismo artículo tienen
+    # su propio precio, y buscarlo por artículo devolvería cualquiera de
+    # los dos.
+    precio_por_ficha = {precio["ficha_id"]: precio["precio"] for precio in precios_vigentes}
     # Datos que necesita el recuadro "Simulación" (ver precios_cargar.html)
     # para calcular la rentabilidad de un precio cualquiera sin volver a
     # pedirle nada al servidor — solo existen para los artículos con costo
@@ -4562,11 +4594,17 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
         for articulo in contexto_negociacion["todos"]
         if articulo["costo_actual"] is not None
     }
-    articulos_cliente = [
+    # La lista de la pantalla es de FICHAS, no de artículos: se carga el
+    # precio de "Banana Ecuador", no el de "Banana". El costo, en cambio,
+    # sigue siendo del artículo (se compró una sola banana), así que la
+    # simulación se busca por articulo_id — las dos fichas comparten costo
+    # y cada una tiene su precio.
+    fichas_cliente = [
         {
+            "ficha_id": ficha["id"],
             "articulo_id": ficha["articulo_id"],
-            "articulo_nombre": ficha["articulo_nombre"],
-            "precio_vigente": precio_por_articulo.get(ficha["articulo_id"]),
+            "nombre": _nombre_de_ficha(ficha),
+            "precio_vigente": precio_por_ficha.get(ficha["id"]),
             **simulacion_por_articulo.get(
                 ficha["articulo_id"],
                 {"costo_producto_unidad_venta": None, "costo_envase_unidad_venta": None, "denominador_tasas": None},
@@ -4581,20 +4619,24 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
         {
             "clientes": clientes,
             "cliente_id": cliente_id,
-            "articulos_cliente": articulos_cliente,
+            "fichas_cliente": fichas_cliente,
             **contexto_negociacion,
         },
     )
 
 
 def _leer_pendientes_del_form(form) -> list[dict]:
-    """Lee del form oculto (armado por JS con los pendientes de la sesión) un precio nuevo por artículo.
+    """Lee del form oculto (armado por JS con los pendientes de la sesión) un precio nuevo por FICHA.
 
-    Cada pendiente viaja como "pendiente_precio_<articulo_id>" (el nuevo) y
-    "pendiente_original_<articulo_id>" (el vigente al elegirlo, para que
+    Cada pendiente viaja como "pendiente_precio_<ficha_id>" (el nuevo) y
+    "pendiente_original_<ficha_id>" (el vigente al elegirlo, para que
     calcular_cambios_de_precios no genere una fila si no cambió nada) — no
     hace falta un índice porque los pendientes ya vienen sin duplicados por
-    artículo (el navegador se encarga de eso).
+    ficha (el navegador se encarga de eso).
+
+    La clave es la ficha y no el artículo porque el precio es de la ficha:
+    con "Banana Bolivia" y "Banana Ecuador" cargadas en la misma sesión,
+    por artículo se pisaban entre ellas.
     """
     filas = []
     prefijo = "pendiente_precio_"
@@ -4602,13 +4644,13 @@ def _leer_pendientes_del_form(form) -> list[dict]:
         if not clave.startswith(prefijo):
             continue
         try:
-            articulo_id = int(clave[len(prefijo) :])
+            ficha_id = int(clave[len(prefijo) :])
         except ValueError:
             continue
         filas.append(
             {
-                "articulo_id": articulo_id,
-                "original_texto": str(form.get(f"pendiente_original_{articulo_id}", "")).strip(),
+                "ficha_id": ficha_id,
+                "original_texto": str(form.get(f"pendiente_original_{ficha_id}", "")).strip(),
                 "nuevo_texto": str(form.get(clave, "")).strip(),
             }
         )
@@ -4643,16 +4685,16 @@ def _guardar_pendientes_carga_manual(form) -> tuple[dict, list[dict]]:
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    nombre_por_articulo = {ficha["articulo_id"]: ficha["articulo_nombre"] for ficha in fichas}
-    ficha_por_articulo = _ficha_por_articulo(fichas)
+    ficha_por_id = {ficha["id"]: ficha for ficha in fichas}
 
     filas_crudas = _leer_pendientes_del_form(form)
     for fila in filas_crudas:
-        fila["articulo_nombre"] = nombre_por_articulo.get(fila["articulo_id"], f"Artículo #{fila['articulo_id']}")
-        fila["ficha_id"] = ficha_por_articulo.get(fila["articulo_id"])
-    # Un artículo sin ficha de este cliente no tiene precio que cargar
-    # (el precio cuelga de la ficha): se ignora en vez de romper.
-    filas_crudas = [fila for fila in filas_crudas if fila["ficha_id"] is not None]
+        ficha = ficha_por_id.get(fila["ficha_id"])
+        fila["articulo_id"] = ficha["articulo_id"] if ficha else None
+        fila["articulo_nombre"] = _nombre_de_ficha(ficha) if ficha else f"Ficha #{fila['ficha_id']}"
+    # Una ficha que ya no es de este cliente (se borró mientras el
+    # navegador tenía el pendiente cargado) se ignora en vez de romper.
+    filas_crudas = [fila for fila in filas_crudas if fila["articulo_id"] is not None]
 
     error, filas_para_diff = _validar_precios(filas_crudas)
     if error:
@@ -4769,38 +4811,40 @@ def _extraer_listado_precios_de_archivo(bytes_archivo: bytes, tipo_archivo: str)
 
 
 def _armar_renglones_precios_desde_datos_leidos(
-    datos: dict, fichas_cliente: list[dict], articulos_existentes: list[dict], precio_por_articulo: dict
+    datos: dict, fichas_cliente: list[dict], precio_por_ficha: dict
 ) -> list[dict]:
-    """Arma los renglones sugeridos (artículo matcheado + precio leído) a partir de lo que devolvió la IA.
+    """Arma los renglones sugeridos (FICHA matcheada + precio leído) a partir de lo que devolvió la IA.
 
-    Acota el catálogo candidato del matcheo a los artículos con ficha de
-    ESTE cliente — su propio nombre_cliente (fichas_logistica) es el alias
-    más preciso que existe, y no tiene sentido sugerir un artículo que ni
-    siquiera tiene ficha para él. Si el cliente todavía no tiene ninguna
-    ficha, se cae al catálogo completo como respaldo. Sin aprendizaje por
-    cliente todavía (se pasa vacío) — el que existe hoy es por proveedor,
-    para comandas.
+    El match cae en una ficha, no en un artículo: el precio cuelga de la
+    ficha, y "Banana Bolivia" y "Banana Ecuador" tienen el suyo. Los
+    candidatos son las fichas de ESTE cliente, con el nombre que él usa
+    (nombre_cliente) — el alias más preciso que existe, y el único que
+    distingue dos fichas del mismo artículo. Sin ninguna ficha no hay nada
+    que sugerir: el precio no tiene dónde colgar hasta que se cree una.
+
+    Sin aprendizaje por cliente todavía (se pasa vacío) — el que existe hoy
+    es por proveedor, para comandas.
     """
-    conversiones_cliente = [f for f in fichas_cliente if f.get("nombre_cliente")]
-    candidatos_articulo = (
-        [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas_cliente]
-        if fichas_cliente
-        else articulos_existentes
-    )
+    conversiones_cliente = [
+        {"nombre_cliente": f["nombre_cliente"], "articulo_id": f["id"]}
+        for f in fichas_cliente
+        if f.get("nombre_cliente")
+    ]
+    candidatos_ficha = [{"id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas_cliente]
 
     renglones = []
     for item in datos.get("items") or []:
         texto_leido = item.get("articulo") or ""
-        articulo_id_sugerido = adivinar_articulo(texto_leido, {}, candidatos_articulo, conversiones_cliente)
+        ficha_id_sugerida = adivinar_articulo(texto_leido, {}, candidatos_ficha, conversiones_cliente)
         renglones.append(
             {
                 "texto_leido": texto_leido,
-                "articulo_id": articulo_id_sugerido,
-                "precio_original": precio_por_articulo.get(articulo_id_sugerido)
-                if articulo_id_sugerido is not None
+                "ficha_id": ficha_id_sugerida,
+                "precio_original": precio_por_ficha.get(ficha_id_sugerida)
+                if ficha_id_sugerida is not None
                 else None,
                 "precio_nuevo": _numero_o_none(item.get("precio")),
-                "advertencia": item.get("confianza") == "baja" or articulo_id_sugerido is None,
+                "advertencia": item.get("confianza") == "baja" or ficha_id_sugerida is None,
                 "descartado": False,
             }
         )
@@ -4876,15 +4920,12 @@ async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archi
 
     try:
         fichas_cliente = listar_fichas_por_cliente(cliente_id_valor)
-        articulos_existentes = listar_articulos()
         precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id_valor, _hoy_argentina())
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    precio_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_vigentes}
-    renglones = _armar_renglones_precios_desde_datos_leidos(
-        datos, fichas_cliente, articulos_existentes, precio_por_articulo
-    )
+    precio_por_ficha = {precio["ficha_id"]: precio["precio"] for precio in precios_vigentes}
+    renglones = _armar_renglones_precios_desde_datos_leidos(datos, fichas_cliente, precio_por_ficha)
 
     if not renglones:
         return templates.TemplateResponse(
@@ -4909,21 +4950,19 @@ async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archi
         bytes_para_guardar = comprimir_pdf(bytes_archivo) if tipo_archivo == "pdf" else bytes_archivo
         archivo_preview = _generar_data_uri_generico(bytes_para_guardar, MIME_POR_TIPO_ARCHIVO_PRECIOS[tipo_archivo])
 
-    articulos_para_select = (
-        [
-            {
-                "articulo_id": f["articulo_id"],
-                "articulo_nombre": f["articulo_nombre"],
-                "precio_vigente": precio_por_articulo.get(f["articulo_id"]),
-            }
-            for f in fichas_cliente
-        ]
-        if fichas_cliente
-        else [
-            {"articulo_id": a["id"], "articulo_nombre": a["nombre"], "precio_vigente": precio_por_articulo.get(a["id"])}
-            for a in articulos_existentes
-        ]
-    )
+    # El select ofrece las FICHAS del cliente, con el nombre que él usa.
+    # Antes, sin fichas, ofrecía el catálogo entero: se podía elegir un
+    # artículo y al guardar no se guardaba nada en silencio, porque el
+    # precio necesita una ficha donde colgar. Sin fichas ahora la lista va
+    # vacía y la pantalla lo dice.
+    fichas_para_select = [
+        {
+            "ficha_id": f["id"],
+            "nombre": _nombre_de_ficha(f),
+            "precio_vigente": precio_por_ficha.get(f["id"]),
+        }
+        for f in fichas_cliente
+    ]
 
     return templates.TemplateResponse(
         request,
@@ -4931,7 +4970,7 @@ async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archi
         {
             "cliente_id": cliente_id_valor,
             "cliente_nombre": cliente["nombre"],
-            "articulos": articulos_para_select,
+            "fichas": fichas_para_select,
             "renglones": renglones,
             "tipo_archivo": tipo_archivo,
             "archivo_preview": archivo_preview,
@@ -4969,28 +5008,29 @@ def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
         fichas = listar_fichas_por_cliente(cliente_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    nombre_por_articulo = {f["articulo_id"]: f["articulo_nombre"] for f in fichas}
-    ficha_por_articulo = _ficha_por_articulo(fichas)
+    ficha_por_id = {f["id"]: f for f in fichas}
 
     filas_crudas = []
     for indice in range(cantidad_renglones):
         if str(form.get(f"item_{indice}_descartar", "")).strip():
             continue
-        articulo_id_texto = str(form.get(f"item_{indice}_articulo_id", "")).strip()
-        if not articulo_id_texto:
+        ficha_id_texto = str(form.get(f"item_{indice}_ficha_id", "")).strip()
+        if not ficha_id_texto:
             continue
         try:
-            articulo_id = int(articulo_id_texto)
+            ficha_id = int(ficha_id_texto)
         except ValueError:
             continue
-        ficha_id = ficha_por_articulo.get(articulo_id)
-        if ficha_id is None:
-            continue  # sin ficha de este cliente no hay precio que cargar
+        # La ficha manda: el artículo sale de ella server-side, nunca del
+        # navegador. Una ficha que ya no es de este cliente se ignora.
+        ficha = ficha_por_id.get(ficha_id)
+        if ficha is None:
+            continue
         filas_crudas.append(
             {
-                "articulo_id": articulo_id,
+                "articulo_id": ficha["articulo_id"],
                 "ficha_id": ficha_id,
-                "articulo_nombre": nombre_por_articulo.get(articulo_id, f"Artículo #{articulo_id}"),
+                "articulo_nombre": _nombre_de_ficha(ficha),
                 "original_texto": str(form.get(f"item_{indice}_precio_original", "")).strip(),
                 "nuevo_texto": str(form.get(f"item_{indice}_precio_nuevo", "")).strip(),
             }
@@ -6168,16 +6208,27 @@ def ver_stock_deposito(request: Request, aviso: str | None = None):
 
 
 def _tamanos_de_caja_por_ficha() -> dict[str, str]:
-    """El tamaño de la caja armada según la ficha, por "cliente_id:articulo_id" ("6 kg") — para el desglose del stock."""
+    """El tamaño de la caja armada según la ficha, por "cliente_id:articulo_id" ("6 kg") — para el desglose del stock.
+
+    Con VARIAS fichas del mismo artículo para ese cliente y tamaños
+    distintos, se muestran los dos ("6 o 10 kg"): la guía R no guarda con
+    qué ficha se armó, así que elegir uno sería inventar. Si las dos fichas
+    tienen el mismo kilaje, no hay ambigüedad y se muestra uno solo.
+    """
     tamanos: dict[str, str] = {}
+    por_clave: dict[str, list[str]] = {}
     for cliente_fila in listar_clientes():
         for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
             if not ficha.get("contenido_caja"):
                 continue
             sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-            tamanos[f"{cliente_fila['id']}:{ficha['articulo_id']}"] = (
-                f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-            )
+            texto = f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+            clave = f"{cliente_fila['id']}:{ficha['articulo_id']}"
+            if texto not in por_clave.setdefault(clave, []):
+                por_clave[clave].append(texto)
+
+    for clave, textos in por_clave.items():
+        tamanos[clave] = " o ".join(textos)
     return tamanos
 
 
@@ -6983,19 +7034,36 @@ def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
     """El kilaje de la caja armada según la ficha, por (cliente, artículo): "6 kg por caja según la ficha de Día".
 
     Es dato de FICHA, no de stock: se le puede mostrar al operario. La
-    clave es "cliente_id:articulo_id" — la ayuda muestra SOLO la ficha del
-    cliente elegido (todas juntas no servían, pedido del dueño 25/08).
+    clave es "cliente_id:articulo_id" — la ayuda muestra SOLO las fichas
+    del cliente elegido (todas juntas no servían, pedido del dueño 25/08).
+
+    Si ese cliente tiene VARIAS fichas de ese artículo (Banana Bolivia y
+    Banana Ecuador), la ayuda las nombra a las dos con su kilaje. Elegir
+    una sería adivinar: la guía R no guarda con qué ficha se armó, y
+    mostrarle al operario el kilaje de la otra es armar la caja mal.
     """
     ayudas: dict[str, str] = {}
     for cliente_fila in listar_clientes():
+        por_articulo: dict[int, list[dict]] = {}
         for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
             if not ficha.get("contenido_caja"):
                 continue
-            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-            ayudas[f"{cliente_fila['id']}:{ficha['articulo_id']}"] = (
-                f"{_formatear_numero(ficha['contenido_caja'])} {sufijo} por caja, "
-                f"según la ficha de {cliente_fila['nombre']}."
-            )
+            por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+
+        for articulo_id, fichas_articulo in por_articulo.items():
+            def _kilaje(ficha):
+                sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+                return f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+
+            if len(fichas_articulo) == 1:
+                texto = f"{_kilaje(fichas_articulo[0])} por caja, según la ficha de {cliente_fila['nombre']}."
+            else:
+                detalle = " · ".join(f"{_nombre_de_ficha(f)}: {_kilaje(f)}" for f in fichas_articulo)
+                texto = (
+                    f"{detalle} por caja, según las fichas de {cliente_fila['nombre']} "
+                    "— fijate cuál estás armando."
+                )
+            ayudas[f"{cliente_fila['id']}:{articulo_id}"] = texto
     return ayudas
 
 
@@ -9549,19 +9617,24 @@ def _armar_renglones_pedido_desde_bloque(bloque: dict, fichas: list[dict], alias
     """Los renglones del bloque con su matcheo: código exacto -> nombre exacto -> sugerencia difusa (marcada).
 
     El match cae en una FICHA (con qué se le vende a este cliente) y el
-    artículo sale de ella. Los alias exactos —código y nombre— son de la
-    ficha y no tienen ambigüedad. La sugerencia difusa, en cambio, compara
-    contra los nombres del CATÁLOGO, así que devuelve un artículo: se
-    traduce a su ficha después.
+    artículo sale de ella. Los tres caminos —código exacto, nombre exacto y
+    sugerencia difusa— devuelven ficha: la difusa compara contra el nombre
+    que el CLIENTE usa (nombre_cliente, cayendo al del catálogo), que es lo
+    único que distingue dos fichas del mismo artículo.
 
     Cada renglón conserva SIEMPRE el texto crudo del mail y las cantidades
     por sucursal tal como vinieron. Sin match, ficha y artículo en None:
     en la revisión va arriba, marcado, para asignar a mano.
     """
-    candidatos = [{"id": f["articulo_id"], "nombre": f["articulo_nombre"]} for f in fichas]
-    conversiones = [f for f in fichas if f.get("nombre_cliente")]
+    # Los candidatos del matcheo difuso son las FICHAS, con el nombre que
+    # el cliente usa: así la sugerencia cae directo en la ficha correcta y
+    # no hay que traducir desde el artículo (que con dos fichas del mismo
+    # artículo no tendría cómo elegir cuál).
+    candidatos = [{"id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas]
+    conversiones = [
+        {"nombre_cliente": f["nombre_cliente"], "articulo_id": f["id"]} for f in fichas if f.get("nombre_cliente")
+    ]
     ficha_por_id = {f["id"]: f for f in fichas}
-    ficha_por_articulo = _ficha_por_articulo(fichas)
 
     renglones = []
     for renglon in bloque.get("renglones") or []:
@@ -9574,8 +9647,7 @@ def _armar_renglones_pedido_desde_bloque(bloque: dict, fichas: list[dict], alias
             ficha_id = alias_por_nombre.get(normalizar_texto(descripcion))
             match_por = "nombre" if ficha_id is not None else None
         if ficha_id is None and descripcion:
-            articulo_sugerido = adivinar_articulo(descripcion, {}, candidatos, conversiones)
-            ficha_id = ficha_por_articulo.get(articulo_sugerido) if articulo_sugerido is not None else None
+            ficha_id = adivinar_articulo(descripcion, {}, candidatos, conversiones)
             match_por = "sugerencia" if ficha_id is not None else None
 
         ficha = ficha_por_id.get(ficha_id) if ficha_id is not None else None
@@ -9819,7 +9891,10 @@ def _contexto_revision_pedido(cliente_id, cliente_nombre, fecha_valor, datos, te
         "empresa_bloque": bloque.get("empresa") or "",
         "sucursales": sucursales,
         "renglones": renglones,
-        "articulos_cliente": [{"id": f["id"], "nombre": f["articulo_nombre"]} for f in fichas],
+        # El select de la revisión elige FICHA, con el nombre que el cliente
+        # usa: "Banana Ecuador" y "Banana Bolivia" son dos opciones, y
+        # "Banana" en las dos no dejaría elegir.
+        "fichas_cliente": [{"id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas],
         "texto_original": texto_original,
         "fotos_data": fotos_data,
         "pedido_vigente": pedido_vigente,
@@ -9946,7 +10021,7 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
             "sin_identificar": sin_identificar,
             "renglones_por_sucursal": renglones_por_sucursal,
             "fotos": fotos,
-            "articulos_cliente": [{"id": f["id"], "nombre": f["articulo_nombre"]} for f in fichas],
+            "fichas_cliente": [{"id": f["id"], "nombre": _nombre_de_ficha(f)} for f in fichas],
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido.html", contexto)
@@ -10310,8 +10385,8 @@ async def confirmar_pedido(request: Request):
             ficha_id = None
         articulo_id = ficha["articulo_id"] if ficha else None
 
-        if articulo_id is not None and str(form.get(f"renglon_{indice}_guardar_alias", "")).strip():
-            alias_a_guardar.append((articulo_id, texto_codigo, texto_descripcion))
+        if ficha_id is not None and str(form.get(f"renglon_{indice}_guardar_alias", "")).strip():
+            alias_a_guardar.append((ficha_id, texto_codigo, texto_descripcion))
 
         con_cantidad = False
         for indice_sucursal, nombre in enumerate(nombres_sucursales):
@@ -10370,11 +10445,11 @@ async def confirmar_pedido(request: Request):
 
     # Los alias se guardan después del pedido (si fallan, el pedido ya
     # está a salvo): solo completan campos vacíos de la ficha.
-    for articulo_id, texto_codigo, texto_descripcion in alias_a_guardar:
+    for ficha_id_alias, texto_codigo, texto_descripcion in alias_a_guardar:
         try:
-            guardar_alias_en_ficha(cliente_id, articulo_id, texto_codigo, texto_descripcion)
+            guardar_alias_en_ficha(ficha_id_alias, texto_codigo, texto_descripcion)
         except Exception:
-            logger.exception("No se pudo guardar el alias en la ficha (cliente %s, articulo %s)", cliente_id, articulo_id)
+            logger.exception("No se pudo guardar el alias en la ficha %s (cliente %s)", ficha_id_alias, cliente_id)
 
     # Las capturas leídas quedan como respaldo del pedido (ya vienen
     # comprimidas desde la lectura). Si Storage falla, el pedido igual
@@ -10405,29 +10480,32 @@ def asignar_renglon_pedido_ruta(
     renglon_id: int,
     cliente_id: int = Form(...),
     fecha: str = Form(""),
-    articulo_id: str = Form(""),
+    ficha_id: str = Form(""),
     guardar_alias: str = Form(""),
     texto_codigo: str = Form(""),
     texto_descripcion: str = Form(""),
 ):
-    """Asigna a mano un renglón "sin identificar" desde la pantalla del pedido (y opcionalmente guarda el alias)."""
+    """Asigna a mano un renglón "sin identificar" desde la pantalla del pedido (y opcionalmente guarda el alias).
+
+    Se elige la FICHA, no el artículo: es la que dice a qué precio, con qué
+    kilaje y con qué nombre se le vende. El artículo lo deriva la base de
+    la ficha elegida.
+    """
     try:
-        articulo_id_valor = int(articulo_id)
+        ficha_id_valor = int(ficha_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Elegí el artículo.")
 
     try:
-        asignar_articulo_a_renglon_pedido(renglon_id, articulo_id_valor)
+        asignar_ficha_a_renglon_pedido(renglon_id, ficha_id_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo asignar el artículo: {error_db}") from error_db
 
     if guardar_alias.strip():
         try:
-            guardar_alias_en_ficha(
-                cliente_id, articulo_id_valor, texto_codigo.strip() or None, texto_descripcion.strip() or None
-            )
+            guardar_alias_en_ficha(ficha_id_valor, texto_codigo.strip() or None, texto_descripcion.strip() or None)
         except Exception:
-            logger.exception("No se pudo guardar el alias en la ficha (cliente %s, articulo %s)", cliente_id, articulo_id_valor)
+            logger.exception("No se pudo guardar el alias en la ficha %s (cliente %s)", ficha_id_valor, cliente_id)
 
     return RedirectResponse(
         url=f"/deposito/pedido?{urlencode({'cliente_id': cliente_id, 'fecha': fecha})}", status_code=303
@@ -10679,6 +10757,15 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         fichas = listar_fichas_por_cliente(cliente_id_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    # El kilaje se busca por FICHA, no por artículo: "Banana Bolivia" viene
+    # en cajas de 6 kg y "Banana Ecuador" en cajas de 10, y son el mismo
+    # artículo. Por artículo, el que arma una vería el default de la otra
+    # — y esos kilos son los que se facturan. El renglón sabe su ficha
+    # desde la Parte 2; el que quedó sin ficha (renglón viejo, o ficha
+    # borrada) cae al kilaje de alguna ficha de su artículo, que es lo
+    # mejor que hay y lo que se hacía siempre.
+    contenido_por_ficha = {f["id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")}
+    unidad_por_ficha = {f["id"]: f.get("unidad_venta") for f in fichas}
     contenido_por_articulo = {
         f["articulo_id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")
     }
@@ -10686,22 +10773,32 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     etiquetas_por_bulto = {"kilo": "Kilos por cajón", "unidad": "Unidades por cajón", "cubeta": "Cubetas por cajón"}
     sufijos_unidad = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
 
+    def _contenido_de(renglon):
+        if renglon.get("ficha_id") in contenido_por_ficha:
+            return contenido_por_ficha[renglon["ficha_id"]]
+        return contenido_por_articulo.get(renglon["articulo_id"])
+
+    def _unidad_de(renglon):
+        if renglon.get("ficha_id") in unidad_por_ficha:
+            return unidad_por_ficha[renglon["ficha_id"]]
+        return unidad_por_articulo.get(renglon["articulo_id"])
+
     def _kilos_de_ficha(renglon, bultos):
-        contenido = contenido_por_articulo.get(renglon["articulo_id"])
+        contenido = _contenido_de(renglon)
         if contenido is None or bultos is None:
             return None
         return round(float(bultos) * contenido, 2)
 
     propios = [r for r in identificados if r["sucursal"] == sucursal_valida["sucursal"]]
-    pendientes = sorted((r for r in propios if r["armado_el"] is None), key=lambda r: r["articulo_nombre"])
-    armados = sorted((r for r in propios if r["armado_el"] is not None), key=lambda r: r["articulo_nombre"])
+    pendientes = sorted((r for r in propios if r["armado_el"] is None), key=lambda r: r["nombre_venta"])
+    armados = sorted((r for r in propios if r["armado_el"] is not None), key=lambda r: r["nombre_venta"])
     anulados = sorted(
         (r for r in anulados_todos if r["sucursal"] == sucursal_valida["sucursal"]),
-        key=lambda r: r["articulo_nombre"],
+        key=lambda r: r["nombre_venta"],
     )
     for r in pendientes:
-        r["contenido_caja"] = contenido_por_articulo.get(r["articulo_id"])
-        unidad = unidad_por_articulo.get(r["articulo_id"])
+        r["contenido_caja"] = _contenido_de(r)
+        unidad = _unidad_de(r)
         # La etiqueta dice la unidad REAL del artículo (como en las otras
         # pantallas): "Kilos por cajón", "Unidades por cajón"...
         r["etiqueta_por_bulto"] = etiquetas_por_bulto.get(unidad, "Contenido por cajón")

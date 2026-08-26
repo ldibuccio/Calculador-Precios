@@ -505,7 +505,7 @@
           <input type="hidden" name="fecha" value="{{ fecha }}">
           <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
           <input type="hidden" name="cantidad_pedida" value="{{ r.cantidad }}">
-          <div class="nombre">{{ r.articulo_nombre }}</div>
+          <div class="nombre">{{ r.nombre_venta }}</div>
           <div class="cantidad">{{ r.cantidad|numero }} bultos</div>
           {# Lo que se carga es el kilaje POR BULTO (el que arma sabe que
              el cajón va con 16 kg): precargado con la ficha, editable.
@@ -531,13 +531,13 @@
           </div>
         </form>
         <div class="acciones-renglon-armar">
-          <button type="submit" form="armar-{{ r.id }}" class="boton-tilde" aria-label="Marcar {{ r.articulo_nombre }} como armado">✓</button>
+          <button type="submit" form="armar-{{ r.id }}" class="boton-tilde" aria-label="Marcar {{ r.nombre_venta }} como armado">✓</button>
           <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/anular"
-                onsubmit="return confirm('¿Anular {{ r.articulo_nombre }}? No se va a armar. Queda registrado como anulado y se puede reponer.');">
+                onsubmit="return confirm('¿Anular {{ r.nombre_venta }}? No se va a armar. Queda registrado como anulado y se puede reponer.');">
             <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
             <input type="hidden" name="fecha" value="{{ fecha }}">
             <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
-            <button type="submit" class="boton-anular" aria-label="Anular {{ r.articulo_nombre }}">✗</button>
+            <button type="submit" class="boton-anular" aria-label="Anular {{ r.nombre_venta }}">✗</button>
           </form>
         </div>
       </div>
@@ -556,7 +556,7 @@
     {% for r in armados %}
     <div class="renglon-armar armado">
       <div class="datos">
-        <div class="nombre">{{ r.articulo_nombre }}</div>
+        <div class="nombre">{{ r.nombre_venta }}</div>
         <div class="cantidad">
           {% if r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
           <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
@@ -587,7 +587,7 @@
     {% for r in anulados %}
     <div class="renglon-armar anulado">
       <div class="datos">
-        <div class="nombre">{{ r.articulo_nombre }}</div>
+        <div class="nombre">{{ r.nombre_venta }}</div>
         <div class="cantidad">{{ r.cantidad|numero }} bultos — anulado (no se armó)</div>
       </div>
       <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desanular">

@@ -154,12 +154,12 @@
       <label for="articulo_texto">Artículo (opcional — dejalo vacío para ver todos)</label>
       <div class="buscador-articulo">
         <input type="text" id="articulo_texto" autocomplete="off" placeholder="Buscar artículo..."
-               value="{{ articulo_nombre_actual or '' }}"
+               value="{{ ficha_nombre_actual or '' }}"
                onfocus="actualizarListaArticulos()" oninput="actualizarListaArticulos()" onblur="ocultarListaArticulos()">
         <div class="lista-articulos" id="lista-articulos"></div>
       </div>
-      <input type="hidden" id="articulo_id" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
-      {% if articulo_id %}
+      <input type="hidden" id="articulo_id" name="ficha_id" value="{{ ficha_id if ficha_id is not none else '' }}">
+      {% if ficha_id %}
       <button type="button" class="boton-secundario" onclick="limpiarArticulo()">✕ Ver todos los artículos</button>
       {% endif %}
 
@@ -207,7 +207,7 @@
     {% endfor %}
     {% else %}
     <p class="vacio">
-      {% if articulo_id %}Este artículo no tiene precio vigente para {{ cliente_nombre }} a esta fecha.
+      {% if ficha_id %}Este artículo no tiene precio vigente para {{ cliente_nombre }} a esta fecha.
       {% else %}{{ cliente_nombre }} no tiene ningún precio vigente a esta fecha.{% endif %}
     </p>
     {% endif %}
@@ -217,7 +217,7 @@
   {% if cliente_id %}
   <script>
     const ARTICULOS_LISTA = [
-      {% for a in articulos_cliente %}{ id: {{ a.articulo_id }}, nombre: "{{ a.articulo_nombre }}" },{% endfor %}
+      {% for f in fichas_cliente %}{ id: {{ f.ficha_id }}, nombre: "{{ f.nombre }}" },{% endfor %}
     ];
 
     function normalizarBusquedaArticulo(texto) {

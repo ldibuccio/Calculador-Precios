@@ -402,10 +402,13 @@
   {% if cliente_id and not sin_fichas %}
   <script>
     const CLIENTE_ID = {{ cliente_id }};
+    // La lista es de FICHAS: el precio cuelga de la ficha, así que
+    // "Banana Bolivia" y "Banana Ecuador" son dos entradas distintas con
+    // su propio precio vigente (y el mismo costo, que es del artículo).
     const ARTICULOS_LISTA = [
-      {% for a in articulos_cliente %}{
-        id: {{ a.articulo_id }},
-        nombre: "{{ a.articulo_nombre }}",
+      {% for a in fichas_cliente %}{
+        id: {{ a.ficha_id }},
+        nombre: "{{ a.nombre }}",
         precioVigente: {{ a.precio_vigente if a.precio_vigente is not none else "null" }},
         costoProductoUnidadVenta: {{ a.costo_producto_unidad_venta if a.costo_producto_unidad_venta is not none else "null" }},
         costoEnvaseUnidadVenta: {{ a.costo_envase_unidad_venta if a.costo_envase_unidad_venta is not none else "null" }},
@@ -538,9 +541,9 @@
         return false;
       }
 
-      const indiceExistente = pendientes.findIndex(function (p) { return p.articuloId === articuloElegido.id; });
+      const indiceExistente = pendientes.findIndex(function (p) { return p.fichaId === articuloElegido.id; });
       const pendiente = {
-        articuloId: articuloElegido.id,
+        fichaId: articuloElegido.id,
         articuloNombre: articuloElegido.nombre,
         precioOriginal: articuloElegido.precioVigente,
         precioNuevo: precioNuevo,
@@ -661,8 +664,8 @@
 
       agregarCampoOculto("cliente_id", CLIENTE_ID);
       pendientes.forEach(function (p) {
-        agregarCampoOculto("pendiente_precio_" + p.articuloId, p.precioNuevo);
-        agregarCampoOculto("pendiente_original_" + p.articuloId, p.precioOriginal !== null ? p.precioOriginal : "");
+        agregarCampoOculto("pendiente_precio_" + p.fichaId, p.precioNuevo);
+        agregarCampoOculto("pendiente_original_" + p.fichaId, p.precioOriginal !== null ? p.precioOriginal : "");
       });
 
       const boton = document.getElementById("boton-guardar-revision");
@@ -703,8 +706,8 @@
       const datos = new URLSearchParams();
       datos.set("cliente_id", CLIENTE_ID);
       pendientes.forEach(function (p) {
-        datos.set("pendiente_precio_" + p.articuloId, p.precioNuevo);
-        datos.set("pendiente_original_" + p.articuloId, p.precioOriginal !== null ? p.precioOriginal : "");
+        datos.set("pendiente_precio_" + p.fichaId, p.precioNuevo);
+        datos.set("pendiente_original_" + p.fichaId, p.precioOriginal !== null ? p.precioOriginal : "");
       });
 
       const url = tipo === "pdf" ? "/precios/cargar/guardar-y-exportar-pdf" : "/precios/cargar/guardar-y-exportar-excel";
