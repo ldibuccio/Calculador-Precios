@@ -1,0 +1,79 @@
+-- ============================================================================
+-- DROP del índice viejo de precios_venta_historial — la deuda anotada al
+-- pasar el precio de venta a la ficha
+-- ============================================================================
+-- Desde agregar_ficha_a_precios_venta.sql (Parte 1 de 3, aplicada y
+-- verificada en las dos bases el 26/08), la clave de VENTA es la ficha. El
+-- índice precios_venta_historial_vigente_idx, por (cliente_id, articulo_id,
+-- vigente_desde desc), quedó sin nadie que lo use:
+--
+--   - El precio vigente y el precio anterior de cada ficha salen por
+--     (cliente_id, ficha_id, vigente_desde desc) -> los sirve el índice
+--     nuevo, precios_venta_historial_ficha_vigente_idx.
+--   - El alta de precios resuelve su ON CONFLICT con el unique nuevo
+--     (ficha_id, vigente_desde), que trae su propio índice.
+--   - El ÚNICO lugar que todavía filtra por articulo_id es el chequeo de
+--     Disponibles ("¿este artículo tiene algún precio cargado?"), y filtra
+--     solo por articulo_id, SIN cliente_id: como este índice arranca por
+--     cliente_id, esa consulta nunca lo pudo usar. No pierde nada.
+--
+-- La columna articulo_id NO se toca: la usa ese mismo chequeo de
+-- Disponibles y es la referencia histórica de a qué artículo apuntaba cada
+-- precio. Acá se va el índice, nada más.
+--
+-- REVERSIBLE Y BARATO: si algún día hiciera falta, se repone con una sola
+-- línea (está al pie). No borra ni modifica ninguna fila, y la tabla es
+-- chica (decenas de filas por base), así que ni el drop ni un eventual
+-- rearmado cuestan nada.
+--
+-- Correr en las DOS bases (Frutamax y Palmala) y marcar en APLICADO.md.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- Verificación PREVIA (solo lectura, correr ANTES del drop)
+-- ----------------------------------------------------------------------------
+-- Una sola consulta muestra todo el panorama de la tabla. Tienen que
+-- aparecer, además del índice de la primary key:
+--   precios_venta_historial_vigente_idx          <- el que se va (cliente_id, articulo_id, vigente_desde DESC)
+--   precios_venta_historial_ficha_vigente_idx    <- el que se queda  (cliente_id, ficha_id, vigente_desde DESC)
+--   precios_venta_historial_ficha_vigente_key    <- el unique (ficha_id, vigente_desde)
+--
+-- Si el índice nuevo o el unique NO están, PARAR: la Parte 1 no está
+-- aplicada en esa base y este drop dejaría la tabla sin índice útil.
+--
+-- select indexname, indexdef
+--   from pg_indexes
+--  where tablename = 'precios_venta_historial'
+--  order by indexname;
+
+drop index precios_venta_historial_vigente_idx;
+
+-- ----------------------------------------------------------------------------
+-- Verificación POSTERIOR
+-- ----------------------------------------------------------------------------
+-- 1. El índice viejo ya no está: esto tiene que devolver 0 filas.
+--
+-- select indexname from pg_indexes
+--  where indexname = 'precios_venta_historial_vigente_idx';
+--
+-- 2. Los que importan siguen ahí: esto tiene que devolver 2 filas.
+--
+-- select indexname from pg_indexes
+--  where indexname in ('precios_venta_historial_ficha_vigente_idx',
+--                      'precios_venta_historial_ficha_vigente_key');
+--
+-- 3. Los precios se siguen leyendo igual (Lista de Precios de un cliente).
+--    Cambiá el 1 por un cliente_id real. Lo que importa es que devuelva las
+--    mismas filas que antes; que el plan diga Seq Scan es normal y está
+--    bien, la tabla tiene decenas de filas.
+--
+-- select distinct on (ficha_id) ficha_id, articulo_id, precio, vigente_desde
+--   from precios_venta_historial
+--  where cliente_id = 1 and vigente_desde <= current_date and ficha_id is not null
+--  order by ficha_id, vigente_desde desc;
+
+-- ----------------------------------------------------------------------------
+-- Para volver atrás (si alguna vez hiciera falta)
+-- ----------------------------------------------------------------------------
+-- create index precios_venta_historial_vigente_idx
+--     on precios_venta_historial (cliente_id, articulo_id, vigente_desde desc);
