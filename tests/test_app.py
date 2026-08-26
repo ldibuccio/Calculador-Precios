@@ -6432,6 +6432,74 @@ def test_ver_precios_consultar_fecha_pasada_usa_esa_fecha():
     assert "15/01/2026" in respuesta.text
 
 
+def _precios_vigentes_con_fechas(vigente_desde_cherry, vigente_desde_mango):
+    return [
+        {"ficha_id": 901, "articulo_id": 1, "precio": 500.0, "vigente_desde": vigente_desde_cherry},
+        {"ficha_id": 902, "articulo_id": 2, "precio": 350.0, "vigente_desde": vigente_desde_mango},
+    ]
+
+
+def _bloque_de_articulo(html: str, nombre: str) -> str:
+    # El renglón del artículo: desde el arranque de su fila hasta la
+    # siguiente. Alcanza para ver si ESE renglón quedó resaltado.
+    inicio = html.rindex('<div class="fila-precio', 0, html.index(nombre))
+    return html[inicio : html.index("</div>", html.index(nombre))]
+
+
+def test_ver_precios_consultar_resalta_el_precio_que_empezo_a_regir_ese_dia():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_con_fechas(HOY_DE_PRUEBA, date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.get("/precios/consultar?cliente_id=1")
+
+    assert "nueva" in _bloque_de_articulo(respuesta.text, "Tomate Cherry")
+    assert "nueva" not in _bloque_de_articulo(respuesta.text, "Mango")
+    assert "Nuevo precio" in respuesta.text
+
+
+def test_ver_precios_consultar_fecha_pasada_resalta_igual_lo_que_cambio_ese_dia():
+    # El agujero que se arregló: consultando para atrás el resaltado se
+    # perdía entero. Lo que empezó a regir el 15/01 tiene que verse en rojo
+    # al consultar el 15/01, igual que si fuera hoy.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_con_fechas(date(2026, 1, 15), date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=2026-01-15")
+
+    assert "nueva" in _bloque_de_articulo(respuesta.text, "Tomate Cherry")
+    assert "nueva" not in _bloque_de_articulo(respuesta.text, "Mango")
+    assert "el precio que empezó a regir el 15/01/2026" in respuesta.text
+
+
+def test_ver_precios_consultar_sin_cambios_ese_dia_no_resalta_ninguno():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            return_value=_precios_vigentes_con_fechas(date(2026, 1, 1), date(2026, 1, 1)),
+        ),
+    ):
+        respuesta = cliente.get("/precios/consultar?cliente_id=1&fecha=2026-01-15")
+
+    assert 'class="badge-nuevo"' not in respuesta.text
+    assert "fila-precio nueva" not in respuesta.text
+    assert "empezaron a regir" not in respuesta.text
+
+
 def test_ver_precios_consultar_fecha_invalida_muestra_error():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -6702,7 +6770,12 @@ def test_exportar_precios_pdf_hoy_resalta_el_que_cambio_hoy():
     assert texto.count("Nuevo precio") == 1
 
 
-def test_exportar_precios_pdf_fecha_pasada_no_resalta_nada():
+def test_exportar_precios_pdf_fecha_pasada_resalta_lo_que_empezo_a_regir_ese_dia():
+    # Consultar el 15/01 tiene que mostrar en rojo lo que arrancó el 15/01
+    # (Tomate Cherry acá): es para lo que se consulta para atrás — facturar
+    # sin tener que comparar contra la lista del día anterior. Mango viene
+    # del 1/1 y queda en negro. Antes el resaltado se apagaba entero en
+    # cuanto la fecha no era HOY.
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
@@ -6717,7 +6790,7 @@ def test_exportar_precios_pdf_fecha_pasada_no_resalta_nada():
         respuesta = cliente.get("/precios/consultar/exportar-pdf?cliente_id=1&fecha=2026-01-15")
 
     texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
-    assert "Nuevo precio" not in texto
+    assert texto.count("Nuevo precio") == 1
 
 
 def test_exportar_precios_pdf_separa_por_grupo():
@@ -6838,22 +6911,24 @@ def test_exportar_precios_excel_usa_el_formato_de_planilla_del_dueno():
     assert hoja.cell(row=2, column=2).value == "Precio Anterior"
     assert hoja.cell(row=2, column=3).value == "Precio Desde HOY"
 
-    # Mango cambió (300 -> 350): anterior a la vista y el nuevo resaltado
-    # en naranja con el precio en rojo. Se vende por unidad y el pie dice
-    # "POR KG", así que la unidad va pegada al nombre.
-    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango (por unidad)")
-    assert fila_mango[1].value == 300.0
-    assert fila_mango[2].value == 350.0
-    assert fila_mango[2].fill.start_color.rgb.endswith("FFC000")
-    assert fila_mango[2].font.color.rgb.endswith("C00000")
-    assert fila_mango[1].fill.start_color.rgb != fila_mango[2].fill.start_color.rgb  # el anterior queda sin resaltar
-
-    # Cherry nunca tuvo precio previo: el anterior figura IGUAL (se repite
-    # el vigente) y la fila no se resalta.
+    # Cherry EMPEZÓ A REGIR hoy: naranja con el precio en rojo. Nunca tuvo
+    # precio previo cargado, así que el anterior repite el vigente (figura
+    # igual, pedido explícito) — lo que manda es la fecha, no la comparación.
     fila_cherry = next(fila for fila in hoja.iter_rows() if fila[0].value == "Tomate Cherry")
     assert fila_cherry[1].value == 500.0
     assert fila_cherry[2].value == 500.0
-    assert fila_cherry[2].fill.start_color.rgb != fila_mango[2].fill.start_color.rgb
+    assert fila_cherry[2].fill.start_color.rgb.endswith("FFC000")
+    assert fila_cherry[2].font.color.rgb.endswith("C00000")
+    assert fila_cherry[1].fill.start_color.rgb != fila_cherry[2].fill.start_color.rgb  # el anterior queda sin resaltar
+
+    # Mango tiene un precio anterior distinto (300 -> 350) pero ese cambio
+    # es del 1/1, no de hoy: NO se resalta. Antes sí, y era un falso aviso.
+    # Se vende por unidad y el pie dice "POR KG", así que la unidad va
+    # pegada al nombre.
+    fila_mango = next(fila for fila in hoja.iter_rows() if fila[0].value == "Mango (por unidad)")
+    assert fila_mango[1].value == 300.0
+    assert fila_mango[2].value == 350.0
+    assert fila_mango[2].fill.start_color.rgb != fila_cherry[2].fill.start_color.rgb
 
     # Pie de la planilla, en la última fila con contenido.
     valores = [celda.value for fila in hoja.iter_rows() for celda in fila if celda.value is not None]
@@ -14729,6 +14804,18 @@ def test_el_form_del_reingreso_ofrece_los_tres_destinos():
     assert 'value="segunda"' in respuesta.text and "Pasa a segunda tal cual" in respuesta.text
     assert 'value="reproceso"' in respuesta.text and "Vuelve a cajón grande" in respuesta.text
     assert "¿Cuántos cajones grandes salieron?" in respuesta.text
+
+
+def test_el_form_del_reingreso_pide_la_fecha_de_la_vuelta_no_la_del_pedido():
+    # Son dos fechas distintas y las dos están a la vista en la pantalla:
+    # la etiqueta tiene que decir cuál se está pidiendo, y la ayuda la
+    # contrasta con la del pedido (24/08 en este renglón).
+    with patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)):
+        respuesta = cliente.get("/deposito/stock/reingreso?renglon_id=77")
+
+    assert "¿Qué día entró al depósito?" in respuesta.text
+    assert "El pedido es del 24/08. Esta fecha es la de la vuelta, y ordena el stock." in respuesta.text
+    assert "Fecha en que volvió" not in respuesta.text
 
 
 LOTES_MERMA_DE_PRUEBA = [

@@ -77,6 +77,26 @@
   }
   .fila-precio:last-child { border-bottom: none; }
   .fila-precio .precio { font-weight: 700; font-size: 1.05rem; }
+  /* Mismo lenguaje visual que el PDF: fondo rosa, franja roja a la
+     izquierda y el "● Nuevo precio" — el que factura los ubica de un
+     vistazo sin comparar contra la lista del día anterior. */
+  .fila-precio.nueva {
+    background: #fce4e4;
+    border-left: 3px solid #cc1a1a;
+    padding-left: 0.6rem;
+    margin: 0 -0.4rem;
+    padding-right: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .fila-precio.nueva .precio { color: #cc1a1a; }
+  .badge-nuevo {
+    display: block;
+    width: 100%;
+    color: #cc1a1a;
+    font-size: 0.8rem;
+    font-weight: 700;
+    margin-top: 0.15rem;
+  }
   .buscador-articulo {
     position: relative;
   }
@@ -174,10 +194,15 @@
   <div class="tarjeta">
     <h2>Precios vigentes al {{ fecha_mostrar }}</h2>
     {% if filas %}
+    {% set nuevos = filas|selectattr("es_nuevo")|list|length %}
+    {% if nuevos %}
+    <p class="ayuda">En rojo, {% if nuevos == 1 %}el precio que empezó{% else %}los {{ nuevos }} precios que empezaron{% endif %} a regir el {{ fecha_mostrar }}.</p>
+    {% endif %}
     {% for fila in filas %}
-    <div class="fila-precio">
+    <div class="fila-precio {% if fila.es_nuevo %}nueva{% endif %}">
       <span>{{ fila.articulo_nombre }}</span>
       <span class="precio">{{ fila.precio|moneda }}</span>
+      {% if fila.es_nuevo %}<span class="badge-nuevo">● Nuevo precio</span>{% endif %}
     </div>
     {% endfor %}
     {% else %}

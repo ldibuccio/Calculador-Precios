@@ -4293,6 +4293,10 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
             "articulo_id": precio["articulo_id"],
             "articulo_nombre": nombre_por_articulo.get(precio["articulo_id"], f"Artículo #{precio['articulo_id']}"),
             "precio": precio["precio"],
+            # Mismo criterio que el PDF y el Excel: empezó a regir en la
+            # fecha consultada. Sirve para facturar — si venía todo igual y
+            # algo cambió ese día, se ve sin comparar contra la lista anterior.
+            "es_nuevo": precio.get("vigente_desde") == fecha_consulta,
         }
         for precio in precios_vigentes
     ]
@@ -4323,11 +4327,15 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
 
     Reusa exactamente los mismos datos que ya arma /precios/consultar
     (fichas para nombre/unidad, precios vigentes, catálogo para el grupo)
-    — no calcula nada nuevo. es_hoy determina si corresponde resaltar
-    "precio nuevo": solo cuando se exporta la fecha de HOY, nunca para una
-    fecha pasada. precio_anterior (ver listar_precios_anteriores_por_cliente)
-    solo lo usa la columna "Precio anterior" del Excel (el PDF no la
-    muestra) — un artículo sin precio anterior cargado queda en None.
+    — no calcula nada nuevo. es_nuevo es "este precio EMPEZÓ A REGIR en la
+    fecha consultada" (vigente_desde == fecha_consulta), y vale igual para
+    hoy que para una fecha pasada: consultar el 20 tiene que mostrar lo que
+    cambió el 20, que es justo para lo que se consulta para atrás.
+    es_hoy queda solo para el encabezado del Excel ("Precio Desde HOY" vs
+    "Precio al dd/mm"), que sí depende de si la fecha es la de hoy.
+    precio_anterior (ver listar_precios_anteriores_por_cliente) solo lo usa
+    la columna "Precio anterior" del Excel (el PDF no la muestra) — un
+    artículo sin precio anterior cargado queda en None.
     """
     fichas = listar_fichas_por_cliente(cliente_id)
     precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, fecha_consulta)
@@ -4345,8 +4353,7 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
     grupo_por_articulo = {articulo["id"]: articulo.get("grupo") for articulo in articulos_existentes}
     precio_anterior_por_articulo = {precio["articulo_id"]: precio["precio"] for precio in precios_anteriores}
 
-    hoy = _hoy_argentina()
-    es_hoy = fecha_consulta == hoy
+    es_hoy = fecha_consulta == _hoy_argentina()
 
     filas = [
         {
@@ -4355,7 +4362,7 @@ def _armar_filas_exportacion_precios(cliente_id: int, fecha_consulta) -> tuple[l
             "precio": precio["precio"],
             "precio_anterior": precio_anterior_por_articulo.get(precio["articulo_id"]),
             "unidad": unidad_por_articulo.get(precio["articulo_id"]),
-            "es_nuevo": es_hoy and precio.get("vigente_desde") == hoy,
+            "es_nuevo": precio.get("vigente_desde") == fecha_consulta,
         }
         for precio in precios_vigentes
     ]
@@ -4402,11 +4409,11 @@ def exportar_precios_pdf(cliente_id: str = "", fecha: str = ""):
     cliente, fecha_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, fecha)
 
     try:
-        filas, es_hoy = _armar_filas_exportacion_precios(cliente["id"], fecha_valor)
+        filas, _ = _armar_filas_exportacion_precios(cliente["id"], fecha_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy, NOMBRE_EMPRESA)
+    pdf_bytes = generar_pdf_lista_precios(cliente["nombre"], fecha_valor, filas, NOMBRE_EMPRESA)
     nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "pdf")
 
     return Response(
@@ -4454,7 +4461,7 @@ def _respuesta_listado_generado(cliente: dict, cambios: list[dict], tipo: str) -
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     if tipo == "pdf":
-        archivo_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, es_hoy, NOMBRE_EMPRESA)
+        archivo_bytes = generar_pdf_lista_precios(cliente["nombre"], hoy, filas, NOMBRE_EMPRESA)
         media_type = "application/pdf"
         extension = "pdf"
     else:

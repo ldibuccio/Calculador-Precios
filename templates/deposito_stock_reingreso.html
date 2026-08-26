@@ -234,8 +234,12 @@
       <input type="number" id="cantidad" name="cantidad" min="0.01" max="{{ tope }}" step="0.01" required
              value="{{ precarga.cantidad if precarga.cantidad is defined and precarga.cantidad else tope|numero }}">
 
-      <label for="fecha">Fecha en que volvió</label>
+      {# La fecha que se pide acá es la de la VUELTA, no la del pedido: son
+         dos fechas distintas y la del pedido está a la vista arriba, así que
+         la etiqueta lo dice con todas las letras y la ayuda las contrasta. #}
+      <label for="fecha">¿Qué día entró al depósito?</label>
       <input type="date" id="fecha" name="fecha" max="{{ hoy }}" value="{{ precarga.fecha or hoy }}">
+      <p class="ayuda">El pedido es del {{ renglon.fecha_pedido.strftime("%d/%m") }}. Esta fecha es la de la vuelta, y ordena el stock.</p>
 
       <label for="motivo">Motivo (obligatorio)</label>
       <input type="text" id="motivo" name="motivo" required placeholder="Ej: rechazado por calidad"
