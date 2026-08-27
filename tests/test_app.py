@@ -11035,6 +11035,43 @@ def test_ver_cotejo_una_diferencia_ya_ajustada_se_pone_en_verde():
     assert "-5" in respuesta.text
 
 
+def test_ver_cotejo_un_ajuste_posterior_a_un_conteo_que_COINCIDIO_no_inventa_un_faltante():
+    """El bug del 28/08: el sin-explicar daba el ajuste con el signo cambiado.
+
+    Restar los ajustes posteriores a secas asume que TODO ajuste posterior
+    viene a tapar la diferencia del conteo. Si el conteo coincidió, no hay
+    ninguna diferencia que tapar: un ajuste hecho después por otro motivo
+    (aparecieron cajones) salía como "queda sin explicar" por su monto con
+    el signo invertido — 657/-657, 9/-9, 257/-257.
+
+    Y era peligroso, no solo feo: la tarjeta ofrecía "Ajustar a lo contado",
+    y apretarlo habría borrado los cajones que de verdad aparecieron, para
+    después ponerse en verde tapando el daño.
+    """
+    coincidio = _conteo_cotejo(cantidad=657, stock_sistema=657,
+                               ajustes_posteriores=657, stock_actual=1314)
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=[coincidio]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert 'class="tarjeta con-diferencia"' not in respuesta.text
+    assert "Ajustar a lo contado" not in respuesta.text
+    assert "sin explicar" not in respuesta.text
+
+
+def test_ver_cotejo_un_ajuste_en_la_direccion_CONTRARIA_no_agranda_el_faltante():
+    # Faltan 5 y el ajuste posterior suma 100 por otro motivo: eso no tapa
+    # nada, así que siguen faltando 5 — no 105.
+    contrario = _conteo_cotejo(ajustes_posteriores=100, stock_actual=140)
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=[contrario]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert 'class="tarjeta con-diferencia"' in respuesta.text
+    assert "sin explicar" not in respuesta.text  # sigue siendo la diferencia entera
+    assert "Ajustar a lo contado" in respuesta.text
+
+
 def test_ver_cotejo_un_ajuste_parcial_deja_el_resto_a_la_vista():
     # Ajustó 3 de los 5: quedan 2 sin explicar, y eso sigue siendo tarea.
     parcial = _conteo_cotejo(ajustes_posteriores=-3, stock_actual=37)

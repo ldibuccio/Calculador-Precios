@@ -133,7 +133,7 @@
       {% elif f.estado == "pendiente" %}
       {# La cantidad final se calcula en la pantalla de ajuste contra el
          stock ACTUAL (con aviso si cambió desde este conteo). #}
-      {% if f.ajustes_posteriores %}
+      {% if f.ajustes_posteriores and f.pendiente != f.diferencia %}
       <p class="pendiente-hoy">Desde el conteo ya se ajustó {{ "+" if f.ajustes_posteriores > 0 }}{{ f.ajustes_posteriores }}: todavía queda sin explicar <strong>{{ "+" if f.pendiente > 0 }}{{ f.pendiente }}</strong>.</p>
       {% endif %}
       <a class="boton-ajustar" href="/puesto/envases/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>

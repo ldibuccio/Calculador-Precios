@@ -9234,6 +9234,36 @@ def cargar_stock_fisico_ruta(
     return RedirectResponse(url=f"/puesto/envases/vacios/stock-fisico?{urlencode({'aviso': aviso})}", status_code=303)
 
 
+def _sin_absorber(diferencia: int, ajustes_posteriores: int) -> int:
+    """De la diferencia que encontró el conteo, cuánto queda sin explicar hoy.
+
+    Un ajuste posterior al conteo ABSORBE la diferencia, pero solo hasta
+    donde llega y solo si va en la dirección de cerrarla. Restar los ajustes
+    a secas estaba mal de dos maneras:
+
+    - Con un conteo que COINCIDIÓ (diferencia cero), cualquier ajuste
+      posterior por otro motivo aparecía como "queda sin explicar" por el
+      monto del ajuste con el signo cambiado. Eso es lo que se vio el 28/08:
+      657/-657, 9/-9, 257/-257. Peor todavía, la tarjeta ofrecía "Ajustar a
+      lo contado", y apretarlo habría borrado los cajones que de verdad
+      habían aparecido — y después se habría puesto en verde, tapando el
+      daño.
+    - Un ajuste en la dirección CONTRARIA a la diferencia agrandaba el
+      número en vez de dejarlo igual.
+
+    El conteo no encontró nada = no hay nada que explicar, sin importar qué
+    haya pasado después. Y lo que absorbe nunca puede pasarse de largo: como
+    mucho cierra la diferencia, nunca la da vuelta.
+    """
+    if diferencia > 0:
+        absorbido = min(max(ajustes_posteriores, 0), diferencia)
+    elif diferencia < 0:
+        absorbido = max(min(ajustes_posteriores, 0), diferencia)
+    else:
+        absorbido = 0
+    return diferencia - absorbido
+
+
 @app.get("/puesto/envases/cotejo")
 def ver_cotejo_vacios(request: Request):
     """Cotejo (cajera): el último conteo físico por proveedor+tipo contra la foto del stock del sistema de ese instante."""
@@ -9251,15 +9281,11 @@ def ver_cotejo_vacios(request: Request):
             conteo,
             # El hecho histórico: qué se vio el día del conteo. No cambia nunca.
             diferencia=conteo["cantidad"] - conteo["stock_sistema"],
-            # Lo que queda SIN ABSORBER de esa diferencia: lo que el
-            # conteo encontró menos lo que se ajustó desde entonces. Es
-            # esto —y no la diferencia congelada— lo que decide el color y
-            # el botón: si no, una tarjeta ya ajustada quedaba en rojo para
-            # siempre, porque el ajuste no crea un conteo nuevo.
-            # Y NO se mide contra el stock de hoy: los cajones que entraron
-            # o salieron legítimamente después del conteo no dejan de
-            # cuadrar nada, y medir así los delataría como un problema.
-            pendiente=(conteo["cantidad"] - conteo["stock_sistema"]) - conteo["ajustes_posteriores"],
+            # Lo que queda SIN ABSORBER de esa diferencia, calculado en
+            # _sin_absorber: no alcanza con restar los ajustes posteriores.
+            pendiente=_sin_absorber(
+                conteo["cantidad"] - conteo["stock_sistema"], conteo["ajustes_posteriores"]
+            ),
             cerrado=cerrado,
         )
 
