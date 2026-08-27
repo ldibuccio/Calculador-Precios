@@ -73,7 +73,43 @@ bases estén marcadas.
 
 ## Deuda pendiente de limpieza
 
-No queda ninguna.
+### Vacíos del Puesto: el ajuste no dice a qué conteo pertenece
+
+El Cotejo calcula lo que queda sin explicar de un conteo restándole los
+ajustes posteriores (ver `_sin_absorber` en `app/main.py`), acotados para
+que un ajuste absorba solo hasta donde llega y solo en la dirección de
+cerrar la diferencia. Eso arregla los dos casos que se vieron el 28/08,
+pero queda un hueco: `ajustes_posteriores` es el NETO de todos los
+ajustes posteriores al conteo.
+
+El caso que todavía falla: conteo con diferencia −5, después un ajuste de
+−5 que lo cierra y otro de +100 por un motivo distinto. El neto da +95,
+el absorbido da 0, y la tarjeta muestra −5 en rojo para siempre aunque el
+conteo esté cerrado. Es el bug del 27/08 —la tarjeta que nunca se pone en
+verde— en un caso más raro.
+
+El arreglo de fondo NO es aritmético: no hay fórmula sobre un neto que
+distinga un ajuste que vino a cerrar el conteo de otro que pasaba por
+ahí. Hay que VINCULARLOS: una columna `conteo_id` en `ajustes_vacios`
+(nullable, la escribe el ajuste que nace del botón "Ajustar a lo
+contado"), y que el Cotejo absorba solo los ajustes de ESE conteo en vez
+de inferirlo de un neto. Los ajustes sueltos, cargados a mano por otro
+motivo, quedan con `conteo_id` en NULL y no absorben nada — que es lo
+correcto.
+
+No es urgente: hace falta que en la misma pareja proveedor+tipo convivan,
+después de un mismo conteo, un ajuste que lo cierra y otro que no.
+
+### Vacíos del Puesto: los saldos iniciales están mezclados con las correcciones
+
+Los saldos de arranque se cargaron por la pantalla de Ajustes, así que en
+`ajustes_vacios` son indistinguibles de una corrección de faltante.
+Cualquier reporte futuro de mermas de vacíos va a sumar esos 923 cajones
+de arranque (657 + 257 + 9) como si se hubieran perdido.
+
+Cuando se vuelva a tocar el módulo: agregar un tipo `saldo_inicial` (o un
+motivo reservado) que los separe, y usarlo para excluirlos de las mermas.
+Hoy no rompe nada porque ese reporte todavía no existe.
 
 (Las saldadas: `compras.foto_ruta` el 2026-08-25 con
 `drop_foto_ruta_compras.sql`, y el índice viejo de
