@@ -1569,10 +1569,15 @@ def test_listar_clientes_suma_las_tasas_vigentes_de_descuento_y_adicionales():
 def test_listar_precios_vigentes_por_cliente_trae_vigente_desde():
     # La exportación a PDF/Excel necesita vigente_desde para saber si un
     # precio es "nuevo" (cambió justo en la fecha exportada).
+    # La consulta trae la fecha adelante: se pide para varias de una y cada
+    # fila dice a qué fecha corresponde.
     conexion, cursor = _conexion_falsa(
-        filas_fetchall=[(901, 1, 500.0, date(2026, 8, 16)), (902, 2, 350.0, date(2026, 8, 10))]
+        filas_fetchall=[
+            (date(2026, 8, 16), 901, 1, 500.0, date(2026, 8, 16)),
+            (date(2026, 8, 16), 902, 2, 350.0, date(2026, 8, 10)),
+        ]
     )
-    cursor.description = [("ficha_id",), ("articulo_id",), ("precio",), ("vigente_desde",)]
+    cursor.description = [("fecha",), ("ficha_id",), ("articulo_id",), ("precio",), ("vigente_desde",)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = listar_precios_vigentes_por_cliente(1, date(2026, 8, 16))
@@ -3739,6 +3744,25 @@ def test_la_funcion_de_a_uno_es_la_de_varios_con_un_solo_id():
         fuente = inspect.getsource(envoltorio)
         assert "SELECT" not in fuente, f"{envoltorio.__name__} volvió a tener consulta propia"
         assert f"{batch}([articulo_id])" in fuente
+
+    # Lo mismo con las tres consultas de "vigente a una fecha": la de a una
+    # fecha no puede resolver el vigente por su cuenta, porque entonces
+    # podría resolverlo distinto que la de varias y nadie se enteraría.
+    for envoltorio, batch in [
+        (db.listar_precios_vigentes_por_cliente, "listar_precios_vigentes_por_cliente_en_fechas"),
+        (db.listar_costos_envases_vigentes, "listar_costos_envases_vigentes_en_fechas"),
+        (db.listar_conceptos_vigentes_por_cliente, "listar_conceptos_vigentes_por_cliente_en_fechas"),
+    ]:
+        fuente = inspect.getsource(envoltorio)
+        assert "SELECT" not in fuente, f"{envoltorio.__name__} volvió a tener consulta propia"
+        assert f"{batch}(" in fuente
+
+    # Y el listado de negociación, que es el que estaba en el bucle por fecha.
+    import app.costeo as costeo
+
+    fuente = inspect.getsource(costeo.calcular_listado_para_negociar_precios)
+    assert "listar_" not in fuente, "el listado de a una fecha volvió a pedirle datos a la base"
+    assert "calcular_listados_para_negociar_precios(cliente_id, [momento_referencia])" in fuente
 
 
 def test_los_insert_de_compras_ya_no_nombran_la_columna_foto_ruta():

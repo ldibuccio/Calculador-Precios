@@ -4,6 +4,8 @@ from core.motor_costeo import utilidad_real_multi_concepto as calcular_utilidad_
 from decimal import Decimal
 from unittest.mock import patch
 
+from tests.ayudas_costeo import parche_por_fechas
+
 import pytest
 
 from app.costeo import (
@@ -336,9 +338,9 @@ def _calcular_negociacion(
     with (
         patch("app.costeo.listar_compras_para_costeo", return_value=compras) as mock_compras,
         patch("app.costeo.listar_fichas_por_cliente", return_value=fichas),
-        patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=precios_vigentes) as mock_vigentes,
-        patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=conceptos),
-        patch("app.costeo.listar_costos_envases_vigentes", return_value=list(costos_envases)),
+        parche_por_fechas("app.costeo.listar_precios_vigentes_por_cliente_en_fechas", precios_vigentes) as mock_vigentes,
+        parche_por_fechas("app.costeo.listar_conceptos_vigentes_por_cliente_en_fechas", conceptos),
+        parche_por_fechas("app.costeo.listar_costos_envases_vigentes_en_fechas", list(costos_envases)),
     ):
         resultado = calcular_listado_para_negociar_precios(CLIENTE_ID_DE_PRUEBA, momento)
     return resultado, mock_compras, mock_vigentes
@@ -426,9 +428,12 @@ def test_negociacion_ordena_frescos_primero():
 
 
 def test_negociacion_llama_precios_vigentes_con_fecha_de_hoy():
+    # Se pide UNA vez con la LISTA de fechas (hoy es una sola), no una
+    # llamada por fecha: es lo que evita cinco conexiones por cada fecha
+    # del rango en la Rentabilidad.
     _, _, mock_vigentes = _calcular_negociacion()
 
-    mock_vigentes.assert_called_once_with(CLIENTE_ID_DE_PRUEBA, date(2026, 8, 10))
+    mock_vigentes.assert_called_once_with(CLIENTE_ID_DE_PRUEBA, [date(2026, 8, 10)])
 
 
 def test_negociacion_sin_fichas_devuelve_lista_vacia():

@@ -13857,7 +13857,8 @@ def _patches_rentabilidad():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_RENTABILIDAD_DE_PRUEBA),
         patch("app.main.listar_renglones_pedidos_vigentes", return_value=list(RENGLONES_RENTABILIDAD_DE_PRUEBA)),
-        patch("app.main.calcular_listado_para_negociar_precios", return_value=[dict(fila_margenes)]),
+        patch("app.main.calcular_listados_para_negociar_precios",
+              side_effect=lambda cliente_id, momentos: {m: [dict(fila_margenes)] for m in momentos}),
     )
 
 
@@ -13882,11 +13883,12 @@ def test_ver_rentabilidad_usa_el_listado_de_margenes_por_fecha():
         respuesta = cliente.get("/gerencia/rentabilidad?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
 
     assert respuesta.status_code == 200
-    # UNA corrida del listado de Márgenes por Artículo POR FECHA con
-    # pedido, anclada a esa fecha (nunca el margen de hoy retroactivo).
-    # Usar ese mismo listado es el control: las dos pantallas dan idéntico.
-    assert [llamada.args[0] for llamada in mock_margenes.call_args_list] == [1, 1]
-    fechas_margenes = [llamada.args[1].date() for llamada in mock_margenes.call_args_list]
+    # El listado de Márgenes por Artículo sigue anclado a CADA fecha con
+    # pedido (nunca el margen de hoy retroactivo) — pero se pide UNA sola
+    # vez con todas las fechas juntas, no una llamada por fecha.
+    mock_margenes.assert_called_once()
+    assert mock_margenes.call_args.args[0] == 1
+    fechas_margenes = sorted(momento.date() for momento in mock_margenes.call_args.args[1])
     assert fechas_margenes == [date(2026, 8, 21), date(2026, 8, 22)]
 
     texto = respuesta.text
@@ -15967,18 +15969,22 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.devoluciones_vinculadas_por_rango", return_value=[]),
         patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, 4.0, [])}),
         patch("app.main.salidas_stock_articulos", return_value={1: salidas}),
-        patch("app.main.calcular_listado_para_negociar_precios",
-              return_value=[{"ficha_id": 901, "articulo_id": 1, "precio_vigente": 100.0,
+        patch("app.main.calcular_listados_para_negociar_precios",
+              side_effect=lambda cliente_id, momentos: {
+                  momento: [{"ficha_id": 901, "articulo_id": 1, "precio_vigente": 100.0,
                              "costo_actual": 60.0, "costo_envase_unidad_venta": 2.0,
-                             "denominador_tasas": 0.9}]) as mock_listado,
+                             "denominador_tasas": 0.9}] for momento in momentos
+              }) as mock_listado,
     ):
         resultado = __import__("app.main", fromlist=["x"])._datos_rentabilidad_real(
             1, date(2026, 8, 18), date(2026, 8, 25), None, None
         )
 
     mock_articulos.assert_called_once_with(1, date(2026, 8, 18), date(2026, 8, 25))
-    # El listado anclado se pide UNA vez por fecha con armados del rango.
-    assert mock_listado.call_count == 1
+    # El listado sigue anclado a cada fecha con armados del rango, pero se
+    # pide UNA sola vez con todas juntas.
+    mock_listado.assert_called_once()
+    assert [m.date() for m in mock_listado.call_args.args[1]] == [date(2026, 8, 25)]
     fila = resultado["grupos"][0]["filas"][0]
     assert fila["venta_neta"] == 64.0 * 100.0 * 0.9
     assert fila["costo_mercaderia"] == 4 * 500.0

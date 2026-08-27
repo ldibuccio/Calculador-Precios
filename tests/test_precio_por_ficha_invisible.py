@@ -17,6 +17,8 @@ el test en vez de pasar desapercibido.
 from datetime import date, datetime
 from unittest.mock import patch
 
+from tests.ayudas_costeo import parche_por_fechas
+
 from app.costeo import calcular_listado_para_negociar_precios, calcular_objetivos_de_compra
 from core.costo_real import calcular_rentabilidad_real
 from core.rentabilidad import calcular_rentabilidad_de_pedidos
@@ -58,9 +60,9 @@ def _listado():
     with (
         patch("app.costeo.listar_compras_para_costeo", return_value=COMPRAS),
         patch("app.costeo.listar_fichas_por_cliente", return_value=FICHAS),
-        patch("app.costeo.listar_precios_vigentes_por_cliente", return_value=PRECIOS),
-        patch("app.costeo.listar_costos_envases_vigentes", return_value=ENVASES),
-        patch("app.costeo.listar_conceptos_vigentes_por_cliente", return_value=CONCEPTOS),
+        parche_por_fechas("app.costeo.listar_precios_vigentes_por_cliente_en_fechas", PRECIOS),
+        parche_por_fechas("app.costeo.listar_costos_envases_vigentes_en_fechas", ENVASES),
+        parche_por_fechas("app.costeo.listar_conceptos_vigentes_por_cliente_en_fechas", CONCEPTOS),
     ):
         return calcular_listado_para_negociar_precios(CLIENTE_ID, MOMENTO)
 

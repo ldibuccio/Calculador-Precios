@@ -33,7 +33,12 @@ from app.alertas import (
     para_mostrar,
     recalcular,
 )
-from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios, calcular_objetivos_de_compra
+from app.costeo import (
+    agrupar_para_negociar,
+    calcular_listado_para_negociar_precios,
+    calcular_listados_para_negociar_precios,
+    calcular_objetivos_de_compra,
+)
 from app.db import (
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -7796,6 +7801,22 @@ def recalcular_alertas_ruta():
     )
 
 
+def _margenes_por_fecha(cliente_id: int, fechas) -> dict:
+    """El listado anclado a cada fecha, indexado por ficha — la fuente de precio y costo de las dos rentabilidades.
+
+    Pide TODAS las fechas de una: antes era una llamada por fecha, y cada
+    llamada abría cinco conexiones. El ancla es siempre el mediodía de la
+    fecha, como venía siendo — es lo que decide qué compras entran en la
+    ventana "fresca" de esa jornada.
+    """
+    momentos = {fecha: datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA) for fecha in fechas}
+    listados = calcular_listados_para_negociar_precios(cliente_id, momentos.values())
+    return {
+        fecha: {fila["ficha_id"]: fila for fila in listados[momento]}
+        for fecha, momento in momentos.items()
+    }
+
+
 def _datos_rentabilidad(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, grupo, fichas: list[dict]) -> dict:
     """Junta los datos y llama al motor puro de rentabilidad (core/rentabilidad.py).
 
@@ -7811,12 +7832,7 @@ def _datos_rentabilidad(cliente_id: int, fecha_desde, fecha_hasta, articulo_id, 
     """
     renglones = listar_renglones_pedidos_vigentes(cliente_id, fecha_desde, fecha_hasta)
     fechas = sorted({r["fecha_operacion"] for r in renglones})
-    margenes_por_fecha = {}
-    for fecha in fechas:
-        listado = calcular_listado_para_negociar_precios(
-            cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
-        )
-        margenes_por_fecha[fecha] = {fila["ficha_id"]: fila for fila in listado}
+    margenes_por_fecha = _margenes_por_fecha(cliente_id, fechas)
     return calcular_rentabilidad_de_pedidos(renglones, fichas, margenes_por_fecha, articulo_id, grupo)
 
 
@@ -8025,12 +8041,7 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     for devolucion in devoluciones:
         fechas_pedido.add(devolucion["fecha_pedido"])
 
-    margenes_por_fecha = {}
-    for fecha in sorted(fechas_pedido):
-        listado = calcular_listado_para_negociar_precios(
-            cliente_id, datetime.combine(fecha, time(12, 0), tzinfo=ARGENTINA)
-        )
-        margenes_por_fecha[fecha] = {fila["ficha_id"]: fila for fila in listado}
+    margenes_por_fecha = _margenes_por_fecha(cliente_id, sorted(fechas_pedido))
 
     return calcular_rentabilidad_real(
         articulos_datos, margenes_por_fecha, cliente_id, fecha_desde, fecha_hasta,

@@ -199,6 +199,67 @@ def obtener_cliente(cliente_id: int) -> dict | None:
         conexion.close()
 
 
+def _agrupar_conceptos(filas) -> dict:
+    """Las filas vigentes de un cliente, agrupadas por tipo para el motor de costeo.
+
+    Separado de la consulta para que la versión de a una fecha y la de
+    varias compartan EXACTAMENTE este criterio (el de la utilidad, sobre
+    todo: si hay más de un concepto de tipo 'utilidad' se prioriza
+    utilidad_objetivo, y si no está ese nombre, el primero que aparezca).
+    """
+    tasas_suman = [float(fila["valor"]) for fila in filas if fila["tipo"] == "suma"]
+    tasas_restan = [float(fila["valor"]) for fila in filas if fila["tipo"] == "resta"]
+
+    filas_utilidad = [fila for fila in filas if fila["tipo"] == "utilidad"]
+    utilidad = None
+    if filas_utilidad:
+        fila_utilidad = next(
+            (fila for fila in filas_utilidad if fila["nombre_parametro"] == "utilidad_objetivo"),
+            filas_utilidad[0],
+        )
+        utilidad = float(fila_utilidad["valor"])
+
+    return {"tasas_suman": tasas_suman, "tasas_restan": tasas_restan, "utilidad": utilidad}
+
+
+def listar_conceptos_vigentes_por_cliente_en_fechas(cliente_id: int, fechas) -> dict:
+    """Los conceptos vigentes de un cliente a VARIAS fechas, en una consulta.
+
+    Devuelve {fecha: {tasas_suman, tasas_restan, utilidad}}. Igual que los
+    precios y los envases: la consulta de "vigente" es la de siempre, dentro
+    de un LATERAL que la corre una vez por fecha, y el agrupado sale del
+    mismo _agrupar_conceptos. Un cambio de tasas a mitad del rango tiene que
+    pegar solo de esa fecha en adelante, nunca retroactivo.
+    """
+    fechas_unicas = sorted(set(fechas))
+    if not fechas_unicas:
+        return {}
+    filas_por_fecha = {fecha: [] for fecha in fechas_unicas}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.fecha, c.nombre_parametro, c.tipo, c.valor
+                FROM unnest(%s::date[]) AS f(fecha)
+                CROSS JOIN LATERAL (
+                    SELECT DISTINCT ON (nombre_parametro) nombre_parametro, tipo, valor
+                    FROM clientes_parametros_historial
+                    WHERE cliente_id = %s AND vigente_desde <= f.fecha
+                    ORDER BY nombre_parametro, vigente_desde DESC
+                ) c
+                """,
+                (fechas_unicas, cliente_id),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            for fila in cursor.fetchall():
+                concepto = dict(zip(columnas, fila))
+                filas_por_fecha[concepto.pop("fecha")].append(concepto)
+    finally:
+        conexion.close()
+    return {fecha: _agrupar_conceptos(filas) for fecha, filas in filas_por_fecha.items()}
+
+
 def listar_conceptos_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> dict:
     """Todos los conceptos vigentes de un cliente (clientes_parametros_historial), agrupados por tipo.
 
@@ -229,36 +290,7 @@ def listar_conceptos_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> 
     con las pantallas viejas), acá los valores vienen tal cual están
     guardados: fracción (0.23), no porcentaje.
     """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT DISTINCT ON (nombre_parametro) nombre_parametro, tipo, valor
-                FROM clientes_parametros_historial
-                WHERE cliente_id = %s AND vigente_desde <= %s
-                ORDER BY nombre_parametro, vigente_desde DESC
-                """,
-                (cliente_id, fecha_referencia),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-    finally:
-        conexion.close()
-
-    tasas_suman = [float(fila["valor"]) for fila in filas if fila["tipo"] == "suma"]
-    tasas_restan = [float(fila["valor"]) for fila in filas if fila["tipo"] == "resta"]
-
-    filas_utilidad = [fila for fila in filas if fila["tipo"] == "utilidad"]
-    utilidad = None
-    if filas_utilidad:
-        fila_utilidad = next(
-            (fila for fila in filas_utilidad if fila["nombre_parametro"] == "utilidad_objetivo"),
-            filas_utilidad[0],
-        )
-        utilidad = float(fila_utilidad["valor"])
-
-    return {"tasas_suman": tasas_suman, "tasas_restan": tasas_restan, "utilidad": utilidad}
+    return listar_conceptos_vigentes_por_cliente_en_fechas(cliente_id, [fecha_referencia])[fecha_referencia]
 
 
 def listar_conceptos_editables_por_cliente(cliente_id: int) -> dict:
@@ -1142,6 +1174,47 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
         conexion.close()
 
 
+def listar_precios_vigentes_por_cliente_en_fechas(cliente_id: int, fechas) -> dict:
+    """El precio vigente de cada ficha del cliente a VARIAS fechas, en una consulta.
+
+    Devuelve {fecha: [precios vigentes a esa fecha]}, con una entrada por
+    cada fecha pedida. La resolución de "vigente" es la MISMA consulta de
+    siempre, palabra por palabra: acá va adentro de un LATERAL que la corre
+    una vez por fecha. No se reimplementa en Python cuál es el precio
+    vigente — eso es justo lo que movería un número sin que se note.
+
+    La usa la Rentabilidad (real y teórica), que ancla el precio a cada
+    fecha con pedido del rango: antes abría cinco conexiones POR FECHA.
+    """
+    fechas_unicas = sorted(set(fechas))
+    if not fechas_unicas:
+        return {}
+    por_fecha = {fecha: [] for fecha in fechas_unicas}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.fecha, p.ficha_id, p.articulo_id, p.precio, p.vigente_desde
+                FROM unnest(%s::date[]) AS f(fecha)
+                CROSS JOIN LATERAL (
+                    SELECT DISTINCT ON (ficha_id) ficha_id, articulo_id, precio, vigente_desde
+                    FROM precios_venta_historial
+                    WHERE cliente_id = %s AND vigente_desde <= f.fecha AND ficha_id IS NOT NULL
+                    ORDER BY ficha_id, vigente_desde DESC
+                ) p
+                """,
+                (fechas_unicas, cliente_id),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            for fila in cursor.fetchall():
+                precio = dict(zip(columnas, fila))
+                por_fecha[precio.pop("fecha")].append(precio)
+        return por_fecha
+    finally:
+        conexion.close()
+
+
 def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
     """Precio vigente de cada FICHA de un cliente, a una fecha dada.
 
@@ -1165,23 +1238,7 @@ def listar_precios_vigentes_por_cliente(cliente_id: int, fecha_referencia) -> li
     lo usa la exportación a PDF/Excel para saber si un precio es "nuevo"
     (cambió justo en la fecha consultada).
     """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT DISTINCT ON (ficha_id) ficha_id, articulo_id, precio, vigente_desde
-                FROM precios_venta_historial
-                WHERE cliente_id = %s AND vigente_desde <= %s AND ficha_id IS NOT NULL
-                ORDER BY ficha_id, vigente_desde DESC
-                """,
-                (cliente_id, fecha_referencia),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
+    return listar_precios_vigentes_por_cliente_en_fechas(cliente_id, [fecha_referencia])[fecha_referencia]
 
 
 def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> list[dict]:
@@ -1267,29 +1324,49 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
         conexion.close()
 
 
+def listar_costos_envases_vigentes_en_fechas(fechas) -> dict:
+    """El costo vigente de cada envase a VARIAS fechas, en una consulta.
+
+    Mismo criterio que listar_precios_vigentes_por_cliente_en_fechas: la
+    consulta de "vigente" es la de siempre, adentro de un LATERAL que la
+    corre una vez por fecha.
+    """
+    fechas_unicas = sorted(set(fechas))
+    if not fechas_unicas:
+        return {}
+    por_fecha = {fecha: [] for fecha in fechas_unicas}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.fecha, e.envase_id, e.costo
+                FROM unnest(%s::date[]) AS f(fecha)
+                CROSS JOIN LATERAL (
+                    SELECT DISTINCT ON (envase_id) envase_id, costo
+                    FROM envases_costo_historial
+                    WHERE vigente_desde <= f.fecha
+                    ORDER BY envase_id, vigente_desde DESC
+                ) e
+                """,
+                (fechas_unicas,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            for fila in cursor.fetchall():
+                costo = dict(zip(columnas, fila))
+                por_fecha[costo.pop("fecha")].append(costo)
+        return por_fecha
+    finally:
+        conexion.close()
+
+
 def listar_costos_envases_vigentes(fecha_referencia) -> list[dict]:
     """Costo vigente de cada envase, a una fecha dada (mismo patrón "vigente" que el resto).
 
     Los envases son un catálogo compartido (no pertenecen a ningún
     cliente): envase_id alcanza para identificar cada uno.
     """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT DISTINCT ON (envase_id) envase_id, costo
-                FROM envases_costo_historial
-                WHERE vigente_desde <= %s
-                ORDER BY envase_id, vigente_desde DESC
-                """,
-                (fecha_referencia,),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            filas = cursor.fetchall()
-        return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
+    return listar_costos_envases_vigentes_en_fechas([fecha_referencia])[fecha_referencia]
 
 
 def listar_compras_por_fecha_y_proveedor(fecha_operacion, proveedor_id: int) -> list[dict]:

@@ -15,9 +15,12 @@ from datetime import date, datetime, timedelta, timezone
 from app.db import (
     listar_compras_para_costeo,
     listar_conceptos_vigentes_por_cliente,
+    listar_conceptos_vigentes_por_cliente_en_fechas,
     listar_costos_envases_vigentes,
+    listar_costos_envases_vigentes_en_fechas,
     listar_fichas_por_cliente,
     listar_precios_vigentes_por_cliente,
+    listar_precios_vigentes_por_cliente_en_fechas,
 )
 from core.motor_costeo import (
     SIN_ENVASE,
@@ -202,7 +205,77 @@ def calcular_costo_por_unidad_venta_reciente(cliente_id: int, momento_referencia
     return {"articulos": articulos, "articulos_sin_ficha": articulos_sin_ficha}
 
 
+def calcular_listados_para_negociar_precios(cliente_id: int, momentos) -> dict:
+    """El listado del cliente anclado a VARIOS momentos, con los datos traídos UNA vez.
+
+    Devuelve {momento: listado}. La Rentabilidad (real y teórica) ancla el
+    precio a cada fecha con pedido del rango: antes pedía este listado fecha
+    por fecha, y cada pedido abría CINCO conexiones. Con siete fechas eran
+    35, y la pantalla lo paga dos veces (la real y la teórica al lado).
+
+    Qué se trae una sola vez y qué por fecha:
+      - las fichas del cliente no dependen de la fecha: una consulta y listo;
+      - las compras se traen para el rango ANCHO (desde la fecha más vieja
+        menos el historial, hasta la más nueva) y cada fecha se queda con su
+        ventana filtrando en Python — el filtro es el mismo BETWEEN de la
+        consulta, aplicado sobre la misma lista y en el mismo orden;
+      - precio vigente, costo de envase y conceptos del cliente se resuelven
+        con SU MISMA consulta de siempre, corrida una vez por fecha adentro
+        de un LATERAL (ver app/db.py). No se reimplementa en Python cuál es
+        el valor vigente: eso movería un número sin que se note.
+
+    El cálculo en sí no cambia: cada fecha recibe exactamente los mismos
+    datos que recibía cuando se los pedía sola.
+    """
+    momentos_unicos = sorted(set(momentos))
+    if not momentos_unicos:
+        return {}
+
+    fechas = [momento.date() for momento in momentos_unicos]
+    fichas = listar_fichas_por_cliente(cliente_id)
+    # El rango ancho: cubre la ventana de historial de TODAS las fechas.
+    compras_anchas = listar_compras_para_costeo(
+        min(fechas) - timedelta(days=RANGO_HISTORIAL_DIAS), max(fechas)
+    )
+    precios_por_fecha = listar_precios_vigentes_por_cliente_en_fechas(cliente_id, fechas)
+    envases_por_fecha = listar_costos_envases_vigentes_en_fechas(fechas)
+    conceptos_por_fecha = listar_conceptos_vigentes_por_cliente_en_fechas(cliente_id, fechas)
+
+    listados = {}
+    for momento in momentos_unicos:
+        hoy = momento.date()
+        desde = hoy - timedelta(days=RANGO_HISTORIAL_DIAS)
+        # Mismo BETWEEN que hacía la consulta, sobre la misma lista: filtrar
+        # conserva el orden, así que cada fecha ve lo mismo que veía sola.
+        compras = [c for c in compras_anchas if desde <= c["fecha_operacion"] <= hoy]
+        listados[momento] = _listado_para_negociar_precios(
+            momento, fichas, compras, precios_por_fecha[hoy],
+            envases_por_fecha[hoy], conceptos_por_fecha[hoy],
+        )
+    return listados
+
+
 def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: datetime | None = None) -> list[dict]:
+    """El listado anclado a UN momento (o a ahora). Es la de varios con una lista de uno.
+
+    Sin consulta propia a propósito: dos consultas que deberían decir lo
+    mismo terminan diciendo cosas distintas (ya pasó con las dos funciones
+    de compras sin precio). Quien necesite varias fechas tiene que usar
+    calcular_listados_para_negociar_precios, que las trae todas de una.
+    """
+    if momento_referencia is None:
+        momento_referencia = datetime.now(ARGENTINA)
+    return calcular_listados_para_negociar_precios(cliente_id, [momento_referencia])[momento_referencia]
+
+
+def _listado_para_negociar_precios(
+    momento_referencia: datetime,
+    fichas: list[dict],
+    compras: list[dict],
+    precios_vigentes: list[dict],
+    costos_envases: list[dict],
+    conceptos_cliente: dict,
+) -> list[dict]:
     """Listado completo de los artículos que el cliente comercializa, para negociar precios.
 
     A diferencia de calcular_costo_por_unidad_venta_reciente (que arranca
@@ -272,15 +345,7 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     necesita "Simulación" en /precios/cargar para calcular la rentabilidad
     de un precio cualquiera sin volver a pedirle nada al servidor.
     """
-    if momento_referencia is None:
-        momento_referencia = datetime.now(ARGENTINA)
-
     hoy = momento_referencia.date()
-    fecha_desde_historial = hoy - timedelta(days=RANGO_HISTORIAL_DIAS)
-
-    compras = listar_compras_para_costeo(fecha_desde_historial, hoy)
-    fichas = listar_fichas_por_cliente(cliente_id)
-    precios_vigentes = listar_precios_vigentes_por_cliente(cliente_id, hoy)
     # float(...): precio (numeric) viene de la base como Decimal — hace
     # falta castear antes de usarlo en la cuenta de utilidad_aproximada más
     # abajo (antes solo se mostraba, nunca se operaba con él).
@@ -288,10 +353,8 @@ def calcular_listado_para_negociar_precios(cliente_id: int, momento_referencia: 
     # (Banana Bolivia y Banana Ecuador) tienen su propio precio.
     precio_vigente_por_ficha = {p["ficha_id"]: float(p["precio"]) for p in precios_vigentes}
 
-    costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
 
-    conceptos_cliente = listar_conceptos_vigentes_por_cliente(cliente_id, hoy)
     tasas_suman = conceptos_cliente["tasas_suman"]
     tasas_restan = conceptos_cliente["tasas_restan"]
     # Sin utilidad vigente todavía, no hay con qué sugerir precio (no se
