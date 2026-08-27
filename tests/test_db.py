@@ -17,6 +17,8 @@ from app.db import (
     listar_senas_pendientes,
     listar_senas_resueltas,
     listar_tipos_envase_puesto,
+    desactivar_proveedor_puesto,
+    desactivar_tipo_envase_puesto,
     listar_ultimos_conteos_vacios,
     obtener_o_crear_cliente_puesto,
     obtener_o_crear_proveedor_puesto,
@@ -2210,6 +2212,88 @@ def test_listar_ultimos_conteos_vacios_toma_el_ultimo_por_proveedor_y_tipo():
     assert "DISTINCT ON (c.proveedor_id, c.tipo_envase_id)" in consulta
     assert "c.creado_en DESC" in consulta
     assert "stock_sistema" in consulta
+
+
+def test_los_conteos_del_cotejo_traen_los_ajustes_hechos_DESPUES_del_conteo():
+    """Sin esto el Cotejo no se pone en verde nunca y el módulo se abandona.
+
+    "Ajustar a lo contado" escribe un ajuste, NO un conteo nuevo. Si la
+    pantalla solo tiene lo contado y la foto congelada, la misma diferencia
+    queda en rojo para siempre. Lo que la resuelve es un ajuste POSTERIOR al
+    conteo, y por eso la consulta lo trae.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ultimos_conteos_vacios()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "a.creado_en > c.creado_en" in consulta
+    assert "AS ajustes_posteriores" in consulta
+    # Y el saldo de hoy, que lo necesita el par dado de baja con stock.
+    assert "AS stock_actual" in consulta
+    # Si el par sigue vivo: es lo que separa "cerrado" de "hay que cerrarlo".
+    assert "p.activo AS proveedor_activo" in consulta
+    assert "t.activo AS tipo_activo" in consulta
+
+
+def test_dar_de_baja_un_tipo_con_saldo_se_niega_y_no_toca_la_base():
+    # La regla que hace que "de baja" signifique algo: saldo cero, cuenta
+    # cerrada. Sin esto el tipo salía de los selects pero seguía con cajones
+    # adentro — medio vivo y medio muerto.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(200, "cajón madera"), (12,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            desactivar_tipo_envase_puesto(3)
+
+    assert "cajón madera" in str(error.value)
+    assert "12" in str(error.value)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_dar_de_baja_un_tipo_sin_saldo_lo_desactiva():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(200, "cajón madera"), (0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        desactivar_tipo_envase_puesto(3)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE tipos_envase_puesto SET activo = false" in consulta
+    assert parametros == (3,)
+    conexion.commit.assert_called_once()
+
+
+def test_dar_de_baja_un_proveedor_mira_TODOS_sus_tipos():
+    # Dar de baja al proveedor NO da de baja sus tipos: mirar uno solo
+    # dejaría pasar el resto. El error los nombra a todos con su número.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("Gómez",)])
+    cursor.fetchall.return_value = [(1, "cajón madera", 12), (2, "cajón plástico", -3)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            desactivar_proveedor_puesto(200)
+
+    assert "cajón madera: 12" in str(error.value)
+    assert "cajón plástico: -3" in str(error.value)
+    consulta_saldos = cursor.execute.call_args_list[1].args[0]
+    assert "WHERE t.proveedor_id = %s" in consulta_saldos
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_dar_de_baja_un_proveedor_sin_saldo_lo_desactiva():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("Gómez",)])
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        desactivar_proveedor_puesto(200)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE proveedores_puesto SET activo = false" in consulta
+    assert parametros == (200,)
+    conexion.commit.assert_called_once()
 
 
 def test_cerrar_sena_escribe_la_columna_del_cierre_elegido():

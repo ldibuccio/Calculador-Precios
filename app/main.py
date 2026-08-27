@@ -9139,6 +9139,11 @@ def dar_de_baja_tipo_envase_puesto_ruta(request: Request, tipo_id: int):
         return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
     try:
         desactivar_tipo_envase_puesto(tipo_id)
+    except ValueError as error:
+        # Con saldo abierto la baja se niega: no es una falla del sistema
+        # sino una cuenta sin cerrar, así que se muestra en la pantalla con
+        # el número adentro (400, no 500).
+        return _renderizar_pantalla_tipos_envase_puesto(request, error=str(error), status_code=400)
     except Exception as error_db:
         return _renderizar_pantalla_tipos_envase_puesto(
             request, error=f"No se pudo dar de baja el tipo de envase: {error_db}", status_code=500
@@ -9241,11 +9246,49 @@ def ver_cotejo_vacios(request: Request):
 
     filas = []
     for conteo in conteos:
-        fila = dict(conteo, diferencia=conteo["cantidad"] - conteo["stock_sistema"])
-        # Con diferencia, botón directo a la pantalla de ajuste, precargada
-        # con este conteo (la cantidad final se calcula ahí contra el stock
-        # ACTUAL, no contra esta foto — ver ver_ajustar_stock_vacios).
-        if fila["diferencia"] != 0:
+        cerrado = not (conteo["proveedor_activo"] and conteo["tipo_activo"])
+        fila = dict(
+            conteo,
+            # El hecho histórico: qué se vio el día del conteo. No cambia nunca.
+            diferencia=conteo["cantidad"] - conteo["stock_sistema"],
+            # Lo que queda SIN ABSORBER de esa diferencia: lo que el
+            # conteo encontró menos lo que se ajustó desde entonces. Es
+            # esto —y no la diferencia congelada— lo que decide el color y
+            # el botón: si no, una tarjeta ya ajustada quedaba en rojo para
+            # siempre, porque el ajuste no crea un conteo nuevo.
+            # Y NO se mide contra el stock de hoy: los cajones que entraron
+            # o salieron legítimamente después del conteo no dejan de
+            # cuadrar nada, y medir así los delataría como un problema.
+            pendiente=(conteo["cantidad"] - conteo["stock_sistema"]) - conteo["ajustes_posteriores"],
+            cerrado=cerrado,
+        )
+
+        if cerrado and conteo["stock_actual"] == 0:
+            # Cuenta cerrada: el par ya no se puede mover y no quedó nada
+            # adentro. La diferencia vieja no es algo que nadie pueda ni deba
+            # resolver, así que va al final y en gris, sin botón — pero NO se
+            # esconde: si desapareciera, no habría forma de ver que existió
+            # ni de notar que se cerró con una diferencia sin explicar.
+            fila["estado"] = "cerrado"
+        elif cerrado:
+            # Dado de baja PERO con saldo: el estado a medio camino que la
+            # validación de la baja ya no deja crear. Los que quedaron de
+            # antes se muestran en rojo, porque lo único que hay que hacer
+            # con ellos es cerrarlos.
+            fila["estado"] = "de_baja_con_saldo"
+            fila["query_cierre"] = urlencode(
+                {
+                    "proveedor_id": conteo["proveedor_id"],
+                    "tipo_envase_id": conteo["tipo_envase_id"],
+                    "contado": 0,
+                    "cierre": "1",
+                }
+            )
+        elif fila["pendiente"] != 0:
+            fila["estado"] = "pendiente"
+            # Botón directo a la pantalla de ajuste, precargada con este
+            # conteo (la cantidad final se calcula ahí contra el stock
+            # ACTUAL, no contra esta foto — ver ver_ajustar_stock_vacios).
             fila["query_ajuste"] = urlencode(
                 {
                     "proveedor_id": conteo["proveedor_id"],
@@ -9255,8 +9298,12 @@ def ver_cotejo_vacios(request: Request):
                     "fecha_conteo": conteo["creado_en"].date().isoformat(),
                 }
             )
+        else:
+            fila["estado"] = "al_dia"
         filas.append(fila)
 
+    # Las cerradas al final: lo que hay para hacer va arriba de todo.
+    filas.sort(key=lambda f: f["estado"] == "cerrado")
     return templates.TemplateResponse(request, "vacios_cotejo.html", {"filas": filas})
 
 
@@ -9473,6 +9520,7 @@ def ver_ajustar_stock_vacios(
     contado: str | None = None,
     stock_conteo: str | None = None,
     fecha_conteo: str | None = None,
+    cierre: str | None = None,
 ):
     """Ajuste de stock (cajera). Sin precarga: pantalla en blanco; con precarga (viene del Cotejo): calcula el ajuste.
 
@@ -9494,15 +9542,29 @@ def ver_ajustar_stock_vacios(
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+        # cierre=1 viene del Cotejo, de un par dado de baja al que le quedó
+        # saldo: ahí el ajuste no es "dejarlo en lo contado" sino cerrar la
+        # cuenta en cero. El motivo arranca escrito pero se puede cambiar —
+        # el sistema no inventa por qué se perdieron los cajones.
+        cerrando = cierre == "1"
         precarga = {
             "proveedor_id": proveedor_id,
             "tipo_envase_id": tipo_envase_id,
             "cantidad": contado_valor - stock_actual,
-            "motivo": f"Ajuste a lo contado: conteo del {fecha_conteo or '?'} ({contado_valor} contados)",
+            "motivo": (
+                "Cierre de cuenta: el proveedor o el tipo se dio de baja"
+                if cerrando
+                else f"Ajuste a lo contado: conteo del {fecha_conteo or '?'} ({contado_valor} contados)"
+            ),
         }
         # El aviso de "el stock se movió desde el conteo": solo si la foto
         # del conteo (stock_conteo) difiere del stock actual.
-        if stock_conteo is not None and stock_conteo.strip().lstrip("-").isdigit() and int(stock_conteo) != stock_actual:
+        if (
+            not cerrando
+            and stock_conteo is not None
+            and stock_conteo.strip().lstrip("-").isdigit()
+            and int(stock_conteo) != stock_actual
+        ):
             precarga["aviso_conteo"] = (
                 f"Ojo: el conteo fue del {fecha_conteo or '?'} con {contado_valor} contados y el sistema decía "
                 f"{int(stock_conteo)}. Desde entonces hubo movimientos: el stock actual es {stock_actual}, "
@@ -9702,6 +9764,10 @@ def dar_de_baja_proveedor_puesto_ruta(request: Request, proveedor_id: int):
         return RedirectResponse(url="/puesto/envases/proveedores", status_code=303)
     try:
         desactivar_proveedor_puesto(proveedor_id)
+    except ValueError as error:
+        # Igual que con los tipos: una cuenta abierta no es un error del
+        # sistema, es algo para cerrar. Se dice con los números.
+        return _renderizar_pantalla_proveedores_puesto(request, error=str(error), status_code=400)
     except Exception as error_db:
         return _renderizar_pantalla_proveedores_puesto(
             request, error=f"No se pudo dar de baja el proveedor: {error_db}", status_code=500

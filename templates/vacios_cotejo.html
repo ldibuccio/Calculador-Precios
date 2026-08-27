@@ -38,6 +38,27 @@
   .diferencia-cero { color: #16a34a; }
   .diferencia-distinta { color: #dc2626; }
   .tarjeta.con-diferencia { border: 2px solid #fecaca; }
+  /* Las cerradas van apagadas y al final: son historia, no tarea. No se
+     esconden — si desaparecieran no habría forma de ver que existieron ni
+     de notar que algo se cerró con una diferencia que nadie explicó. */
+  .tarjeta.cerrada { background: #f3f4f6; box-shadow: none; }
+  .tarjeta.cerrada .encabezado,
+  .tarjeta.cerrada .numeros .valor { color: #9ca3af; }
+  .etiqueta-estado {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .etiqueta-estado.cerrado { background: #e5e7eb; color: #6b7280; }
+  .etiqueta-estado.de-baja { background: #fee2e2; color: #991b1b; }
+  .nota-estado { color: #6b7280; font-size: 0.82rem; margin: 0.5rem 0 0; }
+  .pendiente-hoy { color: #6b7280; font-size: 0.82rem; margin: 0.5rem 0 0; }
+  .pendiente-hoy strong { color: #dc2626; }
   .boton-ajustar {
     display: block;
     margin-top: 0.75rem;
@@ -68,11 +89,19 @@
   {% include "_barra_navegacion.html" %}
   {% include "_boton_bloquear.html" %}
 
-  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos).</p>
+  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos). En rojo queda solo lo que se puede resolver hoy: apenas el stock coincide con lo contado, la tarjeta se pone en verde.</p>
 
   {% if filas %}
     {% for f in filas %}
-    <div class="tarjeta {% if f.diferencia != 0 %}con-diferencia{% endif %}">
+    {# El color lo decide el PENDIENTE DE HOY, no la diferencia congelada:
+       si no, una tarjeta ya ajustada quedaba en rojo para siempre (el
+       ajuste no crea un conteo nuevo) y el Cotejo se dejaba de mirar. #}
+    <div class="tarjeta {% if f.estado == 'cerrado' %}cerrada{% elif f.estado != 'al_dia' %}con-diferencia{% endif %}">
+      {% if f.estado == "cerrado" %}
+      <span class="etiqueta-estado cerrado">Cerrado</span>
+      {% elif f.estado == "de_baja_con_saldo" %}
+      <span class="etiqueta-estado de-baja">Dado de baja con saldo</span>
+      {% endif %}
       <p class="encabezado">{{ f.proveedor_nombre }} — {{ f.tipo_nombre }}</p>
       <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
       <div class="numeros">
@@ -81,20 +110,35 @@
           <span class="valor">{{ f.cantidad }}</span>
         </div>
         <div class="celda">
-          <span class="etiqueta">Sistema</span>
+          <span class="etiqueta">Sistema ese día</span>
           <span class="valor">{{ f.stock_sistema }}</span>
         </div>
         <div class="celda">
           <span class="etiqueta">Diferencia</span>
-          <span class="valor {% if f.diferencia == 0 %}diferencia-cero{% else %}diferencia-distinta{% endif %}">
+          {# El color del número dice lo MISMO que la tarjeta. Rojo solo si
+             hay algo que hacer; verde si contó y coincidió; neutro cuando es
+             un hecho de aquel día que ya no es tarea — un "-6" en rojo arriba
+             de un "ya resuelto" se lee como que algo sigue mal. #}
+          <span class="valor {% if f.estado == 'pendiente' %}diferencia-distinta{% elif f.estado == 'al_dia' and f.diferencia == 0 %}diferencia-cero{% endif %}">
             {% if f.diferencia > 0 %}+{% endif %}{{ f.diferencia }}
           </span>
         </div>
       </div>
-      {% if f.query_ajuste %}
-      <!-- La cantidad final se calcula en la pantalla de ajuste contra el
-           stock ACTUAL (con aviso si cambió desde este conteo). -->
+
+      {% if f.estado == "cerrado" %}
+      <p class="nota-estado">La cuenta está cerrada y el stock quedó en cero. Esta diferencia es de aquel día: ya no hay nada que ajustar.</p>
+      {% elif f.estado == "de_baja_con_saldo" %}
+      <p class="nota-estado">Está dado de baja pero le quedaron <strong>{{ f.stock_actual }}</strong> en el sistema. Lo único que hay para hacer es cerrar la cuenta.</p>
+      <a class="boton-ajustar" href="/puesto/envases/ajustar?{{ f.query_cierre }}">Cerrar la cuenta en cero</a>
+      {% elif f.estado == "pendiente" %}
+      {# La cantidad final se calcula en la pantalla de ajuste contra el
+         stock ACTUAL (con aviso si cambió desde este conteo). #}
+      {% if f.ajustes_posteriores %}
+      <p class="pendiente-hoy">Desde el conteo ya se ajustó {{ "+" if f.ajustes_posteriores > 0 }}{{ f.ajustes_posteriores }}: todavía queda sin explicar <strong>{{ "+" if f.pendiente > 0 }}{{ f.pendiente }}</strong>.</p>
+      {% endif %}
       <a class="boton-ajustar" href="/puesto/envases/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      {% elif f.diferencia != 0 %}
+      <p class="nota-estado">Ya resuelto: la diferencia se ajustó después del conteo.</p>
       {% endif %}
     </div>
     {% endfor %}

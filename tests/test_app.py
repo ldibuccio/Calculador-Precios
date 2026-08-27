@@ -10888,6 +10888,22 @@ def test_dar_de_baja_tipo_envase_puesto_redirige():
     mock_baja.assert_called_once_with(3)
 
 
+def test_dar_de_baja_un_tipo_con_saldo_se_niega_y_lo_dice_con_el_numero():
+    # Una cuenta abierta no es una falla del sistema: es algo para cerrar.
+    # Se muestra en la pantalla con el número adentro (400, no 500).
+    with (
+        patch("app.main.desactivar_tipo_envase_puesto",
+              side_effect=ValueError("'cajón madera' todavía tiene 12 en stock. Devolvelos o ajustá a cero antes de darlo de baja.")),
+        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+    ):
+        respuesta = cliente.post("/puesto/envases/tipos/3/baja", follow_redirects=False)
+
+    assert respuesta.status_code == 400
+    assert "todavía tiene 12 en stock" in respuesta.text
+    assert "ajustá a cero antes de darlo de baja" in respuesta.text
+
+
 # --- Vacíos tanda 2: Stock Físico, Cotejo, Pendientes de Pago, Movimientos, Clientes ---
 
 
@@ -10948,15 +10964,27 @@ def test_cargar_stock_fisico_con_cantidad_negativa_da_error():
     mock_crear.assert_not_called()
 
 
+def _conteo_cotejo(**cambios):
+    """Un conteo del Cotejo con lo mínimo, para variar solo lo que prueba cada caso."""
+    base = {
+        "id": 1, "cantidad": 35, "stock_sistema": 40,
+        "proveedor_id": 200, "tipo_envase_id": 1,
+        "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
+        "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro",
+        "proveedor_activo": True, "tipo_activo": True,
+        "ajustes_posteriores": 0, "stock_actual": 40,
+    }
+    return {**base, **cambios}
+
+
 CONTEOS_COTEJO_DE_PRUEBA = [
-    {"id": 1, "cantidad": 35, "stock_sistema": 40,
-     "proveedor_id": 200, "tipo_envase_id": 1,
-     "creado_en": datetime(2026, 8, 19, 14, 0, tzinfo=timezone.utc),
-     "proveedor_nombre": "Saturno", "tipo_nombre": "cajón plástico negro"},
-    {"id": 2, "cantidad": 8, "stock_sistema": 8,
-     "proveedor_id": 201, "tipo_envase_id": 3,
-     "creado_en": datetime(2026, 8, 19, 14, 5, tzinfo=timezone.utc),
-     "proveedor_nombre": "Don Pepe", "tipo_nombre": "cajón madera"},
+    # Diferencia sin ajustar: lo único que hay para hacer hoy.
+    _conteo_cotejo(),
+    # Contó igual que el sistema: nada que hacer.
+    _conteo_cotejo(id=2, cantidad=8, stock_sistema=8, stock_actual=8,
+                   proveedor_id=201, tipo_envase_id=3,
+                   creado_en=datetime(2026, 8, 19, 14, 5, tzinfo=timezone.utc),
+                   proveedor_nombre="Don Pepe", tipo_nombre="cajón madera"),
 ]
 
 
@@ -10985,6 +11013,95 @@ def test_ver_cotejo_ofrece_ajustar_a_lo_contado_solo_con_diferencia():
     assert "contado=35" in respuesta.text
     assert "stock_conteo=40" in respuesta.text
     assert "fecha_conteo=2026-08-19" in respuesta.text
+
+
+def test_ver_cotejo_una_diferencia_ya_ajustada_se_pone_en_verde():
+    """El bug que hacía que el módulo se abandonara.
+
+    "Ajustar a lo contado" escribe un ajuste, NO un conteo nuevo. Como la
+    tarjeta comparaba lo contado contra la foto congelada del conteo, la
+    misma diferencia quedaba en rojo para siempre, con el botón invitando a
+    ajustar de nuevo. Ordenabas todo y la pantalla seguía igual de roja.
+    """
+    ajustado = _conteo_cotejo(ajustes_posteriores=-5, stock_actual=35)
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=[ajustado]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert 'class="tarjeta con-diferencia"' not in respuesta.text
+    assert "Ajustar a lo contado" not in respuesta.text
+    assert "la diferencia se ajustó después del conteo" in respuesta.text
+    # La diferencia histórica NO desaparece: es el dato de auditoría de ese día.
+    assert "-5" in respuesta.text
+
+
+def test_ver_cotejo_un_ajuste_parcial_deja_el_resto_a_la_vista():
+    # Ajustó 3 de los 5: quedan 2 sin explicar, y eso sigue siendo tarea.
+    parcial = _conteo_cotejo(ajustes_posteriores=-3, stock_actual=37)
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=[parcial]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert 'class="tarjeta con-diferencia"' in respuesta.text
+    assert "Ajustar a lo contado" in respuesta.text
+    assert "ya se ajustó -3" in respuesta.text
+    assert "queda sin explicar <strong>-2</strong>" in respuesta.text
+
+
+def test_ver_cotejo_los_movimientos_normales_posteriores_no_inventan_una_alarma():
+    """Si después del conteo entraron cajones, el stock ya no coincide con lo
+    contado — y eso NO es un problema. Por eso se mide contra los ajustes
+    posteriores y no contra el stock de hoy: medir así pondría en rojo algo
+    que está bien, pidiendo un ajuste que sería incorrecto.
+    """
+    con_movimientos = _conteo_cotejo(cantidad=8, stock_sistema=8, stock_actual=25,
+                                     ajustes_posteriores=0)
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=[con_movimientos]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert 'class="tarjeta con-diferencia"' not in respuesta.text
+    assert "Ajustar a lo contado" not in respuesta.text
+
+
+def test_ver_cotejo_un_par_cerrado_va_en_gris_al_final_y_sin_boton():
+    # Proveedor dado de baja y saldo cero: no hay nada que cotejar. En gris
+    # y al final — pero NO escondido: si desapareciera, no habría forma de
+    # ver que existió ni de notar que se cerró con una diferencia.
+    cerrado = _conteo_cotejo(id=9, proveedor_activo=False, stock_actual=0,
+                             cantidad=3, stock_sistema=5,
+                             proveedor_nombre="Gómez", tipo_nombre="cajón viejo")
+    with patch("app.main.listar_ultimos_conteos_vacios",
+               return_value=[cerrado, _conteo_cotejo()]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert "Cerrado" in respuesta.text
+    assert 'class="tarjeta cerrada"' in respuesta.text
+    assert "ya no hay nada que ajustar" in respuesta.text
+    assert "Gómez" in respuesta.text
+    # El cerrado va DESPUÉS del que sí tiene algo para hacer.
+    assert respuesta.text.index("Saturno") < respuesta.text.index("Gómez")
+    # Y sin botón: solo el de la tarjeta viva.
+    assert respuesta.text.count("Ajustar a lo contado") == 1
+
+
+def test_ver_cotejo_un_par_de_baja_con_saldo_pide_cerrar_la_cuenta():
+    # El estado a medio camino que la validación de la baja ya no deja
+    # crear. Los que quedaron de antes se muestran, y lo único que ofrecen
+    # es cerrar: ajustarlo "a lo contado" sería devolverle vida a algo
+    # que ya no se puede mover.
+    a_medias = _conteo_cotejo(id=8, tipo_activo=False, stock_actual=4,
+                              cantidad=10, stock_sistema=10)
+    with patch("app.main.listar_ultimos_conteos_vacios", return_value=[a_medias]):
+        respuesta = cliente.get("/puesto/envases/cotejo")
+
+    assert respuesta.status_code == 200
+    assert "Dado de baja con saldo" in respuesta.text
+    assert "le quedaron <strong>4</strong> en el sistema" in respuesta.text
+    assert "Cerrar la cuenta en cero" in respuesta.text
+    assert "Ajustar a lo contado" not in respuesta.text
+    assert "contado=0" in respuesta.text and "cierre=1" in respuesta.text
 
 
 def test_ver_pendientes_de_pago_ofrece_los_tres_cierres():
@@ -11657,6 +11774,19 @@ def test_dar_de_baja_proveedor_puesto_redirige():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/puesto/envases/proveedores"
     mock_baja.assert_called_once_with(200)
+
+
+def test_dar_de_baja_un_proveedor_con_saldo_se_niega_nombrando_sus_tipos():
+    with (
+        patch("app.main.desactivar_proveedor_puesto",
+              side_effect=ValueError("Gómez todavía tiene stock (cajón madera: 12, cajón plástico: -3). Devolvelos o ajustá a cero antes de darlo de baja.")),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+    ):
+        respuesta = cliente.post("/puesto/envases/proveedores/200/baja", follow_redirects=False)
+
+    assert respuesta.status_code == 400
+    assert "cajón madera: 12" in respuesta.text
+    assert "cajón plástico: -3" in respuesta.text
 
 
 def test_hub_envases_puesto_tiene_proveedores_del_puesto():

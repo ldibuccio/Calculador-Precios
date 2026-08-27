@@ -3369,10 +3369,35 @@ def crear_tipo_envase_puesto(proveedor_id: int, nombre: str) -> None:
 
 
 def desactivar_tipo_envase_puesto(tipo_id: int) -> None:
-    """Baja lógica de un tipo de cajón: deja de ofrecerse en las pantallas, los movimientos viejos quedan."""
+    """Baja lógica de un tipo de cajón: deja de ofrecerse en las pantallas, los movimientos viejos quedan.
+
+    SE NIEGA si el tipo todavía tiene saldo. Antes se podía dar de baja
+    cualquier cosa: el tipo salía de los selects pero seguía con cajones
+    adentro, y quedaba medio vivo y medio muerto — invisible para cargar,
+    presente en Stock y en rojo en el Cotejo para siempre, sin que nadie
+    pudiera hacer nada al respecto.
+
+    Con esta regla, "activo = false" pasa a significar algo: saldo cero,
+    cuenta cerrada. Es lo que le permite al Cotejo mostrar esos pares como
+    CERRADOS sin adivinar.
+
+    El saldo no se cierra solo con un ajuste automático, a propósito: un
+    faltante se cierra con un motivo que escribió alguien, nunca tapado
+    por el sistema (misma regla que el resto del módulo).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute("SELECT proveedor_id, nombre FROM tipos_envase_puesto WHERE id = %s", (tipo_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese tipo de envase no existe.")
+            proveedor_id, nombre = fila
+            saldo = _stock_vacios_actual(cursor, proveedor_id, tipo_id)
+            if saldo != 0:
+                raise ValueError(
+                    f"'{nombre}' todavía tiene {saldo} en stock. Devolvelos o ajustá a cero antes de darlo de baja."
+                )
             cursor.execute("UPDATE tipos_envase_puesto SET activo = false WHERE id = %s", (tipo_id,))
         conexion.commit()
     finally:
@@ -3424,6 +3449,33 @@ def obtener_o_crear_cliente_puesto(nombre: str, nombre_normalizado: str) -> int:
         return cliente_id
     finally:
         conexion.close()
+
+
+def _saldos_vacios_del_proveedor(cursor, proveedor_id: int) -> list[dict]:
+    """El saldo de CADA tipo de un proveedor (los que no dan cero), con el cursor abierto.
+
+    Lo usa la baja del proveedor para saber si quedó algo abierto: dar de
+    baja al proveedor no toca sus tipos, así que el saldo hay que mirarlo
+    tipo por tipo, no de a uno.
+    """
+    cursor.execute(
+        """
+        SELECT t.id, t.nombre,
+               COALESCE(r.total, 0) - COALESCE(d.total, 0) + COALESCE(a.total, 0) AS saldo
+        FROM tipos_envase_puesto t
+        LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_recibidos
+                   WHERE anulado_el IS NULL GROUP BY tipo_envase_id) r ON r.tipo_envase_id = t.id
+        LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM vacios_devueltos
+                   WHERE anulado_el IS NULL GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
+        LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM ajustes_vacios
+                   WHERE anulado_el IS NULL GROUP BY tipo_envase_id) a ON a.tipo_envase_id = t.id
+        WHERE t.proveedor_id = %s
+          AND COALESCE(r.total, 0) - COALESCE(d.total, 0) + COALESCE(a.total, 0) <> 0
+        ORDER BY t.nombre
+        """,
+        (proveedor_id,),
+    )
+    return [{"tipo_id": fila[0], "tipo_nombre": fila[1], "saldo": int(fila[2])} for fila in cursor.fetchall()]
 
 
 def _stock_vacios_actual(cursor, proveedor_id: int, tipo_envase_id: int) -> int:
@@ -3755,7 +3807,25 @@ def listar_conteos_vacios_de_fecha(fecha) -> list[dict]:
 
 
 def listar_ultimos_conteos_vacios() -> list[dict]:
-    """El ÚLTIMO conteo por proveedor+tipo, con su foto del stock del sistema, para el Cotejo (cajera)."""
+    """El ÚLTIMO conteo por proveedor+tipo, con su foto del stock del sistema, para el Cotejo (cajera).
+
+    Trae además tres cosas que el Cotejo necesita para saber qué queda por
+    hacer, porque la foto congelada sola no alcanza:
+
+    - ajustes_posteriores: cuánto se ajustó DESPUÉS de este conteo. Es lo
+      que absorbe la diferencia que el conteo encontró. Sin esto, una
+      tarjeta ya ajustada seguía en rojo para siempre —el ajuste no crea un
+      conteo nuevo, así que la comparación quedaba clavada en los mismos dos
+      números viejos— y el módulo se dejaba de mirar.
+    - stock_actual: el saldo de hoy, para el par dado de baja al que le
+      quedó stock.
+    - proveedor_activo / tipo_activo: si el par sigue vivo.
+
+    Se mide contra los ajustes posteriores y NO contra el stock de hoy: si
+    después del conteo entraron o salieron cajones legítimamente, el stock
+    ya no coincide con lo contado, y medir así pondría en rojo algo que está
+    bien, pidiendo un ajuste que sería incorrecto.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -3765,7 +3835,35 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
                        c.id, c.proveedor_id, c.tipo_envase_id,
                        c.cantidad, c.stock_sistema, c.creado_en,
                        p.nombre AS proveedor_nombre,
-                       t.nombre AS tipo_nombre
+                       t.nombre AS tipo_nombre,
+                       p.activo AS proveedor_activo,
+                       t.activo AS tipo_activo,
+                       -- Los ajustes hechos DESPUÉS de este conteo: son los
+                       -- que absorben la diferencia que el conteo encontró.
+                       -- Se mide contra esto y NO contra el stock de hoy: si
+                       -- después del conteo entraron cajones legítimamente,
+                       -- el stock ya no coincide con lo contado y medir así
+                       -- inventaría una alarma pidiendo un ajuste incorrecto.
+                       COALESCE((SELECT SUM(a.cantidad) FROM ajustes_vacios a
+                                 WHERE a.proveedor_id = c.proveedor_id
+                                   AND a.tipo_envase_id = c.tipo_envase_id
+                                   AND a.anulado_el IS NULL
+                                   AND a.creado_en > c.creado_en), 0) AS ajustes_posteriores,
+                       -- El saldo de hoy: lo necesita el par dado de baja al
+                       -- que le quedó stock, donde lo pendiente no es ajustar
+                       -- a lo contado sino cerrar la cuenta en cero.
+                       COALESCE((SELECT SUM(r.cantidad) FROM vacios_recibidos r
+                                 WHERE r.proveedor_id = c.proveedor_id
+                                   AND r.tipo_envase_id = c.tipo_envase_id
+                                   AND r.anulado_el IS NULL), 0)
+                     - COALESCE((SELECT SUM(d.cantidad) FROM vacios_devueltos d
+                                 WHERE d.proveedor_id = c.proveedor_id
+                                   AND d.tipo_envase_id = c.tipo_envase_id
+                                   AND d.anulado_el IS NULL), 0)
+                     + COALESCE((SELECT SUM(a.cantidad) FROM ajustes_vacios a
+                                 WHERE a.proveedor_id = c.proveedor_id
+                                   AND a.tipo_envase_id = c.tipo_envase_id
+                                   AND a.anulado_el IS NULL), 0) AS stock_actual
                 FROM conteos_vacios c
                 JOIN proveedores_puesto p ON p.id = c.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
@@ -3775,6 +3873,9 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         resultado = [dict(zip(columnas, fila)) for fila in filas]
+        for fila in resultado:
+            fila["stock_actual"] = int(fila["stock_actual"])
+            fila["ajustes_posteriores"] = int(fila["ajustes_posteriores"])
         resultado.sort(key=lambda fila: (fila["proveedor_nombre"], fila["tipo_nombre"]))
         return resultado
     finally:
@@ -3954,10 +4055,30 @@ def obtener_o_crear_proveedor_puesto(nombre: str, nombre_normalizado: str) -> in
 
 
 def desactivar_proveedor_puesto(proveedor_id: int) -> None:
-    """Baja lógica de un proveedor del puesto: sale de los selects; sus movimientos y stock histórico quedan."""
+    """Baja lógica de un proveedor del puesto: sale de los selects; sus movimientos y stock histórico quedan.
+
+    SE NIEGA si le queda saldo en ALGUNO de sus tipos, y el error los
+    nombra a todos con su número: dar de baja al proveedor no da de baja
+    sus tipos, así que mirar un solo tipo dejaría pasar el resto.
+
+    Misma razón que en desactivar_tipo_envase_puesto: sin esta regla,
+    "de baja" no quiere decir nada, y el Cotejo no tiene forma de saber
+    qué está realmente cerrado.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute("SELECT nombre FROM proveedores_puesto WHERE id = %s", (proveedor_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese proveedor no existe.")
+            (nombre,) = fila
+            abiertos = _saldos_vacios_del_proveedor(cursor, proveedor_id)
+            if abiertos:
+                detalle = ", ".join(f"{a['tipo_nombre']}: {a['saldo']}" for a in abiertos)
+                raise ValueError(
+                    f"{nombre} todavía tiene stock ({detalle}). Devolvelos o ajustá a cero antes de darlo de baja."
+                )
             cursor.execute("UPDATE proveedores_puesto SET activo = false WHERE id = %s", (proveedor_id,))
         conexion.commit()
     finally:
