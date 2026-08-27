@@ -4,25 +4,35 @@
 -- Se corre en el SQL Editor de la base NUEVA, después del paso 2, y ANTES de
 -- tocar el DATABASE_URL de Railway. Es de SOLO LECTURA: no escribe nada.
 --
--- Devuelve cuatro resultados. Los cuatro tienen que dar bien.
+-- Devuelve UNA sola tabla, con el veredicto en la última fila. Va así a
+-- propósito: el SQL Editor de Supabase muestra únicamente el resultado de la
+-- ÚLTIMA consulta, así que un verificador que devuelva varias deja lo
+-- importante invisible.
 --
--- POR QUÉ NO ALCANZA CON CONTAR FILAS: probado en local — las dos tablas del
--- plan de cuentas de Costos Fijos dan 8 y 34 filas en las dos bases aunque la
--- copia haya fallado, porque esas filas las siembra esquema_completo.sql. El
--- conteo dice OK y la copia está mal. Por eso va también la firma md5 del
--- contenido, que sí lo detecta.
+-- POR QUÉ NO ALCANZA CON CONTAR FILAS: probado — las dos tablas del plan de
+-- cuentas de Costos Fijos dan 8 y 34 filas en las dos bases aunque la copia
+-- haya fallado, porque esas filas las siembra esquema_completo.sql. El conteo
+-- dice OK y la copia está mal. Por eso va también la firma md5 del contenido.
+--
+-- POR QUÉ LA FIRMA NOMBRA LAS COLUMNAS: las dos bases tienen las mismas
+-- columnas pero NO en el mismo orden (lo agregado con ALTER TABLE quedó al
+-- final en la vieja). Una firma sobre la fila entera cambiaría solo por el
+-- orden y marcaría como distinta una tabla copiada perfecto.
 -- ============================================================================
 
--- ----------------------------------------------------------------------------
--- 1. CONTENIDO: conteo y firma de cada tabla, en las dos bases.
---    TIENE QUE DEVOLVER 0 FILAS.
--- ----------------------------------------------------------------------------
 create temp table if not exists mudanza_control (
     tabla text, filas_vieja bigint, filas_nueva bigint, firma_vieja text, firma_nueva text
 );
+create temp table if not exists mudanza_resultado (
+    orden int, control text, resultado text
+);
 truncate mudanza_control;
+truncate mudanza_resultado;
 
-do $verificar$
+-- ----------------------------------------------------------------------------
+-- 1. Contenido de cada tabla, en las dos bases.
+-- ----------------------------------------------------------------------------
+do $contenido$
 declare t text; columnas text;
 begin
     for t in
@@ -31,11 +41,6 @@ begin
          where c.relname not like 'mudanza\_%'
          order by c.relname
     loop
-        -- Las columnas se nombran, igual que en la copia. Las dos bases tienen
-        -- las mismas columnas pero NO en el mismo orden (lo agregado con ALTER
-        -- TABLE quedó al final en la vieja), y la firma de la fila entera
-        -- cambiaría solo por el orden: marcaría como distinta una tabla que se
-        -- copió perfecto. Nombrándolas, la firma compara CONTENIDO.
         select string_agg(quote_ident(column_name), ', ' order by ordinal_position)
           into columnas
           from information_schema.columns
@@ -50,46 +55,32 @@ begin
                    (select md5(string_agg(x::text, '|' order by x::text)) from (select %s from public.%I) x)
         $sql$, t, t, t, columnas, t, columnas, t);
     end loop;
-end $verificar$;
+end $contenido$;
 
-select tabla, filas_vieja, filas_nueva,
-       case when filas_vieja <> filas_nueva then 'DIFIERE EL CONTEO'
-            else 'MISMO CONTEO, CONTENIDO DISTINTO' end as problema
+insert into mudanza_resultado
+select 10, 'CONTENIDO',
+       case when count(*) filter (where malas) = 0
+            then 'OK — ' || count(*) || ' tablas, ' || sum(filas_nueva) || ' filas, idénticas a la vieja'
+            else count(*) filter (where malas) || ' TABLA(S) MAL — ver abajo' end
+  from (select *, (filas_vieja is distinct from filas_nueva
+                or firma_vieja is distinct from firma_nueva) as malas
+          from mudanza_control) x;
+
+insert into mudanza_resultado
+select 11, '  ' || tabla,
+       case when filas_vieja is distinct from filas_nueva
+            then 'vieja ' || filas_vieja || ' filas / nueva ' || filas_nueva
+            else 'mismo conteo (' || filas_nueva || ') pero el CONTENIDO difiere' end
   from mudanza_control
  where filas_vieja is distinct from filas_nueva
-    or firma_vieja is distinct from firma_nueva
- order by tabla;
+    or firma_vieja is distinct from firma_nueva;
 
 -- ----------------------------------------------------------------------------
--- 2. RESUMEN: una línea para mirar de reojo desde el celular.
---    TIENE QUE DECIR "TODO IGUAL".
+-- 2. Secuencias: ninguna puede quedar por debajo del max(id) de su tabla, o
+--    el primer INSERT nuevo choca con "duplicate key".
 -- ----------------------------------------------------------------------------
-select case
-         when count(*) filter (where filas_vieja is distinct from filas_nueva
-                                  or firma_vieja is distinct from firma_nueva) = 0
-           then 'TODO IGUAL: ' || count(*) || ' tablas, ' || sum(filas_nueva) || ' filas.'
-         else 'HAY ' || count(*) filter (where filas_vieja is distinct from filas_nueva
-                                            or firma_vieja is distinct from firma_nueva)
-              || case when count(*) filter (where filas_vieja is distinct from filas_nueva
-                                              or firma_vieja is distinct from firma_nueva) = 1
-                      then ' TABLA MAL' else ' TABLAS MAL' end
-              || '. NO cambies el DATABASE_URL.'
-       end as resultado
-  from mudanza_control;
-
--- ----------------------------------------------------------------------------
--- 3. SECUENCIAS: ninguna puede quedar por debajo del max(id) de su tabla.
---    TIENE QUE DEVOLVER UNA SOLA FILA QUE DIGA "SECUENCIAS OK".
---    Si devuelve alguna fila "MAL", el primer INSERT nuevo va a chocar:
---    volvé a correr el paso 2.
--- ----------------------------------------------------------------------------
-create temp table if not exists mudanza_secuencias (
-    tabla text, max_id bigint, proximo_id bigint, estado text
-);
-truncate mudanza_secuencias;
-
 do $secuencias$
-declare r record; maximo bigint; ultimo bigint; llamada boolean; proximo bigint;
+declare r record; maximo bigint; ultimo bigint; llamada boolean; proximo bigint; mal int := 0;
 begin
     for r in
         select c.relname as tabla, a.attname as columna,
@@ -104,43 +95,44 @@ begin
         execute format('select last_value, is_called from %s', r.secuencia) into ultimo, llamada;
         proximo := case when llamada then ultimo + 1 else ultimo end;
         if proximo <= maximo then
-            insert into mudanza_secuencias values (r.tabla, maximo, proximo, 'MAL');
+            mal := mal + 1;
+            insert into mudanza_resultado values (21, '  ' || r.tabla,
+                'max(id)=' || maximo || ' pero la secuencia daría ' || proximo);
         end if;
     end loop;
+    insert into mudanza_resultado values (20, 'SECUENCIAS',
+        case when mal = 0 then 'OK — las 37 por encima de su max(id)'
+             else mal || ' MAL — volvé a correr el paso 2' end);
 end $secuencias$;
 
-select case when count(*) = 0
-            then 'SECUENCIAS OK: las 37 están por encima de su max(id).'
-            else count(*) || case when count(*) = 1 then ' SECUENCIA MAL' else ' SECUENCIAS MAL' end
-                 || '. Volvé a correr el paso 2.'
-       end as secuencias
-  from mudanza_secuencias;
-
--- El detalle de las que estén mal (vacío si todo OK).
-select * from mudanza_secuencias order by tabla;
-
--- 4. STORAGE: cuántos archivos hay en el bucket de cada lado.
---    Los BYTES no viajan con la base: esto se empareja recién después de
---    copiar el bucket (ver el paso de Storage en db/MUDANZA.md).
---    Mientras no lo hagas, la nueva va a dar 0. Es lo esperado.
 -- ----------------------------------------------------------------------------
--- El conteo del bucket va por SQL dinámico a propósito: nombrar
--- storage.objects directo hace fallar la consulta entera en un Postgres común
--- (sin Supabase), aunque la rama no se ejecute — se resuelve al parsear.
--- Si da -1, es que no estás en Supabase.
-create temp table if not exists mudanza_storage (archivos bigint);
-truncate mudanza_storage;
-
+-- 3. Storage: los archivos NO viajan con la base. Hasta que se copie el
+--    bucket, esto va a decir que faltan, y está bien.
+-- ----------------------------------------------------------------------------
 do $storage$
+declare en_bucket bigint; referenciados bigint;
 begin
+    select (select count(*) from fotos_guia) + (select count(*) from fotos_pedido)
+      into referenciados;
     if to_regclass('storage.objects') is null then
-        insert into mudanza_storage values (-1);
+        en_bucket := -1;
     else
-        execute 'insert into mudanza_storage select count(*) from storage.objects where bucket_id = ''comandas''';
+        execute 'select count(*) from storage.objects where bucket_id = ''comandas''' into en_bucket;
     end if;
+    insert into mudanza_resultado values (30, 'STORAGE',
+        case when en_bucket >= referenciados
+             then 'OK — ' || en_bucket || ' archivos en el bucket, ' || referenciados || ' referenciados'
+             else 'FALTAN ARCHIVOS — ' || en_bucket || ' en el bucket, ' || referenciados ||
+                  ' referenciados. Copiar el bucket (no bloquea la copia de datos).' end);
 end $storage$;
 
-select (select archivos from mudanza_storage) as archivos_en_el_bucket,
-       (select count(*) from fotos_guia) as filas_fotos_guia,
-       (select count(*) from fotos_pedido) as filas_fotos_pedido,
-       (select count(*) from precios_venta_historial where foto_ruta is not null) as precios_con_archivo;
+-- ----------------------------------------------------------------------------
+-- 4. El veredicto. El Storage no bloquea: se puede copiar después.
+-- ----------------------------------------------------------------------------
+insert into mudanza_resultado
+select 99, '>>> VEREDICTO',
+       case when (select count(*) from mudanza_resultado where orden in (11, 21)) = 0
+            then 'LA BASE NUEVA ES UN ESPEJO EXACTO DE LA VIEJA'
+            else 'HAY PROBLEMAS ARRIBA — NO cambies el DATABASE_URL' end;
+
+select control, resultado from mudanza_resultado order by orden, control;
