@@ -23,22 +23,32 @@ create temp table if not exists mudanza_control (
 truncate mudanza_control;
 
 do $verificar$
-declare t text;
+declare t text; columnas text;
 begin
     for t in
         select c.relname from pg_class c
           join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public' and c.relkind = 'r'
-         where c.relname <> 'mudanza_control'
+         where c.relname not like 'mudanza\_%'
          order by c.relname
     loop
+        -- Las columnas se nombran, igual que en la copia. Las dos bases tienen
+        -- las mismas columnas pero NO en el mismo orden (lo agregado con ALTER
+        -- TABLE quedó al final en la vieja), y la firma de la fila entera
+        -- cambiaría solo por el orden: marcaría como distinta una tabla que se
+        -- copió perfecto. Nombrándolas, la firma compara CONTENIDO.
+        select string_agg(quote_ident(column_name), ', ' order by ordinal_position)
+          into columnas
+          from information_schema.columns
+         where table_schema = 'public' and table_name = t;
+
         execute format($sql$
             insert into mudanza_control
             select %L,
                    (select count(*) from origen.%I),
                    (select count(*) from public.%I),
-                   (select md5(string_agg(x::text, '|' order by x::text)) from origen.%I x),
-                   (select md5(string_agg(x::text, '|' order by x::text)) from public.%I x)
-        $sql$, t, t, t, t, t);
+                   (select md5(string_agg(x::text, '|' order by x::text)) from (select %s from origen.%I) x),
+                   (select md5(string_agg(x::text, '|' order by x::text)) from (select %s from public.%I) x)
+        $sql$, t, t, t, columnas, t, columnas, t);
     end loop;
 end $verificar$;
 

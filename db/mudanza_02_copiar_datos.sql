@@ -61,31 +61,65 @@ declare
     copiadas bigint;
     total bigint := 0;
     n int := 0;
+    columnas text;
+    faltantes text;
 begin
     if coalesce(current_setting('mudanza.confirmo', true), '') <> 'SI, VACIAR Y COPIAR' then
         raise exception 'Falta el candado. Corré el select set_config(...) de arriba JUNTO con este bloque, en la misma pestaña del SQL Editor.';
     end if;
 
-    -- 1. Vaciar. Una sola sentencia con las 40: TRUNCATE resuelve solo el
+    -- 1. Antes de tocar nada: toda columna que exista en la base NUEVA tiene
+    -- que existir también en la vieja. Si falta alguna, la copia sería
+    -- incompleta en silencio, así que se corta acá y se dice cuál.
+    -- (Al revés no importa: si la vieja tiene columnas de más — restos de
+    -- migraciones viejas — simplemente no se copian.)
+    select string_agg(d.table_name || '.' || d.column_name, ', ' order by d.table_name, d.column_name)
+      into faltantes
+      from information_schema.columns d
+     where d.table_schema = 'public'
+       and d.table_name = any(tablas)
+       and not exists (select 1 from information_schema.columns o
+                        where o.table_schema = 'origen'
+                          and o.table_name = d.table_name
+                          and o.column_name = d.column_name);
+    if faltantes is not null then
+        raise exception 'La base vieja no tiene estas columnas, que la nueva sí: %', faltantes;
+    end if;
+
+    -- 2. Vaciar. Una sola sentencia con las 40: TRUNCATE resuelve solo el
     -- orden entre ellas. CASCADE está por las FKs entre las de la lista.
     execute 'truncate table ' || array_to_string(tablas, ', ') || ' cascade';
 
-    -- 2. Copiar, en orden. OVERRIDING SYSTEM VALUE porque los ids son
+    -- 3. Copiar, en orden. OVERRIDING SYSTEM VALUE porque los ids son
     -- "generated always" y acá entran tal cual vienen: es lo que hace que
     -- todas las FKs queden bien apuntadas sin remapear nada, y lo que
     -- conserva los números de guía de compra y de guía R, que vos ves.
+    --
+    -- Las columnas se nombran UNA POR UNA, nunca "select *". Las dos bases
+    -- tienen las mismas columnas pero NO en el mismo orden: en la vieja, lo
+    -- que se agregó con ALTER TABLE quedó al final, y en esquema_completo.sql
+    -- está escrito en su lugar lógico. Con "select *" el mapeo es por
+    -- posición y termina metiendo una fecha adentro de un booleano.
+    -- Nombrándolas, el mapeo es por nombre y el orden deja de importar.
+    --
     -- El "order by 1" es por pedidos.reemplaza_a_pedido_id, que apunta a otro
     -- pedido: sin orden, la fila que referencia podría entrar antes que la
     -- referenciada y la FK fallaría.
     foreach t in array tablas loop
-        execute format('insert into public.%I overriding system value select * from origen.%I order by 1', t, t);
+        select string_agg(quote_ident(column_name), ', ' order by ordinal_position)
+          into columnas
+          from information_schema.columns
+         where table_schema = 'public' and table_name = t;
+
+        execute format('insert into public.%I (%s) overriding system value select %s from origen.%I order by 1',
+                       t, columnas, columnas, t);
         get diagnostics copiadas = row_count;
         total := total + copiadas;
         n := n + 1;
         insert into mudanza_copia values (n, t, copiadas);
     end loop;
 
-    -- 3. Las secuencias. Sin esto el primer INSERT nuevo choca con
+    -- 4. Las secuencias. Sin esto el primer INSERT nuevo choca con
     -- "duplicate key": la secuencia sigue en 1 y el id 1 ya existe.
     -- setval(..., max + 1, false) deja el PRÓXIMO id en max+1, y funciona
     -- también con la tabla vacía (próximo = 1).
