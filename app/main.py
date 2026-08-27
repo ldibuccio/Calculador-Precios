@@ -110,6 +110,7 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    entradas_y_salidas_stock_articulos,
     listar_articulos_con_primera_de_cliente,
     crear_grupo_costos_fijos,
     crear_importe_costos_fijos,
@@ -129,6 +130,7 @@ from app.db import (
     listar_movimientos_stock_por_rango,
     listar_remitos_segunda_por_rango,
     salidas_stock_articulo,
+    salidas_stock_articulos,
     listar_reprocesos_por_rango,
     listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
@@ -195,6 +197,7 @@ from app.db import (
     listar_envases_con_costo,
     listar_historial_costos_envases,
     listar_historial_fichas_por_cliente,
+    listar_fichas_de_todos_los_clientes,
     listar_fichas_por_cliente,
     listar_renglones_pedido,
     listar_sucursales_pedido,
@@ -6196,29 +6199,34 @@ def _tamanos_de_caja_por_ficha() -> dict[str, str]:
     """
     tamanos: dict[str, str] = {}
     por_clave: dict[str, list[str]] = {}
-    for cliente_fila in listar_clientes():
-        for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
-            if not ficha.get("contenido_caja"):
-                continue
-            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-            texto = f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-            clave = f"{cliente_fila['id']}:{ficha['articulo_id']}"
-            if texto not in por_clave.setdefault(clave, []):
-                por_clave[clave].append(texto)
+    # TODAS las fichas en una consulta: antes se pedían cliente por cliente,
+    # que es el mismo N+1 que el del FIFO, escondido en otra pantalla.
+    for ficha in listar_fichas_de_todos_los_clientes():
+        if not ficha.get("contenido_caja"):
+            continue
+        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+        texto = f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+        clave = f"{ficha['cliente_id']}:{ficha['articulo_id']}"
+        if texto not in por_clave.setdefault(clave, []):
+            por_clave[clave].append(texto)
 
     for clave, textos in por_clave.items():
         tamanos[clave] = " o ".join(textos)
     return tamanos
 
 
-def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str]) -> list[dict]:
+def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str], movimientos: tuple) -> list[dict]:
     """Las guías R con primera restante de un artículo, rejugando el FIFO: qué cajas armadas hay hoy, para quién y de qué tamaño.
 
     Cada línea es una guía R con resto (si hay varias de tamaños
     distintos, salen separadas). Es el mismo reparto del detalle por
     artículo, subido al listado: nada se guarda, se calcula cada vez.
+
+    Recibe los movimientos ya traídos (entradas, total de salidas y mermas
+    dirigidas) en vez de ir a buscarlos: el listado los pide TODOS de una,
+    para no abrir una conexión por artículo.
     """
-    entradas, total_salidas, dirigidas = entradas_y_salidas_stock_articulo(fila["articulo_id"])
+    entradas, total_salidas, dirigidas = movimientos
     for e in entradas:
         e["orden"] = (e["fecha_orden"], e["momento_orden"])
     reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
@@ -6256,8 +6264,14 @@ def ver_stock_sistema_deposito(request: Request):
         tamanos_ficha = (
             _tamanos_de_caja_por_ficha() if any(f["reproceso_primera"] for f in filas) else {}
         )
+        # Los movimientos de TODOS los artículos con guía R, en una consulta.
+        con_primera = [f["articulo_id"] for f in filas if f["reproceso_primera"]]
+        movimientos = entradas_y_salidas_stock_articulos(con_primera)
         for fila in filas:
-            fila["armados"] = _desglose_stock_articulo(fila, tamanos_ficha) if fila["reproceso_primera"] else []
+            fila["armados"] = (
+                _desglose_stock_articulo(fila, tamanos_ficha, movimientos[fila["articulo_id"]])
+                if fila["reproceso_primera"] else []
+            )
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -7021,14 +7035,18 @@ def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
     una sería adivinar: la guía R no guarda con qué ficha se armó, y
     mostrarle al operario el kilaje de la otra es armar la caja mal.
     """
-    ayudas: dict[str, str] = {}
-    for cliente_fila in listar_clientes():
-        por_articulo: dict[int, list[dict]] = {}
-        for ficha in listar_fichas_por_cliente(cliente_fila["id"]):
-            if not ficha.get("contenido_caja"):
-                continue
-            por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+    # Dos consultas: los nombres de los clientes y TODAS las fichas. Antes se
+    # pedían cliente por cliente — el mismo N+1 del FIFO, en otra pantalla.
+    nombres = {cliente["id"]: cliente["nombre"] for cliente in listar_clientes()}
+    por_cliente: dict[int, dict[int, list[dict]]] = {}
+    for ficha in listar_fichas_de_todos_los_clientes():
+        if not ficha.get("contenido_caja"):
+            continue
+        por_cliente.setdefault(ficha["cliente_id"], {}).setdefault(ficha["articulo_id"], []).append(ficha)
 
+    ayudas: dict[str, str] = {}
+    for cliente_id, por_articulo in por_cliente.items():
+        cliente_fila = {"id": cliente_id, "nombre": nombres.get(cliente_id, f"cliente #{cliente_id}")}
         for articulo_id, fichas_articulo in por_articulo.items():
             def _kilaje(ficha):
                 sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
@@ -7199,14 +7217,20 @@ def _cruces_primera_reproceso() -> list[dict]:
         logger.exception("No se pudieron listar los artículos con primera de cliente")
         return []
 
+    # Los movimientos de todos los artículos de una: dos consultas en total,
+    # no dos por artículo. Si falla, no hay alerta — jamás traba.
+    ids = [articulo["articulo_id"] for articulo in articulos]
+    try:
+        movimientos = entradas_y_salidas_stock_articulos(ids)
+        salidas_por_articulo = salidas_stock_articulos(ids)
+    except Exception:
+        logger.exception("No se pudo rejugar el FIFO para la alerta de cruce")
+        return []
+
     cruces = []
     for articulo in articulos:
-        try:
-            entradas, _, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
-            salidas = salidas_stock_articulo(articulo["articulo_id"])
-        except Exception:
-            logger.exception("No se pudo rejugar el FIFO del artículo %s para la alerta de cruce", articulo["articulo_id"])
-            continue
+        entradas, _, _ = movimientos[articulo["articulo_id"]]
+        salidas = salidas_por_articulo[articulo["articulo_id"]]
         for e in entradas:
             e["orden"] = (e["fecha_orden"], e["momento_orden"])
         for s in salidas:
@@ -7973,11 +7997,17 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     if grupo is not None:
         devoluciones = [d for d in devoluciones if d["grupo"] == grupo]
 
+    # La historia completa de TODOS los artículos del rango, en dos consultas.
+    # Antes eran dos por artículo, cada una con su conexión.
+    ids = [articulo["articulo_id"] for articulo in articulos]
+    movimientos = entradas_y_salidas_stock_articulos(ids)
+    salidas_por_articulo = salidas_stock_articulos(ids)
+
     articulos_datos = []
     fechas_pedido = set()
     for articulo in articulos:
-        entradas, _, _ = entradas_y_salidas_stock_articulo(articulo["articulo_id"])
-        salidas = salidas_stock_articulo(articulo["articulo_id"])
+        entradas, _, _ = movimientos[articulo["articulo_id"]]
+        salidas = salidas_por_articulo[articulo["articulo_id"]]
         for e in entradas:
             e["orden"] = (e["fecha_orden"], e["momento_orden"])
         for s in salidas:

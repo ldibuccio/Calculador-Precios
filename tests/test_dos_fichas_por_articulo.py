@@ -36,12 +36,12 @@ CLIENTE_DIA = [{"id": 1, "nombre": "Día", "utilidad_objetivo": 20.0}]
 # Las dos fichas del artículo 1 (Banana). Kilajes distintos a propósito: es
 # lo que hace que mostrar el de la otra sea armar la caja mal.
 BANANA_BOLIVIA = {
-    "id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+    "id": 901, "cliente_id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
     "envase_id": None, "envase_nombre": None, "contenido_caja": 6, "unidad_venta": "kilo",
     "envase_variable": False, "nombre_cliente": "BANANA BOLIVIA", "codigo_cliente": "90101",
 }
 BANANA_ECUADOR = {
-    "id": 902, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+    "id": 902, "cliente_id": 1, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
     "envase_id": None, "envase_nombre": None, "contenido_caja": 10, "unidad_venta": "kilo",
     "envase_variable": False, "nombre_cliente": "BANANA ECUADOR", "codigo_cliente": "90102",
 }
@@ -112,7 +112,7 @@ def test_la_ayuda_de_kilaje_nombra_las_dos_fichas_con_el_suyo():
     # adivinar — y mostrarle al operario el kilaje de la otra es armar mal.
     with (
         patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
-        patch("app.main.listar_fichas_por_cliente", return_value=DOS_FICHAS),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=DOS_FICHAS),
     ):
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
 
@@ -125,7 +125,7 @@ def test_la_ayuda_de_kilaje_nombra_las_dos_fichas_con_el_suyo():
 def test_con_una_sola_ficha_la_ayuda_queda_como_siempre():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
-        patch("app.main.listar_fichas_por_cliente", return_value=[BANANA_BOLIVIA]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[BANANA_BOLIVIA]),
     ):
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
 
@@ -133,10 +133,9 @@ def test_con_una_sola_ficha_la_ayuda_queda_como_siempre():
 
 
 def test_el_tamano_de_caja_del_stock_muestra_los_dos_posibles():
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
-        patch("app.main.listar_fichas_por_cliente", return_value=DOS_FICHAS),
-    ):
+    # Las fichas se piden TODAS de una (antes iba cliente por cliente):
+    # el cliente de cada una sale de la propia ficha.
+    with patch("app.main.listar_fichas_de_todos_los_clientes", return_value=DOS_FICHAS):
         tamanos = _tamanos_de_caja_por_ficha()
 
     assert tamanos["1:1"] == "6 kg o 10 kg"
@@ -144,10 +143,7 @@ def test_el_tamano_de_caja_del_stock_muestra_los_dos_posibles():
 
 def test_dos_fichas_del_mismo_kilaje_no_repiten_el_tamano():
     mismo_kilaje = [BANANA_BOLIVIA, {**BANANA_ECUADOR, "contenido_caja": 6}]
-    with (
-        patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
-        patch("app.main.listar_fichas_por_cliente", return_value=mismo_kilaje),
-    ):
+    with patch("app.main.listar_fichas_de_todos_los_clientes", return_value=mismo_kilaje):
         tamanos = _tamanos_de_caja_por_ficha()
 
     # No hay ambigüedad que mostrar: las dos cajas son de 6 kg.

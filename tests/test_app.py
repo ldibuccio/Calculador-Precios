@@ -15422,10 +15422,14 @@ def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
 
 
 def _get_reproceso(articulos_stock=None, fichas=None):
+    # Las fichas ahora se piden TODAS de una y cada una dice de qué cliente
+    # es: acá se le dan las mismas a los dos clientes del selector, que es
+    # lo que hacía el parche de a-un-cliente.
+    todas = [dict(f, cliente_id=c["id"]) for c in CLIENTES_PARA_SELECTOR for f in (fichas or [])]
     with (
         patch("app.main.stock_deposito_por_articulo", return_value=articulos_stock or []),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        patch("app.main.listar_fichas_por_cliente", return_value=fichas or []),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=todas),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         return cliente.get("/deposito/stock/reproceso")
@@ -15502,6 +15506,7 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.crear_reproceso") as mock_crear,
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
@@ -15516,7 +15521,7 @@ def test_reproceso_sin_cliente_da_400():
 
 
 def test_reproceso_sin_nada_producido_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
@@ -15529,7 +15534,7 @@ def test_reproceso_sin_nada_producido_da_400():
 
 
 def test_reproceso_fecha_futura_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",
@@ -15650,18 +15655,19 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
          "tipo_lote": "reproceso", "origen_id": 7, "fecha_lote": date(2026, 8, 22),
          "detalle": "Día", "motivo": None, "cantidad": 40.0, "cliente_lote_id": 1},
     ]
-    fichas_dia = [{"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
+    fichas_dia = [{"id": 901, "cliente_id": 1, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
     with (
         patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas_fifo, 20.0, [])) as mock_fifo,
-        patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Día"}]),
-        patch("app.main.listar_fichas_por_cliente", return_value=fichas_dia),
+        patch("app.main.entradas_y_salidas_stock_articulos",
+              return_value={1: (entradas_fifo, 20.0, [])}) as mock_fifo,
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas_dia),
     ):
         respuesta = cliente.get("/deposito/stock/sistema")
 
     assert respuesta.status_code == 200
-    mock_fifo.assert_called_once_with(1)
+    # UNA sola llamada con TODOS los artículos con guía R, no una por artículo.
+    mock_fifo.assert_called_once_with([1])
     texto_plano = " ".join(respuesta.text.split())
     # Los 20 tomados salieron FIFO de la guía: quedan 80 sin procesar.
     assert "Sin procesar</span><span class=\"numero\">80" in texto_plano
@@ -15959,8 +15965,8 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.articulos_con_salidas_stock",
               return_value=[{"articulo_id": 1, "nombre": "Banana", "grupo": "fruta"}]) as mock_articulos,
         patch("app.main.devoluciones_vinculadas_por_rango", return_value=[]),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 4.0, [])),
-        patch("app.main.salidas_stock_articulo", return_value=salidas),
+        patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, 4.0, [])}),
+        patch("app.main.salidas_stock_articulos", return_value={1: salidas}),
         patch("app.main.calcular_listado_para_negociar_precios",
               return_value=[{"ficha_id": 901, "articulo_id": 1, "precio_vigente": 100.0,
                              "costo_actual": 60.0, "costo_envase_unidad_venta": 2.0,
@@ -16343,9 +16349,9 @@ def test_cruce_de_primera_detecta_bultos_que_salieron_a_otro_cliente():
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])),
-        patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(2, 4.0)]),
+        patch("app.main.entradas_y_salidas_stock_articulos",
+              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
+        patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(2, 4.0)]}),
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
 
@@ -16363,9 +16369,9 @@ def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])),
-        patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(1, 4.0)]),
+        patch("app.main.entradas_y_salidas_stock_articulos",
+              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
+        patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(1, 4.0)]}),
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
     assert cruces == []
@@ -16387,9 +16393,9 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        patch("app.main.entradas_y_salidas_stock_articulo",
-              return_value=([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])),
-        patch("app.main.salidas_stock_articulo", return_value=[_salida_armado_cruce(2, 4.0)]),
+        patch("app.main.entradas_y_salidas_stock_articulos",
+              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
+        patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(2, 4.0)]}),
     ):
         respuesta = cliente.get("/deposito/stock/guias-r")
 

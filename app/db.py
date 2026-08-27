@@ -387,6 +387,35 @@ def desactivar_cliente(cliente_id: int) -> None:
         conexion.close()
 
 
+def listar_fichas_de_todos_los_clientes() -> list[dict]:
+    """TODAS las fichas de logística, de todos los clientes, en una consulta.
+
+    Misma consulta y mismo orden que listar_fichas_por_cliente, con el
+    cliente_id adentro y agregado al ORDER BY para que cada cliente conserve
+    exactamente el orden que tenía suelto. La usa el desglose de Stock del
+    Sistema, que antes pedía las fichas cliente por cliente.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT fl.id, fl.cliente_id, fl.articulo_id, a.nombre AS articulo_nombre,
+                       a.grupo AS articulo_grupo, fl.envase_id, e.nombre AS envase_nombre,
+                       fl.contenido_caja, fl.unidad_venta, fl.envase_variable,
+                       fl.nombre_cliente, fl.codigo_cliente
+                FROM fichas_logistica fl
+                JOIN articulos a ON a.id = fl.articulo_id
+                LEFT JOIN envases e ON e.id = fl.envase_id
+                ORDER BY fl.cliente_id, a.nombre, COALESCE(fl.nombre_cliente, ''), fl.id
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
     """Devuelve las fichas de logística de un cliente, ordenadas por nombre de artículo.
 
@@ -5441,52 +5470,81 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
         conexion.close()
 
 
-def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], float, list[dict]]:
-    """La cuenta interna de lotes y salidas, con el cursor abierto — la comparten el detalle FIFO y crear_reproceso."""
+def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
+    """La cuenta de lotes y salidas de VARIOS artículos, con el cursor abierto.
+
+    Devuelve {articulo_id: (entradas, total_salidas, dirigidas)}, con una
+    entrada por cada id pedido — el que no tiene ningún movimiento sale con
+    listas vacías y cero, nunca ausente: un artículo que no aparece rompería
+    al que lo lee, y "sin movimiento" es un resultado, no un faltante.
+
+    Son las MISMAS tres consultas de siempre con "= ANY(%s)" en vez de "= %s".
+    Antes se corrían una vez por artículo, con su conexión cada vez: el listado
+    de Stock del Sistema abría una por artículo con guía R, y la Rentabilidad
+    Real dos por artículo del rango. Con el reproceso funcionando eso crece con
+    el catálogo.
+
+    El reparto en sí NO cambia: cada artículo recibe exactamente las mismas
+    listas que recibía antes, y el motor (core/stock.py, core/costo_real.py)
+    ni se entera.
+    """
+    ids = list(articulo_ids)
+    entradas_por_articulo = {articulo_id: [] for articulo_id in ids}
+    dirigidas_por_articulo = {articulo_id: [] for articulo_id in ids}
+    if not ids:
+        return {}
+
     cursor.execute(
         """
-        SELECT (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
-               c.procesada_el AS momento_orden,
-               'guia' AS tipo_lote,
-               c.id AS origen_id,
-               g.fecha_operacion AS fecha_lote,
-               p.nombre AS detalle,
-               NULL AS motivo,
-               c.cantidad_cajones_real AS cantidad,
-               c.importe AS costo_bulto,
-               NULL::bigint AS cliente_lote_id
-        FROM compras c
-        JOIN proveedores p ON p.id = c.proveedor_id
-        LEFT JOIN guias_compra g ON g.id = c.guia_id
-        WHERE c.estado = 'recepcionado' AND c.articulo_id = %s
-        UNION ALL
-        -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
-        -- congelado del listado anclado al pedido de origen); ajustes y
-        -- reingresos viejos sin vínculo siguen siendo lotes sin costo.
-        -- Un rechazo mandado a segunda NO es un lote de stock: salió del
-        -- circuito normal al pool de segunda, y su costo ya se imputó
-        -- entero como pérdida en la Rentabilidad Real.
-        SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
-               cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint
-        FROM movimientos_stock m
-        LEFT JOIN clientes cl ON cl.id = m.cliente_id
-        WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = %s
-          AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
-        UNION ALL
-        -- La primera lleva PARA QUIÉN se armó (dato de trazabilidad: el
-        -- stock sigue sin dueño); cliente_lote_id alimenta la alerta de
-        -- cruce y el detalle muestra "armada para X".
-        SELECT rp.fecha_operacion, rp.creado_en, 'reproceso', rp.id, rp.fecha_operacion,
-               cl.nombre, NULL, rp.bultos_primera, rp.costo_por_bulto_primera, rp.cliente_id
-        FROM reprocesos rp
-        LEFT JOIN clientes cl ON cl.id = rp.cliente_id
-        WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = %s
-        ORDER BY 1, 2
+        SELECT * FROM (
+            SELECT (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
+                   c.procesada_el AS momento_orden,
+                   'guia' AS tipo_lote,
+                   c.id AS origen_id,
+                   g.fecha_operacion AS fecha_lote,
+                   p.nombre AS detalle,
+                   NULL AS motivo,
+                   c.cantidad_cajones_real AS cantidad,
+                   c.importe AS costo_bulto,
+                   NULL::bigint AS cliente_lote_id,
+                   c.articulo_id AS articulo_id
+            FROM compras c
+            JOIN proveedores p ON p.id = c.proveedor_id
+            LEFT JOIN guias_compra g ON g.id = c.guia_id
+            WHERE c.estado = 'recepcionado' AND c.articulo_id = ANY(%s)
+            UNION ALL
+            -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
+            -- congelado del listado anclado al pedido de origen); ajustes y
+            -- reingresos viejos sin vínculo siguen siendo lotes sin costo.
+            -- Un rechazo mandado a segunda NO es un lote de stock: salió del
+            -- circuito normal al pool de segunda, y su costo ya se imputó
+            -- entero como pérdida en la Rentabilidad Real.
+            SELECT m.fecha_operacion, m.creado_en, m.tipo, m.id, m.fecha_operacion,
+                   cl.nombre, m.motivo, m.cantidad, m.costo_por_bulto, NULL::bigint,
+                   m.articulo_id
+            FROM movimientos_stock m
+            LEFT JOIN clientes cl ON cl.id = m.cliente_id
+            WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = ANY(%s)
+              AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
+            UNION ALL
+            -- La primera lleva PARA QUIÉN se armó (dato de trazabilidad: el
+            -- stock sigue sin dueño); cliente_lote_id alimenta la alerta de
+            -- cruce y el detalle muestra "armada para X".
+            SELECT rp.fecha_operacion, rp.creado_en, 'reproceso', rp.id, rp.fecha_operacion,
+                   cl.nombre, NULL, rp.bultos_primera, rp.costo_por_bulto_primera, rp.cliente_id,
+                   rp.articulo_id
+            FROM reprocesos rp
+            LEFT JOIN clientes cl ON cl.id = rp.cliente_id
+            WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = ANY(%s)
+        ) lotes
+        ORDER BY articulo_id, fecha_orden, momento_orden
         """,
-        (articulo_id, articulo_id, articulo_id),
+        (ids, ids, ids),
     )
     columnas = [descripcion[0] for descripcion in cursor.description]
-    entradas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    for fila in cursor.fetchall():
+        lote = dict(zip(columnas, fila))
+        entradas_por_articulo[lote.pop("articulo_id")].append(lote)
 
     cursor.execute(
         """
@@ -5494,37 +5552,88 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
             SELECT DISTINCT ON (cliente_id, fecha_operacion) id
             FROM pedidos WHERE anulado_el IS NULL
             ORDER BY cliente_id, fecha_operacion, creado_en DESC
+        ),
+        armados AS (
+            SELECT r.articulo_id, SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
+            FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+            WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+              AND r.articulo_id = ANY(%s)
+            GROUP BY r.articulo_id
+        ),
+        negativos AS (
+            SELECT articulo_id, -SUM(cantidad) AS total FROM movimientos_stock
+            WHERE anulado_el IS NULL AND cantidad < 0 AND articulo_id = ANY(%s)
+            GROUP BY articulo_id
+        ),
+        tomados AS (
+            SELECT articulo_id, SUM(bultos_tomados) AS total FROM reprocesos
+            WHERE anulado_el IS NULL AND articulo_id = ANY(%s)
+            GROUP BY articulo_id
         )
-        SELECT COALESCE((SELECT SUM(COALESCE(r.cantidad_armada, r.cantidad))
-                         FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
-                         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
-                           AND r.articulo_id = %s), 0)
-             + COALESCE((SELECT -SUM(cantidad) FROM movimientos_stock
-                         WHERE anulado_el IS NULL AND cantidad < 0 AND articulo_id = %s), 0)
-             + COALESCE((SELECT SUM(bultos_tomados) FROM reprocesos
-                         WHERE anulado_el IS NULL AND articulo_id = %s), 0)
+        -- unnest y no una tabla: así sale una fila por CADA id pedido, tenga
+        -- movimientos o no. Sin esto, un artículo sin nada quedaría afuera.
+        SELECT pedidos_ids.id,
+               COALESCE(a.total, 0) + COALESCE(n.total, 0) + COALESCE(t.total, 0)
+        FROM unnest(%s::bigint[]) AS pedidos_ids(id)
+        LEFT JOIN armados a ON a.articulo_id = pedidos_ids.id
+        LEFT JOIN negativos n ON n.articulo_id = pedidos_ids.id
+        LEFT JOIN tomados t ON t.articulo_id = pedidos_ids.id
         """,
-        (articulo_id, articulo_id, articulo_id),
+        (ids, ids, ids, ids),
     )
-    total_salidas = float(cursor.fetchone()[0])
+    total_por_articulo = {articulo_id: float(total) for articulo_id, total in cursor.fetchall()}
 
     # Las mermas DIRIGIDAS a un lote viajan aparte del total (ya están
     # sumadas adentro): el reparto necesita saber a qué lote va cada una
     # para descontarla de ahí y no del más viejo.
     cursor.execute(
         """
-        SELECT -cantidad AS cantidad, lote_tipo, lote_origen_id
+        SELECT -cantidad AS cantidad, lote_tipo, lote_origen_id, articulo_id
         FROM movimientos_stock
-        WHERE anulado_el IS NULL AND articulo_id = %s AND lote_tipo IS NOT NULL
-        ORDER BY fecha_operacion, creado_en
+        WHERE anulado_el IS NULL AND articulo_id = ANY(%s) AND lote_tipo IS NOT NULL
+        ORDER BY articulo_id, fecha_operacion, creado_en
         """,
-        (articulo_id,),
+        (ids,),
     )
     columnas = [descripcion[0] for descripcion in cursor.description]
-    dirigidas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-    # El total NO puede contarlas dos veces: se restan del bloque general.
-    total_salidas -= sum(float(d["cantidad"]) for d in dirigidas)
-    return entradas, total_salidas, dirigidas
+    for fila in cursor.fetchall():
+        dirigida = dict(zip(columnas, fila))
+        dirigidas_por_articulo[dirigida.pop("articulo_id")].append(dirigida)
+
+    resultado = {}
+    for articulo_id in ids:
+        dirigidas = dirigidas_por_articulo[articulo_id]
+        # El total NO puede contarlas dos veces: se restan del bloque general.
+        total = total_por_articulo[articulo_id] - sum(float(d["cantidad"]) for d in dirigidas)
+        resultado[articulo_id] = (entradas_por_articulo[articulo_id], total, dirigidas)
+    return resultado
+
+
+def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], float, list[dict]]:
+    """La cuenta interna de lotes y salidas de UN artículo, con el cursor abierto.
+
+    La usa crear_reproceso, que necesita rejugar el FIFO adentro de su propia
+    transacción antes de insertar. Es la de varios con un solo id: una sola
+    consulta de cada cosa, para que no puedan desincronizarse nunca.
+    """
+    return _entradas_y_salidas_stock_varios(cursor, [articulo_id])[articulo_id]
+
+
+def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
+    """Los lotes, el total de salidas y las mermas dirigidas de VARIOS artículos, en UNA conexión.
+
+    Devuelve {articulo_id: (entradas, total_salidas, dirigidas)}. Es la que
+    usan las pantallas que miran muchos artículos de una (Stock del Sistema,
+    Guías R, Rentabilidad Real): antes abrían una conexión por artículo.
+    """
+    if not articulo_ids:
+        return {}
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return _entradas_y_salidas_stock_varios(cursor, articulo_ids)
+    finally:
+        conexion.close()
 
 
 def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float, list[dict]]:
@@ -5540,13 +5649,12 @@ def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], flo
 
     Las mermas con lote elegido salen aparte (y ya descontadas del total):
     esas no van al lote más viejo sino al que el operario marcó.
+
+    Para un artículo solo (el detalle FIFO de una pantalla). Quien mire varios
+    tiene que usar entradas_y_salidas_stock_articulos, que los trae todos en
+    una conexión.
     """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            return _entradas_y_salidas_stock(cursor, articulo_id)
-    finally:
-        conexion.close()
+    return entradas_y_salidas_stock_articulos([articulo_id])[articulo_id]
 
 
 def total_reingresos_rechazo() -> float:
@@ -6063,8 +6171,12 @@ def articulos_con_salidas_stock(cliente_id: int, fecha_desde, fecha_hasta) -> li
         conexion.close()
 
 
-def salidas_stock_articulo(articulo_id: int) -> list[dict]:
-    """CADA salida individual de un artículo, tipada y en orden cronológico — TODA la historia.
+def salidas_stock_articulos(articulo_ids: list[int]) -> dict:
+    """CADA salida individual de VARIOS artículos, tipada y en orden cronológico — TODA la historia.
+
+    Devuelve {articulo_id: [salidas]}, con una lista por cada id pedido
+    (vacía si no tuvo ninguna). Misma consulta de siempre con "= ANY(%s)":
+    antes se corría una vez por artículo, con su conexión cada vez.
 
     La atribución FIFO de la Rentabilidad Real necesita el pasado
     completo (qué lote consumió cada salida depende de todas las
@@ -6077,6 +6189,10 @@ def salidas_stock_articulo(articulo_id: int) -> list[dict]:
     El orden FIFO es el mismo del resto del módulo: fecha real del hecho
     + momento de carga de desempate; el armado, por su instante de tilde.
     """
+    ids = list(articulo_ids)
+    if not ids:
+        return {}
+    por_articulo = {articulo_id: [] for articulo_id in ids}
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -6087,41 +6203,52 @@ def salidas_stock_articulo(articulo_id: int) -> list[dict]:
                     FROM pedidos WHERE anulado_el IS NULL
                     ORDER BY cliente_id, fecha_operacion, creado_en DESC
                 )
-                SELECT (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
-                       r.armado_el AS momento_orden,
-                       'armado' AS tipo,
-                       v.fecha_operacion AS fecha,
-                       COALESCE(r.cantidad_armada, r.cantidad) AS cantidad,
-                       r.kilos_enviados AS unidades,
-                       v.cliente_id AS cliente_id,
-                       NULL AS motivo,
-                       NULL::numeric AS bultos_segunda,
-                       NULL AS lote_tipo,
-                       NULL::bigint AS lote_origen_id,
-                       r.ficha_id
-                FROM pedidos_renglones r
-                JOIN vigentes v ON v.id = r.pedido_id
-                WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = %s
-                UNION ALL
-                SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
-                       -m.cantidad, NULL, NULL, m.motivo, NULL,
-                       m.lote_tipo, m.lote_origen_id, NULL
-                FROM movimientos_stock m
-                WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = %s
-                UNION ALL
-                SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
-                       rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
-                       NULL, NULL, NULL
-                FROM reprocesos rp
-                WHERE rp.anulado_el IS NULL AND rp.articulo_id = %s
-                ORDER BY 1, 2
+                SELECT * FROM (
+                    SELECT (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
+                           r.armado_el AS momento_orden,
+                           'armado' AS tipo,
+                           v.fecha_operacion AS fecha,
+                           COALESCE(r.cantidad_armada, r.cantidad) AS cantidad,
+                           r.kilos_enviados AS unidades,
+                           v.cliente_id AS cliente_id,
+                           NULL AS motivo,
+                           NULL::numeric AS bultos_segunda,
+                           NULL AS lote_tipo,
+                           NULL::bigint AS lote_origen_id,
+                           r.ficha_id,
+                           r.articulo_id AS articulo_id
+                    FROM pedidos_renglones r
+                    JOIN vigentes v ON v.id = r.pedido_id
+                    WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
+                    UNION ALL
+                    SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
+                           -m.cantidad, NULL, NULL, m.motivo, NULL,
+                           m.lote_tipo, m.lote_origen_id, NULL, m.articulo_id
+                    FROM movimientos_stock m
+                    WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
+                    UNION ALL
+                    SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
+                           rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
+                           NULL, NULL, NULL, rp.articulo_id
+                    FROM reprocesos rp
+                    WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
+                ) salidas
+                ORDER BY articulo_id, fecha_orden, momento_orden
                 """,
-                (articulo_id, articulo_id, articulo_id),
+                (ids, ids, ids),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
-            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+            for fila in cursor.fetchall():
+                salida = dict(zip(columnas, fila))
+                por_articulo[salida.pop("articulo_id")].append(salida)
+        return por_articulo
     finally:
         conexion.close()
+
+
+def salidas_stock_articulo(articulo_id: int) -> list[dict]:
+    """Las salidas de UN artículo. Quien mire varios usa salidas_stock_articulos, que los trae en una conexión."""
+    return salidas_stock_articulos([articulo_id])[articulo_id]
 
 
 # --- Costos Fijos (Gerencia): plan de cuentas, fotos de importe e índices ---

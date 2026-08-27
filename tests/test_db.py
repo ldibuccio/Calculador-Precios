@@ -2,6 +2,7 @@ from datetime import date, datetime, time
 import pytest
 from unittest.mock import MagicMock, patch
 
+from app import db
 from app.db import (
     actualizar_cantidad_compra,
     anular_ajuste_vacios,
@@ -3140,6 +3141,7 @@ from app.db import (  # noqa: E402
     crear_movimiento_stock,
     devoluciones_vinculadas_por_rango,
     entradas_y_salidas_stock_articulo,
+    entradas_y_salidas_stock_articulos,
     listar_pedidos_para_reingreso,
     listar_renglones_para_reingreso,
     obtener_renglon_para_reingreso,
@@ -3281,11 +3283,12 @@ def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
 
 
 def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(20.0,)])
+    conexion, cursor = _conexion_falsa()
     cursor.description = [
-        ("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",),
+        ("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("fecha_lote",), ("detalle",), ("motivo",),
+        ("cantidad",), ("articulo_id",),
     ]
-    cursor.fetchall.return_value = []
+    cursor.fetchall.side_effect = [[], _total_salidas(2, 20.0), []]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         entradas, salidas, dirigidas = entradas_y_salidas_stock_articulo(2)
@@ -3312,6 +3315,39 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     consulta_dirigidas = cursor.execute.call_args_list[2].args[0]
     assert "lote_tipo IS NOT NULL" in consulta_dirigidas
     assert dirigidas == []
+    assert entradas == []
+
+
+def test_entradas_de_varios_articulos_devuelve_una_entrada_por_cada_id_pedido():
+    # Igual que las salidas: el artículo sin movimientos sale en cero y con
+    # listas vacías, no ausente. Y en UNA sola conexión para todos.
+    conexion, cursor = _conexion_falsa()
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0, articulo_id=2)],
+        [(2, 20.0), (7, 0.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        movimientos = entradas_y_salidas_stock_articulos([2, 7])
+
+    assert sorted(movimientos) == [2, 7]
+    entradas_2, total_2, dirigidas_2 = movimientos[2]
+    assert [e["origen_id"] for e in entradas_2] == [101]
+    assert (total_2, dirigidas_2) == (20.0, [])
+    assert movimientos[7] == ([], 0.0, [])
+    # Tres consultas en total (lotes, total de salidas, dirigidas), no tres
+    # por artículo — y una sola conexión.
+    assert cursor.execute.call_count == 3
+    assert conexion.close.call_count == 1
+
+
+def test_entradas_de_varios_articulos_sin_ids_no_toca_la_base():
+    # Sin artículos con guía R no hay nada que traer: ni conexión se abre.
+    with patch("app.db.obtener_conexion") as abrir:
+        assert entradas_y_salidas_stock_articulos([]) == {}
+    abrir.assert_not_called()
 
 
 def test_total_reingresos_rechazo_excluye_anulados():
@@ -3436,24 +3472,31 @@ from app.db import (  # noqa: E402
 
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
                   ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",),
-                  ("cliente_lote_id",)]
+                  ("cliente_lote_id",), ("articulo_id",)]
 
 
-def _lote_compra(origen_id, fecha, cantidad, costo):
-    return (fecha, datetime(2026, 8, fecha.day, 10), "guia", origen_id, fecha, "Norte 15", None, cantidad, costo, None)
+def _lote_compra(origen_id, fecha, cantidad, costo, articulo_id=1):
+    return (fecha, datetime(2026, 8, fecha.day, 10), "guia", origen_id, fecha, "Norte 15", None,
+            cantidad, costo, None, articulo_id)
+
+
+def _total_salidas(articulo_id, total):
+    """La fila del total de salidas: ahora viene por artículo, no como escalar suelto."""
+    return [(articulo_id, total)]
 
 
 def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # Lotes: compra 101 (8 bultos a $1000, viejo) y 102 (10 a $1200). Ya
     # salieron 5 → restos 3 y 10. Tomo 6: 3 del 101 y 3 del 102 (FIFO).
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(5.0,), (12,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(12,)])
     cursor.description = COLUMNAS_LOTES
-    # La 2ª tanda de fetchall es la de mermas dirigidas: acá no hay.
+    # Las tres tandas de fetchall: lotes, total de salidas y mermas dirigidas.
     cursor.fetchall.side_effect = [
         [
             _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
             _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
         ],
+        _total_salidas(1, 5.0),
         [],
     ]
 
@@ -3478,13 +3521,14 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
 def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     # Un lote sin importe (compra de la mañana sin precio, o stock
     # inicial): NO se promedia con números inventados — costo NULL.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,), (13,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(13,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
             _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
             _lote_compra(102, date(2026, 8, 22), 10.0, None),
         ],
+        _total_salidas(1, 0.0),
         [],  # sin mermas dirigidas
     ]
 
@@ -3500,9 +3544,13 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
 def test_crear_reproceso_lo_que_excede_los_lotes_queda_sin_lote():
     # El piso es la verdad: si tomó 5 y los lotes cubren 3, no se traba —
     # los 2 de más quedan como consumo sin_lote, a la vista.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0.0,), (14,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(14,)])
     cursor.description = COLUMNAS_LOTES
-    cursor.fetchall.side_effect = [[_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)], []]
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)],
+        _total_salidas(1, 0.0),
+        [],
+    ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))
@@ -3632,7 +3680,7 @@ def test_salidas_stock_articulo_trae_cada_salida_tipada_de_toda_la_historia():
     from app.db import salidas_stock_articulo
 
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("fecha_orden",), ("tipo",)]
+    cursor.description = [("fecha_orden",), ("tipo",), ("articulo_id",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -3649,7 +3697,48 @@ def test_salidas_stock_articulo_trae_cada_salida_tipada_de_toda_la_historia():
     assert "m.cantidad < 0" in consulta
     assert "'reproceso_toma'" in consulta
     assert "rp.bultos_segunda" in consulta
-    assert "ORDER BY 1, 2" in consulta
+    # Ordena por artículo y después por el orden FIFO de siempre: la consulta
+    # trae varios artículos de una y cada uno conserva su secuencia.
+    assert "ORDER BY articulo_id, fecha_orden, momento_orden" in consulta
+
+
+def test_salidas_de_varios_articulos_devuelve_una_lista_por_cada_id_pedido():
+    # El que no tuvo ninguna salida sale con lista vacía, nunca ausente:
+    # un artículo que falta del diccionario rompe a quien lo lee.
+    from app.db import salidas_stock_articulos
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("fecha_orden",), ("tipo",), ("articulo_id",)]
+    cursor.fetchall.return_value = [(date(2026, 8, 21), "armado", 2)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        salidas = salidas_stock_articulos([2, 7])
+
+    assert sorted(salidas) == [2, 7]
+    assert salidas[2] == [{"fecha_orden": date(2026, 8, 21), "tipo": "armado"}]
+    assert salidas[7] == []
+    # UNA sola consulta para los dos, y sin abrir una conexión por artículo.
+    assert cursor.execute.call_count == 1
+    assert cursor.execute.call_args.args[1] == ([2, 7], [2, 7], [2, 7])
+
+
+def test_la_funcion_de_a_uno_es_la_de_varios_con_un_solo_id():
+    """La de a un artículo NO puede tener SQL propio: es la de varios con una lista de uno.
+
+    Es la garantía de que no vuelvan a desincronizarse dos consultas que
+    deberían decir lo mismo — el problema que ya tuvimos con las dos
+    funciones de compras sin precio, que daban el mismo número contando
+    compras distintas.
+    """
+    import inspect
+
+    for envoltorio, batch in [
+        (db.entradas_y_salidas_stock_articulo, "entradas_y_salidas_stock_articulos"),
+        (db.salidas_stock_articulo, "salidas_stock_articulos"),
+    ]:
+        fuente = inspect.getsource(envoltorio)
+        assert "SELECT" not in fuente, f"{envoltorio.__name__} volvió a tener consulta propia"
+        assert f"{batch}([articulo_id])" in fuente
 
 
 def test_los_insert_de_compras_ya_no_nombran_la_columna_foto_ruta():
