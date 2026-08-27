@@ -139,8 +139,17 @@ end $secuencias$;
 do $storage$
 declare en_bucket bigint; referenciados bigint;
 begin
-    select (select count(*) from fotos_guia) + (select count(*) from fotos_pedido)
-      into referenciados;
+    -- Las rutas viven en TRES lugares, no dos: las comandas de las guías, las
+    -- fotos de los pedidos y los archivos de los que salió cada precio. Y se
+    -- cuentan DISTINTAS: un mismo archivo puede colgar de varias guías (el
+    -- Listado consolidado comparte una foto entre proveedores).
+    select count(*) into referenciados from (
+        select foto_ruta from fotos_guia
+        union
+        select foto_ruta from fotos_pedido
+        union
+        select foto_ruta from precios_venta_historial where foto_ruta is not null
+    ) rutas;
     if to_regclass('storage.objects') is null then
         en_bucket := -1;
     else
