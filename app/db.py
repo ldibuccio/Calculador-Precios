@@ -6,6 +6,7 @@ core/lector_comandas.py.
 """
 
 import os
+from contextlib import contextmanager
 
 import psycopg2
 
@@ -6346,6 +6347,96 @@ def listar_articulos_con_primera_de_cliente() -> list[dict]:
                   AND rp.bultos_primera > 0
                 ORDER BY a.nombre
                 """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+# ----------------------------------------------------------------------------
+# ALERTAS GUARDADAS (ver app/alertas.py para el porqué del diseño)
+# ----------------------------------------------------------------------------
+
+# Número arbitrario y fijo: identifica al candado de la recalculación de
+# alertas entre todos los advisory locks de la base.
+CLAVE_CANDADO_ALERTAS = 8_270_001
+
+
+@contextmanager
+def candado_alertas():
+    """Toma el candado de la recalculación de alertas mientras dure el bloque.
+
+    Devuelve True si lo consiguió y False si ya lo tiene otro (el bucle de
+    fondo y el botón de "recalcular ahora" pueden coincidir).
+
+    Los advisory locks viven en la CONEXIÓN, y acá cada consulta abre la suya,
+    así que este es el único lugar del sistema donde una conexión se mantiene
+    abierta un rato: la que sostiene el candado. Al cerrarla, Postgres lo
+    suelta solo — un corte a mitad de camino no deja el candado trabado.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_lock(%s)", (CLAVE_CANDADO_ALERTAS,))
+            (tomado,) = cursor.fetchone()
+        yield tomado
+    finally:
+        conexion.close()
+
+
+def guardar_estado_alerta(codigo: str, casos: int | None = None, mas_viejo=None,
+                          duracion_ms: int | None = None, error: str | None = None) -> None:
+    """Guarda la foto de UNA alerta. Con error, no pisa el conteo: solo lo anota.
+
+    Que el error no pise el conteo es a propósito: la alerta queda con su
+    último valor bueno y su fecha vieja, y la pantalla la muestra vencida.
+    Poner cero cuando la consulta se rompió sería decir que el problema
+    desapareció.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if error is not None:
+                cursor.execute(
+                    """
+                    INSERT INTO alertas_estado (codigo, casos, calculada_el, error)
+                    VALUES (%s, 0, now(), %s)
+                    ON CONFLICT (codigo) DO UPDATE SET error = EXCLUDED.error
+                    """,
+                    (codigo, error),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO alertas_estado (codigo, casos, mas_viejo, calculada_el, duracion_ms, error)
+                    VALUES (%s, %s, %s, now(), %s, NULL)
+                    ON CONFLICT (codigo) DO UPDATE SET
+                        casos = EXCLUDED.casos,
+                        mas_viejo = EXCLUDED.mas_viejo,
+                        calculada_el = EXCLUDED.calculada_el,
+                        duracion_ms = EXCLUDED.duracion_ms,
+                        error = NULL
+                    """,
+                    (codigo, casos, mas_viejo, duracion_ms),
+                )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_estado_alertas() -> list[dict]:
+    """La foto entera, de una sola consulta: es lo único que cada pantalla con banner lee.
+
+    Son 15-100 filas: se traen todas y el filtrado por módulo se hace en
+    Python contra el registro. Así agregar una alerta no toca la base ni
+    obliga a duplicar los módulos en dos lugares.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT codigo, casos, mas_viejo, calculada_el, duracion_ms, error FROM alertas_estado"
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]

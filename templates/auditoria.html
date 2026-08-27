@@ -73,6 +73,55 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  /* De cuándo es la foto. Se muestra SIEMPRE: si el cálculo automático se
+     murió, tiene que verse acá y no quedar tapado por un "todo en orden". */
+  .frescura {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 10px;
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 1rem;
+    color: #666;
+    font-size: 0.88rem;
+  }
+  .frescura.vencida {
+    background: #fffbeb;
+    border-color: #fcd34d;
+    color: #92400e;
+    font-weight: 600;
+  }
+  .frescura .titulo-vencida { display: block; font-size: 0.95rem; margin-bottom: 0.2rem; }
+  /* Botón grande y tocable con el pulgar: se usa desde el celular. */
+  .recalcular {
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    margin-bottom: 1rem;
+    padding: 0.9rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 2px solid #1d4ed8;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .mensaje {
+    border-radius: 10px;
+    padding: 0.8rem 0.9rem;
+    margin-bottom: 1rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+  }
+  .mensaje.ok { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+  .mensaje.mal { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  /* Una alerta que no se pudo calcular, o que nunca se calculó: el número no
+     es cero, es desconocido. Mostrarla en cero sería decir que está todo bien
+     sin haber mirado. */
+  .alerta.sin-dato { border-left-color: #d97706; }
+  .alerta.sin-dato .alerta-casos { color: #d97706; font-size: 1.1rem; font-weight: 700; }
+  .alerta-error { color: #991b1b; font-size: 0.85rem; margin: 0 0 0.75rem; }
 </style>
 </head>
 <body>
@@ -83,14 +132,40 @@
 
   <p class="ayuda">Cosas que están mal en el sistema, de un pantallazo. Un control sin casos no aparece.</p>
 
+  {% if aviso %}<div class="mensaje ok">{{ aviso }}</div>{% endif %}
+  {% if error %}<div class="mensaje mal">{{ error }}</div>{% endif %}
+
+  {% if not frescura.hay_datos %}
+  <div class="frescura vencida">
+    <span class="titulo-vencida">Las alertas todavía no se calcularon</span>
+    Tocá "Recalcular ahora" para verlas por primera vez.
+  </div>
+  {% elif frescura.vencida %}
+  <div class="frescura vencida">
+    <span class="titulo-vencida">Estas alertas se calcularon {{ frescura.texto }}</span>
+    Pasaron más de {{ horas_vencimiento }} horas: el cálculo automático no está corriendo. Lo que ves puede estar desactualizado.
+  </div>
+  {% else %}
+  <div class="frescura">Calculadas {{ frescura.texto }}. Se recalculan solas dos veces por día.</div>
+  {% endif %}
+
+  <form method="post" action="/auditoria/recalcular">
+    <button class="recalcular" type="submit">Recalcular ahora</button>
+  </form>
+
   {% if alertas %}
     {% for a in alertas %}
-    <div class="alerta">
+    <div class="alerta{% if a.casos is none or a.error %} sin-dato{% endif %}">
       <p class="alerta-titulo">{{ a.titulo }}</p>
       <div class="alerta-datos">
+        {% if a.casos is none %}
+        <span class="alerta-casos">Sin calcular todavía</span>
+        {% else %}
         <span class="alerta-casos">{{ a.casos }}</span>
         <span class="alerta-mas-viejo">caso{% if a.casos != 1 %}s{% endif %}{% if a.mas_viejo %} — el más viejo es del {{ a.mas_viejo.strftime("%d/%m/%Y") }}{% endif %}</span>
+        {% endif %}
       </div>
+      {% if a.error %}<p class="alerta-error">No se pudo calcular: {{ a.error }}. El número de arriba es el último que se pudo.</p>{% endif %}
       <a class="alerta-link" href="{{ a.url }}">{{ a.texto_link }}</a>
     </div>
     {% endfor %}

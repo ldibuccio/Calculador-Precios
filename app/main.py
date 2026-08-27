@@ -24,6 +24,15 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps
 
+from app.alertas import (
+    HORAS_VENCIMIENTO,
+    DefinicionAlerta,
+    frescura,
+    hay_que_recalcular,
+    modulos_inexistentes,
+    para_mostrar,
+    recalcular,
+)
 from app.costeo import agrupar_para_negociar, calcular_listado_para_negociar_precios, calcular_objetivos_de_compra
 from app.db import (
     actualizar_articulo,
@@ -219,6 +228,7 @@ from app.db import (
     obtener_o_crear_proveedor_puesto,
     obtener_proveedor,
     obtener_ultimo_disponible_cliente,
+    listar_estado_alertas,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
@@ -7464,175 +7474,217 @@ def bloquear_gerencia_ruta(request: Request):
     return respuesta
 
 
-def _alertas_auditoria() -> list[dict]:
-    """Los controles del tablero de Auditoría, como LISTA de definiciones.
+def _contar_cruces_primera_reproceso() -> dict:
+    """Envoltorio de _cruces_primera_reproceso con la forma que espera el registro."""
+    cruces = _cruces_primera_reproceso()
+    return {"casos": len(cruces), "mas_viejo": min((c["fecha"] for c in cruces), default=None)}
 
-    Agregar el control número diez tiene que ser sumar una entrada acá
-    (título + conteo + link al detalle), no tocar el diseño de la
-    pantalla. Cada control devuelve casos y el dato que más dice: de
-    cuándo es el caso más viejo. Todos son consultas de conteo livianas
-    (corren en cada carga de la pantalla): apoyarse en índices.
+
+def _contar_modulos_inexistentes() -> dict:
+    """Alertas del registro que apuntan a un módulo que no existe.
+
+    Es una alerta que vigila a las alertas, igual que la de la casilla muerta
+    vigila al bucle. Los módulos válidos salen de las RUTAS del sistema, no de
+    una lista escrita a mano: se desactualiza y después miente.
+
+    Un error de tipeo acá no deja la alerta invisible — Auditoría no filtra por
+    módulo, así que se sigue viendo; lo que se pierde es el banner. Esta alerta
+    es la que lo delata, con nombre y apellido en el log.
     """
-    hoy = _hoy_argentina()
-    # "Más de 48 horas" con la granularidad real del dato (fecha_operacion
-    # es una fecha, sin hora): compras de anteayer para atrás.
-    limite = hoy - timedelta(days=2)
-    # Ventanas de las alertas nuevas, elegidas a mano y fáciles de tocar.
-    limite_senas = hoy - timedelta(days=7)
-    ventana_comprados = hoy - timedelta(days=7)
+    sueltas = modulos_inexistentes(ALERTAS, [ruta.path for ruta in app.routes])
+    if sueltas:
+        logger.warning(
+            "Alertas apuntando a módulos que no existen: %s",
+            ", ".join(f"{s['codigo']} -> {s['modulo']}" for s in sueltas),
+        )
+    return {"casos": len(sueltas), "mas_viejo": None}
 
-    sin_precio = contar_compras_sin_precio_viejas(limite)
-    retiros = contar_retiros_pendientes_viejos(limite)
-    recepciones = contar_recepciones_pendientes_viejas(limite)
-    negativos = contar_stock_vacios_negativos()
-    negativos_deposito = contar_stock_deposito_negativo()
-    guias_costo_incompleto = contar_reprocesos_costo_incompleto()
-    incotizables = contar_articulos_comprados_incotizables(ventana_comprados, hoy)
-    senas = contar_senas_pendientes_viejas(limite_senas)
-    pedidos_sin_identificar = contar_pedidos_con_renglones_sin_identificar()
-    pedidos_incompletos = contar_pedidos_con_renglones_incompletos()
-    mails_sin_procesar = contar_mails_pedido_sin_procesar()
-    # Ventana de 7 días: alcanza para ver un cambio de formato ese día y
-    # los siguientes, sin arrastrar para siempre un mail viejo ya resuelto.
-    mails_leidos_con_ia = contar_mails_pedido_leidos_con_ia(hoy - timedelta(days=7))
-    pedidos_faltantes = contar_pedidos_faltantes()
-    casillas_sin_revisar = contar_casillas_sin_revisar()
-    # El cruce de primera de reproceso: rejuega el FIFO solo de los
-    # artículos con guías R de cliente (pocos) — aviso, jamás traba.
-    cruces_primera = _cruces_primera_reproceso()
 
-    return [
-        {
-            "titulo": "Compras sin precio hace más de 48 horas",
-            "casos": sin_precio["casos"],
-            "mas_viejo": sin_precio["mas_viejo"],
-            "url": "/compras/pendientes",
-            "texto_link": "Ver en Compras sin precio",
-        },
-        {
-            "titulo": "Mercadería sin retirar hace más de 48 horas",
-            "casos": retiros["casos"],
-            "mas_viejo": retiros["mas_viejo"],
-            "url": "/logistica/consultar?" + urlencode({
-                "fecha_desde": (retiros["mas_viejo"] or limite).isoformat(),
-                "fecha_hasta": limite.isoformat(),
-                "estado": "pendiente",
-            }),
-            "texto_link": "Ver en Consultar Retiros",
-        },
-        {
-            "titulo": "Mercadería sin recepcionar hace más de 48 horas",
-            "casos": recepciones["casos"],
-            "mas_viejo": recepciones["mas_viejo"],
-            "url": "/deposito/recepcion",
-            "texto_link": "Ver en Recepción",
-        },
-        {
-            "titulo": "Stock de vacíos negativo",
-            "casos": negativos,
-            "mas_viejo": None,
-            "url": "/puesto/envases/stock",
-            "texto_link": "Ver en Stock del Sistema",
-        },
-        {
-            # Salió más de lo que entró: salidas sin lote que un reproceso
-            # o un ajuste tienen que explicar — o alguien sacó de más.
-            "titulo": "Stock de depósito en negativo (salidas sin explicar)",
-            "casos": negativos_deposito,
-            "mas_viejo": None,
-            "url": "/deposito/stock/sistema",
-            "texto_link": "Ver en Stock del Sistema del Depósito",
-        },
-        {
-            # Sin costo cerrado no hay rentabilidad real de ese reproceso:
-            # o falta el precio de una compra ("Completar costo" lo
-            # arregla), o consumió stock inicial/reingreso/sin lote.
-            "titulo": "Guías R con costo incompleto",
-            "casos": guias_costo_incompleto["casos"],
-            "mas_viejo": guias_costo_incompleto["mas_viejo"],
-            "url": "/deposito/stock/guias-r",
-            "texto_link": "Ver en Guías R",
-        },
-        {
-            # La primera se armó para un cliente y el FIFO dice que parte
-            # salió en pedidos de OTRO: cajas de presentación equivocada.
-            # Aviso con datos (el detalle por guía está en Guías R), nunca
-            # traba — el galpón ya lo hizo; acá se delata.
-            "titulo": "Primera de reproceso armada para un cliente salió en pedidos de otro",
-            "casos": len(cruces_primera),
-            "mas_viejo": min((c["fecha"] for c in cruces_primera), default=None),
-            "url": "/deposito/stock/guias-r",
-            "texto_link": "Ver el detalle en Guías R",
-        },
-        {
-            "titulo": "Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",
-            "casos": incotizables,
-            "mas_viejo": None,
-            "url": "/fichas",
-            "texto_link": "Ver en Fichas Logísticas",
-        },
-        {
-            "titulo": "Señas de vacíos pendientes hace más de 7 días",
-            "casos": senas["casos"],
-            "mas_viejo": senas["mas_viejo"],
-            "url": "/puesto/envases/pendientes",
-            "texto_link": "Ver en Pendientes de Pago",
-        },
-        {
-            "titulo": "Pedidos con renglones sin identificar",
-            "casos": pedidos_sin_identificar["casos"],
-            "mas_viejo": pedidos_sin_identificar["mas_viejo"],
-            "url": "/deposito/pedido",
-            "texto_link": "Ver en Pedido",
-        },
-        {
-            "titulo": "Pedidos con renglones incompletos (se armó menos de lo pedido)",
-            "casos": pedidos_incompletos["casos"],
-            "mas_viejo": pedidos_incompletos["mas_viejo"],
-            "url": "/deposito/pedido",
-            "texto_link": "Ver en Pedido",
-        },
-        {
-            # Pendientes Y con error de lectura: un mail que falló a las
-            # 12:00 corriendo solo se tiene que ver acá, no perderse.
-            "titulo": "Mails de pedido sin confirmar",
-            "casos": mails_sin_procesar["casos"],
-            "mas_viejo": mails_sin_procesar["mas_viejo"],
-            "url": "/sistema/casilla-pedidos",
-            "texto_link": "Ver en Casilla de Pedidos",
-        },
-        {
-            # El fallback a IA VISIBLE: si Día cambió el formato del mail y
-            # el parser por estructura dejó de poder, esto lo dice ese
-            # mismo día — antes de que un cruce de bultos llegue a una entrega.
-            "titulo": "Pedidos de mail leídos con IA (el parser de estructura no pudo, últimos 7 días)",
-            "casos": mails_leidos_con_ia["casos"],
-            "mas_viejo": mails_leidos_con_ia["mas_viejo"],
-            "url": "/sistema/casilla-pedidos",
-            "texto_link": "Ver en Casilla de Pedidos",
-        },
-        {
-            # Un día esperado sin pedido después de las 15:00: o el mail
-            # no llegó, o no se leyó. Se cierra cargando el pedido o
-            # marcando "no hubo pedido" desde la pantalla de Pedido.
-            "titulo": "Falta el pedido de un día esperado",
-            "casos": pedidos_faltantes["casos"],
-            "mas_viejo": pedidos_faltantes["mas_viejo"],
-            "url": "/deposito/pedido",
-            "texto_link": "Ver en Pedido",
-        },
-        {
-            # Solo el problema REAL: desde las 14:00, la casilla activa
-            # que en todo el día no tuvo ninguna revisión exitosa. Un
-            # fallo puntual que se recuperó solo no alerta (se ve en la
-            # pantalla de la casilla, pero no grita acá).
-            "titulo": "La casilla de pedidos no se pudo revisar",
-            "casos": casillas_sin_revisar["casos"],
-            "mas_viejo": casillas_sin_revisar["mas_viejo"],
-            "url": "/sistema/casilla-pedidos",
-            "texto_link": "Ver en Casilla de Pedidos",
-        },
-    ]
+def _url_retiros_viejos(datos) -> str:
+    """El link de los retiros pendientes viejos: arranca en el caso más viejo."""
+    limite = _hoy_argentina() - timedelta(days=2)
+    return "/logistica/consultar?" + urlencode({
+        "fecha_desde": (datos["mas_viejo"] or limite).isoformat(),
+        "fecha_hasta": limite.isoformat(),
+        "estado": "pendiente",
+    })
+
+
+# ----------------------------------------------------------------------------
+# EL REGISTRO DE ALERTAS
+# ----------------------------------------------------------------------------
+# Agregar la alerta número dieciséis es sumar UNA entrada acá y escribir su
+# consulta. Nada más: ni migración, ni tocar plantillas, ni tocar pantallas.
+#
+# "modulos" dice en qué banners aparece ADEMÁS de Auditoría, que las muestra
+# TODAS siempre. Por eso "auditoria" no se lista: si hubiera que listarla,
+# sería un ítem más para olvidarse, y una alerta olvidada es invisible.
+#
+# Los conteos NO corren acá: los corre el recálculo cada 12 horas y las
+# pantallas leen la foto. Ver app/alertas.py para el porqué.
+#
+# "contar" va SIEMPRE como lambda, aunque la función no necesite argumentos.
+# Este registro se evalúa al importar el módulo, y varias funciones de conteo
+# se definen más abajo en este mismo archivo: con la lambda el nombre se
+# resuelve recién al llamarla, así el registro no depende de en qué orden
+# quedaron las definiciones en un archivo de once mil líneas.
+# ----------------------------------------------------------------------------
+ALERTAS = [
+    DefinicionAlerta(
+        codigo="compras_sin_precio",
+        titulo="Compras sin precio hace más de 48 horas",
+        url="/compras/pendientes",
+        texto_link="Ver en Compras sin precio",
+        modulos=("compras",),
+        # "Más de 48 horas" con la granularidad real del dato (fecha_operacion
+        # es una fecha, sin hora): compras de anteayer para atrás.
+        contar=lambda: contar_compras_sin_precio_viejas(_hoy_argentina() - timedelta(days=2)),
+    ),
+    DefinicionAlerta(
+        codigo="retiros_sin_hacer",
+        titulo="Mercadería sin retirar hace más de 48 horas",
+        url=_url_retiros_viejos,
+        texto_link="Ver en Consultar Retiros",
+        modulos=("logistica",),
+        contar=lambda: contar_retiros_pendientes_viejos(_hoy_argentina() - timedelta(days=2)),
+    ),
+    DefinicionAlerta(
+        codigo="recepciones_pendientes",
+        titulo="Mercadería sin recepcionar hace más de 48 horas",
+        url="/deposito/recepcion",
+        texto_link="Ver en Recepción",
+        modulos=("deposito",),
+        contar=lambda: contar_recepciones_pendientes_viejas(_hoy_argentina() - timedelta(days=2)),
+    ),
+    DefinicionAlerta(
+        codigo="stock_vacios_negativo",
+        titulo="Stock de vacíos negativo",
+        url="/puesto/envases/stock",
+        texto_link="Ver en Stock del Sistema",
+        modulos=("puesto",),
+        contar=lambda: contar_stock_vacios_negativos(),
+    ),
+    DefinicionAlerta(
+        codigo="stock_deposito_negativo",
+        # Salió más de lo que entró: salidas sin lote que un reproceso o un
+        # ajuste tienen que explicar — o alguien sacó de más.
+        titulo="Stock de depósito en negativo (salidas sin explicar)",
+        url="/deposito/stock/sistema",
+        texto_link="Ver en Stock del Sistema del Depósito",
+        modulos=("deposito",),
+        contar=lambda: contar_stock_deposito_negativo(),
+    ),
+    DefinicionAlerta(
+        codigo="guias_r_costo_incompleto",
+        # Sin costo cerrado no hay rentabilidad real de ese reproceso: o falta
+        # el precio de una compra ("Completar costo" lo arregla), o consumió
+        # stock inicial/reingreso/sin lote.
+        titulo="Guías R con costo incompleto",
+        url="/deposito/stock/guias-r",
+        texto_link="Ver en Guías R",
+        modulos=("deposito",),
+        contar=lambda: contar_reprocesos_costo_incompleto(),
+    ),
+    DefinicionAlerta(
+        codigo="cruce_primera_reproceso",
+        # La primera se armó para un cliente y el FIFO dice que parte salió en
+        # pedidos de OTRO: cajas de presentación equivocada. Aviso con datos,
+        # nunca traba — el galpón ya lo hizo; acá se delata.
+        titulo="Primera de reproceso armada para un cliente salió en pedidos de otro",
+        url="/deposito/stock/guias-r",
+        texto_link="Ver el detalle en Guías R",
+        modulos=("deposito",),
+        contar=lambda: _contar_cruces_primera_reproceso(),
+    ),
+    DefinicionAlerta(
+        codigo="articulos_incotizables",
+        titulo="Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",
+        url="/fichas",
+        texto_link="Ver en Fichas Logísticas",
+        modulos=("fichas", "compras"),
+        contar=lambda: contar_articulos_comprados_incotizables(
+            _hoy_argentina() - timedelta(days=7), _hoy_argentina()
+        ),
+    ),
+    DefinicionAlerta(
+        codigo="senas_vacios_pendientes",
+        titulo="Señas de vacíos pendientes hace más de 7 días",
+        url="/puesto/envases/pendientes",
+        texto_link="Ver en Pendientes de Pago",
+        modulos=("puesto",),
+        contar=lambda: contar_senas_pendientes_viejas(_hoy_argentina() - timedelta(days=7)),
+    ),
+    DefinicionAlerta(
+        codigo="pedidos_sin_identificar",
+        titulo="Pedidos con renglones sin identificar",
+        url="/deposito/pedido",
+        texto_link="Ver en Pedido",
+        modulos=("deposito",),
+        contar=lambda: contar_pedidos_con_renglones_sin_identificar(),
+    ),
+    DefinicionAlerta(
+        codigo="pedidos_incompletos",
+        titulo="Pedidos con renglones incompletos (se armó menos de lo pedido)",
+        url="/deposito/pedido",
+        texto_link="Ver en Pedido",
+        modulos=("deposito", "compras"),
+        contar=lambda: contar_pedidos_con_renglones_incompletos(),
+    ),
+    DefinicionAlerta(
+        codigo="mails_sin_confirmar",
+        # Pendientes Y con error de lectura: un mail que falló a las 12:00
+        # corriendo solo se tiene que ver acá, no perderse.
+        titulo="Mails de pedido sin confirmar",
+        url="/sistema/casilla-pedidos",
+        texto_link="Ver en Casilla de Pedidos",
+        modulos=("sistema", "deposito"),
+        contar=lambda: contar_mails_pedido_sin_procesar(),
+    ),
+    DefinicionAlerta(
+        codigo="mails_leidos_con_ia",
+        # El fallback a IA VISIBLE: si Día cambió el formato del mail y el
+        # parser por estructura dejó de poder, esto lo dice ese mismo día —
+        # antes de que un cruce de bultos llegue a una entrega. Ventana de 7
+        # días: alcanza para verlo sin arrastrar para siempre un mail viejo.
+        titulo="Pedidos de mail leídos con IA (el parser de estructura no pudo, últimos 7 días)",
+        url="/sistema/casilla-pedidos",
+        texto_link="Ver en Casilla de Pedidos",
+        modulos=("sistema",),
+        contar=lambda: contar_mails_pedido_leidos_con_ia(_hoy_argentina() - timedelta(days=7)),
+    ),
+    DefinicionAlerta(
+        codigo="pedido_faltante",
+        # Un día esperado sin pedido después de las 15:00: o el mail no llegó,
+        # o no se leyó. Se cierra cargando el pedido o marcando "no hubo
+        # pedido" desde la pantalla de Pedido.
+        titulo="Falta el pedido de un día esperado",
+        url="/deposito/pedido",
+        texto_link="Ver en Pedido",
+        modulos=("deposito",),
+        contar=lambda: contar_pedidos_faltantes(),
+    ),
+    DefinicionAlerta(
+        codigo="casilla_sin_revisar",
+        # Solo el problema REAL: desde las 14:00, la casilla activa que en todo
+        # el día no tuvo ninguna revisión exitosa. Un fallo puntual que se
+        # recuperó solo no alerta (se ve en la pantalla de la casilla, pero no
+        # grita acá).
+        titulo="La casilla de pedidos no se pudo revisar",
+        url="/sistema/casilla-pedidos",
+        texto_link="Ver en Casilla de Pedidos",
+        modulos=("sistema",),
+        contar=lambda: contar_casillas_sin_revisar(),
+    ),
+    DefinicionAlerta(
+        codigo="modulos_inexistentes",
+        # La alerta que vigila a las alertas. Sin módulos propios: vive solo en
+        # Auditoría, que es donde se mira lo que le pasa al sistema.
+        titulo="Alertas apuntando a un módulo que no existe (no se ven en su banner)",
+        url="/auditoria",
+        texto_link="El detalle está en el log del servidor",
+        contar=lambda: _contar_modulos_inexistentes(),
+    ),
+]
 
 
 @app.get("/gerencia/auditoria")
@@ -7642,23 +7694,71 @@ def ver_auditoria_url_vieja():
 
 
 @app.get("/auditoria")
-def ver_auditoria(request: Request):
+def ver_auditoria(request: Request, aviso: str | None = None, error: str | None = None):
     """Tablero de cosas que están mal, de un pantallazo: solo aparecen los controles con casos.
 
     Sector PROPIO, fuera de Gerencia y SIN clave: es control operativo
     (qué está trabado o mal cargado), no manejo de plata — en Gerencia
     quedan solo las rentabilidades, detrás de su clave.
+
+    Lee la FOTO del último cálculo (una consulta), no recalcula: ver
+    app/alertas.py. Y muestra SIEMPRE de cuándo es esa foto, calculado contra
+    el reloj — si el cálculo automático se murió, tiene que verse acá, no
+    quedar tapado por un tablero que dice "todo en orden".
+
+    Auditoría NO filtra por módulo: muestra todas las del registro. Eso es lo
+    que garantiza que una alerta con el módulo mal escrito no quede invisible.
     """
     try:
-        alertas = _alertas_auditoria()
+        estado = listar_estado_alertas()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    con_casos = [a for a in alertas if a["casos"] > 0]
+    ahora = datetime.now(ARGENTINA)
     return templates.TemplateResponse(
         request,
         "auditoria.html",
-        {"alertas": con_casos, "controles_corridos": len(alertas)},
+        {
+            "alertas": para_mostrar(ALERTAS, estado),
+            "controles_corridos": len(ALERTAS),
+            "frescura": frescura(estado, ahora),
+            "horas_vencimiento": HORAS_VENCIMIENTO,
+            "aviso": aviso,
+            "error": error,
+        },
+    )
+
+
+@app.post("/auditoria/recalcular")
+def recalcular_alertas_ruta():
+    """Recalcula las alertas ahora, a pedido: arreglé algo y quiero confirmarlo sin esperar.
+
+    Sincrónico a propósito: apretaste el botón porque querés ver el resultado.
+    Si el bucle de fondo ya está recalculando, el candado lo detecta y avisa en
+    vez de duplicar el trabajo.
+    """
+    try:
+        resumen = recalcular(ALERTAS)
+    except Exception as error_db:
+        return RedirectResponse(
+            url="/auditoria?" + urlencode({"error": f"No se pudieron recalcular las alertas: {error_db}"}),
+            status_code=303,
+        )
+    if not resumen["corrio"]:
+        return RedirectResponse(
+            url="/auditoria?" + urlencode({"aviso": "Ya se estaban recalculando en este momento. Probá de nuevo en un rato."}),
+            status_code=303,
+        )
+    if resumen["fallaron"]:
+        return RedirectResponse(
+            url="/auditoria?" + urlencode({
+                "error": f"Se recalcularon {resumen['ok']}, pero {resumen['fallaron']} no se pudieron calcular (quedaron con su valor viejo)."
+            }),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url="/auditoria?" + urlencode({"aviso": f"Listo: {resumen['ok']} controles recalculados."}),
+        status_code=303,
     )
 
 
@@ -11600,6 +11700,27 @@ def revisar_casillas_activas(ahora=None) -> int:
 # vencen — lo que no puede pasar nunca más es que bloquee el bucle.
 SEGUNDOS_TIMEOUT_TICK = 120
 
+# Tope para el recálculo de alertas. Corre dos veces por día, así que demorar
+# un tick de casilla como mucho ese rato, dos veces al día, no molesta a nadie
+# — y con tope, una alerta colgada no puede dejar el bucle parado para siempre.
+SEGUNDOS_TIMEOUT_ALERTAS = 180
+
+
+def _recalcular_alertas_si_toca() -> None:
+    """Recalcula las alertas si la foto más nueva ya pasó las HORAS_RECALCULO.
+
+    Va colgado del bucle que ya existe en vez de tener uno propio: un solo
+    lugar que puede morirse, con la disciplina de timeout y excepciones ya
+    puesta. Y el criterio es "cuán vieja está la foto", no "¿ya corrí el turno
+    de las 6?": así se autocorrige después de una caída, sin depender de que
+    el reloj coincida con nada.
+    """
+    estado = listar_estado_alertas()
+    if not hay_que_recalcular(estado, datetime.now(ARGENTINA)):
+        return
+    logger.info("Las alertas están vencidas: recalculando")
+    recalcular(ALERTAS)
+
 
 async def _bucle_revision_casillas() -> None:
     """El task de fondo: mira el reloj cada minuto y revisa la casilla a la que le toca.
@@ -11632,6 +11753,21 @@ async def _bucle_revision_casillas() -> None:
             )
         except Exception:
             logger.exception("El bucle de revisión de casillas falló — sigue en el próximo ciclo")
+
+        # Las alertas, en el mismo bucle. Con su propio try: que el recálculo
+        # falle no puede llevarse puesta la revisión de la casilla, ni al revés.
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_recalcular_alertas_si_toca), timeout=SEGUNDOS_TIMEOUT_ALERTAS
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "El recálculo de alertas superó los %s segundos y se abandonó — el bucle sigue",
+                SEGUNDOS_TIMEOUT_ALERTAS,
+            )
+        except Exception:
+            logger.exception("El recálculo de alertas falló — sigue en el próximo ciclo")
+
         await asyncio.sleep(SEGUNDOS_TICK_REVISION)
 
 

@@ -956,4 +956,26 @@ from (values
 ) as s (grupo_numero, numero, nombre)
 join grupos_costos_fijos g on g.numero = s.grupo_numero;
 
+-- ----------------------------------------------------------------------------
+-- 19. ALERTAS — la foto del último cálculo de cada control
+-- ----------------------------------------------------------------------------
+-- Una fila por alerta, se pisa en cada corrida: no es historial. El título, la
+-- URL y a qué módulos pertenece viven en el registro de app/main.py, no acá —
+-- por eso agregar una alerta nueva no toca la base.
+create table alertas_estado (
+    codigo        text primary key,
+    casos         integer not null check (casos >= 0),
+    mas_viejo     date,
+    calculada_el  timestamptz not null,
+    duracion_ms   integer,
+    error         text
+);
+
+comment on table alertas_estado is
+    'Foto del último cálculo de cada alerta, una fila por código. Se pisa en cada corrida: no es historial. El título, la URL y los módulos NO están acá: viven en el registro de app/main.py, así agregar una alerta no toca la base.';
+comment on column alertas_estado.calculada_el is
+    'Cuándo se calculó esta alerta. Es el dato que la pantalla muestra ("hace 3 h") y a la vez el latido del cálculo automático: se escribe siempre, aunque casos sea 0.';
+comment on column alertas_estado.error is
+    'Si la consulta de esta alerta falló, el mensaje. La alerta queda con su valor viejo y su calculada_el vieja: se muestra vencida, no en cero.';
+
 commit;

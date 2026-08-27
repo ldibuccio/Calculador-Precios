@@ -9364,38 +9364,61 @@ def test_barra_navegacion_en_sistema():
     assert f'href="/sistema" aria-label="Ir a Sistema">{SECTORES["sistema"]["icono"]}</a>' in respuesta.text
 
 
+ARGENTINA_TEST = timezone(timedelta(hours=-3))
+
+
+def _foto_alertas(valores=None, calculada_el=None):
+    """La foto de alertas_estado: todas las del registro en cero, salvo las que se pasen.
+
+    Auditoría ya NO calcula: lee esta foto. Que los conteos se hagan con las
+    ventanas correctas es lo que prueba
+    test_recalcular_alertas_usa_las_ventanas_de_cada_control.
+    """
+    from app.main import ALERTAS
+
+    valores = valores or {}
+    momento = calculada_el or datetime.now(ARGENTINA_TEST)
+    filas = []
+    for definicion in ALERTAS:
+        casos, mas_viejo = valores.get(definicion.codigo, (0, None))
+        filas.append({
+            "codigo": definicion.codigo, "casos": casos, "mas_viejo": mas_viejo,
+            "calculada_el": momento, "duracion_ms": 5, "error": None,
+        })
+    return filas
+
+
 def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
-    # El tablero es una LISTA de alertas con la misma forma (título +
-    # casos + más viejo + link): agregar la número diez es sumar una
-    # definición, no tocar el diseño.
+    # El tablero es una LISTA de alertas con la misma forma (título + casos +
+    # más viejo + link): agregar la número diecisiete es sumar una definición
+    # al registro, no tocar el diseño. Y ahora LEE la foto: una sola consulta,
+    # no quince conteos en vivo.
+    foto = _foto_alertas({
+        "compras_sin_precio": (2, date(2026, 7, 30)),
+        "retiros_sin_hacer": (7, date(2026, 8, 1)),
+        "recepciones_pendientes": (3, date(2026, 8, 2)),
+        "stock_vacios_negativo": (1, None),
+        "stock_deposito_negativo": (2, None),
+        "guias_r_costo_incompleto": (1, date(2026, 8, 5)),
+        "articulos_incotizables": (4, None),
+        "senas_vacios_pendientes": (5, date(2026, 7, 28)),
+        "pedidos_sin_identificar": (2, date(2026, 8, 3)),
+        "pedidos_incompletos": (1, date(2026, 8, 5)),
+        "mails_sin_confirmar": (2, date(2026, 8, 6)),
+        "mails_leidos_con_ia": (1, date(2026, 8, 7)),
+        "pedido_faltante": (1, date(2026, 8, 5)),
+        "casilla_sin_revisar": (1, None),
+    })
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 2, "mas_viejo": date(2026, 7, 30)}) as mock_sin_precio,
-        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 7, "mas_viejo": date(2026, 8, 1)}) as mock_retiros,
-        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 3, "mas_viejo": date(2026, 8, 2)}) as mock_recepciones,
-        patch("app.main.contar_stock_vacios_negativos", return_value=1),
-        patch("app.main.contar_stock_deposito_negativo", return_value=2),
-        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
-        patch("app.main.contar_articulos_comprados_incotizables", return_value=4) as mock_incotizables,
-        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 5, "mas_viejo": datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)}) as mock_senas,
-        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 3)}),
-        patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
-        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 2, "mas_viejo": date(2026, 8, 6)}),
-        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 1, "mas_viejo": date(2026, 8, 7)}) as mock_leidos_ia,
-        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 1, "mas_viejo": date(2026, 8, 5)}),
-        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 1, "mas_viejo": None}),
+        patch("app.main.listar_estado_alertas", return_value=foto) as mock_foto,
     ):
         respuesta = cliente.get("/auditoria")
 
     assert respuesta.status_code == 200
-    # "Más de 48 horas" = compras de anteayer para atrás; señas y ventana
-    # de comprados, 7 días.
-    mock_sin_precio.assert_called_once_with(date(2026, 8, 4))
-    mock_retiros.assert_called_once_with(date(2026, 8, 4))
-    mock_recepciones.assert_called_once_with(date(2026, 8, 4))
-    mock_incotizables.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA)
-    mock_senas.assert_called_once_with(date(2026, 7, 30))
-    # Las seis alertas, con sin-precio primera (la más importante).
+    # UNA sola consulta para toda la pantalla: ese es el punto del cambio.
+    mock_foto.assert_called_once_with()
+    # Las alertas, con sin-precio primera (la más importante).
     assert respuesta.text.index("Compras sin precio hace") < respuesta.text.index("Mercadería sin retirar hace")
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
     assert "Stock de vacíos negativo" in respuesta.text
@@ -9408,14 +9431,13 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Pedidos con renglones sin identificar" in respuesta.text
     assert "Pedidos con renglones incompletos" in respuesta.text
     assert "Mails de pedido sin confirmar" in respuesta.text
-    mock_leidos_ia.assert_called_once_with(date(2026, 7, 30))
     assert "leídos con IA (el parser de estructura no pudo" in respuesta.text
     assert "Falta el pedido de un día esperado" in respuesta.text
     assert "La casilla de pedidos no se pudo revisar" in respuesta.text
     assert 'href="/sistema/casilla-pedidos"' in respuesta.text
     assert "el más viejo es del 01/08/2026" in respuesta.text
     assert "el más viejo es del 28/07/2026" in respuesta.text
-    # Los links al detalle.
+    # Los links al detalle. El de retiros se arma con el dato de la foto.
     assert "/logistica/consultar?fecha_desde=2026-08-01&amp;fecha_hasta=2026-08-04&amp;estado=pendiente" in respuesta.text
     assert 'href="/deposito/recepcion"' in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
@@ -9424,31 +9446,93 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert 'href="/puesto/envases/pendientes"' in respuesta.text
 
 
-def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
-    # Un control sin casos NO aparece; si ninguno tiene, cartel verde.
+def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
+    """Las ventanas de cada alerta ("más de 48 horas", "7 días") ahora se prueban acá.
+
+    Antes esto lo verificaba la vista, porque calculaba en vivo. Ahora calcula
+    el recálculo, y la garantía tiene que seguir estando.
+    """
+    from app.main import ALERTAS, recalcular
+
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.alertas.candado_alertas") as candado,
+        patch("app.alertas.guardar_estado_alerta"),
+        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 0, "mas_viejo": None}) as sin_precio,
+        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}) as retiros,
+        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as recepciones,
+        patch("app.main.contar_articulos_comprados_incotizables", return_value=0) as incotizables,
+        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as senas,
+        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}) as leidos_ia,
         patch("app.main.contar_stock_vacios_negativos", return_value=0),
         patch("app.main.contar_stock_deposito_negativo", return_value=0),
         patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
-        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
+        candado.return_value.__enter__.return_value = True
+        resumen = recalcular(ALERTAS)
+
+    assert resumen["corrio"] is True and resumen["fallaron"] == 0
+    # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
+    sin_precio.assert_called_once_with(date(2026, 8, 4))
+    retiros.assert_called_once_with(date(2026, 8, 4))
+    recepciones.assert_called_once_with(date(2026, 8, 4))
+    incotizables.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA)
+    senas.assert_called_once_with(date(2026, 7, 30))
+    leidos_ia.assert_called_once_with(date(2026, 7, 30))
+
+
+def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
+    # Un control sin casos NO aparece; si ninguno tiene, cartel verde.
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/auditoria")
 
     assert respuesta.status_code == 200
     assert "Todo en orden" in respuesta.text
     assert "Mercadería sin retirar" not in respuesta.text
     assert "Mercadería sin recepcionar" not in respuesta.text
+
+
+def test_auditoria_muestra_siempre_de_cuando_es_la_foto():
+    """De cuándo son las alertas se muestra SIEMPRE, aunque no haya ninguna con casos."""
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
+        respuesta = cliente.get("/auditoria")
+    assert "Calculadas" in respuesta.text
+    assert "Recalcular ahora" in respuesta.text
+
+
+def test_auditoria_avisa_fuerte_cuando_el_calculo_automatico_se_murio():
+    """La trampa del 25/08: "no hay problemas" y "no se está calculando" no pueden verse iguales."""
+    vieja = datetime.now(ARGENTINA_TEST) - timedelta(hours=40)
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas(calculada_el=vieja)):
+        respuesta = cliente.get("/auditoria")
+    assert "el cálculo automático no está corriendo" in respuesta.text
+
+
+def test_auditoria_sin_ninguna_foto_lo_dice():
+    with patch("app.main.listar_estado_alertas", return_value=[]):
+        respuesta = cliente.get("/auditoria")
+    assert "todavía no se calcularon" in respuesta.text
+
+
+def test_boton_de_recalcular_corre_las_alertas_y_vuelve_con_el_resultado():
+    with patch("app.main.recalcular", return_value={"corrio": True, "ok": 16, "fallaron": 0}) as mock_recalcular:
+        respuesta = cliente.post("/auditoria/recalcular", follow_redirects=False)
+    mock_recalcular.assert_called_once()
+    assert respuesta.status_code == 303
+    assert "16+controles+recalculados" in respuesta.headers["location"]
+
+
+def test_si_ya_se_estan_recalculando_el_boton_avisa_en_vez_de_duplicar():
+    with patch("app.main.recalcular", return_value={"corrio": False, "ok": 0, "fallaron": 0}):
+        respuesta = cliente.post("/auditoria/recalcular", follow_redirects=False)
+    assert respuesta.status_code == 303
+    assert "Ya+se+estaban+recalculando" in respuesta.headers["location"]
 
 
 def test_barra_navegacion_en_placeholders_logistica_gerencia():
@@ -16278,32 +16362,25 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
 
 
 def test_auditoria_incluye_la_alerta_de_cruce_de_primera():
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_stock_vacios_negativos", return_value=0),
-        patch("app.main.contar_stock_deposito_negativo", return_value=0),
-        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_articulos_comprados_incotizables", return_value=0),
-        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main._cruces_primera_reproceso",
-              return_value=[{"articulo_nombre": "Tomate", "reproceso_id": 12,
-                             "cliente_lote_nombre": "Día", "cliente_salida_nombre": "Vea",
-                             "bultos": 4.0, "fecha": date(2026, 8, 25)}]),
-    ):
+    foto = _foto_alertas({"cruce_primera_reproceso": (1, date(2026, 8, 25))})
+    with patch("app.main.listar_estado_alertas", return_value=foto):
         respuesta = cliente.get("/auditoria")
 
     assert respuesta.status_code == 200
     assert "Primera de reproceso armada para un cliente salió en pedidos de otro" in respuesta.text
     assert 'href="/deposito/stock/guias-r"' in respuesta.text
+
+
+def test_el_cruce_de_primera_se_cuenta_con_su_fecha_mas_vieja():
+    """El conteo del cruce sigue siendo el de siempre: cantidad y fecha del más viejo."""
+    from app.main import _contar_cruces_primera_reproceso
+
+    cruces = [
+        {"reproceso_id": 12, "cliente_salida_nombre": "Vea", "bultos": 4.0, "fecha": date(2026, 8, 25)},
+        {"reproceso_id": 13, "cliente_salida_nombre": "Día", "bultos": 2.0, "fecha": date(2026, 8, 20)},
+    ]
+    with patch("app.main._cruces_primera_reproceso", return_value=cruces):
+        assert _contar_cruces_primera_reproceso() == {"casos": 2, "mas_viejo": date(2026, 8, 20)}
 
 
 def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():

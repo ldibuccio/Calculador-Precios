@@ -69,6 +69,7 @@ bases estén marcadas.
 | `agregar_ficha_a_pedidos_renglones.sql` | ✅ 2026-08-26 (verificado: 418 de 418 renglones con ficha, 0 sin identificar, 0 identificados sin ficha) | ✅ 2026-08-26 (verificado: 232 de 232 renglones con ficha, 0 sin identificar, 0 identificados sin ficha) |
 | `permitir_varias_fichas_por_articulo.sql` | ✅ 2026-08-26 (verificado: unique viejo dropeado, los 2 índices nuevos creados; cero códigos repetidos en la verificación previa) | ✅ 2026-08-26 (verificado: unique viejo dropeado, los 2 índices nuevos creados; cero códigos repetidos en la verificación previa) |
 | `drop_indice_viejo_precios_venta_historial.sql` | ✅ 2026-08-26 (verificado: índice viejo dropeado, quedan los 3 correctos — la primary key, `precios_venta_historial_ficha_vigente_idx` y el unique `precios_venta_historial_ficha_vigente_key`) | ✅ 2026-08-26 (verificado: índice viejo dropeado, quedan los 3 correctos — la primary key, `precios_venta_historial_ficha_vigente_idx` y el unique `precios_venta_historial_ficha_vigente_key`) |
+| `agregar_alertas_estado.sql` | ✅ 2026-08-27 (verificado: las 6 columnas creadas) | ✅ 2026-08-27 (verificado: las 6 columnas creadas) |
 
 ## Deuda pendiente de limpieza
 
