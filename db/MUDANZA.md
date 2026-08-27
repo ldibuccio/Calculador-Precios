@@ -115,3 +115,36 @@ select relname as tabla, n_live_tup as filas_aprox,
  order by n_live_tup desc
  limit 15;
 ```
+
+---
+
+## Lo que pasó al hacerla de verdad (Palmala, 2026-08-27)
+
+La mudanza se ejecutó: Palmala pasó de `sa-east-1` (São Paulo) a `us-west-1`
+(North California), que es donde está el servicio de Railway. Resultado:
+la app pasó a andar como Frutamax, que era la predicción.
+
+**La decisión de región es contraintuitiva y conviene no olvidarla.** El
+celular le habla a Railway UNA vez por pantalla; Railway le habla a la base
+cientos de veces para armar esa misma pantalla. Así que la base no va cerca
+del usuario: va **pegada a Railway**. Ese fue todo el problema.
+
+Cuatro cosas que solo aparecieron contra una base con historia, y que los
+scripts ya contemplan:
+
+- **El orden de las columnas no coincide.** En la base vieja, lo agregado con
+  ALTER TABLE quedó al final; en esquema_completo.sql está en su lugar
+  lógico. `select *` mapea por posición y falla. Por eso la copia y la
+  verificación nombran las columnas una por una.
+- **El SQL Editor muestra solo el resultado de la ÚLTIMA consulta**, y no
+  muestra los mensajes NOTICE. Todo lo que tenga que verse va en una sola
+  consulta final que devuelva filas.
+- **revision_tick cambia solo**: es el latido del bucle de revisión, y la app
+  viva lo mueve entre la copia y la verificación. Se informa aparte.
+- **Las rutas de archivos viven en TRES tablas**, no dos: fotos_guia,
+  fotos_pedido y precios_venta_historial.foto_ruta.
+
+Sobre el Storage: eran 33 archivos en 8 carpetas por fecha. Se movieron a
+mano desde el panel (bajar y subir, carpeta por carpeta), sin herramientas.
+Para ese volumen alcanza; la clave es que la ruta quede idéntica, y eso se
+verifica cruzando ruta por ruta contra storage.objects, no contando.

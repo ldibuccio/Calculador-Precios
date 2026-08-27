@@ -20,7 +20,9 @@ drop schema if exists origen cascade;
 drop server if exists base_vieja cascade;
 drop extension if exists postgres_fdw;
 
--- Tiene que devolver 0 filas las tres.
-select count(*) as servidores_foraneos from pg_foreign_server;
-select count(*) as tablas_foraneas from information_schema.foreign_tables;
-select count(*) as extension_fdw from pg_extension where extname = 'postgres_fdw';
+-- Los tres controles en UNA consulta: el SQL Editor de Supabase muestra
+-- solamente el resultado de la última, así que tres consultas sueltas
+-- dejarían dos invisibles. Tiene que dar 0 | 0 | 0.
+select (select count(*) from pg_foreign_server)                                  as servidores,
+       (select count(*) from information_schema.foreign_tables)                  as tablas_foraneas,
+       (select count(*) from pg_extension where extname = 'postgres_fdw')        as extension;
