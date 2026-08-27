@@ -14,6 +14,14 @@
 -- haya fallado, porque esas filas las siembra esquema_completo.sql. El conteo
 -- dice OK y la copia está mal. Por eso va también la firma md5 del contenido.
 --
+-- LA EXCEPCIÓN — revision_tick: es el latido del bucle de revisión
+-- automática, una sola fila que la app viva actualiza cada vez que despierta.
+-- Mientras Railway siga apuntando a la base vieja, esa fila avanza sola entre
+-- la copia y esta verificación, SIEMPRE. Se informa aparte y no entra en el
+-- veredicto: un veredicto que da rojo todas las veces por algo que no importa
+-- enseña a ignorar el veredicto. Después del corte la app escribe su propio
+-- latido en la base nueva a los pocos minutos.
+--
 -- POR QUÉ LA FIRMA NOMBRA LAS COLUMNAS: las dos bases tienen las mismas
 -- columnas pero NO en el mismo orden (lo agregado con ALTER TABLE quedó al
 -- final en la vieja). Una firma sobre la fila entera cambiaría solo por el
@@ -57,13 +65,22 @@ begin
     end loop;
 end $contenido$;
 
+-- Las tablas que la app viva mueve sola, y que por eso no bloquean.
+create temp table if not exists mudanza_volatiles (tabla text);
+truncate mudanza_volatiles;
+insert into mudanza_volatiles values ('revision_tick');
+
+-- Cuenta las 40 tablas y todas las filas; para decidir si algo está MAL
+-- excluye las volátiles, que se informan aparte en la línea del LATIDO.
 insert into mudanza_resultado
 select 10, 'CONTENIDO',
        case when count(*) filter (where malas) = 0
             then 'OK — ' || count(*) || ' tablas, ' || sum(filas_nueva) || ' filas, idénticas a la vieja'
             else count(*) filter (where malas) || ' TABLA(S) MAL — ver abajo' end
-  from (select *, (filas_vieja is distinct from filas_nueva
-                or firma_vieja is distinct from firma_nueva) as malas
+  from (select *,
+               (tabla not in (select tabla from mudanza_volatiles)
+                and (filas_vieja is distinct from filas_nueva
+                  or firma_vieja is distinct from firma_nueva)) as malas
           from mudanza_control) x;
 
 insert into mudanza_resultado
@@ -72,8 +89,18 @@ select 11, '  ' || tabla,
             then 'vieja ' || filas_vieja || ' filas / nueva ' || filas_nueva
             else 'mismo conteo (' || filas_nueva || ') pero el CONTENIDO difiere' end
   from mudanza_control
- where filas_vieja is distinct from filas_nueva
-    or firma_vieja is distinct from firma_nueva;
+ where tabla not in (select tabla from mudanza_volatiles)
+   and (filas_vieja is distinct from filas_nueva
+     or firma_vieja is distinct from firma_nueva);
+
+-- El latido, informado aparte: cambia solo y no bloquea nada.
+insert into mudanza_resultado
+select 15, 'LATIDO',
+       case when firma_vieja is distinct from firma_nueva
+            then 'revision_tick difiere, y está BIEN: la app viva lo mueve sola. No bloquea.'
+            else 'revision_tick igual (la app no latió entre la copia y esta consulta).' end
+  from mudanza_control
+ where tabla = 'revision_tick';
 
 -- ----------------------------------------------------------------------------
 -- 2. Secuencias: ninguna puede quedar por debajo del max(id) de su tabla, o
