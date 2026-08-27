@@ -69,10 +69,17 @@ select case
 
 -- ----------------------------------------------------------------------------
 -- 3. SECUENCIAS: ninguna puede quedar por debajo del max(id) de su tabla.
---    TIENE QUE DECIR OK. Si no, el primer INSERT nuevo choca.
+--    TIENE QUE DEVOLVER UNA SOLA FILA QUE DIGA "SECUENCIAS OK".
+--    Si devuelve alguna fila "MAL", el primer INSERT nuevo va a chocar:
+--    volvé a correr el paso 2.
 -- ----------------------------------------------------------------------------
+create temp table if not exists mudanza_secuencias (
+    tabla text, max_id bigint, proximo_id bigint, estado text
+);
+truncate mudanza_secuencias;
+
 do $secuencias$
-declare r record; maximo bigint; ultimo bigint; llamada boolean; proximo bigint; mal int := 0;
+declare r record; maximo bigint; ultimo bigint; llamada boolean; proximo bigint;
 begin
     for r in
         select c.relname as tabla, a.attname as columna,
@@ -87,19 +94,21 @@ begin
         execute format('select last_value, is_called from %s', r.secuencia) into ultimo, llamada;
         proximo := case when llamada then ultimo + 1 else ultimo end;
         if proximo <= maximo then
-            mal := mal + 1;
-            raise notice 'MAL  %: max(id)=%, la secuencia daría %', r.tabla, maximo, proximo;
+            insert into mudanza_secuencias values (r.tabla, maximo, proximo, 'MAL');
         end if;
     end loop;
-    if mal = 0 then
-        raise notice 'SECUENCIAS OK: todas por encima de su max(id).';
-    else
-        raise notice '% mal. Volvé a correr el paso 2.',
-            mal || case when mal = 1 then ' SECUENCIA' else ' SECUENCIAS' end;
-    end if;
 end $secuencias$;
 
--- ----------------------------------------------------------------------------
+select case when count(*) = 0
+            then 'SECUENCIAS OK: las 37 están por encima de su max(id).'
+            else count(*) || case when count(*) = 1 then ' SECUENCIA MAL' else ' SECUENCIAS MAL' end
+                 || '. Volvé a correr el paso 2.'
+       end as secuencias
+  from mudanza_secuencias;
+
+-- El detalle de las que estén mal (vacío si todo OK).
+select * from mudanza_secuencias order by tabla;
+
 -- 4. STORAGE: cuántos archivos hay en el bucket de cada lado.
 --    Los BYTES no viajan con la base: esto se empareja recién después de
 --    copiar el bucket (ver el paso de Storage en db/MUDANZA.md).

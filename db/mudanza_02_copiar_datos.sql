@@ -30,6 +30,11 @@
 
 select set_config('mudanza.confirmo', 'SI, VACIAR Y COPIAR', false);
 
+-- El SQL Editor de Supabase no muestra los mensajes NOTICE, así que el
+-- resultado se junta acá y se devuelve como tabla al final.
+create temp table if not exists mudanza_copia (orden int, tabla text, filas bigint);
+truncate mudanza_copia;
+
 do $mudanza$
 declare
     -- Las 40 tablas en orden de dependencias: cada una solo referencia a las
@@ -55,6 +60,7 @@ declare
     maximo bigint;
     copiadas bigint;
     total bigint := 0;
+    n int := 0;
 begin
     if coalesce(current_setting('mudanza.confirmo', true), '') <> 'SI, VACIAR Y COPIAR' then
         raise exception 'Falta el candado. Corré el select set_config(...) de arriba JUNTO con este bloque, en la misma pestaña del SQL Editor.';
@@ -75,7 +81,8 @@ begin
         execute format('insert into public.%I overriding system value select * from origen.%I order by 1', t, t);
         get diagnostics copiadas = row_count;
         total := total + copiadas;
-        raise notice '%: % filas', rpad(t, 30), copiadas;
+        n := n + 1;
+        insert into mudanza_copia values (n, t, copiadas);
     end loop;
 
     -- 3. Las secuencias. Sin esto el primer INSERT nuevo choca con
@@ -95,7 +102,13 @@ begin
         perform setval(r.secuencia, maximo + 1, false);
     end loop;
 
-    raise notice '---';
-    raise notice 'COPIADO: % filas en % tablas. Secuencias ajustadas.', total, array_length(tablas, 1);
-    raise notice 'Ahora corré el paso 3 (verificar) ANTES de tocar Railway.';
+    insert into mudanza_copia values (0,
+        'COPIADO: ' || total || ' filas en ' || array_length(tablas, 1) ||
+        ' tablas. Secuencias ajustadas. Ahora corré el paso 3.', total);
 end $mudanza$;
+
+-- El resultado, visible en el SQL Editor. La fila de orden 0 es el resumen.
+select case when orden = 0 then tabla else '  ' || tabla end as tabla,
+       filas
+  from mudanza_copia
+ order by orden;
