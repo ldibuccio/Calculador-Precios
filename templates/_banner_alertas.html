@@ -1,0 +1,92 @@
+{# Banner de alertas del módulo, compartido por todas las botoneras.
+
+   Recibe "banner", que arma _banner_alertas() en app/main.py:
+     banner.alertas  — las alertas del registro que le tocan a ESTE módulo
+                       y tienen casos (o no se pudieron calcular)
+     banner.frescura — de cuándo es la foto, calculado contra el reloj
+
+   Es una cinta que corre de derecha a izquierda con todas las novedades una
+   atrás de la otra, en loop. El contenido va DUPLICADO (la segunda copia con
+   aria-hidden) para que el corte del loop no se note.
+
+   La foto vencida ENTRA COMO UN AVISO MÁS: si el cálculo automático se murió,
+   el banner tiene que decirlo. Un banner vacío porque nadie calculó nada se
+   ve igual que un banner vacío porque está todo bien, y esa es la peor falla
+   posible en un sistema de alertas. Por eso, si la foto está vencida, el
+   banner aparece aunque no haya ninguna alerta con casos. #}
+{% set _avisos = [] %}
+{% for _a in (banner.alertas if banner else []) %}
+  {% if _a.error %}
+    {% set _ = _avisos.append({"texto": "No se pudo calcular: " ~ _a.titulo, "url": "/auditoria"}) %}
+  {% elif _a.casos is none %}
+    {% set _ = _avisos.append({"texto": "Sin calcular todavía: " ~ _a.titulo, "url": "/auditoria"}) %}
+  {% else %}
+    {% set _ = _avisos.append({"texto": _a.titulo ~ " (" ~ _a.casos ~ ")", "url": _a.url}) %}
+  {% endif %}
+{% endfor %}
+{% if banner and banner.frescura and banner.frescura.vencida %}
+  {% if banner.frescura.hay_datos %}
+    {% set _ = _avisos.append({"texto": "Ojo: estas alertas se calcularon " ~ banner.frescura.texto ~ " y no se actualizaron desde entonces", "url": "/auditoria"}) %}
+  {% else %}
+    {% set _ = _avisos.append({"texto": "Ojo: las alertas todavía no se calcularon nunca", "url": "/auditoria"}) %}
+  {% endif %}
+{% endif %}
+
+{% if _avisos %}
+<div class="banner-avisos" role="status">
+  {# La velocidad acompaña al contenido: más avisos, más tiempo de vuelta. #}
+  <div class="banner-cinta" style="animation-duration: {{ _avisos|length * 12 }}s;">
+    {% for n in _avisos %}<a href="{{ n.url }}">{{ n.texto }}</a><span class="separador">•</span>{% endfor %}
+    <span class="copia" aria-hidden="true">{% for n in _avisos %}<a href="{{ n.url }}" tabindex="-1">{{ n.texto }}</a><span class="separador">•</span>{% endfor %}</span>
+  </div>
+</div>
+<style>
+  .banner-avisos {
+    background: #fef9c3;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+  }
+  .banner-cinta {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    padding: 0.75rem 0;
+    animation: banner-correr linear infinite;
+    will-change: transform;
+  }
+  .banner-cinta a {
+    color: #713f12;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .banner-cinta .separador { color: #713f12; margin: 0 1.25rem; }
+  /* La copia mide EXACTAMENTE igual que la original (también flex, sin
+     espacios fantasma): el -50% del loop cae justo y el corte no salta. */
+  .banner-cinta .copia { display: inline-flex; align-items: center; }
+  @keyframes banner-correr {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  /* Si el usuario pidió menos movimiento, los avisos quedan quietos y
+     apilados, sin perder ninguno. */
+  @media (prefers-reduced-motion: reduce) {
+    .banner-cinta {
+      animation: none;
+      display: block;
+      white-space: normal;
+      padding: 0.75rem 1rem;
+    }
+    .banner-cinta .copia { display: none; }
+    .banner-cinta a {
+      display: block;
+      /* Apilados hay que poder tocarlos con el pulgar: cada aviso es un
+         renglón alto, no un link de texto apretado contra el de arriba. */
+      padding: 0.45rem 0;
+      min-height: 1.6rem;
+    }
+    .banner-cinta .separador { display: none; }
+  }
+</style>
+{% endif %}

@@ -2371,19 +2371,37 @@ def contar_ingresos_deposito(
         conexion.close()
 
 
-def contar_compras_sin_precio_viejas(fecha_limite) -> dict:
-    """Auditoría: compras que siguen sin precio con fecha_operacion de fecha_limite para atrás, y la más vieja.
+def contar_compras_sin_precio() -> dict:
+    """Compras que siguen sin precio de compra cargado, y la más vieja.
 
-    Plata que no se sabe cuánto costó. Usa el índice parcial
-    compras_sin_precio_idx (solo filas sin precio, con la fecha adentro).
+    Plata que no se sabe cuánto costó: mientras falte, el costeo del día
+    siguiente sale mal. Por eso NO tiene ventana de tiempo — no se espera a que
+    la compra "envejezca" para avisar, y no deja de avisar por vieja: un
+    agujero sigue siendo un agujero tenga un día o tres meses, hasta que
+    alguien le carga el precio.
+
+    El filtro por ESTADO es lo que la hace accionable: una compra rechazada o
+    cancelada NUNCA va a tener precio, así que contarla es ruido. Esta versión
+    reemplaza a la vieja contar_compras_sin_precio_viejas, que filtraba por
+    fecha y NO por estado: contaba rechazadas de hace meses y se perdía las de
+    hoy. Las dos convivían —el banner con una, Auditoría con la otra— y
+    llegaron a devolver el mismo número contando compras distintas.
+
+    Sigue apoyada en el índice parcial compras_sin_precio_idx (solo las filas
+    sin precio): sacar el filtro de fecha no lo desaprovecha, porque lo que
+    achica la tabla es el "importe IS NULL", no la fecha.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT COUNT(*), MIN(fecha_operacion) FROM compras c "
-                "WHERE c.importe IS NULL AND c.fecha_operacion <= %s",
-                (fecha_limite,),
+                """
+                SELECT COUNT(*), MIN(c.fecha_operacion)
+                FROM compras c
+                WHERE c.importe IS NULL
+                  AND c.estado IN ('pendiente', 'recepcionado')
+                  AND c.estado_retiro IN ('pendiente', 'retirado')
+                """
             )
             casos, mas_viejo = cursor.fetchone()
         return {"casos": int(casos), "mas_viejo": mas_viejo}
@@ -2734,29 +2752,6 @@ def listar_compras_sin_precio() -> list[dict]:
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
-    finally:
-        conexion.close()
-
-
-def contar_compras_sin_precio() -> int:
-    """Cuántas compras sin precio de compra cargado hay pendientes de completar (mismo filtro que
-    listar_compras_sin_precio, sin traer las filas) — para el cartel de aviso de /comercial, que se
-    calcula en cada entrada a esa pantalla y solo necesita el número.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM compras c
-                WHERE c.importe IS NULL
-                  AND c.estado IN ('pendiente', 'recepcionado')
-                  AND c.estado_retiro IN ('pendiente', 'retirado')
-                """
-            )
-            (cantidad,) = cursor.fetchone()
-        return cantidad
     finally:
         conexion.close()
 
@@ -4337,23 +4332,47 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
         conexion.close()
 
 
-def contar_pedidos_con_renglones_incompletos() -> dict:
-    """Auditoría: pedidos vivos con renglones armados por MENOS de lo pedido, y el más viejo.
+def contar_pedidos_incompletos(fecha_desde) -> dict:
+    """Pedidos vigentes desde una fecha que salieron con mercadería incompleta, y el más viejo.
 
-    "Armé 12 de 15": el dueño se entera por acá, no cuando reclame Día.
+    Incompleto = algún renglón armado con MENOS bultos que los pedidos, o
+    renglones sin armar en un pedido ya cerrado con Terminar (un pedido a medio
+    armar todavía no es noticia). Solo renglones armables (con sucursal e
+    identificados), mismo criterio que los conteos de Armar.
+
+    El "<" es a propósito y arregla un bug: la versión vieja de Auditoría
+    comparaba con "<>", así que un renglón armado de MÁS (18 de 15) aparecía
+    bajo un título que decía "se armó menos de lo pedido".
+
+    LLEVA VENTANA, al revés que las compras sin precio: un pedido que ya salió
+    incompleto no se puede completar después. Sin ventana, quedaría en la lista
+    para siempre sin forma de resolverlo ni limpiarlo.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COUNT(DISTINCT p.id), MIN(p.fecha_operacion)
-                FROM pedidos p
-                WHERE p.anulado_el IS NULL
-                  AND EXISTS (SELECT 1 FROM pedidos_renglones r
-                              WHERE r.pedido_id = p.id AND r.armado_el IS NOT NULL
-                                AND r.cantidad_armada IS NOT NULL AND r.cantidad_armada <> r.cantidad)
-                """
+                SELECT COUNT(*), MIN(fecha_operacion) FROM (
+                    SELECT DISTINCT ON (p.cliente_id, p.fecha_operacion)
+                           p.id, p.fecha_operacion, p.armado_cerrado_el,
+                           (SELECT COUNT(*) FROM pedidos_renglones r
+                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                              AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+                              AND r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
+                              AND r.cantidad_armada < r.cantidad) AS renglones_cortos,
+                           (SELECT COUNT(*) FROM pedidos_renglones r
+                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                              AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+                              AND r.armado_el IS NULL) AS renglones_sin_armar
+                    FROM pedidos p
+                    WHERE p.anulado_el IS NULL AND p.fecha_operacion >= %s
+                    ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC
+                ) vigentes
+                WHERE renglones_cortos > 0
+                   OR (armado_cerrado_el IS NOT NULL AND renglones_sin_armar > 0)
+                """,
+                (fecha_desde,),
             )
             casos, mas_viejo = cursor.fetchone()
         return {"casos": int(casos), "mas_viejo": mas_viejo}
@@ -4856,48 +4875,6 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
                 ORDER BY p.fecha_operacion, p.creado_en DESC
                 """,
                 (cliente_id, fecha_desde),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-    finally:
-        conexion.close()
-
-
-def listar_pedidos_incompletos_recientes(fecha_desde) -> list[dict]:
-    """Pedidos vigentes desde una fecha que salieron con mercadería incompleta, para el banner de Compras.
-
-    Incompleto = algún renglón armado con menos bultos que los pedidos, o
-    renglones sin armar en un pedido ya cerrado con Terminar (un pedido a
-    medio armar todavía no es noticia). Solo renglones armables (con
-    sucursal e identificados), mismo criterio que los conteos de Armar.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT * FROM (
-                    SELECT DISTINCT ON (p.cliente_id, p.fecha_operacion)
-                           p.id, c.nombre AS cliente_nombre, p.fecha_operacion, p.armado_cerrado_el,
-                           (SELECT COUNT(*) FROM pedidos_renglones r
-                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
-                              AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
-                              AND r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
-                              AND r.cantidad_armada < r.cantidad) AS renglones_cortos,
-                           (SELECT COUNT(*) FROM pedidos_renglones r
-                            WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
-                              AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
-                              AND r.armado_el IS NULL) AS renglones_sin_armar
-                    FROM pedidos p
-                    JOIN clientes c ON c.id = p.cliente_id
-                    WHERE p.anulado_el IS NULL AND p.fecha_operacion >= %s
-                    ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC
-                ) vigentes
-                WHERE renglones_cortos > 0
-                   OR (armado_cerrado_el IS NOT NULL AND renglones_sin_armar > 0)
-                ORDER BY fecha_operacion DESC, cliente_nombre
-                """,
-                (fecha_desde,),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]

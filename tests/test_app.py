@@ -7989,65 +7989,74 @@ def test_ver_comercial_muestra_los_tres_accesos():
     assert 'href="/negociar"' not in respuesta.text
 
 
-def test_ver_comercial_con_compras_sin_precio_muestra_el_cartel():
-    with patch("app.main.contar_compras_sin_precio", return_value=4):
+def test_ver_comercial_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
+    # El criterio del mapa de módulos: la alerta aparece donde está la persona
+    # que puede resolverla. Comercial factura, así que las compras sin precio
+    # también son suyas; los retiros de Logística no, y no le ensucian el
+    # banner — un banner que se llena de cosas ajenas se deja de mirar.
+    foto = _foto_alertas({
+        "compras_sin_precio": (4, date(2026, 7, 30)),
+        "articulos_incotizables": (2, None),
+        "retiros_sin_hacer": (9, date(2026, 8, 1)),
+    })
+    with patch("app.main.listar_estado_alertas", return_value=foto) as mock_foto:
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
-    assert "Hay 4 compras sin precio de compra cargado" in respuesta.text
+    # UNA sola consulta para todo el banner, tenga el registro 15 alertas o 100.
+    mock_foto.assert_called_once_with()
+    assert "Compras sin precio de compra cargado (4)" in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
+    assert "sin ficha logística o sin precio de venta" in respuesta.text
+    assert "Mercadería sin retirar" not in respuesta.text
     # Arriba de los tres botones, no mezclado ni después.
-    assert respuesta.text.index("Hay 4 compras") < respuesta.text.index('href="/precios"')
+    assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/precios"')
 
 
-def test_ver_comercial_con_una_sola_compra_sin_precio_usa_singular():
-    with patch("app.main.contar_compras_sin_precio", return_value=1):
-        respuesta = cliente.get("/comercial")
-
-    assert "Hay 1 compra sin precio de compra cargado" in respuesta.text
-
-
-def test_ver_comercial_sin_compras_sin_precio_no_muestra_cartel():
-    with patch("app.main.contar_compras_sin_precio", return_value=0):
+def test_ver_comercial_sin_alertas_no_muestra_banner():
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
+    assert 'class="banner-avisos"' not in respuesta.text
     assert "sin precio de compra cargado" not in respuesta.text
 
 
-def test_ver_comercial_error_al_contar_no_rompe_la_pantalla():
-    # El cartel es un aviso, no algo crítico: si la consulta del conteo
-    # falla, la pantalla sigue funcionando (sin cartel), nunca un 500.
-    with patch("app.main.contar_compras_sin_precio", side_effect=Exception("no se pudo conectar")):
+def test_ver_comercial_error_al_leer_las_alertas_no_rompe_la_pantalla():
+    # El banner es un aviso, no algo crítico: si la consulta falla, la
+    # pantalla sigue funcionando (sin banner), nunca un 500.
+    with patch("app.main.listar_estado_alertas", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200
-    assert "sin precio de compra cargado" not in respuesta.text
+    assert 'class="banner-avisos"' not in respuesta.text
     assert 'href="/precios"' in respuesta.text
     assert 'href="/inicio"' in respuesta.text
 
 
-def test_ver_compras_con_compras_sin_precio_muestra_el_cartel():
-    # En el banner de notificaciones, arriba de todo: el comprador tiene
-    # pendiente cargar precios y lo ve apenas entra a su módulo.
-    with (
-        patch("app.main.contar_compras_sin_precio", return_value=4),
-        patch("app.main.listar_pedidos_incompletos_recientes", return_value=[]),
-    ):
+def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
+    # El comprador ve apenas entra lo que él puede resolver: los precios que
+    # faltan cargar y las Guías R cuyo costo no cierra porque falta un precio
+    # de compra. Lo de Depósito no es suyo y no aparece.
+    foto = _foto_alertas({
+        "compras_sin_precio": (4, date(2026, 7, 30)),
+        "guias_r_costo_incompleto": (1, date(2026, 8, 5)),
+        "recepciones_pendientes": (3, date(2026, 8, 2)),
+    })
+    with patch("app.main.listar_estado_alertas", return_value=foto):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert "Hay 4 compras sin precio de compra cargado" in respuesta.text
+    assert "Compras sin precio de compra cargado (4)" in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
+    assert "Guías R con costo incompleto (1)" in respuesta.text
+    assert "Mercadería sin recepcionar" not in respuesta.text
     # Arriba de los botones de carga, no mezclado ni después.
-    assert respuesta.text.index("Hay 4 compras") < respuesta.text.index('href="/compras/nueva/manual"')
+    assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/compras/nueva/manual"')
 
 
-def test_ver_compras_sin_compras_sin_precio_no_muestra_cartel():
-    with (
-        patch("app.main.contar_compras_sin_precio", return_value=0),
-        patch("app.main.listar_pedidos_incompletos_recientes", return_value=[]),
-    ):
+def test_ver_compras_sin_alertas_no_muestra_banner():
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
@@ -8055,70 +8064,107 @@ def test_ver_compras_sin_compras_sin_precio_no_muestra_cartel():
     assert 'class="banner-avisos"' not in respuesta.text
 
 
-PEDIDOS_INCOMPLETOS_DE_PRUEBA = [
-    {
-        "id": 7, "cliente_nombre": "Día", "fecha_operacion": date(2026, 8, 25),
-        "armado_cerrado_el": datetime(2026, 8, 25, 18, 0, tzinfo=timezone.utc),
-        "renglones_cortos": 2, "renglones_sin_armar": 1,
-    },
-    {
-        "id": 8, "cliente_nombre": "Vea", "fecha_operacion": date(2026, 8, 24),
-        "armado_cerrado_el": None,
-        "renglones_cortos": 1, "renglones_sin_armar": 3,
-    },
-]
-
-
-def test_ver_compras_pedido_incompleto_de_las_ultimas_48_horas_aparece_en_el_banner():
-    # El comprador se entera apenas entra de que un pedido salió con menos
-    # mercadería de la pedida. Un pedido SIN cerrar solo cuenta los
-    # renglones cortos: los sin armar todavía pueden armarse.
-    with (
-        patch("app.main.contar_compras_sin_precio", return_value=0),
-        patch("app.main.listar_pedidos_incompletos_recientes", return_value=PEDIDOS_INCOMPLETOS_DE_PRUEBA),
-    ):
+def test_ver_compras_error_al_leer_las_alertas_no_rompe_la_pantalla():
+    with patch("app.main.listar_estado_alertas", side_effect=Exception("no se pudo conectar")):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert "El pedido de Día del 25/08 salió incompleto: 2 renglones con menos de lo pedido y 1 sin armar" in respuesta.text
-    assert "El pedido de Vea del 24/08 salió incompleto: 1 renglón con menos de lo pedido" in respuesta.text
-    assert "3 sin armar" not in respuesta.text
-    assert 'href="/deposito/pedido"' in respuesta.text
+    assert 'class="banner-avisos"' not in respuesta.text
+    assert 'href="/compras/nueva/manual"' in respuesta.text
 
 
-def test_ver_compras_banner_corre_y_duplica_el_contenido_para_el_loop():
-    # La cinta se anima proporcional a cuántas notificaciones lleva, y el
-    # contenido va dos veces (la copia oculta a lectores de pantalla) para
-    # que el corte del loop no se note.
-    with (
-        patch("app.main.contar_compras_sin_precio", return_value=4),
-        patch("app.main.listar_pedidos_incompletos_recientes", return_value=PEDIDOS_INCOMPLETOS_DE_PRUEBA),
-    ):
+def test_banner_corre_y_duplica_el_contenido_para_el_loop():
+    # La cinta se anima proporcional a cuántos avisos lleva, y el contenido va
+    # dos veces (la copia oculta a lectores de pantalla) para que el corte del
+    # loop no se note.
+    foto = _foto_alertas({
+        "compras_sin_precio": (4, date(2026, 7, 30)),
+        "guias_r_costo_incompleto": (1, date(2026, 8, 5)),
+    })
+    with patch("app.main.listar_estado_alertas", return_value=foto):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert 'class="banner-cinta" style="animation-duration: 36s;"' in respuesta.text
-    assert respuesta.text.count("Hay 4 compras sin precio de compra cargado") == 2
+    assert 'class="banner-cinta" style="animation-duration: 24s;"' in respuesta.text
+    assert respuesta.text.count("Compras sin precio de compra cargado (4)") == 2
     assert '<span class="copia" aria-hidden="true">' in respuesta.text
 
 
-def test_ver_compras_error_al_buscar_incompletos_no_rompe_la_pantalla():
-    with (
-        patch("app.main.contar_compras_sin_precio", return_value=0),
-        patch("app.main.listar_pedidos_incompletos_recientes", side_effect=Exception("no se pudo conectar")),
-    ):
+def test_banner_avisa_cuando_la_foto_esta_vencida_aunque_no_haya_ninguna_alerta():
+    # La misma trampa que en Auditoría: un banner vacío porque está todo bien
+    # no puede verse igual que un banner vacío porque nadie calculó nada. Si
+    # el cálculo automático se murió, el banner aparece igual y lo dice.
+    vieja = datetime.now(ARGENTINA_TEST) - timedelta(hours=40)
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas(calculada_el=vieja)):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert "salió incompleto" not in respuesta.text
-    assert 'href="/compras/nueva/manual"' in respuesta.text
+    assert "no se actualizaron desde entonces" in respuesta.text
+    assert 'href="/auditoria"' in respuesta.text
+
+
+def test_banner_avisa_cuando_las_alertas_nunca_se_calcularon():
+    with patch("app.main.listar_estado_alertas", return_value=[]):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "las alertas todavía no se calcularon nunca" in respuesta.text
+
+
+def test_banner_muestra_la_alerta_que_no_se_pudo_calcular():
+    # Que una alerta no se haya podido calcular ES la noticia: sale igual,
+    # aunque su último conteo diera cero. Desaparecer en silencio es la peor
+    # falla posible en un sistema de alertas.
+    foto = _foto_alertas()
+    for fila in foto:
+        if fila["codigo"] == "compras_sin_precio":
+            fila["error"] = "no se pudo conectar"
+    with patch("app.main.listar_estado_alertas", return_value=foto):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+    assert "No se pudo calcular: Compras sin precio de compra cargado" in respuesta.text
+
+
+def test_toda_alerta_con_modulo_se_ve_en_la_pantalla_de_ese_modulo():
+    """La garantía que no se negocia: una alerta no puede quedar invisible.
+
+    Recorre los módulos que declara EL REGISTRO —no una lista escrita a mano
+    acá— y entra a la pantalla de cada uno con esa alerta en 1. Si un módulo
+    nuevo se declara y su pantalla no incluye el banner, la alerta existiría
+    en Auditoría y no la vería nunca el que puede resolverla. Este test es lo
+    que lo impide.
+    """
+    from app.main import ALERTAS
+
+    modulos = sorted({modulo for definicion in ALERTAS for modulo in definicion.modulos})
+    assert modulos, "El registro se quedó sin ninguna alerta con módulo"
+
+    for modulo in modulos:
+        definicion = next(d for d in ALERTAS if modulo in d.modulos)
+        foto = _foto_alertas({definicion.codigo: (1, date(2026, 8, 1))})
+        with ExitStack() as pila:
+            pila.enter_context(patch("app.main.listar_estado_alertas", return_value=foto))
+            # Los datos que piden algunas de esas pantallas para poder abrir.
+            pila.enter_context(patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA))
+            pila.enter_context(patch("app.main.obtener_uso_storage_bucket", return_value=None))
+            respuesta = cliente.get(f"/{modulo}")
+
+        assert respuesta.status_code == 200, (
+            f"/{modulo} no abre: o el módulo está mal escrito en la alerta "
+            f"{definicion.codigo}, o su pantalla necesita datos que este test no le da"
+        )
+        assert 'class="banner-avisos"' in respuesta.text, (
+            f"La alerta {definicion.codigo} dice ir a {modulo}, pero /{modulo} "
+            f'no muestra el banner: le falta el include de "_banner_alertas.html"'
+        )
 
 
 def test_ver_compras_muestra_el_aviso_cuando_viene_en_la_url():
     # El aviso del Cancelar de la carga manual: cuántas se cancelaron y
     # cuántas no se pudieron (ya recepcionadas) — no puede perderse por
     # volver al hub en vez de a Buscar.
-    with patch("app.main.contar_compras_sin_precio", return_value=0):
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get(
             "/compras?aviso=3+compras+canceladas.+2+no+se+pudieron+eliminar%3A+ya+fueron+retiradas+o+recepcionadas."
         )
@@ -8128,20 +8174,11 @@ def test_ver_compras_muestra_el_aviso_cuando_viene_en_la_url():
 
 
 def test_ver_compras_sin_aviso_no_muestra_cartel_vacio():
-    with patch("app.main.contar_compras_sin_precio", return_value=0):
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
     assert "canceladas" not in respuesta.text
-
-
-def test_ver_compras_error_al_contar_no_rompe_la_pantalla():
-    with patch("app.main.contar_compras_sin_precio", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/compras")
-
-    assert respuesta.status_code == 200
-    assert "sin precio de compra cargado" not in respuesta.text
-    assert 'href="/compras/nueva/manual"' in respuesta.text
 
 
 def test_ver_logistica_muestra_solo_clark_y_consultar():
@@ -9418,8 +9455,9 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert respuesta.status_code == 200
     # UNA sola consulta para toda la pantalla: ese es el punto del cambio.
     mock_foto.assert_called_once_with()
-    # Las alertas, con sin-precio primera (la más importante).
-    assert respuesta.text.index("Compras sin precio hace") < respuesta.text.index("Mercadería sin retirar hace")
+    # Las alertas, con sin-precio primera (la más importante). Su título ya no
+    # habla de horas: esa alerta no tiene ventana, avisa el mismo día.
+    assert respuesta.text.index("Compras sin precio de compra cargado") < respuesta.text.index("Mercadería sin retirar hace")
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
     assert "Stock de vacíos negativo" in respuesta.text
     assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
@@ -9458,7 +9496,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.alertas.candado_alertas") as candado,
         patch("app.alertas.guardar_estado_alerta"),
-        patch("app.main.contar_compras_sin_precio_viejas", return_value={"casos": 0, "mas_viejo": None}) as sin_precio,
+        patch("app.main.contar_compras_sin_precio", return_value={"casos": 0, "mas_viejo": None}) as sin_precio,
         patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}) as retiros,
         patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as recepciones,
         patch("app.main.contar_articulos_comprados_incotizables", return_value=0) as incotizables,
@@ -9468,7 +9506,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         patch("app.main.contar_stock_deposito_negativo", return_value=0),
         patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_con_renglones_incompletos", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.contar_pedidos_incompletos", return_value={"casos": 0, "mas_viejo": None}) as incompletos,
         patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
@@ -9479,7 +9517,11 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
-    sin_precio.assert_called_once_with(date(2026, 8, 4))
+    # Compras sin precio va SIN ventana: se avisa el mismo día y no deja de
+    # avisar por vieja. Pedidos incompletos SÍ lleva ventana (7 días): un
+    # pedido que ya salió incompleto no se puede completar después.
+    sin_precio.assert_called_once_with()
+    incompletos.assert_called_once_with(date(2026, 7, 30))
     retiros.assert_called_once_with(date(2026, 8, 4))
     recepciones.assert_called_once_with(date(2026, 8, 4))
     incotizables.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA)
@@ -10066,7 +10108,7 @@ def test_ver_objetivo_de_compra_cliente_inexistente_da_404():
 
 
 def test_ver_compras_tiene_el_boton_objetivo_de_compra():
-    with patch("app.main.contar_compras_sin_precio", return_value=0):
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
@@ -10165,7 +10207,7 @@ def test_agregar_envase_con_nombre_repetido_muestra_el_error():
 
 
 def test_ver_comercial_tiene_el_boton_envases():
-    with patch("app.main.contar_compras_sin_precio", return_value=0):
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/comercial")
 
     assert respuesta.status_code == 200

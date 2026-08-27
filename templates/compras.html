@@ -78,51 +78,6 @@
     font-weight: 600;
     text-decoration: none;
   }
-  /* Banner de notificaciones: cinta que corre de derecha a izquierda con
-     todas las novedades una atrás de la otra, en loop. El contenido va
-     DUPLICADO (la segunda copia con aria-hidden) para que el corte del
-     loop no se note. */
-  .banner-avisos {
-    background: #fef9c3;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    overflow: hidden;
-  }
-  .banner-cinta {
-    display: inline-flex;
-    align-items: center;
-    white-space: nowrap;
-    padding: 0.75rem 0;
-    animation: banner-correr linear infinite;
-    will-change: transform;
-  }
-  .banner-cinta a {
-    color: #713f12;
-    font-size: 0.9rem;
-    font-weight: 600;
-    text-decoration: none;
-  }
-  .banner-cinta .separador { color: #713f12; margin: 0 1.25rem; }
-  /* La copia mide EXACTAMENTE igual que la original (también flex, sin
-     espacios fantasma): el -50% del loop cae justo y el corte no salta. */
-  .banner-cinta .copia { display: inline-flex; align-items: center; }
-  @keyframes banner-correr {
-    from { transform: translateX(0); }
-    to { transform: translateX(-50%); }
-  }
-  /* Si el usuario pidió menos movimiento, las notificaciones quedan
-     quietas y apiladas, sin perder ninguna. */
-  @media (prefers-reduced-motion: reduce) {
-    .banner-cinta {
-      animation: none;
-      display: block;
-      white-space: normal;
-      padding: 0.75rem 1rem;
-    }
-    .banner-cinta .copia { display: none; }
-    .banner-cinta a { display: block; }
-    .banner-cinta .separador { display: none; }
-  }
 </style>
 </head>
 <body>
@@ -135,15 +90,7 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
-  {% if notificaciones %}
-  <div class="banner-avisos" role="status">
-    {# La velocidad acompaña al contenido: más notificaciones, más tiempo de vuelta. #}
-    <div class="banner-cinta" style="animation-duration: {{ notificaciones|length * 12 }}s;">
-      {% for n in notificaciones %}<a href="{{ n.url }}">{{ n.texto }}</a><span class="separador">•</span>{% endfor %}
-      <span class="copia" aria-hidden="true">{% for n in notificaciones %}<a href="{{ n.url }}" tabindex="-1">{{ n.texto }}</a><span class="separador">•</span>{% endfor %}</span>
-    </div>
-  </div>
-  {% endif %}
+  {% include "_banner_alertas.html" %}
 
   <div class="tarjeta">
     <h2>Cargar</h2>

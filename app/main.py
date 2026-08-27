@@ -54,8 +54,8 @@ from app.db import (
     contar_ingresos_deposito,
     contar_mails_pedido_leidos_con_ia,
     contar_mails_pedido_sin_procesar,
-    contar_pedidos_con_renglones_incompletos,
     contar_pedidos_con_renglones_sin_identificar,
+    contar_pedidos_incompletos,
     desmarcar_renglon_armado,
     marcar_renglon_armado,
     contar_retiros_buscados,
@@ -69,7 +69,6 @@ from app.db import (
     contar_articulos,
     contar_articulos_comprados_incotizables,
     contar_compras_sin_precio,
-    contar_compras_sin_precio_viejas,
     contar_recepciones_pendientes_viejas,
     contar_retiros_pendientes_viejos,
     contar_senas_pendientes_viejas,
@@ -153,7 +152,6 @@ from app.db import (
     listar_fechas_con_pedido_vigente,
     listar_mails_pedido,
     listar_mails_pedido_sin_procesar_de_cliente,
-    listar_pedidos_incompletos_recientes,
     listar_pedidos_vigentes_con_armado,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
@@ -1456,7 +1454,14 @@ def ver_fichas(request: Request, cliente_id: int | None = None, error: str | Non
     return templates.TemplateResponse(
         request,
         "fichas.html",
-        {"clientes": clientes, "cliente_id": cliente_id, "fichas": fichas, "error": error, "aviso": aviso},
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
+            "fichas": fichas,
+            "error": error,
+            "aviso": aviso,
+            "banner": _banner_alertas("fichas"),
+        },
     )
 
 
@@ -1841,49 +1846,15 @@ def ver_compras(request: Request, aviso: str | None = None):
 
     aviso viene por la URL cuando otra pantalla redirige acá con algo
     para contar (hoy: Cancelar en la carga manual, con cuántas compras se
-    cancelaron y cuántas no se pudieron). Arriba de los botones corre el
-    banner de notificaciones: compras sin precio de compra y pedidos de
-    las últimas 48 horas que salieron con mercadería incompleta. Son
-    avisos, no algo crítico para poder navegar — si una consulta falla,
-    esa notificación no aparece en vez de romper toda la pantalla por
-    algo accesorio.
+    cancelaron y cuántas no se pudieron).
+
+    Arriba de los botones corre el banner con las alertas que le tocan a
+    Compras. NO las calcula: las lee de la foto del registro (ver
+    app/alertas.py). Antes esta pantalla corría sus dos consultas propias,
+    duplicadas con las de Auditoría y ya desincronizadas entre sí.
     """
-    notificaciones = []
-    try:
-        compras_sin_precio = contar_compras_sin_precio()
-    except Exception:
-        compras_sin_precio = 0
-    if compras_sin_precio:
-        plural = "compra" if compras_sin_precio == 1 else "compras"
-        notificaciones.append({
-            "texto": f"Hay {compras_sin_precio} {plural} sin precio de compra cargado",
-            "url": "/compras/pendientes",
-        })
-
-    try:
-        incompletos = listar_pedidos_incompletos_recientes(_hoy_argentina() - timedelta(days=2))
-    except Exception:
-        incompletos = []
-    for pedido in incompletos:
-        partes = []
-        if pedido["renglones_cortos"]:
-            if pedido["renglones_cortos"] == 1:
-                partes.append("1 renglón con menos de lo pedido")
-            else:
-                partes.append(f"{pedido['renglones_cortos']} renglones con menos de lo pedido")
-        if pedido["armado_cerrado_el"] and pedido["renglones_sin_armar"]:
-            if pedido["renglones_sin_armar"] == 1:
-                partes.append("1 sin armar")
-            else:
-                partes.append(f"{pedido['renglones_sin_armar']} sin armar")
-        fecha = pedido["fecha_operacion"].strftime("%d/%m")
-        notificaciones.append({
-            "texto": f"El pedido de {pedido['cliente_nombre']} del {fecha} salió incompleto: {' y '.join(partes)}",
-            "url": "/deposito/pedido",
-        })
-
     return templates.TemplateResponse(
-        request, "compras.html", {"notificaciones": notificaciones, "aviso": aviso}
+        request, "compras.html", {"banner": _banner_alertas("compras"), "aviso": aviso}
     )
 
 
@@ -5138,6 +5109,7 @@ def _renderizar_pantalla_sistema(
             "mensaje": mensaje,
             "uso_storage": uso_storage,
             "cantidad_fotos_para_limpiar": cantidad_fotos_para_limpiar,
+            "banner": _banner_alertas("sistema"),
         },
         status_code=status_code,
     )
@@ -5202,16 +5174,11 @@ def limpiar_fotos_viejas_ruta(request: Request):
 def ver_comercial(request: Request):
     """Hub del área Comercial: junta los accesos a Precios, Clientes y Fichas Logísticas.
 
-    El cartel de "compras sin precio" es un aviso, no algo crítico para
-    poder navegar — si la consulta del conteo falla, se pisa en 0 (sin
-    cartel) en vez de romper toda la pantalla por algo accesorio.
+    El cartel suelto de "compras sin precio" pasó a ser una alerta más del
+    banner: la misma alerta que ve Compras, calculada UNA vez y leída de la
+    foto, en vez de dos consultas distintas que decían cosas distintas.
     """
-    try:
-        compras_sin_precio = contar_compras_sin_precio()
-    except Exception:
-        compras_sin_precio = 0
-
-    return templates.TemplateResponse(request, "comercial.html", {"compras_sin_precio": compras_sin_precio})
+    return templates.TemplateResponse(request, "comercial.html", {"banner": _banner_alertas("comercial")})
 
 
 def _validar_costo_envase(texto: str) -> tuple[str | None, float | None]:
@@ -5317,7 +5284,7 @@ def dar_de_baja_envase(request: Request, envase_id: int):
 @app.get("/logistica")
 def ver_logistica(request: Request):
     """Hub del área Logística: el retiro de Clark (el único que se tilda acá) y el histórico Consultar Retiros."""
-    return templates.TemplateResponse(request, "logistica.html", {})
+    return templates.TemplateResponse(request, "logistica.html", {"banner": _banner_alertas("logistica")})
 
 
 ESTADOS_FILTRO_RETIRO_VALIDOS = {"pendiente", "retirado", "cancelado"}
@@ -5702,7 +5669,9 @@ def deshacer_retiro_compra_ruta(request: Request, tipo_retiro: str, compra_id: i
 @app.get("/deposito")
 def ver_deposito(request: Request, aviso: str | None = None):
     """Hub del área Depósito: Recepción, Retirar e Ingresar Mercadería."""
-    return templates.TemplateResponse(request, "deposito.html", {"aviso": aviso})
+    return templates.TemplateResponse(
+        request, "deposito.html", {"aviso": aviso, "banner": _banner_alertas("deposito")}
+    )
 
 
 AVISO_INGRESO_DIRECTO_SIN_PRECIO = "Ingresada sin precio. El comprador tiene que cargar el costo."
@@ -7532,13 +7501,17 @@ def _url_retiros_viejos(datos) -> str:
 ALERTAS = [
     DefinicionAlerta(
         codigo="compras_sin_precio",
-        titulo="Compras sin precio hace más de 48 horas",
+        titulo="Compras sin precio de compra cargado",
         url="/compras/pendientes",
         texto_link="Ver en Compras sin precio",
-        modulos=("compras",),
-        # "Más de 48 horas" con la granularidad real del dato (fecha_operacion
-        # es una fecha, sin hora): compras de anteayer para atrás.
-        contar=lambda: contar_compras_sin_precio_viejas(_hoy_argentina() - timedelta(days=2)),
+        # También en Comercial: el que factura es el que se come el problema.
+        modulos=("compras", "comercial"),
+        # SIN ventana de tiempo, a propósito: si compré a la mañana y a la
+        # tarde no está el precio, el costeo del día siguiente ya sale mal —
+        # esperar 48 horas es enterarse tarde. Y tampoco desaparece por vieja:
+        # es un agujero hasta que alguien lo tapa. Lo que sí filtra es el
+        # ESTADO: una compra rechazada o cancelada nunca va a tener precio.
+        contar=lambda: contar_compras_sin_precio(),
     ),
     DefinicionAlerta(
         codigo="retiros_sin_hacer",
@@ -7581,8 +7554,11 @@ ALERTAS = [
         # stock inicial/reingreso/sin lote.
         titulo="Guías R con costo incompleto",
         url="/deposito/stock/guias-r",
+        # A los dos: se arregla cargando el precio de una compra que falta
+        # (eso es Compras), pero el que cargó el reproceso es el que puede
+        # avisar cuál falta.
         texto_link="Ver en Guías R",
-        modulos=("deposito",),
+        modulos=("compras", "deposito"),
         contar=lambda: contar_reprocesos_costo_incompleto(),
     ),
     DefinicionAlerta(
@@ -7592,8 +7568,10 @@ ALERTAS = [
         # nunca traba — el galpón ya lo hizo; acá se delata.
         titulo="Primera de reproceso armada para un cliente salió en pedidos de otro",
         url="/deposito/stock/guias-r",
+        # Sin banner a propósito: el cruce YA pasó en el galpón, no hay
+        # nada que hacer con él hoy. Es información para revisar, y para
+        # eso está Auditoría.
         texto_link="Ver el detalle en Guías R",
-        modulos=("deposito",),
         contar=lambda: _contar_cruces_primera_reproceso(),
     ),
     DefinicionAlerta(
@@ -7601,7 +7579,7 @@ ALERTAS = [
         titulo="Artículos comprados sin ficha logística o sin precio de venta (últimos 7 días)",
         url="/fichas",
         texto_link="Ver en Fichas Logísticas",
-        modulos=("fichas", "compras"),
+        modulos=("comercial", "fichas"),
         contar=lambda: contar_articulos_comprados_incotizables(
             _hoy_argentina() - timedelta(days=7), _hoy_argentina()
         ),
@@ -7627,8 +7605,11 @@ ALERTAS = [
         titulo="Pedidos con renglones incompletos (se armó menos de lo pedido)",
         url="/deposito/pedido",
         texto_link="Ver en Pedido",
-        modulos=("deposito", "compras"),
-        contar=lambda: contar_pedidos_con_renglones_incompletos(),
+        modulos=("deposito",),
+        # CON ventana, al revés que las compras sin precio: un pedido que ya
+        # salió incompleto no se puede completar después. Sin ventana quedaría
+        # en la lista para siempre, sin forma de resolverlo ni limpiarlo.
+        contar=lambda: contar_pedidos_incompletos(_hoy_argentina() - timedelta(days=7)),
     ),
     DefinicionAlerta(
         codigo="mails_sin_confirmar",
@@ -7637,7 +7618,9 @@ ALERTAS = [
         titulo="Mails de pedido sin confirmar",
         url="/sistema/casilla-pedidos",
         texto_link="Ver en Casilla de Pedidos",
-        modulos=("sistema", "deposito"),
+        # Solo en Sistema: Depósito ya tiene seis y todas accionables. Un
+        # banner que se llena deja de mirarse.
+        modulos=("sistema",),
         contar=lambda: contar_mails_pedido_sin_procesar(),
     ),
     DefinicionAlerta(
@@ -7685,6 +7668,33 @@ ALERTAS = [
         contar=lambda: _contar_modulos_inexistentes(),
     ),
 ]
+
+
+def _banner_alertas(modulo: str) -> dict:
+    """Lo que necesita el banner de una botonera: las alertas de ese módulo y cuán vieja es la foto.
+
+    UNA sola consulta, siempre: lee la foto del último cálculo y filtra en
+    memoria. Da igual que el registro tenga 15 alertas o 100 — por eso las
+    alertas se guardan en vez de calcularse en vivo (ver app/alertas.py).
+
+    El banner es un aviso, no algo crítico para poder navegar: si la consulta
+    falla, la botonera sale sin banner en vez de romperse entera por algo
+    accesorio. Mismo criterio que tenía el banner viejo de Compras.
+
+    La frescura NO sale de la foto: se compara contra el reloj acá. Si el
+    cálculo automático se murió, el banner lo dice — un banner vacío porque
+    nadie calculó nada no puede verse igual que un banner vacío porque está
+    todo bien.
+    """
+    try:
+        estado = listar_estado_alertas()
+    except Exception:
+        logger.exception("No se pudo leer el estado de las alertas para el banner de %s", modulo)
+        return {"alertas": [], "frescura": None}
+    return {
+        "alertas": para_mostrar(ALERTAS, estado, modulo),
+        "frescura": frescura(estado, datetime.now(ARGENTINA)),
+    }
 
 
 @app.get("/gerencia/auditoria")
@@ -8658,7 +8668,7 @@ def exportar_ingresos_deposito_excel(
 @app.get("/puesto")
 def ver_puesto(request: Request):
     """Hub del módulo Puesto (la venta en el puesto del Mercado, aparte de la distribución)."""
-    return templates.TemplateResponse(request, "puesto.html", {})
+    return templates.TemplateResponse(request, "puesto.html", {"banner": _banner_alertas("puesto")})
 
 
 @app.get("/puesto/envases")

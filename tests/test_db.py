@@ -34,7 +34,7 @@ from app.db import (
     contar_compras_buscadas,
     contar_ingresos_deposito,
     contar_pedidos_con_renglones_sin_identificar,
-    contar_pedidos_con_renglones_incompletos,
+    contar_pedidos_incompletos,
     activar_casilla_pedidos,
     anular_renglon_pedido,
     borrar_dia_sin_pedido,
@@ -77,7 +77,6 @@ from app.db import (
     compra_tiene_precio_bloqueado,
     contar_compras_sin_precio,
     contar_articulos_comprados_incotizables,
-    contar_compras_sin_precio_viejas,
     contar_recepciones_pendientes_viejas,
     contar_senas_pendientes_viejas,
     contar_stock_vacios_negativos,
@@ -715,18 +714,34 @@ def test_listar_compras_sin_precio_excluye_rechazada_no_ingresada_y_retiro_cance
     assert "c.estado_retiro IN ('pendiente', 'retirado')" in consulta
 
 
-def test_contar_compras_sin_precio_mismo_filtro_que_listar_devuelve_el_numero():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(4,)])
+def test_contar_compras_sin_precio_mismo_filtro_que_listar_y_trae_la_mas_vieja():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(4, date(2026, 7, 30))])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = contar_compras_sin_precio()
 
-    assert resultado == 4
+    assert resultado == {"casos": 4, "mas_viejo": date(2026, 7, 30)}
     consulta = cursor.execute.call_args[0][0]
-    assert "SELECT COUNT(*)" in consulta
+    assert "SELECT COUNT(*), MIN(c.fecha_operacion)" in consulta
     assert "c.importe IS NULL" in consulta
     assert "c.estado IN ('pendiente', 'recepcionado')" in consulta
     assert "c.estado_retiro IN ('pendiente', 'retirado')" in consulta
+
+
+def test_contar_compras_sin_precio_no_tiene_ventana_de_tiempo():
+    # SIN ventana a propósito: una compra sin precio se avisa el mismo día y
+    # sigue avisando hasta que se cargue el precio. La versión vieja
+    # (contar_compras_sin_precio_viejas) filtraba por fecha y no por estado:
+    # contaba rechazadas viejas y se perdía las de hoy.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_compras_sin_precio()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "fecha_operacion <=" not in consulta
+    assert "fecha_operacion >=" not in consulta
+    assert cursor.execute.call_args.args[1:] == ()
 
 
 def test_listar_compras_pendientes_recepcion_filtra_por_estado_y_guia():
@@ -1082,20 +1097,6 @@ def test_contar_retiros_buscados_incluye_el_criterio_de_pendiente():
     consulta = cursor.execute.call_args.args[0]
     assert "COUNT(*)" in consulta
     assert "IS DISTINCT FROM 'retirado'" in consulta
-
-
-def test_contar_compras_sin_precio_viejas_cuenta_y_trae_la_mas_vieja():
-    conexion, cursor = _conexion_falsa([(2, date(2026, 7, 30))])
-
-    with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = contar_compras_sin_precio_viejas(date(2026, 8, 4))
-
-    assert resultado == {"casos": 2, "mas_viejo": date(2026, 7, 30)}
-    consulta, parametros = cursor.execute.call_args.args
-    assert "importe IS NULL" in consulta
-    assert "MIN(fecha_operacion)" in consulta
-    assert "fecha_operacion <= %s" in consulta
-    assert parametros == (date(2026, 8, 4),)
 
 
 def test_contar_stock_vacios_negativos_usa_la_misma_cuenta_que_el_stock():
@@ -2640,17 +2641,56 @@ def test_crear_pedido_corregido_traslada_los_tildes_solo_a_renglones_identicos()
     assert parametros_traslado == (52, 50)
 
 
-def test_contar_pedidos_con_renglones_incompletos_solo_armados_por_menos():
+def test_contar_pedidos_incompletos_cuenta_los_armados_por_menos_y_trae_el_mas_viejo():
     conexion, cursor = _conexion_falsa([(1, date(2026, 8, 5))])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        resultado = contar_pedidos_con_renglones_incompletos()
+        resultado = contar_pedidos_incompletos(date(2026, 8, 1))
 
     assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 5)}
-    consulta = cursor.execute.call_args.args[0]
-    assert "r.armado_el IS NOT NULL" in consulta
-    assert "r.cantidad_armada IS NOT NULL AND r.cantidad_armada <> r.cantidad" in consulta
+    consulta, parametros = cursor.execute.call_args.args
+    assert "r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL" in consulta
     assert "p.anulado_el IS NULL" in consulta
+    assert parametros == (date(2026, 8, 1),)
+
+
+def test_contar_pedidos_incompletos_compara_con_menor_no_con_distinto():
+    # El bug que arregla: con "<>" un renglón armado de MAS (18 de 15) caia
+    # bajo un titulo que dice "se armo menos de lo pedido".
+    conexion, cursor = _conexion_falsa([(0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_pedidos_incompletos(date(2026, 8, 1))
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "r.cantidad_armada < r.cantidad" in consulta
+    assert "r.cantidad_armada <> r.cantidad" not in consulta
+
+
+def test_contar_pedidos_incompletos_toma_los_sin_armar_solo_con_el_armado_cerrado():
+    # Un pedido a medio armar todavia no es noticia: recien cuando se apreto
+    # Terminar, lo que quedo sin armar salio faltando.
+    conexion, cursor = _conexion_falsa([(0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_pedidos_incompletos(date(2026, 8, 1))
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "armado_cerrado_el IS NOT NULL AND renglones_sin_armar > 0" in consulta
+    # Solo renglones armables, mismo criterio que los conteos de Armar.
+    assert "r.sucursal IS NOT NULL" in consulta
+    assert "r.articulo_id IS NOT NULL" in consulta
+
+
+def test_contar_pedidos_incompletos_solo_el_pedido_vigente_de_cada_cliente_y_dia():
+    conexion, cursor = _conexion_falsa([(0, None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_pedidos_incompletos(date(2026, 8, 1))
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "DISTINCT ON (p.cliente_id, p.fecha_operacion)" in consulta
+    assert "ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC" in consulta
 
 
 # --- Casilla de pedidos (etapa 3) ---
