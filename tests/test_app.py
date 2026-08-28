@@ -11200,7 +11200,7 @@ def test_ver_pendientes_de_pago_ofrece_los_tres_cierres():
     pendientes = [
         {"id": 5, "cantidad": 12, "creado_en": datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc),
          "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
-         "tipo_nombre": "cajón plástico negro"},
+         "tipo_nombre": "cajón plástico negro", "monto_unitario": 500},
     ]
     with (
         patch("app.main.listar_senas_pendientes", return_value=pendientes),
@@ -11229,15 +11229,15 @@ def test_ver_pendientes_el_historial_distingue_los_tres_cierres():
         {"id": 4, "cantidad": 3, "creado_en": datetime(2026, 8, 18, 10, 0, tzinfo=timezone.utc),
          "cierre": "pagada", "cerrada_el": datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc),
          "cliente_nombre": "Marta", "proveedor_nombre": "Saturno",
-         "tipo_nombre": "torito"},
+         "tipo_nombre": "torito", "monto_unitario": 500},
         {"id": 3, "cantidad": 5, "creado_en": datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc),
          "cierre": "vale", "cerrada_el": datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc),
          "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
-         "tipo_nombre": "torito"},
+         "tipo_nombre": "torito", "monto_unitario": None},
         {"id": 2, "cantidad": 7, "creado_en": datetime(2026, 8, 16, 10, 0, tzinfo=timezone.utc),
          "cierre": "anulada", "cerrada_el": datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
          "cliente_nombre": "Pedro", "proveedor_nombre": "Don Pepe",
-         "tipo_nombre": "cajón madera"},
+         "tipo_nombre": "cajón madera", "monto_unitario": 300},
     ]
     with (
         patch("app.main.listar_senas_pendientes", return_value=[]),
@@ -11927,6 +11927,185 @@ def test_renombrar_proveedor_a_un_nombre_repetido_da_400_con_el_nombre_nunca_500
     assert respuesta.status_code == 400
     assert "Ya existe un proveedor llamado" in respuesta.text
     assert "Gómez" in respuesta.text
+
+
+VALORES_SENA_DE_PRUEBA = [
+    {"tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro", "proveedor_nombre": "Saturno",
+     "monto": 700, "vigente_desde": date(2026, 8, 20), "ultima_vigencia": date(2026, 8, 20)},
+    {"tipo_envase_id": 2, "tipo_nombre": "torito", "proveedor_nombre": "Saturno",
+     "monto": None, "vigente_desde": None, "ultima_vigencia": None},
+]
+
+
+def _pantalla_valores(**extra):
+    """La pantalla de valores con sus dos consultas parcheadas."""
+    parches = {"app.main.listar_valores_sena": VALORES_SENA_DE_PRUEBA,
+               "app.main.listar_historial_valores_sena": []}
+    parches.update(extra)
+    return parches
+
+
+def test_ver_valores_sena_dice_SIN_VALOR_CARGADO_y_nunca_cero():
+    # Un tipo sin valor no vale $0: vale "no sabemos". Un cero en pantalla
+    # se lee como dato real y la cajera pagaría cero.
+    with (
+        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
+        patch("app.main.listar_historial_valores_sena", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/senas")
+
+    assert respuesta.status_code == 200
+    assert "$700" in respuesta.text
+    assert "Sin valor cargado" in respuesta.text
+    # Sin el <style>: "$0" aparece en un comentario del CSS que explica
+    # justamente por qué no hay que mostrarlo.
+    assert "$0" not in respuesta.text.split("</style>")[-1]
+
+
+def test_cargar_valor_sena_de_hoy_guarda_sin_molestar():
+    # Lo normal: la fecha no mueve nada viejo, se guarda de una.
+    with (
+        patch("app.main.contar_senas_afectadas_por_valor", return_value=0),
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/senas/cargar",
+            data={"tipo_envase_id": "1", "monto": "700", "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cargar.assert_called_once_with(1, 700.0, date(2026, 8, 28))
+
+
+def test_una_fecha_retroactiva_AVISA_con_el_numero_y_NO_guarda_todavia():
+    """El aviso es aviso, no traba: muestra el número y deja seguir.
+
+    Cargar tarde lo que rige desde la semana pasada es legítimo. Lo que no
+    puede pasar es que la plata de señas ya recibidas cambie sin que el
+    que lo cargó se entere.
+    """
+    with (
+        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
+        patch("app.main.listar_historial_valores_sena", return_value=[]),
+        patch("app.main.contar_senas_afectadas_por_valor", return_value=3),
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/senas/cargar",
+            data={"tipo_envase_id": "1", "monto": "600", "vigente_desde": "2026-08-10"},
+        )
+
+    assert respuesta.status_code == 200
+    assert "cambia el valor de 3 señas ya recibidas" in respuesta.text
+    # Todavía NO guardó: el aviso va ANTES de tocar la base.
+    mock_cargar.assert_not_called()
+    # Y ofrece seguir: es aviso, no traba.
+    assert "Guardar igual" in respuesta.text
+    assert 'name="confirmado" value="1"' in respuesta.text
+
+
+def test_una_sola_sena_afectada_se_dice_en_singular():
+    with (
+        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
+        patch("app.main.listar_historial_valores_sena", return_value=[]),
+        patch("app.main.contar_senas_afectadas_por_valor", return_value=1),
+        patch("app.main.cargar_valor_sena"),
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/senas/cargar",
+            data={"tipo_envase_id": "1", "monto": "600", "vigente_desde": "2026-08-10"},
+        )
+
+    assert "cambia el valor de 1 seña ya recibida" in respuesta.text
+
+
+def test_confirmada_la_retroactiva_se_guarda_sin_volver_a_preguntar():
+    with (
+        patch("app.main.contar_senas_afectadas_por_valor") as mock_contar,
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/senas/cargar",
+            data={"tipo_envase_id": "1", "monto": "600", "vigente_desde": "2026-08-10",
+                  "confirmado": "1"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cargar.assert_called_once_with(1, 600.0, date(2026, 8, 10))
+    # Ya avisó una vez; no vuelve a contar ni a preguntar.
+    mock_contar.assert_not_called()
+
+
+def test_cargar_valor_sena_rechaza_el_monto_negativo_y_la_fecha_vacia():
+    for datos, esperado in (
+        ({"tipo_envase_id": "1", "monto": "-5", "vigente_desde": "2026-08-28"},
+         "El monto no puede ser negativo."),
+        ({"tipo_envase_id": "1", "monto": "cinco", "vigente_desde": "2026-08-28"},
+         "El monto tiene que ser un número."),
+        ({"tipo_envase_id": "1", "monto": "500", "vigente_desde": ""},
+         "La fecha desde cuándo rige es obligatoria."),
+    ):
+        with (
+            patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
+            patch("app.main.listar_historial_valores_sena", return_value=[]),
+            patch("app.main.cargar_valor_sena") as mock_cargar,
+        ):
+            respuesta = cliente.post("/puesto/envases/senas/cargar", data=datos)
+
+        assert respuesta.status_code == 400
+        assert esperado in respuesta.text
+        mock_cargar.assert_not_called()
+
+
+def test_el_cero_explicito_SI_se_permite():
+    # "Este envase no lleva seña" es un dato, y es distinto de no tener
+    # fila. Por eso el corte es en el negativo, no en el cero.
+    with (
+        patch("app.main.contar_senas_afectadas_por_valor", return_value=0),
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/senas/cargar",
+            data={"tipo_envase_id": "1", "monto": "0", "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cargar.assert_called_once_with(1, 0.0, date(2026, 8, 28))
+
+
+def test_pendientes_muestra_el_monto_en_su_renglon_y_el_total_por_cantidad():
+    pendientes = [
+        {"id": 5, "cantidad": 12, "creado_en": datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Juan Pérez", "proveedor_nombre": "Saturno",
+         "tipo_nombre": "cajón plástico negro", "monto_unitario": 500},
+        {"id": 6, "cantidad": 3, "creado_en": datetime(2026, 8, 19, 11, 0, tzinfo=timezone.utc),
+         "cliente_nombre": "Marta", "proveedor_nombre": "Saturno",
+         "tipo_nombre": "torito", "monto_unitario": None},
+    ]
+    with (
+        patch("app.main.listar_senas_pendientes", return_value=pendientes),
+        patch("app.main.listar_senas_resueltas", return_value=[]),
+    ):
+        respuesta = cliente.get("/puesto/envases/pendientes")
+
+    assert respuesta.status_code == 200
+    # El total grande (500 × 12) y el unitario chico al lado.
+    assert "$6.000" in respuesta.text
+    assert 'class="monto-total"' in respuesta.text
+    assert 'class="monto-unitario"' in respuesta.text
+    # Y el que no tiene valor lo dice con palabras, sin ningún número.
+    assert "Sin valor de seña cargado" in respuesta.text
+    assert "$0" not in respuesta.text.split("</style>")[-1]
+
+
+def test_hub_envases_puesto_tiene_el_valor_de_la_sena():
+    respuesta = cliente.get("/puesto/envases")
+
+    assert respuesta.status_code == 200
+    assert 'href="/puesto/envases/senas"' in respuesta.text
 
 
 def test_hub_envases_puesto_tiene_proveedores_del_puesto():

@@ -21,6 +21,11 @@ from app.db import (
     desactivar_tipo_envase_puesto,
     renombrar_proveedor_puesto,
     renombrar_tipo_envase_puesto,
+    listar_senas_pendientes,
+    listar_senas_resueltas,
+    listar_valores_sena,
+    contar_senas_afectadas_por_valor,
+    cargar_valor_sena,
     listar_ultimos_conteos_vacios,
     obtener_o_crear_cliente_puesto,
     obtener_o_crear_proveedor_puesto,
@@ -2413,6 +2418,117 @@ def test_renombrar_un_proveedor_dado_de_baja_se_niega():
     assert "de baja" in str(error.value)
     assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
     conexion.commit.assert_not_called()
+
+
+def test_las_senas_toman_el_valor_del_dia_QUE_SE_RECIBIERON_no_el_de_hoy():
+    """El ancla es v.creado_en::date, no CURRENT_DATE.
+
+    Lo que se le debe al cliente se fijó cuando dejó los cajones. Si la
+    consulta anclara en hoy, subir el valor de la seña reescribiría de
+    golpe lo que se le debe por todo lo recibido antes.
+    """
+    for funcion in (listar_senas_pendientes, listar_senas_resueltas):
+        conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion()
+
+        consulta = cursor.execute.call_args[0][0]
+        assert "h.vigente_desde <= v.creado_en::date" in consulta
+        assert "CURRENT_DATE" not in consulta
+        assert "ORDER BY h.vigente_desde DESC" in consulta
+
+
+def test_una_sena_sin_valor_cargado_NO_desaparece_del_listado():
+    # LEFT JOIN LATERAL, no CROSS: con CROSS, un tipo sin valor cargado
+    # haría desaparecer la seña de la pantalla y la cajera no se enteraría
+    # de que tiene un pendiente. Sin valor es NULL, no "no existe".
+    for funcion in (listar_senas_pendientes, listar_senas_resueltas):
+        conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion()
+
+        consulta = cursor.execute.call_args[0][0]
+        assert "LEFT JOIN LATERAL" in consulta
+        assert "CROSS JOIN LATERAL" not in consulta
+
+
+def test_el_valor_de_la_sena_se_resuelve_en_UNA_sola_consulta():
+    # El N+1 que había que no hacer: una consulta por seña para buscarle
+    # el valor. El LATERAL lo trae en la misma.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_senas_pendientes()
+
+    assert cursor.execute.call_count == 1
+
+
+def test_listar_valores_sena_devuelve_NULL_para_el_tipo_sin_valor_cargado():
+    # Sin filas es NULL, nunca 0: "no lleva seña" y "todavía no lo
+    # cargamos" son cosas distintas y la pantalla las dice distinto.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_valores_sena()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "LEFT JOIN LATERAL" in consulta
+    # Nada de COALESCE(monto, 0): eso convertiría "sin valor cargado" en un
+    # cero que parece un dato real y la pantalla ya no podría distinguirlos.
+    assert "COALESCE" not in consulta.upper()
+    # Solo tipos vivos, y de proveedor vivo.
+    assert "WHERE t.activo AND p.activo" in consulta
+
+
+def test_cargar_valor_sena_es_append_only_y_la_misma_fecha_pisa_solo_esa_fila():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(True,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        cargar_valor_sena(3, 500, date(2026, 8, 20))
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO senas_valor_historial" in consulta
+    assert "ON CONFLICT (tipo_envase_id, vigente_desde) DO UPDATE SET monto" in consulta
+    assert parametros == (3, 500, date(2026, 8, 20))
+    # Nunca se borra una fila de historial.
+    assert not any("DELETE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_called_once()
+
+
+def test_cargar_valor_sena_a_un_tipo_dado_de_baja_se_niega():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(False,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            cargar_valor_sena(3, 500, date(2026, 8, 20))
+
+    assert "de baja" in str(error.value)
+    assert not any("INSERT" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_el_aviso_retroactivo_cuenta_solo_las_senas_que_de_verdad_cambian():
+    """Las tres condiciones, que son las que hacen que el número no mienta.
+
+    Una seña se cuenta solo si: se recibió en la fecha nueva o después; la
+    fila nueva le gana a la que tiene hoy; y el monto que le queda es
+    distinto del que ya tenía. Sin la tercera, recargar el mismo número
+    avisaría "esto cambia N señas" sin cambiar ninguna.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert contar_senas_afectadas_por_valor(3, 500, date(2026, 8, 10)) == 7
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "v.creado_en::date >= %s" in consulta
+    assert "actual.vigente_desde IS NULL OR actual.vigente_desde <= %s" in consulta
+    assert "actual.monto IS DISTINCT FROM %s" in consulta
+    # Una anulada no es una seña que se le deba a nadie: no se cuenta.
+    assert "v.anulado_el IS NULL" in consulta
+    assert parametros == (3, date(2026, 8, 10), date(2026, 8, 10), 500)
 
 
 def test_cerrar_sena_escribe_la_columna_del_cierre_elegido():

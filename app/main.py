@@ -215,6 +215,10 @@ from app.db import (
     listar_proveedores_puesto,
     listar_senas_pendientes,
     listar_senas_resueltas,
+    listar_valores_sena,
+    listar_historial_valores_sena,
+    contar_senas_afectadas_por_valor,
+    cargar_valor_sena,
     listar_tipos_envase_puesto,
     listar_todas_las_conversiones,
     listar_ultimos_conteos_vacios,
@@ -9372,6 +9376,89 @@ def _renderizar_pantalla_pendientes_pago(request: Request, *, error=None, status
         {"pendientes": pendientes, "resueltas": resueltas, "error": error},
         status_code=status_code,
     )
+
+
+def _renderizar_pantalla_valores_sena(request: Request, *, error=None, aviso=None,
+                                      advertencia=None, pendiente=None, status_code: int = 200):
+    """La pantalla de valores. `advertencia` + `pendiente` son la carga retroactiva esperando confirmación."""
+    try:
+        valores = listar_valores_sena()
+        historiales = {v["tipo_envase_id"]: listar_historial_valores_sena(v["tipo_envase_id"]) for v in valores}
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "vacios_senas.html",
+        {"valores": valores, "historiales": historiales, "hoy": date.today(),
+         "error": error, "aviso": aviso, "advertencia": advertencia, "pendiente": pendiente},
+        status_code=status_code,
+    )
+
+
+@app.get("/puesto/envases/senas")
+def ver_valores_sena(request: Request):
+    """Cuánto vale la seña de cada tipo de cajón, con historial por fecha (cajera)."""
+    return _renderizar_pantalla_valores_sena(request)
+
+
+@app.post("/puesto/envases/senas/cargar")
+def cargar_valor_sena_ruta(request: Request, tipo_envase_id: str = Form(""), monto: str = Form(""),
+                           vigente_desde: str = Form(""), confirmado: str = Form("")):
+    """Carga el valor de la seña de un tipo desde una fecha.
+
+    Si la fecha es vieja y mueve señas ya recibidas, la pantalla AVISA con
+    el número y pide un segundo toque. Avisa, no traba: cargar tarde lo que
+    rige desde la semana pasada es legítimo — lo que no puede pasar es que
+    la plata de señas viejas cambie sin que el que la cargó se entere.
+    """
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/senas", status_code=303)
+
+    try:
+        tipo_id = int(tipo_envase_id)
+    except ValueError:
+        return _renderizar_pantalla_valores_sena(request, error="Elegí un tipo de envase.", status_code=400)
+
+    try:
+        monto_limpio = float(monto.strip().replace(",", "."))
+    except ValueError:
+        return _renderizar_pantalla_valores_sena(request, error="El monto tiene que ser un número.", status_code=400)
+    if monto_limpio < 0:
+        return _renderizar_pantalla_valores_sena(
+            request, error="El monto no puede ser negativo.", status_code=400)
+
+    try:
+        fecha = date.fromisoformat(vigente_desde.strip())
+    except ValueError:
+        return _renderizar_pantalla_valores_sena(
+            request, error="La fecha desde cuándo rige es obligatoria.", status_code=400)
+
+    try:
+        if confirmado != "1":
+            afectadas = contar_senas_afectadas_por_valor(tipo_id, monto_limpio, fecha)
+            if afectadas:
+                return _renderizar_pantalla_valores_sena(
+                    request,
+                    advertencia=(
+                        f"Esto cambia el valor de {afectadas} "
+                        f"{'seña ya recibida' if afectadas == 1 else 'señas ya recibidas'}."
+                    ),
+                    # Los valores ya parseados: la pantalla los muestra
+                    # formateados y los reenvía en los hidden.
+                    pendiente={"tipo_envase_id": tipo_id, "monto": monto_limpio,
+                               "vigente_desde": fecha},
+                    status_code=200,
+                )
+        cargar_valor_sena(tipo_id, monto_limpio, fecha)
+    except ValueError as error:
+        return _renderizar_pantalla_valores_sena(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        return _renderizar_pantalla_valores_sena(
+            request, error=f"No se pudo cargar el valor: {error_db}", status_code=500)
+
+    parametros = urlencode({"aviso": f"Valor cargado: {_formatear_moneda(monto_limpio)} desde el {fecha.strftime('%d/%m/%Y')}."})
+    return RedirectResponse(url=f"/puesto/envases/senas?{parametros}", status_code=303)
 
 
 @app.get("/puesto/envases/pendientes")

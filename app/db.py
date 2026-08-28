@@ -3946,6 +3946,168 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
         conexion.close()
 
 
+# El valor de la seña se resuelve SIEMPRE con este fragmento: por tipo de
+# envase, la fila de mayor vigente_desde que no pase de la fecha de la
+# RECEPCIÓN. Va como LEFT JOIN LATERAL dentro de la consulta que lista las
+# señas, no como una consulta por fila: una sola ida a la base.
+#
+# LEFT, no CROSS: un tipo sin valor cargado tiene que devolver la seña con
+# monto NULL, no desaparecer del listado. NULL no es cero — es "sin valor
+# cargado", y así lo muestran las pantallas.
+VALOR_SENA_VIGENTE = """
+    LEFT JOIN LATERAL (
+        SELECT h.monto, h.vigente_desde
+        FROM senas_valor_historial h
+        WHERE h.tipo_envase_id = v.tipo_envase_id
+          AND h.vigente_desde <= v.creado_en::date
+        ORDER BY h.vigente_desde DESC
+        LIMIT 1
+    ) valor ON true
+"""
+
+
+def listar_valores_sena() -> list[dict]:
+    """Cada tipo de envase activo con el valor de seña que rige HOY, para la pantalla de carga.
+
+    monto en NULL = ese tipo no tiene ningún valor cargado. NO es cero: la
+    pantalla lo dice con palabras ("sin valor cargado"), nunca con un $0
+    que parece un dato real.
+
+    Trae además ultima_vigencia (el vigente_desde más alto que tiene ese
+    tipo, haya empezado a regir o no): es contra ese valor que se compara
+    la fecha nueva para saber si hay que avisar por carga retroactiva.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT t.id AS tipo_envase_id, t.nombre AS tipo_nombre,
+                       p.nombre AS proveedor_nombre,
+                       vigente.monto, vigente.vigente_desde,
+                       (SELECT max(h.vigente_desde) FROM senas_valor_historial h
+                        WHERE h.tipo_envase_id = t.id) AS ultima_vigencia
+                FROM tipos_envase_puesto t
+                JOIN proveedores_puesto p ON p.id = t.proveedor_id
+                LEFT JOIN LATERAL (
+                    SELECT h.monto, h.vigente_desde
+                    FROM senas_valor_historial h
+                    WHERE h.tipo_envase_id = t.id AND h.vigente_desde <= CURRENT_DATE
+                    ORDER BY h.vigente_desde DESC
+                    LIMIT 1
+                ) vigente ON true
+                WHERE t.activo AND p.activo
+                ORDER BY p.nombre, t.nombre
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_historial_valores_sena(tipo_envase_id: int) -> list[dict]:
+    """Todas las filas de valor de un tipo, de la más nueva a la más vieja. Solo lectura: nada se borra ni se corrige."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT monto, vigente_desde, creado_en
+                FROM senas_valor_historial
+                WHERE tipo_envase_id = %s
+                ORDER BY vigente_desde DESC
+                """,
+                (tipo_envase_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def contar_senas_afectadas_por_valor(tipo_envase_id: int, monto, vigente_desde) -> int:
+    """Cuántas señas YA RECIBIDAS cambiarían de valor si se cargara este monto desde esta fecha.
+
+    Sirve para AVISAR antes de guardar, nunca para trabar: cargar una fecha
+    vieja es legítimo (recién ahora se carga lo que rige desde la semana
+    pasada), pero mueve plata que ya se estaba mostrando y el que lo carga
+    tiene que enterarse ANTES, no después.
+
+    Cuenta una seña si se dan las tres:
+      - se recibió en la fecha nueva o después (antes de esa fecha la fila
+        nueva no rige y no la toca);
+      - hoy resuelve a una vigencia igual o anterior a la nueva, o a
+        ninguna — o sea, la fila nueva le va a ganar;
+      - y el monto que le queda es DISTINTO del que tiene hoy. Recargar el
+        mismo número no cambia nada y no tiene sentido avisarlo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*)
+                FROM vacios_recibidos v
+                LEFT JOIN LATERAL (
+                    SELECT h.monto, h.vigente_desde
+                    FROM senas_valor_historial h
+                    WHERE h.tipo_envase_id = v.tipo_envase_id
+                      AND h.vigente_desde <= v.creado_en::date
+                    ORDER BY h.vigente_desde DESC
+                    LIMIT 1
+                ) actual ON true
+                WHERE v.tipo_envase_id = %s
+                  AND v.anulado_el IS NULL
+                  AND v.creado_en::date >= %s
+                  AND (actual.vigente_desde IS NULL OR actual.vigente_desde <= %s)
+                  AND actual.monto IS DISTINCT FROM %s
+                """,
+                (tipo_envase_id, vigente_desde, vigente_desde, monto),
+            )
+            return cursor.fetchone()[0]
+    finally:
+        conexion.close()
+
+
+def cargar_valor_sena(tipo_envase_id: int, monto, vigente_desde) -> None:
+    """Carga el valor de la seña de un tipo de envase desde una fecha. Append-only: NUNCA se borra una fila.
+
+    Lo único que pisa una fila vieja es cargar de nuevo la MISMA fecha, y
+    eso es corregir un número recién puesto, no borrar historia: las demás
+    fechas quedan intactas y las señas ancladas a ellas también.
+
+    El monto va tal cual: cero es un dato válido ("este envase no lleva
+    seña") y es distinto de no tener fila. Lo que la base corta es el
+    negativo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT t.activo AND p.activo FROM tipos_envase_puesto t "
+                           "JOIN proveedores_puesto p ON p.id = t.proveedor_id WHERE t.id = %s",
+                           (tipo_envase_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese tipo de envase no existe.")
+            if not fila[0]:
+                raise ValueError("Ese tipo de envase está dado de baja: no se le carga valor de seña.")
+
+            cursor.execute(
+                """
+                INSERT INTO senas_valor_historial (tipo_envase_id, monto, vigente_desde)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (tipo_envase_id, vigente_desde) DO UPDATE SET monto = EXCLUDED.monto
+                """,
+                (tipo_envase_id, monto, vigente_desde),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def listar_senas_pendientes() -> list[dict]:
     """Entradas vigentes con la seña sin resolver, para la pantalla Pendientes de Pago (cajera). Más viejas primero.
 
@@ -3960,11 +4122,14 @@ def listar_senas_pendientes() -> list[dict]:
                 SELECT v.id, v.cantidad, v.creado_en,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
-                       t.nombre AS tipo_nombre
+                       t.nombre AS tipo_nombre,
+                       valor.monto AS monto_unitario
                 FROM vacios_recibidos v
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores_puesto p ON p.id = v.proveedor_id
-                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
+                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id"""
+                + VALOR_SENA_VIGENTE
+                + """
                 WHERE v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL
                   AND v.anulado_el IS NULL
                 ORDER BY v.creado_en
@@ -3998,11 +4163,14 @@ def listar_senas_resueltas(limite: int = 50) -> list[dict]:
                        COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
-                       t.nombre AS tipo_nombre
+                       t.nombre AS tipo_nombre,
+                       valor.monto AS monto_unitario
                 FROM vacios_recibidos v
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores_puesto p ON p.id = v.proveedor_id
-                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
+                JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id"""
+                + VALOR_SENA_VIGENTE
+                + """
                 WHERE num_nonnulls(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) = 1
                   AND v.anulado_el IS NULL
                 ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC

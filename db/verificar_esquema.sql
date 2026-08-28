@@ -2,17 +2,17 @@
 -- Verificación de esquema entre dos bases (ej. Frutamax vs. Palmala)
 --
 -- CONSULTA 1 (la corta): correrla en el editor SQL de CADA Supabase y
--- comparar las dos salidas. Devuelve UNA fila por tabla viva (13 filas),
+-- comparar las dos salidas. Devuelve UNA fila por tabla viva (14 filas),
 -- con la cantidad de columnas y de constraints y una "firma" (hash) de
 -- cada cosa — compacta a propósito, para poder copiarla entera desde el
--- celular. Si las 13 filas coinciden en las dos bases, los esquemas son
+-- celular. Si las 14 filas coinciden en las dos bases, los esquemas son
 -- idénticos en todo lo que importa y no hay nada más que mirar.
 --
 -- Si alguna fila difiere (distinta firma o distinta cantidad), recién ahí
 -- correr la CONSULTA 2 en las dos bases, cambiando 'compras' por la tabla
 -- que difirió, y comparar el detalle.
 --
--- Solo mira las 13 tablas que el código usa. Las tablas muertas del diseño
+-- Solo mira las 14 tablas que el código usa. Las tablas muertas del diseño
 -- original que quedaron en Frutamax (recepciones, precios_dia, etc.) no
 -- entran en la comparación: en la base nueva no existen a propósito.
 --
@@ -30,7 +30,7 @@ with tablas as (
         'articulos', 'proveedores', 'clientes', 'clientes_parametros_historial',
         'envases', 'envases_costo_historial', 'fichas_logistica', 'guias_compra',
         'compras', 'precios_venta_historial', 'disponibles', 'disponibles_detalle',
-        'aprendizaje_articulos'
+        'aprendizaje_articulos', 'senas_valor_historial'
     ]) as tabla
 ),
 cols as (

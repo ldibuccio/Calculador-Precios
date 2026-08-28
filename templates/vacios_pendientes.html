@@ -35,7 +35,16 @@
   }
   .renglon:first-of-type { border-top: none; padding-top: 0; }
   .cliente { font-weight: 700; font-size: 1rem; margin: 0 0 0.15rem; }
-  .detalle { color: #555; font-size: 0.9rem; margin: 0 0 0.6rem; }
+  .detalle { color: #555; font-size: 0.9rem; margin: 0 0 0.5rem; }
+  /* El monto en su propio renglón, entre el detalle y los botones: es el
+     número que la cajera tiene que leer antes de apretar "Pagó". Total
+     grande, unitario chico al lado. */
+  .monto { margin: 0 0 0.6rem; }
+  .monto-total { font-size: 1.4rem; font-weight: 700; color: #166534; }
+  .monto-unitario { color: #888; font-size: 0.82rem; margin-left: 0.4rem; }
+  /* Sin valor cargado NO es $0: se dice con palabras, nunca con un cero
+     que parece un dato real. */
+  .monto-sin-valor { font-size: 0.95rem; font-style: italic; color: #b45309; }
   .acciones { display: flex; gap: 0.5rem; }
   .acciones form { flex: 1; margin: 0; }
   .acciones button { width: 100%; }
@@ -118,12 +127,20 @@
 
   <div class="tarjeta">
     <h2>Señas pendientes ({{ pendientes|length }})</h2>
-    <p class="ayuda">Cada pendiente se cierra de una de tres formas: se pagó, se hizo vale, o se anuló (no se paga). Queda registrado cuál fue y cuándo. Anular la seña no toca los cajones del stock.</p>
+    <p class="ayuda">Cada pendiente se cierra de una de tres formas: se pagó, se hizo vale, o se anuló (no se paga). Queda registrado cuál fue y cuándo. Anular la seña no toca los cajones del stock. El monto sale del valor que regía el día que se recibieron los cajones; si el tipo no tiene valor cargado, lo dice y no muestra ningún número.</p>
     {% if pendientes %}
       {% for p in pendientes %}
       <div class="renglon">
         <p class="cliente">{{ p.cliente_nombre }}</p>
         <p class="detalle">{{ p.cantidad }} × {{ p.tipo_nombre }} de {{ p.proveedor_nombre }} — trajo el {{ p.creado_en|fecha_hora }}</p>
+
+        <p class="monto">
+          {% if p.monto_unitario is none %}
+          <span class="monto-sin-valor">Sin valor de seña cargado</span>
+          {% else %}
+          <span class="monto-total">{{ (p.monto_unitario * p.cantidad)|moneda }}</span><span class="monto-unitario">{{ p.monto_unitario|moneda }} × {{ p.cantidad }}</span>
+          {% endif %}
+        </p>
 
         <div class="acciones" id="acciones-{{ p.id }}">
           <button type="button" class="boton-pagar" onclick="mostrarConfirmacion('{{ p.id }}', 'pagar')">Pagó la seña</button>
@@ -171,6 +188,7 @@
           {% elif r.cierre == "vale" %}<span class="etiqueta-cierre cierre-vale">Vale</span>
           {% else %}<span class="etiqueta-cierre cierre-anulada">Anulada</span>{% endif %}
           {{ r.cliente_nombre }} — {{ r.cantidad }} × {{ r.tipo_nombre }} de {{ r.proveedor_nombre }}
+          {% if r.monto_unitario is not none %}· <strong>{{ (r.monto_unitario * r.cantidad)|moneda }}</strong>{% endif %}
           <span class="fecha-cierre">· {{ r.cerrada_el|fecha_hora }}</span>
         </div>
         {% endfor %}
