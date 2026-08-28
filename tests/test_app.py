@@ -11964,6 +11964,33 @@ def _pantalla_valores(**extra):
     return parches
 
 
+def test_el_historial_tacha_el_valor_corregido_el_mismo_dia():
+    """Dos filas del mismo día: la que rige y la que quedó atrás.
+
+    Antes esto no podía pasar (el UNIQUE obligaba a pisar). Ahora pasa, y
+    mostrar dos montos para el mismo día sin decir cuál ganó sería peor
+    que no mostrar nada.
+    """
+    historial = [
+        {"monto": 700, "vigente_desde": date(2026, 8, 20), "creado_en": None, "reemplazada": False},
+        {"monto": 7000, "vigente_desde": date(2026, 8, 20), "creado_en": None, "reemplazada": True},
+    ]
+    with (
+        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
+        patch("app.main.listar_historial_valores_sena", return_value=historial),
+    ):
+        respuesta = cliente.get("/puesto/envases/senas")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # El que quedó atrás sigue a la vista, tachado y marcado.
+    assert "$7.000" in cuerpo
+    assert 'class="historial-fila reemplazada"' in cuerpo
+    assert "reemplazado" in cuerpo
+    # Y el que rige NO está marcado.
+    assert 'class="historial-fila"' in cuerpo
+
+
 def test_ver_valores_sena_dice_SIN_VALOR_CARGADO_y_nunca_cero():
     # Un tipo sin valor no vale $0: vale "no sabemos". Un cero en pantalla
     # se lee como dato real y la cajera pagaría cero.

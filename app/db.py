@@ -3954,13 +3954,21 @@ def listar_ultimos_conteos_vacios() -> list[dict]:
 # LEFT, no CROSS: un tipo sin valor cargado tiene que devolver la seña con
 # monto NULL, no desaparecer del listado. NULL no es cero — es "sin valor
 # cargado", y así lo muestran las pantallas.
+#
+# EL SEGUNDO CRITERIO DE ORDEN NO ES DECORACIÓN. Desde que la tabla no
+# tiene UNIQUE por fecha, una misma fecha puede tener varias filas (así se
+# corrige un tipeo del mismo día sin perder el número anterior). Ordenando
+# solo por vigente_desde, con dos filas de esa fecha la base devuelve
+# cualquiera de las dos — o sea, a veces el monto viejo. creado_en DESC es
+# lo que hace ganar a la última cargada. El índice
+# senas_valor_historial_vigente_idx está hecho para este ORDER BY.
 VALOR_SENA_VIGENTE = """
     LEFT JOIN LATERAL (
         SELECT h.monto, h.vigente_desde
         FROM senas_valor_historial h
         WHERE h.tipo_envase_id = v.tipo_envase_id
           AND h.vigente_desde <= v.creado_en::date
-        ORDER BY h.vigente_desde DESC
+        ORDER BY h.vigente_desde DESC, h.creado_en DESC
         LIMIT 1
     ) valor ON true
 """
@@ -3993,7 +4001,7 @@ def listar_valores_sena() -> list[dict]:
                     SELECT h.monto, h.vigente_desde
                     FROM senas_valor_historial h
                     WHERE h.tipo_envase_id = t.id AND h.vigente_desde <= CURRENT_DATE
-                    ORDER BY h.vigente_desde DESC
+                    ORDER BY h.vigente_desde DESC, h.creado_en DESC
                     LIMIT 1
                 ) vigente ON true
                 WHERE t.activo AND p.activo
@@ -4008,16 +4016,26 @@ def listar_valores_sena() -> list[dict]:
 
 
 def listar_historial_valores_sena(tipo_envase_id: int) -> list[dict]:
-    """Todas las filas de valor de un tipo, de la más nueva a la más vieja. Solo lectura: nada se borra ni se corrige."""
+    """Todas las filas de valor de un tipo, de la más nueva a la más vieja. Solo lectura: nada se borra ni se corrige.
+
+    Una misma fecha puede tener varias filas (una corrección del mismo
+    día). Trae `reemplazada` en las que ya no rigen: sin eso el historial
+    mostraría dos montos para el mismo día sin decir cuál ganó, que es
+    peor que no mostrar nada.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT monto, vigente_desde, creado_en
+                SELECT monto, vigente_desde, creado_en,
+                       -- La que rige de esa fecha es la última cargada;
+                       -- las anteriores de la misma fecha quedan a la
+                       -- vista, marcadas.
+                       creado_en < max(creado_en) OVER (PARTITION BY vigente_desde) AS reemplazada
                 FROM senas_valor_historial
                 WHERE tipo_envase_id = %s
-                ORDER BY vigente_desde DESC
+                ORDER BY vigente_desde DESC, creado_en DESC
                 """,
                 (tipo_envase_id,),
             )
@@ -4056,7 +4074,7 @@ def contar_senas_afectadas_por_valor(tipo_envase_id: int, monto, vigente_desde) 
                     FROM senas_valor_historial h
                     WHERE h.tipo_envase_id = v.tipo_envase_id
                       AND h.vigente_desde <= v.creado_en::date
-                    ORDER BY h.vigente_desde DESC
+                    ORDER BY h.vigente_desde DESC, h.creado_en DESC
                     LIMIT 1
                 ) actual ON true
                 WHERE v.tipo_envase_id = %s
@@ -4073,11 +4091,17 @@ def contar_senas_afectadas_por_valor(tipo_envase_id: int, monto, vigente_desde) 
 
 
 def cargar_valor_sena(tipo_envase_id: int, monto, vigente_desde) -> None:
-    """Carga el valor de la seña de un tipo de envase desde una fecha. Append-only: NUNCA se borra una fila.
+    """Carga el valor de la seña de un tipo de envase desde una fecha. SIEMPRE agrega una fila; nunca pisa ni borra.
 
-    Lo único que pisa una fila vieja es cargar de nuevo la MISMA fecha, y
-    eso es corregir un número recién puesto, no borrar historia: las demás
-    fechas quedan intactas y las señas ancladas a ellas también.
+    Append-only de verdad, no de nombre: cargar de nuevo una fecha ya
+    cargada NO actualiza la fila existente, agrega otra. Gana la de
+    creado_en más alto y la anterior queda visible en el historial,
+    marcada como reemplazada.
+
+    Eso es lo que permite corregir un tipeo del MISMO día. Si en vez de
+    esto la fecha repetida se rechazara, un 7000 cargado hoy en lugar de
+    700 no tendría arreglo: las señas que se reciban hoy quedan ancladas a
+    hoy, y una corrección fechada mañana no las alcanza.
 
     El monto va tal cual: cero es un dato válido ("este envase no lleva
     seña") y es distinto de no tener fila. Lo que la base corta es el
@@ -4099,7 +4123,6 @@ def cargar_valor_sena(tipo_envase_id: int, monto, vigente_desde) -> None:
                 """
                 INSERT INTO senas_valor_historial (tipo_envase_id, monto, vigente_desde)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (tipo_envase_id, vigente_desde) DO UPDATE SET monto = EXCLUDED.monto
                 """,
                 (tipo_envase_id, monto, vigente_desde),
             )

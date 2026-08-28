@@ -402,13 +402,19 @@ create table senas_valor_historial (
     tipo_envase_id  bigint not null references tipos_envase_puesto (id),
     monto           numeric not null check (monto >= 0),
     vigente_desde   date not null,
-    creado_en       timestamptz not null default now(),
-    unique (tipo_envase_id, vigente_desde)
+    creado_en       timestamptz not null default now()
 );
 
-comment on table senas_valor_historial is 'Valor de la seña de cada tipo de envase del puesto, con historial por fecha de vigencia. Append-only: nunca se borra ni se corrige una fila vieja; cargar de nuevo la misma fecha es lo único que la pisa. Un tipo sin filas no vale 0: no tiene valor cargado.';
+-- SIN unique por (tipo_envase_id, vigente_desde), a diferencia de
+-- envases_costo_historial: acá una misma fecha puede tener varias filas.
+-- Es lo que permite corregir un tipeo del mismo día sin perder el número
+-- anterior. Gana la de creado_en más alto; este índice sirve ese orden.
+create index senas_valor_historial_vigente_idx
+    on senas_valor_historial (tipo_envase_id, vigente_desde desc, creado_en desc);
+
+comment on table senas_valor_historial is 'Valor de la seña de cada tipo de envase del puesto, con historial por fecha de vigencia. Append-only de verdad: nada se borra ni se pisa. Cargar de nuevo una fecha ya cargada agrega otra fila; gana la de creado_en más alto y la anterior queda visible en el historial. Un tipo sin filas no vale 0: no tiene valor cargado.';
 comment on column senas_valor_historial.monto is 'Cuánto se le seña al cliente por CADA cajón de este tipo. El total de una recepción es monto * cantidad. Cero explícito es un dato: "este envase no lleva seña", distinto de no tener fila.';
-comment on column senas_valor_historial.vigente_desde is 'Desde qué día rige este monto. Se resuelve con el valor de mayor vigente_desde que sea <= la fecha de la RECEPCIÓN (vacios_recibidos.creado_en::date), no la fecha del pago.';
+comment on column senas_valor_historial.vigente_desde is 'Desde qué día rige este monto. Se resuelve por (vigente_desde DESC, creado_en DESC) contra la fecha de la RECEPCIÓN (vacios_recibidos.creado_en::date), no la fecha del pago: la fila de mayor vigencia que no pase de ese día y, entre las de esa misma fecha, la última cargada.';
 
 create table clientes_puesto (
     id                 bigint generated always as identity primary key,

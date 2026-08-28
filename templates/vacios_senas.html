@@ -121,6 +121,20 @@
     font-size: 0.85rem;
     color: #555;
   }
+  /* El valor que se corrigió el mismo día no se borra: queda tachado, con
+     su marca. Se ve que estuvo y se ve que ya no rige. */
+  .historial-fila.reemplazada { color: #aaa; text-decoration: line-through; }
+  .historial-fila .marca {
+    text-decoration: none;
+    display: inline-block;
+    margin-left: 0.3rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #6b7280;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
   .vacio { color: #888; font-style: italic; margin: 0; }
   .volver {
     display: block;
@@ -174,7 +188,7 @@
 
   <div class="tarjeta">
     <h2>Cargar valor</h2>
-    <p class="ayuda">El valor rige desde el día que elijas y se le aplica a las señas por la fecha en que se RECIBIERON los cajones, no por la fecha en que se pagan. Cargar de nuevo la misma fecha corrige ese número; las otras fechas no se tocan.</p>
+    <p class="ayuda">El valor rige desde el día que elijas y se le aplica a las señas por la fecha en que se RECIBIERON los cajones, no por la fecha en que se pagan. Si te equivocaste, cargá de nuevo la misma fecha: vale el último y el anterior queda tachado en el historial. Nada se borra.</p>
     <form class="alta" method="post" action="/puesto/envases/senas/cargar">
       <label for="tipo_envase_id">Tipo de envase *</label>
       <select id="tipo_envase_id" name="tipo_envase_id" required>
@@ -207,11 +221,17 @@
         {% endif %}
 
         {% if historiales[v.tipo_envase_id]|length > 1
-              or (historiales[v.tipo_envase_id] and v.monto is none) %}
+              or (historiales[v.tipo_envase_id] and v.monto is none) %}{# más de una fila siempre vale abrirla: puede ser otra fecha o una corrección #}
         <details class="historial">
           <summary>Historial ({{ historiales[v.tipo_envase_id]|length }})</summary>
           {% for h in historiales[v.tipo_envase_id] %}
-          <div class="historial-fila">{{ h.monto|moneda }} desde el {{ h.vigente_desde|fecha_corta }}</div>
+          {# Dos filas de la misma fecha = una corrección del mismo día.
+             Sin marcar cuál ganó, el historial muestra dos montos
+             contradictorios para el mismo día. #}
+          <div class="historial-fila{% if h.reemplazada %} reemplazada{% endif %}">
+            {{ h.monto|moneda }} desde el {{ h.vigente_desde|fecha_corta }}
+            {%- if h.reemplazada %} <span class="marca">reemplazado</span>{% endif %}
+          </div>
           {% endfor %}
         </details>
         {% endif %}

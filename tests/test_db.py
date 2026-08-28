@@ -24,6 +24,7 @@ from app.db import (
     listar_senas_pendientes,
     listar_senas_resueltas,
     listar_valores_sena,
+    listar_historial_valores_sena,
     contar_senas_afectadas_por_valor,
     cargar_valor_sena,
     listar_ultimos_conteos_vacios,
@@ -2439,6 +2440,45 @@ def test_las_senas_toman_el_valor_del_dia_QUE_SE_RECIBIERON_no_el_de_hoy():
         assert "ORDER BY h.vigente_desde DESC" in consulta
 
 
+def test_TODAS_las_consultas_desempatan_por_creado_en_dentro_de_la_misma_fecha():
+    """Sin UNIQUE por fecha, una fecha puede tener varias filas.
+
+    Ordenando solo por vigente_desde, con dos filas de esa fecha la base
+    devuelve cualquiera de las dos — a veces el monto viejo, sin nada que
+    lo delate. creado_en DESC es lo que hace ganar a la última cargada, y
+    tiene que estar en las CUATRO consultas que resuelven vigencia, no en
+    la que uno se acordó.
+    """
+    for funcion, argumentos in (
+        (listar_senas_pendientes, ()),
+        (listar_senas_resueltas, ()),
+        (listar_valores_sena, ()),
+        (contar_senas_afectadas_por_valor, (3, 500, date(2026, 8, 10))),
+    ):
+        conexion, cursor = _conexion_falsa(filas_fetchall=[], filas_fetchone=[(0,)])
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion(*argumentos)
+
+        consulta = cursor.execute.call_args[0][0]
+        assert "vigente_desde DESC, h.creado_en DESC" in consulta.replace("h.vigente_desde", "vigente_desde"), \
+            f"{funcion.__name__} resuelve la vigencia sin desempatar por creado_en"
+
+
+def test_el_historial_marca_cual_fila_de_la_misma_fecha_quedo_reemplazada():
+    # Dos montos para el mismo día sin decir cuál ganó es peor que no
+    # mostrar nada.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_historial_valores_sena(3)
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "max(creado_en) OVER (PARTITION BY vigente_desde)" in consulta
+    assert "AS reemplazada" in consulta
+    assert "ORDER BY vigente_desde DESC, creado_en DESC" in consulta
+
+
 def test_una_sena_sin_valor_cargado_NO_desaparece_del_listado():
     # LEFT JOIN LATERAL, no CROSS: con CROSS, un tipo sin valor cargado
     # haría desaparecer la seña de la pantalla y la cajera no se enteraría
@@ -2482,7 +2522,14 @@ def test_listar_valores_sena_devuelve_NULL_para_el_tipo_sin_valor_cargado():
     assert "WHERE t.activo AND p.activo" in consulta
 
 
-def test_cargar_valor_sena_es_append_only_y_la_misma_fecha_pisa_solo_esa_fila():
+def test_cargar_valor_sena_SIEMPRE_agrega_una_fila_y_nunca_pisa_la_anterior():
+    """Append-only de verdad, no de nombre.
+
+    Con ON CONFLICT DO UPDATE, recargar una fecha ya cargada pisaba el
+    monto anterior y el número viejo se perdía sin rastro. Ese UPDATE es
+    lo que se sacó: ahora la fecha repetida agrega otra fila y gana por
+    creado_en.
+    """
     conexion, cursor = _conexion_falsa(filas_fetchone=[(True,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -2490,9 +2537,10 @@ def test_cargar_valor_sena_es_append_only_y_la_misma_fecha_pisa_solo_esa_fila():
 
     consulta, parametros = cursor.execute.call_args.args
     assert "INSERT INTO senas_valor_historial" in consulta
-    assert "ON CONFLICT (tipo_envase_id, vigente_desde) DO UPDATE SET monto" in consulta
     assert parametros == (3, 500, date(2026, 8, 20))
-    # Nunca se borra una fila de historial.
+    # Nada que pise ni borre una fila que ya está.
+    assert "ON CONFLICT" not in consulta
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
     assert not any("DELETE" in c.args[0] for c in cursor.execute.call_args_list)
     conexion.commit.assert_called_once()
 
