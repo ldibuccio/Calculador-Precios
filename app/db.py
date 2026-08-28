@@ -3356,8 +3356,13 @@ def listar_tipos_envase_puesto() -> list[dict]:
         conexion.close()
 
 
-def crear_tipo_envase_puesto(proveedor_id: int, nombre: str) -> None:
-    """Alta de un tipo de cajón para un proveedor. Si existía dado de baja, lo reactiva (mismo nombre)."""
+def crear_tipo_envase_puesto(proveedor_id: int, nombre: str) -> int:
+    """Alta de un tipo de cajón para un proveedor. Si existía dado de baja, lo reactiva (mismo nombre).
+
+    Devuelve el id, sirva para el alta nueva o para la reactivación: el
+    alta puede venir con el valor de la seña en el mismo formulario, y sin
+    el id no hay a qué colgársela.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -3366,10 +3371,13 @@ def crear_tipo_envase_puesto(proveedor_id: int, nombre: str) -> None:
                 INSERT INTO tipos_envase_puesto (proveedor_id, nombre)
                 VALUES (%s, %s)
                 ON CONFLICT (proveedor_id, nombre) DO UPDATE SET activo = true
+                RETURNING id
                 """,
                 (proveedor_id, nombre),
             )
+            tipo_id = cursor.fetchone()[0]
         conexion.commit()
+        return tipo_id
     finally:
         conexion.close()
 
@@ -4013,6 +4021,47 @@ def listar_valores_sena() -> list[dict]:
         return [dict(zip(columnas, fila)) for fila in filas]
     finally:
         conexion.close()
+
+
+def listar_historiales_valores_sena(tipo_envase_ids) -> dict:
+    """El historial de valores de VARIOS tipos, en una sola consulta.
+
+    La pantalla de Tipos de Envase lista todos los tipos con su historial
+    plegado: pedirlo tipo por tipo es un N+1 que crece con el catálogo.
+
+    Devuelve {tipo_envase_id: [filas]}, con lista vacía para los que no
+    tienen ninguna — el que pregunta no tiene que andar con .get().
+    """
+    if not tipo_envase_ids:
+        return {}
+    ids = list(tipo_envase_ids)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT tipo_envase_id, monto, vigente_desde, creado_en,
+                       -- La que rige de esa fecha es la última cargada; las
+                       -- anteriores de la misma fecha quedan a la vista,
+                       -- marcadas. PARTITION por tipo Y fecha: sin el tipo,
+                       -- la fecha de un tipo pisaría la de otro.
+                       creado_en < max(creado_en) OVER (PARTITION BY tipo_envase_id, vigente_desde)
+                           AS reemplazada
+                FROM senas_valor_historial
+                WHERE tipo_envase_id = ANY(%s)
+                ORDER BY tipo_envase_id, vigente_desde DESC, creado_en DESC
+                """,
+                (ids,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+    historiales = {tipo_id: [] for tipo_id in ids}
+    for fila in filas:
+        historiales[fila.pop("tipo_envase_id")].append(fila)
+    return historiales
 
 
 def listar_historial_valores_sena(tipo_envase_id: int) -> list[dict]:

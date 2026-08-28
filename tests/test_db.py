@@ -25,6 +25,7 @@ from app.db import (
     listar_senas_resueltas,
     listar_valores_sena,
     listar_historial_valores_sena,
+    listar_historiales_valores_sena,
     contar_senas_afectadas_por_valor,
     cargar_valor_sena,
     listar_ultimos_conteos_vacios,
@@ -2463,6 +2464,42 @@ def test_TODAS_las_consultas_desempatan_por_creado_en_dentro_de_la_misma_fecha()
         consulta = cursor.execute.call_args[0][0]
         assert "vigente_desde DESC, h.creado_en DESC" in consulta.replace("h.vigente_desde", "vigente_desde"), \
             f"{funcion.__name__} resuelve la vigencia sin desempatar por creado_en"
+
+
+def test_los_historiales_de_todos_los_tipos_salen_en_UNA_consulta():
+    # La pantalla de Tipos lista todos los tipos con su historial: pedirlo
+    # tipo por tipo es un N+1 que crece con el catálogo.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_historiales_valores_sena([1, 2, 3])
+
+    assert cursor.execute.call_count == 1
+    consulta, parametros = cursor.execute.call_args.args
+    assert "tipo_envase_id = ANY(%s)" in consulta
+    assert parametros == ([1, 2, 3],)
+    # Los que no tienen ninguna fila vienen con lista vacía, no ausentes:
+    # el que pregunta no tiene que andar con .get().
+    assert resultado == {1: [], 2: [], 3: []}
+
+
+def test_el_historial_batcheado_particiona_por_TIPO_y_fecha():
+    # Sin el tipo en el PARTITION, la fecha de un tipo pisaría la de otro
+    # y marcaría como reemplazadas filas que sí rigen.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_historiales_valores_sena([1, 2])
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "PARTITION BY tipo_envase_id, vigente_desde" in consulta
+    assert "ORDER BY tipo_envase_id, vigente_desde DESC, creado_en DESC" in consulta
+
+
+def test_sin_tipos_el_batch_no_va_a_la_base():
+    with patch("app.db.obtener_conexion") as mock_conexion:
+        assert listar_historiales_valores_sena([]) == {}
+    mock_conexion.assert_not_called()
 
 
 def test_el_historial_marca_cual_fila_de_la_misma_fecha_quedo_reemplazada():

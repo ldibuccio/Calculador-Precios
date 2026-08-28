@@ -102,7 +102,7 @@
     font-weight: 700;
     cursor: pointer;
   }
-  .boton-guardar { background: #16a34a; color: #fff; }
+  button.boton-guardar { background: #16a34a; color: #fff; }
   .boton-cancelar { background: #e5e7eb; color: #374151; }
   .boton-editar {
     padding: 0.8rem 0.85rem;
@@ -115,6 +115,86 @@
     cursor: pointer;
     white-space: nowrap;
   }
+  /* La seña vigente, que es el dato que se mira de un vistazo: número
+     grande y al lado chiquito desde cuándo rige. */
+  .sena { margin: 0.35rem 0 0; }
+  .sena-monto { font-size: 1.3rem; font-weight: 700; color: #166534; }
+  .sena-desde { color: #888; font-size: 0.8rem; margin-left: 0.35rem; }
+  /* Sin valor cargado NO es $0: se dice con palabras. Un cero ahí se lee
+     como dato real y se paga. */
+  .sena-sin-valor { font-size: 0.95rem; font-style: italic; color: #b45309; }
+  /* Los botones bajan a su propia fila: con nombre, proveedor y seña
+     arriba, en 390px no entran al costado. */
+  .acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+  .campo-sena { margin-top: 0.75rem; }
+  .campo-sena label {
+    display: block;
+    font-size: 0.85rem;
+    color: #444;
+    margin-bottom: 0.2rem;
+  }
+  .editar .separador {
+    border: none;
+    border-top: 1px dashed #ddd;
+    margin: 0.9rem 0 0;
+  }
+  .historial { margin-top: 0.6rem; }
+  .historial summary { cursor: pointer; font-size: 0.85rem; color: #666; padding: 0.3rem 0; }
+  .historial-fila {
+    padding: 0.4rem 0;
+    border-top: 1px solid #f0f0f0;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  /* El valor corregido el mismo día no se borra: queda tachado, con su
+     marca. Se ve que estuvo y se ve que ya no rige. */
+  .historial-fila.reemplazada { color: #aaa; text-decoration: line-through; }
+  .historial-fila .marca {
+    text-decoration: none;
+    display: inline-block;
+    margin-left: 0.3rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: #f3f4f6;
+    color: #6b7280;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  /* La carga retroactiva AVISA, no traba: amarillo (mirá esto), no rojo
+     (esto está mal). El botón de seguir queda a mano. */
+  .advertencia {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 0.9rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .advertencia p { margin: 0 0 0.75rem; font-weight: 700; }
+  .advertencia .que-se-guarda {
+    font-weight: 400;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
+    padding: 0.5rem 0.7rem;
+    margin: 0 0 0.75rem;
+  }
+  .advertencia .aclaracion { font-weight: 400; margin-bottom: 0.9rem; }
+  .advertencia-botones { display: flex; gap: 0.5rem; }
+  .advertencia-botones form { flex: 1; margin: 0; }
+  .advertencia-botones button, .advertencia-botones .boton-no {
+    width: 100%;
+    padding: 0.8rem;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    box-sizing: border-box;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+  }
+  button.boton-igual { background: #b45309; color: #fff; border: none; }
+  .boton-no { background: #fff; color: #444; border: 1px solid #ccc; flex: 1; }
   button.boton-baja {
     padding: 0.8rem 0.85rem;
     background: #fff;
@@ -152,9 +232,32 @@
   <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
+  {% if advertencia %}
+  <div class="advertencia">
+    <p>{{ advertencia }}</p>
+    {# Qué se está por guardar, escrito: sin esto, "mirá que sea lo que
+       querías" no le da nada para mirar. #}
+    <p class="que-se-guarda">
+      {{ pendiente.nombre }}: <strong>{{ pendiente.monto|moneda }} por cajón</strong>
+      desde el {{ pendiente.vigente_desde.strftime('%d/%m/%Y') }}
+    </p>
+    <p class="aclaracion">La fecha que elegiste es anterior a un valor que ya estaba cargado, así que el nuevo pasa a regir para señas que ya se habían recibido. Es válido hacerlo — solo mirá que sea lo que querías.</p>
+    <div class="advertencia-botones">
+      <form method="post" action="/puesto/envases/tipos/{{ pendiente.tipo_envase_id }}/editar">
+        <input type="hidden" name="nombre" value="{{ pendiente.nombre }}">
+        <input type="hidden" name="monto" value="{{ pendiente.monto }}">
+        <input type="hidden" name="vigente_desde" value="{{ pendiente.vigente_desde.isoformat() }}">
+        <input type="hidden" name="confirmado" value="1">
+        <button type="submit" class="boton-igual">Guardar igual</button>
+      </form>
+      <a class="boton-no" href="/puesto/envases/tipos">No, volver</a>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="tarjeta">
     <h2>Cargar tipo de envase</h2>
-    <p class="ayuda">Un proveedor sin tipos cargados no aparece en Recibir ni en Devolver: cargarle su primer tipo acá es lo que lo habilita para Vacíos. Si el proveedor todavía no existe, cargalo primero en Proveedores del Puesto.</p>
+    <p class="ayuda">Un proveedor sin tipos cargados no aparece en Recibir ni en Devolver: cargarle su primer tipo acá es lo que lo habilita para Vacíos. Si el proveedor todavía no existe, cargalo primero en Proveedores del Puesto. La seña se puede dejar para después.</p>
     <form method="post" action="/puesto/envases/tipos/nuevo">
       <label for="proveedor_id">Proveedor *</label>
       <select id="proveedor_id" name="proveedor_id" required>
@@ -166,21 +269,44 @@
       <label for="nombre">Nombre del tipo *</label>
       <input type="text" id="nombre" name="nombre" required placeholder="Ej: cajón plástico negro">
 
+      {# La seña va OPCIONAL: si fuera obligatoria, el día que no se sepa
+         cuánto vale van a inventar un número, y un número inventado es
+         peor que "sin valor cargado" — se paga. #}
+      <label for="monto">Seña por cajón (opcional)</label>
+      <input type="number" id="monto" name="monto" step="0.01" min="0"
+             placeholder="Dejalo vacío si todavía no se sabe">
+
+      <label for="vigente_desde">La seña rige desde</label>
+      <input type="date" id="vigente_desde" name="vigente_desde" value="{{ hoy.isoformat() }}">
+
       <button type="submit">Cargar</button>
     </form>
   </div>
 
   <div class="tarjeta">
     <h2>Tipos cargados</h2>
-    <p class="ayuda">Editar corrige el nombre mal escrito: sigue siendo el mismo tipo y sus movimientos no se mueven. Dar de baja lo saca de Recibir y Devolver; lo cargado queda.</p>
+    <p class="ayuda">Editar corrige el nombre y carga la seña. La seña vale por la fecha en que se RECIBIERON los cajones, no por la fecha en que se pagan, y el valor anterior no se borra: queda tachado en el historial.</p>
     {% if tipos %}
       {% for t in tipos %}
+      {% set valor = valores.get(t.id) %}
+      {% set historial = historiales.get(t.id, []) %}
       <div class="renglon-tipo">
-        <div class="renglon-arriba">
-          <div class="nombre">
-            <strong>{{ t.nombre }}</strong>
-            <div class="puesto">{{ t.proveedor_nombre }}</div>
-          </div>
+        <div class="nombre">
+          <strong>{{ t.nombre }}</strong>
+          <div class="puesto">{{ t.proveedor_nombre }}</div>
+        </div>
+
+        {# La seña vigente HOY, que es lo que se mira de un vistazo. Sin
+           fila cargada se dice con palabras, nunca con un $0. #}
+        <p class="sena">
+          {% if valor and valor.monto is not none %}
+          <span class="sena-monto">{{ valor.monto|moneda }}</span><span class="sena-desde">desde el {{ valor.vigente_desde|fecha_corta }}</span>
+          {% else %}
+          <span class="sena-sin-valor">Sin valor cargado</span>
+          {% endif %}
+        </p>
+
+        <div class="acciones">
           <button type="button" class="boton-editar" onclick="abrirEdicion('{{ t.id }}')">Editar</button>
           <form method="post" action="/puesto/envases/tipos/{{ t.id }}/baja"
                 onsubmit="return confirm('¿Dar de baja \'{{ t.nombre }}\' de {{ t.proveedor_nombre }}? Los movimientos viejos quedan; solo deja de ofrecerse.');">
@@ -188,18 +314,44 @@
           </form>
         </div>
 
-        {# Corrección de tipeo: el id no se toca, así que los movimientos
-           viejos siguen colgando de este mismo tipo. #}
+        {# Nombre y seña son atributos de la misma cosa: un solo bloque.
+           El nombre es UPDATE (corrección de tipeo, el id no se toca); la
+           seña es una fila nueva. El monto vacío no toca la seña. #}
         <div class="editar" id="editar-{{ t.id }}">
-          <form method="post" action="/puesto/envases/tipos/{{ t.id }}/renombrar">
+          <form method="post" action="/puesto/envases/tipos/{{ t.id }}/editar">
             <input type="text" id="nombre-{{ t.id }}" name="nombre" value="{{ t.nombre }}"
-                   aria-label="Nombre nuevo del tipo de envase" required>
+                   aria-label="Nombre del tipo de envase" required>
+
+            <hr class="separador">
+            <div class="campo-sena">
+              <label for="monto-{{ t.id }}">Seña por cajón</label>
+              <input type="number" id="monto-{{ t.id }}" name="monto" step="0.01" min="0"
+                     placeholder="{% if valor and valor.monto is not none %}Hoy: {{ valor.monto|moneda }} — vacío no la toca{% else %}Vacío = sigue sin valor cargado{% endif %}">
+            </div>
+            <div class="campo-sena">
+              <label for="vigente-{{ t.id }}">Rige desde</label>
+              <input type="date" id="vigente-{{ t.id }}" name="vigente_desde" value="{{ hoy.isoformat() }}">
+            </div>
+
             <div class="editar-botones">
               <button type="submit" class="boton-guardar">Guardar</button>
               <button type="button" class="boton-cancelar" onclick="cerrarEdicion('{{ t.id }}')">Cancelar</button>
             </div>
           </form>
         </div>
+
+        {# El historial va plegado: no es lo que se mira todos los días. #}
+        {% if historial %}
+        <details class="historial">
+          <summary>Historial de la seña ({{ historial|length }})</summary>
+          {% for h in historial %}
+          <div class="historial-fila{% if h.reemplazada %} reemplazada{% endif %}">
+            {{ h.monto|moneda }} desde el {{ h.vigente_desde|fecha_corta }}
+            {%- if h.reemplazada %} <span class="marca">reemplazado</span>{% endif %}
+          </div>
+          {% endfor %}
+        </details>
+        {% endif %}
       </div>
       {% endfor %}
     {% else %}

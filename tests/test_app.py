@@ -10839,13 +10839,37 @@ PROVEEDORES_PUESTO_DE_PRUEBA = [
 ]
 
 
+VALORES_SENA_DE_PRUEBA = {
+    1: {"tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro", "proveedor_nombre": "Saturno",
+        "monto": 700, "vigente_desde": date(2026, 8, 20), "ultima_vigencia": date(2026, 8, 20)},
+    2: {"tipo_envase_id": 2, "tipo_nombre": "torito", "proveedor_nombre": "Saturno",
+        "monto": None, "vigente_desde": None, "ultima_vigencia": None},
+}
+
+
+def _pantalla_tipos(tipos=None, valores=None, historiales=None):
+    """Los cuatro parches que necesita la pantalla de Tipos de Envase.
+
+    Desde que la seña vive acá, el render pide también el valor vigente de
+    cada tipo y el historial de todos (en una consulta, no una por
+    renglón).
+    """
+    tipos = TIPOS_ENVASE_PUESTO_DE_PRUEBA if tipos is None else tipos
+    return (
+        patch("app.main.listar_tipos_envase_puesto", return_value=tipos),
+        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_valores_sena",
+              return_value=list((VALORES_SENA_DE_PRUEBA if valores is None else valores).values())),
+        patch("app.main.listar_historiales_valores_sena", return_value=historiales or {}),
+    )
+
+
 def test_ver_tipos_envase_puesto_lista_y_ofrece_alta():
     # El select de proveedores es de proveedores_puesto (cajera), NUNCA los
     # de Compras.
-    with (
-        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
-        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
-    ):
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos():
+            pila.enter_context(parche)
         respuesta = cliente.get("/puesto/envases/tipos")
 
     assert respuesta.status_code == 200
@@ -10866,12 +10890,65 @@ def test_crear_tipo_envase_puesto_limpia_el_nombre_y_redirige():
     mock_crear.assert_called_once_with(200, "cajón negro")
 
 
-def test_crear_tipo_envase_puesto_sin_nombre_da_error():
+def test_el_alta_de_un_tipo_acepta_la_sena_pero_NO_la_exige():
+    """Opcional a propósito.
+
+    Si fuera obligatoria, el día que no se sepa cuánto vale la seña van a
+    inventar un número para poder seguir, y un número inventado es peor
+    que "sin valor cargado": se paga.
+    """
     with (
-        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
-        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
-        patch("app.main.crear_tipo_envase_puesto") as mock_crear,
+        patch("app.main.crear_tipo_envase_puesto", return_value=9) as mock_crear,
+        patch("app.main.cargar_valor_sena") as mock_cargar,
     ):
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/nuevo",
+            data={"proveedor_id": "200", "nombre": "cajón negro", "monto": "", "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(200, "cajón negro")
+    # Sin monto, el tipo nace igual y sin seña.
+    mock_cargar.assert_not_called()
+
+
+def test_el_alta_con_sena_se_la_cuelga_al_tipo_recien_creado():
+    with (
+        patch("app.main.crear_tipo_envase_puesto", return_value=9),
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/nuevo",
+            data={"proveedor_id": "200", "nombre": "cajón negro", "monto": "500",
+                  "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # Al id que devolvió el alta, no a otro.
+    mock_cargar.assert_called_once_with(9, 500.0, date(2026, 8, 28))
+
+
+def test_el_hub_ya_no_tiene_el_boton_de_valor_de_la_sena():
+    # La pantalla se eliminó: no puede quedar un link a un 404.
+    respuesta = cliente.get("/puesto/envases")
+
+    assert respuesta.status_code == 200
+    assert "/puesto/envases/senas" not in respuesta.text
+    assert "Valor de la Seña" not in respuesta.text
+
+
+def test_la_ruta_vieja_del_valor_de_la_sena_ya_no_existe():
+    assert cliente.get("/puesto/envases/senas").status_code == 404
+    assert cliente.post("/puesto/envases/senas/cargar", data={}).status_code == 404
+
+
+def test_crear_tipo_envase_puesto_sin_nombre_da_error():
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos(tipos=[]):
+            pila.enter_context(parche)
+        mock_crear = pila.enter_context(patch("app.main.crear_tipo_envase_puesto"))
         respuesta = cliente.post("/puesto/envases/tipos/nuevo", data={"proveedor_id": "200", "nombre": "  "})
 
     assert respuesta.status_code == 400
@@ -10891,12 +10968,12 @@ def test_dar_de_baja_tipo_envase_puesto_redirige():
 def test_dar_de_baja_un_tipo_con_saldo_se_niega_y_lo_dice_con_el_numero():
     # Una cuenta abierta no es una falla del sistema: es algo para cerrar.
     # Se muestra en la pantalla con el número adentro (400, no 500).
-    with (
-        patch("app.main.desactivar_tipo_envase_puesto",
-              side_effect=ValueError("'cajón madera' todavía tiene 12 en stock. Devolvelos o ajustá a cero antes de darlo de baja.")),
-        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
-        patch("app.main.listar_proveedores_puesto", return_value=[]),
-    ):
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos(tipos=[]):
+            pila.enter_context(parche)
+        pila.enter_context(patch(
+            "app.main.desactivar_tipo_envase_puesto",
+            side_effect=ValueError("'cajón madera' todavía tiene 12 en stock. Devolvelos o ajustá a cero antes de darlo de baja.")))
         respuesta = cliente.post("/puesto/envases/tipos/3/baja", follow_redirects=False)
 
     assert respuesta.status_code == 400
@@ -10904,55 +10981,243 @@ def test_dar_de_baja_un_tipo_con_saldo_se_niega_y_lo_dice_con_el_numero():
     assert "ajustá a cero antes de darlo de baja" in respuesta.text
 
 
-def test_ver_tipos_envase_puesto_ofrece_editar_el_nombre():
-    with (
-        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
-        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
-    ):
+def test_el_renglon_del_tipo_muestra_la_sena_vigente_y_el_que_no_tiene_lo_dice():
+    # La mudanza: la seña se ve en el renglón del tipo, no en una pantalla
+    # aparte. Sin valor cargado NO es $0 — un cero se lee como dato real y
+    # se paga.
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos():
+            pila.enter_context(parche)
         respuesta = cliente.get("/puesto/envases/tipos")
 
     assert respuesta.status_code == 200
-    assert 'action="/puesto/envases/tipos/1/renombrar"' in respuesta.text
-    # El input arranca con el nombre actual: se corrige la letra mal puesta,
-    # no se reescribe todo de cero en el celular.
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "$700" in cuerpo
+    assert "desde el 20/08" in cuerpo
+    assert "Sin valor cargado" in cuerpo
+    assert "$0" not in cuerpo
+
+
+def test_el_bloque_de_edicion_del_tipo_trae_nombre_Y_sena():
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos():
+            pila.enter_context(parche)
+        respuesta = cliente.get("/puesto/envases/tipos")
+
+    assert respuesta.status_code == 200
+    assert 'action="/puesto/envases/tipos/1/editar"' in respuesta.text
+    # El nombre precargado, y los dos campos de la seña en el mismo bloque.
     assert 'value="cajón plástico negro"' in respuesta.text
+    assert 'name="monto"' in respuesta.text
+    assert 'name="vigente_desde"' in respuesta.text
 
 
-def test_renombrar_tipo_envase_puesto_limpia_el_nombre_y_redirige():
-    with patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar:
+def test_el_historial_de_la_sena_va_plegado_y_tacha_lo_reemplazado():
+    historiales = {1: [
+        {"monto": 700, "vigente_desde": date(2026, 8, 20), "creado_en": None, "reemplazada": False},
+        {"monto": 7000, "vigente_desde": date(2026, 8, 20), "creado_en": None, "reemplazada": True},
+    ], 2: [], 3: []}
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos(historiales=historiales):
+            pila.enter_context(parche)
+        respuesta = cliente.get("/puesto/envases/tipos")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Plegado: no es lo que se mira todos los días.
+    assert "<details" in cuerpo and "Historial de la seña (2)" in cuerpo
+    # El que quedó atrás sigue a la vista, tachado y marcado.
+    assert "$7.000" in cuerpo
+    assert 'class="historial-fila reemplazada"' in cuerpo
+    assert "reemplazado" in cuerpo
+    # Y el tipo sin historial no muestra un desplegable vacío.
+    assert cuerpo.count("<details") == 1
+
+
+def test_editar_el_tipo_sin_monto_solo_renombra_y_NO_toca_la_sena():
+    # El monto vacío significa "no toques la seña", no cero. Quien entra a
+    # arreglar un tipeo no tiene por qué cargar un valor.
+    with (
+        patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar,
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+        patch("app.main.contar_senas_afectadas_por_valor") as mock_contar,
+    ):
         respuesta = cliente.post(
-            "/puesto/envases/tipos/3/renombrar",
-            data={"nombre": "  cajón   negro "},
+            "/puesto/envases/tipos/3/editar",
+            data={"nombre": "  cajón   negro ", "monto": "", "vigente_desde": "2026-08-28"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     mock_renombrar.assert_called_once_with(3, "cajón negro")
+    mock_cargar.assert_not_called()
+    # Sin monto no hay nada retroactivo que avisar.
+    mock_contar.assert_not_called()
 
 
-def test_renombrar_tipo_envase_puesto_sin_nombre_da_error():
+def test_editar_el_tipo_con_monto_renombra_Y_carga_la_sena():
     with (
-        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
-        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
         patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar,
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+        patch("app.main.contar_senas_afectadas_por_valor", return_value=0),
     ):
-        respuesta = cliente.post("/puesto/envases/tipos/3/renombrar", data={"nombre": "  "})
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/3/editar",
+            data={"nombre": "cajón negro", "monto": "700", "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_renombrar.assert_called_once_with(3, "cajón negro")
+    mock_cargar.assert_called_once_with(3, 700.0, date(2026, 8, 28))
+
+
+def test_el_cero_explicito_de_sena_SI_se_permite():
+    # "Este envase no lleva seña" es un dato, y es distinto de no tener
+    # fila. Por eso el corte es en el negativo, no en el cero.
+    with (
+        patch("app.main.renombrar_tipo_envase_puesto"),
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+        patch("app.main.contar_senas_afectadas_por_valor", return_value=0),
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/3/editar",
+            data={"nombre": "cajón negro", "monto": "0", "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cargar.assert_called_once_with(3, 0.0, date(2026, 8, 28))
+
+
+def test_LA_FECHA_RETROACTIVA_SIGUE_AVISANDO_despues_de_la_mudanza():
+    """Lo que no se puede perder al mudar la pantalla.
+
+    Si el aviso se pierde, cargar una fecha vieja mueve plata de señas ya
+    recibidas en silencio. Y AVISA, NO TRABA: ofrece seguir.
+
+    Se chequea además que NO escriba nada todavía — ni el nombre ni la
+    seña — para que no quede la mitad hecha esperando una confirmación.
+    """
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos():
+            pila.enter_context(parche)
+        pila.enter_context(patch("app.main.contar_senas_afectadas_por_valor", return_value=3))
+        mock_cargar = pila.enter_context(patch("app.main.cargar_valor_sena"))
+        mock_renombrar = pila.enter_context(patch("app.main.renombrar_tipo_envase_puesto"))
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/1/editar",
+            data={"nombre": "cajón plástico negro", "monto": "600", "vigente_desde": "2026-08-10"},
+        )
+
+    assert respuesta.status_code == 200
+    assert "cambia el valor de 3 señas ya recibidas" in respuesta.text
+    mock_cargar.assert_not_called()
+    mock_renombrar.assert_not_called()
+    # Ofrece seguir: es aviso, no traba.
+    assert "Guardar igual" in respuesta.text
+    assert 'name="confirmado" value="1"' in respuesta.text
+    # Y dice QUÉ se está por guardar.
+    assert "$600" in respuesta.text and "10/08/2026" in respuesta.text
+
+
+def test_el_boton_de_la_advertencia_no_se_pinta_como_el_de_confirmar():
+    """Ya pasó con "Dar de baja", que salía verde igual que "Cargar".
+
+    button[type="submit"] es más específico que una clase suelta y le gana.
+    Un botón del que la pantalla acaba de advertir no puede verse igual que
+    el de la operación normal.
+    """
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos():
+            pila.enter_context(parche)
+        pila.enter_context(patch("app.main.contar_senas_afectadas_por_valor", return_value=3))
+        pila.enter_context(patch("app.main.cargar_valor_sena"))
+        pila.enter_context(patch("app.main.renombrar_tipo_envase_puesto"))
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/1/editar",
+            data={"nombre": "cajón plástico negro", "monto": "600", "vigente_desde": "2026-08-10"},
+        )
+
+    estilos = respuesta.text.split("</style>")[0]
+    assert "button.boton-igual" in estilos, "la regla tiene que ganarle a button[type=submit]"
+
+
+def test_una_sola_sena_afectada_se_dice_en_singular():
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos():
+            pila.enter_context(parche)
+        pila.enter_context(patch("app.main.contar_senas_afectadas_por_valor", return_value=1))
+        pila.enter_context(patch("app.main.cargar_valor_sena"))
+        pila.enter_context(patch("app.main.renombrar_tipo_envase_puesto"))
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/1/editar",
+            data={"nombre": "cajón plástico negro", "monto": "600", "vigente_desde": "2026-08-10"},
+        )
+
+    assert "cambia el valor de 1 seña ya recibida" in respuesta.text
+
+
+def test_confirmada_la_retroactiva_guarda_las_dos_cosas_sin_volver_a_preguntar():
+    with (
+        patch("app.main.contar_senas_afectadas_por_valor") as mock_contar,
+        patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar,
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/1/editar",
+            data={"nombre": "cajón plástico negro", "monto": "600",
+                  "vigente_desde": "2026-08-10", "confirmado": "1"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_renombrar.assert_called_once_with(1, "cajón plástico negro")
+    mock_cargar.assert_called_once_with(1, 600.0, date(2026, 8, 10))
+    mock_contar.assert_not_called()
+
+
+def test_editar_el_tipo_sin_nombre_da_error():
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos(tipos=[]):
+            pila.enter_context(parche)
+        mock_renombrar = pila.enter_context(patch("app.main.renombrar_tipo_envase_puesto"))
+        respuesta = cliente.post("/puesto/envases/tipos/3/editar", data={"nombre": "  "})
 
     assert respuesta.status_code == 400
     assert "El nombre del tipo de envase es obligatorio." in respuesta.text
     mock_renombrar.assert_not_called()
 
 
+def test_editar_el_tipo_con_un_monto_invalido_da_400_y_no_escribe():
+    for monto, esperado in (("cinco", "El monto de la seña tiene que ser un número."),
+                            ("-5", "El monto de la seña no puede ser negativo.")):
+        with ExitStack() as pila:
+            for parche in _pantalla_tipos(tipos=[]):
+                pila.enter_context(parche)
+            mock_renombrar = pila.enter_context(patch("app.main.renombrar_tipo_envase_puesto"))
+            mock_cargar = pila.enter_context(patch("app.main.cargar_valor_sena"))
+            respuesta = cliente.post(
+                "/puesto/envases/tipos/3/editar",
+                data={"nombre": "cajón", "monto": monto, "vigente_desde": "2026-08-28"},
+            )
+
+        assert respuesta.status_code == 400
+        assert esperado in respuesta.text
+        mock_renombrar.assert_not_called()
+        mock_cargar.assert_not_called()
+
+
 def test_renombrar_tipo_a_un_nombre_repetido_da_400_con_el_nombre_nunca_500():
     # Chocar con uno que ya existe es dato mal cargado, no una falla del
     # sistema: se muestra en la pantalla nombrando al que ya está.
-    with (
-        patch("app.main.renombrar_tipo_envase_puesto",
-              side_effect=ValueError("Ese proveedor ya tiene un tipo llamado 'cajón madera'.")),
-        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
-        patch("app.main.listar_proveedores_puesto", return_value=[]),
-    ):
-        respuesta = cliente.post("/puesto/envases/tipos/3/renombrar", data={"nombre": "cajón madera"})
+    with ExitStack() as pila:
+        for parche in _pantalla_tipos(tipos=[]):
+            pila.enter_context(parche)
+        pila.enter_context(patch(
+            "app.main.renombrar_tipo_envase_puesto",
+            side_effect=ValueError("Ese proveedor ya tiene un tipo llamado 'cajón madera'.")))
+        respuesta = cliente.post("/puesto/envases/tipos/3/editar", data={"nombre": "cajón madera"})
 
     assert respuesta.status_code == 400
     assert "ya tiene un tipo llamado" in respuesta.text
@@ -11641,7 +11906,6 @@ def test_con_clave_las_pantallas_de_control_piden_clave():
             "/puesto/envases/proveedores",
             "/puesto/envases/tipos",
             "/puesto/envases/clientes",
-            "/puesto/envases/senas",
         ):
             respuesta = cliente.get(url)
             assert respuesta.status_code == 401, url
@@ -11656,15 +11920,20 @@ def test_cambiar_el_valor_de_la_sena_sin_destrabar_NO_toca_la_base():
     se puede mandar sin pasar por la pantalla. Cuánto vale la seña define
     cuánto se le paga a cada cliente.
     """
-    with _con_clave_control(), patch("app.main.cargar_valor_sena") as mock_cargar:
+    with (
+        _con_clave_control(),
+        patch("app.main.cargar_valor_sena") as mock_cargar,
+        patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar,
+    ):
         respuesta = cliente.post(
-            "/puesto/envases/senas/cargar",
-            data={"tipo_envase_id": "1", "monto": "500", "vigente_desde": "2026-08-28"},
+            "/puesto/envases/tipos/1/editar",
+            data={"nombre": "cajón", "monto": "500", "vigente_desde": "2026-08-28"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     mock_cargar.assert_not_called()
+    mock_renombrar.assert_not_called()
 
 
 def test_la_pantalla_de_clave_no_deja_que_el_navegador_la_recuerde():
@@ -11948,180 +12217,6 @@ def test_renombrar_proveedor_a_un_nombre_repetido_da_400_con_el_nombre_nunca_500
     assert "Gómez" in respuesta.text
 
 
-VALORES_SENA_DE_PRUEBA = [
-    {"tipo_envase_id": 1, "tipo_nombre": "cajón plástico negro", "proveedor_nombre": "Saturno",
-     "monto": 700, "vigente_desde": date(2026, 8, 20), "ultima_vigencia": date(2026, 8, 20)},
-    {"tipo_envase_id": 2, "tipo_nombre": "torito", "proveedor_nombre": "Saturno",
-     "monto": None, "vigente_desde": None, "ultima_vigencia": None},
-]
-
-
-def _pantalla_valores(**extra):
-    """La pantalla de valores con sus dos consultas parcheadas."""
-    parches = {"app.main.listar_valores_sena": VALORES_SENA_DE_PRUEBA,
-               "app.main.listar_historial_valores_sena": []}
-    parches.update(extra)
-    return parches
-
-
-def test_el_historial_tacha_el_valor_corregido_el_mismo_dia():
-    """Dos filas del mismo día: la que rige y la que quedó atrás.
-
-    Antes esto no podía pasar (el UNIQUE obligaba a pisar). Ahora pasa, y
-    mostrar dos montos para el mismo día sin decir cuál ganó sería peor
-    que no mostrar nada.
-    """
-    historial = [
-        {"monto": 700, "vigente_desde": date(2026, 8, 20), "creado_en": None, "reemplazada": False},
-        {"monto": 7000, "vigente_desde": date(2026, 8, 20), "creado_en": None, "reemplazada": True},
-    ]
-    with (
-        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
-        patch("app.main.listar_historial_valores_sena", return_value=historial),
-    ):
-        respuesta = cliente.get("/puesto/envases/senas")
-
-    assert respuesta.status_code == 200
-    cuerpo = respuesta.text.split("</style>")[-1]
-    # El que quedó atrás sigue a la vista, tachado y marcado.
-    assert "$7.000" in cuerpo
-    assert 'class="historial-fila reemplazada"' in cuerpo
-    assert "reemplazado" in cuerpo
-    # Y el que rige NO está marcado.
-    assert 'class="historial-fila"' in cuerpo
-
-
-def test_ver_valores_sena_dice_SIN_VALOR_CARGADO_y_nunca_cero():
-    # Un tipo sin valor no vale $0: vale "no sabemos". Un cero en pantalla
-    # se lee como dato real y la cajera pagaría cero.
-    with (
-        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
-        patch("app.main.listar_historial_valores_sena", return_value=[]),
-    ):
-        respuesta = cliente.get("/puesto/envases/senas")
-
-    assert respuesta.status_code == 200
-    assert "$700" in respuesta.text
-    assert "Sin valor cargado" in respuesta.text
-    # Sin el <style>: "$0" aparece en un comentario del CSS que explica
-    # justamente por qué no hay que mostrarlo.
-    assert "$0" not in respuesta.text.split("</style>")[-1]
-
-
-def test_cargar_valor_sena_de_hoy_guarda_sin_molestar():
-    # Lo normal: la fecha no mueve nada viejo, se guarda de una.
-    with (
-        patch("app.main.contar_senas_afectadas_por_valor", return_value=0),
-        patch("app.main.cargar_valor_sena") as mock_cargar,
-    ):
-        respuesta = cliente.post(
-            "/puesto/envases/senas/cargar",
-            data={"tipo_envase_id": "1", "monto": "700", "vigente_desde": "2026-08-28"},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    mock_cargar.assert_called_once_with(1, 700.0, date(2026, 8, 28))
-
-
-def test_una_fecha_retroactiva_AVISA_con_el_numero_y_NO_guarda_todavia():
-    """El aviso es aviso, no traba: muestra el número y deja seguir.
-
-    Cargar tarde lo que rige desde la semana pasada es legítimo. Lo que no
-    puede pasar es que la plata de señas ya recibidas cambie sin que el
-    que lo cargó se entere.
-    """
-    with (
-        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
-        patch("app.main.listar_historial_valores_sena", return_value=[]),
-        patch("app.main.contar_senas_afectadas_por_valor", return_value=3),
-        patch("app.main.cargar_valor_sena") as mock_cargar,
-    ):
-        respuesta = cliente.post(
-            "/puesto/envases/senas/cargar",
-            data={"tipo_envase_id": "1", "monto": "600", "vigente_desde": "2026-08-10"},
-        )
-
-    assert respuesta.status_code == 200
-    assert "cambia el valor de 3 señas ya recibidas" in respuesta.text
-    # Todavía NO guardó: el aviso va ANTES de tocar la base.
-    mock_cargar.assert_not_called()
-    # Y ofrece seguir: es aviso, no traba.
-    assert "Guardar igual" in respuesta.text
-    assert 'name="confirmado" value="1"' in respuesta.text
-
-
-def test_una_sola_sena_afectada_se_dice_en_singular():
-    with (
-        patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
-        patch("app.main.listar_historial_valores_sena", return_value=[]),
-        patch("app.main.contar_senas_afectadas_por_valor", return_value=1),
-        patch("app.main.cargar_valor_sena"),
-    ):
-        respuesta = cliente.post(
-            "/puesto/envases/senas/cargar",
-            data={"tipo_envase_id": "1", "monto": "600", "vigente_desde": "2026-08-10"},
-        )
-
-    assert "cambia el valor de 1 seña ya recibida" in respuesta.text
-
-
-def test_confirmada_la_retroactiva_se_guarda_sin_volver_a_preguntar():
-    with (
-        patch("app.main.contar_senas_afectadas_por_valor") as mock_contar,
-        patch("app.main.cargar_valor_sena") as mock_cargar,
-    ):
-        respuesta = cliente.post(
-            "/puesto/envases/senas/cargar",
-            data={"tipo_envase_id": "1", "monto": "600", "vigente_desde": "2026-08-10",
-                  "confirmado": "1"},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    mock_cargar.assert_called_once_with(1, 600.0, date(2026, 8, 10))
-    # Ya avisó una vez; no vuelve a contar ni a preguntar.
-    mock_contar.assert_not_called()
-
-
-def test_cargar_valor_sena_rechaza_el_monto_negativo_y_la_fecha_vacia():
-    for datos, esperado in (
-        ({"tipo_envase_id": "1", "monto": "-5", "vigente_desde": "2026-08-28"},
-         "El monto no puede ser negativo."),
-        ({"tipo_envase_id": "1", "monto": "cinco", "vigente_desde": "2026-08-28"},
-         "El monto tiene que ser un número."),
-        ({"tipo_envase_id": "1", "monto": "500", "vigente_desde": ""},
-         "La fecha desde cuándo rige es obligatoria."),
-    ):
-        with (
-            patch("app.main.listar_valores_sena", return_value=VALORES_SENA_DE_PRUEBA),
-            patch("app.main.listar_historial_valores_sena", return_value=[]),
-            patch("app.main.cargar_valor_sena") as mock_cargar,
-        ):
-            respuesta = cliente.post("/puesto/envases/senas/cargar", data=datos)
-
-        assert respuesta.status_code == 400
-        assert esperado in respuesta.text
-        mock_cargar.assert_not_called()
-
-
-def test_el_cero_explicito_SI_se_permite():
-    # "Este envase no lleva seña" es un dato, y es distinto de no tener
-    # fila. Por eso el corte es en el negativo, no en el cero.
-    with (
-        patch("app.main.contar_senas_afectadas_por_valor", return_value=0),
-        patch("app.main.cargar_valor_sena") as mock_cargar,
-    ):
-        respuesta = cliente.post(
-            "/puesto/envases/senas/cargar",
-            data={"tipo_envase_id": "1", "monto": "0", "vigente_desde": "2026-08-28"},
-            follow_redirects=False,
-        )
-
-    assert respuesta.status_code == 303
-    mock_cargar.assert_called_once_with(1, 0.0, date(2026, 8, 28))
-
-
 def test_pendientes_muestra_el_monto_en_su_renglon_y_el_total_por_cantidad():
     pendientes = [
         {"id": 5, "cantidad": 12, "creado_en": datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc),
@@ -12145,13 +12240,6 @@ def test_pendientes_muestra_el_monto_en_su_renglon_y_el_total_por_cantidad():
     # Y el que no tiene valor lo dice con palabras, sin ningún número.
     assert "Sin valor de seña cargado" in respuesta.text
     assert "$0" not in respuesta.text.split("</style>")[-1]
-
-
-def test_hub_envases_puesto_tiene_el_valor_de_la_sena():
-    respuesta = cliente.get("/puesto/envases")
-
-    assert respuesta.status_code == 200
-    assert 'href="/puesto/envases/senas"' in respuesta.text
 
 
 def test_hub_envases_puesto_tiene_proveedores_del_puesto():

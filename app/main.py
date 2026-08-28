@@ -216,7 +216,7 @@ from app.db import (
     listar_senas_pendientes,
     listar_senas_resueltas,
     listar_valores_sena,
-    listar_historial_valores_sena,
+    listar_historiales_valores_sena,
     contar_senas_afectadas_por_valor,
     cargar_valor_sena,
     listar_tipos_envase_puesto,
@@ -9092,20 +9092,61 @@ def exportar_stock_vacios_excel(request: Request, fecha: str = ""):
     )
 
 
-def _renderizar_pantalla_tipos_envase_puesto(request: Request, *, error=None, aviso=None, status_code: int = 200):
+def _renderizar_pantalla_tipos_envase_puesto(request: Request, *, error=None, aviso=None,
+                                            advertencia=None, pendiente=None, status_code: int = 200):
+    """Tipos de envase con su seña: son atributos de la misma cosa, se manejan juntos.
+
+    `advertencia` + `pendiente` son la carga retroactiva esperando el
+    segundo toque; `pendiente.tipo_envase_id` dice qué renglón la abrió.
+    """
     try:
         tipos = listar_tipos_envase_puesto()
         # Proveedores del PUESTO, nunca los de Compras: circuitos separados.
         proveedores = listar_proveedores_puesto()
+        # El valor vigente HOY de cada tipo, y el historial de todos en una
+        # sola consulta (no una por renglón).
+        valores = {v["tipo_envase_id"]: v for v in listar_valores_sena()}
+        historiales = listar_historiales_valores_sena([t["id"] for t in tipos])
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
         request,
         "vacios_tipos.html",
-        {"tipos": tipos, "proveedores": proveedores, "error": error, "aviso": aviso},
+        {"tipos": tipos, "proveedores": proveedores, "valores": valores,
+         "historiales": historiales, "hoy": date.today(),
+         "error": error, "aviso": aviso, "advertencia": advertencia, "pendiente": pendiente},
         status_code=status_code,
     )
+
+
+def _monto_de_sena(texto: str):
+    """Parsea el monto del formulario. Devuelve (monto, error); monto None = no se cargó ninguno.
+
+    Vacío NO es cero: es "no toques la seña". El cero explícito sí es un
+    dato ("este envase no lleva seña"), así que el corte es en el negativo.
+    """
+    limpio = (texto or "").strip().replace(",", ".")
+    if not limpio:
+        return None, None
+    try:
+        monto = float(limpio)
+    except ValueError:
+        return None, "El monto de la seña tiene que ser un número."
+    if monto < 0:
+        return None, "El monto de la seña no puede ser negativo."
+    return monto, None
+
+
+def _fecha_de_vigencia(texto: str):
+    """La fecha desde la que rige el monto. Vacía = hoy."""
+    limpio = (texto or "").strip()
+    if not limpio:
+        return date.today(), None
+    try:
+        return date.fromisoformat(limpio), None
+    except ValueError:
+        return None, "La fecha desde cuándo rige la seña no es válida."
 
 
 @app.get("/puesto/envases/tipos")
@@ -9117,7 +9158,17 @@ def ver_tipos_envase_puesto(request: Request, aviso: str | None = None):
 
 
 @app.post("/puesto/envases/tipos/nuevo")
-def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form(""), nombre: str = Form("")):
+def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form(""), nombre: str = Form(""),
+                                  monto: str = Form(""), vigente_desde: str = Form("")):
+    """Alta de un tipo de cajón, con el valor de la seña OPCIONAL.
+
+    Opcional a propósito: si fuera obligatorio, el día que no se sepa
+    cuánto vale la seña van a inventar un número para poder seguir, y un
+    número inventado es peor que "sin valor cargado" — se paga.
+
+    El tipo nace igual sin seña; la seña se le carga después desde su
+    propio renglón.
+    """
     if not _acceso_control_valido(request):
         return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
     nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
@@ -9128,20 +9179,48 @@ def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form("")
     if not proveedor_id.strip().isdigit():
         return _renderizar_pantalla_tipos_envase_puesto(request, error="Elegí un proveedor.", status_code=400)
 
+    monto_valor, error_monto = _monto_de_sena(monto)
+    if error_monto:
+        return _renderizar_pantalla_tipos_envase_puesto(request, error=error_monto, status_code=400)
+    fecha, error_fecha = _fecha_de_vigencia(vigente_desde)
+    if error_fecha:
+        return _renderizar_pantalla_tipos_envase_puesto(request, error=error_fecha, status_code=400)
+
     try:
-        crear_tipo_envase_puesto(int(proveedor_id), nombre_limpio)
+        tipo_id = crear_tipo_envase_puesto(int(proveedor_id), nombre_limpio)
+        # Sin aviso retroactivo acá: un tipo recién creado no tiene señas
+        # recibidas, así que no hay nada viejo que mover. (Si el alta
+        # reactivó uno dado de baja, sus señas viejas están cerradas o
+        # ancladas a fechas anteriores; el aviso vive en el renglón.)
+        if monto_valor is not None:
+            cargar_valor_sena(tipo_id, monto_valor, fecha)
     except Exception as error_db:
         return _renderizar_pantalla_tipos_envase_puesto(
             request, error=f"No se pudo crear el tipo de envase: {error_db}", status_code=500
         )
 
-    parametros = urlencode({"aviso": f"Tipo de envase '{nombre_limpio}' cargado."})
+    detalle = "" if monto_valor is None else f" con seña de {_formatear_moneda(monto_valor)}"
+    parametros = urlencode({"aviso": f"Tipo de envase '{nombre_limpio}' cargado{detalle}."})
     return RedirectResponse(url=f"/puesto/envases/tipos?{parametros}", status_code=303)
 
 
-@app.post("/puesto/envases/tipos/{tipo_id}/renombrar")
-def renombrar_tipo_envase_puesto_ruta(request: Request, tipo_id: int, nombre: str = Form("")):
-    """Corrige el nombre de un tipo de cajón. Sin historial: es un tipeo, no otra entidad."""
+@app.post("/puesto/envases/tipos/{tipo_id}/editar")
+def editar_tipo_envase_puesto_ruta(request: Request, tipo_id: int, nombre: str = Form(""),
+                                   monto: str = Form(""), vigente_desde: str = Form(""),
+                                   confirmado: str = Form("")):
+    """Corrige el nombre de un tipo de cajón y, si viene monto, le carga el valor de la seña.
+
+    Nombre y seña son atributos de la misma cosa y se editan en el mismo
+    bloque. El monto VACÍO significa "no toques la seña", no cero: quien
+    entra a arreglar un tipeo no tiene por qué cargar un valor.
+
+    Si la fecha elegida mueve señas ya recibidas, la pantalla avisa con el
+    número y pide un segundo toque. AVISA, NO TRABA: cargar tarde lo que
+    rige desde la semana pasada es legítimo — lo que no puede pasar es que
+    la plata de señas viejas cambie sin que el que la cargó se entere. El
+    aviso va ANTES de escribir nada, así que ni el nombre ni la seña se
+    guardan a medias.
+    """
     if not _acceso_control_valido(request):
         return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
     nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
@@ -9149,18 +9228,45 @@ def renombrar_tipo_envase_puesto_ruta(request: Request, tipo_id: int, nombre: st
         return _renderizar_pantalla_tipos_envase_puesto(
             request, error="El nombre del tipo de envase es obligatorio.", status_code=400
         )
+    monto_valor, error_monto = _monto_de_sena(monto)
+    if error_monto:
+        return _renderizar_pantalla_tipos_envase_puesto(request, error=error_monto, status_code=400)
+    fecha, error_fecha = _fecha_de_vigencia(vigente_desde)
+    if error_fecha:
+        return _renderizar_pantalla_tipos_envase_puesto(request, error=error_fecha, status_code=400)
+
     try:
+        if monto_valor is not None and confirmado != "1":
+            afectadas = contar_senas_afectadas_por_valor(tipo_id, monto_valor, fecha)
+            if afectadas:
+                return _renderizar_pantalla_tipos_envase_puesto(
+                    request,
+                    advertencia=(
+                        f"Esto cambia el valor de {afectadas} "
+                        f"{'seña ya recibida' if afectadas == 1 else 'señas ya recibidas'}."
+                    ),
+                    pendiente={"tipo_envase_id": tipo_id, "nombre": nombre_limpio,
+                               "monto": monto_valor, "vigente_desde": fecha},
+                    status_code=200,
+                )
         renombrar_tipo_envase_puesto(tipo_id, nombre_limpio)
+        if monto_valor is not None:
+            cargar_valor_sena(tipo_id, monto_valor, fecha)
     except ValueError as error:
         # Nombre repetido o tipo dado de baja: es dato mal cargado, no una
         # falla del sistema. 400 con el mensaje, nunca 500.
         return _renderizar_pantalla_tipos_envase_puesto(request, error=str(error), status_code=400)
     except Exception as error_db:
         return _renderizar_pantalla_tipos_envase_puesto(
-            request, error=f"No se pudo renombrar el tipo de envase: {error_db}", status_code=500
+            request, error=f"No se pudo guardar el tipo de envase: {error_db}", status_code=500
         )
-    parametros = urlencode({"aviso": f"Tipo de envase renombrado a '{nombre_limpio}'."})
-    return RedirectResponse(url=f"/puesto/envases/tipos?{parametros}", status_code=303)
+
+    if monto_valor is None:
+        aviso = f"Tipo de envase guardado como '{nombre_limpio}'."
+    else:
+        aviso = (f"'{nombre_limpio}': seña de {_formatear_moneda(monto_valor)} "
+                 f"desde el {fecha.strftime('%d/%m/%Y')}.")
+    return RedirectResponse(url=f"/puesto/envases/tipos?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 @app.post("/puesto/envases/tipos/{tipo_id}/baja")
@@ -9376,95 +9482,6 @@ def _renderizar_pantalla_pendientes_pago(request: Request, *, error=None, status
         {"pendientes": pendientes, "resueltas": resueltas, "error": error},
         status_code=status_code,
     )
-
-
-def _renderizar_pantalla_valores_sena(request: Request, *, error=None, aviso=None,
-                                      advertencia=None, pendiente=None, status_code: int = 200):
-    """La pantalla de valores. `advertencia` + `pendiente` son la carga retroactiva esperando confirmación."""
-    try:
-        valores = listar_valores_sena()
-        historiales = {v["tipo_envase_id"]: listar_historial_valores_sena(v["tipo_envase_id"]) for v in valores}
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    return templates.TemplateResponse(
-        request,
-        "vacios_senas.html",
-        {"valores": valores, "historiales": historiales, "hoy": date.today(),
-         "error": error, "aviso": aviso, "advertencia": advertencia, "pendiente": pendiente},
-        status_code=status_code,
-    )
-
-
-@app.get("/puesto/envases/senas")
-def ver_valores_sena(request: Request, aviso: str | None = None):
-    """Cuánto vale la seña de cada tipo de cajón, con historial por fecha (cajera).
-
-    Detrás de la clave: acá se define cuánta plata se le paga a cada
-    cliente por sus cajones. El empleado del fondo no entra.
-    """
-    if not _acceso_control_valido(request):
-        return _pantalla_clave_control(request)
-    return _renderizar_pantalla_valores_sena(request, aviso=aviso)
-
-
-@app.post("/puesto/envases/senas/cargar")
-def cargar_valor_sena_ruta(request: Request, tipo_envase_id: str = Form(""), monto: str = Form(""),
-                           vigente_desde: str = Form(""), confirmado: str = Form("")):
-    """Carga el valor de la seña de un tipo desde una fecha.
-
-    Si la fecha es vieja y mueve señas ya recibidas, la pantalla AVISA con
-    el número y pide un segundo toque. Avisa, no traba: cargar tarde lo que
-    rige desde la semana pasada es legítimo — lo que no puede pasar es que
-    la plata de señas viejas cambie sin que el que la cargó se entere.
-    """
-    if not _acceso_control_valido(request):
-        return RedirectResponse(url="/puesto/envases/senas", status_code=303)
-
-    try:
-        tipo_id = int(tipo_envase_id)
-    except ValueError:
-        return _renderizar_pantalla_valores_sena(request, error="Elegí un tipo de envase.", status_code=400)
-
-    try:
-        monto_limpio = float(monto.strip().replace(",", "."))
-    except ValueError:
-        return _renderizar_pantalla_valores_sena(request, error="El monto tiene que ser un número.", status_code=400)
-    if monto_limpio < 0:
-        return _renderizar_pantalla_valores_sena(
-            request, error="El monto no puede ser negativo.", status_code=400)
-
-    try:
-        fecha = date.fromisoformat(vigente_desde.strip())
-    except ValueError:
-        return _renderizar_pantalla_valores_sena(
-            request, error="La fecha desde cuándo rige es obligatoria.", status_code=400)
-
-    try:
-        if confirmado != "1":
-            afectadas = contar_senas_afectadas_por_valor(tipo_id, monto_limpio, fecha)
-            if afectadas:
-                return _renderizar_pantalla_valores_sena(
-                    request,
-                    advertencia=(
-                        f"Esto cambia el valor de {afectadas} "
-                        f"{'seña ya recibida' if afectadas == 1 else 'señas ya recibidas'}."
-                    ),
-                    # Los valores ya parseados: la pantalla los muestra
-                    # formateados y los reenvía en los hidden.
-                    pendiente={"tipo_envase_id": tipo_id, "monto": monto_limpio,
-                               "vigente_desde": fecha},
-                    status_code=200,
-                )
-        cargar_valor_sena(tipo_id, monto_limpio, fecha)
-    except ValueError as error:
-        return _renderizar_pantalla_valores_sena(request, error=str(error), status_code=400)
-    except Exception as error_db:
-        return _renderizar_pantalla_valores_sena(
-            request, error=f"No se pudo cargar el valor: {error_db}", status_code=500)
-
-    parametros = urlencode({"aviso": f"Valor cargado: {_formatear_moneda(monto_limpio)} desde el {fecha.strftime('%d/%m/%Y')}."})
-    return RedirectResponse(url=f"/puesto/envases/senas?{parametros}", status_code=303)
 
 
 @app.get("/puesto/envases/pendientes")
