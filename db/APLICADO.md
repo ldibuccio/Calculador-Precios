@@ -127,11 +127,60 @@ vigente_desde)` el 2026-08-26 con
 las dos bases. De aquella limpieza la columna `articulo_id` SE QUEDÓ,
 como estaba previsto: la usa el chequeo de Disponibles.)
 
-### Guías R: el botón "Anular guía" quedó en 37px
+### ~~Guías R: el botón "Anular guía" quedó en 37px~~ — SALDADA
 
-Por debajo de los 44px de la regla mobile-first. No es de la etapa 1 (ya
-estaba así), pero esa pantalla se muda a Administración en la etapa 0 del
-modelo nuevo: se arregla ahí, cuando se toque el archivo igual.
+Estaba por debajo de los 44px de la regla mobile-first. Se arregló en la
+etapa 0, al mudar la pantalla a Administración, como estaba previsto:
+`.boton-anular` en `templates/deposito_stock_guias_r.html` pasó a
+`padding: 0.8rem 0.9rem`.
+
+### Etapa 0, fase 3: `/deposito/pedido` todavía no se partió
+
+Las fases 1 y 2 están hechas (Facturación pasó a llamarse Administración,
+y las seis pantallas de control de stock se mudaron). Falta la tercera: la
+pantalla de pedidos tiene dos mitades con dos dueños distintos —el
+depósito arma, administración busca y corrige— y hoy comparten prefijo.
+
+Cuando se retome, este relevamiento ya está hecho y es la mitad del
+trabajo:
+
+**Son 19 rutas colgando del prefijo `/deposito/pedido`** (`app/main.py`),
+y **170 referencias** a esa cadena en `app/`, `templates/` y `tests/`. No
+es un `sed`: cada referencia hay que mirarla para decidir de qué mitad es.
+
+Las 19: `/deposito/pedido`, `/cargar`, `/cargar/leer`,
+`/cargar/confirmar`, `/{id}/renglones/{rid}/asignar`, `/{id}/fotos`,
+`/{id}/fotos/{fid}/ver`, `/{id}/fotos/{fid}/borrar`,
+`/dias-sin-pedido`, `/dias-sin-pedido/deshacer`, `/armar`,
+`/{id}/renglones/{rid}/armar`, `/desarmar`, `/anular`, `/desanular`,
+`/{id}/terminar`, `/{id}/reabrir`, `/armar/buscar-pedido`,
+`/mails/{mail_id}/revisar`.
+
+**Tres trampas que ya se encontraron:**
+
+1. **`/deposito/pedido/mails/{mail_id}/revisar` es un GET que ESCRIBE.**
+   Si se le pone un 301 como a las demás rutas renombradas, el redirect
+   puede reejecutar la escritura o perderla según el cliente. Esa ruta
+   necesita tratamiento propio, no el redirect genérico.
+
+2. **`templates/sistema_casilla_pedidos.html` linkea a la pantalla desde
+   afuera del módulo.** Es un link entrante que no se ve grepeando solo
+   `app/main.py`.
+
+3. **El reparto de las tres alertas ya está confirmado por Lionel** (no
+   hay que volver a decidirlo):
+   - `pedidos_sin_identificar` → **Administración**
+   - `pedidos_incompletos` → **queda en Depósito**, y su URL tiene que
+     apuntar a la mitad de `/deposito/pedido` que quede en Depósito, no
+     a la que se mude
+   - `pedido_faltante` → **Administración**
+
+   Hoy las tres están en `ALERTAS` (`app/main.py`, cerca de la línea
+   7760) con `url="/deposito/pedido"` y `modulos=("deposito",)`.
+
+Se difirió a pedido de Lionel el 28/08 para no comerse el sábado y llegar
+con las etapas 2 y 3 del modelo nuevo antes del lunes de corte. No bloquea
+nada: la navegación ya quedó coherente con las fases 1 y 2.
 
 ## Pasos manuales que NO son SQL (por base)
 
