@@ -7881,7 +7881,7 @@ def test_ver_inicio_muestra_las_8_areas():
     assert 'href="/logistica"' in respuesta.text
     assert 'href="/deposito"' in respuesta.text
     assert 'href="/gerencia"' in respuesta.text
-    assert 'href="/facturacion"' in respuesta.text
+    assert 'href="/administracion"' in respuesta.text
     assert 'href="/puesto"' in respuesta.text
     assert 'href="/sistema"' in respuesta.text
 
@@ -7924,14 +7924,14 @@ def test_ver_inicio_puesto_es_el_primer_boton():
     assert respuesta.text.index('href="/puesto"') < respuesta.text.index('href="/compras"')
 
 
-def test_ver_inicio_facturacion_y_puesto_son_modulos_plenos():
-    # Facturación ya es un módulo real (Ingresos a Depósito), igual que
+def test_ver_inicio_administracion_y_puesto_son_modulos_plenos():
+    # Administración ya es un módulo real (Ingresos a Depósito), igual que
     # Puesto: los dos van con botón pleno, sin "Próximamente".
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
-    assert '<a class="boton-area" href="/facturacion">' in respuesta.text
-    assert "Facturación (Próximamente)" not in respuesta.text
+    assert '<a class="boton-area" href="/administracion">' in respuesta.text
+    assert "Administración (Próximamente)" not in respuesta.text
     assert '<a class="boton-area" href="/puesto">' in respuesta.text
     assert "Puesto (Próximamente)" not in respuesta.text
 
@@ -7943,7 +7943,7 @@ def test_ver_inicio_usa_los_mismos_iconos_que_la_barra_de_navegacion():
     respuesta = cliente.get("/inicio")
 
     assert respuesta.status_code == 200
-    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "facturacion", "puesto", "sistema"):
+    for sector in ("compras", "comercial", "logistica", "deposito", "gerencia", "administracion", "puesto", "sistema"):
         assert SECTORES[sector]["icono"] in respuesta.text
 
 
@@ -9167,12 +9167,37 @@ def test_la_firma_del_puesto_no_abre_gerencia():
     assert _firma_acceso_control("secreta") != _firma_acceso_gerencia("secreta")
 
 
-def test_ver_facturacion_es_un_hub_con_ingresos_a_deposito():
-    respuesta = cliente.get("/facturacion")
+def test_las_urls_viejas_de_facturacion_redirigen_no_dan_404():
+    """El link viejo sigue en el historial del celular.
+
+    Mismo criterio que /gerencia/auditoria -> /auditoria cuando Auditoría
+    salió de Gerencia: 301, no 404 un martes a las 6 de la mañana.
+    """
+    respuesta = cliente.get("/facturacion", follow_redirects=False)
+    assert respuesta.status_code == 301
+    assert respuesta.headers["location"] == "/administracion"
+
+
+def test_la_url_vieja_de_ingresos_conserva_los_filtros_al_redirigir():
+    # Un link guardado con fechas y proveedor no puede perder los filtros
+    # en el camino: llegaría a la pantalla mostrando otra cosa.
+    respuesta = cliente.get(
+        "/facturacion/ingresos?fecha_desde=2026-08-01&fecha_hasta=2026-08-28&proveedor_id=5",
+        follow_redirects=False,
+    )
+    assert respuesta.status_code == 301
+    destino = respuesta.headers["location"]
+    assert destino.startswith("/administracion/ingresos?")
+    assert "fecha_desde=2026-08-01" in destino
+    assert "proveedor_id=5" in destino
+
+
+def test_ver_administracion_es_un_hub_con_ingresos_a_deposito():
+    respuesta = cliente.get("/administracion")
 
     assert respuesta.status_code == 200
-    assert "Facturación" in respuesta.text
-    assert 'href="/facturacion/ingresos"' in respuesta.text
+    assert "Administración" in respuesta.text
+    assert 'href="/administracion/ingresos"' in respuesta.text
     assert "Ingresos a Depósito" in respuesta.text
     assert "En construcción" not in respuesta.text
     assert 'href="/inicio"' in respuesta.text
@@ -9215,7 +9240,7 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
     ):
-        respuesta = cliente.get("/facturacion/ingresos")
+        respuesta = cliente.get("/administracion/ingresos")
 
     assert respuesta.status_code == 200
     # Default: últimas 48hs y SOLO lo que hay que pagar (recepcionadas,
@@ -9249,8 +9274,8 @@ def test_ver_ingresos_deposito_agrupa_por_proveedor_con_subtotales_y_total():
     assert "<th>Seña</th>" in respuesta.text
     assert "$500 ($4.000)" in respuesta.text
     # Export con los mismos filtros.
-    assert "/facturacion/ingresos/exportar-pdf?" in respuesta.text
-    assert "/facturacion/ingresos/exportar-excel?" in respuesta.text
+    assert "/administracion/ingresos/exportar-pdf?" in respuesta.text
+    assert "/administracion/ingresos/exportar-excel?" in respuesta.text
 
 
 def test_ver_ingresos_deposito_estado_todas_pasa_none_a_la_consulta():
@@ -9261,7 +9286,7 @@ def test_ver_ingresos_deposito_estado_todas_pasa_none_a_la_consulta():
         patch("app.main.buscar_ingresos_deposito", return_value=[]) as mock_buscar,
     ):
         respuesta = cliente.get(
-            "/facturacion/ingresos?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&estado=todas&proveedor_id=7"
+            "/administracion/ingresos?fecha_desde=2026-08-10&fecha_hasta=2026-08-12&estado=todas&proveedor_id=7"
         )
 
     assert respuesta.status_code == 200
@@ -9280,7 +9305,7 @@ def test_ver_ingresos_deposito_cortada_por_el_tope_avisa_y_oculta_totales():
         patch("app.main.buscar_ingresos_deposito", return_value=muchos),
         patch("app.main.contar_ingresos_deposito", return_value=1200) as mock_contar,
     ):
-        respuesta = cliente.get("/facturacion/ingresos")
+        respuesta = cliente.get("/administracion/ingresos")
 
     assert respuesta.status_code == 200
     assert f"Se muestran los primeros {TOPE_FILAS_BUSQUEDA} ingresos de 1200" in respuesta.text
@@ -9294,7 +9319,7 @@ def test_exportar_ingresos_deposito_pdf_sin_tope_con_subtotales_y_marcas():
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA) as mock_buscar,
     ):
-        respuesta = cliente.get("/facturacion/ingresos/exportar-pdf?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
+        respuesta = cliente.get("/administracion/ingresos/exportar-pdf?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
 
     assert respuesta.status_code == 200
     assert respuesta.headers["content-type"] == "application/pdf"
@@ -9324,7 +9349,7 @@ def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_ingresos_deposito", return_value=INGRESOS_DEPOSITO_DE_PRUEBA),
     ):
-        respuesta = cliente.get("/facturacion/ingresos/exportar-excel?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
+        respuesta = cliente.get("/administracion/ingresos/exportar-excel?fecha_desde=2026-08-17&fecha_hasta=2026-08-18")
 
     assert respuesta.status_code == 200
     assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -9345,7 +9370,7 @@ def test_exportar_ingresos_deposito_excel_devuelve_archivo_adjunto():
 
 
 def test_exportar_ingresos_deposito_pdf_fecha_invalida_da_400():
-    respuesta = cliente.get("/facturacion/ingresos/exportar-pdf?fecha_desde=no-es-fecha&fecha_hasta=2026-08-18")
+    respuesta = cliente.get("/administracion/ingresos/exportar-pdf?fecha_desde=no-es-fecha&fecha_hasta=2026-08-18")
 
     assert respuesta.status_code == 400
 

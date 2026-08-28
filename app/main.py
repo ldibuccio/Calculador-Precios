@@ -707,9 +707,9 @@ SECTORES = {
             "</svg>"
         ),
     },
-    "facturacion": {
-        "nombre": "Facturación",
-        "url": "/facturacion",
+    "administracion": {
+        "nombre": "Administración",
+        "url": "/administracion",
         "icono": (
             '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">'
             '<path stroke-linecap="round" stroke-linejoin="round" d="M9 14.25l6-6m4.5-3.493V21.75l-3.75-1.5-3.75 1.5-3.75-1.5-3.75 1.5V4.757c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0c1.1.128 1.907 1.077 1.907 2.185ZM9.75 9h.008v.008H9.75V9Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm4.125 4.5h.008v.008h-.008V13.5Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>'
@@ -8545,10 +8545,10 @@ def cargar_importe_costos_fijos_ruta(
     )
 
 
-@app.get("/facturacion")
-def ver_facturacion(request: Request):
-    """Hub de Facturación: por ahora, solo Ingresos a Depósito."""
-    return templates.TemplateResponse(request, "facturacion.html", {})
+@app.get("/administracion")
+def ver_administracion(request: Request):
+    """Hub de Administración: lo que se mira y se corrige. El depósito hace; acá se controla."""
+    return templates.TemplateResponse(request, "administracion.html", {})
 
 
 ESTADOS_FILTRO_INGRESOS_VALIDOS = {"recepcionado", "rechazado", "no_ingresado", "todas"}
@@ -8642,7 +8642,21 @@ def _grupos_ingresos_deposito(ingresos: list[dict]) -> tuple[list[dict], dict]:
     return grupos, totales
 
 
+@app.get("/facturacion")
+def ver_facturacion_url_vieja():
+    """La URL vieja (cuando el módulo se llamaba Facturación) sigue llegando: redirige."""
+    return RedirectResponse(url="/administracion", status_code=301)
+
+
 @app.get("/facturacion/ingresos")
+def ver_ingresos_url_vieja(request: Request):
+    """Ídem: el link viejo de Ingresos a Depósito, con sus filtros si los traía."""
+    consulta = request.url.query
+    return RedirectResponse(url="/administracion/ingresos" + (f"?{consulta}" if consulta else ""),
+                            status_code=301)
+
+
+@app.get("/administracion/ingresos")
 def ver_ingresos_deposito(
     request: Request,
     fecha_desde: str | None = None,
@@ -8708,7 +8722,7 @@ def ver_ingresos_deposito(
 
     return templates.TemplateResponse(
         request,
-        "facturacion_ingresos.html",
+        "administracion_ingresos.html",
         {
             "proveedores": proveedores,
             "articulos": articulos,
@@ -8762,7 +8776,7 @@ def _leer_filtros_exportar_ingresos(
     return fecha_desde, fecha_hasta, proveedor_id, articulo_id, estado_consulta, filtros_texto
 
 
-@app.get("/facturacion/ingresos/exportar-pdf")
+@app.get("/administracion/ingresos/exportar-pdf")
 def exportar_ingresos_deposito_pdf(
     fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "", estado: str = ""
 ):
@@ -8785,7 +8799,7 @@ def exportar_ingresos_deposito_pdf(
     )
 
 
-@app.get("/facturacion/ingresos/exportar-excel")
+@app.get("/administracion/ingresos/exportar-excel")
 def exportar_ingresos_deposito_excel(
     fecha_desde: str = "", fecha_hasta: str = "", proveedor_id: str = "", articulo_id: str = "", estado: str = ""
 ):

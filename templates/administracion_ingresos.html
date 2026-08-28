@@ -134,13 +134,13 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "facturacion" %}
+  {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Ingresos a Depósito" %}
-  {% set barra_atras = "/facturacion" %}
+  {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <form method="get" action="/facturacion/ingresos">
+    <form method="get" action="/administracion/ingresos">
       <div class="fila-fechas">
         <div>
           <label for="fecha_desde">Desde</label>
@@ -177,8 +177,8 @@
     {% if grupos %}
     <button type="button" class="boton-exportar" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
     <div id="opciones-exportar" style="display: none;">
-      <a class="boton-exportar" href="/facturacion/ingresos/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&estado={{ estado }}">Exportar PDF</a>
-      <a class="boton-exportar" href="/facturacion/ingresos/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&estado={{ estado }}">Exportar Excel</a>
+      <a class="boton-exportar" href="/administracion/ingresos/exportar-pdf?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&estado={{ estado }}">Exportar PDF</a>
+      <a class="boton-exportar" href="/administracion/ingresos/exportar-excel?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}&estado={{ estado }}">Exportar Excel</a>
     </div>
     {% endif %}
   </div>
