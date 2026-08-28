@@ -204,11 +204,20 @@
     <form class="asignar" method="post" action="/deposito/stock/guias-r/{{ g.id }}/asignar-ficha">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      {# "Sin asignar" en su propio grupo, no al lado de las cajas: al
+         mismo nivel se vuelve el default de hecho. Sigue siempre
+         disponible — el que no sabe tiene que poder decirlo. #}
       <select name="ficha_id" aria-label="Ficha de la guía R{{ g.id }}">
-        {% for f in fichas_por_articulo.get(g.articulo_id, []) %}
-        <option value="{{ f.id }}" {% if g.ficha_id == f.id %}selected{% endif %}>{{ f.nombre }}</option>
-        {% endfor %}
-        <option value="sin_asignar" {% if not g.ficha_id %}selected{% endif %}>Sin asignar</option>
+        {% if fichas_por_articulo.get(g.articulo_id) %}
+        <optgroup label="Cajas de este artículo">
+          {% for f in fichas_por_articulo.get(g.articulo_id, []) %}
+          <option value="{{ f.id }}" {% if g.ficha_id == f.id %}selected{% endif %}>{{ f.nombre }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
+        <optgroup label="Si no sabés">
+          <option value="sin_asignar" {% if not g.ficha_id %}selected{% endif %}>Sin asignar (se completa después)</option>
+        </optgroup>
       </select>
       <button type="submit">Guardar ficha</button>
     </form>

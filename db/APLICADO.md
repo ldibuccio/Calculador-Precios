@@ -127,6 +127,12 @@ vigente_desde)` el 2026-08-26 con
 las dos bases. De aquella limpieza la columna `articulo_id` SE QUEDÓ,
 como estaba previsto: la usa el chequeo de Disponibles.)
 
+### Guías R: el botón "Anular guía" quedó en 37px
+
+Por debajo de los 44px de la regla mobile-first. No es de la etapa 1 (ya
+estaba así), pero esa pantalla se muda a Administración en la etapa 0 del
+modelo nuevo: se arregla ahí, cuando se toque el archivo igual.
+
 ## Pasos manuales que NO son SQL (por base)
 
 | Paso | Frutamax | Palmala |

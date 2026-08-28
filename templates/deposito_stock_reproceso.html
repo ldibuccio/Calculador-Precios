@@ -181,12 +181,25 @@
 
       select.add(new Option("Elegí qué caja armaste...", "", true, true));
       select.options[0].disabled = true;
-      fichas.forEach(function (f) {
-        select.add(new Option(f.nombre, String(f.id)));
-      });
-      // "Sin asignar" al final y SIEMPRE presente: si no está, el que no
-      // sabe qué caja armó no tiene con qué seguir y elige cualquiera.
-      select.add(new Option("Sin asignar (no sé a qué caja fue)", "sin_asignar"));
+
+      // Las cajas de verdad van en su grupo. "Sin asignar" va en OTRO, y
+      // eso no es cosmética: al mismo nivel, elegirlo cuesta lo mismo que
+      // elegir bien y se vuelve el default de hecho — un toque menos que
+      // pensar. Separado se lee como la excepción que es, sin agregar
+      // pasos. Y sigue SIEMPRE presente: el que no sabe tiene que poder
+      // decirlo, o va a elegir cualquiera.
+      if (fichas.length) {
+        const grupo = document.createElement("optgroup");
+        grupo.label = "Cajas de este cliente";
+        fichas.forEach(function (f) {
+          grupo.appendChild(new Option(f.nombre, String(f.id)));
+        });
+        select.add(grupo);
+      }
+      const excepcion = document.createElement("optgroup");
+      excepcion.label = "Si no sabés";
+      excepcion.appendChild(new Option("Sin asignar (se completa después)", "sin_asignar"));
+      select.add(excepcion);
 
       if (elegida) { select.value = elegida; }
       document.getElementById("ayuda-sin-asignar").textContent = fichas.length

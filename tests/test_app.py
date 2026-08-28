@@ -17079,6 +17079,31 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     assert "Banana Ecuador" in cuerpo
 
 
+def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
+    """Al mismo nivel que las fichas, elegirlo cuesta lo mismo que elegir
+    bien, y se vuelve el default de hecho: un toque menos que pensar.
+    Separado se lee como la excepción que es. Y sigue SIEMPRE presente:
+    el que no sabe tiene que poder decirlo.
+    """
+    guias = [dict(GUIAS_R_DE_PRUEBA[0], id=2, articulo_id=5, ficha_id=None,
+                  ficha_nombre=None, anulado_el=None)]
+    fichas = [{"id": 901, "articulo_id": 5, "cliente_nombre": "Día",
+               "nombre_cliente": "Banana Bolivia", "articulo_nombre": "Banana"}]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert '<optgroup label="Cajas de este artículo">' in cuerpo
+    assert '<optgroup label="Si no sabés">' in cuerpo
+    # La caja y la excepción NO comparten grupo.
+    assert cuerpo.index("Banana Bolivia") < cuerpo.index('label="Si no sabés"')
+    assert "Sin asignar" in cuerpo
+
+
 def test_una_guia_anulada_no_ofrece_asignar_ficha():
     guias = [dict(GUIAS_R_DE_PRUEBA[0], id=3, articulo_id=5, ficha_id=None,
                   ficha_nombre=None, anulado_el=datetime(2026, 8, 26, 10, 0))]
