@@ -397,6 +397,19 @@ create table tipos_envase_puesto (
 
 comment on table tipos_envase_puesto is 'Tipos de cajón físico por proveedor del puesto (los carga la cajera). Un proveedor sin tipos cargados no aparece en las pantallas de Vacíos.';
 
+create table senas_valor_historial (
+    id              bigint generated always as identity primary key,
+    tipo_envase_id  bigint not null references tipos_envase_puesto (id),
+    monto           numeric not null check (monto >= 0),
+    vigente_desde   date not null,
+    creado_en       timestamptz not null default now(),
+    unique (tipo_envase_id, vigente_desde)
+);
+
+comment on table senas_valor_historial is 'Valor de la seña de cada tipo de envase del puesto, con historial por fecha de vigencia. Append-only: nunca se borra ni se corrige una fila vieja; cargar de nuevo la misma fecha es lo único que la pisa. Un tipo sin filas no vale 0: no tiene valor cargado.';
+comment on column senas_valor_historial.monto is 'Cuánto se le seña al cliente por CADA cajón de este tipo. El total de una recepción es monto * cantidad. Cero explícito es un dato: "este envase no lleva seña", distinto de no tener fila.';
+comment on column senas_valor_historial.vigente_desde is 'Desde qué día rige este monto. Se resuelve con el valor de mayor vigente_desde que sea <= la fecha de la RECEPCIÓN (vacios_recibidos.creado_en::date), no la fecha del pago.';
+
 create table clientes_puesto (
     id                 bigint generated always as identity primary key,
     nombre             text not null,

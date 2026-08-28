@@ -23,6 +23,10 @@
 --   * Un tipo sin valor cargado NO vale $0: las pantallas muestran "sin
 --     valor cargado" en texto, nunca un número. Por eso no hay default ni
 --     fila sembrada acá: la tabla arranca vacía a propósito.
+--   * El check es >= 0, no > 0: un cero explícito SIGNIFICA algo ("este
+--     envase no lleva seña") y es distinto de no tener fila. Con > 0 esa
+--     distinción se perdería. Lo que el check corta es el negativo, que
+--     ahí sí siempre es error de carga.
 --
 -- Esta migración NO rompe el código desplegado: agrega una tabla que nadie
 -- lee todavía. Se puede correr antes de mergear.
@@ -40,7 +44,7 @@ create table senas_valor_historial (
 );
 
 comment on table senas_valor_historial is 'Valor de la seña de cada tipo de envase del puesto, con historial por fecha de vigencia. Append-only: nunca se borra ni se corrige una fila vieja; cargar de nuevo la misma fecha es lo único que la pisa. Un tipo sin filas no vale 0: no tiene valor cargado.';
-comment on column senas_valor_historial.monto is 'Cuánto se le señan al cliente por CADA cajón de este tipo. El total de una recepción es monto * cantidad.';
+comment on column senas_valor_historial.monto is 'Cuánto se le seña al cliente por CADA cajón de este tipo. El total de una recepción es monto * cantidad. Cero explícito es un dato: "este envase no lleva seña", distinto de no tener fila.';
 comment on column senas_valor_historial.vigente_desde is 'Desde qué día rige este monto. Se resuelve con el valor de mayor vigente_desde que sea <= la fecha de la RECEPCIÓN (vacios_recibidos.creado_en::date), no la fecha del pago.';
 
 -- El índice que necesita el "vigente a la fecha": por tipo, la fecha más
