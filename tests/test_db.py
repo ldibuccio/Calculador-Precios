@@ -27,6 +27,10 @@ from app.db import (
     listar_historial_valores_sena,
     listar_historiales_valores_sena,
     asignar_ficha_a_reproceso,
+    anular_renglon_stock_inicial,
+    crear_reproceso_inicial,
+    crear_stock_inicial,
+    fecha_corte,
     eliminar_ficha,
     contar_senas_afectadas_por_valor,
     cargar_valor_sena,
@@ -4380,3 +4384,135 @@ def test_devoluciones_vinculadas_por_rango_trae_el_renglon_y_la_fecha_del_pedido
     assert "m.anulado_el IS NULL AND m.pedido_renglon_id IS NOT NULL" in consulta
     assert "p.fecha_operacion AS fecha_pedido" in consulta
     assert cursor.execute.call_args.args[1] == (1, date(2026, 8, 18), date(2026, 8, 25))
+
+
+# --- Etapa 2: el stock inicial del corte ---
+
+
+def test_fecha_corte_se_lee_de_la_base_y_no_del_codigo():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 8, 31),)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert fecha_corte() == date(2026, 8, 31)
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "corte_modelo" in consulta and "id = 1" in consulta
+
+
+def test_fecha_corte_sin_fila_revienta_en_vez_de_inventar_una():
+    # Una base a medio configurar tiene que avisar: elegir una fecha por su
+    # cuenta sería costear contra lotes que no corresponden, en silencio.
+    conexion, _ = _conexion_falsa(filas_fetchone=[None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(RuntimeError, match="a medio configurar"):
+            fecha_corte()
+
+
+def test_crear_stock_inicial_es_un_movimiento_de_TIPO_PROPIO_con_costo():
+    # Con tipo propio y no como 'ajuste': es exactamente el error que se
+    # cometió con los saldos iniciales de Vacíos.
+    with patch("app.db.crear_movimiento_stock", return_value=40.0) as mock_mov:
+        assert crear_stock_inicial(7, 40, 1500, date(2026, 8, 31)) == 40.0
+
+    args, kwargs = mock_mov.call_args
+    assert args[1] == "stock_inicial"
+    assert args[2] == 40
+    assert kwargs["costo_por_bulto"] == 1500
+
+
+def test_crear_stock_inicial_sin_costo_no_llega_a_la_base():
+    with patch("app.db.crear_movimiento_stock") as mock_mov:
+        with pytest.raises(ValueError, match="costo por bulto"):
+            crear_stock_inicial(7, 40, None, date(2026, 8, 31))
+    mock_mov.assert_not_called()
+
+
+def test_crear_stock_inicial_con_cero_bultos_no_llega_a_la_base():
+    with patch("app.db.crear_movimiento_stock") as mock_mov:
+        with pytest.raises(ValueError, match="mayor a cero"):
+            crear_stock_inicial(7, 0, 1500, date(2026, 8, 31))
+    mock_mov.assert_not_called()
+
+
+def test_reproceso_inicial_toma_CERO_y_no_escribe_consumos():
+    """El corazón de la etapa: produce sin consumir.
+
+    Las cajas armadas del piso ya existen y los cajones que las originaron
+    no se van a cargar nunca. Si este reproceso descontara como uno normal,
+    dejaría el artículo en negativo o se comería el stock inicial suelto
+    recién cargado.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(99,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert crear_reproceso_inicial(7, 20, 2200, date(2026, 8, 31), ficha_id=11, cliente_id=2) == 99
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "INSERT INTO reprocesos" in consulta
+    # Toma cero y es de tipo inicial: los dos van escritos en el INSERT, y
+    # el check de la base no deja cargarlo de otra forma.
+    assert "VALUES (%s, %s, 0, %s, 0, 0, %s, %s, %s, %s, 'inicial')" in consulta
+    # costo_total = cajas × costo por caja, para que siga valiendo
+    # costo_por_bulto_primera = costo_total / bultos_primera.
+    assert parametros == (7, date(2026, 8, 31), 20, 44000.0, 2200, 2, 11)
+    # No corre el FIFO ni escribe consumos: no hay lote del que salgan.
+    assert not any("reprocesos_consumos" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_called_once()
+
+
+def test_reproceso_inicial_sin_ficha_no_llega_a_la_base():
+    # Al revés que el reproceso normal: una caja armada que está en el piso
+    # se puede ir a mirar, así que un "sin asignar" acá sería no haberla
+    # mirado.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(99,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="ficha"):
+            crear_reproceso_inicial(7, 20, 2200, date(2026, 8, 31), ficha_id=None)
+
+    cursor.execute.assert_not_called()
+
+
+def test_reproceso_inicial_sin_costo_no_llega_a_la_base():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(99,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="costo por caja"):
+            crear_reproceso_inicial(7, 20, None, date(2026, 8, 31), ficha_id=11)
+
+    cursor.execute.assert_not_called()
+
+
+def test_anular_stock_inicial_no_es_puerta_de_atras_para_otros_movimientos():
+    """El UPDATE filtra POR TIPO, no solo por id.
+
+    Sin ese filtro, la pantalla del stock inicial dejaría anular cualquier
+    ajuste o cualquier guía R del depósito cambiando un número en el
+    formulario.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_renglon_stock_inicial("sueltos", 5)
+    consulta, parametros = cursor.execute.call_args.args
+    assert "movimientos_stock" in consulta and "tipo = 'stock_inicial'" in consulta
+    assert parametros == (5,)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_renglon_stock_inicial("armadas", 99)
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE reprocesos" in consulta and "tipo = 'inicial'" in consulta
+    assert parametros == (99,)
+
+
+def test_anular_stock_inicial_que_no_es_del_corte_avisa_y_no_commitea():
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 0
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="no es del stock inicial"):
+            anular_renglon_stock_inicial("sueltos", 5)
+
+    conexion.commit.assert_not_called()

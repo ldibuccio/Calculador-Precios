@@ -868,7 +868,8 @@ create index reprocesos_ficha_idx
 create table reprocesos_consumos (
     id bigint generated always as identity primary key,
     reproceso_id bigint not null references reprocesos (id),
-    origen text not null check (origen in ('compra', 'ajuste', 'reingreso_rechazo', 'reproceso', 'sin_lote')),
+    origen text not null check (origen in ('compra', 'ajuste', 'reingreso_rechazo', 'reproceso',
+                                          'stock_inicial', 'sin_lote')),
     compra_id bigint references compras (id),
     origen_id bigint,
     bultos numeric not null check (bultos > 0),

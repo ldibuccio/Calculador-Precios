@@ -68,7 +68,8 @@ ETIQUETAS_MOTIVO_REAL = {
     "sin_kilaje": "Renglón armado sin kilaje cargado",
     "sin_precio": "Sin precio de venta vigente a la fecha del pedido",
     "compra_sin_precio": "Consumió una compra sin precio cargado",
-    "ajuste_sin_costo": "Consumió stock inicial u otro ajuste (sin costo posible)",
+    "ajuste_sin_costo": "Consumió un ajuste (sin costo posible)",
+    "stock_inicial_sin_costo": "Consumió stock inicial cargado sin costo",
     "reingreso_sin_costo": "Consumió un reingreso por rechazo sin costo (sin vínculo a pedido)",
     "guia_r_incompleta": "Consumió la primera de una guía R con costo incompleto",
     "sin_lote": "Salida sin lote (salió más de lo que había en el sistema)",
@@ -97,6 +98,10 @@ def _es_trabajado(tipo_lote) -> bool:
 _MOTIVO_POR_TIPO_LOTE = {
     "guia": "compra_sin_precio",
     "ajuste": "ajuste_sin_costo",
+    # El stock inicial nace CON costo (el check de la base lo permite justo
+    # para eso). Si igual aparece uno sin costo, es una anomalía propia y
+    # se dice: mezclarlo con los ajustes mandaría a mirar donde no es.
+    "stock_inicial": "stock_inicial_sin_costo",
     "reingreso_rechazo": "reingreso_sin_costo",
     "reproceso": "guia_r_incompleta",
 }

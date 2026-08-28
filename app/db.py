@@ -5670,6 +5670,35 @@ def obtener_mail_de_pedido(pedido_id: int) -> dict | None:
         conexion.close()
 
 
+# --- La fecha de corte del modelo nuevo ---
+
+
+def fecha_corte():
+    """La fecha desde la que rige el modelo nuevo (una sola fila en corte_modelo).
+
+    Vive en la base y no en el código para que se lea de UN lugar: la
+    usan el stock inicial, las guías R sin ficha (antes del corte un NULL
+    es dato viejo, después es "sin asignar") y todo lo que venga.
+
+    Si la fila no está, revienta a propósito: una base a medio configurar
+    tiene que avisar, no elegir una fecha por su cuenta y costear contra
+    lotes que no corresponden.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT fecha FROM corte_modelo WHERE id = 1")
+            fila = cursor.fetchone()
+        if fila is None:
+            raise RuntimeError(
+                "No hay fecha de corte cargada (corte_modelo está vacía): "
+                "la base quedó a medio configurar."
+            )
+        return fila[0]
+    finally:
+        conexion.close()
+
+
 # --- Stock del Depósito ---
 # El stock por artículo NUNCA se guarda: se calcula siempre, derivado de
 # compras recepcionadas (entradas), renglones armados de pedidos vigentes
@@ -5881,6 +5910,34 @@ def crear_movimiento_stock(
         return stock_sistema + float(cantidad)
     finally:
         conexion.close()
+
+
+def crear_stock_inicial(articulo_id: int, cantidad: float, costo_por_bulto: float, fecha_operacion) -> float:
+    """Los bultos SIN PROCESAR que había en el piso el día del corte, con su costo. Devuelve el stock resultante.
+
+    Es un movimiento de stock como cualquier otro, pero con TIPO PROPIO
+    en vez de entrar como 'ajuste': los saldos iniciales de Vacíos se
+    cargaron por la pantalla de Ajustes y hoy son indistinguibles de una
+    corrección de faltante — cualquier reporte de mermas los suma como
+    perdidos. Acá se separa desde el día uno, que es cuando sale gratis.
+
+    El costo es OBLIGATORIO y por eso no tiene default: sin él, el lote
+    entra al FIFO sin precio y todo lo que salga de él queda sin costear.
+    Es lo único que este stock no puede recuperar después — no hay compra
+    a la que ir a buscarle el importe.
+    """
+    if cantidad <= 0:
+        raise ValueError("El stock inicial son bultos que están en el piso: tiene que ser mayor a cero.")
+    if costo_por_bulto is None or costo_por_bulto < 0:
+        raise ValueError("El stock inicial necesita un costo por bulto de cero o más.")
+    return crear_movimiento_stock(
+        articulo_id,
+        "stock_inicial",
+        cantidad,
+        f"Stock inicial del corte ({fecha_operacion})",
+        fecha_operacion,
+        costo_por_bulto=costo_por_bulto,
+    )
 
 
 # El acumulado "ya devuelto" por renglón (solo reingresos no anulados):
@@ -6542,6 +6599,163 @@ def crear_reproceso(
                 )
         conexion.commit()
         return reproceso_id
+    finally:
+        conexion.close()
+
+
+def crear_reproceso_inicial(
+    articulo_id: int,
+    bultos_primera: float,
+    costo_por_bulto_primera: float,
+    fecha_operacion,
+    ficha_id: int,
+    cliente_id: int | None = None,
+) -> int:
+    """Las cajas que YA ESTABAN ARMADAS en el piso el día del corte. PRODUCE SIN CONSUMIR. Devuelve el número de guía.
+
+    No corre el FIFO ni escribe consumos, y eso no es un atajo: los
+    cajones que originaron estas cajas nunca se van a cargar, así que no
+    hay lote del que salgan. Un reproceso normal descuenta lo que tomó;
+    si este descontara igual, dejaría el artículo en negativo o se
+    comería el stock inicial sin procesar recién cargado.
+
+    Que no consuma vive EN EL DATO: bultos_tomados = 0, y el cálculo de
+    stock ya resta SUM(bultos_tomados). No hay ninguna excepción escrita
+    en una consulta que alguien pueda olvidar después, y el check de la
+    base no deja cargarlo de otra forma.
+
+    El costo por caja se carga a mano por la misma razón: no hay consumos
+    de los que derivarlo. costo_total sale de multiplicar, para que
+    siga valiendo costo_por_bulto_primera = costo_total / bultos_primera
+    como en cualquier otra guía.
+
+    La ficha es OBLIGATORIA acá, al revés que en el reproceso normal: una
+    caja armada que está en el piso ya es de una ficha concreta — se la
+    puede ir a mirar. Un "sin asignar" en el stock inicial sería no
+    haberla mirado.
+    """
+    if bultos_primera <= 0:
+        raise ValueError("Un reproceso inicial son cajas que están armadas en el piso: tiene que ser mayor a cero.")
+    if costo_por_bulto_primera is None or costo_por_bulto_primera < 0:
+        raise ValueError("Las cajas del stock inicial necesitan un costo por caja de cero o más.")
+    if ficha_id is None:
+        raise ValueError("Una caja ya armada tiene ficha: elegí cuál.")
+
+    costo_total = round(float(bultos_primera) * float(costo_por_bulto_primera), 2)
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO reprocesos
+                    (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                     bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
+                     cliente_id, ficha_id, tipo)
+                VALUES (%s, %s, 0, %s, 0, 0, %s, %s, %s, %s, 'inicial')
+                RETURNING id
+                """,
+                (articulo_id, fecha_operacion, bultos_primera, costo_total,
+                 costo_por_bulto_primera, cliente_id, ficha_id),
+            )
+            reproceso_id = cursor.fetchone()[0]
+        conexion.commit()
+        return reproceso_id
+    finally:
+        conexion.close()
+
+
+def listar_stock_inicial() -> dict:
+    """Todo lo cargado como stock inicial, de las dos formas, para mostrarlo abajo de la pantalla de carga.
+
+    Devuelve {"sueltos": [...], "armadas": [...], "total_bultos": n,
+    "total_pesos": n}. Sirve para dos cosas concretas mientras se carga:
+    saber por dónde se va, y no cargar dos veces lo mismo.
+
+    Lo anulado no viene: se carga a mano y equivocarse es parte del
+    trabajo, así que lo que se ve tiene que ser lo que cuenta.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, m.articulo_id, a.nombre AS articulo_nombre,
+                       m.cantidad, m.costo_por_bulto, m.fecha_operacion, m.creado_en
+                FROM movimientos_stock m
+                JOIN articulos a ON a.id = m.articulo_id
+                WHERE m.tipo = 'stock_inicial' AND m.anulado_el IS NULL
+                ORDER BY m.creado_en DESC
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            sueltos = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT r.id, r.articulo_id, a.nombre AS articulo_nombre,
+                       r.bultos_primera, r.costo_por_bulto_primera,
+                       r.ficha_id, r.cliente_id, cl.nombre AS cliente_nombre,
+                       -- El mismo nombre de ficha que muestra Guías R: el
+                       -- alias del cliente si lo tiene, y si no el artículo
+                       -- de la ficha. Que las dos pantallas la llamen
+                       -- distinto sería peor que no mostrarla.
+                       COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
+                       r.fecha_operacion, r.creado_en
+                FROM reprocesos r
+                JOIN articulos a ON a.id = r.articulo_id
+                LEFT JOIN clientes cl ON cl.id = r.cliente_id
+                LEFT JOIN fichas_logistica f ON f.id = r.ficha_id
+                LEFT JOIN articulos fa ON fa.id = f.articulo_id
+                WHERE r.tipo = 'inicial' AND r.anulado_el IS NULL
+                ORDER BY r.creado_en DESC
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            armadas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+    total_bultos = sum(float(f["cantidad"]) for f in sueltos) + sum(
+        float(f["bultos_primera"]) for f in armadas
+    )
+    total_pesos = sum(float(f["cantidad"]) * float(f["costo_por_bulto"]) for f in sueltos) + sum(
+        float(f["bultos_primera"]) * float(f["costo_por_bulto_primera"]) for f in armadas
+    )
+    return {
+        "sueltos": sueltos,
+        "armadas": armadas,
+        "total_bultos": round(total_bultos, 2),
+        "total_pesos": round(total_pesos, 2),
+    }
+
+
+def anular_renglon_stock_inicial(clase: str, renglon_id: int) -> None:
+    """Anula un renglón del stock inicial, sueltos o armadas. Se carga a mano: equivocarse es parte del trabajo.
+
+    Comprueba el tipo antes de anular. Sin eso, la pantalla del stock
+    inicial sería una puerta de atrás para anular cualquier ajuste o
+    cualquier guía R del depósito cambiando un número en el formulario.
+    """
+    if clase not in ("sueltos", "armadas"):
+        raise ValueError("Clase de renglón desconocida.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            if clase == "sueltos":
+                cursor.execute(
+                    "UPDATE movimientos_stock SET anulado_el = now() "
+                    "WHERE id = %s AND tipo = 'stock_inicial' AND anulado_el IS NULL",
+                    (renglon_id,),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE reprocesos SET anulado_el = now() "
+                    "WHERE id = %s AND tipo = 'inicial' AND anulado_el IS NULL",
+                    (renglon_id,),
+                )
+            if cursor.rowcount == 0:
+                raise ValueError("Ese renglón no es del stock inicial, o ya estaba anulado.")
+        conexion.commit()
     finally:
         conexion.close()
 

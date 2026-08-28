@@ -46,7 +46,7 @@ RESULTADO_REAL = {
         "renta_pesos": 3080.0, "utilidad_pct": 61.6, "afuera_bultos": 18.0, "afuera_motivos": 2,
     },
     "afuera_por_motivo": [
-        {"motivo": "ajuste_sin_costo", "etiqueta": "Consumió stock inicial u otro ajuste (sin costo posible)",
+        {"motivo": "ajuste_sin_costo", "etiqueta": "Consumió un ajuste (sin costo posible)",
          "bultos": 14.0, "articulos": [{"nombre": "Anco", "bultos": 14.0}]},
         {"motivo": "sin_kilaje", "etiqueta": "Renglón armado sin kilaje cargado",
          "bultos": 4.0, "articulos": [{"nombre": "Kiwi", "bultos": 4.0}]},
@@ -75,7 +75,7 @@ def test_generar_excel_rentabilidad_real_lleva_la_cuenta_y_el_afuera():
     # El AFUERA va incluido, con bultos y artículos por motivo — en el
     # papel también es protagonista.
     assert "AFUERA DEL CÁLCULO" in texto
-    assert "Consumió stock inicial u otro ajuste (sin costo posible)" in texto
+    assert "Consumió un ajuste (sin costo posible)" in texto
     assert "Anco (14)" in texto
     # La cuenta: mermas, segunda y devoluciones con sus columnas.
     assert "Mermas $" in texto

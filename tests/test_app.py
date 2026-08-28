@@ -15388,8 +15388,9 @@ def test_ajustar_stock_guarda_el_movimiento_y_precarga_el_motivo_en_cadena():
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(1, "ajuste", 12.0, "stock inicial", date(2026, 8, 25))
-    # El motivo vuelve en la URL: el caso real es el stock inicial, un
-    # ajuste por artículo, uno atrás de otro sin retipear el motivo.
+    # El motivo vuelve en la URL para encadenar varios ajustes con el mismo
+    # motivo sin retipearlo. (El stock inicial del corte ya NO se carga por
+    # acá: tiene pantalla y tipo propios.)
     assert "motivo=stock+inicial" in respuesta.headers["location"]
     assert "El+stock+qued%C3%B3+en+12" in respuesta.headers["location"]
 
@@ -16565,7 +16566,7 @@ RESULTADO_REAL_DE_PRUEBA = {
                 "afuera_bultos": 42.0, "afuera_motivos": 2, "costo_total": 6820.0,
                 "renta_pesos": 7580.0, "utilidad_pct": 151.6},
     "afuera_por_motivo": [
-        {"motivo": "ajuste_sin_costo", "etiqueta": "Consumió stock inicial u otro ajuste (sin costo posible)",
+        {"motivo": "ajuste_sin_costo", "etiqueta": "Consumió un ajuste (sin costo posible)",
          "bultos": 30.0, "articulos": [{"nombre": "Banana", "bultos": 30.0}]},
         {"motivo": "sin_kilaje", "etiqueta": "Renglón armado sin kilaje cargado",
          "bultos": 12.0, "articulos": [{"nombre": "Anco", "bultos": 12.0}]},
@@ -16596,7 +16597,7 @@ def test_rentabilidad_real_muestra_la_cuenta_y_el_afuera_protagonista():
     # El AFUERA protagonista: total en grande, bultos por motivo, artículos.
     assert "Afuera del cálculo — no sumó como cero" in respuesta.text
     assert "42 bultos afuera, por 2 motivos" in respuesta.text
-    assert "Consumió stock inicial u otro ajuste (sin costo posible)" in respuesta.text
+    assert "Consumió un ajuste (sin costo posible)" in respuesta.text
     assert "Banana (30)" in respuesta.text
     assert "Anco (12)" in respuesta.text
     # Y aparece ANTES que la tabla de grupos (arriba, no nota al pie).
@@ -17307,3 +17308,242 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
     ):
         respuesta = cliente.get("/sistema/casilla-pedidos")
     assert ancla.format(destino="/sistema") in respuesta.text
+
+
+# --- Etapa 2: el stock inicial del corte ---
+# La pantalla que se usa UNA vez, el día antes del corte, para que lo que
+# hay en el piso pase a existir para el sistema. Va en Administración y no
+# en Depósito porque lleva costo.
+
+FICHAS_STOCK_INICIAL = [
+    {"id": 10, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Banana",
+     "contenido_caja": 18, "unidad_venta": "kilo", "envase_variable": False,
+     "nombre_cliente": "Banana Bolivia", "codigo_cliente": None},
+    {"id": 11, "cliente_id": 2, "articulo_id": 7, "articulo_nombre": "Banana",
+     "contenido_caja": 18, "unidad_venta": "kilo", "envase_variable": False,
+     "nombre_cliente": "Banana Ecuador", "codigo_cliente": None},
+]
+
+CARGADO_VACIO = {"sueltos": [], "armadas": [], "total_bultos": 0, "total_pesos": 0}
+
+
+def _pantalla_stock_inicial(url="/administracion/stock/inicial", cargado=None, fichas=None):
+    with (
+        patch("app.main.listar_articulos", return_value=[{"id": 7, "nombre": "Banana"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=FICHAS_STOCK_INICIAL if fichas is None else fichas),
+        patch("app.main.listar_stock_inicial", return_value=cargado or CARGADO_VACIO),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
+    ):
+        return cliente.get(url)
+
+
+def test_stock_inicial_muestra_la_fecha_de_corte_leida_de_la_base():
+    respuesta = _pantalla_stock_inicial()
+
+    assert respuesta.status_code == 200
+    # La fecha NO está escrita en el código: sale de corte_modelo.
+    assert "31/08/2026" in respuesta.text
+
+
+def test_stock_inicial_sin_articulo_no_muestra_los_formularios_de_carga():
+    respuesta = _pantalla_stock_inicial()
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Elegí el artículo" in cuerpo
+    assert "Guardar bultos sueltos" not in cuerpo
+    assert "Guardar cajas armadas" not in cuerpo
+
+
+def test_stock_inicial_con_articulo_muestra_las_dos_formas_de_cargar():
+    respuesta = _pantalla_stock_inicial("/administracion/stock/inicial?articulo_id=7")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Guardar bultos sueltos" in cuerpo
+    assert "Guardar cajas armadas" in cuerpo
+    # El artículo queda elegido en el selector: no hay que reelegirlo.
+    assert 'value="7" selected' in " ".join(cuerpo.split())
+
+
+def test_stock_inicial_las_fichas_se_eligen_por_articulo_y_dicen_de_que_cliente_son():
+    respuesta = _pantalla_stock_inicial("/administracion/stock/inicial?articulo_id=7")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Sin el cliente adentro del nombre, las dos fichas de Banana de dos
+    # clientes distintos serían dos opciones idénticas.
+    assert "Día — Banana Bolivia" in cuerpo
+    assert "Vea — Banana Ecuador" in cuerpo
+    # Y NO hay un "sin asignar" como en la guía R: una caja que está en el
+    # piso se puede ir a mirar.
+    assert "Sin asignar" not in cuerpo
+
+
+def test_stock_inicial_sin_fichas_del_articulo_lo_dice_en_vez_de_dejar_cargar():
+    respuesta = _pantalla_stock_inicial("/administracion/stock/inicial?articulo_id=7", fichas=[])
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "no tiene ninguna ficha cargada" in cuerpo
+    assert "Guardar cajas armadas" not in cuerpo
+
+
+def test_stock_inicial_sueltos_guarda_con_la_fecha_de_corte_y_vuelve_al_mismo_articulo():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "Banana"}),
+        patch("app.main.crear_stock_inicial", return_value=40.0) as mock_crear,
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
+    ):
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/sueltos",
+            data={"articulo_id": "7", "bultos": "40", "costo_por_bulto": "1500"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # La fecha del movimiento es la del corte, no la de hoy: se carga el
+    # domingo lo que hay para el lunes.
+    mock_crear.assert_called_once_with(7, 40.0, 1500.0, date(2026, 8, 31))
+    # Vuelve con el MISMO artículo puesto y al formulario, no arriba de
+    # todo: son muchos renglones seguidos.
+    assert "articulo_id=7" in respuesta.headers["location"]
+    assert respuesta.headers["location"].endswith("#carga")
+
+
+def test_stock_inicial_sueltos_sin_costo_da_400_y_no_guarda():
+    with (
+        patch("app.main.crear_stock_inicial") as mock_crear,
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_stock_inicial", return_value=CARGADO_VACIO),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
+    ):
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/sueltos",
+            data={"articulo_id": "7", "bultos": "40", "costo_por_bulto": ""},
+        )
+
+    assert respuesta.status_code == 400
+    # Es lo único que este stock no puede recuperar después.
+    assert "sin costear" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_stock_inicial_armadas_guarda_un_reproceso_inicial_con_su_ficha():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "Banana"}),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.crear_reproceso_inicial", return_value=99) as mock_crear,
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
+    ):
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/armadas",
+            data={"articulo_id": "7", "ficha_id": "11", "cajas": "20", "costo_por_caja": "2200"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # El cliente sale de la ficha elegida, no se pregunta aparte.
+    mock_crear.assert_called_once_with(
+        7, 20.0, 2200.0, date(2026, 8, 31), ficha_id=11, cliente_id=2
+    )
+    assert "articulo_id=7" in respuesta.headers["location"]
+
+
+def test_stock_inicial_armadas_sin_ficha_da_400_y_no_guarda():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "Banana"}),
+        patch("app.main.listar_articulos", return_value=[{"id": 7, "nombre": "Banana"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_stock_inicial", return_value=CARGADO_VACIO),
+        patch("app.main.crear_reproceso_inicial") as mock_crear,
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
+    ):
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/armadas",
+            data={"articulo_id": "7", "ficha_id": "", "cajas": "20", "costo_por_caja": "2200"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "siempre es de alguna" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_stock_inicial_armadas_con_ficha_de_otro_articulo_no_guarda():
+    # La ficha 10 es de Banana (artículo 7): pedirla para el artículo 9
+    # tiene que rebotar, aunque el id exista.
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 9, "nombre": "Pera"}),
+        patch("app.main.listar_articulos", return_value=[{"id": 9, "nombre": "Pera"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_stock_inicial", return_value=CARGADO_VACIO),
+        patch("app.main.crear_reproceso_inicial") as mock_crear,
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
+    ):
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/armadas",
+            data={"articulo_id": "9", "ficha_id": "10", "cajas": "20", "costo_por_caja": "2200"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_stock_inicial_muestra_lo_cargado_con_el_total_de_las_dos_formas():
+    cargado = {
+        "sueltos": [{"id": 1, "articulo_id": 7, "articulo_nombre": "Banana",
+                     "cantidad": 40, "costo_por_bulto": 1500,
+                     "fecha_operacion": date(2026, 8, 31), "creado_en": None}],
+        "armadas": [{"id": 99, "articulo_id": 7, "articulo_nombre": "Banana",
+                     "bultos_primera": 20, "costo_por_bulto_primera": 2200,
+                     "ficha_id": 11, "ficha_nombre": "Banana Ecuador",
+                     "cliente_id": 2, "cliente_nombre": "Vea",
+                     "fecha_operacion": date(2026, 8, 31), "creado_en": None}],
+        "total_bultos": 60,
+        "total_pesos": 104000.0,
+    }
+    respuesta = _pantalla_stock_inicial(cargado=cargado)
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Para saber por dónde va y no cargar dos veces lo mismo.
+    assert "40 bultos × $1500" in cuerpo
+    assert "20 cajas × $2200" in cuerpo
+    assert "Banana Ecuador" in cuerpo
+    # El total, de las dos formas juntas.
+    assert "60</span>" in cuerpo
+    assert "$104.000,00" in cuerpo
+
+
+def test_stock_inicial_anular_pasa_la_clase_y_vuelve_al_mismo_articulo():
+    with patch("app.main.anular_renglon_stock_inicial") as mock_anular:
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/anular",
+            data={"clase": "armadas", "renglon_id": "99", "articulo_id": "7"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_anular.assert_called_once_with("armadas", 99)
+    assert "articulo_id=7" in respuesta.headers["location"]
+
+
+def test_stock_inicial_anular_con_clase_desconocida_no_llama_a_la_base():
+    with patch("app.main.anular_renglon_stock_inicial") as mock_anular:
+        respuesta = cliente.post(
+            "/administracion/stock/inicial/anular",
+            data={"clase": "cualquiera", "renglon_id": "99", "articulo_id": "7"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_anular.assert_not_called()
+
+
+def test_administracion_tiene_el_boton_del_stock_inicial():
+    with patch("app.main._banner_alertas", return_value=None):
+        respuesta = cliente.get("/administracion")
+
+    assert 'href="/administracion/stock/inicial"' in respuesta.text

@@ -89,6 +89,7 @@ from app.db import (
     articulos_con_salidas_stock,
     anular_remito_segunda,
     anular_reproceso,
+    anular_renglon_stock_inicial,
     completar_costo_reproceso,
     contar_reprocesos_costo_incompleto,
     contar_stock_deposito_negativo,
@@ -97,6 +98,8 @@ from app.db import (
     crear_pedido,
     crear_remito_segunda,
     crear_reproceso,
+    crear_reproceso_inicial,
+    crear_stock_inicial,
     crear_ajuste_vacios,
     crear_compras_de_comanda,
     crear_conteo_vacios,
@@ -115,6 +118,7 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    fecha_corte,
     entradas_y_salidas_stock_articulos,
     listar_articulos_con_primera_de_cliente,
     crear_grupo_costos_fijos,
@@ -206,6 +210,7 @@ from app.db import (
     listar_historial_costos_envases,
     listar_historial_fichas_por_cliente,
     listar_fichas_de_todos_los_clientes,
+    listar_stock_inicial,
     listar_fichas_por_cliente,
     listar_renglones_pedido,
     listar_sucursales_pedido,
@@ -6472,10 +6477,223 @@ def ajustar_stock_deposito_ruta(
         f"Ajuste guardado: {'+' if cantidad_valor > 0 else ''}{_formatear_numero(cantidad_valor)} bultos de "
         f"{articulo['nombre']}. El stock quedó en {_formatear_numero(stock_nuevo)}."
     )
-    # El motivo vuelve en la URL para la carga en cadena (stock inicial).
+    # El motivo vuelve en la URL para poder encadenar varios ajustes con el
+    # mismo motivo sin reescribirlo. (El stock inicial del corte NO se carga
+    # más por acá: tiene pantalla y tipo propios — ver /administracion/stock/inicial.)
     return RedirectResponse(
         url=f"/administracion/stock/ajustar?{urlencode({'aviso': aviso, 'motivo': motivo_limpio})}", status_code=303
     )
+
+
+# --- El stock inicial del corte ---
+# Se carga UNA vez, a mano, el día antes del corte: lo que hay en el piso
+# pasa a existir para el sistema. Va en Administración y no en Depósito
+# porque lleva COSTO, y el operario no ve números del sistema.
+
+
+def _fichas_por_articulo() -> dict[str, list[dict]]:
+    """Las fichas elegibles al cargar cajas ya armadas, por articulo_id (como texto).
+
+    Acá la ficha se elige por ARTÍCULO y no por (cliente, artículo) como
+    en la guía R: el que carga está mirando una caja concreta en el piso y
+    ya sabe de quién es. Pedirle el cliente primero sería un campo más por
+    renglón, y son muchos renglones seguidos.
+
+    Por eso cada opción lleva el cliente adentro del nombre: sin él,
+    "Banana Bolivia" de dos clientes distintos serían dos opciones
+    idénticas.
+    """
+    nombres = {cliente["id"]: cliente["nombre"] for cliente in listar_clientes()}
+    por_articulo: dict[str, list[dict]] = {}
+    for ficha in listar_fichas_de_todos_los_clientes():
+        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+        kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+                  if ficha.get("contenido_caja") else "")
+        por_articulo.setdefault(str(ficha["articulo_id"]), []).append(
+            {
+                "id": ficha["id"],
+                "cliente_id": ficha["cliente_id"],
+                "nombre": f"{nombres.get(ficha['cliente_id'], 'Cliente sin nombre')} — {_nombre_de_ficha(ficha)}",
+                "kilaje": kilaje,
+            }
+        )
+    for fichas in por_articulo.values():
+        fichas.sort(key=lambda f: f["nombre"])
+    return por_articulo
+
+
+def _renderizar_stock_inicial(
+    request: Request, *, articulo_id=None, precarga=None, aviso=None, error=None, status_code: int = 200
+):
+    """La pantalla del stock inicial: el artículo elegido ARRIBA y fijo, y abajo lo ya cargado con su total.
+
+    El artículo viaja en la URL a propósito. Se carga renglón tras renglón
+    y son muchos: si cada guardado devolviera la pantalla en blanco,
+    habría que reelegirlo cada vez.
+    """
+    try:
+        contexto = {
+            "articulos": listar_articulos(),
+            "fichas_por_articulo": _fichas_por_articulo(),
+            "cargado": listar_stock_inicial(),
+            "fecha_corte": fecha_corte(),
+            "articulo_id": str(articulo_id) if articulo_id is not None else "",
+            "precarga": precarga or {},
+            "aviso": aviso,
+            "error": error,
+        }
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request, "administracion_stock_inicial.html", contexto, status_code=status_code
+    )
+
+
+def _volver_a_stock_inicial(articulo_id, aviso=None, error=None):
+    """Vuelve a la pantalla con el MISMO artículo puesto y el foco en la carga (#carga).
+
+    El ancla no es un detalle: en el celular, sin ella cada guardado deja
+    la pantalla arriba de todo y hay que scrollear hasta el formulario
+    otra vez, renglón por renglón.
+    """
+    parametros = {"articulo_id": str(articulo_id or "")}
+    if aviso:
+        parametros["aviso"] = aviso
+    if error:
+        parametros["error"] = error
+    return RedirectResponse(url=f"/administracion/stock/inicial?{urlencode(parametros)}#carga", status_code=303)
+
+
+@app.get("/administracion/stock/inicial")
+def ver_stock_inicial(
+    request: Request,
+    articulo_id: str | None = None,
+    aviso: str | None = None,
+    error: str | None = None,
+):
+    return _renderizar_stock_inicial(request, articulo_id=articulo_id, aviso=aviso, error=error)
+
+
+@app.post("/administracion/stock/inicial/sueltos")
+def cargar_stock_inicial_sueltos(
+    request: Request,
+    articulo_id: str = Form(""),
+    bultos: str = Form(""),
+    costo_por_bulto: str = Form(""),
+):
+    """Los bultos SIN PROCESAR que hay en el piso, con su costo por bulto."""
+    error, bultos_valor = _validar_bultos_positivos(bultos, "del stock inicial")
+    costo_valor = None
+    if not error:
+        error, costo_valor = _validar_costo_stock_inicial(costo_por_bulto, "por bulto")
+
+    articulo = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+
+    if error:
+        return _renderizar_stock_inicial(
+            request,
+            articulo_id=articulo_id,
+            precarga={"bultos": bultos, "costo_por_bulto": costo_por_bulto},
+            error=error,
+            status_code=400,
+        )
+
+    try:
+        crear_stock_inicial(articulo["id"], bultos_valor, costo_valor, fecha_corte())
+    except Exception as error_db:
+        return _renderizar_stock_inicial(
+            request, articulo_id=articulo_id, error=f"No se pudo guardar: {error_db}", status_code=500
+        )
+
+    return _volver_a_stock_inicial(
+        articulo["id"],
+        aviso=(f"Cargados {_formatear_numero(bultos_valor)} bultos sueltos de {articulo['nombre']} "
+               f"a ${_formatear_numero(costo_valor)} cada uno."),
+    )
+
+
+@app.post("/administracion/stock/inicial/armadas")
+def cargar_stock_inicial_armadas(
+    request: Request,
+    articulo_id: str = Form(""),
+    ficha_id: str = Form(""),
+    cajas: str = Form(""),
+    costo_por_caja: str = Form(""),
+):
+    """Las cajas YA ARMADAS que hay en el piso: una guía R de tipo inicial, que produce sin consumir."""
+    error, cajas_valor = _validar_bultos_positivos(cajas, "ya armadas")
+    costo_valor = None
+    if not error:
+        error, costo_valor = _validar_costo_stock_inicial(costo_por_caja, "por caja")
+
+    articulo = None
+    ficha = None
+    if not error:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+            fichas = _fichas_por_articulo().get(str(articulo_id).strip(), []) if articulo else []
+            ficha = next((f for f in fichas if str(f["id"]) == ficha_id.strip()), None)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+        elif ficha is None:
+            # Una caja armada en el piso YA es de una ficha concreta: se la
+            # puede ir a mirar. Dejar cargarla sin ficha sería crear el
+            # "sin asignar" que la etapa 1 vino a poder completar.
+            error = "Elegí de qué ficha son estas cajas: una caja ya armada siempre es de alguna."
+
+    if error:
+        return _renderizar_stock_inicial(
+            request,
+            articulo_id=articulo_id,
+            precarga={"ficha_id": ficha_id, "cajas": cajas, "costo_por_caja": costo_por_caja},
+            error=error,
+            status_code=400,
+        )
+
+    try:
+        crear_reproceso_inicial(
+            articulo["id"], cajas_valor, costo_valor, fecha_corte(),
+            ficha_id=ficha["id"], cliente_id=ficha["cliente_id"],
+        )
+    except Exception as error_db:
+        return _renderizar_stock_inicial(
+            request, articulo_id=articulo_id, error=f"No se pudo guardar: {error_db}", status_code=500
+        )
+
+    return _volver_a_stock_inicial(
+        articulo["id"],
+        aviso=(f"Cargadas {_formatear_numero(cajas_valor)} cajas armadas de {ficha['nombre']} "
+               f"a ${_formatear_numero(costo_valor)} cada una."),
+    )
+
+
+@app.post("/administracion/stock/inicial/anular")
+def anular_stock_inicial_ruta(
+    request: Request,
+    clase: str = Form(""),
+    renglon_id: str = Form(""),
+    articulo_id: str = Form(""),
+):
+    """Saca un renglón mal cargado. Se carga a mano y de apuro: equivocarse es parte del trabajo."""
+    if not renglon_id.strip().isdigit() or clase not in ("sueltos", "armadas"):
+        return _volver_a_stock_inicial(articulo_id, error="No se entendió qué renglón anular.")
+    try:
+        anular_renglon_stock_inicial(clase, int(renglon_id))
+    except ValueError as error_valor:
+        return _volver_a_stock_inicial(articulo_id, error=str(error_valor))
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return _volver_a_stock_inicial(articulo_id, aviso="Renglón anulado: no cuenta más en el total.")
 
 
 def _validar_bultos_positivos(cantidad: str, que: str) -> tuple[str | None, float | None]:
@@ -6492,9 +6710,29 @@ def _validar_bultos_positivos(cantidad: str, que: str) -> tuple[str | None, floa
     return None, valor
 
 
+def _validar_costo_stock_inicial(costo: str, que: str) -> tuple[str | None, float | None]:
+    """El costo del stock inicial: obligatorio y de cero o más.
+
+    Obligatorio a propósito, y sin default. Es lo único que este stock no
+    puede recuperar después: no hay compra a la que ir a buscarle el
+    importe, así que un lote que entra sin costo deja sin costear todo lo
+    que salga de él, para siempre.
+    """
+    texto = costo.strip().replace("$", "").replace(" ", "")
+    if not texto:
+        return f"El costo {que} es obligatorio: sin él, todo lo que salga de este stock queda sin costear.", None
+    try:
+        valor = float(texto)
+    except ValueError:
+        return f"El costo {que} tiene que ser un número.", None
+    if valor < 0:
+        return f"El costo {que} no puede ser negativo.", None
+    return None, valor
+
+
 # Los tipos de lote del detalle FIFO por artículo, para validar a mano a
 # cuál se dirige una merma (el value del selector es "tipo:id").
-TIPOS_LOTE_STOCK = ("guia", "reproceso", "reingreso_rechazo", "ajuste")
+TIPOS_LOTE_STOCK = ("guia", "reproceso", "reingreso_rechazo", "ajuste", "stock_inicial")
 
 
 def _renderizar_pantalla_merma(
@@ -6860,7 +7098,12 @@ def cargar_reingreso_stock_ruta(
     return RedirectResponse(url=f"/deposito/stock/reingreso?{urlencode({'aviso': aviso})}", status_code=303)
 
 
-ETIQUETAS_MOVIMIENTO_STOCK = {"ajuste": "Ajuste", "merma": "Merma", "reingreso_rechazo": "Reingreso"}
+ETIQUETAS_MOVIMIENTO_STOCK = {
+    "ajuste": "Ajuste",
+    "merma": "Merma",
+    "reingreso_rechazo": "Reingreso",
+    "stock_inicial": "Stock inicial",
+}
 
 
 @app.get("/administracion/stock/movimientos")
