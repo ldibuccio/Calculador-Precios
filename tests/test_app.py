@@ -11641,11 +11641,30 @@ def test_con_clave_las_pantallas_de_control_piden_clave():
             "/puesto/envases/proveedores",
             "/puesto/envases/tipos",
             "/puesto/envases/clientes",
+            "/puesto/envases/senas",
         ):
             respuesta = cliente.get(url)
             assert respuesta.status_code == 401, url
             assert 'action="/puesto/envases/clave"' in respuesta.text, url
             assert f'name="volver" value="{url}"' in respuesta.text, url
+
+
+def test_cambiar_el_valor_de_la_sena_sin_destrabar_NO_toca_la_base():
+    """El POST, que es donde de verdad se mueve plata.
+
+    Que la pantalla pida clave no alcanza: el que importa es el POST, que
+    se puede mandar sin pasar por la pantalla. Cuánto vale la seña define
+    cuánto se le paga a cada cliente.
+    """
+    with _con_clave_control(), patch("app.main.cargar_valor_sena") as mock_cargar:
+        respuesta = cliente.post(
+            "/puesto/envases/senas/cargar",
+            data={"tipo_envase_id": "1", "monto": "500", "vigente_desde": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_cargar.assert_not_called()
 
 
 def test_la_pantalla_de_clave_no_deja_que_el_navegador_la_recuerde():

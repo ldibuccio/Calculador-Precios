@@ -9397,9 +9397,15 @@ def _renderizar_pantalla_valores_sena(request: Request, *, error=None, aviso=Non
 
 
 @app.get("/puesto/envases/senas")
-def ver_valores_sena(request: Request):
-    """Cuánto vale la seña de cada tipo de cajón, con historial por fecha (cajera)."""
-    return _renderizar_pantalla_valores_sena(request)
+def ver_valores_sena(request: Request, aviso: str | None = None):
+    """Cuánto vale la seña de cada tipo de cajón, con historial por fecha (cajera).
+
+    Detrás de la clave: acá se define cuánta plata se le paga a cada
+    cliente por sus cajones. El empleado del fondo no entra.
+    """
+    if not _acceso_control_valido(request):
+        return _pantalla_clave_control(request)
+    return _renderizar_pantalla_valores_sena(request, aviso=aviso)
 
 
 @app.post("/puesto/envases/senas/cargar")
