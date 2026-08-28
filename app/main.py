@@ -132,6 +132,7 @@ from app.db import (
     listar_renglones_para_reingreso,
     obtener_renglon_para_reingreso,
     listar_conteos_stock_de_fecha,
+    fecha_conteo_stock_mas_cercana,
     listar_movimientos_stock_por_rango,
     listar_remitos_segunda_por_rango,
     salidas_stock_articulo,
@@ -6941,27 +6942,51 @@ def anular_remito_segunda_ruta(
     )
 
 
-def _renderizar_pantalla_stock_fisico_deposito(request: Request, *, error=None, aviso=None, status_code: int = 200):
+def _renderizar_pantalla_stock_fisico_deposito(request: Request, *, error=None, aviso=None,
+                                              fecha=None, status_code: int = 200):
+    """La pantalla del operario. `fecha` es el día que se está mirando; None es hoy."""
+    hoy = _hoy_argentina()
+    dia = fecha or hoy
     try:
         articulos = listar_articulos()
         # listar_conteos_stock_de_fecha NO trae stock_sistema, a propósito:
         # esta pantalla la ve el operario y el número del sistema no puede
         # viajar ni escondido en su HTML (control cruzado).
-        contados_hoy = listar_conteos_stock_de_fecha(_hoy_argentina())
+        contados = listar_conteos_stock_de_fecha(dia)
+        # Solo si ese día está vacío: buscarlo siempre sería una consulta
+        # de más en el caso normal, que es mirar hoy y ver lo de hoy.
+        mas_cercana = fecha_conteo_stock_mas_cercana(dia) if not contados else None
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # Si el día vacío es justo el más cercano no hay nada que ofrecer (pasa
+    # cuando la tabla está vacía del todo).
+    if mas_cercana == dia:
+        mas_cercana = None
 
     return templates.TemplateResponse(
         request,
         "deposito_stock_fisico.html",
-        {"articulos": articulos, "contados_hoy": contados_hoy, "error": error, "aviso": aviso},
+        {"articulos": articulos, "contados_hoy": contados, "error": error, "aviso": aviso,
+         "dia": dia, "es_hoy": dia == hoy, "hoy": hoy, "mas_cercana": mas_cercana},
         status_code=status_code,
     )
 
 
 @app.get("/deposito/stock/fisico")
-def ver_stock_fisico_deposito(request: Request, aviso: str | None = None):
-    return _renderizar_pantalla_stock_fisico_deposito(request, aviso=aviso)
+def ver_stock_fisico_deposito(request: Request, aviso: str | None = None, fecha: str | None = None):
+    """Carga de conteos del operario, con lo contado del día que se esté mirando (hoy por defecto).
+
+    Una fecha mal escrita cae a hoy en vez de romper: el operario no tiene
+    que quedarse con una pantalla de error por un parámetro de la URL.
+    """
+    dia = None
+    if fecha:
+        try:
+            dia = date.fromisoformat(fecha.strip())
+        except ValueError:
+            dia = None
+    return _renderizar_pantalla_stock_fisico_deposito(request, aviso=aviso, fecha=dia)
 
 
 @app.post("/deposito/stock/fisico")

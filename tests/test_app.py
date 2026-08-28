@@ -15947,6 +15947,7 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
     ):
         respuesta = cliente.post(
             "/deposito/stock/fisico",
@@ -15972,6 +15973,91 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
     # Ni rastro del stock del sistema en el HTML del operario.
     assert "stock_sistema" not in respuesta.text
     assert "Sistema" not in respuesta.text
+
+
+def test_stock_fisico_deja_buscar_un_dia_y_muestra_ESE_dia():
+    contados = [{"id": 5, "cantidad": 12.0, "creado_en": datetime(2026, 8, 20, 10, 30),
+                 "articulo_nombre": "Banana"}]
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=contados) as mock_listar,
+        patch("app.main.fecha_conteo_stock_mas_cercana") as mock_cercana,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico?fecha=2026-08-20")
+
+    assert respuesta.status_code == 200
+    # Pidió ESE día, no hoy.
+    mock_listar.assert_called_once_with(date(2026, 8, 20))
+    assert "Contado el 20/08/2026" in respuesta.text
+    assert "Contado hoy" not in respuesta.text
+    assert "Volver a hoy" in respuesta.text
+    # El día tiene conteos: no sale a buscar el más cercano al pedo.
+    mock_cercana.assert_not_called()
+    # Y sigue sin filtrarse ningún número del sistema.
+    assert "stock_sistema" not in respuesta.text
+
+
+def test_un_dia_sin_conteos_ofrece_el_mas_cercano_con_el_link_puesto():
+    # Sin esto el operario queda en un "no hay nada" sin salida, probando
+    # fechas a mano hasta pegarle a una.
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=date(2026, 8, 24)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico?fecha=2026-08-22")
+
+    assert respuesta.status_code == 200
+    assert "No hay nada contado el 22/08/2026" in respuesta.text
+    assert "más cercano es el 24/08/2026" in respuesta.text
+    assert 'href="/deposito/stock/fisico?fecha=2026-08-24"' in respuesta.text
+
+
+def test_sin_ningun_conteo_en_la_tabla_no_ofrece_nada_y_no_rompe():
+    # La base recién estrenada: no hay "más cercano" que ofrecer.
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico")
+
+    assert respuesta.status_code == 200
+    assert "Todavía no contaste nada hoy." in respuesta.text
+    # Sin el <style>: "más cercano" también aparece en un comentario del CSS.
+    assert "más cercano" not in respuesta.text.split("</style>")[-1]
+
+
+def test_el_dia_vacio_que_es_su_propio_mas_cercano_no_se_ofrece_a_si_mismo():
+    # Caso borde: la consulta devuelve el día pedido. Ofrecer "andá al
+    # 25/08" estando en el 25/08 sería un link a la nada.
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=date(2026, 8, 25)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico")
+
+    assert respuesta.status_code == 200
+    assert "más cercano" not in respuesta.text.split("</style>")[-1]
+
+
+def test_una_fecha_mal_escrita_en_la_url_cae_a_hoy_y_no_rompe():
+    with (
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]) as mock_listar,
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico?fecha=el-martes")
+
+    assert respuesta.status_code == 200
+    mock_listar.assert_called_once_with(date(2026, 8, 25))
+    assert "Contado hoy" in respuesta.text
 
 
 def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste():

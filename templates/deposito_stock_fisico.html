@@ -78,6 +78,49 @@
   .fila-conteo:first-of-type { border-top: none; }
   .fila-conteo .hora { color: #888; font-size: 0.82rem; white-space: nowrap; }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  /* Buscar otro día: la fecha ancha y el botón al lado, en una fila que
+     se parte sola si no entra. En 390px el input de fecha ya come casi
+     todo el ancho. */
+  .buscar-dia { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+  .buscar-dia input { flex: 1 1 60%; margin-top: 0; }
+  .buscar-dia button {
+    flex: 1 1 30%;
+    padding: 0.8rem 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .volver-hoy {
+    display: inline-block;
+    margin-bottom: 0.75rem;
+    padding: 0.8rem 1.1rem;
+    background: #fff;
+    color: #2563eb;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  /* El día vacío no deja al operario sin salida: le ofrece el más cercano
+     como un botón, no como un texto que tiene que releer. */
+  .sin-conteos { margin: 0; }
+  .sin-conteos .mas-cercana {
+    display: inline-block;
+    margin-top: 0.6rem;
+    padding: 0.75rem 1rem;
+    background: #fff7ed;
+    color: #9a3412;
+    border: 1px solid #fdba74;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
 </style>
 </head>
 <body>
@@ -115,7 +158,17 @@
   </div>
 
   <div class="tarjeta">
-    <h2>Contado hoy</h2>
+    <h2>{% if es_hoy %}Contado hoy{% else %}Contado el {{ dia.strftime('%d/%m/%Y') }}{% endif %}</h2>
+
+    <form class="buscar-dia" method="get" action="/deposito/stock/fisico">
+      <input type="date" name="fecha" value="{{ dia.isoformat() }}" max="{{ hoy.isoformat() }}"
+             aria-label="Ver los conteos de otro día">
+      <button type="submit">Ver el día</button>
+    </form>
+    {% if not es_hoy %}
+    <a class="volver-hoy" href="/deposito/stock/fisico">Volver a hoy</a>
+    {% endif %}
+
     {% if contados_hoy %}
       {% for c in contados_hoy %}
       <div class="fila-conteo">
@@ -124,7 +177,17 @@
       </div>
       {% endfor %}
     {% else %}
-    <p class="vacio">Todavía no contaste nada hoy.</p>
+    <p class="sin-conteos">
+      <span class="vacio">
+        {%- if es_hoy %}Todavía no contaste nada hoy.
+        {%- else %}No hay nada contado el {{ dia.strftime('%d/%m/%Y') }}.{% endif %}
+      </span>
+      {% if mas_cercana %}
+      <a class="mas-cercana" href="/deposito/stock/fisico?fecha={{ mas_cercana.isoformat() }}">
+        El día contado más cercano es el {{ mas_cercana.strftime('%d/%m/%Y') }} — verlo
+      </a>
+      {% endif %}
+    </p>
     {% endif %}
   </div>
 </body>

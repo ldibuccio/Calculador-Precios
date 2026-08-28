@@ -6316,6 +6316,38 @@ def crear_conteo_stock(articulo_id: int, cantidad: float) -> None:
         conexion.close()
 
 
+def fecha_conteo_stock_mas_cercana(fecha):
+    """El día con conteos más cercano al pedido, para cuando el pedido no tiene ninguno.
+
+    Sirve para no dejar al operario en un "no hay nada" sin salida: si
+    buscó el martes y contó el lunes, la pantalla le ofrece el lunes.
+
+    Mira para los dos lados. Si empatan (uno antes y uno después, a la
+    misma distancia) gana el POSTERIOR, que es el conteo más nuevo.
+
+    Devuelve None solo si no hay ningún conteo en toda la tabla.
+
+    Devuelve una FECHA y nada más: ningún número del sistema puede salir
+    por esta pantalla, que es la del operario.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.fecha
+                FROM (SELECT DISTINCT creado_en::date AS fecha FROM conteos_stock) f
+                ORDER BY abs(f.fecha - %s::date), f.fecha DESC
+                LIMIT 1
+                """,
+                (fecha,),
+            )
+            fila = cursor.fetchone()
+            return fila[0] if fila else None
+    finally:
+        conexion.close()
+
+
 def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     """Conteos de un día para la lista "Contado hoy" del operario.
 
