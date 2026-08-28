@@ -67,16 +67,54 @@
   .renglon {
     padding: 0.6rem 0;
     border-top: 1px solid #eee;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
     font-size: 0.95rem;
   }
   .renglon:first-of-type { border-top: none; padding-top: 0; }
   .renglon form { margin: 0; }
+  /* La edición del nombre arranca oculta: el renglón se mira de un vistazo
+     y solo se abre el que hay que corregir. Mismo patrón de dos toques que
+     Pendientes de Pago. */
+  .editar { display: none; margin-top: 0.6rem; }
+  .editar.visible { display: block; }
+  .editar input {
+    width: 100%;
+    padding: 0.7rem;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-sizing: border-box;
+    margin-bottom: 0.5rem;
+  }
+  .editar-botones { display: flex; gap: 0.5rem; }
+  .editar-botones button {
+    flex: 1;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .boton-guardar { background: #16a34a; color: #fff; }
+  .boton-cancelar { background: #e5e7eb; color: #374151; }
+  .boton-editar {
+    padding: 0.8rem 0.85rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 1px solid #1d4ed8;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  /* El renglón deja de ser una sola fila: arriba el nombre con Editar y la
+     baja, y debajo la edición. Si el renglón siguiera siendo flex, el
+     bloque de edición se abriría al costado en vez de abajo. */
+  .renglon-arriba { display: flex; align-items: center; gap: 0.5rem; }
+  .renglon-arriba strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .boton-baja {
-    padding: 0.55rem 0.85rem;
+    padding: 0.8rem 0.85rem;
     background: #fff;
     color: #dc2626;
     border: 1px solid #dc2626;
@@ -129,15 +167,31 @@
 
   <div class="tarjeta">
     <h2>Proveedores ({{ proveedores|length }})</h2>
-    <p class="ayuda">Dar de baja lo saca de los selects de Vacíos; sus movimientos y su stock histórico quedan.</p>
+    <p class="ayuda">Editar corrige el nombre mal escrito: sigue siendo el mismo proveedor y sus movimientos no se mueven. Dar de baja lo saca de los selects de Vacíos; sus movimientos y su stock histórico quedan.</p>
     {% if proveedores %}
       {% for p in proveedores %}
       <div class="renglon">
-        <strong>{{ p.nombre }}</strong>
-        <form method="post" action="/puesto/envases/proveedores/{{ p.id }}/baja"
-              onsubmit="return confirm('¿Dar de baja a {{ p.nombre }}? Sus movimientos y stock quedan.');">
-          <button type="submit" class="boton-baja">Dar de baja</button>
-        </form>
+        <div class="renglon-arriba">
+          <strong>{{ p.nombre }}</strong>
+          <button type="button" class="boton-editar" onclick="abrirEdicion('{{ p.id }}')">Editar</button>
+          <form method="post" action="/puesto/envases/proveedores/{{ p.id }}/baja"
+                onsubmit="return confirm('¿Dar de baja a {{ p.nombre }}? Sus movimientos y stock quedan.');">
+            <button type="submit" class="boton-baja">Dar de baja</button>
+          </form>
+        </div>
+
+        {# Corrección de tipeo: el id no se toca, así que los movimientos
+           viejos siguen colgando de este mismo proveedor. #}
+        <div class="editar" id="editar-{{ p.id }}">
+          <form method="post" action="/puesto/envases/proveedores/{{ p.id }}/renombrar">
+            <input type="text" id="nombre-{{ p.id }}" name="nombre" value="{{ p.nombre }}"
+                   aria-label="Nombre nuevo del proveedor" required>
+            <div class="editar-botones">
+              <button type="submit" class="boton-guardar">Guardar</button>
+              <button type="button" class="boton-cancelar" onclick="cerrarEdicion('{{ p.id }}')">Cancelar</button>
+            </div>
+          </form>
+        </div>
       </div>
       {% endfor %}
     {% else %}
@@ -146,5 +200,16 @@
   </div>
 
   <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+
+  <script>
+    function abrirEdicion(id) {
+      const bloque = document.getElementById('editar-' + id);
+      bloque.classList.add('visible');
+      bloque.querySelector('input').focus();
+    }
+    function cerrarEdicion(id) {
+      document.getElementById('editar-' + id).classList.remove('visible');
+    }
+  </script>
 </body>
 </html>

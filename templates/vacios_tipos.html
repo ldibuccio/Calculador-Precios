@@ -68,17 +68,55 @@
   .renglon-tipo {
     padding: 0.6rem 0;
     border-top: 1px solid #eee;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
     font-size: 0.95rem;
   }
   .renglon-tipo:first-of-type { border-top: none; padding-top: 0; }
   .renglon-tipo .puesto { color: #888; font-size: 0.82rem; }
   .renglon-tipo form { margin: 0; }
-  .boton-baja {
-    padding: 0.55rem 0.85rem;
+  /* El renglón deja de ser una sola fila: arriba el nombre con Editar y la
+     baja, y debajo la edición. Si el renglón siguiera siendo flex, el
+     bloque de edición se abriría al costado en vez de abajo. */
+  .renglon-arriba { display: flex; align-items: center; gap: 0.5rem; }
+  .renglon-arriba .nombre { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  /* La edición del nombre arranca oculta: el listado se mira de un vistazo
+     y solo se abre el que hay que corregir. */
+  .editar { display: none; margin-top: 0.6rem; }
+  .editar.visible { display: block; }
+  .editar input {
+    width: 100%;
+    padding: 0.7rem;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-sizing: border-box;
+    margin-bottom: 0.5rem;
+  }
+  .editar-botones { display: flex; gap: 0.5rem; }
+  .editar-botones button {
+    flex: 1;
+    width: auto;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .boton-guardar { background: #16a34a; color: #fff; }
+  .boton-cancelar { background: #e5e7eb; color: #374151; }
+  .boton-editar {
+    padding: 0.8rem 0.85rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 1px solid #1d4ed8;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button.boton-baja {
+    padding: 0.8rem 0.85rem;
     background: #fff;
     color: #dc2626;
     border: 1px solid #dc2626;
@@ -134,16 +172,34 @@
 
   <div class="tarjeta">
     <h2>Tipos cargados</h2>
+    <p class="ayuda">Editar corrige el nombre mal escrito: sigue siendo el mismo tipo y sus movimientos no se mueven. Dar de baja lo saca de Recibir y Devolver; lo cargado queda.</p>
     {% if tipos %}
       {% for t in tipos %}
       <div class="renglon-tipo">
-        <div>
-          <strong>{{ t.nombre }}</strong> — {{ t.proveedor_nombre }}
+        <div class="renglon-arriba">
+          <div class="nombre">
+            <strong>{{ t.nombre }}</strong>
+            <div class="puesto">{{ t.proveedor_nombre }}</div>
+          </div>
+          <button type="button" class="boton-editar" onclick="abrirEdicion('{{ t.id }}')">Editar</button>
+          <form method="post" action="/puesto/envases/tipos/{{ t.id }}/baja"
+                onsubmit="return confirm('¿Dar de baja \'{{ t.nombre }}\' de {{ t.proveedor_nombre }}? Los movimientos viejos quedan; solo deja de ofrecerse.');">
+            <button type="submit" class="boton-baja">Dar de baja</button>
+          </form>
         </div>
-        <form method="post" action="/puesto/envases/tipos/{{ t.id }}/baja"
-              onsubmit="return confirm('¿Dar de baja \'{{ t.nombre }}\' de {{ t.proveedor_nombre }}? Los movimientos viejos quedan; solo deja de ofrecerse.');">
-          <button type="submit" class="boton-baja">Dar de baja</button>
-        </form>
+
+        {# Corrección de tipeo: el id no se toca, así que los movimientos
+           viejos siguen colgando de este mismo tipo. #}
+        <div class="editar" id="editar-{{ t.id }}">
+          <form method="post" action="/puesto/envases/tipos/{{ t.id }}/renombrar">
+            <input type="text" id="nombre-{{ t.id }}" name="nombre" value="{{ t.nombre }}"
+                   aria-label="Nombre nuevo del tipo de envase" required>
+            <div class="editar-botones">
+              <button type="submit" class="boton-guardar">Guardar</button>
+              <button type="button" class="boton-cancelar" onclick="cerrarEdicion('{{ t.id }}')">Cancelar</button>
+            </div>
+          </form>
+        </div>
       </div>
       {% endfor %}
     {% else %}
@@ -152,5 +208,16 @@
   </div>
 
   <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+
+  <script>
+    function abrirEdicion(id) {
+      const bloque = document.getElementById('editar-' + id);
+      bloque.classList.add('visible');
+      bloque.querySelector('input').focus();
+    }
+    function cerrarEdicion(id) {
+      document.getElementById('editar-' + id).classList.remove('visible');
+    }
+  </script>
 </body>
 </html>

@@ -10904,6 +10904,61 @@ def test_dar_de_baja_un_tipo_con_saldo_se_niega_y_lo_dice_con_el_numero():
     assert "ajustá a cero antes de darlo de baja" in respuesta.text
 
 
+def test_ver_tipos_envase_puesto_ofrece_editar_el_nombre():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/puesto/envases/tipos")
+
+    assert respuesta.status_code == 200
+    assert 'action="/puesto/envases/tipos/1/renombrar"' in respuesta.text
+    # El input arranca con el nombre actual: se corrige la letra mal puesta,
+    # no se reescribe todo de cero en el celular.
+    assert 'value="cajón plástico negro"' in respuesta.text
+
+
+def test_renombrar_tipo_envase_puesto_limpia_el_nombre_y_redirige():
+    with patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar:
+        respuesta = cliente.post(
+            "/puesto/envases/tipos/3/renombrar",
+            data={"nombre": "  cajón   negro "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_renombrar.assert_called_once_with(3, "cajón negro")
+
+
+def test_renombrar_tipo_envase_puesto_sin_nombre_da_error():
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
+        patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA),
+        patch("app.main.renombrar_tipo_envase_puesto") as mock_renombrar,
+    ):
+        respuesta = cliente.post("/puesto/envases/tipos/3/renombrar", data={"nombre": "  "})
+
+    assert respuesta.status_code == 400
+    assert "El nombre del tipo de envase es obligatorio." in respuesta.text
+    mock_renombrar.assert_not_called()
+
+
+def test_renombrar_tipo_a_un_nombre_repetido_da_400_con_el_nombre_nunca_500():
+    # Chocar con uno que ya existe es dato mal cargado, no una falla del
+    # sistema: se muestra en la pantalla nombrando al que ya está.
+    with (
+        patch("app.main.renombrar_tipo_envase_puesto",
+              side_effect=ValueError("Ese proveedor ya tiene un tipo llamado 'cajón madera'.")),
+        patch("app.main.listar_tipos_envase_puesto", return_value=[]),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+    ):
+        respuesta = cliente.post("/puesto/envases/tipos/3/renombrar", data={"nombre": "cajón madera"})
+
+    assert respuesta.status_code == 400
+    assert "ya tiene un tipo llamado" in respuesta.text
+    assert "cajón madera" in respuesta.text
+
+
 # --- Vacíos tanda 2: Stock Físico, Cotejo, Pendientes de Pago, Movimientos, Clientes ---
 
 
@@ -11824,6 +11879,54 @@ def test_dar_de_baja_un_proveedor_con_saldo_se_niega_nombrando_sus_tipos():
     assert respuesta.status_code == 400
     assert "cajón madera: 12" in respuesta.text
     assert "cajón plástico: -3" in respuesta.text
+
+
+def test_ver_proveedores_puesto_ofrece_editar_el_nombre():
+    with patch("app.main.listar_proveedores_puesto", return_value=PROVEEDORES_PUESTO_DE_PRUEBA):
+        respuesta = cliente.get("/puesto/envases/proveedores")
+
+    assert respuesta.status_code == 200
+    assert 'action="/puesto/envases/proveedores/200/renombrar"' in respuesta.text
+    assert 'value="Saturno"' in respuesta.text
+
+
+def test_renombrar_proveedor_puesto_manda_TAMBIEN_el_normalizado():
+    # Si la ruta mandara solo el nombre, el normalizado quedaría con el
+    # viejo adentro y la próxima alta duplicaría el proveedor.
+    with patch("app.main.renombrar_proveedor_puesto") as mock_renombrar:
+        respuesta = cliente.post(
+            "/puesto/envases/proveedores/200/renombrar",
+            data={"nombre": "  EL   Cajónero "},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_renombrar.assert_called_once_with(200, "EL Cajónero", "el cajonero")
+
+
+def test_renombrar_proveedor_puesto_sin_nombre_da_error():
+    with (
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+        patch("app.main.renombrar_proveedor_puesto") as mock_renombrar,
+    ):
+        respuesta = cliente.post("/puesto/envases/proveedores/200/renombrar", data={"nombre": "   "})
+
+    assert respuesta.status_code == 400
+    assert "El nombre del proveedor es obligatorio." in respuesta.text
+    mock_renombrar.assert_not_called()
+
+
+def test_renombrar_proveedor_a_un_nombre_repetido_da_400_con_el_nombre_nunca_500():
+    with (
+        patch("app.main.renombrar_proveedor_puesto",
+              side_effect=ValueError("Ya existe un proveedor llamado 'Gómez'.")),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+    ):
+        respuesta = cliente.post("/puesto/envases/proveedores/200/renombrar", data={"nombre": "GOMEZ"})
+
+    assert respuesta.status_code == 400
+    assert "Ya existe un proveedor llamado" in respuesta.text
+    assert "Gómez" in respuesta.text
 
 
 def test_hub_envases_puesto_tiene_proveedores_del_puesto():

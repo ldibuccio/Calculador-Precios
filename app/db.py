@@ -3374,6 +3374,55 @@ def crear_tipo_envase_puesto(proveedor_id: int, nombre: str) -> None:
         conexion.close()
 
 
+def renombrar_tipo_envase_puesto(tipo_id: int, nombre: str) -> None:
+    """Corrige el nombre de un tipo de cajón. UPDATE directo, SIN historial.
+
+    Es corrección de tipeo, no cambio de entidad: el id no se toca, así que
+    todos los movimientos viejos siguen colgando de la misma fila y no hay
+    nada que versionar. Si algún día "renombrar" pasara a significar "ahora
+    es otro cajón", eso NO es esto: sería un tipo nuevo.
+
+    Se niega si el tipo ya no está en circulación (dado de baja él o su
+    proveedor): esas filas no se muestran en la pantalla, y un formulario
+    viejo o un POST a mano no tienen que poder tocarlas.
+
+    Nombre repetido dentro del MISMO proveedor: ValueError con el nombre del
+    que ya existe, para mostrar tal cual. Se chequea acá para dar un mensaje
+    decente, y el unique (proveedor_id, nombre) de la tabla queda de red.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT t.proveedor_id, t.activo, p.activo
+                FROM tipos_envase_puesto t
+                JOIN proveedores_puesto p ON p.id = t.proveedor_id
+                WHERE t.id = %s
+                """,
+                (tipo_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese tipo de envase no existe.")
+            proveedor_id, tipo_activo, proveedor_activo = fila
+            if not (tipo_activo and proveedor_activo):
+                raise ValueError("Ese tipo de envase está dado de baja: no se puede renombrar.")
+
+            cursor.execute(
+                "SELECT nombre FROM tipos_envase_puesto WHERE proveedor_id = %s AND nombre = %s AND id <> %s",
+                (proveedor_id, nombre, tipo_id),
+            )
+            repetido = cursor.fetchone()
+            if repetido:
+                raise ValueError(f"Ese proveedor ya tiene un tipo llamado '{repetido[0]}'.")
+
+            cursor.execute("UPDATE tipos_envase_puesto SET nombre = %s WHERE id = %s", (nombre, tipo_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def desactivar_tipo_envase_puesto(tipo_id: int) -> None:
     """Baja lógica de un tipo de cajón: deja de ofrecerse en las pantallas, los movimientos viejos quedan.
 
@@ -4065,6 +4114,53 @@ def obtener_o_crear_proveedor_puesto(nombre: str, nombre_normalizado: str) -> in
             (proveedor_id,) = cursor.fetchone()
         conexion.commit()
         return proveedor_id
+    finally:
+        conexion.close()
+
+
+def renombrar_proveedor_puesto(proveedor_id: int, nombre: str, nombre_normalizado: str) -> None:
+    """Corrige el nombre de un proveedor del puesto. UPDATE directo, SIN historial.
+
+    Es corrección de tipeo, no cambio de entidad: el id no se toca y sus
+    movimientos siguen colgando de la misma fila.
+
+    Escribe nombre Y nombre_normalizado EN LA MISMA SENTENCIA, y eso no es
+    un detalle: el normalizado es la identidad con la que
+    obtener_o_crear_proveedor_puesto decide si un alta reusa o crea. Si se
+    actualizara solo el nombre, el normalizado quedaría mintiendo y la
+    próxima alta escribiendo el nombre nuevo crearía un duplicado en vez de
+    reusar este.
+
+    Se niega si el proveedor está dado de baja: la pantalla solo lista los
+    activos, y un POST a mano no tiene que poder saltearlo.
+
+    Nombre repetido (por normalizado, o sea ignorando mayúsculas y acentos):
+    ValueError con el nombre del que ya existe. El UNIQUE de la tabla queda
+    de red.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT activo FROM proveedores_puesto WHERE id = %s", (proveedor_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Ese proveedor no existe.")
+            if not fila[0]:
+                raise ValueError("Ese proveedor está dado de baja: no se puede renombrar.")
+
+            cursor.execute(
+                "SELECT nombre FROM proveedores_puesto WHERE nombre_normalizado = %s AND id <> %s",
+                (nombre_normalizado, proveedor_id),
+            )
+            repetido = cursor.fetchone()
+            if repetido:
+                raise ValueError(f"Ya existe un proveedor llamado '{repetido[0]}'.")
+
+            cursor.execute(
+                "UPDATE proveedores_puesto SET nombre = %s, nombre_normalizado = %s WHERE id = %s",
+                (nombre, nombre_normalizado, proveedor_id),
+            )
+        conexion.commit()
     finally:
         conexion.close()
 

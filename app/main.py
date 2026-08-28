@@ -179,6 +179,8 @@ from app.db import (
     registrar_mail_pedido,
     obtener_ultimo_tick_revision,
     registrar_revision_casilla,
+    renombrar_proveedor_puesto,
+    renombrar_tipo_envase_puesto,
     registrar_tick_revision,
     limpiar_foto_ruta_de_compras,
     listar_fotos_de_guia,
@@ -9133,6 +9135,30 @@ def crear_tipo_envase_puesto_ruta(request: Request, proveedor_id: str = Form("")
     return RedirectResponse(url=f"/puesto/envases/tipos?{parametros}", status_code=303)
 
 
+@app.post("/puesto/envases/tipos/{tipo_id}/renombrar")
+def renombrar_tipo_envase_puesto_ruta(request: Request, tipo_id: int, nombre: str = Form("")):
+    """Corrige el nombre de un tipo de cajón. Sin historial: es un tipeo, no otra entidad."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/tipos", status_code=303)
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if not nombre_limpio:
+        return _renderizar_pantalla_tipos_envase_puesto(
+            request, error="El nombre del tipo de envase es obligatorio.", status_code=400
+        )
+    try:
+        renombrar_tipo_envase_puesto(tipo_id, nombre_limpio)
+    except ValueError as error:
+        # Nombre repetido o tipo dado de baja: es dato mal cargado, no una
+        # falla del sistema. 400 con el mensaje, nunca 500.
+        return _renderizar_pantalla_tipos_envase_puesto(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        return _renderizar_pantalla_tipos_envase_puesto(
+            request, error=f"No se pudo renombrar el tipo de envase: {error_db}", status_code=500
+        )
+    parametros = urlencode({"aviso": f"Tipo de envase renombrado a '{nombre_limpio}'."})
+    return RedirectResponse(url=f"/puesto/envases/tipos?{parametros}", status_code=303)
+
+
 @app.post("/puesto/envases/tipos/{tipo_id}/baja")
 def dar_de_baja_tipo_envase_puesto_ruta(request: Request, tipo_id: int):
     if not _acceso_control_valido(request):
@@ -9781,6 +9807,29 @@ def crear_proveedor_puesto_ruta(request: Request, nombre: str = Form("")):
     parametros = urlencode(
         {"aviso": f"Proveedor '{nombre_limpio}' cargado. Para que aparezca en Vacíos, cargale un tipo de envase."}
     )
+    return RedirectResponse(url=f"/puesto/envases/proveedores?{parametros}", status_code=303)
+
+
+@app.post("/puesto/envases/proveedores/{proveedor_id}/renombrar")
+def renombrar_proveedor_puesto_ruta(request: Request, proveedor_id: int, nombre: str = Form("")):
+    """Corrige el nombre de un proveedor del puesto. Sin historial: es un tipeo, no otro proveedor."""
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/proveedores", status_code=303)
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    nombre_normalizado = normalizar_texto(nombre_limpio)
+    if not nombre_normalizado:
+        return _renderizar_pantalla_proveedores_puesto(
+            request, error="El nombre del proveedor es obligatorio.", status_code=400
+        )
+    try:
+        renombrar_proveedor_puesto(proveedor_id, nombre_limpio, nombre_normalizado)
+    except ValueError as error:
+        return _renderizar_pantalla_proveedores_puesto(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_puesto(
+            request, error=f"No se pudo renombrar el proveedor: {error_db}", status_code=500
+        )
+    parametros = urlencode({"aviso": f"Proveedor renombrado a '{nombre_limpio}'."})
     return RedirectResponse(url=f"/puesto/envases/proveedores?{parametros}", status_code=303)
 
 

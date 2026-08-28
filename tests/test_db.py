@@ -19,6 +19,8 @@ from app.db import (
     listar_tipos_envase_puesto,
     desactivar_proveedor_puesto,
     desactivar_tipo_envase_puesto,
+    renombrar_proveedor_puesto,
+    renombrar_tipo_envase_puesto,
     listar_ultimos_conteos_vacios,
     obtener_o_crear_cliente_puesto,
     obtener_o_crear_proveedor_puesto,
@@ -2316,6 +2318,101 @@ def test_dar_de_baja_un_proveedor_sin_saldo_lo_desactiva():
     assert "UPDATE proveedores_puesto SET activo = false" in consulta
     assert parametros == (200,)
     conexion.commit.assert_called_once()
+
+
+def test_renombrar_un_tipo_corrige_el_nombre_sin_tocar_el_id():
+    # Corrección de tipeo: UPDATE directo, sin historial y sin fila nueva.
+    # El id es lo que mantiene colgados los movimientos viejos.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(200, True, True), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        renombrar_tipo_envase_puesto(3, "cajón madera")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE tipos_envase_puesto SET nombre = %s WHERE id = %s" in consulta
+    assert parametros == ("cajón madera", 3)
+    assert not any("INSERT" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_called_once()
+
+
+def test_renombrar_un_tipo_al_nombre_de_otro_del_mismo_proveedor_se_niega():
+    # El choque tiene que salir por ValueError NOMBRANDO al que ya existe:
+    # si llegara al UNIQUE de la tabla, la pantalla mostraría un 500.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(200, True, True), ("cajón madera",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            renombrar_tipo_envase_puesto(3, "cajón madera")
+
+    assert "cajón madera" in str(error.value)
+    # El repetido se busca DENTRO del mismo proveedor y sin contarse a sí mismo.
+    consulta_repetido, parametros_repetido = cursor.execute.call_args_list[1].args
+    assert "proveedor_id = %s AND nombre = %s AND id <> %s" in consulta_repetido
+    assert parametros_repetido == (200, "cajón madera", 3)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_renombrar_un_tipo_dado_de_baja_se_niega():
+    # La pantalla no los lista, pero un POST a mano no tiene que poder
+    # revivir el nombre de algo que ya está fuera de circulación.
+    for tipo_activo, proveedor_activo in ((False, True), (True, False)):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(200, tipo_activo, proveedor_activo)])
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(ValueError) as error:
+                renombrar_tipo_envase_puesto(3, "cajón madera")
+
+        assert "de baja" in str(error.value)
+        assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+        conexion.commit.assert_not_called()
+
+
+def test_renombrar_un_proveedor_escribe_TAMBIEN_el_normalizado():
+    """Si solo se actualizara el nombre, el normalizado quedaría mintiendo.
+
+    El normalizado es la identidad con la que el alta decide reusar o crear:
+    con el viejo adentro, la próxima alta escribiendo el nombre nuevo no
+    reusaría este proveedor, crearía un duplicado.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(True,), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        renombrar_proveedor_puesto(200, "Gómez", "gomez")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE proveedores_puesto SET nombre = %s, nombre_normalizado = %s" in consulta
+    assert parametros == ("Gómez", "gomez", 200)
+    conexion.commit.assert_called_once()
+
+
+def test_renombrar_un_proveedor_al_nombre_de_otro_se_niega_por_el_normalizado():
+    # "GOMEZ" y "Gómez" son el mismo: el choque se busca por normalizado,
+    # no por el nombre tal cual se escribió.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(True,), ("Gómez",)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            renombrar_proveedor_puesto(200, "GOMEZ", "gomez")
+
+    assert "Gómez" in str(error.value)
+    consulta_repetido, parametros_repetido = cursor.execute.call_args_list[1].args
+    assert "nombre_normalizado = %s AND id <> %s" in consulta_repetido
+    assert parametros_repetido == ("gomez", 200)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_renombrar_un_proveedor_dado_de_baja_se_niega():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(False,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            renombrar_proveedor_puesto(200, "Gómez", "gomez")
+
+    assert "de baja" in str(error.value)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
 
 
 def test_cerrar_sena_escribe_la_columna_del_cierre_elegido():
