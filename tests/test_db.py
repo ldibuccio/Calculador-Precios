@@ -2012,7 +2012,11 @@ def test_listar_tipos_envase_puesto_solo_activos_ordenados_por_carga():
         listar_tipos_envase_puesto()
 
     consulta = cursor.execute.call_args[0][0]
-    assert "WHERE t.activo" in consulta
+    # El tipo activo Y su proveedor activo. Dar de baja al proveedor NO da
+    # de baja sus tipos (son dos tablas), así que sin el p.activo un
+    # proveedor muerto seguía apareciendo en Recibir y en Devolver y se le
+    # podían cargar movimientos nuevos.
+    assert "WHERE t.activo AND p.activo" in consulta
     # Dentro de cada proveedor, por id (orden de carga): el primero cargado
     # es el que Recibir preselecciona.
     assert "ORDER BY p.nombre, t.id" in consulta
@@ -2160,6 +2164,24 @@ def test_anular_ajuste_vacios_es_baja_logica_no_delete():
     assert "DELETE" not in consulta
     assert "anulado_el IS NULL" in consulta
     assert parametros == (30,)
+
+
+def test_stock_vacios_esconde_lo_cerrado_pero_nunca_lo_que_tiene_saldo():
+    """Cerrado = dado de baja (el tipo o el proveedor) Y en cero: no se muestra.
+
+    Un par cerrado en cero es un renglón de algo que ya no existe: el que lo
+    dio de baja ya decidió que no lo quiere ver. Pero un par dado de baja al
+    que le QUEDA saldo se sigue mostrando — esconder cajones que están en el
+    galpón sería mentir.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock_vacios()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "WHERE (t.activo AND p.activo)" in consulta
+    assert "COALESCE(r.total, 0) - COALESCE(d.total, 0) + COALESCE(aj.total, 0) <> 0" in consulta
 
 
 def test_stock_vacios_de_tipo_suma_los_ajustes_y_excluye_anulados():

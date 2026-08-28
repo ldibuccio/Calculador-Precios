@@ -3325,7 +3325,13 @@ def cerrar_disponible_generado(disponible_id: int, cliente_id: int, fecha_desde)
 
 
 def listar_tipos_envase_puesto() -> list[dict]:
-    """Tipos de cajón activos con su proveedor, para las pantallas de Vacíos y el ABM de tipos.
+    """Tipos de cajón EN CIRCULACIÓN con su proveedor, para las pantallas de Vacíos y el ABM de tipos.
+
+    En circulación = el tipo activo Y su proveedor activo. Dar de baja al
+    proveedor NO da de baja sus tipos (son dos tablas), así que mirar solo
+    t.activo dejaba a un proveedor muerto en las listas del empleado: seguía
+    apareciendo en Recibir y en Devolver, y se le podían cargar movimientos
+    nuevos a alguien que ya no existe.
 
     El orden dentro de cada proveedor es por id (orden de carga): el
     PRIMERO cargado es el que viene preseleccionado en Recibir.
@@ -3339,7 +3345,7 @@ def listar_tipos_envase_puesto() -> list[dict]:
                        p.nombre AS proveedor_nombre
                 FROM tipos_envase_puesto t
                 JOIN proveedores_puesto p ON p.id = t.proveedor_id
-                WHERE t.activo
+                WHERE t.activo AND p.activo
                 ORDER BY p.nombre, t.id
                 """
             )
@@ -3648,8 +3654,17 @@ def stock_vacios(fecha_hasta=None) -> list[dict]:
     stock de fechas anteriores a su anulación (a propósito — el stock de un
     día pasado puede cambiar si después se descubre un movimiento mal cargado).
 
-    Incluye tipos dados de baja que todavía tengan movimientos (su stock
-    histórico no puede desaparecer de la pantalla por una baja del ABM).
+    Muestra los pares EN CIRCULACIÓN (tipo y proveedor activos) más
+    cualquiera que todavía tenga saldo, esté dado de baja o no: esconder
+    cajones que están en el galpón sería mentir.
+
+    Lo que NO muestra es lo CERRADO: dado de baja (el tipo o el proveedor) y
+    con saldo cero. Ahí no queda nada que mirar — el que lo dio de baja ya
+    decidió que no lo quiere ver más, y un renglón en cero de algo que no
+    existe solo ensucia la pantalla. Mismo criterio de "cerrado" que usa el
+    Cotejo, aunque ahí el par cerrado SÍ se muestra (en gris y al final):
+    esa pantalla cuenta qué pasó el día del conteo, y esta cuenta qué hay
+    hoy. En cero y cerrado, no hay nada que haya.
     """
     filtro_fecha = "" if fecha_hasta is None else "AND creado_en < %s::date + 1"
     parametros = tuple() if fecha_hasta is None else (fecha_hasta, fecha_hasta, fecha_hasta)
@@ -3671,8 +3686,8 @@ def stock_vacios(fecha_hasta=None) -> list[dict]:
                            WHERE anulado_el IS NULL {filtro_fecha} GROUP BY tipo_envase_id) d ON d.tipo_envase_id = t.id
                 LEFT JOIN (SELECT tipo_envase_id, SUM(cantidad) AS total FROM ajustes_vacios
                            WHERE anulado_el IS NULL {filtro_fecha} GROUP BY tipo_envase_id) aj ON aj.tipo_envase_id = t.id
-                WHERE t.activo OR COALESCE(r.total, 0) <> 0 OR COALESCE(d.total, 0) <> 0
-                   OR COALESCE(aj.total, 0) <> 0
+                WHERE (t.activo AND p.activo)
+                   OR COALESCE(r.total, 0) - COALESCE(d.total, 0) + COALESCE(aj.total, 0) <> 0
                 ORDER BY p.nombre, t.id
                 """,
                 parametros,
