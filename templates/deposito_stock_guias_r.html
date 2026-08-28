@@ -106,6 +106,39 @@
   .tarjeta.anulada { opacity: 0.6; }
   .tarjeta.anulada .numero-guia { text-decoration: line-through; }
   .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 700; }
+  /* La ficha a la que fueron las cajas. Sin asignar NO se pinta de rojo:
+     no es un error, es un dato que falta y que se completa acá mismo. */
+  .ficha { margin: 0.35rem 0 0; font-size: 0.9rem; }
+  .ficha .sin-asignar { color: #b45309; font-style: italic; }
+  .asignar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .asignar select {
+    flex: 1 1 60%;
+    padding: 0.7rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .asignar button {
+    flex: 1 1 30%;
+    padding: 0.7rem 1rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 1px solid #1d4ed8;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
   .boton-anular {
     margin-top: 0.6rem;
     padding: 0.6rem 0.9rem;
@@ -125,6 +158,10 @@
   {% set barra_titulo = "Guías R" %}
   {% set barra_atras = "/deposito/stock" %}
   {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
 
   {% if aviso %}
   <div class="aviso">{{ aviso }}</div>
@@ -156,6 +193,26 @@
     </div>
     <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
     <p class="transformacion">{% if g.cliente_nombre %}Primera armada para <strong>{{ g.cliente_nombre }}</strong>{% else %}<em>Sin cliente (guía vieja, anterior al dato)</em>{% endif %}</p>
+
+    {# A qué ficha fueron las cajas. Se puede completar o corregir acá:
+       los consumos y el costo NO se tocan, ya se congelaron al cargar. #}
+    <p class="ficha">
+      {% if g.ficha_nombre %}Caja: <strong>{{ g.ficha_nombre }}</strong>
+      {% else %}<span class="sin-asignar">Sin asignar a una ficha</span>{% endif %}
+    </p>
+    {% if not g.anulado_el %}
+    <form class="asignar" method="post" action="/deposito/stock/guias-r/{{ g.id }}/asignar-ficha">
+      <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+      <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <select name="ficha_id" aria-label="Ficha de la guía R{{ g.id }}">
+        {% for f in fichas_por_articulo.get(g.articulo_id, []) %}
+        <option value="{{ f.id }}" {% if g.ficha_id == f.id %}selected{% endif %}>{{ f.nombre }}</option>
+        {% endfor %}
+        <option value="sin_asignar" {% if not g.ficha_id %}selected{% endif %}>Sin asignar</option>
+      </select>
+      <button type="submit">Guardar ficha</button>
+    </form>
+    {% endif %}
     {% if cruces_por_guia.get(g.id) %}
     {# El cruce que delata la alerta de Auditoría: cajas de presentación
        equivocada. Aviso con datos — jamás traba. #}

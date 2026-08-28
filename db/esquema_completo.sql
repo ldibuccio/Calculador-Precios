@@ -809,7 +809,12 @@ create table reprocesos (
     costo_por_bulto_primera numeric,
     creado_en timestamptz not null default now(),
     anulado_el timestamptz,
-    cliente_id bigint references clientes (id)
+    cliente_id bigint references clientes (id),
+    -- Sin ON DELETE SET NULL a propósito (a diferencia de
+    -- pedidos_renglones.ficha_id): acá el NULL significa "sin asignar", y
+    -- nulear en silencio al borrar una ficha volvería un reproceso
+    -- asignado indistinguible de uno sin asignar.
+    ficha_id bigint references fichas_logistica (id)
 );
 
 comment on table reprocesos is
@@ -820,6 +825,13 @@ comment on column reprocesos.costo_por_bulto_primera is
     'costo_total / bultos_primera, congelado. NULL si el costo está incompleto o no hubo primera.';
 comment on column reprocesos.cliente_id is
     'Para quién se armó la primera (dato de trazabilidad: el stock sigue sin dueño). NULL = guía vieja, sin cliente. La alerta de Auditoría cruza este cliente contra el de los pedidos que el FIFO atribuye a esta primera.';
+comment on column reprocesos.ficha_id is
+    'A qué ficha fueron las cajas de primera de esta guía R. NULL tiene dos significados que separa la fecha de corte (31/08/2026): antes del corte = dato viejo que no se completa; después = SIN ASIGNAR, y hay que completarlo. No se deriva de (articulo_id, cliente_id): un cliente puede tener varias fichas del mismo artículo, así que esa derivación es ambigua por diseño.';
+
+-- Parcial: los reprocesos sin asignar no se buscan por ficha, y el índice
+-- que importa es el de "cuántas cajas hay de esta ficha".
+create index reprocesos_ficha_idx
+    on reprocesos (ficha_id) where ficha_id is not null;
 
 create table reprocesos_consumos (
     id bigint generated always as identity primary key,

@@ -104,6 +104,17 @@
         {% endfor %}
       </select>
 
+      {# A QUÉ FICHA van las cajas. Elegirla es obligatorio, y "sin
+         asignar" es una de las opciones: así queda registrado que el
+         operario no lo sabía, en vez de que el dato falte por descuido.
+         No se puede adivinar por (cliente, artículo) — el mismo cliente
+         puede pedir Banana Bolivia y recibir Banana Ecuador. #}
+      <label for="ficha_id">Qué caja armé</label>
+      <select id="ficha_id" name="ficha_id" required onchange="mostrarAyudaFicha()">
+        <option value="" {% if not precarga.ficha_id %}selected{% endif %} disabled>Elegí el cliente y el artículo...</option>
+      </select>
+      <p class="ayuda-ficha" id="ayuda-sin-asignar"></p>
+
       <label for="bultos_tomados">Bultos que tomé</label>
       <input type="number" id="bultos_tomados" name="bultos_tomados" min="0.01" step="0.01" required
              placeholder="¿Cuántos saqué del stock?" value="{{ precarga.bultos_tomados or "" }}">
@@ -134,12 +145,55 @@
     // (dato de ficha, no de stock): SOLO la de ese cliente — todas juntas
     // no servían.
     var AYUDAS_FICHA = {{ ayudas_ficha|tojson }};
+    // Las fichas elegibles para ese cliente y ese artículo. Puede haber
+    // más de una: pide Banana Bolivia y recibe Banana Ecuador.
+    var FICHAS = {{ fichas_elegibles|tojson }};
+    var FICHA_PRECARGADA = {{ (precarga.ficha_id or "")|tojson }};
+
     function mostrarAyudaFicha() {
       const cliente = document.getElementById("cliente_id").value;
       const articulo = document.getElementById("articulo_id").value;
-      const texto = (cliente && articulo && AYUDAS_FICHA[cliente + ":" + articulo]) || "";
+      llenarFichas(cliente, articulo);
+
+      // Con la ficha ya elegida, la ayuda muestra EL KILAJE DE ESA CAJA.
+      // Sin ficha elegida cae al texto de siempre, que las nombra a todas.
+      const elegida = document.getElementById("ficha_id").value;
+      const fichas = (cliente && articulo && FICHAS[cliente + ":" + articulo]) || [];
+      const ficha = fichas.find(function (f) { return String(f.id) === elegida; });
+      const texto = (ficha && ficha.kilaje)
+        ? ficha.kilaje + " por caja, según la ficha " + ficha.nombre + "."
+        : ((cliente && articulo && AYUDAS_FICHA[cliente + ":" + articulo]) || "");
       document.getElementById("ayuda-ficha").textContent = texto;
     }
+
+    function llenarFichas(cliente, articulo) {
+      const select = document.getElementById("ficha_id");
+      const elegida = select.value || FICHA_PRECARGADA;
+      const fichas = (cliente && articulo && FICHAS[cliente + ":" + articulo]) || [];
+      select.innerHTML = "";
+
+      if (!cliente || !articulo) {
+        select.add(new Option("Elegí el cliente y el artículo...", "", true, true));
+        select.options[0].disabled = true;
+        document.getElementById("ayuda-sin-asignar").textContent = "";
+        return;
+      }
+
+      select.add(new Option("Elegí qué caja armaste...", "", true, true));
+      select.options[0].disabled = true;
+      fichas.forEach(function (f) {
+        select.add(new Option(f.nombre, String(f.id)));
+      });
+      // "Sin asignar" al final y SIEMPRE presente: si no está, el que no
+      // sabe qué caja armó no tiene con qué seguir y elige cualquiera.
+      select.add(new Option("Sin asignar (no sé a qué caja fue)", "sin_asignar"));
+
+      if (elegida) { select.value = elegida; }
+      document.getElementById("ayuda-sin-asignar").textContent = fichas.length
+        ? ""
+        : "Este cliente no tiene fichas cargadas de este artículo: va a quedar sin asignar.";
+    }
+
     mostrarAyudaFicha();
   </script>
 </body>

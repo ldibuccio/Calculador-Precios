@@ -137,6 +137,7 @@ from app.db import (
     salidas_stock_articulo,
     salidas_stock_articulos,
     listar_reprocesos_por_rango,
+    asignar_ficha_a_reproceso,
     listar_ultimos_conteos_stock,
     eliminar_compras_del_dia_por_proveedor,
     eliminar_ficha,
@@ -1751,8 +1752,18 @@ def editar_ficha(
 
 @app.post("/fichas/{ficha_id}/eliminar")
 def eliminar_ficha_ruta(ficha_id: int, cliente_id: int = Form(...)):
+    """Borra una ficha. Si tiene guías R cargadas, se niega y lo dice con el número.
+
+    Una ficha con guías R no se borra: el reproceso guarda a qué ficha
+    fueron sus cajas, y borrarla dejaría ese dato en la nada. Es dato mal
+    pedido, no una falla del sistema — se muestra en la pantalla, nunca
+    como un 500.
+    """
     try:
         eliminar_ficha(ficha_id)
+    except ValueError as error:
+        parametros = urlencode({"cliente_id": cliente_id, "error": str(error)})
+        return RedirectResponse(url=f"/fichas?{parametros}", status_code=303)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la ficha: {error}") from error
 
@@ -7034,6 +7045,36 @@ def ver_cotejo_stock(request: Request):
 SUFIJOS_FICHA_REPROCESO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
 
 
+def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
+    """Las fichas elegibles al cargar una guía R, por "cliente_id:articulo_id".
+
+    Desde que el reproceso guarda a qué ficha fueron sus cajas, el
+    operario tiene que ELEGIRLA. No se puede derivar de (cliente,
+    artículo): un cliente puede tener varias fichas del mismo artículo —
+    pide Banana Bolivia y recibe Banana Ecuador — y elegir por él sería
+    adivinar. Justo lo que decía el comentario de la ayuda de kilaje
+    cuando la guía R todavía no guardaba la ficha.
+
+    Una consulta sola (todas las fichas), no una por cliente.
+    """
+    por_clave: dict[str, list[dict]] = {}
+    for ficha in listar_fichas_de_todos_los_clientes():
+        clave = f"{ficha['cliente_id']}:{ficha['articulo_id']}"
+        # El kilaje viaja con la ficha para que, una vez elegida, la ayuda
+        # muestre EL DE ESA CAJA. Antes tenía que nombrarlas a todas y
+        # pedirle al operario que se fijara cuál estaba armando: no había
+        # forma de saberlo, porque la guía R no guardaba la ficha.
+        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+        kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+                  if ficha.get("contenido_caja") else "")
+        por_clave.setdefault(clave, []).append(
+            {"id": ficha["id"], "nombre": _nombre_de_ficha(ficha), "kilaje": kilaje}
+        )
+    for fichas in por_clave.values():
+        fichas.sort(key=lambda f: f["nombre"])
+    return por_clave
+
+
 def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
     """El kilaje de la caja armada según la ficha, por (cliente, artículo): "6 kg por caja según la ficha de Día".
 
@@ -7087,6 +7128,7 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         ]
         clientes = listar_clientes()
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
+        fichas_elegibles = _fichas_por_cliente_y_articulo()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -7094,6 +7136,7 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "articulos": con_stock,
         "clientes": clientes,
         "ayudas_ficha": ayudas,
+        "fichas_elegibles": fichas_elegibles,
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "aviso": aviso,
@@ -7130,6 +7173,7 @@ def cargar_reproceso_ruta(
     bultos_segunda: str = Form(""),
     bultos_merma: str = Form(""),
     fecha: str = Form(""),
+    ficha_id: str = Form(""),
 ):
     """El operario declara la transformación; el server corre el FIFO y congela consumos y costo.
 
@@ -7190,22 +7234,31 @@ def cargar_reproceso_ruta(
             "bultos_segunda": bultos_segunda,
             "bultos_merma": bultos_merma,
             "fecha": fecha,
+            "ficha_id": ficha_id,
         }
         return _renderizar_pantalla_reproceso(request, precarga=precarga, error=error, status_code=400)
+
+    # "sin_asignar" es una ELECCIÓN, no el resultado de no contestar: el
+    # select la ofrece como opción y es obligatorio elegir algo. Eso es lo
+    # que después deja distinguir "no lo sabía" de "me lo salteé".
+    ficha_valor = None
+    if ficha_id.strip().isdigit():
+        ficha_valor = int(ficha_id)
 
     try:
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
-            cliente_id=cliente["id"],
+            cliente_id=cliente["id"], ficha_id=ficha_valor,
         )
     except Exception as error_db:
         return _renderizar_pantalla_reproceso(
             request, error=f"No se pudo guardar el reproceso: {error_db}", status_code=500
         )
 
+    destino = " (sin asignar a una ficha)" if ficha_valor is None else ""
     aviso = (
         f"Guía R{numero_guia}: tomé {_formatear_numero(tomados_valor)} bultos de {articulo['nombre']}, "
-        f"armé {_formatear_numero(primera_valor)} cajas para {cliente['nombre']}, "
+        f"armé {_formatear_numero(primera_valor)} cajas para {cliente['nombre']}{destino}, "
         f"{_formatear_numero(segunda_valor)} de segunda y {_formatear_numero(merma_valor)} de merma."
     )
     return RedirectResponse(url=f"/deposito/stock/reproceso?{urlencode({'aviso': aviso})}", status_code=303)
@@ -7273,7 +7326,8 @@ def _cruces_primera_reproceso() -> list[dict]:
 
 
 @app.get("/deposito/stock/guias-r")
-def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None, aviso: str | None = None):
+def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
+                aviso: str | None = None, error: str | None = None):
     """Guías R (control): la trazabilidad hacia atrás y el costo del reproceso. Acá SÍ se ven costos.
 
     Este costo NUNCA alimenta la cotización (que solo lee compras): se
@@ -7296,17 +7350,59 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             por_cliente.get(cruce["cliente_salida_nombre"], 0.0) + cruce["bultos"]
         )
 
+    # Para completar la ficha de una guía sin asignar: las fichas de ESE
+    # artículo, cualquiera sea el cliente. Una consulta sola.
+    fichas_por_articulo: dict = {}
+    for ficha in listar_fichas_de_todos_los_clientes():
+        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(
+            {"id": ficha["id"], "nombre": f"{_nombre_de_ficha(ficha)} ({ficha['cliente_nombre']})"}
+        )
+    for fichas in fichas_por_articulo.values():
+        fichas.sort(key=lambda f: f["nombre"])
+
     return templates.TemplateResponse(
         request,
         "deposito_stock_guias_r.html",
         {
             "guias": guias,
             "cruces_por_guia": cruces_por_guia,
+            "fichas_por_articulo": fichas_por_articulo,
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
             "aviso": aviso,
+            "error": error,
         },
     )
+
+
+@app.post("/deposito/stock/guias-r/{reproceso_id}/asignar-ficha")
+def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
+                                   ficha_id: str = Form(""),
+                                   fecha_desde: str = Form(""), fecha_hasta: str = Form("")):
+    """Completa (o corrige) a qué ficha fueron las cajas de una guía R ya cargada.
+
+    No recalcula nada: los consumos y el costo se congelaron al cargar la
+    guía. Asignar la ficha es decir a qué producto de venta fueron esas
+    cajas, no rehacer el FIFO.
+    """
+    parametros = {"fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
+    ficha_valor = int(ficha_id) if ficha_id.strip().isdigit() else None
+    try:
+        asignar_ficha_a_reproceso(reproceso_id, ficha_valor)
+    except ValueError as error:
+        # Ficha de otro artículo o guía anulada: dato mal pedido, no una
+        # falla del sistema. Se muestra en la pantalla, nunca un 500.
+        parametros["error"] = str(error)
+        return RedirectResponse(url=f"/deposito/stock/guias-r?{urlencode(parametros)}", status_code=303)
+    except Exception as error_db:
+        parametros["error"] = f"No se pudo asignar la ficha: {error_db}"
+        return RedirectResponse(url=f"/deposito/stock/guias-r?{urlencode(parametros)}", status_code=303)
+
+    parametros["aviso"] = (
+        f"Guía R{reproceso_id}: quedó sin asignar." if ficha_valor is None
+        else f"Guía R{reproceso_id}: ficha asignada."
+    )
+    return RedirectResponse(url=f"/deposito/stock/guias-r?{urlencode(parametros)}", status_code=303)
 
 
 def _renderizar_pantalla_remito_segunda(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):

@@ -799,10 +799,33 @@ def actualizar_ficha(
 
 
 def eliminar_ficha(ficha_id: int) -> None:
-    """Borra una ficha de logística (borrado real: nada más referencia su id). El estado final queda en la bitácora."""
+    """Borra una ficha de logística (borrado real). El estado final queda en la bitácora.
+
+    YA NO ES CIERTO que "nada más referencia su id": desde que reprocesos
+    tiene ficha_id, una ficha con guías R NO SE BORRA, y se niega acá con
+    el número adentro en vez de dejar que reviente la foreign key.
+
+    El ON DELETE de esa FK es NO ACTION a propósito. Con SET NULL, borrar
+    una ficha nulearía sus guías R en silencio: un reproceso perfectamente
+    asignado quedaría indistinguible de uno que el operario dejó SIN
+    ASIGNAR, y el stock de cajas de esa ficha cambiaría sin que nadie lo
+    haya pedido. Borrar una ficha no puede mover el stock.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM reprocesos WHERE ficha_id = %s AND anulado_el IS NULL",
+                (ficha_id,),
+            )
+            guias = cursor.fetchone()[0]
+            if guias:
+                una = guias == 1
+                raise ValueError(
+                    f"Esa ficha tiene {guias} {'guía R cargada' if una else 'guías R cargadas'}: "
+                    f"no se puede borrar. {'Reasignala' if una else 'Reasignalas'} a otra ficha "
+                    "desde Guías R si hace falta."
+                )
             cursor.execute(
                 """
                 DELETE FROM fichas_logistica WHERE id = %s
@@ -6376,6 +6399,51 @@ def contar_stock_deposito_negativo() -> int:
 # --- Reproceso (Guías R) ---
 
 
+def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
+    """Completa (o corrige) a qué ficha fueron las cajas de primera de una guía R ya cargada.
+
+    Solo toca ficha_id: los consumos y el costo quedaron congelados
+    cuando se cargó la guía y no se recalculan — asignar la ficha es
+    decir a qué producto de venta fueron esas cajas, no rehacer el FIFO.
+
+    La ficha tiene que ser DEL MISMO ARTÍCULO que la guía. No es
+    burocracia: el stock de cajas de una ficha se cuenta como
+    "reprocesadas de esa ficha menos salidas de esa ficha", así que una
+    ficha de otro artículo inventaría cajas que no existen y el Cotejo
+    mostraría un rojo imposible de explicar.
+
+    Una guía anulada no se asigna: ya no cuenta para nada.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT articulo_id, anulado_el IS NOT NULL FROM reprocesos WHERE id = %s",
+                (reproceso_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa guía R no existe.")
+            articulo_id, anulada = fila
+            if anulada:
+                raise ValueError("Esa guía R está anulada: no se le asigna ficha.")
+
+            if ficha_id is not None:
+                cursor.execute(
+                    "SELECT articulo_id FROM fichas_logistica WHERE id = %s", (ficha_id,)
+                )
+                ficha = cursor.fetchone()
+                if ficha is None:
+                    raise ValueError("Esa ficha no existe.")
+                if ficha[0] != articulo_id:
+                    raise ValueError("Esa ficha es de otro artículo: no puede ser la de esta guía R.")
+
+            cursor.execute("UPDATE reprocesos SET ficha_id = %s WHERE id = %s", (ficha_id, reproceso_id))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def crear_reproceso(
     articulo_id: int,
     bultos_tomados: float,
@@ -6384,6 +6452,7 @@ def crear_reproceso(
     bultos_merma: float,
     fecha_operacion,
     cliente_id: int | None = None,
+    ficha_id: int | None = None,
 ) -> int:
     """Carga una guía R: el SERVER corre el FIFO acá y congela consumos y costo. Devuelve el número de guía.
 
@@ -6396,6 +6465,13 @@ def crear_reproceso(
     un lote sin precio deja el consumo sin costo, y con UN consumo sin
     costo la guía queda con costo_total NULL = "costo incompleto" —
     nunca se promedia con números inventados. Todo en UNA transacción.
+
+    ficha_id: a qué ficha fueron las cajas de primera. None = SIN
+    ASIGNAR, y en la pantalla eso se elige a propósito, no se llega por
+    no contestar. No se puede derivar de (cliente, artículo): un cliente
+    puede tener varias fichas del mismo artículo — pide Banana Bolivia y
+    recibe Banana Ecuador — así que esa derivación es ambigua por diseño
+    y lo va a ser siempre.
     """
     from core.stock import repartir_fifo, salidas_para_reparto
 
@@ -6445,13 +6521,13 @@ def crear_reproceso(
                 INSERT INTO reprocesos
                     (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                      bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-                     cliente_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     cliente_id, ficha_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                  bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-                 cliente_id),
+                 cliente_id, ficha_id),
             )
             reproceso_id = cursor.fetchone()[0]
             for c in consumos:
@@ -6476,6 +6552,10 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
     Cada guía trae "consumos": de qué lote salió cada bulto, con la guía
     de compra y el proveedor cuando el lote es una compra — la
     trazabilidad hacia atrás completa ("de la 105 tomé 30...").
+
+    Y trae la FICHA a la que fueron las cajas de primera, con su nombre
+    para mostrar. ficha_id en NULL = sin asignar: esta pantalla es donde
+    se completa, así que esas guías tienen que aparecer, no esconderse.
     """
     conexion = obtener_conexion()
     try:
@@ -6486,10 +6566,18 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        rp.bultos_primera, rp.bultos_segunda, rp.bultos_merma,
                        rp.costo_total, rp.costo_por_bulto_primera, rp.creado_en,
                        rp.anulado_el, a.nombre AS articulo_nombre,
-                       rp.cliente_id, cl.nombre AS cliente_nombre
+                       rp.cliente_id, cl.nombre AS cliente_nombre,
+                       -- A qué ficha fueron las cajas. NULL = sin asignar;
+                       -- LEFT porque una guía sin ficha no puede
+                       -- desaparecer del listado, que es justo donde se
+                       -- la va a completar.
+                       rp.ficha_id,
+                       COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id
+                LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
+                LEFT JOIN articulos fa ON fa.id = f.articulo_id
                 WHERE rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s
                 ORDER BY rp.fecha_operacion DESC, rp.id DESC
                 """,

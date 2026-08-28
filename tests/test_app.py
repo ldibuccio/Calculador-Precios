@@ -16040,7 +16040,8 @@ def test_reproceso_pide_el_cliente_primero_y_la_ayuda_es_solo_de_su_ficha():
     # El cliente va PRIMERO (la primera se arma para alguien) y la ayuda
     # de kilaje muestra SOLO la ficha de ese cliente — todas juntas no
     # servían (pedido del dueño 25/08).
-    fichas = [{"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
+    fichas = [{"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo",
+               "articulo_nombre": "Tomate Perita", "nombre_cliente": None}]
     respuesta = _get_reproceso(
         articulos_stock=[{"articulo_id": 1, "nombre": "Tomate Perita", "stock": 30.0}],
         fichas=fichas,
@@ -16074,7 +16075,7 @@ def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
 
     assert respuesta.status_code == 303
     # El cliente queda en la guía R como DATO (el stock sigue sin dueño).
-    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1)
+    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=None)
     destino = respuesta.headers["location"]
     # "Guía R12: tomé 30... para Día..." — lo cargado, jamás costos ni stock.
     assert "Gu%C3%ADa+R12" in destino
@@ -16082,6 +16083,85 @@ def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
     assert "para+D%C3%ADa" in destino
     assert "costo" not in destino.lower()
     assert "qued" not in destino
+
+
+def test_el_reproceso_guarda_A_QUE_FICHA_fueron_las_cajas():
+    """Lo que la etapa 1 vino a arreglar.
+
+    Sin esto, la única forma de saber a qué ficha fue una guía R era
+    derivarla de (cliente, artículo) — y esa derivación es ambigua POR
+    DISEÑO: un cliente pide Banana Bolivia y recibe Banana Ecuador, así
+    que puede tener dos fichas del mismo artículo. No es algo que se rompa
+    el día que se crea una ficha nueva: ya está roto.
+    """
+    with (
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_reproceso", return_value=13) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reproceso",
+            data={"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+                  "bultos_primera": "20", "bultos_segunda": "5", "bultos_merma": "5",
+                  "fecha": "2026-08-25", "ficha_id": "901"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(
+        1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901
+    )
+    # Asignada, el aviso no dice nada de "sin asignar".
+    assert "sin+asignar" not in respuesta.headers["location"]
+
+
+def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
+    """"Sin asignar" tiene que ser una opción que se elige, no el resultado
+    de no contestar: es lo que después deja distinguir "no lo sabía" de
+    "me lo salteé". Y el aviso lo repite, para que no pase inadvertido.
+    """
+    with (
+        patch("app.main.obtener_cliente", return_value={"id": 1, "nombre": "Día"}),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.crear_reproceso", return_value=14) as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reproceso",
+            data={"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+                  "bultos_primera": "20", "bultos_segunda": "0", "bultos_merma": "0",
+                  "fecha": "2026-08-25", "ficha_id": "sin_asignar"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(
+        1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None
+    )
+    assert "sin+asignar" in respuesta.headers["location"]
+
+
+def test_la_pantalla_de_reproceso_ofrece_las_fichas_del_cliente_y_del_articulo():
+    # El select se llena en el navegador con este mapa: puede haber DOS
+    # fichas del mismo cliente y artículo, y elegir por él sería adivinar.
+    fichas = [
+        {"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo",
+         "articulo_nombre": "Banana", "nombre_cliente": "Banana Bolivia"},
+        {"id": 902, "articulo_id": 1, "contenido_caja": 8.0, "unidad_venta": "kilo",
+         "articulo_nombre": "Banana", "nombre_cliente": "Banana Ecuador"},
+    ]
+    respuesta = _get_reproceso(
+        articulos_stock=[{"articulo_id": 1, "nombre": "Banana", "stock": 30.0}],
+        fichas=fichas,
+    )
+
+    assert respuesta.status_code == 200
+    assert 'name="ficha_id"' in respuesta.text
+    # Las dos fichas viajan bajo la misma clave cliente:articulo.
+    assert '"1:1"' in respuesta.text
+    assert "Banana Bolivia" in respuesta.text
+    assert "Banana Ecuador" in respuesta.text
 
 
 def test_reproceso_sin_cliente_da_400():
@@ -16159,6 +16239,7 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
     ):
         respuesta = cliente.get("/deposito/stock/guias-r")
 
@@ -16370,6 +16451,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
     ):
         respuesta = cliente.get("/deposito/stock/guias-r")
 
@@ -16381,6 +16463,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
     ):
         respuesta = cliente.get("/deposito/stock/guias-r")
 
@@ -16966,6 +17049,92 @@ def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
     assert cruces == []
 
 
+def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
+    guias = [
+        dict(GUIAS_R_DE_PRUEBA[0], id=1, articulo_id=5, ficha_id=901,
+             ficha_nombre="Banana Bolivia", anulado_el=None),
+        dict(GUIAS_R_DE_PRUEBA[0], id=2, articulo_id=5, ficha_id=None,
+             ficha_nombre=None, anulado_el=None),
+    ]
+    fichas = [
+        {"id": 901, "articulo_id": 5, "cliente_nombre": "Día", "nombre_cliente": "Banana Bolivia",
+         "articulo_nombre": "Banana"},
+        {"id": 902, "articulo_id": 5, "cliente_nombre": "Día", "nombre_cliente": "Banana Ecuador",
+         "articulo_nombre": "Banana"},
+    ]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # La asignada muestra su ficha; la otra dice que le falta.
+    assert "Banana Bolivia" in cuerpo
+    assert "Sin asignar a una ficha" in cuerpo
+    # Y la que falta se completa desde acá, con LAS DOS fichas del artículo.
+    assert 'action="/deposito/stock/guias-r/2/asignar-ficha"' in cuerpo
+    assert "Banana Ecuador" in cuerpo
+
+
+def test_una_guia_anulada_no_ofrece_asignar_ficha():
+    guias = [dict(GUIAS_R_DE_PRUEBA[0], id=3, articulo_id=5, ficha_id=None,
+                  ficha_nombre=None, anulado_el=datetime(2026, 8, 26, 10, 0))]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/stock/guias-r")
+
+    assert respuesta.status_code == 200
+    assert "/guias-r/3/asignar-ficha" not in respuesta.text
+
+
+def test_asignar_una_ficha_de_otro_articulo_se_muestra_en_pantalla_nunca_500():
+    with patch("app.main.asignar_ficha_a_reproceso",
+               side_effect=ValueError("Esa ficha es de otro artículo: no puede ser la de esta guía R.")):
+        respuesta = cliente.post(
+            "/deposito/stock/guias-r/2/asignar-ficha",
+            data={"ficha_id": "901", "fecha_desde": "2026-08-20", "fecha_hasta": "2026-08-28"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "otro+art" in respuesta.headers["location"]
+    # Y vuelve al mismo rango que estaba mirando.
+    assert "fecha_desde=2026-08-20" in respuesta.headers["location"]
+
+
+def test_desasignar_desde_guias_r_manda_None():
+    with patch("app.main.asignar_ficha_a_reproceso") as mock_asignar:
+        respuesta = cliente.post(
+            "/deposito/stock/guias-r/2/asignar-ficha",
+            data={"ficha_id": "sin_asignar", "fecha_desde": "", "fecha_hasta": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_asignar.assert_called_once_with(2, None)
+    assert "sin+asignar" in respuesta.headers["location"]
+
+
+def test_borrar_una_ficha_con_guias_R_lo_dice_en_la_pantalla_y_NO_da_500():
+    with patch("app.main.eliminar_ficha",
+               side_effect=ValueError("Esa ficha tiene 3 guías R cargadas: no se puede borrar. "
+                                      "Reasignalas a otra ficha desde Guías R si hace falta.")):
+        respuesta = cliente.post("/fichas/901/eliminar", data={"cliente_id": "1"},
+                                 follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    destino = respuesta.headers["location"]
+    assert "/fichas?" in destino
+    assert "3+gu%C3%ADas+R" in destino
+    assert "cliente_id=1" in destino
+
+
 def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     guia = {
         "id": 12, "articulo_id": 1, "fecha_operacion": date(2026, 8, 24),
@@ -16979,6 +17148,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),

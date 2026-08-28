@@ -343,7 +343,7 @@ Cliente y el Envase que usa.
    El sistema viene funcionando con reglas que dejaban salir pedidos
    contra cualquier mercadería. Los datos anteriores **no son
    confiables y no se van a corregir**. Se define una FECHA DE CORTE a
-   partir de la cual rige el modelo nuevo.
+   partir de la cual rige el modelo nuevo: **lunes 31/08/2026**.
 
    Lo anterior **no se borra**: queda visible y consultable, pero
    **fuera del alcance del FIFO nuevo y de la rentabilidad real**. El
@@ -364,6 +364,17 @@ Cliente y el Envase que usa.
    pendiente de limpieza", punto 2, en `db/APLICADO.md`). Ahí el tipo
    propio hay que agregarlo después, con los datos ya mezclados. Acá se
    separa desde el día uno, que es cuando sale gratis.
+
+   **Qué había del lado viejo al momento de fijar el corte** (medido el
+   28/08/2026, al correr la etapa 1): Frutamax tiene **36 guías R**
+   anteriores al corte y Palmala **ninguna**. Esas 36 quedan con su
+   ficha en NULL para siempre — no se van a completar. Por eso la
+   alerta de reprocesos sin asignar tiene que contar **solo los
+   posteriores al 31/08/2026**: si contara todos, nacería con 36 casos
+   que nadie puede resolver, y una alerta que arranca en rojo
+   permanente es una alerta que se deja de mirar. Palmala, sin
+   historia, queda como base de prueba limpia: ahí cualquier NULL
+   posterior al corte es un "sin asignar" real.
 
    **La fecha de corte y la carga inicial son parte del alcance del
    trabajo, no un paso manual que se resuelve después.** Cuando se arme

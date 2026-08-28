@@ -72,6 +72,7 @@ bases estén marcadas.
 | `agregar_alertas_estado.sql` | ✅ 2026-08-27 (verificado: las 6 columnas creadas) | ✅ 2026-08-27 (verificado: las 6 columnas creadas) |
 | `agregar_senas_valor_historial.sql` | ✅ 2026-08-28 (verificado: 7/7 OK) | ✅ 2026-08-28 (verificado: 7/7 OK) |
 | `senas_valor_historial_append_only.sql` (saca el UNIQUE por fecha, que obligaba a pisar el monto anterior; corrida con la tabla todavía vacía) | ✅ 2026-08-28 (verificado: 7/7 OK; el freno de mano no saltó) | ✅ 2026-08-28 (verificado: 7/7 OK; el freno de mano no saltó) |
+| `agregar_ficha_a_reprocesos.sql` (etapa 1 del modelo nuevo: a qué ficha fueron las cajas de primera) | ✅ 2026-08-28 (verificado: 7/7 OK; **36 guías R** pre-corte, todas con ficha en NULL para siempre) | ✅ 2026-08-28 (verificado: 7/7 OK; **0 guías R**: sin historia, cualquier NULL posterior al corte es un "sin asignar" real) |
 
 ## Deuda pendiente de limpieza
 

@@ -26,6 +26,8 @@ from app.db import (
     listar_valores_sena,
     listar_historial_valores_sena,
     listar_historiales_valores_sena,
+    asignar_ficha_a_reproceso,
+    eliminar_ficha,
     contar_senas_afectadas_por_valor,
     cargar_valor_sena,
     listar_ultimos_conteos_vacios,
@@ -2466,6 +2468,96 @@ def test_TODAS_las_consultas_desempatan_por_creado_en_dentro_de_la_misma_fecha()
             f"{funcion.__name__} resuelve la vigencia sin desempatar por creado_en"
 
 
+def test_asignar_ficha_a_reproceso_solo_toca_la_ficha():
+    # Los consumos y el costo se congelaron al cargar la guía: asignar la
+    # ficha es decir a qué producto de venta fueron esas cajas, no rehacer
+    # el FIFO.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False), (7,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        asignar_ficha_a_reproceso(12, 901)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert consulta == "UPDATE reprocesos SET ficha_id = %s WHERE id = %s"
+    assert parametros == (901, 12)
+    # Nada de recalcular: los consumos no se tocan.
+    assert not any("reprocesos_consumos" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_called_once()
+
+
+def test_no_se_puede_asignar_una_ficha_de_OTRO_articulo():
+    """El stock de cajas de una ficha es "reprocesadas menos salidas".
+
+    Una ficha de otro artículo inventaría cajas que no existen, y el
+    Cotejo mostraría un rojo imposible de explicar.
+    """
+    # La guía es del artículo 7; la ficha, del 9.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False), (9,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            asignar_ficha_a_reproceso(12, 901)
+
+    assert "otro artículo" in str(error.value)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_una_guia_anulada_no_se_asigna():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            asignar_ficha_a_reproceso(12, 901)
+
+    assert "anulada" in str(error.value)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+
+
+def test_desasignar_una_guia_se_permite_y_no_valida_ficha():
+    # Volver a "sin asignar" es legítimo: el que se equivocó de ficha
+    # tiene que poder sacarla sin inventar otra.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        asignar_ficha_a_reproceso(12, None)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "UPDATE reprocesos SET ficha_id = %s" in consulta
+    assert parametros == (None, 12)
+    # No sale a buscar una ficha que no existe.
+    assert not any("FROM fichas_logistica" in c.args[0] for c in cursor.execute.call_args_list)
+
+
+def test_una_ficha_con_guias_R_NO_se_borra_y_lo_dice_con_el_numero():
+    """Lo que la migración de la etapa 1 volvió necesario.
+
+    La FK es NO ACTION a propósito: con SET NULL, borrar una ficha
+    nulearía sus guías R en silencio y un reproceso asignado quedaría
+    indistinguible de uno SIN ASIGNAR — además de mover el stock de esa
+    ficha sin que nadie lo pida. Se niega acá con el número adentro, en
+    vez de dejar que reviente la foreign key con un 500.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(3,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            eliminar_ficha(901)
+
+    assert "3 guías R cargadas" in str(error.value)
+    assert not any("DELETE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_una_ficha_sin_guias_R_se_borra_como_siempre():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_ficha(901)
+
+    assert any("DELETE FROM fichas_logistica" in c.args[0] for c in cursor.execute.call_args_list)
+
+
 def test_los_historiales_de_todos_los_tipos_salen_en_UNA_consulta():
     # La pantalla de Tipos lista todos los tipos con su historial: pedirlo
     # tipo por tipo es un N+1 que crece con el catálogo.
@@ -2750,15 +2842,17 @@ def test_actualizar_ficha_inexistente_no_escribe_bitacora():
 
 
 def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
-    conexion, cursor = _conexion_falsa([(1, 5, 100, 6, "kilo", False, "BERENJENA", None)])
+    # El primer fetchone es el conteo de guías R: sin guías, sigue de largo
+    # y borra como siempre.
+    conexion, cursor = _conexion_falsa([(0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(10)
 
-    consulta_delete = cursor.execute.call_args_list[0].args[0]
+    consulta_delete = cursor.execute.call_args_list[1].args[0]
     assert "DELETE FROM fichas_logistica WHERE id = %s" in consulta_delete
     assert "RETURNING" in consulta_delete
-    consulta_foto, parametros_foto = cursor.execute.call_args_list[1].args
+    consulta_foto, parametros_foto = cursor.execute.call_args_list[2].args
     assert "INSERT INTO fichas_logistica_historial" in consulta_foto
     assert parametros_foto == (10, 1, 5, 100, 6, "kilo", False, "BERENJENA", None, "borrado")
     conexion.commit.assert_called_once()
@@ -3918,7 +4012,9 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # 6600 / 4 cajas = 1650. Segunda y merma no llevan nada. El cliente
     # queda como DATO de la guía (para quién se armó la primera).
     assert "INSERT INTO reprocesos" in inserts[0].args[0]
-    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7)
+    # El último es la FICHA a la que fueron las cajas de primera: None acá
+    # significa SIN ASIGNAR, que en la pantalla se elige a propósito.
+    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None)
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
     assert inserts[2].args[1] == (12, "compra", 102, 102, 3.0, 1200.0)
