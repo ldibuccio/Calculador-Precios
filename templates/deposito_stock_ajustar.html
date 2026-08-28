@@ -95,7 +95,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <form method="post" action="/deposito/stock/ajustar">
+    <form method="post" action="/administracion/stock/ajustar">
       <label for="articulo_id">Artículo</label>
       <select id="articulo_id" name="articulo_id" required>
         <option value="" {% if not precarga.articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>

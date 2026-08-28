@@ -9486,9 +9486,9 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
     assert "Stock de vacíos negativo" in respuesta.text
     assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
-    assert 'href="/deposito/stock/sistema"' in respuesta.text
+    assert 'href="/administracion/stock/sistema"' in respuesta.text
     assert "Guías R con costo incompleto" in respuesta.text
-    assert 'href="/deposito/stock/guias-r"' in respuesta.text
+    assert 'href="/administracion/stock/guias-r"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
     assert "Pedidos con renglones sin identificar" in respuesta.text
@@ -12319,10 +12319,9 @@ def test_ver_deposito_muestra_los_accesos_a_pedido():
     assert respuesta.status_code == 200
     assert 'href="/deposito/pedido"' in respuesta.text
     assert 'href="/deposito/pedido/cargar"' in respuesta.text
-    # Buscar Pedidos también entra directo desde el menú: es la pantalla
-    # de facturar, no debería exigir pasar antes por Pedido.
-    assert 'href="/deposito/pedido/buscar"' in respuesta.text
-    assert "Buscar Pedidos" in respuesta.text
+    # Buscar Pedidos se mudó a Administración: es consulta, no operación.
+    assert "/administracion/pedidos/buscar" not in respuesta.text
+    assert "Buscar Pedidos" not in respuesta.text
 
 
 def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
@@ -15102,7 +15101,7 @@ def test_buscar_pedidos_muestra_los_kilos_enviados_nunca_los_de_ficha():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
     ):
-        respuesta = cliente.get("/deposito/pedido/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
+        respuesta = cliente.get("/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
 
     assert respuesta.status_code == 200
     texto = respuesta.text
@@ -15116,8 +15115,8 @@ def test_buscar_pedidos_muestra_los_kilos_enviados_nunca_los_de_ficha():
     assert "anulado" in texto
     assert "1 anulado" in texto
     # Export con los mismos filtros.
-    assert "/deposito/pedido/buscar/exportar-pdf?cliente_id=1" in texto
-    assert "/deposito/pedido/buscar/exportar-excel?cliente_id=1" in texto
+    assert "/administracion/pedidos/buscar/exportar-pdf?cliente_id=1" in texto
+    assert "/administracion/pedidos/buscar/exportar-excel?cliente_id=1" in texto
 
 
 def test_buscar_pedidos_sin_cliente_muestra_solo_el_selector():
@@ -15126,7 +15125,7 @@ def test_buscar_pedidos_sin_cliente_muestra_solo_el_selector():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.buscar_renglones_pedidos") as mock_buscar,
     ):
-        respuesta = cliente.get("/deposito/pedido/buscar")
+        respuesta = cliente.get("/administracion/pedidos/buscar")
 
     assert respuesta.status_code == 200
     assert "Elegí un cliente" in respuesta.text
@@ -15139,8 +15138,8 @@ def test_exportar_buscar_pedidos_pdf_y_excel():
         patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)),
         patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
     ):
-        pdf = cliente.get("/deposito/pedido/buscar/exportar-pdf?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
-        excel = cliente.get("/deposito/pedido/buscar/exportar-excel?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
+        pdf = cliente.get("/administracion/pedidos/buscar/exportar-pdf?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
+        excel = cliente.get("/administracion/pedidos/buscar/exportar-excel?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22")
 
     assert pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF")
@@ -15211,7 +15210,7 @@ def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
         respuesta = cliente.get("/deposito/pedido?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert 'href="/deposito/pedido/buscar?cliente_id=1"' in respuesta.text
+    assert 'href="/administracion/pedidos/buscar?cliente_id=1"' in respuesta.text
     # Cerrado explícitamente: TERMINADO ✔ aunque no esté completo (2 de 3).
     assert "TERMINADO ✔" in respuesta.text
 
@@ -15272,20 +15271,20 @@ def test_ver_deposito_muestra_el_acceso_a_stock():
     assert 'href="/deposito/stock"' in respuesta.text
 
 
-def test_hub_stock_separa_la_carga_del_operario_del_control():
+def test_el_hub_de_stock_queda_solo_con_la_carga_del_operario():
     respuesta = cliente.get("/deposito/stock")
 
     assert respuesta.status_code == 200
-    # Lo construido, activo; lo de tandas siguientes, atenuado y visible.
-    assert 'href="/deposito/stock/sistema"' in respuesta.text
-    assert 'href="/deposito/stock/ajustar"' in respuesta.text
+    # Solo la CARGA del operario: el control se mudó a Administración.
+    assert 'href="/deposito/stock/fisico"' in respuesta.text
     assert 'href="/deposito/stock/merma"' in respuesta.text
     assert 'href="/deposito/stock/reingreso"' in respuesta.text
-    assert 'href="/deposito/stock/movimientos"' in respuesta.text
-    assert 'href="/deposito/stock/fisico"' in respuesta.text
-    assert 'href="/deposito/stock/cotejo"' in respuesta.text
+    assert 'href="/deposito/stock/reproceso"' in respuesta.text
+    assert 'href="/deposito/stock/remito-segunda"' in respuesta.text
     assert "Carga del depósito" in respuesta.text
-    assert "Control" in respuesta.text
+    # Y NO quedan botones apuntando a otro módulo: mudar la pantalla y
+    # dejar el botón sería mudar a medias.
+    assert "/administracion/" not in respuesta.text
     # Módulo completo: no queda nada "Próximamente".
     assert "(Próximamente)" not in respuesta.text
 
@@ -15295,13 +15294,13 @@ def test_stock_sistema_muestra_el_stock_calculado_por_articulo():
         patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
         patch("app.main.total_reingresos_rechazo", return_value=2.0),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema")
 
     assert respuesta.status_code == 200
     assert "Banana" in respuesta.text
     assert "24 <span" in respuesta.text
     assert "40 entraron · 15 salieron · 2 reingresados · -3 ajustados" in respuesta.text
-    assert 'href="/deposito/stock/sistema/1"' in respuesta.text
+    assert 'href="/administracion/stock/sistema/1"' in respuesta.text
 
 
 def test_stock_sistema_negativo_muestra_la_tarjeta_de_salidas_sin_lote():
@@ -15309,7 +15308,7 @@ def test_stock_sistema_negativo_muestra_la_tarjeta_de_salidas_sin_lote():
         patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema")
 
     assert respuesta.status_code == 200
     # El negativo NO es un error a esconder: tarjeta roja arriba con el
@@ -15325,7 +15324,7 @@ def test_stock_sistema_muestra_los_reingresos_aparte_siempre():
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema")
 
     assert respuesta.status_code == 200
     assert "0 bultos reingresados por rechazo" in respuesta.text
@@ -15344,7 +15343,7 @@ def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 11.0, [])),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema/1")
+        respuesta = cliente.get("/administracion/stock/sistema/1")
 
     assert respuesta.status_code == 200
     # 11 salieron: la guía del 20 (8) se agotó y la del 22 quedó en 7.
@@ -15360,7 +15359,7 @@ def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 5.0, [])),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema/2")
+        respuesta = cliente.get("/administracion/stock/sistema/2")
 
     assert respuesta.status_code == 200
     assert "Anco: -5 bultos" in respuesta.text
@@ -15370,7 +15369,7 @@ def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
 
 def test_stock_articulo_inexistente_da_404():
     with patch("app.main.obtener_articulo", return_value=None):
-        respuesta = cliente.get("/deposito/stock/sistema/999")
+        respuesta = cliente.get("/administracion/stock/sistema/999")
 
     assert respuesta.status_code == 404
 
@@ -15382,7 +15381,7 @@ def test_ajustar_stock_guarda_el_movimiento_y_precarga_el_motivo_en_cadena():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
-            "/deposito/stock/ajustar",
+            "/administracion/stock/ajustar",
             data={"articulo_id": "1", "cantidad": "12", "motivo": "stock inicial"},
             follow_redirects=False,
         )
@@ -15398,7 +15397,7 @@ def test_ajustar_stock_guarda_el_movimiento_y_precarga_el_motivo_en_cadena():
 def test_ajustar_stock_sin_motivo_da_400():
     with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
         respuesta = cliente.post(
-            "/deposito/stock/ajustar",
+            "/administracion/stock/ajustar",
             data={"articulo_id": "1", "cantidad": "5", "motivo": "   "},
         )
 
@@ -15410,7 +15409,7 @@ def test_ajustar_stock_sin_motivo_da_400():
 def test_ajustar_stock_cantidad_cero_da_400():
     with patch("app.main.crear_movimiento_stock") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
         respuesta = cliente.post(
-            "/deposito/stock/ajustar",
+            "/administracion/stock/ajustar",
             data={"articulo_id": "1", "cantidad": "0", "motivo": "nada"},
         )
 
@@ -15420,7 +15419,7 @@ def test_ajustar_stock_cantidad_cero_da_400():
 
 def test_ajustar_stock_muestra_el_motivo_precargado():
     with patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]):
-        respuesta = cliente.get("/deposito/stock/ajustar?motivo=stock+inicial")
+        respuesta = cliente.get("/administracion/stock/ajustar?motivo=stock+inicial")
 
     assert respuesta.status_code == 200
     assert 'value="stock inicial"' in respuesta.text
@@ -15878,7 +15877,7 @@ def test_movimientos_stock_muestra_los_tipos_con_pill_y_la_foto_del_sistema():
               return_value=[dict(m) for m in MOVIMIENTOS_STOCK_DE_PRUEBA]) as mock_listar,
         patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/movimientos")
+        respuesta = cliente.get("/administracion/stock/movimientos")
 
     assert respuesta.status_code == 200
     mock_listar.assert_called_once_with(date(2026, 8, 18), date(2026, 8, 25))
@@ -15898,7 +15897,7 @@ def test_movimientos_stock_muestra_los_tipos_con_pill_y_la_foto_del_sistema():
 def test_anular_movimiento_stock_vuelve_al_rango():
     with patch("app.main.anular_movimiento_stock") as mock_anular:
         respuesta = cliente.post(
-            "/deposito/stock/movimientos/32/anular",
+            "/administracion/stock/movimientos/32/anular",
             data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
             follow_redirects=False,
         )
@@ -15983,7 +15982,7 @@ def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste(
          "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Anco"},
     ]
     with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
-        respuesta = cliente.get("/deposito/stock/cotejo")
+        respuesta = cliente.get("/administracion/stock/cotejo")
 
     assert respuesta.status_code == 200
     # La diferencia es contra la FOTO del conteo, resaltada.
@@ -16004,7 +16003,7 @@ def test_ajustar_desde_cotejo_precarga_contra_el_stock_actual_y_avisa_si_se_movi
         patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
     ):
         respuesta = cliente.get(
-            "/deposito/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
+            "/administracion/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
         )
 
     assert respuesta.status_code == 200
@@ -16020,7 +16019,7 @@ def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
         patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
     ):
         respuesta = cliente.get(
-            "/deposito/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
+            "/administracion/stock/ajustar?articulo_id=1&contado=12.0&stock_conteo=15.0&fecha_conteo=2026-08-25"
         )
 
     assert respuesta.status_code == 200
@@ -16266,7 +16265,7 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     assert respuesta.status_code == 200
     assert "Guía R12 — Tomate Perita" in respuesta.text
@@ -16288,7 +16287,7 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
 def test_anular_guia_r_vuelve_al_rango():
     with patch("app.main.anular_reproceso") as mock_anular:
         respuesta = cliente.post(
-            "/deposito/stock/guias-r/12/anular",
+            "/administracion/stock/guias-r/12/anular",
             data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
             follow_redirects=False,
         )
@@ -16298,12 +16297,17 @@ def test_anular_guia_r_vuelve_al_rango():
     assert "fecha_desde=2026-08-18" in respuesta.headers["location"]
 
 
-def test_hub_stock_tiene_reproceso_y_guias_r():
-    respuesta = cliente.get("/deposito/stock")
+def test_el_control_de_stock_vive_en_administracion():
+    # Las cinco pantallas de control, en el hub que les corresponde.
+    respuesta = cliente.get("/administracion")
 
     assert respuesta.status_code == 200
-    assert 'href="/deposito/stock/reproceso"' in respuesta.text
-    assert 'href="/deposito/stock/guias-r"' in respuesta.text
+    for destino in ("/administracion/stock/sistema", "/administracion/stock/cotejo",
+                    "/administracion/stock/ajustar", "/administracion/stock/movimientos",
+                    "/administracion/stock/guias-r", "/administracion/pedidos/buscar"):
+        assert f'href="{destino}"' in respuesta.text, destino
+    # El reproceso NO se muda: es carga del depósito.
+    assert "/deposito/stock/reproceso" not in respuesta.text
 
 
 # --- Reproceso (tanda 2): segunda, remito al Puesto, completar costo ---
@@ -16317,7 +16321,7 @@ def test_stock_sistema_muestra_la_segunda_como_pool_aparte():
         patch("app.main.stock_deposito_por_articulo", return_value=filas),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema")
 
     assert respuesta.status_code == 200
     assert "3 bultos de segunda en el depósito" in respuesta.text
@@ -16354,7 +16358,7 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
               return_value={1: (entradas_fifo, 20.0, [])}) as mock_fifo,
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas_dia),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema")
 
     assert respuesta.status_code == 200
     # UNA sola llamada con TODOS los artículos con guía R, no una por artículo.
@@ -16376,7 +16380,7 @@ def test_stock_sistema_sin_reprocesos_ni_segunda_muestra_solo_el_numero():
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
         patch("app.main.entradas_y_salidas_stock_articulo") as mock_fifo,
     ):
-        respuesta = cliente.get("/deposito/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema")
 
     assert respuesta.status_code == 200
     mock_fifo.assert_not_called()
@@ -16427,12 +16431,12 @@ def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=remitos),
     ):
-        respuesta = cliente.get("/deposito/stock/movimientos")
+        respuesta = cliente.get("/administracion/stock/movimientos")
 
     assert respuesta.status_code == 200
     assert "Remito 2ª" in respuesta.text
     assert "Segunda remitida al Puesto" in respuesta.text
-    assert 'action="/deposito/stock/movimientos/remitos/7/anular"' in respuesta.text
+    assert 'action="/administracion/stock/movimientos/remitos/7/anular"' in respuesta.text
     # Sale del pool: cantidad negativa; y no tiene foto del sistema.
     assert "-2" in respuesta.text
     assert "el sistema decía" not in respuesta.text
@@ -16441,7 +16445,7 @@ def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
 def test_anular_remito_segunda_vuelve_al_rango():
     with patch("app.main.anular_remito_segunda") as mock_anular:
         respuesta = cliente.post(
-            "/deposito/stock/movimientos/remitos/7/anular",
+            "/administracion/stock/movimientos/remitos/7/anular",
             data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
             follow_redirects=False,
         )
@@ -16454,7 +16458,7 @@ def test_anular_remito_segunda_vuelve_al_rango():
 def test_completar_costo_avisa_si_completo_o_que_sigue_incompleto():
     with patch("app.main.completar_costo_reproceso", return_value={"completado": True, "sin_precio": 0}) as mock_completar:
         respuesta = cliente.post(
-            "/deposito/stock/guias-r/12/completar-costo",
+            "/administracion/stock/guias-r/12/completar-costo",
             data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
             follow_redirects=False,
         )
@@ -16464,7 +16468,7 @@ def test_completar_costo_avisa_si_completo_o_que_sigue_incompleto():
 
     with patch("app.main.completar_costo_reproceso", return_value={"completado": False, "sin_precio": 2}):
         respuesta = cliente.post(
-            "/deposito/stock/guias-r/13/completar-costo",
+            "/administracion/stock/guias-r/13/completar-costo",
             data={"fecha_desde": "2026-08-18", "fecha_hasta": "2026-08-25"},
             follow_redirects=False,
         )
@@ -16478,7 +16482,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     assert respuesta.status_code == 200
     # La R12 tiene costo completo y la R13 está ANULADA: ninguna lo lleva.
@@ -16490,10 +16494,10 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     assert respuesta.text.count("Completar costo") == 1
-    assert 'action="/deposito/stock/guias-r/13/completar-costo"' in respuesta.text
+    assert 'action="/administracion/stock/guias-r/13/completar-costo"' in respuesta.text
 
 
 def test_hub_stock_tiene_remitir_segunda():
@@ -17092,7 +17096,7 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     assert respuesta.status_code == 200
     cuerpo = respuesta.text.split("</style>")[-1]
@@ -17100,7 +17104,7 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     assert "Banana Bolivia" in cuerpo
     assert "Sin asignar a una ficha" in cuerpo
     # Y la que falta se completa desde acá, con LAS DOS fichas del artículo.
-    assert 'action="/deposito/stock/guias-r/2/asignar-ficha"' in cuerpo
+    assert 'action="/administracion/stock/guias-r/2/asignar-ficha"' in cuerpo
     assert "Banana Ecuador" in cuerpo
 
 
@@ -17119,7 +17123,7 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     cuerpo = respuesta.text.split("</style>")[-1]
     assert '<optgroup label="Cajas de este artículo">' in cuerpo
@@ -17137,7 +17141,7 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     assert respuesta.status_code == 200
     assert "/guias-r/3/asignar-ficha" not in respuesta.text
@@ -17147,7 +17151,7 @@ def test_asignar_una_ficha_de_otro_articulo_se_muestra_en_pantalla_nunca_500():
     with patch("app.main.asignar_ficha_a_reproceso",
                side_effect=ValueError("Esa ficha es de otro artículo: no puede ser la de esta guía R.")):
         respuesta = cliente.post(
-            "/deposito/stock/guias-r/2/asignar-ficha",
+            "/administracion/stock/guias-r/2/asignar-ficha",
             data={"ficha_id": "901", "fecha_desde": "2026-08-20", "fecha_hasta": "2026-08-28"},
             follow_redirects=False,
         )
@@ -17161,7 +17165,7 @@ def test_asignar_una_ficha_de_otro_articulo_se_muestra_en_pantalla_nunca_500():
 def test_desasignar_desde_guias_r_manda_None():
     with patch("app.main.asignar_ficha_a_reproceso") as mock_asignar:
         respuesta = cliente.post(
-            "/deposito/stock/guias-r/2/asignar-ficha",
+            "/administracion/stock/guias-r/2/asignar-ficha",
             data={"ficha_id": "sin_asignar", "fecha_desde": "", "fecha_hasta": ""},
             follow_redirects=False,
         )
@@ -17206,7 +17210,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
               return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
         patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(2, 4.0)]}),
     ):
-        respuesta = cliente.get("/deposito/stock/guias-r")
+        respuesta = cliente.get("/administracion/stock/guias-r")
 
     assert respuesta.status_code == 200
     texto = respuesta.text
@@ -17225,7 +17229,7 @@ def test_auditoria_incluye_la_alerta_de_cruce_de_primera():
 
     assert respuesta.status_code == 200
     assert "Primera de reproceso armada para un cliente salió en pedidos de otro" in respuesta.text
-    assert 'href="/deposito/stock/guias-r"' in respuesta.text
+    assert 'href="/administracion/stock/guias-r"' in respuesta.text
 
 
 def test_el_cruce_de_primera_se_cuenta_con_su_fecha_mas_vieja():
@@ -17290,8 +17294,8 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
     ):
-        respuesta = cliente.get("/deposito/stock/sistema/2")
-    assert ancla.format(destino="/deposito/stock/sistema") in respuesta.text
+        respuesta = cliente.get("/administracion/stock/sistema/2")
+    assert ancla.format(destino="/administracion/stock/sistema") in respuesta.text
 
     # La casilla cuelga de Sistema.
     with (

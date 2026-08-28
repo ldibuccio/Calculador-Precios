@@ -127,7 +127,7 @@
   <div class="tarjeta">
     {% if filas %}
       {% for f in filas %}
-      <a class="fila-stock {% if f.stock < 0 %}negativa{% endif %}" href="/deposito/stock/sistema/{{ f.articulo_id }}">
+      <a class="fila-stock {% if f.stock < 0 %}negativa{% endif %}" href="/administracion/stock/sistema/{{ f.articulo_id }}">
         <div class="encabezado">
           <span class="nombre">{{ f.nombre }}</span>
           {# Sin guías R ni segunda: solo el número, sin renglones de más. #}

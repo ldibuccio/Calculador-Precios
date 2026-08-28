@@ -89,7 +89,7 @@
 <body>
   {% set barra_sector = "deposito" %}
   {% set barra_titulo = "Stock por Guía" %}
-  {% set barra_atras = "/deposito/stock/sistema" %}
+  {% set barra_atras = "/administracion/stock/sistema" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="resumen {% if stock < 0 %}negativo{% endif %}">
@@ -148,6 +148,6 @@
   </details>
   {% endif %}
 
-  <a class="volver" href="/deposito/stock/sistema">Volver al Stock del Sistema</a>
+  <a class="volver" href="/administracion/stock/sistema">Volver al Stock del Sistema</a>
 </body>
 </html>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administración</title>
 <style>
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
     margin: 0;
@@ -19,7 +20,12 @@
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
+  .boton:last-child { margin-bottom: 0; }
   .boton {
+    /* Separación entre botones: la tarjeta tenía UNO solo y nunca hizo
+       falta. Con cinco, pegados se leen como un bloque y el dedo no
+       distingue dónde termina uno. */
+    margin-bottom: 0.6rem;
     width: 100%;
     padding: 1.1rem;
     background: #2563eb;
@@ -48,8 +54,24 @@
   {% set barra_titulo = "Administración" %}
   {% set barra_atras = "/inicio" %}
   {% include "_barra_navegacion.html" %}
+  {% include "_banner_alertas.html" %}
 
   <div class="tarjeta">
+    <h2>Control de stock</h2>
+    <a class="boton" href="/administracion/stock/sistema">Stock del Sistema</a>
+    <a class="boton" href="/administracion/stock/cotejo">Cotejo</a>
+    <a class="boton" href="/administracion/stock/ajustar">Ajustar Stock</a>
+    <a class="boton" href="/administracion/stock/movimientos">Movimientos</a>
+    <a class="boton" href="/administracion/stock/guias-r">Guías R</a>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Pedidos</h2>
+    <a class="boton" href="/administracion/pedidos/buscar">Buscar Pedidos</a>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Facturación</h2>
     <a class="boton" href="/administracion/ingresos">Ingresos a Depósito</a>
   </div>
 

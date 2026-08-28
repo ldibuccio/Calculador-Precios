@@ -6268,7 +6268,7 @@ def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str], movimien
     return armados
 
 
-@app.get("/deposito/stock/sistema")
+@app.get("/administracion/stock/sistema")
 def ver_stock_sistema_deposito(request: Request):
     """Stock del Sistema por artículo (bultos), calculado siempre. Los negativos arriba, en rojo: son salidas sin explicar.
 
@@ -6316,7 +6316,7 @@ def ver_stock_sistema_deposito(request: Request):
     )
 
 
-@app.get("/deposito/stock/sistema/{articulo_id}")
+@app.get("/administracion/stock/sistema/{articulo_id}")
 def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     """El detalle FIFO de un artículo: qué queda de cada lote (guía, reingreso, ajuste) y cuánto salió sin lote.
 
@@ -6375,7 +6375,7 @@ def _numero_query_o_none(texto: str | None) -> float | None:
         return None
 
 
-@app.get("/deposito/stock/ajustar")
+@app.get("/administracion/stock/ajustar")
 def ver_ajustar_stock_deposito(
     request: Request,
     aviso: str | None = None,
@@ -6419,7 +6419,7 @@ def ver_ajustar_stock_deposito(
     return _renderizar_pantalla_ajustar_stock(request, precarga=precarga, aviso=aviso)
 
 
-@app.post("/deposito/stock/ajustar")
+@app.post("/administracion/stock/ajustar")
 def ajustar_stock_deposito_ruta(
     request: Request,
     articulo_id: str = Form(""),
@@ -6474,7 +6474,7 @@ def ajustar_stock_deposito_ruta(
     )
     # El motivo vuelve en la URL para la carga en cadena (stock inicial).
     return RedirectResponse(
-        url=f"/deposito/stock/ajustar?{urlencode({'aviso': aviso, 'motivo': motivo_limpio})}", status_code=303
+        url=f"/administracion/stock/ajustar?{urlencode({'aviso': aviso, 'motivo': motivo_limpio})}", status_code=303
     )
 
 
@@ -6863,7 +6863,7 @@ def cargar_reingreso_stock_ruta(
 ETIQUETAS_MOVIMIENTO_STOCK = {"ajuste": "Ajuste", "merma": "Merma", "reingreso_rechazo": "Reingreso"}
 
 
-@app.get("/deposito/stock/movimientos")
+@app.get("/administracion/stock/movimientos")
 def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None):
     """Movimientos de stock (control): ajustes, mermas y reingresos de cualquier fecha, con anular por baja lógica.
 
@@ -6880,7 +6880,7 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
 
     for m in movimientos:
         m["etiqueta_tipo"] = ETIQUETAS_MOVIMIENTO_STOCK.get(m["tipo"], m["tipo"])
-        m["url_anular"] = f"/deposito/stock/movimientos/{m['id']}/anular"
+        m["url_anular"] = f"/administracion/stock/movimientos/{m['id']}/anular"
     # Los remitos de segunda entran al mismo listado, con su propia pill y
     # su propio anular: un solo lugar de control para todo lo cargado a mano.
     for r in remitos:
@@ -6891,7 +6891,7 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
             motivo="Segunda remitida al Puesto",
             cliente_nombre=None,
             stock_sistema=None,
-            url_anular=f"/deposito/stock/movimientos/remitos/{r['id']}/anular",
+            url_anular=f"/administracion/stock/movimientos/remitos/{r['id']}/anular",
         )
     movimientos = sorted(
         movimientos + remitos, key=lambda m: (m["fecha_operacion"], m["creado_en"]), reverse=True
@@ -6907,7 +6907,7 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
     )
 
 
-@app.post("/deposito/stock/movimientos/{movimiento_id}/anular")
+@app.post("/administracion/stock/movimientos/{movimiento_id}/anular")
 def anular_movimiento_stock_ruta(
     movimiento_id: int,
     fecha_desde: str = Form(""),
@@ -6919,12 +6919,12 @@ def anular_movimiento_stock_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
 
     return RedirectResponse(
-        url=f"/deposito/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        url=f"/administracion/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
         status_code=303,
     )
 
 
-@app.post("/deposito/stock/movimientos/remitos/{remito_id}/anular")
+@app.post("/administracion/stock/movimientos/remitos/{remito_id}/anular")
 def anular_remito_segunda_ruta(
     remito_id: int,
     fecha_desde: str = Form(""),
@@ -6936,7 +6936,7 @@ def anular_remito_segunda_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo anular el remito: {error_db}") from error_db
 
     return RedirectResponse(
-        url=f"/deposito/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        url=f"/administracion/stock/movimientos?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
         status_code=303,
     )
 
@@ -7012,7 +7012,7 @@ def cargar_stock_fisico_deposito_ruta(
     return RedirectResponse(url=f"/deposito/stock/fisico?{urlencode({'aviso': aviso})}", status_code=303)
 
 
-@app.get("/deposito/stock/cotejo")
+@app.get("/administracion/stock/cotejo")
 def ver_cotejo_stock(request: Request):
     """Cotejo (control): el último conteo físico por artículo contra la foto del sistema de ese instante."""
     try:
@@ -7325,7 +7325,7 @@ def _cruces_primera_reproceso() -> list[dict]:
     return cruces
 
 
-@app.get("/deposito/stock/guias-r")
+@app.get("/administracion/stock/guias-r")
 def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
                 aviso: str | None = None, error: str | None = None):
     """Guías R (control): la trazabilidad hacia atrás y el costo del reproceso. Acá SÍ se ven costos.
@@ -7375,7 +7375,7 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     )
 
 
-@app.post("/deposito/stock/guias-r/{reproceso_id}/asignar-ficha")
+@app.post("/administracion/stock/guias-r/{reproceso_id}/asignar-ficha")
 def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
                                    ficha_id: str = Form(""),
                                    fecha_desde: str = Form(""), fecha_hasta: str = Form("")):
@@ -7393,16 +7393,16 @@ def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
         # Ficha de otro artículo o guía anulada: dato mal pedido, no una
         # falla del sistema. Se muestra en la pantalla, nunca un 500.
         parametros["error"] = str(error)
-        return RedirectResponse(url=f"/deposito/stock/guias-r?{urlencode(parametros)}", status_code=303)
+        return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
     except Exception as error_db:
         parametros["error"] = f"No se pudo asignar la ficha: {error_db}"
-        return RedirectResponse(url=f"/deposito/stock/guias-r?{urlencode(parametros)}", status_code=303)
+        return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
 
     parametros["aviso"] = (
         f"Guía R{reproceso_id}: quedó sin asignar." if ficha_valor is None
         else f"Guía R{reproceso_id}: ficha asignada."
     )
-    return RedirectResponse(url=f"/deposito/stock/guias-r?{urlencode(parametros)}", status_code=303)
+    return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
 
 
 def _renderizar_pantalla_remito_segunda(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
@@ -7488,7 +7488,7 @@ def cargar_remito_segunda_ruta(
     return RedirectResponse(url=f"/deposito/stock/remito-segunda?{urlencode({'aviso': aviso})}", status_code=303)
 
 
-@app.post("/deposito/stock/guias-r/{reproceso_id}/completar-costo")
+@app.post("/administracion/stock/guias-r/{reproceso_id}/completar-costo")
 def completar_costo_reproceso_ruta(
     reproceso_id: int,
     fecha_desde: str = Form(""),
@@ -7509,12 +7509,12 @@ def completar_costo_reproceso_ruta(
             f"(compra sin precio aún, stock inicial, reingreso o sin lote)."
         )
     return RedirectResponse(
-        url=f"/deposito/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta, 'aviso': aviso})}",
+        url=f"/administracion/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta, 'aviso': aviso})}",
         status_code=303,
     )
 
 
-@app.post("/deposito/stock/guias-r/{reproceso_id}/anular")
+@app.post("/administracion/stock/guias-r/{reproceso_id}/anular")
 def anular_reproceso_ruta(
     reproceso_id: int,
     fecha_desde: str = Form(""),
@@ -7526,7 +7526,7 @@ def anular_reproceso_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo anular la guía: {error_db}") from error_db
 
     return RedirectResponse(
-        url=f"/deposito/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        url=f"/administracion/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
         status_code=303,
     )
 
@@ -7673,9 +7673,12 @@ ALERTAS = [
         # Salió más de lo que entró: salidas sin lote que un reproceso o un
         # ajuste tienen que explicar — o alguien sacó de más.
         titulo="Stock de depósito en negativo (salidas sin explicar)",
-        url="/deposito/stock/sistema",
+        url="/administracion/stock/sistema",
         texto_link="Ver en Stock del Sistema del Depósito",
-        modulos=("deposito",),
+        # El banner va donde está la pantalla: Stock del Sistema se mudó
+        # a Administración, así que avisar en Depósito mandaría al
+        # operario a un módulo que ya no es suyo.
+        modulos=("administracion",),
         contar=lambda: contar_stock_deposito_negativo(),
     ),
     DefinicionAlerta(
@@ -7684,12 +7687,14 @@ ALERTAS = [
         # el precio de una compra ("Completar costo" lo arregla), o consumió
         # stock inicial/reingreso/sin lote.
         titulo="Guías R con costo incompleto",
-        url="/deposito/stock/guias-r",
+        url="/administracion/stock/guias-r",
         # A los dos: se arregla cargando el precio de una compra que falta
         # (eso es Compras), pero el que cargó el reproceso es el que puede
         # avisar cuál falta.
         texto_link="Ver en Guías R",
-        modulos=("compras", "deposito"),
+        # Guías R se mudó a Administración; Compras se queda porque el
+        # costo incompleto lo resuelve el que carga el precio.
+        modulos=("compras", "administracion"),
         contar=lambda: contar_reprocesos_costo_incompleto(),
     ),
     DefinicionAlerta(
@@ -7698,7 +7703,7 @@ ALERTAS = [
         # pedidos de OTRO: cajas de presentación equivocada. Aviso con datos,
         # nunca traba — el galpón ya lo hizo; acá se delata.
         titulo="Primera de reproceso armada para un cliente salió en pedidos de otro",
-        url="/deposito/stock/guias-r",
+        url="/administracion/stock/guias-r",
         # Sin banner a propósito: el cruce YA pasó en el galpón, no hay
         # nada que hacer con él hoy. Es información para revisar, y para
         # eso está Auditoría.
@@ -8547,8 +8552,16 @@ def cargar_importe_costos_fijos_ruta(
 
 @app.get("/administracion")
 def ver_administracion(request: Request):
-    """Hub de Administración: lo que se mira y se corrige. El depósito hace; acá se controla."""
-    return templates.TemplateResponse(request, "administracion.html", {})
+    """Hub de Administración: lo que se mira y se corrige. El depósito hace; acá se controla.
+
+    Con banner: desde que Stock del Sistema y Guías R viven acá, sus
+    alertas avisan en este módulo. Sin el banner, esas alertas no se
+    verían en ninguna botonera — solo en Auditoría, que es justo lo que
+    el banner vino a evitar.
+    """
+    return templates.TemplateResponse(
+        request, "administracion.html", {"banner": _banner_alertas("administracion")}
+    )
 
 
 ESTADOS_FILTRO_INGRESOS_VALIDOS = {"recepcionado", "rechazado", "no_ingresado", "todas"}
@@ -10628,7 +10641,7 @@ def _leer_filtros_buscar_pedidos(cliente_id_texto, fecha_desde_texto, fecha_hast
     return cliente_id, fecha_desde, fecha_hasta, error_fecha
 
 
-@app.get("/deposito/pedido/buscar")
+@app.get("/administracion/pedidos/buscar")
 def ver_buscar_pedidos(
     request: Request,
     cliente_id: str | None = None,
@@ -10687,7 +10700,7 @@ def _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta):
     return desde, hasta, nombre_cliente, grupos, totales
 
 
-@app.get("/deposito/pedido/buscar/exportar-pdf")
+@app.get("/administracion/pedidos/buscar/exportar-pdf")
 def exportar_pedidos_pdf(cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = ""):
     """Buscar Pedidos en PDF (mismos filtros que la pantalla) — sin tope."""
     desde, hasta, nombre_cliente, grupos, totales = _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta)
@@ -10700,7 +10713,7 @@ def exportar_pedidos_pdf(cliente_id: str = "", fecha_desde: str = "", fecha_hast
     )
 
 
-@app.get("/deposito/pedido/buscar/exportar-excel")
+@app.get("/administracion/pedidos/buscar/exportar-excel")
 def exportar_pedidos_excel(cliente_id: str = "", fecha_desde: str = "", fecha_hasta: str = ""):
     """Buscar Pedidos en Excel (mismos filtros que la pantalla) — sin tope."""
     desde, hasta, nombre_cliente, grupos, totales = _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta)

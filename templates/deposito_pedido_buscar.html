@@ -129,7 +129,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <form class="filtros" method="get" action="/deposito/pedido/buscar">
+    <form class="filtros" method="get" action="/administracion/pedidos/buscar">
       <label for="cliente_id">Cliente</label>
       <select id="cliente_id" name="cliente_id" onchange="this.form.submit()">
         <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
@@ -150,8 +150,8 @@
       <button type="submit" class="boton-buscar">Buscar</button>
     </form>
     {% if grupos is not none %}
-    <a class="boton-exportar" href="/deposito/pedido/buscar/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar PDF</a>
-    <a class="boton-exportar" href="/deposito/pedido/buscar/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar Excel</a>
+    <a class="boton-exportar" href="/administracion/pedidos/buscar/exportar-pdf?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar PDF</a>
+    <a class="boton-exportar" href="/administracion/pedidos/buscar/exportar-excel?cliente_id={{ cliente_id }}&fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}">Exportar Excel</a>
     {% endif %}
     <p class="ayuda">Los kilos son los <strong>enviados por el depósito</strong> al armar cada renglón (lo que se factura), no los de la ficha. Un renglón sin armar figura "sin kilaje".</p>
   </div>

@@ -141,7 +141,9 @@
   }
   .boton-anular {
     margin-top: 0.6rem;
-    padding: 0.6rem 0.9rem;
+    /* 44px de alto: estaba en 37 y la regla mobile-first son 44. Se
+       arregla acá porque esta pantalla se toca igual en la mudanza. */
+    padding: 0.8rem 0.9rem;
     background: #fff;
     color: #dc2626;
     border: 1px solid #dc2626;
@@ -168,7 +170,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <form class="filtros" method="get" action="/deposito/stock/guias-r">
+    <form class="filtros" method="get" action="/administracion/stock/guias-r">
       <div class="fila-fechas">
         <div>
           <label for="fecha_desde">Desde</label>
@@ -201,7 +203,7 @@
       {% else %}<span class="sin-asignar">Sin asignar a una ficha</span>{% endif %}
     </p>
     {% if not g.anulado_el %}
-    <form class="asignar" method="post" action="/deposito/stock/guias-r/{{ g.id }}/asignar-ficha">
+    <form class="asignar" method="post" action="/administracion/stock/guias-r/{{ g.id }}/asignar-ficha">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
       {# "Sin asignar" en su propio grupo, no al lado de las cajas: al
@@ -250,14 +252,14 @@
     {% if not g.anulado_el and g.costo_total is none %}
     {# Rellena SOLO los costos que faltaban con precios ya cargados —
        jamás pisa un costo congelado. #}
-    <form method="post" action="/deposito/stock/guias-r/{{ g.id }}/completar-costo" style="display: inline;">
+    <form method="post" action="/administracion/stock/guias-r/{{ g.id }}/completar-costo" style="display: inline;">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
       <button type="submit" class="boton-completar">Completar costo</button>
     </form>
     {% endif %}
     {% if not g.anulado_el %}
-    <form method="post" action="/deposito/stock/guias-r/{{ g.id }}/anular" style="display: inline;"
+    <form method="post" action="/administracion/stock/guias-r/{{ g.id }}/anular" style="display: inline;"
           onsubmit="return confirm('¿Anular la guía R{{ g.id }}? Lo tomado vuelve a sus lotes y la primera sale del stock. Queda registrada como anulada.');">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
