@@ -663,6 +663,20 @@ create table revision_tick (
 comment on table revision_tick is
     'El latido del bucle de revisión automática (una sola fila, id = 1): se actualiza en cada tick, aunque no toque revisar nada. Si quedó viejo, el bucle no está corriendo — visible en Sistema sin deducir nada de logs.';
 
+create table corte_modelo (
+    id integer primary key check (id = 1),
+    fecha date not null,
+    creado_en timestamptz not null default now()
+);
+
+-- La fila va acá y no en el seed: sin ella el modelo nuevo no sabe desde
+-- cuándo rige, y una base recién creada quedaría a medio configurar sin
+-- que nada avise.
+insert into corte_modelo (id, fecha) values (1, '2026-08-31');
+
+comment on table corte_modelo is
+    'La fecha de corte del modelo nuevo (una sola fila, id = 1). A partir de ella rige el FIFO nuevo y la rentabilidad real; lo anterior queda visible pero fuera de alcance, porque se cargó con reglas que dejaban salir pedidos contra cualquier mercadería. Vive en la base y no en el código para que se lea de un solo lugar.';
+
 -- ----------------------------------------------------------------------------
 -- 15. CONDICIONES DE PEDIDO — qué días se espera pedido de cada cliente
 -- ----------------------------------------------------------------------------
@@ -699,7 +713,7 @@ comment on table dias_sin_pedido is
 create table movimientos_stock (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
-    tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo')),
+    tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo', 'stock_inicial')),
     cantidad numeric not null check (cantidad <> 0),
     motivo text not null check (btrim(motivo) <> ''),
     cliente_id bigint references clientes (id),
@@ -716,7 +730,8 @@ create table movimientos_stock (
     bultos_segunda numeric check (bultos_segunda is null or bultos_segunda > 0),
     -- Merma dirigida a un lote puntual (NULL = FIFO, el default).
     lote_tipo text
-        check (lote_tipo is null or lote_tipo in ('guia', 'reproceso', 'reingreso_rechazo', 'ajuste')),
+        check (lote_tipo is null
+               or lote_tipo in ('guia', 'reproceso', 'reingreso_rechazo', 'ajuste', 'stock_inicial')),
     lote_origen_id bigint,
     constraint movimientos_stock_merma_negativa
         check (tipo <> 'merma' or cantidad < 0),
@@ -724,8 +739,15 @@ create table movimientos_stock (
         check (tipo <> 'reingreso_rechazo' or cantidad > 0),
     constraint movimientos_stock_cliente_solo_reingreso
         check (tipo = 'reingreso_rechazo' or cliente_id is null),
+    -- El stock inicial del corte también lleva costo (se carga a mano): sin
+    -- eso, el FIFO nuevo arrancaría costeando contra lotes sin precio.
+    -- pedido_renglon_id sigue siendo exclusivo del reingreso: apunta a un
+    -- renglón que volvió, y el stock inicial no vuelve de ningún lado.
     constraint movimientos_stock_vinculo_solo_reingreso
-        check (tipo = 'reingreso_rechazo' or (pedido_renglon_id is null and costo_por_bulto is null)),
+        check (
+            (tipo = 'reingreso_rechazo' or pedido_renglon_id is null)
+            and (tipo in ('reingreso_rechazo', 'stock_inicial') or costo_por_bulto is null)
+        ),
     constraint movimientos_stock_destino_solo_reingreso
         check (tipo = 'reingreso_rechazo' or (destino_rechazo is null and bultos_segunda is null)),
     constraint movimientos_stock_segunda_segun_destino
@@ -801,7 +823,7 @@ create table reprocesos (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
     fecha_operacion date not null,
-    bultos_tomados numeric not null check (bultos_tomados > 0),
+    bultos_tomados numeric not null,
     bultos_primera numeric not null check (bultos_primera >= 0),
     bultos_segunda numeric not null check (bultos_segunda >= 0),
     bultos_merma numeric not null check (bultos_merma >= 0),
@@ -814,7 +836,15 @@ create table reprocesos (
     -- pedidos_renglones.ficha_id): acá el NULL significa "sin asignar", y
     -- nulear en silencio al borrar una ficha volvería un reproceso
     -- asignado indistinguible de uno sin asignar.
-    ficha_id bigint references fichas_logistica (id)
+    ficha_id bigint references fichas_logistica (id),
+    tipo text not null default 'normal' check (tipo in ('normal', 'inicial')),
+    -- El reproceso inicial PRODUCE SIN CONSUMIR: las cajas armadas que había
+    -- en el piso el día del corte ya existen, y los cajones que las
+    -- originaron no se van a cargar nunca. Vive en el dato (toma cero) y no
+    -- en el código, porque el cálculo de stock ya resta SUM(bultos_tomados).
+    constraint reprocesos_bultos_tomados_check
+        check ((tipo = 'inicial' and bultos_tomados = 0)
+               or (tipo = 'normal' and bultos_tomados > 0))
 );
 
 comment on table reprocesos is
@@ -827,6 +857,8 @@ comment on column reprocesos.cliente_id is
     'Para quién se armó la primera (dato de trazabilidad: el stock sigue sin dueño). NULL = guía vieja, sin cliente. La alerta de Auditoría cruza este cliente contra el de los pedidos que el FIFO atribuye a esta primera.';
 comment on column reprocesos.ficha_id is
     'A qué ficha fueron las cajas de primera de esta guía R. NULL tiene dos significados que separa la fecha de corte (31/08/2026): antes del corte = dato viejo que no se completa; después = SIN ASIGNAR, y hay que completarlo. No se deriva de (articulo_id, cliente_id): un cliente puede tener varias fichas del mismo artículo, así que esa derivación es ambigua por diseño.';
+comment on column reprocesos.tipo is
+    'normal = el reproceso de todos los días: toma bultos del stock y produce primera, segunda y merma. inicial = las cajas que ya estaban armadas en el piso el día del corte (31/08/2026): PRODUCEN SIN CONSUMIR (bultos_tomados = 0), porque los cajones que las originaron nunca se cargaron. El check obliga las dos cosas.';
 
 -- Parcial: los reprocesos sin asignar no se buscan por ficha, y el índice
 -- que importa es el de "cuántas cajas hay de esta ficha".

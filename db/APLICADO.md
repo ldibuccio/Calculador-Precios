@@ -73,6 +73,7 @@ bases estén marcadas.
 | `agregar_senas_valor_historial.sql` | ✅ 2026-08-28 (verificado: 7/7 OK) | ✅ 2026-08-28 (verificado: 7/7 OK) |
 | `senas_valor_historial_append_only.sql` (saca el UNIQUE por fecha, que obligaba a pisar el monto anterior; corrida con la tabla todavía vacía) | ✅ 2026-08-28 (verificado: 7/7 OK; el freno de mano no saltó) | ✅ 2026-08-28 (verificado: 7/7 OK; el freno de mano no saltó) |
 | `agregar_ficha_a_reprocesos.sql` (etapa 1 del modelo nuevo: a qué ficha fueron las cajas de primera) | ✅ 2026-08-28 (verificado: 7/7 OK; **36 guías R** pre-corte, todas con ficha en NULL para siempre) | ✅ 2026-08-28 (verificado: 7/7 OK; **0 guías R**: sin historia, cualquier NULL posterior al corte es un "sin asignar" real) |
+| `agregar_corte_y_stock_inicial.sql` (etapa 2 del modelo nuevo: la fecha de corte, el tipo `stock_inicial` con costo, y el reproceso inicial que produce sin consumir) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **36 guías R**, 0 con tipo distinto de `normal` — el default hizo lo suyo) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **0 guías R**, nada que convertir) |
 
 ## Deuda pendiente de limpieza
 
