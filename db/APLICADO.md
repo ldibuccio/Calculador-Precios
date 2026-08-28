@@ -113,6 +113,11 @@ Cuando se vuelva a tocar el módulo: agregar un tipo `saldo_inicial` (o un
 motivo reservado) que los separe, y usarlo para excluirlos de las mermas.
 Hoy no rompe nada porque ese reporte todavía no existe.
 
+Esta deuda ya sirvió de algo: es la razón por la que el stock inicial de
+la fecha de corte nace con tipo propio desde el día uno, en vez de
+cargarse por la pantalla de ajustes como se hizo acá (ver "Decisiones
+confirmadas", punto 7, en `docs/diseno_base_datos.md`).
+
 (Las saldadas: `compras.foto_ruta` el 2026-08-25 con
 `drop_foto_ruta_compras.sql`, y el índice viejo de
 `precios_venta_historial` por `(cliente_id, articulo_id,

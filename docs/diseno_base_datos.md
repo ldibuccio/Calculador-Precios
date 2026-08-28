@@ -336,3 +336,37 @@ Cliente y el Envase que usa.
    a la vez. El motor de costeo deriva costo por kilo y costo por fracción
    directamente de estos dos números, y la ficha de logística del cliente
    decide cuál usar.
+
+7. **Fecha de corte y stock inicial** (decisión de diseño, base de todo
+   lo que viene):
+
+   El sistema viene funcionando con reglas que dejaban salir pedidos
+   contra cualquier mercadería. Los datos anteriores **no son
+   confiables y no se van a corregir**. Se define una FECHA DE CORTE a
+   partir de la cual rige el modelo nuevo.
+
+   Lo anterior **no se borra**: queda visible y consultable, pero
+   **fuera del alcance del FIFO nuevo y de la rentabilidad real**. El
+   motivo no es comodidad: si el FIFO nuevo alcanza movimientos
+   cargados con las reglas viejas, va a costear contra lotes que no son
+   lo que dicen ser. Un número mal calculado que parece bueno es peor
+   que no tener el número.
+
+   El stock existente al momento del corte se carga como **stock
+   inicial**, con su costo, y tiene que nacer con **un tipo o motivo
+   propio que lo distinga de cualquier otro movimiento**.
+
+   Esto último no es una preferencia estética, es una lección ya
+   pagada: los saldos iniciales de Vacíos se cargaron por la pantalla
+   de Ajustes y hoy son **indistinguibles de una corrección de
+   faltante** — cualquier reporte de mermas que se haga va a sumar esos
+   923 cajones de arranque como si se hubieran perdido (ver "Deuda
+   pendiente de limpieza", punto 2, en `db/APLICADO.md`). Ahí el tipo
+   propio hay que agregarlo después, con los datos ya mezclados. Acá se
+   separa desde el día uno, que es cuando sale gratis.
+
+   **La fecha de corte y la carga inicial son parte del alcance del
+   trabajo, no un paso manual que se resuelve después.** Cuando se arme
+   el plan, entran adentro: quién carga el stock inicial, con qué
+   pantalla, con qué tipo de movimiento, y qué pasa con lo que quede a
+   mitad de camino ese día.
