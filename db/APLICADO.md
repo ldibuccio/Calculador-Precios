@@ -261,6 +261,20 @@ problema del verificador. Era del **entorno**. La regla que sale de acá está e
 `CLAUDE.md`, sección "SQL para el editor de Supabase": nada de temporales, y
 todo lo que tenga que ser todo-o-nada adentro de un único `do $$ ... end $$`.
 
+### Cabo cerrado: el verificador de la migración no dejó residuos
+
+El verificador de `agregar_cierre_modelo_viejo.sql` tiene el mismo defecto
+—temp table y un `rollback` que ahí no revierte nada—, así que pudo haber
+dejado escritas en `movimientos_stock` las filas de prueba que inserta. El
+control de stock **no lo habría delatado**: el compensatorio del corte se come
+cualquier saldo anterior y deja el número correcto igual.
+
+Se comprobó a mano con una consulta de residuos (filas con `motivo = 'prueba'`,
+o de tipo `cierre_modelo_viejo` / `stock_inicial` con un motivo distinto del que
+escribe el script). **Cero filas en Frutamax**: no quedó ninguna fila de prueba,
+y todos los movimientos de cierre y de stock inicial tienen su motivo correcto.
+**Cerrado, no queda pendiente.**
+
 ### Qué respaldó el corte de verdad — y qué NO se verificó
 
 **El verificador de las 12 NUNCA SE CORRIÓ.** También usa vistas y tablas
