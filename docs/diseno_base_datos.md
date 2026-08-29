@@ -319,21 +319,31 @@ En orden, para el martes o miércoles:
    Toca `atribuir_costos_fifo` (`core/costo_real.py`) y `repartir_fifo`
    (`core/stock.py`). Sin migración.
 
-2. **E6 — las alertas.** Se puede hacer en cualquier momento, no depende
+2. **Elegir del stock que hay** — el lote de tres piezas que ya se perdió del
+   plan tres veces: el **freno por stock del reproceso**, su **desglose
+   editable**, y **la misma elección en el armado de pedido** (que E5 dejó con
+   los dos avisos y sin la elección). Las tres van juntas y **después de E4**,
+   porque las tres necesitan lo mismo: saber qué había en cada lote a una
+   fecha. En el reproceso la edición viene con freno —ahí se congela un costo
+   que no se corrige nunca—; en el armado **avisa y no traba**, igual que hoy.
+   Todo el detalle en "Pendiente con nombre propio: elegir del stock que hay",
+   más abajo.
+
+3. **E6 — las alertas.** Se puede hacer en cualquier momento, no depende
    de que haya datos. Cuenta **solo los reprocesos posteriores al
    31/08/2026**: si contara todos, Frutamax nacería con 36 casos que
    nadie puede resolver, y una alerta que arranca en rojo permanente se
    deja de mirar. Incluye la advertencia en Gerencia con el número de
    bultos sin costear.
 
-3. **El retenido de Stock Físico**, en la rama
+4. **El retenido de Stock Físico**, en la rama
    `claude/retenido-stock-fisico` (commit `597896e`): "buscar los conteos
    de un día". **Tiene cruce con E3**, que reescribió esa misma pantalla
    —el artículo pasó a vivir en la URL y se agregó el campo "Qué
    contaste"—, así que no se aplica tal cual: hay que rehacer la búsqueda
    por día sobre la pantalla nueva.
 
-4. **La lentitud de Frutamax**, que sigue sin diagnosticar. Lo medido: el
+5. **La lentitud de Frutamax**, que sigue sin diagnosticar. Lo medido: el
    costo está en **abrir la conexión**, no en la consulta — las dos
    pantallas que se sienten normales (`/gerencia` y `/`) son las únicas
    con cero conexiones, y la base no muestra nada corriendo. Hipótesis
@@ -341,7 +351,7 @@ En orden, para el martes o miércoles:
    (directo contra pooler; timeouts de fallback IPv6). Los tres SQL de
    comparación de volumen, índices y conexiones siguen sin correr.
 
-5. **Reescribir los scripts del corte sin temporales, y correr el verificador
+6. **Reescribir los scripts del corte sin temporales, y correr el verificador
    que nunca corrió** (`db/corte_frutamax_*`). El corte se aplicó, pero el
    script **falló en el editor de Supabase y escribió igual**: ahí
    `begin ... commit` no es atómico y las tablas y vistas temporales no
@@ -358,7 +368,7 @@ En orden, para el martes o miércoles:
    antes del corte de Palmala**, que sigue pendiente. La regla que sale de acá
    está en `CLAUDE.md`. El incidente completo, en `db/APLICADO.md`.
 
-6. **La etiqueta de `cierre_modelo_viejo`** en `ETIQUETAS_MOVIMIENTO_STOCK`
+7. **La etiqueta de `cierre_modelo_viejo`** en `ETIQUETAS_MOVIMIENTO_STOCK`
    (`app/main.py`). Hoy el tipo nuevo se ve como texto crudo en Movimientos
    de Stock. No rompe nada (el `.get()` tiene fallback), es solo feo. Sin
    urgencia y sin migración.
@@ -376,7 +386,7 @@ dependencia — cada una necesita que la anterior exista.
 | **E1** | `ficha_id` en `reprocesos` + "sin asignar" explícito | **En main** |
 | **E2** | Fecha de corte (31/08/2026) y stock inicial con tipo propio | **En main** |
 | **E3** | `conteos_stock` con `ficha_id`; Stock Físico y Cotejo por porción | **En main** |
-| **E4** | El FIFO que nunca consume un lote posterior a la salida | Pendiente, **a propósito después del lunes**. De ella cuelgan el freno por stock y el desglose editable del reproceso: sin E4, trabar rompe la carga con demora (ver "el reproceso es 100% o nada", más arriba) |
+| **E4** | El FIFO que nunca consume un lote posterior a la salida | Pendiente, **a propósito después del lunes**. De ella cuelgan las tres piezas de "elegir del stock que hay": el freno por stock, el desglose editable del reproceso y el del armado de pedido. Sin E4, trabar rompe la carga con demora y el desglose que se muestre estaría mal (ver la sección, más arriba) |
 | **E5** | El pedido descuenta del formato de la ficha, no del artículo, con la tolerancia | En curso |
 | **E6** | Alerta de reprocesos sin asignar + advertencia en Gerencia | Pendiente |
 
@@ -402,7 +412,7 @@ costear.
 del mes en curso) pertenece a la **carga retroactiva en
 Administración**, que todavía no está asignada a ninguna etapa.
 
-## Pendiente con nombre propio: el reproceso es 100% o nada (freno por stock + desglose editable)
+## Pendiente con nombre propio: elegir del stock que hay (freno + desglose del reproceso + armado de pedido)
 
 Relevado el 29/08/2026, después de que una guía R real tomara 300 bultos
 de un artículo que no los tenía.
@@ -440,7 +450,7 @@ suelto es el armado del pedido, no este. Un pedido puede salir con
 mercadería que el sistema no tiene y eso se resuelve después; un
 reproceso mal cargado congela un costo que no se corrige nunca.
 
-De esa regla salen las dos piezas, y van juntas:
+De esa regla salen las dos piezas del reproceso, y van juntas:
 
 1. **Si no hay remanente en el sistema, no se puede cargar. Punto.** No
    es "avisa y sigue", no es `sin_lote`. Se traba.
@@ -450,7 +460,7 @@ De esa regla salen las dos piezas, y van juntas:
    hay de cada lote**. La edición es OPCIONAL: si no quiere mirar nada,
    confirma y listo.
 
-**Esto ya se perdió DOS veces. Que no pase una tercera.**
+**Esto ya se perdió TRES veces. Que no pase una cuarta.**
 
 - La primera, del plan E0–E6: se armó sobre tablas y pantallas, y esto no
   es ni una cosa ni la otra. E1 agregó `ficha_id` a `reprocesos`, pero
@@ -458,6 +468,36 @@ De esa regla salen las dos piezas, y van juntas:
 - La segunda, el 29/08: se sacó el desglose editable del alcance por
   considerarlo "revertir una decisión". Era al revés — la decisión que
   había que revertir era justamente esa.
+- Y la misma pieza en el **armado de pedido** se perdió sin que nadie la
+  nombrara: estaba definida en la conversación de diseño y E5 salió con los
+  dos avisos y sin la elección. No se discutió sacarla; simplemente no entró.
+
+### La tercera pieza: el armado de pedido tampoco deja elegir del stock
+
+Anotado el 29/08/2026. **Es la misma pieza aplicada a la otra pantalla**, y
+también quedó definida en la conversación de diseño y nunca se implementó:
+**E5 dejó solo los dos avisos** (la tolerancia de kilos y el de "no hay cajas
+de esta ficha"), no la elección.
+
+Hoy el que arma un pedido tilda un renglón y el sistema descuenta del stock
+del artículo sin decir de dónde. **Tiene que ser lo mismo que el reproceso:
+default por FIFO, edición OPCIONAL dentro de lo que hay.** El que arma dice
+artículo y cantidad; el sistema propone de qué lotes sale; él confirma, o lo
+corrige dentro del remanente de cada lote.
+
+**La diferencia con el reproceso es el freno, y sigue en pie:** el armado
+**avisa y no traba**. Un pedido puede salir con mercadería que el sistema no
+tiene —el piso es la verdad, el camión sale igual— y el sobrante cae a
+`sin_lote` como hoy. Lo que cambia no es si se puede armar, sino que el que
+arma pueda **decir de dónde salió** en vez de que lo adivine el FIFO a
+posteriori. En el reproceso la misma edición viene con freno porque ahí se
+congela un costo que no se corrige nunca; acá no.
+
+**Va en el MISMO LOTE que el desglose del reproceso, después de E4**, y por la
+misma razón: las dos piezas necesitan saber **qué había en cada lote a una
+fecha**, y eso es exactamente lo que E4 deja listo. Antes de E4, el desglose
+que se le muestre al que arma un pedido cargado con demora estaría mal por la
+misma causa que rompería el freno.
 
 ### Las tres objeciones, y por qué ninguna alcanza para recortarlo
 
