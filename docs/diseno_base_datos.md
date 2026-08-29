@@ -341,6 +341,21 @@ En orden, para el martes o miércoles:
    (directo contra pooler; timeouts de fallback IPv6). Los tres SQL de
    comparación de volumen, índices y conexiones siguen sin correr.
 
+5. **Reescribir los scripts del corte sin temporales** (`db/corte_frutamax_*`).
+   El corte se aplicó, pero el script **falló en el editor de Supabase y
+   escribió igual**: ahí `begin ... commit` no es atómico y las tablas y
+   vistas temporales no sobreviven de una sentencia a la siguiente. Terminó
+   bien por casualidad; la verificación posterior fue lo único que lo
+   respaldó. Los dos archivos quedaron con un cartel de "no reusar" arriba y
+   **hay que reescribirlos antes del corte de Palmala**, que sigue pendiente.
+   La regla que sale de acá está en `CLAUDE.md`. El incidente completo, en
+   `db/APLICADO.md`.
+
+6. **La etiqueta de `cierre_modelo_viejo`** en `ETIQUETAS_MOVIMIENTO_STOCK`
+   (`app/main.py`). Hoy el tipo nuevo se ve como texto crudo en Movimientos
+   de Stock. No rompe nada (el `.get()` tiene fallback), es solo feo. Sin
+   urgencia y sin migración.
+
 ## El plan del modelo nuevo (E0–E6)
 
 Aprobado el 28/08/2026 **con el orden tal cual**, y anotado acá el

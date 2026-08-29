@@ -1,3 +1,19 @@
+-- ############################################################################
+-- ATENCIÓN — NO REUSAR ESTE SCRIPT COMO ESTÁ.
+--
+-- Se corrió en Frutamax el 29/08/2026 y TERMINÓ CON ERROR ESCRIBIENDO IGUAL
+-- ('relation "foto" does not exist'). El editor SQL de Supabase NO sostiene el
+-- `begin`: confirma cada sentencia por su cuenta, y las tablas/vistas
+-- TEMPORALES no sobreviven de una sentencia a la siguiente. Terminó bien por
+-- casualidad: el error cayó después del último paso. Si caía en el medio,
+-- quedaba media base aplicada y media no.
+--
+-- ANTES DE REUSARLO (por ejemplo para Palmala): reescribirlo SIN temporales y
+-- con todo lo que tenga que ser todo-o-nada adentro de un único
+-- `do $$ ... end $$`. Ver CLAUDE.md, "SQL para el editor de Supabase", y el
+-- incidente completo en db/APLICADO.md.
+-- ############################################################################
+
 -- CORTE DEL MODELO — FRUTAMAX Y SOLO FRUTAMAX.
 -- Puesta a cero del modelo viejo + carga del stock inicial del 31/08/2026.
 -- Todo en UNA transacción: o entra completo o no entra nada.
