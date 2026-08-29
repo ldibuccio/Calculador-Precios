@@ -303,6 +303,44 @@ su propio historial de descuento/utilidad y sus propios Envases (con su
 propio historial de costo); Fichas de logística conecta un Artículo con un
 Cliente y el Envase que usa.
 
+## Para retomar (anotado el 29/08/2026, antes del corte)
+
+Se corta acá a propósito. **Quedan desplegadas E0 (parcial), E1, E2, E3 y
+E5.** El lunes 31/08 arranca el modelo nuevo y se lo mira funcionar unos
+días antes de seguir tocando: acumular cambios sin ver ninguno andando en
+la operación real es cómo se llega a no poder distinguir qué rompió qué.
+El domingo se carga el stock inicial a mano.
+
+En orden, para el martes o miércoles:
+
+1. **E4 — el FIFO que no viaja al futuro.** Es la primera **cuando haya
+   datos nuevos suficientes**, y no antes: mueve números, así que con
+   pocos días de datos post-corte no se distingue el arreglo del ruido.
+   Toca `atribuir_costos_fifo` (`core/costo_real.py`) y `repartir_fifo`
+   (`core/stock.py`). Sin migración.
+
+2. **E6 — las alertas.** Se puede hacer en cualquier momento, no depende
+   de que haya datos. Cuenta **solo los reprocesos posteriores al
+   31/08/2026**: si contara todos, Frutamax nacería con 36 casos que
+   nadie puede resolver, y una alerta que arranca en rojo permanente se
+   deja de mirar. Incluye la advertencia en Gerencia con el número de
+   bultos sin costear.
+
+3. **El retenido de Stock Físico**, en la rama
+   `claude/retenido-stock-fisico` (commit `597896e`): "buscar los conteos
+   de un día". **Tiene cruce con E3**, que reescribió esa misma pantalla
+   —el artículo pasó a vivir en la URL y se agregó el campo "Qué
+   contaste"—, así que no se aplica tal cual: hay que rehacer la búsqueda
+   por día sobre la pantalla nueva.
+
+4. **La lentitud de Frutamax**, que sigue sin diagnosticar. Lo medido: el
+   costo está en **abrir la conexión**, no en la consulta — las dos
+   pantallas que se sienten normales (`/gerencia` y `/`) son las únicas
+   con cero conexiones, y la base no muestra nada corriendo. Hipótesis
+   principal sin verificar: comparar los dos `DATABASE_URL` en Railway
+   (directo contra pooler; timeouts de fallback IPv6). Los tres SQL de
+   comparación de volumen, índices y conexiones siguen sin correr.
+
 ## El plan del modelo nuevo (E0–E6)
 
 Aprobado el 28/08/2026 **con el orden tal cual**, y anotado acá el
