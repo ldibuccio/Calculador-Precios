@@ -75,6 +75,7 @@ bases estén marcadas.
 | `agregar_ficha_a_reprocesos.sql` (etapa 1 del modelo nuevo: a qué ficha fueron las cajas de primera) | ✅ 2026-08-28 (verificado: 7/7 OK; **36 guías R** pre-corte, todas con ficha en NULL para siempre) | ✅ 2026-08-28 (verificado: 7/7 OK; **0 guías R**: sin historia, cualquier NULL posterior al corte es un "sin asignar" real) |
 | `agregar_corte_y_stock_inicial.sql` (etapa 2 del modelo nuevo: la fecha de corte, el tipo `stock_inicial` con costo, y el reproceso inicial que produce sin consumir) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **36 guías R**, 0 con tipo distinto de `normal` — el default hizo lo suyo) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **0 guías R**, nada que convertir) |
 | `agregar_stock_inicial_a_consumos.sql` (arrastre de la etapa 2: el lote de stock inicial también puede CONSUMIRSE. La migración anterior lo dejó entrar pero no salir, y el primer reproceso normal después del corte reventaba sin guardar la guía) | ✅ 2026-08-28 (verificado: 4/4 OK; **68 consumos** intactos, coherente con las 36 guías R) | ✅ 2026-08-28 (verificado: 4/4 OK; **0 consumos**, coherente con las 0 guías R) |
+| `agregar_ficha_a_conteos.sql` (etapa 3 del modelo nuevo: el conteo físico dice de qué ficha es lo que contó; NULL después del corte = los bultos sueltos) | ✅ 2026-08-29 (verificado: 7/7 OK; **31 conteos**, 0 con ficha: todos pre-corte) | ✅ 2026-08-29 (verificado: 7/7 OK; **51 conteos**, 0 con ficha: todos pre-corte) |
 
 ## Deuda pendiente de limpieza
 

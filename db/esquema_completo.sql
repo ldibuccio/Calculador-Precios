@@ -792,11 +792,25 @@ create table conteos_stock (
     articulo_id bigint not null references articulos (id),
     cantidad numeric not null check (cantidad >= 0),
     stock_sistema numeric not null,
-    creado_en timestamptz not null default now()
+    creado_en timestamptz not null default now(),
+    -- Sin ON DELETE SET NULL a propósito, y acá el motivo es más fuerte
+    -- que en reprocesos.ficha_id: el NULL ya tiene significado propio
+    -- ("los sueltos"), así que nulear al borrar una ficha convertiría un
+    -- conteo de cajas en uno de sueltos, y el Cotejo mostraría una
+    -- diferencia inexplicable en los dos lados a la vez.
+    ficha_id bigint references fichas_logistica (id)
 );
+
+-- El orden exacto del DISTINCT ON del Cotejo, para que salga del índice
+-- sin ordenar la tabla. Con el conteo partido por ficha, esta tabla pasa a
+-- crecer por ficha y no por artículo.
+create index conteos_stock_cotejo_idx
+    on conteos_stock (articulo_id, ficha_id, creado_en desc);
 
 comment on table conteos_stock is
     'Stock Físico del depósito: lo que el operario contó (en bultos), sin ver el sistema. stock_sistema es la foto del sistema en el instante del conteo, para el Cotejo.';
+comment on column conteos_stock.ficha_id is
+    'De qué ficha son las cajas que se contaron. NULL tiene dos significados que separa la fecha de corte (31/08/2026): antes del corte = conteo viejo, todo el artículo junto, no se completa; después = los BULTOS SUELTOS del artículo, un conteo válido y completo. La ficha tiene que ser del mismo artículo del conteo: eso lo controla el código, como en asignar_ficha_a_reproceso.';
 
 -- Los tres índices del cálculo de stock: cada uno cubre una de las patas de
 -- la cuenta, con INCLUDE para que salga sin tocar la tabla.
