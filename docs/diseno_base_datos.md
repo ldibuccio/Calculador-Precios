@@ -381,3 +381,31 @@ Cliente y el Envase que usa.
    el plan, entran adentro: quién carga el stock inicial, con qué
    pantalla, con qué tipo de movimiento, y qué pasa con lo que quede a
    mitad de camino ese día.
+
+8. **Las salidas se atribuyen a la ficha con la que el cliente PIDIÓ**
+   (etapa 3, confirmado el 29/08/2026):
+
+   Desde que el Cotejo se parte por ficha hay que decidir a qué ficha
+   se le descuentan las cajas que salen. El sistema no tiene registro
+   de qué cajas concretas llenaron qué renglón —eso es trabajo del
+   FIFO, que corre por artículo— así que lo único que puede usar es la
+   ficha del **renglón del pedido**: con la que el cliente pidió.
+
+   Consecuencia: si el cliente pidió Banana Bolivia y se le mandaron
+   cajas de Banana Ecuador, la salida se le descuenta a Bolivia igual,
+   y el Cotejo muestra **las dos fichas en rojo a la vez** — una de más
+   y la otra de menos.
+
+   **Eso queda así a propósito.** Sustituir una ficha por otra es
+   excepcional en la operación, así que esos dos renglones no van a ser
+   ruido de todos los días: van a ser exactamente la señal de que pasó
+   algo raro y hay que mirarlo. Y es la única forma que tiene hoy el
+   sistema de mostrar una sustitución, que hasta ahora no se veía en
+   ningún lado.
+
+   **Dónde se resuelve de verdad: en la ETAPA 5**, cuando el armado de
+   pedido deje declarar qué se está mandando realmente. Ahí la salida
+   va a poder atribuirse a la ficha de las cajas que salieron, y no a
+   la del pedido, y estos dos renglones dejan de aparecer por una
+   sustitución legítima. Hasta entonces, la atribución por el renglón
+   es lo correcto y no hay que "arreglarla" antes de tiempo.
