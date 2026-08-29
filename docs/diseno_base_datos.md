@@ -354,7 +354,7 @@ dependencia — cada una necesita que la anterior exista.
 | **E1** | `ficha_id` en `reprocesos` + "sin asignar" explícito | **En main** |
 | **E2** | Fecha de corte (31/08/2026) y stock inicial con tipo propio | **En main** |
 | **E3** | `conteos_stock` con `ficha_id`; Stock Físico y Cotejo por porción | **En main** |
-| **E4** | El FIFO que nunca consume un lote posterior a la salida | Pendiente, **a propósito después del lunes** |
+| **E4** | El FIFO que nunca consume un lote posterior a la salida | Pendiente, **a propósito después del lunes**. De ella cuelga el freno por stock del reproceso: sin E4, trabar rompe la carga con demora (ver el pendiente del reproceso, más arriba) |
 | **E5** | El pedido descuenta del formato de la ficha, no del artículo, con la tolerancia | En curso |
 | **E6** | Alerta de reprocesos sin asignar + advertencia en Gerencia | Pendiente |
 
@@ -411,50 +411,64 @@ buscarle el importe, porque esos bultos no existieron.
 Por eso acá trabar no contradice el criterio: lo que se protege no es el
 stock, es el costo.
 
-### Lo que hay que resolver, con lo que ya se relevó
+### El orden: E4 primero, el freno después (decidido el 29/08/2026)
 
-**1. Trabar por stock en `crear_reproceso`.** Ningún flujo depende de que
-`sin_lote` se genere: es un síntoma, no una entrada de nada. Pero hay
-**dos riesgos reales** que resolver antes:
+**El freno NO se implementa hasta que el FIFO respete la fecha del
+reproceso**, y eso es exactamente la **etapa 4**, que ya estaba planeada.
 
-- **El FIFO no mira la fecha de la operación.** `_entradas_y_salidas_stock`
-  usa el estado ACTUAL, sin filtro de fecha, y la pantalla acepta cargar
-  un reproceso con `fecha_operacion` pasada (solo rechaza futuras). Un
-  reproceso de ayer cargado hoy, cuyas cajas ya salieron en pedidos, hoy
-  queda como `sin_lote` y mañana chocaría contra una pared. **Trabar sin
-  resolver esto rompe la carga con demora**, que es normal en el depósito.
-- **Trabar es una foto, no una garantía.** Los consumos se congelan al
-  cargar, pero los lotes que consumieron se pueden corregir después (una
-  recepción editada a la baja). Una guía que pasó el chequeo puede quedar
-  sobreconsumida igual. El freno tapa la puerta de entrada, no cierra el
-  agujero.
+El motivo: `_entradas_y_salidas_stock` usa el estado ACTUAL, sin filtro
+de fecha, y la pantalla acepta cargar un reproceso con `fecha_operacion`
+pasada (solo rechaza futuras). Un reproceso de ayer cargado hoy, cuyas
+cajas ya salieron en pedidos, hoy queda como `sin_lote`; con el freno
+puesto antes de E4 chocaría contra una pared. **Cargar con demora es
+normal en el depósito**, así que el freno sin E4 rompe la operación en
+vez de protegerla.
 
-**2. Mostrar el desglose de lotes y dejarlo editar.** Son dos cosas de
-tamaño muy distinto:
+Queda entonces: E4 → el freno apoyado en ella.
 
-- **Mostrarlo es exponer lo que ya se calcula.** `crear_reproceso` ya
-  corre `repartir_fifo` y arma la lista de consumos antes de insertar. Se
-  extrae esa parte a una función pura y se la llama desde un preview. Es
-  barato.
-- **Editarlo NO es exponer: es un camino de escritura nuevo.** Hoy el
-  server recalcula el FIFO e ignora cualquier cosa que la pantalla diga
-  sobre lotes. Aceptar un reparto editado exige validarlo (cada lote con
-  resto suficiente, la suma igual a lo tomado, lotes del artículo
-  correcto, ninguno repetido) y resolver la concurrencia: entre el
-  preview y el guardar, otro reproceso o un pedido pueden haber consumido
-  esos lotes, así que el server tiene que revalidar al escribir y
-  devolver una propuesta fresca en vez de guardar lo viejo.
-- **Y las dos chocan con la regla de operario.** El desglose son nombres
-  de proveedor, fechas y cantidades: números del sistema. Hoy Reproceso
-  filtra por stock **sin mostrar la cifra**, a propósito. Mostrar el
-  desglose obliga a decidir una de dos: el reproceso deja de ser pantalla
-  de operario, o el desglose vive en Administración. Además, "nadie elige
-  lote — lo reparte el sistema" está escrito en el docstring de
-  `crear_reproceso` y **impreso en la pantalla de Stock por Guía**:
-  dejarlo editar es revertir eso, no ajustarlo.
+### Lo que el freno NO resuelve, aunque se implemente bien
 
-**3. `sin_lote` no desaparece: se angosta.** Son DOS cosas distintas con
-el mismo nombre, y solo una se apaga al trabar:
+**Trabar es una foto, no una garantía.** Los consumos se congelan al
+cargar, pero los lotes que consumieron se pueden corregir después — una
+recepción editada a la baja, por ejemplo. Una guía que pasó el chequeo
+puede quedar sobreconsumida igual, sin que nadie se entere.
+
+Esto no invalida el freno: tapa la puerta de entrada, que es por donde
+entran los casos que vimos. Pero está escrito acá para no creer que
+resuelve más de lo que resuelve. Cerrar ese agujero es otra cosa
+(revalidar los consumos cuando cambia un lote), y todavía no tiene dueño.
+
+### El desglose editable: FUERA DE ALCANCE (decidido el 29/08/2026)
+
+Se evaluó mostrar el reparto de lotes propuesto y dejar editarlo. **Queda
+afuera**, y no por tamaño sino porque es revertir una decisión, no
+ajustarla:
+
+- **"Nadie elige lote — lo reparte el sistema"** está en el docstring de
+  `crear_reproceso` y **impreso en la pantalla de Stock por Guía**.
+- El desglose son nombres de proveedor, fechas y cantidades: **números
+  del sistema**, y el reproceso es pantalla de operario, que hoy filtra
+  por stock sin mostrar ninguna cifra.
+- **Editar no es exponer, es un camino de escritura nuevo**: hay que
+  validar el reparto (lotes con resto suficiente, suma igual a lo tomado,
+  lotes del artículo correcto, ninguno repetido) y resolver la
+  concurrencia — entre el preview y el guardar, otro reproceso o un
+  pedido pueden haber consumido esos lotes, así que el server tendría que
+  revalidar al escribir y devolver una propuesta fresca.
+
+**El reproceso sigue sin desglose y sin edición.** Si con el sistema
+andando aparece la necesidad real de elegir lote, se retoma **con el
+problema concreto adelante** en vez de con una idea de diseño.
+
+(Para el registro: mostrar el desglose SÍ sería barato — `crear_reproceso`
+ya corre `repartir_fifo` y arma la lista de consumos antes de insertar,
+así que alcanzaría con extraer esa parte a una función pura. Lo caro y lo
+discutible es dejarlo editar.)
+
+### `sin_lote` no desaparece: se angosta
+
+Son DOS cosas distintas con el mismo nombre, y solo una se apaga al
+trabar:
 
 - **El consumo guardado** (`reprocesos_consumos.origen = 'sin_lote'`) lo
   escribe únicamente `crear_reproceso`. Con el freno deja de generarse
