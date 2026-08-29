@@ -76,6 +76,7 @@ bases estén marcadas.
 | `agregar_corte_y_stock_inicial.sql` (etapa 2 del modelo nuevo: la fecha de corte, el tipo `stock_inicial` con costo, y el reproceso inicial que produce sin consumir) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **36 guías R**, 0 con tipo distinto de `normal` — el default hizo lo suyo) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **0 guías R**, nada que convertir) |
 | `agregar_stock_inicial_a_consumos.sql` (arrastre de la etapa 2: el lote de stock inicial también puede CONSUMIRSE. La migración anterior lo dejó entrar pero no salir, y el primer reproceso normal después del corte reventaba sin guardar la guía) | ✅ 2026-08-28 (verificado: 4/4 OK; **68 consumos** intactos, coherente con las 36 guías R) | ✅ 2026-08-28 (verificado: 4/4 OK; **0 consumos**, coherente con las 0 guías R) |
 | `agregar_ficha_a_conteos.sql` (etapa 3 del modelo nuevo: el conteo físico dice de qué ficha es lo que contó; NULL después del corte = los bultos sueltos) | ✅ 2026-08-29 (verificado: 7/7 OK; **31 conteos**, 0 con ficha: todos pre-corte) | ✅ 2026-08-29 (verificado: 7/7 OK; **51 conteos**, 0 con ficha: todos pre-corte) |
+| `agregar_cierre_modelo_viejo.sql` (el corte de Frutamax: el tipo propio del movimiento compensatorio que cancela el saldo del modelo viejo, y la tabla de respaldo de las fichas que el corte pone en NULL) | ⬜ pendiente (verificador: 8/8) | — el corte es solo de Frutamax; Palmala no se toca |
 
 ## Riesgos verificados contra producción y descartados
 
@@ -231,3 +232,15 @@ Administración, y sus dos pantallas (`deposito_pedido_cargar.html` y
 | Copia inicial del catálogo (`scripts/copiar_catalogo_empresa.py`, o a mano por el navegador con `db/generar_inserts_catalogo.sql`) | — es el origen | ✅ 2026-08-19 (8 tablas verificadas) |
 | Revisión a mano de parámetros de clientes y costos de envase copiados | — | ✅ 2026-08-19 |
 | Verificación de esquema (`verificar_esquema.sql` en las dos bases, comparar) | ✅ 2026-08-19 (13/13 firmas idénticas) | ✅ 2026-08-19 (13/13 firmas idénticas) |
+
+## El corte del modelo — Frutamax (31/08/2026)
+
+Scripts de DATOS, no de esquema: se corren UNA vez, en Frutamax y solo en
+Frutamax. Cada uno tiene su guarda: si los 18 ids de la foto no traen los
+nombres esperados, el script se corta sin escribir nada.
+
+| Script | Frutamax | Palmala |
+|---|---|---|
+| `corte_frutamax_puesta_a_cero_y_carga.sql` (compensatorio por artículo calculado como −1 × las seis patas, los 18 movimientos de stock inicial, los 2 reprocesos iniciales y el `ficha_id` en NULL de las guías R pre-corte) | ⬜ pendiente | — no corresponde |
+| `corte_frutamax_verificador.sql` (las seis patas contra la foto aprobada; 12 verificaciones) | ⬜ pendiente | — no corresponde |
+| `corte_frutamax_rollback.sql` (deshace la carga y devuelve las fichas desde el respaldo; se corta si ya hubo operación después del corte) | — solo si hace falta | — no corresponde |
