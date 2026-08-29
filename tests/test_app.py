@@ -1859,7 +1859,6 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "importe": 45000.0,
         "sena": None,
         "tipo_retiro": "Clark",
-        "foto_ruta": None,
     },
     {
         "id": 2,
@@ -1875,7 +1874,6 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "importe": None,
         "sena": None,
         "tipo_retiro": "Carro",
-        "foto_ruta": None,
     },
 ]
 
@@ -2940,7 +2938,6 @@ COMPRA_DETALLE_DE_PRUEBA = {
     "importe": 50000,
     "sena": None,
     "tipo_retiro": "Clark",
-    "foto_ruta": None,
     "estado_retiro": "retirado",
     "retiro_procesado_el": datetime(2026, 8, 16, 13, 0, tzinfo=timezone.utc),
     "retiro_origen": "logistica",
@@ -10527,10 +10524,14 @@ def test_editar_compra_sin_foto_no_muestra_el_boton():
 
 # --- Vacíos (Envases Puesto): cajones de proveedores que entran y salen del puesto ---
 
+# Las MISMAS claves que devuelve listar_tipos_envase_puesto: id,
+# proveedor_id, nombre y proveedor_nombre. Traía además un codigo_puesto
+# que esa consulta nunca devolvió — nadie lo leía, pero una fixture que
+# miente es la que dejó pasar el 500 de Guías R.
 TIPOS_ENVASE_PUESTO_DE_PRUEBA = [
-    {"id": 1, "proveedor_id": 200, "nombre": "cajón plástico negro", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41"},
-    {"id": 2, "proveedor_id": 200, "nombre": "torito", "proveedor_nombre": "Saturno", "codigo_puesto": "N07P41"},
-    {"id": 3, "proveedor_id": 201, "nombre": "cajón madera", "proveedor_nombre": "Don Pepe", "codigo_puesto": "N01P02"},
+    {"id": 1, "proveedor_id": 200, "nombre": "cajón plástico negro", "proveedor_nombre": "Saturno"},
+    {"id": 2, "proveedor_id": 200, "nombre": "torito", "proveedor_nombre": "Saturno"},
+    {"id": 3, "proveedor_id": 201, "nombre": "cajón madera", "proveedor_nombre": "Don Pepe"},
 ]
 
 CLIENTES_PUESTO_DE_PRUEBA = [
