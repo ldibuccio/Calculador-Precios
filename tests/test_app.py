@@ -15976,6 +15976,7 @@ def test_stock_fisico_guarda_el_conteo_de_las_cajas_de_una_ficha():
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "Banana"}),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.crear_conteo_stock") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -15997,6 +15998,7 @@ def test_stock_fisico_no_deja_contar_una_ficha_de_OTRO_articulo():
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -16017,6 +16019,7 @@ def test_stock_fisico_sin_decir_que_conto_da_400():
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -16041,6 +16044,7 @@ def test_stock_fisico_los_sueltos_van_PRIMEROS_y_al_mismo_nivel_que_las_fichas()
         patch("app.main.listar_articulos", return_value=[{"id": 7, "nombre": "Banana"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -16072,6 +16076,7 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
     ):
         respuesta = cliente.post(
@@ -16090,6 +16095,7 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -16170,6 +16176,7 @@ def _get_reproceso(articulos_stock=None, fichas=None):
         patch("app.main.stock_deposito_por_articulo", return_value=articulos_stock or []),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=todas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         return cliente.get("/deposito/stock/reproceso")
@@ -16327,6 +16334,7 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.stock_deposito_por_articulo", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
@@ -16395,6 +16403,7 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -16488,6 +16497,7 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
         patch("app.main.entradas_y_salidas_stock_articulos",
               return_value={1: (entradas_fifo, 20.0, [])}) as mock_fifo,
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas_dia),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
         respuesta = cliente.get("/administracion/stock/sistema")
 
@@ -16612,6 +16622,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -16624,6 +16635,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -17216,15 +17228,20 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
         dict(GUIAS_R_DE_PRUEBA[0], id=2, articulo_id=5, ficha_id=None,
              ficha_nombre=None, anulado_el=None),
     ]
+    # Las mismas claves que devuelve listar_fichas_de_todos_los_clientes:
+    # cliente_id, no cliente_nombre. La fixture vieja inventaba una columna
+    # que esa consulta nunca devolvió, y por eso pasaba en verde mientras
+    # la pantalla real tiraba 500.
     fichas = [
-        {"id": 901, "articulo_id": 5, "cliente_nombre": "Día", "nombre_cliente": "Banana Bolivia",
+        {"id": 901, "articulo_id": 5, "cliente_id": 1, "nombre_cliente": "Banana Bolivia",
          "articulo_nombre": "Banana"},
-        {"id": 902, "articulo_id": 5, "cliente_nombre": "Día", "nombre_cliente": "Banana Ecuador",
+        {"id": 902, "articulo_id": 5, "cliente_id": 1, "nombre_cliente": "Banana Ecuador",
          "articulo_nombre": "Banana"},
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
@@ -17257,6 +17274,7 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
@@ -17278,6 +17296,7 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
@@ -17342,6 +17361,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -17556,6 +17576,7 @@ def test_stock_inicial_sueltos_sin_costo_da_400_y_no_guarda():
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_stock_inicial", return_value=CARGADO_VACIO),
         patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
     ):
@@ -17575,6 +17596,7 @@ def test_stock_inicial_armadas_guarda_un_reproceso_inicial_con_su_ficha():
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "Banana"}),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.crear_reproceso_inicial", return_value=99) as mock_crear,
         patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
     ):
@@ -17598,6 +17620,7 @@ def test_stock_inicial_armadas_sin_ficha_da_400_y_no_guarda():
         patch("app.main.listar_articulos", return_value=[{"id": 7, "nombre": "Banana"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_stock_inicial", return_value=CARGADO_VACIO),
         patch("app.main.crear_reproceso_inicial") as mock_crear,
         patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
@@ -17620,6 +17643,7 @@ def test_stock_inicial_armadas_con_ficha_de_otro_articulo_no_guarda():
         patch("app.main.listar_articulos", return_value=[{"id": 9, "nombre": "Pera"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_stock_inicial", return_value=CARGADO_VACIO),
         patch("app.main.crear_reproceso_inicial") as mock_crear,
         patch("app.main.fecha_corte", return_value=date(2026, 8, 31)),
