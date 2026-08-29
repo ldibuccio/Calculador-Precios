@@ -78,6 +78,8 @@
   .fila-conteo:first-of-type { border-top: none; }
   .fila-conteo .hora { color: #888; font-size: 0.82rem; white-space: nowrap; }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  #carga { display: block; scroll-margin-top: 4.5rem; }
+  .fila-conteo .que { color: #666; font-size: 0.85rem; }
 </style>
 </head>
 <body>
@@ -85,6 +87,10 @@
   {% set barra_titulo = "Stock Físico" %}
   {% set barra_atras = "/deposito/stock" %}
   {% include "_barra_navegacion.html" %}
+
+  {# El ancla va arriba de los avisos: al guardar el navegador salta acá,
+     y si el aviso quedara más arriba lo taparía la barra sticky. #}
+  <span id="carga"></span>
 
   {% if aviso %}
   <div class="aviso">{{ aviso }}</div>
@@ -96,12 +102,37 @@
   {# Pantalla de OPERARIO: acá no aparece ningún número del sistema —
      si lo viera, transcribe en vez de contar (criterio Vacíos). #}
   <div class="tarjeta">
-    <form method="post" action="/deposito/stock/fisico">
+    <form method="get" action="/deposito/stock/fisico" id="elegir">
       <label for="articulo_id">Artículo</label>
-      <select id="articulo_id" name="articulo_id" required>
-        <option value="" selected disabled>Elegí un artículo...</option>
+      <select id="articulo_id" name="articulo_id"
+              onchange="document.getElementById('elegir').submit()">
+        <option value="" {% if not articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>
         {% for a in articulos %}
-        <option value="{{ a.id }}">{{ a.nombre }}</option>
+        <option value="{{ a.id }}" {% if articulo_id == a.id|string %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+      <p class="ayuda">Queda elegido después de cada conteo: contá todo lo de este artículo antes de cambiarlo.</p>
+      <noscript><button type="submit" class="boton-guardar">Elegir</button></noscript>
+    </form>
+  </div>
+
+  {% if articulo_id %}
+  <div class="tarjeta">
+    <form method="post" action="/deposito/stock/fisico">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
+
+      {# "Bultos sueltos" va PRIMERO y al mismo nivel que las fichas, sin
+         optgroup ni separador. Es lo contrario de lo que se hizo con "sin
+         asignar" en la guía R, y a propósito: allá es la excepción del que
+         no sabe, y acá es el caso más común — la mayoría de la mercadería
+         está sin procesar. Esconderlo abajo o marcarlo como especial sería
+         hacer más difícil justo lo que más se hace. #}
+      <label for="que_conto">Qué contaste</label>
+      <select id="que_conto" name="que_conto" required>
+        <option value="" selected disabled>Elegí qué contaste...</option>
+        <option value="sueltos">Bultos sueltos (sin procesar)</option>
+        {% for ficha in fichas_por_articulo.get(articulo_id, []) %}
+        <option value="{{ ficha.id }}">Cajas de {{ ficha.nombre }}{% if ficha.kilaje %} ({{ ficha.kilaje }}){% endif %}</option>
         {% endfor %}
       </select>
 
@@ -111,15 +142,18 @@
 
       <button type="submit" class="boton-guardar">Guardar conteo</button>
     </form>
-    <p class="ayuda">Contá lo que hay en el piso y cargalo tal cual. Si te equivocaste, cargá el conteo de nuevo: vale el último por artículo.</p>
+    <p class="ayuda">Contá lo que hay en el piso y cargalo tal cual, aunque te parezca que está mal. Si te equivocaste, cargá el conteo de nuevo: vale el último.</p>
   </div>
+  {% endif %}
 
   <div class="tarjeta">
     <h2>Contado hoy</h2>
     {% if contados_hoy %}
       {% for c in contados_hoy %}
       <div class="fila-conteo">
-        <span><strong>{{ c.articulo_nombre }}</strong>: {{ c.cantidad|numero }} bultos</span>
+        <span><strong>{{ c.articulo_nombre }}</strong>: {{ c.cantidad|numero }} bultos<br>
+          <span class="que">{% if c.ficha_id %}cajas de {{ c.ficha_nombre }}{% if c.ficha_cliente %} ({{ c.ficha_cliente }}){% endif %}{% else %}bultos sueltos{% endif %}</span>
+        </span>
         <span class="hora">{{ c.creado_en|hora }}</span>
       </div>
       {% endfor %}

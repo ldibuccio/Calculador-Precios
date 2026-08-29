@@ -7184,27 +7184,32 @@ def anular_remito_segunda_ruta(
     )
 
 
-def _renderizar_pantalla_stock_fisico_deposito(request: Request, *, error=None, aviso=None, status_code: int = 200):
+def _renderizar_pantalla_stock_fisico_deposito(
+    request: Request, *, articulo_id=None, error=None, aviso=None, status_code: int = 200
+):
     try:
-        articulos = listar_articulos()
-        # listar_conteos_stock_de_fecha NO trae stock_sistema, a propósito:
-        # esta pantalla la ve el operario y el número del sistema no puede
-        # viajar ni escondido en su HTML (control cruzado).
-        contados_hoy = listar_conteos_stock_de_fecha(_hoy_argentina())
+        contexto = {
+            "articulos": listar_articulos(),
+            "fichas_por_articulo": _fichas_por_articulo(),
+            # listar_conteos_stock_de_fecha NO trae stock_sistema, a propósito:
+            # esta pantalla la ve el operario y el número del sistema no puede
+            # viajar ni escondido en su HTML (control cruzado).
+            "contados_hoy": listar_conteos_stock_de_fecha(_hoy_argentina()),
+            "articulo_id": str(articulo_id) if articulo_id is not None else "",
+            "error": error,
+            "aviso": aviso,
+        }
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     return templates.TemplateResponse(
-        request,
-        "deposito_stock_fisico.html",
-        {"articulos": articulos, "contados_hoy": contados_hoy, "error": error, "aviso": aviso},
-        status_code=status_code,
+        request, "deposito_stock_fisico.html", contexto, status_code=status_code
     )
 
 
 @app.get("/deposito/stock/fisico")
-def ver_stock_fisico_deposito(request: Request, aviso: str | None = None):
-    return _renderizar_pantalla_stock_fisico_deposito(request, aviso=aviso)
+def ver_stock_fisico_deposito(request: Request, articulo_id: str | None = None, aviso: str | None = None):
+    return _renderizar_pantalla_stock_fisico_deposito(request, articulo_id=articulo_id, aviso=aviso)
 
 
 @app.post("/deposito/stock/fisico")
@@ -7212,11 +7217,19 @@ def cargar_stock_fisico_deposito_ruta(
     request: Request,
     articulo_id: str = Form(""),
     cantidad: str = Form(""),
+    que_conto: str = Form(""),
 ):
     """El operario carga lo que CONTÓ. Se acepta 0 (contó y no hay ninguno). Si se equivoca, carga de nuevo: vale el último.
 
     No es obligatorio todos los días: es un control disponible. El aviso
     repite SOLO lo contado — jamás el stock del sistema.
+
+    que_conto es "sueltos" o el id de una ficha. NO se valida contra lo
+    que el sistema cree tener: el conteo es DECLARATIVO. Si cuenta cajas
+    de una ficha de la que el sistema no tiene nada, se guarda igual y el
+    Cotejo muestra la diferencia — que es justo para lo que está. Lo
+    único que se valida es que la ficha exista y sea de ESE artículo:
+    una ficha de otro artículo no es un conteo raro, es un dato roto.
     """
     texto_cantidad = cantidad.strip()
     error = None
@@ -7233,31 +7246,52 @@ def cargar_stock_fisico_deposito_ruta(
                 error = "La cantidad contada no puede ser negativa."
 
     articulo = None
+    ficha = None
     if not error:
         try:
             articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+            if articulo is not None and que_conto.strip() and que_conto.strip() != "sueltos":
+                fichas = _fichas_por_articulo().get(str(articulo_id).strip(), [])
+                ficha = next((f for f in fichas if str(f["id"]) == que_conto.strip()), None)
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         if articulo is None:
             error = "Elegí un artículo válido."
+        elif not que_conto.strip():
+            error = "Elegí qué contaste: los bultos sueltos o las cajas de una ficha."
+        elif que_conto.strip() != "sueltos" and ficha is None:
+            error = "Esa ficha no es de este artículo."
 
     if error:
-        return _renderizar_pantalla_stock_fisico_deposito(request, error=error, status_code=400)
-
-    try:
-        crear_conteo_stock(articulo["id"], cantidad_valor)
-    except Exception as error_db:
         return _renderizar_pantalla_stock_fisico_deposito(
-            request, error=f"No se pudo guardar el conteo: {error_db}", status_code=500
+            request, articulo_id=articulo_id, error=error, status_code=400
         )
 
-    aviso = f"Conteo guardado: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']}."
-    return RedirectResponse(url=f"/deposito/stock/fisico?{urlencode({'aviso': aviso})}", status_code=303)
+    try:
+        crear_conteo_stock(articulo["id"], cantidad_valor, ficha_id=ficha["id"] if ficha else None)
+    except Exception as error_db:
+        return _renderizar_pantalla_stock_fisico_deposito(
+            request, articulo_id=articulo_id, error=f"No se pudo guardar el conteo: {error_db}", status_code=500
+        )
+
+    que = f"cajas de {ficha['nombre']}" if ficha else f"bultos sueltos de {articulo['nombre']}"
+    aviso = f"Conteo guardado: {_formatear_numero(cantidad_valor)} {que}."
+    # El artículo vuelve puesto: de un mismo artículo se cuentan los
+    # sueltos y después las cajas de cada ficha, uno atrás de otro.
+    return RedirectResponse(
+        url=f"/deposito/stock/fisico?{urlencode({'articulo_id': articulo['id'], 'aviso': aviso})}#carga",
+        status_code=303,
+    )
 
 
 @app.get("/administracion/stock/cotejo")
 def ver_cotejo_stock(request: Request):
-    """Cotejo (control): el último conteo físico por artículo contra la foto del sistema de ese instante."""
+    """Cotejo (control): el último conteo físico de cada PORCIÓN contra la foto del sistema de ese instante.
+
+    Desde la etapa 3 un artículo tiene varias porciones: sus bultos
+    sueltos y las cajas de cada ficha. Sale de los conteos y de ningún
+    otro lado: una ficha que nunca se contó no genera renglón.
+    """
     try:
         conteos = listar_ultimos_conteos_stock()
     except Exception as error_db:
@@ -7269,7 +7303,13 @@ def ver_cotejo_stock(request: Request):
         # Con diferencia, botón directo a la pantalla de ajuste, precargada
         # con este conteo (la cantidad final se calcula ahí contra el stock
         # ACTUAL, no contra esta foto — ver ver_ajustar_stock_deposito).
-        if fila["diferencia"] != 0:
+        #
+        # SOLO en los renglones de sueltos. Un ajuste de stock es por
+        # ARTÍCULO: mueve el total, no reparte entre fichas. Si sobran
+        # cajas de Bolivia y faltan de Ecuador, el total del artículo está
+        # bien y ajustarlo lo rompería — lo que hay que corregir es a qué
+        # ficha fue una guía R, que se hace en Guías R desde la etapa 1.
+        if fila["diferencia"] != 0 and fila["ficha_id"] is None:
             fila["query_ajuste"] = urlencode(
                 {
                     "articulo_id": conteo["articulo_id"],

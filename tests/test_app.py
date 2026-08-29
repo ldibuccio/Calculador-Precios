@@ -15918,16 +15918,101 @@ def test_stock_fisico_guarda_el_conteo_y_el_aviso_no_muestra_el_sistema():
     ):
         respuesta = cliente.post(
             "/deposito/stock/fisico",
-            data={"articulo_id": "1", "cantidad": "12"},
+            data={"articulo_id": "1", "cantidad": "12", "que_conto": "sueltos"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(1, 12.0)
+    mock_crear.assert_called_once_with(1, 12.0, ficha_id=None)
     # Pantalla de OPERARIO: el aviso repite SOLO lo contado.
     destino = respuesta.headers["location"]
-    assert "Conteo+guardado%3A+12+bultos+de+Banana" in destino
+    assert "Conteo+guardado%3A+12+bultos+sueltos+de+Banana" in destino
     assert "sistema" not in destino
+    # El artículo vuelve puesto: de un mismo artículo se cuentan los
+    # sueltos y después las cajas de cada ficha, uno atrás de otro.
+    assert "articulo_id=1" in destino
+
+
+def test_stock_fisico_guarda_el_conteo_de_las_cajas_de_una_ficha():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "Banana"}),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.crear_conteo_stock") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "7", "cantidad": "12", "que_conto": "11"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(7, 12.0, ficha_id=11)
+    assert "cajas+de+Vea" in respuesta.headers["location"]
+
+
+def test_stock_fisico_no_deja_contar_una_ficha_de_OTRO_articulo():
+    # Un conteo raro se guarda (es declarativo), pero una ficha que no es
+    # de este artículo no es un conteo raro: es un dato roto.
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 9, "nombre": "Pera"}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.crear_conteo_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "9", "cantidad": "12", "que_conto": "11"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "no es de este artículo" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_stock_fisico_sin_decir_que_conto_da_400():
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.crear_conteo_stock") as mock_crear,
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "1", "cantidad": "12", "que_conto": ""},
+        )
+
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_stock_fisico_los_sueltos_van_PRIMEROS_y_al_mismo_nivel_que_las_fichas():
+    """Es lo contrario de "sin asignar" en la guía R, y a propósito.
+
+    Allá es la excepción del que no sabe y va en un optgroup aparte. Acá
+    es el caso más común —la mayoría de la mercadería está sin procesar—
+    así que esconderlo sería hacer más difícil justo lo que más se hace.
+    """
+    with (
+        patch("app.main.listar_articulos", return_value=[{"id": 7, "nombre": "Banana"}]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico?articulo_id=7")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    selector = cuerpo.split('name="que_conto"')[1].split("</select>")[0]
+    assert "optgroup" not in selector
+    # Primera opción real, antes de cualquier ficha.
+    assert selector.index("Bultos sueltos") < selector.index("Cajas de")
 
 
 def test_stock_fisico_acepta_cero_pero_no_negativos():
@@ -15937,21 +16022,23 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
     ):
         respuesta = cliente.post(
             "/deposito/stock/fisico",
-            data={"articulo_id": "1", "cantidad": "0"},
+            data={"articulo_id": "1", "cantidad": "0", "que_conto": "sueltos"},
             follow_redirects=False,
         )
     # 0 vale: contó y no hay ninguno.
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(1, 0.0)
+    mock_crear.assert_called_once_with(1, 0.0, ficha_id=None)
 
     with (
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
     ):
         respuesta = cliente.post(
             "/deposito/stock/fisico",
-            data={"articulo_id": "1", "cantidad": "-2"},
+            data={"articulo_id": "1", "cantidad": "-2", "que_conto": "sueltos"},
         )
     assert respuesta.status_code == 400
     mock_crear.assert_not_called()
@@ -15959,9 +16046,12 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
 
 def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
     contados = [{"id": 5, "cantidad": 12.0, "creado_en": datetime(2026, 8, 25, 10, 30),
-                 "articulo_nombre": "Banana"}]
+                 "articulo_nombre": "Banana", "ficha_id": None,
+                 "ficha_nombre": None, "ficha_cliente": None}]
     with (
         patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -15978,9 +16068,11 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
 def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste():
     conteos = [
         {"id": 5, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 15.0,
-         "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana"},
+         "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
         {"id": 6, "articulo_id": 2, "cantidad": 7.0, "stock_sistema": 7.0,
-         "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Anco"},
+         "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Anco",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
     ]
     with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
         respuesta = cliente.get("/administracion/stock/cotejo")
@@ -17574,3 +17666,88 @@ def test_stock_inicial_los_importes_grandes_no_salen_en_notacion_cientifica():
     assert "$1.020.000" in cuerpo
     # Y el detalle usa el mismo formato que el total: $8.500, no $8500.
     assert "120 bultos × $8.500" in cuerpo
+
+
+def test_cotejo_dice_de_que_porcion_es_cada_tarjeta():
+    # Un artículo puede tener varias tarjetas. Sin decir cuál es cuál,
+    # "Banana 12 / Banana 40" no se entiende.
+    conteos = [
+        {"id": 5, "articulo_id": 1, "cantidad": 40.0, "stock_sistema": 40.0,
+         "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+        {"id": 6, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 12.0,
+         "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Banana",
+         "ficha_id": 11, "ficha_nombre": "Banana Bolivia", "ficha_cliente": "Día"},
+    ]
+    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
+        respuesta = cliente.get("/administracion/stock/cotejo")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Bultos sueltos" in cuerpo
+    assert "Cajas de Banana Bolivia" in cuerpo
+    assert "Día" in cuerpo
+
+
+def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
+    """El ajuste es por ARTÍCULO: mueve el total, no reparte entre fichas.
+
+    Si sobran cajas de Bolivia y faltan de Ecuador, el total del artículo
+    está bien y ajustarlo lo rompería. Lo que hay que corregir es a qué
+    ficha fue una guía R.
+    """
+    conteos = [
+        {"id": 6, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 20.0,
+         "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Banana",
+         "ficha_id": 11, "ficha_nombre": "Banana Bolivia", "ficha_cliente": "Día"},
+    ]
+    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
+        respuesta = cliente.get("/administracion/stock/cotejo")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # La diferencia se muestra igual: -8.
+    assert "-8" in cuerpo
+    assert "Ajustar a lo contado" not in cuerpo
+    # Y manda donde sí se arregla.
+    assert "/administracion/stock/guias-r" in cuerpo
+
+
+def test_cotejo_si_ofrece_ajustar_stock_en_una_diferencia_de_SUELTOS():
+    conteos = [
+        {"id": 5, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 15.0,
+         "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
+        respuesta = cliente.get("/administracion/stock/cotejo")
+
+    assert "Ajustar a lo contado" in respuesta.text
+    assert "articulo_id=1&amp;contado=12.0" in respuesta.text
+
+
+def test_cotejo_no_inventa_renglones_de_fichas_que_nunca_se_contaron():
+    """Solo sale de conteos_stock, de ningún otro lado.
+
+    Si listara todas las fichas de todos los clientes en cero, la pantalla
+    se vuelve ilegible y se deja de mirar.
+    """
+    with patch("app.main.listar_ultimos_conteos_stock", return_value=[]) as mock_listar:
+        respuesta = cliente.get("/administracion/stock/cotejo")
+
+    assert respuesta.status_code == 200
+    assert "Todavía no hay conteos físicos cargados" in respuesta.text
+    mock_listar.assert_called_once_with()
+
+
+def test_las_pantallas_que_se_mudaron_vuelven_a_ADMINISTRACION():
+    # Resto de la etapa 0: se cambiaron los links de ida pero el "atrás"
+    # seguía apuntando al hub de Depósito, donde esos botones ya no están.
+    with (
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main.listar_articulos", return_value=[]),
+    ):
+        cotejo = cliente.get("/administracion/stock/cotejo")
+        ajustar = cliente.get("/administracion/stock/ajustar")
+
+    for respuesta in (cotejo, ajustar):
+        assert 'href="/deposito/stock"' not in respuesta.text
+        assert "/administracion" in respuesta.text

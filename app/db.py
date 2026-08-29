@@ -6348,25 +6348,104 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
         conexion.close()
 
 
-def crear_conteo_stock(articulo_id: int, cantidad: float) -> None:
+# El stock PARTIDO: los bultos sueltos del artículo por un lado, y las cajas
+# ya armadas de cada ficha por otro. Es la cuenta del Cotejo desde la etapa
+# 3, y suma exactamente lo mismo que stock_deposito_por_articulo: cada
+# renglón es una porción de ese total, no una cuenta nueva.
+#
+# cajas(ficha)   = lo reprocesado a esa ficha − lo que salió atribuido a ella
+# sueltos(art)   = el stock del artículo − la suma de las cajas de sus fichas
+#
+# Las SALIDAS se atribuyen por la ficha del renglón, que es con la que el
+# cliente PIDIÓ. Si pidió Banana Bolivia y se le mandaron cajas de Banana
+# Ecuador, la salida se le descuenta a Bolivia igual. Eso NO es un error a
+# tapar: aparece como dos diferencias a la vez —Bolivia de menos, Ecuador
+# de más— y es la única forma que tiene el sistema de mostrar un cambio de
+# ficha, que hasta ahora no se veía en ningún lado.
+_SQL_STOCK_PARTIDO = """
+    WITH vigentes AS (
+        SELECT DISTINCT ON (cliente_id, fecha_operacion) id
+        FROM pedidos WHERE anulado_el IS NULL
+        ORDER BY cliente_id, fecha_operacion, creado_en DESC
+    ), armadas AS (
+        SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
+        FROM reprocesos
+        WHERE anulado_el IS NULL AND ficha_id IS NOT NULL
+        GROUP BY articulo_id, ficha_id
+    ), salidas_ficha AS (
+        SELECT r.articulo_id, r.ficha_id,
+               SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+        WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+          AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
+        GROUP BY r.articulo_id, r.ficha_id
+    ), fichas_con_algo AS (
+        SELECT articulo_id, ficha_id FROM armadas
+        UNION
+        SELECT articulo_id, ficha_id FROM salidas_ficha
+    )
+    SELECT f.articulo_id, f.ficha_id,
+           COALESCE(a.total, 0) - COALESCE(s.total, 0) AS stock
+    FROM fichas_con_algo f
+    LEFT JOIN armadas a ON a.articulo_id = f.articulo_id AND a.ficha_id = f.ficha_id
+    LEFT JOIN salidas_ficha s ON s.articulo_id = f.articulo_id AND s.ficha_id = f.ficha_id
+"""
+
+
+def _cajas_por_ficha(cursor) -> dict:
+    """{(articulo_id, ficha_id): stock de cajas armadas}, SOLO las fichas con algún movimiento.
+
+    Una ficha sin nada reprocesado ni nada salido no aparece. Es a
+    propósito: si el Cotejo listara todas las fichas de todos los clientes
+    en cero, la pantalla se vuelve ilegible y se deja de mirar.
+    """
+    cursor.execute(_SQL_STOCK_PARTIDO)
+    return {(fila[0], fila[1]): float(fila[2]) for fila in cursor.fetchall()}
+
+
+def _stock_de_ficha(cursor, articulo_id: int, ficha_id: int | None) -> float:
+    """El stock de UNA porción: las cajas de una ficha, o los bultos sueltos del artículo (ficha_id None).
+
+    Es la foto que se congela al cargar un conteo. Los sueltos se calculan
+    por resta y no por una cuenta propia: así la suma de las porciones da
+    siempre el total del artículo, sin que se pueda perder ni duplicar
+    nada por el camino.
+    """
+    cajas = _cajas_por_ficha(cursor)
+    if ficha_id is not None:
+        return cajas.get((articulo_id, ficha_id), 0.0)
+    total = _stock_deposito_actual(cursor, articulo_id)
+    return round(total - sum(v for (a, _), v in cajas.items() if a == articulo_id), 2)
+
+
+def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None = None) -> None:
     """Conteo físico del operario del depósito. El stock del sistema se graba acá, del lado del server — NUNCA se le devuelve.
 
     A propósito no retorna nada: la pantalla de Stock Físico no puede
     mostrar el número del sistema (si el operario lo ve, transcribe en
     vez de contar — se pierde el control cruzado; mismo criterio que
     Vacíos). El Cotejo compara después contra esta foto exacta. Si se
-    equivoca, carga de nuevo: en el Cotejo vale el último por artículo.
+    equivoca, carga de nuevo: en el Cotejo vale el último por porción.
+
+    ficha_id dice QUÉ contó: una ficha son sus cajas ya armadas, y None
+    son los bultos sueltos del artículo, sin procesar. Los sueltos son el
+    caso más común, no una excepción.
+
+    El conteo es DECLARATIVO: no se valida contra lo que el sistema cree
+    tener. Si cuenta cajas de una ficha de la que el sistema no tiene
+    nada, se guarda igual y el Cotejo muestra la diferencia — que es
+    exactamente para lo que está.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            stock_sistema = _stock_deposito_actual(cursor, articulo_id)
+            stock_sistema = _stock_de_ficha(cursor, articulo_id, ficha_id)
             cursor.execute(
                 """
-                INSERT INTO conteos_stock (articulo_id, cantidad, stock_sistema)
-                VALUES (%s, %s, %s)
+                INSERT INTO conteos_stock (articulo_id, cantidad, stock_sistema, ficha_id)
+                VALUES (%s, %s, %s, %s)
                 """,
-                (articulo_id, cantidad, stock_sistema),
+                (articulo_id, cantidad, stock_sistema, ficha_id),
             )
         conexion.commit()
     finally:
@@ -6379,15 +6458,25 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     SIN stock_sistema en el SELECT, a propósito: esta lista la ve el
     operario, y el número del sistema no puede viajar ni escondido en el
     HTML de su pantalla.
+
+    Trae la ficha porque desde la etapa 3 el mismo artículo aparece
+    varias veces en la lista —los sueltos y cada ficha— y sin decir cuál
+    es cada uno, "Banana 40 / Banana 12" no se entiende.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.cantidad, c.creado_en, a.nombre AS articulo_nombre
+                SELECT c.id, c.cantidad, c.creado_en, a.nombre AS articulo_nombre,
+                       c.ficha_id,
+                       COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
+                       cl.nombre AS ficha_cliente
                 FROM conteos_stock c
                 JOIN articulos a ON a.id = c.articulo_id
+                LEFT JOIN fichas_logistica f ON f.id = c.ficha_id
+                LEFT JOIN articulos fa ON fa.id = f.articulo_id
+                LEFT JOIN clientes cl ON cl.id = f.cliente_id
                 WHERE c.creado_en >= %s AND c.creado_en < %s::date + 1
                 ORDER BY c.creado_en DESC
                 """,
@@ -6400,23 +6489,45 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
 
 
 def listar_ultimos_conteos_stock() -> list[dict]:
-    """El ÚLTIMO conteo por artículo, con su foto del stock del sistema, para el Cotejo (control)."""
+    """El ÚLTIMO conteo por PORCIÓN (artículo + ficha), con su foto del sistema, para el Cotejo.
+
+    Desde la etapa 3 un artículo tiene varias porciones: sus bultos
+    sueltos y las cajas de cada ficha. El último de cada una vale por su
+    cuenta — contar las cajas de una ficha no invalida el conteo de
+    sueltos de la mañana.
+
+    Sale de conteos_stock y de ningún otro lado: una ficha que nunca se
+    contó no genera renglón. Si el Cotejo listara todas las fichas de
+    todos los clientes en cero, la pantalla se vuelve ilegible y se deja
+    de mirar.
+
+    El orden del DISTINCT ON es el del índice conteos_stock_cotejo_idx.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT DISTINCT ON (c.articulo_id)
-                       c.id, c.articulo_id, c.cantidad, c.stock_sistema, c.creado_en,
-                       a.nombre AS articulo_nombre
+                SELECT DISTINCT ON (c.articulo_id, c.ficha_id)
+                       c.id, c.articulo_id, c.ficha_id, c.cantidad, c.stock_sistema, c.creado_en,
+                       a.nombre AS articulo_nombre,
+                       COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
+                       cl.nombre AS ficha_cliente
                 FROM conteos_stock c
                 JOIN articulos a ON a.id = c.articulo_id
-                ORDER BY c.articulo_id, c.creado_en DESC
+                LEFT JOIN fichas_logistica f ON f.id = c.ficha_id
+                LEFT JOIN articulos fa ON fa.id = f.articulo_id
+                LEFT JOIN clientes cl ON cl.id = f.cliente_id
+                ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC
                 """
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-        filas.sort(key=lambda fila: fila["articulo_nombre"])
+        # Cada artículo junto, y adentro los sueltos primero: es la porción
+        # más grande y la que más se cuenta.
+        filas.sort(key=lambda fila: (fila["articulo_nombre"],
+                                     fila["ficha_id"] is not None,
+                                     fila["ficha_nombre"] or ""))
         return filas
     finally:
         conexion.close()

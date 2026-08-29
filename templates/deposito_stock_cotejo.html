@@ -59,6 +59,21 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  .que-conto {
+    margin: 0.1rem 0 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #2563eb;
+  }
+  .ayuda-ficha {
+    margin: 0.75rem 0 0;
+    font-size: 0.85rem;
+    color: #92400e;
+    background: #fef3c7;
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+  }
+  a.boton-ajustar.secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
 </style>
 </head>
 <body>
@@ -67,12 +82,16 @@
   {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
-  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos).</p>
+  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos). Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.</p>
 
   {% if filas %}
     {% for f in filas %}
     <div class="tarjeta {% if f.diferencia != 0 %}con-diferencia{% endif %}">
       <p class="encabezado">{{ f.articulo_nombre }}</p>
+      <p class="que-conto">
+        {% if f.ficha_id %}Cajas de {{ f.ficha_nombre }}{% if f.ficha_cliente %} · {{ f.ficha_cliente }}{% endif %}
+        {% else %}Bultos sueltos{% endif %}
+      </p>
       <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
       <div class="numeros">
         <div class="celda">
@@ -94,12 +113,21 @@
       {# La cantidad final se calcula en la pantalla de ajuste contra el
          stock ACTUAL (con aviso si cambió desde este conteo). #}
       <a class="boton-ajustar" href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      {% elif f.diferencia != 0 %}
+      {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
+         el ajuste mueve el total del artículo, y acá el total puede estar
+         perfecto. Si sobran cajas de una ficha y faltan de otra, lo que
+         está mal es a qué ficha fue una guía R. #}
+      <p class="ayuda-ficha">El total del artículo puede estar bien: lo que cambia entre fichas es a cuál
+        fueron las cajas. Revisá la guía R en Guías R, no ajustes el stock.</p>
+      <a class="boton-ajustar secundario" href="/administracion/stock/guias-r">Ver Guías R</a>
       {% endif %}
     </div>
     {% endfor %}
   {% else %}
   <div class="tarjeta">
-    <p class="vacio">Todavía no hay conteos físicos cargados. El operario los carga desde Stock → Stock Físico.</p>
+    <p class="vacio">Todavía no hay conteos físicos cargados. El operario los carga desde Depósito → Stock → Stock Físico.
+      Solo aparece acá lo que se contó: una ficha que nunca se contó no genera tarjeta.</p>
   </div>
   {% endif %}
 

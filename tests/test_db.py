@@ -3907,6 +3907,9 @@ def test_crear_conteo_stock_graba_la_foto_y_no_devuelve_nada():
     from app.db import crear_conteo_stock
 
     conexion, cursor = _conexion_falsa(filas_fetchone=[(7.0,)])
+    # Sin fichas con movimiento: el stock partido devuelve vacío, así que
+    # los sueltos son el total del artículo.
+    cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = crear_conteo_stock(2, 4.0)
@@ -3914,11 +3917,50 @@ def test_crear_conteo_stock_graba_la_foto_y_no_devuelve_nada():
     insert = cursor.execute.call_args_list[-1]
     assert "INSERT INTO conteos_stock" in insert.args[0]
     # La foto del sistema se graba del lado del server...
-    assert insert.args[1] == (2, 4.0, 7.0)
+    assert insert.args[1] == (2, 4.0, 7.0, None)
     # ...y NUNCA se le devuelve al operario: si la ve, transcribe en vez
     # de contar.
     assert resultado is None
     conexion.commit.assert_called_once()
+
+
+def test_crear_conteo_stock_de_una_ficha_congela_el_stock_DE_ESA_FICHA():
+    """La foto de un conteo de ficha son SUS cajas, no el total del artículo.
+
+    Si congelara el total, el Cotejo de una ficha compararía 12 cajas
+    contadas contra los 300 bultos del artículo y daría siempre rojo.
+    """
+    from app.db import crear_conteo_stock
+
+    conexion, cursor = _conexion_falsa()
+    # cajas por ficha: la 11 tiene 20, la 12 tiene 5.
+    cursor.fetchall.return_value = [(2, 11, 20.0), (2, 12, 5.0)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_conteo_stock(2, 18.0, ficha_id=11)
+
+    insert = cursor.execute.call_args_list[-1]
+    assert insert.args[1] == (2, 18.0, 20.0, 11)
+
+
+def test_crear_conteo_stock_de_sueltos_resta_las_cajas_de_todas_las_fichas():
+    """Los sueltos salen por RESTA, no por una cuenta propia.
+
+    Así la suma de las porciones da siempre el total del artículo: no se
+    puede perder ni duplicar nada entre los renglones del Cotejo.
+    """
+    from app.db import crear_conteo_stock
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(100.0,)])
+    # 20 + 5 en cajas de dos fichas de ESTE artículo, y 40 de otro que no
+    # tiene que restar.
+    cursor.fetchall.return_value = [(2, 11, 20.0), (2, 12, 5.0), (9, 30, 40.0)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_conteo_stock(2, 70.0)
+
+    insert = cursor.execute.call_args_list[-1]
+    assert insert.args[1] == (2, 70.0, 75.0, None)
 
 
 def test_listar_conteos_stock_de_fecha_no_trae_el_stock_del_sistema():
@@ -3937,20 +3979,44 @@ def test_listar_conteos_stock_de_fecha_no_trae_el_stock_del_sistema():
     assert "stock_sistema" not in consulta
 
 
-def test_listar_ultimos_conteos_stock_trae_el_ultimo_por_articulo():
+def test_listar_ultimos_conteos_stock_trae_el_ultimo_por_PORCION():
+    """Desde la etapa 3 el último vale por porción, no por artículo.
+
+    Contar las cajas de una ficha a la tarde no puede invalidar el conteo
+    de bultos sueltos de la mañana: son dos cosas distintas del piso.
+    """
     from app.db import listar_ultimos_conteos_stock
 
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("id",), ("articulo_nombre",)]
+    cursor.description = [("id",), ("articulo_nombre",), ("ficha_id",), ("ficha_nombre",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         listar_ultimos_conteos_stock()
 
     consulta = cursor.execute.call_args.args[0]
-    assert "DISTINCT ON (c.articulo_id)" in consulta
+    assert "DISTINCT ON (c.articulo_id, c.ficha_id)" in consulta
     assert "c.stock_sistema" in consulta
-    assert "c.creado_en DESC" in consulta
+    # El mismo orden que el índice conteos_stock_cotejo_idx.
+    assert "ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC" in consulta
+
+
+def test_el_cotejo_ordena_los_sueltos_ANTES_que_las_fichas_del_mismo_articulo():
+    # Es la porción más grande y la que más se cuenta: va primero.
+    from app.db import listar_ultimos_conteos_stock
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("articulo_nombre",), ("ficha_id",), ("ficha_nombre",)]
+    cursor.fetchall.return_value = [
+        ("Banana", 12, "Banana Ecuador"),
+        ("Banana", None, None),
+        ("Banana", 11, "Banana Bolivia"),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        filas = listar_ultimos_conteos_stock()
+
+    assert [f["ficha_nombre"] for f in filas] == [None, "Banana Bolivia", "Banana Ecuador"]
 
 
 def test_contar_stock_deposito_negativo_hace_la_misma_cuenta_que_el_stock():
