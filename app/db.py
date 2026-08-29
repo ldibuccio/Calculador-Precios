@@ -6403,6 +6403,31 @@ def _cajas_por_ficha(cursor) -> dict:
     return {(fila[0], fila[1]): float(fila[2]) for fila in cursor.fetchall()}
 
 
+def fichas_con_cajas_armadas() -> set:
+    """Los ficha_id que HOY tienen cajas armadas disponibles (más de cero).
+
+    Devuelve solo ids, sin cantidades, y eso es a propósito: la usa la
+    pantalla de armado, que es de OPERARIO. El número del sistema se usa
+    del lado del server para decidir si avisar, pero no puede viajar a su
+    pantalla ni escondido en el HTML — si lo ve, arma contra el sistema en
+    vez de contra el piso (mismo criterio que Vacíos y que Reproceso, que
+    filtra por stock sin mostrar la cifra).
+
+    "No está en el conjunto" cubre los dos casos que al que arma le dan
+    lo mismo: nunca se reprocesó nada para esa ficha, o ya salió todo.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return {
+                ficha_id
+                for (_, ficha_id), cajas in _cajas_por_ficha(cursor).items()
+                if cajas > 0
+            }
+    finally:
+        conexion.close()
+
+
 def _stock_de_ficha(cursor, articulo_id: int, ficha_id: int | None) -> float:
     """El stock de UNA porción: las cajas de una ficha, o los bultos sueltos del artículo (ficha_id None).
 

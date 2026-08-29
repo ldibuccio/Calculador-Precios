@@ -4582,3 +4582,24 @@ def test_anular_stock_inicial_que_no_es_del_corte_avisa_y_no_commitea():
             anular_renglon_stock_inicial("sueltos", 5)
 
     conexion.commit.assert_not_called()
+
+
+def test_fichas_con_cajas_armadas_devuelve_SOLO_ids_sin_cantidades():
+    """La usa la pantalla de armado, que es de operario.
+
+    El número del sistema se usa del lado del server para decidir si
+    avisar, pero no puede viajar a su pantalla ni escondido en el HTML: si
+    lo ve, arma contra el sistema en vez de contra el piso.
+    """
+    from app.db import fichas_con_cajas_armadas
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = [(1, 11, 20.0), (1, 12, 0.0), (2, 13, 5.0), (2, 14, -3.0)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = fichas_con_cajas_armadas()
+
+    # Solo las que tienen cajas de verdad: cero y negativo no cuentan.
+    assert resultado == {11, 13}
+    # Y son ids pelados, sin ninguna cantidad adentro.
+    assert all(isinstance(x, int) for x in resultado)

@@ -210,6 +210,7 @@ from app.db import (
     listar_historial_costos_envases,
     listar_historial_fichas_por_cliente,
     listar_fichas_de_todos_los_clientes,
+    fichas_con_cajas_armadas,
     listar_stock_inicial,
     listar_fichas_por_cliente,
     listar_renglones_pedido,
@@ -11604,6 +11605,14 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         (r for r in anulados_todos if r["sucursal"] == sucursal_valida["sucursal"]),
         key=lambda r: r["nombre_venta"],
     )
+    # Qué fichas tienen cajas armadas hoy: SOLO los ids, sin cantidades.
+    # Esta pantalla es de operario y el número del sistema no puede viajar
+    # a su HTML (criterio Vacíos) — alcanza con saber si hay o no hay.
+    try:
+        con_cajas = fichas_con_cajas_armadas()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
     for r in pendientes:
         r["contenido_caja"] = _contenido_de(r)
         unidad = _unidad_de(r)
@@ -11612,15 +11621,33 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         r["etiqueta_por_bulto"] = etiquetas_por_bulto.get(unidad, "Contenido por cajón")
         r["sufijo_unidad"] = sufijos_unidad.get(unidad, "")
         r["total_sugerido"] = _kilos_de_ficha(r, r["cantidad"])
+        # El pedido sale del stock de LA FICHA, no del artículo: que haya
+        # bananas no quiere decir que haya cajas de Banana Bolivia. Avisa
+        # y NO traba: el piso es la verdad, y el que arma puede estar
+        # viendo cajas que todavía nadie cargó como guía R.
+        # Un renglón sin ficha (viejo, o ficha borrada) no se marca: no
+        # hay ficha de la cual mirar el stock.
+        r["sin_cajas_de_la_ficha"] = (
+            r.get("ficha_id") is not None and r["ficha_id"] not in con_cajas
+        )
     for r in armados:
         # Con qué comparar para la marca "editado a mano": el cálculo de
         # ficha sobre los bultos que realmente armó.
         bultos_reales = r["cantidad_armada"] if r["cantidad_armada"] is not None else r["cantidad"]
         kilos_ficha = _kilos_de_ficha(r, bultos_reales)
-        r["kilos_editados"] = (
+        editado = (
             r["kilos_enviados"] is not None
             and (kilos_ficha is None or float(r["kilos_enviados"]) != kilos_ficha)
         )
+        # El desvío se calcula recién acá, con el renglón ya tildado: hasta
+        # que no se tilda no existe el kilaje real contra el cual comparar.
+        r["fuera_de_tolerancia"] = _desvio_de_tolerancia(r, _contenido_de(r), _unidad_de(r))
+        # Las dos marcas dicen lo mismo con distinta fuerza, así que no se
+        # apilan: cuando salta la de tolerancia, "editado a mano" queda
+        # tapada. Lo que NO se pierde es que el kilaje lo puso una persona
+        # — eso lo dice el propio aviso rojo, que si no se leería como un
+        # error de cálculo del sistema.
+        r["kilos_editados"] = editado and r["fuera_de_tolerancia"] is None
 
     contexto.update(
         {
@@ -11631,6 +11658,43 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         }
     )
     return templates.TemplateResponse(request, "deposito_pedido_armar.html", contexto)
+
+
+# La tolerancia del kilaje declarado al armar, contra lo que dice la ficha.
+# Va como constante y no en la base a propósito: los 3 kg salen de que la
+# variación real es por tamaño o deshidratación, y eso no se mueve. Si
+# alguna vez hay que cambiarlo, es un deploy — no vale una tabla ni un
+# viaje a Supabase para un número que nadie va a tocar.
+#
+# POR BULTO, no por renglón: 20 bultos con 1 kg de más cada uno son 20 kg
+# de diferencia en el renglón y están DENTRO de tolerancia; 2 bultos con
+# 5 kg de más cada uno son 10 kg en el renglón y están FUERA. Lo que se
+# controla es cómo se llenó cada caja, no cuánto suma el renglón.
+TOLERANCIA_KILOS_POR_BULTO = 3
+
+
+def _desvio_de_tolerancia(renglon, contenido_ficha, unidad):
+    """Cuántos kilos por bulto se pasó de la ficha, o None si no aplica o está en tolerancia.
+
+    Solo para fichas por KILO. En una ficha por unidad o por cubeta, "3"
+    no significa nada: 3 unidades y 3 cubetas son cosas distintas y nadie
+    definió un equivalente, así que inventarlo sería inventar una regla.
+
+    Se compara el kilaje POR BULTO —el declarado contra el de la ficha—,
+    no el total del renglón.
+    """
+    if unidad != "kilo" or not contenido_ficha:
+        return None
+    if renglon.get("kilos_enviados") is None:
+        return None
+    bultos = renglon["cantidad_armada"] if renglon.get("cantidad_armada") is not None else renglon["cantidad"]
+    if not bultos or float(bultos) <= 0:
+        return None
+    por_bulto = float(renglon["kilos_enviados"]) / float(bultos)
+    desvio = round(por_bulto - float(contenido_ficha), 2)
+    if abs(desvio) <= TOLERANCIA_KILOS_POR_BULTO:
+        return None
+    return {"por_bulto": round(por_bulto, 2), "ficha": float(contenido_ficha), "desvio": desvio}
 
 
 def _url_vuelta_armado(cliente_id: int, fecha: str, sucursal: str) -> str:

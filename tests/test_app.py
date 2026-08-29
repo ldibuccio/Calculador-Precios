@@ -12345,6 +12345,7 @@ def test_ver_pedido_muestra_sucursales_con_oc_declarado_informativo_y_sin_identi
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_fotos_pedido", return_value=[]),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
     ):
@@ -12615,6 +12616,7 @@ def test_armar_pedido_muestra_las_sucursales_con_progreso_y_oc():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
     ):
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
@@ -12634,6 +12636,7 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
     ):
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
@@ -12665,6 +12668,7 @@ def test_armar_el_atras_de_la_barra_sube_en_la_jerarquia_no_en_el_historial():
         listar_renglones_pedido=RENGLONES_ARMADO_DE_PRUEBA,
         listar_fichas_por_cliente=FICHAS_PEDIDO_DE_PRUEBA,
         listar_mails_pedido_sin_procesar_de_cliente=[],
+        fichas_con_cajas_armadas=set(),
     )
     with ExitStack() as stack:
         for nombre, valor in patches.items():
@@ -12777,6 +12781,7 @@ def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_fotos_pedido", return_value=[]),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
     ):
@@ -13707,6 +13712,7 @@ def test_armar_pedido_con_fecha_muestra_ese_pedido_con_su_fecha_visible():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
     ):
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
@@ -14010,6 +14016,7 @@ def test_ver_pedido_avisa_cuando_se_confirmo_automaticamente():
         patch("app.main.obtener_mail_de_pedido", return_value=mail_del_pedido),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_fotos_pedido", return_value=[]),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
     ):
@@ -14038,6 +14045,7 @@ def test_ver_pedido_confirmado_a_mano_desde_mail_no_muestra_el_aviso_auto():
         patch("app.main.obtener_mail_de_pedido", return_value=mail_del_pedido),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_PEDIDO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_fotos_pedido", return_value=[]),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
     ):
@@ -14846,6 +14854,7 @@ def _get_armar_sucursal(renglones, pedido=None):
         patch("app.main.obtener_pedido_vigente", return_value=pedido or PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_ARMADO_CON_CONTENIDO),
     ):
         return cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
@@ -15020,6 +15029,7 @@ def test_terminar_pedido_cierra_y_muestra_el_banner_con_reabrir():
         patch("app.main.obtener_pedido_vigente", return_value=pedido_cerrado),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
     ):
         vista = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
@@ -15046,6 +15056,7 @@ def test_armar_muestra_terminar_pedido_con_los_sin_tildar_avisados():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO_DE_PRUEBA),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
     ):
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
@@ -15074,6 +15085,7 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
         patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
         patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
         patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
     ):
         respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
 
@@ -17751,3 +17763,195 @@ def test_las_pantallas_que_se_mudaron_vuelven_a_ADMINISTRACION():
     for respuesta in (cotejo, ajustar):
         assert 'href="/deposito/stock"' not in respuesta.text
         assert "/administracion" in respuesta.text
+
+
+# --- Etapa 5: el pedido descuenta del formato de la ficha, con tolerancia ---
+# La regla del envase quedó afuera a propósito: el sistema no captura en
+# qué envase vino un bulto (ver el pendiente con nombre propio en
+# docs/diseno_base_datos.md).
+
+FICHAS_E5 = [
+    {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": 15, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": "BANANA", "codigo_cliente": "90101"},
+    {"id": 902, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza",
+     "envase_id": None, "envase_nombre": None, "contenido_caja": 10, "unidad_venta": "kilo",
+     "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "90102"},
+]
+
+
+def _armar_e5(renglones, con_cajas=frozenset({901, 902}), fichas=None):
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.listar_fichas_por_cliente", return_value=fichas if fichas is not None else FICHAS_E5),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set(con_cajas)),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+    # Los espacios se normalizan: el aviso está partido en varias líneas en
+    # el template, y buscar la frase entera fallaría por el salto.
+    return " ".join(respuesta.text.split("</style>")[-1].split())
+
+
+def _renglon(**cambios):
+    base = {"id": 11, "sucursal": "VL", "articulo_id": 1, "articulo_nombre": "Banana",
+            "ficha_id": 901, "nombre_venta": "Banana", "texto_codigo": "90101",
+            "texto_descripcion": "BANANA", "cantidad": 10.0, "armado_el": None,
+            "cantidad_armada": None, "kilos_enviados": None, "anulado_el": None}
+    base.update(cambios)
+    return base
+
+
+def test_armar_con_cajas_de_la_ficha_no_avisa_nada():
+    # El caso normal no tiene que estorbar.
+    cuerpo = _armar_e5([_renglon()])
+
+    assert "Banana" in cuerpo
+    assert "No hay cajas armadas de esta ficha" not in cuerpo
+
+
+def test_armar_sin_cajas_de_la_ficha_avisa_SIN_decir_ningun_numero():
+    """El pedido sale del stock de LA FICHA, no del artículo.
+
+    Y el aviso no dice cuántas hay: esta pantalla es de operario y el
+    número del sistema no puede viajar acá ni escondido en el HTML. Si lo
+    ve, arma contra el sistema en vez de contra el piso.
+    """
+    cuerpo = _armar_e5([_renglon()], con_cajas=set())
+
+    assert "No hay cajas armadas de esta ficha" in cuerpo
+    assert "Fijate si hay que reprocesar" in cuerpo
+    # Ni el número ni la palabra: no dice "0 cajas" ni "hay 0".
+    assert "0 cajas" not in cuerpo
+    # Y NO traba: el botón de tildar sigue estando.
+    assert "Listo" in cuerpo or "armar-11" in cuerpo
+
+
+def test_armar_avisa_por_la_FICHA_y_no_por_el_articulo():
+    # Dos renglones del mismo artículo con fichas distintas: solo el que
+    # no tiene cajas de SU ficha se marca. Que haya bananas no quiere
+    # decir que haya cajas de Banana Bolivia.
+    fichas = FICHAS_E5 + [
+        {"id": 903, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
+         "envase_id": None, "envase_nombre": None, "contenido_caja": 18, "unidad_venta": "kilo",
+         "envase_variable": False, "nombre_cliente": "BANANA ECUADOR", "codigo_cliente": "90109"},
+    ]
+    renglones = [
+        _renglon(id=11, ficha_id=901, nombre_venta="Banana Bolivia"),
+        _renglon(id=12, ficha_id=903, nombre_venta="Banana Ecuador"),
+    ]
+    cuerpo = _armar_e5(renglones, con_cajas={901}, fichas=fichas)
+
+    assert cuerpo.count("No hay cajas armadas de esta ficha") == 1
+    # El que avisa es el de Ecuador, que es el que no tiene.
+    bolivia, ecuador = cuerpo.split("Banana Ecuador", 1)
+    assert "No hay cajas armadas de esta ficha" not in bolivia
+
+
+def test_armar_un_renglon_sin_ficha_no_se_marca():
+    # Renglón viejo o ficha borrada: no hay ficha de la cual mirar el
+    # stock, así que no se inventa un aviso.
+    cuerpo = _armar_e5([_renglon(ficha_id=None)], con_cajas=set())
+
+    assert "No hay cajas armadas de esta ficha" not in cuerpo
+
+
+def test_tolerancia_el_kilaje_pasado_avisa_DESPUES_de_tildar():
+    # Ficha de 15 kg, cargó 21 por bulto: 6 de más, fuera de los 3.
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad_armada=None,
+        cantidad=10.0, kilos_enviados=210.0)])
+
+    assert "Cargaste 21 kg por bulto y la ficha dice 15" in cuerpo
+    assert "6 kg de más por bulto" in cuerpo
+    # Queda armado igual: avisa, no traba.
+    assert "Destildar" in cuerpo
+
+
+def test_tolerancia_dentro_de_los_3_kg_no_avisa_pero_marca_editado_a_mano():
+    # Ficha de 15, cargó 17: 2 de más, dentro de tolerancia.
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=10.0, kilos_enviados=170.0)])
+
+    assert "por bulto y la ficha dice" not in cuerpo
+    assert "kilaje editado a mano" in cuerpo
+
+
+def test_tolerancia_es_por_BULTO_y_no_por_renglon():
+    """20 bultos con 1 kg de más son 20 kg en el renglón y están DENTRO.
+
+    Lo que se controla es cómo se llenó cada caja, no cuánto suma el
+    renglón: si fuera por renglón, un pedido grande daría fuera de
+    tolerancia por acumulación aunque cada caja esté perfecta.
+    """
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=20.0, kilos_enviados=320.0)])
+
+    assert "por bulto y la ficha dice" not in cuerpo
+
+    # Y 2 bultos con 5 kg de más son 10 kg en el renglón y están FUERA.
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=2.0, kilos_enviados=40.0)])
+
+    assert "Cargaste 20 kg por bulto y la ficha dice 15" in cuerpo
+
+
+def test_tolerancia_usa_los_bultos_REALMENTE_armados_si_armo_menos():
+    # Pidió 10, armó 4, mandó 84 kg: son 21 por bulto, no 8,4.
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=10.0,
+        cantidad_armada=4.0, kilos_enviados=84.0)])
+
+    assert "Cargaste 21 kg por bulto" in cuerpo
+
+
+def test_el_aviso_de_tolerancia_TAPA_la_marca_de_editado_a_mano():
+    """Las dos dicen lo mismo con distinta fuerza: no se apilan.
+
+    Pero el aviso rojo tiene que dejar claro que el kilaje lo cargó una
+    persona — si no, se leería como un error de cálculo del sistema, que
+    es lo contrario de lo que pasó.
+    """
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=10.0, kilos_enviados=210.0)])
+
+    assert "kilaje editado a mano" not in cuerpo
+    assert "Cargaste" in cuerpo
+
+
+def test_tolerancia_no_aplica_a_fichas_que_no_son_por_kilo():
+    """±3 no significa nada en una ficha por unidad o por cubeta.
+
+    3 unidades y 3 cubetas son cosas distintas y nadie definió un
+    equivalente: inventarlo sería inventar una regla.
+    """
+    fichas = [dict(FICHAS_E5[0], unidad_venta="unidad", contenido_caja=15)]
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=10.0, kilos_enviados=210.0)],
+        fichas=fichas)
+
+    assert "por bulto y la ficha dice" not in cuerpo
+
+
+def test_tolerancia_sin_contenido_en_la_ficha_no_inventa_una_comparacion():
+    fichas = [dict(FICHAS_E5[0], contenido_caja=None)]
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=10.0, kilos_enviados=210.0)],
+        fichas=fichas)
+
+    assert "por bulto y la ficha dice" not in cuerpo
+
+
+def test_tolerancia_avisa_tambien_cuando_mando_de_MENOS():
+    # Ficha de 15, cargó 9: 6 de menos. Un cajón a medio llenar también
+    # es un problema, y del lado que se factura.
+    cuerpo = _armar_e5([_renglon(
+        armado_el=datetime(2026, 8, 21, 13, 0), cantidad=10.0, kilos_enviados=90.0)])
+
+    assert "Cargaste 9 kg por bulto y la ficha dice 15" in cuerpo
+    assert "6 kg de menos por bulto" in cuerpo

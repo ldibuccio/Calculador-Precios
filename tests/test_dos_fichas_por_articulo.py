@@ -221,6 +221,7 @@ def test_armar_pedido_muestra_el_nombre_de_la_ficha_no_el_del_articulo():
             {"id": 1, "sucursal": "VL", "orden_compra": "123", "total_bultos_declarado": 8},
         ]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.listar_fichas_por_cliente", return_value=DOS_FICHAS),
     ):
@@ -243,6 +244,7 @@ def test_armar_pedido_sugiere_los_kilos_de_SU_ficha_no_los_de_la_otra():
             {"id": 1, "sucursal": "VL", "orden_compra": "123", "total_bultos_declarado": 8},
         ]),
         patch("app.main.listar_renglones_pedido", return_value=RENGLONES_ARMADO),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
         patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
         patch("app.main.listar_fichas_por_cliente", return_value=DOS_FICHAS),
     ):

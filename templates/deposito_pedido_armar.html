@@ -174,6 +174,30 @@
   .campo-kilos .unidad { font-size: 0.9rem; color: #666; }
   .ayuda-kilos { font-size: 0.78rem; color: #888; margin: 0.15rem 0 0; }
   .kilos-enviados { font-size: 0.9rem; color: #444; }
+  /* Aviso naranja: no hay cajas de esta ficha. Informa, no traba, así que
+     no compite con el botón de tildar. */
+  .aviso-sin-cajas {
+    margin: 0.5rem 0 0;
+    padding: 0.6rem 0.75rem;
+    background: #fff7ed;
+    border-left: 4px solid #ea580c;
+    border-radius: 6px;
+    color: #9a3412;
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
+  /* Aviso rojo: el kilaje por bulto se pasó de la tolerancia. Más fuerte
+     que el naranja porque el renglón YA salió con ese número. */
+  .aviso-tolerancia {
+    margin: 0.4rem 0 0;
+    padding: 0.6rem 0.75rem;
+    background: #fee2e2;
+    border-left: 4px solid #dc2626;
+    border-radius: 6px;
+    color: #991b1b;
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
   .marca-kilos-mano {
     display: inline-block;
     background: #fff7ed;
@@ -507,6 +531,16 @@
           <input type="hidden" name="cantidad_pedida" value="{{ r.cantidad }}">
           <div class="nombre">{{ r.nombre_venta }}</div>
           <div class="cantidad">{{ r.cantidad|numero }} bultos</div>
+          {# El pedido sale del stock de LA FICHA, no del artículo: que
+             haya bananas no quiere decir que haya cajas de Banana
+             Bolivia. SIN NÚMERO a propósito: esta pantalla es de operario
+             y el stock del sistema no puede viajar acá ni escondido (si
+             lo ve, arma contra el sistema en vez de contra el piso). Y no
+             traba nada: el piso es la verdad, y puede estar viendo cajas
+             que todavía nadie cargó como guía R. #}
+          {% if r.sin_cajas_de_la_ficha %}
+          <p class="aviso-sin-cajas">No hay cajas armadas de esta ficha. Fijate si hay que reprocesar antes de mandarlo.</p>
+          {% endif %}
           {# Lo que se carga es el kilaje POR BULTO (el que arma sabe que
              el cajón va con 16 kg): precargado con la ficha, editable.
              El TOTAL enviado lo calcula el server al tildar y acá se
@@ -567,6 +601,20 @@
           Mandó {{ r.kilos_enviados|numero }} kg{% if r.kilos_editados %} <span class="marca-kilos-mano">kilaje editado a mano</span>{% endif %}
           {% else %}<span class="sin-kilaje">sin kilaje cargado</span>{% endif %}
         </div>
+        {# Fuera de tolerancia. Reemplaza a "kilaje editado a mano" en vez
+           de apilarse: las dos dicen lo mismo con distinta fuerza. Por eso
+           este aviso DICE que lo cargó una persona — si no, se leería como
+           un error de cálculo del sistema, que es lo contrario de lo que
+           pasó. #}
+        {% if r.fuera_de_tolerancia %}
+        <p class="aviso-tolerancia">
+          Cargaste {{ r.fuera_de_tolerancia.por_bulto|numero }} kg por bulto y la ficha dice
+          {{ r.fuera_de_tolerancia.ficha|numero }}: son
+          {{ r.fuera_de_tolerancia.desvio|abs|numero }} kg
+          {% if r.fuera_de_tolerancia.desvio > 0 %}de más{% else %}de menos{% endif %} por bulto.
+          Si está bien, dejalo; si te equivocaste, destildá y cargalo de nuevo.
+        </p>
+        {% endif %}
       </div>
       <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
         <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
