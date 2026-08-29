@@ -77,6 +77,35 @@ bases estén marcadas.
 | `agregar_stock_inicial_a_consumos.sql` (arrastre de la etapa 2: el lote de stock inicial también puede CONSUMIRSE. La migración anterior lo dejó entrar pero no salir, y el primer reproceso normal después del corte reventaba sin guardar la guía) | ✅ 2026-08-28 (verificado: 4/4 OK; **68 consumos** intactos, coherente con las 36 guías R) | ✅ 2026-08-28 (verificado: 4/4 OK; **0 consumos**, coherente con las 0 guías R) |
 | `agregar_ficha_a_conteos.sql` (etapa 3 del modelo nuevo: el conteo físico dice de qué ficha es lo que contó; NULL después del corte = los bultos sueltos) | ✅ 2026-08-29 (verificado: 7/7 OK; **31 conteos**, 0 con ficha: todos pre-corte) | ✅ 2026-08-29 (verificado: 7/7 OK; **51 conteos**, 0 con ficha: todos pre-corte) |
 
+## Riesgos verificados contra producción y descartados
+
+Cosas que se sospecharon, se midieron en las dos bases y NO existen. Se
+anotan para que no se vuelvan a investigar desde cero.
+
+### Compras recepcionadas sin cantidad real — DESCARTADO 29/08/2026
+
+**La sospecha:** el detalle FIFO arma los lotes con
+`c.cantidad_cajones_real AS cantidad` para las compras `recepcionado`. Si
+alguna estuviera recepcionada con `cantidad_cajones_real` en NULL —una
+migrada de antes de que existiera Recepción, por ejemplo—, ese NULL llega
+a `float()` en `atribuir_costos_fifo` y **tira Guías R con un 500**, el
+mismo síntoma que el bug del `cliente_nombre` de esa misma fecha.
+
+Apareció al fabricar datos de prueba: la fila inventada tenía esa
+combinación y la pantalla se cayó. El flujo normal no la produce.
+
+**Medido en las dos bases el 29/08:**
+
+```sql
+select count(*) as recepcionadas_sin_cantidad_real
+from compras
+where estado = 'recepcionado' and cantidad_cajones_real is null;
+```
+
+**Frutamax 0, Palmala 0.** No hay ninguna, así que ese 500 no puede
+pasar. No se tocó código: endurecerlo sería protegerse de un caso que no
+existe, y el que lo lea después merece saber que se midió.
+
 ## Deuda pendiente de limpieza
 
 ### Vacíos del Puesto: el ajuste no dice a qué conteo pertenece
