@@ -479,6 +479,32 @@ propia fecha.
 Con eso, el freno pregunta lo único que necesita: **qué quedaba en cada
 lote a la fecha del reproceso**.
 
+### Otro argumento para el freno: hay costos que NO se pueden completar nunca
+
+Relevado el 29/08 al investigar el botón **"Completar costo"** de Guías R.
+
+Ese botón rellena `reprocesos_consumos.costo_por_bulto` con el
+`compras.importe` del lote del que salió cada consumo — solo donde está
+en NULL, sin pisar nunca un costo congelado. Sirve para el caso real: se
+reprocesó a la tarde consumiendo la compra de la mañana, que todavía no
+tenía precio; cuando el precio se carga, el botón cierra el costo.
+
+**Pero un consumo `sin_lote` tiene `compra_id` en NULL.** No salió de
+ninguna compra —son bultos que no existían— así que el `UPDATE` nunca lo
+alcanza. Ese botón **no puede completar un `sin_lote`, ni hoy ni nunca**,
+y mientras quede uno la guía se queda con `costo_total` en NULL para
+siempre.
+
+Verificado contra la base: con el precio de la compra cargado, el botón
+completa ese consumo y deja el `sin_lote` intacto; `costo_total` no se
+cierra.
+
+Es decir: **hoy el sistema deja crear una guía cuyo costo no se puede
+completar nunca, ni a mano ni automáticamente.** No es que falte una
+pantalla para arreglarlo — no hay nada que arreglar, el dato no existe.
+La única forma de que ese caso no aparezca es que la guía no se pueda
+crear, que es exactamente el freno.
+
 ### Lo que el freno NO resuelve, aunque se implemente bien
 
 **Trabar es una foto, no una garantía.** Los consumos se congelan al

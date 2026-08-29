@@ -16417,12 +16417,62 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     # El costo, TODO a la primera: $33.000 total, $1.650 por caja.
     assert "$33.000 total" in respuesta.text
     assert "$1.650 por caja de primera" in respuesta.text
-    # La guía sin precio en algún lote: COSTO INCOMPLETO, no un invento.
-    assert "COSTO INCOMPLETO" in respuesta.text
-    assert "De un ajuste (ej. stock inicial)" in respuesta.text
     # La anulada queda visible, marcada y sin botón de anular.
     assert "ANULADA" in respuesta.text
     assert respuesta.text.count("Anular guía") == 1
+    # Y la única sin costo de esta fixture es la ANULADA: su cartel y su
+    # detalle de lotes NO salen (ver los dos tests de abajo).
+    assert "COSTO INCOMPLETO" not in respuesta.text
+    assert "De un ajuste (ej. stock inicial)" not in respuesta.text
+
+
+def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
+    # El cartel tiene que seguir estando donde SÍ hay algo que hacer.
+    guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "COSTO INCOMPLETO" in cuerpo
+    assert "De un ajuste (ej. stock inicial)" in cuerpo
+    # Y el botón que lo resuelve.
+    assert "Completar costo" in cuerpo
+
+
+def test_guias_r_una_guia_ANULADA_no_grita_nada():
+    """En una anulada no hay nada que completar ni nada que opinar.
+
+    Lo tomado ya volvió a sus lotes y la primera salió del stock. El
+    cartel de COSTO INCOMPLETO gritaba sin ninguna acción detrás: el
+    botón "Completar costo" ya estaba escondido en las anuladas.
+    """
+    guia = dict(GUIAS_R_DE_PRUEBA[1], id=21,
+                anulado_el=datetime(2026, 8, 25, 17, 0), cliente_nombre="Día")
+    cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=cruces),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Sigue visible y marcada: no se esconde la guía, se esconde el ruido.
+    assert "Guía R21" in cuerpo
+    assert "ANULADA" in cuerpo
+    assert "Tomó 4 bultos" in cuerpo
+    # Nada de esto va en una anulada.
+    assert "COSTO INCOMPLETO" not in cuerpo
+    assert "CRUCE DE CLIENTE" not in cuerpo
+    assert "De un ajuste (ej. stock inicial)" not in cuerpo
+    assert "Completar costo" not in cuerpo
+    assert "Anular guía" not in cuerpo
 
 
 def test_anular_guia_r_vuelve_al_rango():

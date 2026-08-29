@@ -224,6 +224,14 @@
       <button type="submit">Guardar ficha</button>
     </form>
     {% endif %}
+    {# En una guía ANULADA no va NADA de esto: ni el cruce, ni el costo, ni
+       el detalle de lotes. Lo tomado ya volvió a sus lotes y la primera
+       salió del stock, así que no hay nada que completar ni nada que
+       opinar — y el botón "Completar costo" ya estaba escondido acá, con
+       lo cual el cartel gritaba sin ninguna acción detrás. Los consumos
+       siguen guardados como registro de la guía anulada: no se pierde
+       nada, solo deja de mostrarse donde no sirve. #}
+    {% if not g.anulado_el %}
     {% if cruces_por_guia.get(g.id) %}
     {# El cruce que delata la alerta de Auditoría: cajas de presentación
        equivocada. Aviso con datos — jamás traba. #}
@@ -249,6 +257,7 @@
       </div>
       {% endfor %}
     </div>
+    {% endif %}
     {% if not g.anulado_el and g.costo_total is none %}
     {# Rellena SOLO los costos que faltaban con precios ya cargados —
        jamás pisa un costo congelado. #}
