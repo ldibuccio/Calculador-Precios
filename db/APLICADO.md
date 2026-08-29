@@ -242,7 +242,7 @@ nombres esperados, el script se corta sin escribir nada.
 | Script | Frutamax | Palmala |
 |---|---|---|
 | `corte_frutamax_puesta_a_cero_y_carga.sql` (compensatorio por artículo calculado como −1 × las seis patas, los 18 movimientos de stock inicial, los 2 reprocesos iniciales y el `ficha_id` en NULL de las guías R pre-corte) | ✅ 2026-08-29 — **aplicado, pero con el incidente de abajo: terminó con error y escribió igual** | — no corresponde |
-| `corte_frutamax_verificador.sql` (las seis patas contra la foto aprobada; 12 verificaciones) | ✅ 2026-08-29 — es lo ÚNICO que respalda la carga | — no corresponde |
+| `corte_frutamax_verificador.sql` (las seis patas contra la foto aprobada; 12 verificaciones) | ❌ **NUNCA SE CORRIÓ** — también usa vistas y tablas temporales, así que habría fallado igual | — no corresponde |
 | `corte_frutamax_rollback.sql` (deshace la carga y devuelve las fichas desde el respaldo; se corta si ya hubo operación después del corte) | — no hizo falta | — no corresponde |
 
 ### Lo que pasó al correr el corte (29/08/2026) — leer antes de reusar estos scripts
@@ -261,10 +261,43 @@ problema del verificador. Era del **entorno**. La regla que sale de acá está e
 `CLAUDE.md`, sección "SQL para el editor de Supabase": nada de temporales, y
 todo lo que tenga que ser todo-o-nada adentro de un único `do $$ ... end $$`.
 
+### Qué respaldó el corte de verdad — y qué NO se verificó
+
+**El verificador de las 12 NUNCA SE CORRIÓ.** También usa vistas y tablas
+temporales, así que habría fallado por la misma razón que el script de carga.
+Queda escrito acá con todas las letras porque **decir "12/12" sobre una
+verificación que no existió es exactamente lo que dentro de seis meses hace
+confiar en un control que nunca pasó.**
+
+Lo que sí respaldó el corte fueron **dos consultas de una sola sentencia,
+armadas a mano en el chat** (una sentencia = el editor las corre bien):
+
+1. **Stock y conteos.** El stock artículo por artículo contra la foto, con las
+   seis patas, más los cuatro conteos: **22 cierres, 18 iniciales, 2
+   reprocesos, 0 guías pre-corte con ficha.** Todo OK.
+2. **La plata.** **531 bultos por $17.522.615,76**, **37 cajas por
+   $437.215,92**, y `bultos_tomados = 0` en los reprocesos iniciales. Todo OK.
+
+**LO QUE NO SE VERIFICÓ NUNCA** (las verificaciones 04, 05, 11 y 12 del
+verificador que no corrió):
+
+- **04** — que ningún artículo quede con **sueltos negativos**, que es el
+  síntoma de las cajas fantasma de una ficha.
+- **05** — las **cajas por ficha**: que solo la ficha 5 tenga 25 y la 7 tenga
+  12, y ninguna otra ficha tenga nada.
+- **11** — que **el FIFO arranque limpio**: que ningún lote viejo haya quedado
+  con resto.
+- **12** — que **ningún lote con resto haya quedado sin precio**.
+
+Las cuatro miran cosas que las dos consultas que sí se corrieron NO cubren: el
+stock por artículo puede dar exacto y aun así estar mal repartido entre fichas,
+o arrastrar un lote sin precio que ensucie el costo del primer reproceso.
+
 **DEUDA ABIERTA.** El corte se aplicó **sin la atomicidad que el script
-prometía**, así que la verificación posterior (12/12) fue lo único que lo
-respaldó. `corte_frutamax_puesta_a_cero_y_carga.sql` y
-`corte_frutamax_verificador.sql` **siguen escritos con temporales y con un
-`begin` que no protege nada**: hay que reescribirlos sin temporales **antes de
-que alguien los reuse** — por ejemplo para el corte de Palmala, que sigue
-pendiente. Tal como están hoy, volverían a fallar igual.
+prometía** y **sin las cuatro verificaciones de arriba**.
+`corte_frutamax_puesta_a_cero_y_carga.sql` y `corte_frutamax_verificador.sql`
+**siguen escritos con temporales y con un `begin` que no protege nada**: hay
+que reescribirlos sin temporales **antes de que alguien los reuse** — por
+ejemplo para el corte de Palmala, que sigue pendiente. Tal como están hoy,
+volverían a fallar igual. Cuando se reescriba el verificador, **se corre en
+Frutamax para cerrar el hueco de las cuatro**, aunque sea después del arranque.

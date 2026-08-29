@@ -1,5 +1,11 @@
 -- ############################################################################
--- ATENCIÓN — NO REUSAR ESTE SCRIPT COMO ESTÁ.
+-- ATENCIÓN — NO REUSAR ESTE SCRIPT COMO ESTÁ. NUNCA SE CORRIÓ.
+--
+-- Este verificador NO se ejecutó en el corte del 29/08/2026: usa vistas y
+-- tablas temporales y habría fallado igual que el script de carga. El corte
+-- se respaldó con dos consultas de UNA sola sentencia armadas a mano. Sus
+-- verificaciones 04, 05, 11 y 12 (sueltos negativos, cajas por ficha, y las
+-- dos del FIFO) SIGUEN SIN CORRERSE en Frutamax.
 --
 -- Se corrió en Frutamax el 29/08/2026 y TERMINÓ CON ERROR ESCRIBIENDO IGUAL
 -- ('relation "foto" does not exist'). El editor SQL de Supabase NO sostiene el

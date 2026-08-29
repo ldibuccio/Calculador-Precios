@@ -341,15 +341,22 @@ En orden, para el martes o miércoles:
    (directo contra pooler; timeouts de fallback IPv6). Los tres SQL de
    comparación de volumen, índices y conexiones siguen sin correr.
 
-5. **Reescribir los scripts del corte sin temporales** (`db/corte_frutamax_*`).
-   El corte se aplicó, pero el script **falló en el editor de Supabase y
-   escribió igual**: ahí `begin ... commit` no es atómico y las tablas y
-   vistas temporales no sobreviven de una sentencia a la siguiente. Terminó
-   bien por casualidad; la verificación posterior fue lo único que lo
-   respaldó. Los dos archivos quedaron con un cartel de "no reusar" arriba y
-   **hay que reescribirlos antes del corte de Palmala**, que sigue pendiente.
-   La regla que sale de acá está en `CLAUDE.md`. El incidente completo, en
-   `db/APLICADO.md`.
+5. **Reescribir los scripts del corte sin temporales, y correr el verificador
+   que nunca corrió** (`db/corte_frutamax_*`). El corte se aplicó, pero el
+   script **falló en el editor de Supabase y escribió igual**: ahí
+   `begin ... commit` no es atómico y las tablas y vistas temporales no
+   sobreviven de una sentencia a la siguiente. Terminó bien por casualidad.
+   **El verificador de las 12 nunca se corrió** —tiene el mismo defecto—, así
+   que el corte se respaldó con dos consultas de una sola sentencia armadas a
+   mano: stock por artículo contra la foto con las seis patas, los cuatro
+   conteos, y la plata. **Quedaron sin verificar las verificaciones 04, 05, 11
+   y 12**: sueltos negativos (el síntoma de las cajas fantasma), cajas por
+   ficha, que el FIFO arranque limpio, y que ningún lote con resto haya
+   quedado sin precio. Reescrito el verificador, **se corre en Frutamax para
+   cerrar ese hueco**, aunque sea después del arranque. Los dos archivos
+   quedaron con un cartel de "no reusar" arriba y **hay que reescribirlos
+   antes del corte de Palmala**, que sigue pendiente. La regla que sale de acá
+   está en `CLAUDE.md`. El incidente completo, en `db/APLICADO.md`.
 
 6. **La etiqueta de `cierre_modelo_viejo`** en `ETIQUETAS_MOVIMIENTO_STOCK`
    (`app/main.py`). Hoy el tipo nuevo se ve como texto crudo en Movimientos
