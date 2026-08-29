@@ -342,6 +342,72 @@ costear.
 del mes en curso) pertenece a la **carga retroactiva en
 Administración**, que todavía no está asignada a ninguna etapa.
 
+## Pendiente con nombre propio: el sistema no sabe en qué envase vino un bulto
+
+Relevado el 29/08/2026, al intentar implementar la regla del envase de la
+etapa 5. **La regla, como se definió, no se puede implementar hoy**, y no
+por una columna que falta sino porque el dato nunca se captura.
+
+La regla era: al armar, el envase del bulto tiene que ser el que la ficha
+manda — Cherry de 5 kg en un descartable de 7 kg pasa, Pepino de 4 kg en
+un torito de 18 kg nunca pasa.
+
+**Qué se encontró:**
+
+1. **`compras` no guarda el envase.** Guarda `contenido_por_cajon` y
+   `contenido_por_cajon_real`: **kilos por cajón, no el envase**. Ninguna
+   tabla fuera de fichas ata un `envase_id` a una compra, a un lote ni a
+   un bulto.
+
+2. **La única inferencia que existe es binaria y no se guarda.** En
+   `app/costeo.py`, `_envases_por_unidad_ponderado`: si la ficha es de
+   envase variable y el contenido de esa compra es menor o igual al de la
+   ficha, cuenta como descartable (cero cajas); si no, como caja chica.
+   Eso **no identifica un envase**: decide si sumar el costo de una caja.
+   Nunca resuelve a una fila de `envases`, no se persiste, y solo
+   distingue dos casos.
+
+3. **Hay dos universos de envases y no están conectados.** `envases` es
+   el catálogo de **venta**, el que eligen las fichas: solo `nombre` y
+   `activo`, sin capacidad. `tipos_envase_puesto` son los **cajones
+   físicos por proveedor del puesto**, que carga la cajera: existen solo
+   para el circuito de Vacíos, se cuentan en agregado por proveedor, y
+   nunca se atan a una compra. Tampoco tienen capacidad. O sea: el cajón
+   físico se cuenta para devolverle vacíos al proveedor, pero jamás queda
+   asociado a la compra que vino adentro.
+
+4. **Para `envase_variable`, el envase de la ficha ya está declarado como
+   no confiable por diseño.** El comentario de esa columna dice que
+   cuando es true el envase de la ficha es "solo referencia/default: se
+   decide por compra". Mango y cherry —los casos que motivaron la regla—
+   son justamente esos.
+
+**Por qué no alcanza con agregarle capacidad a `envases`.** Chequear la
+ficha contra sí misma (que el envase que declara pueda contener el
+kilaje que declara) es **higiene del catálogo, no control de salida**: no
+mira el bulto real, así que no impide que salga pepino de un torito de
+18 kg. Es otra cosa, no una versión más chica de la regla, y no se hizo
+pasar por la etapa 5.
+
+**Capturar el envase de verdad es una etapa propia**, con al menos tres
+frentes:
+
+- **Dato nuevo en Recepción**: es cuando el depósito ve el cajón físico.
+- **Propagación por el FIFO**: los lotes se consumen por artículo, así
+  que un bulto armado puede venir de varias compras con envases
+  distintos, y hoy el lote no arrastra ningún envase.
+- **Decisión sobre el reproceso**: al rearmar, el envase cambia por
+  definición, así que el envase del lote de salida no es el de entrada.
+
+Más el backfill de las fichas de envase variable, que hoy no tienen un
+envase confiable del cual partir.
+
+**Mientras tanto**, la etapa 5 va sin la regla del envase (ver
+"Decisiones confirmadas", punto 9): un descuento entre formatos con
+kilaje parecido puede colarse, y se acepta — es muchísimo menos malo que
+descontar de cualquier bulto del artículo sin mirar nada, que es lo que
+se hacía antes.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
@@ -448,3 +514,27 @@ Administración**, que todavía no está asignada a ninguna etapa.
    la del pedido, y estos dos renglones dejan de aparecer por una
    sustitución legítima. Hasta entonces, la atribución por el renglón
    es lo correcto y no hay que "arreglarla" antes de tiempo.
+
+9. **La etapa 5 va SIN la regla del envase** (confirmado el 29/08/2026):
+
+   La regla original —que al armar el envase del bulto sea el que la
+   ficha manda— **no se puede implementar**: el sistema nunca captura en
+   qué envase vino un bulto (ver el pendiente con nombre propio, más
+   arriba). Y la alternativa de chequear la ficha contra sí misma es
+   higiene del catálogo, no control de salida: no mira el bulto real, así
+   que no impide que salga pepino de un torito de 18 kg. Es otra cosa, y
+   no se hace pasar por esta etapa.
+
+   La etapa 5 implementa **solo lo que sí se puede hoy**:
+
+   - El pedido descuenta del stock de **la ficha**, no del artículo. Es
+     lo grueso, y no depende del envase.
+   - La **tolerancia de ±3 kg por BULTO** (no por renglón), comparando el
+     kilaje declarado al armar contra el `contenido_caja` de la ficha.
+     **Avisa, no traba.**
+
+   **Lo que queda sin cubrir, aceptado a sabiendas**: sin la comparación
+   de envase, un descuento entre dos formatos con kilaje parecido se
+   puede colar. Se acepta porque es muchísimo menos malo que lo de
+   antes, donde el pedido descontaba de cualquier bulto del artículo sin
+   mirar nada.
