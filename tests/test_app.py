@@ -17981,3 +17981,19 @@ def test_tolerancia_avisa_tambien_cuando_mando_de_MENOS():
 
     assert "Cargaste 9 kg por bulto y la ficha dice 15" in cuerpo
     assert "6 kg de menos por bulto" in cuerpo
+
+
+def test_deposito_ordena_los_botones_como_pasan_las_cosas():
+    """Retirar → recepcionar → ingresar (si algo falló) → armar → stock.
+
+    El orden es el del día, no el de los módulos: Recepción estaba primera
+    de cuando la pantalla se armó por dónde vivía cada ruta, pero lo
+    primero que hace el depósito es traer la mercadería del puesto.
+    """
+    respuesta = cliente.get("/deposito")
+    cuerpo = respuesta.text.split("</style>")[-1]
+
+    orden = ["Retirar Mercadería", "Recepción Compras", "Ingresar Mercadería",
+             "Armar Pedido", "Stock"]
+    posiciones = [cuerpo.index(t) for t in orden]
+    assert posiciones == sorted(posiciones), dict(zip(orden, posiciones))

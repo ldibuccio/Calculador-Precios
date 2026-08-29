@@ -57,9 +57,13 @@
 
   {% include "_banner_alertas.html" %}
 
+  {# En el orden en que pasan las cosas, no por módulo: se retira la
+     mercadería del puesto, se la recepciona en el depósito, y si algo
+     falló se la ingresa a mano. Recién ahí se arma el pedido, y al final
+     está el stock, que es donde se cuenta. #}
   <div class="tarjeta">
-    <a class="boton" href="/deposito/recepcion">Recepción Compras</a>
     <a class="boton" href="/logistica/retiro/Pases?origen=deposito">Retirar Mercadería</a>
+    <a class="boton" href="/deposito/recepcion">Recepción Compras</a>
     <a class="boton" href="/deposito/ingresar">Ingresar Mercadería</a>
     <a class="boton" href="/deposito/pedido">Pedido</a>
     <a class="boton" href="/deposito/pedido/armar">Armar Pedido</a>
