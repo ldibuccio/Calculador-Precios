@@ -62,9 +62,9 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "deposito" %}
+  {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Cotejo de Stock" %}
-  {% set barra_atras = "/deposito/stock" %}
+  {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
   <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos).</p>
@@ -103,6 +103,6 @@
   </div>
   {% endif %}
 
-  <a class="volver" href="/deposito/stock">Volver a Stock</a>
+  <a class="volver" href="/administracion">Volver a Administración</a>
 </body>
 </html>
