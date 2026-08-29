@@ -380,6 +380,97 @@ costear.
 del mes en curso) pertenece a la **carga retroactiva en
 Administración**, que todavía no está asignada a ninguna etapa.
 
+## Pendiente con nombre propio: el reproceso no traba por stock ni deja ver de qué lotes toma
+
+Relevado el 29/08/2026, después de que una guía R real tomara 300 bultos
+de un artículo que no los tenía.
+
+**Por qué se perdió**: el plan E0–E6 se armó sobre tablas y pantallas, y
+estas dos piezas no son ni una cosa ni la otra. E1 agregó `ficha_id` a
+`reprocesos`, pero ninguna etapa dijo "el reproceso toma lotes reales".
+Quedó afuera de todas.
+
+### El reproceso es la excepción a "avisa, no traba"
+
+En todo el sistema la regla es avisar y no trabar: el conteo físico es
+declarativo, el armado de pedido avisa por tolerancia y por falta de
+cajas, la merma no se discute. El piso es la verdad.
+
+**El reproceso es distinto, y por una razón concreta: es el único acto
+del operario que CONSUME LOTES Y CONGELA COSTO.** Los demás declaran un
+hecho que se corrige solo —el próximo conteo pisa al anterior, un renglón
+se destilda— o registran una salida que realmente ocurrió. El reproceso,
+en cambio, escribe `reprocesos_consumos` con el costo de cada lote
+congelado en ese instante, y ese costo es el que después alimenta el
+costo de la primera, la rentabilidad real y el precio de las cajas que
+salgan de ahí. Un número tomado de más no queda como una diferencia a la
+vista: queda como un consumo `sin_lote` sin precio posible, que deja la
+guía con costo incompleto **para siempre** — no hay compra a la que ir a
+buscarle el importe, porque esos bultos no existieron.
+
+Por eso acá trabar no contradice el criterio: lo que se protege no es el
+stock, es el costo.
+
+### Lo que hay que resolver, con lo que ya se relevó
+
+**1. Trabar por stock en `crear_reproceso`.** Ningún flujo depende de que
+`sin_lote` se genere: es un síntoma, no una entrada de nada. Pero hay
+**dos riesgos reales** que resolver antes:
+
+- **El FIFO no mira la fecha de la operación.** `_entradas_y_salidas_stock`
+  usa el estado ACTUAL, sin filtro de fecha, y la pantalla acepta cargar
+  un reproceso con `fecha_operacion` pasada (solo rechaza futuras). Un
+  reproceso de ayer cargado hoy, cuyas cajas ya salieron en pedidos, hoy
+  queda como `sin_lote` y mañana chocaría contra una pared. **Trabar sin
+  resolver esto rompe la carga con demora**, que es normal en el depósito.
+- **Trabar es una foto, no una garantía.** Los consumos se congelan al
+  cargar, pero los lotes que consumieron se pueden corregir después (una
+  recepción editada a la baja). Una guía que pasó el chequeo puede quedar
+  sobreconsumida igual. El freno tapa la puerta de entrada, no cierra el
+  agujero.
+
+**2. Mostrar el desglose de lotes y dejarlo editar.** Son dos cosas de
+tamaño muy distinto:
+
+- **Mostrarlo es exponer lo que ya se calcula.** `crear_reproceso` ya
+  corre `repartir_fifo` y arma la lista de consumos antes de insertar. Se
+  extrae esa parte a una función pura y se la llama desde un preview. Es
+  barato.
+- **Editarlo NO es exponer: es un camino de escritura nuevo.** Hoy el
+  server recalcula el FIFO e ignora cualquier cosa que la pantalla diga
+  sobre lotes. Aceptar un reparto editado exige validarlo (cada lote con
+  resto suficiente, la suma igual a lo tomado, lotes del artículo
+  correcto, ninguno repetido) y resolver la concurrencia: entre el
+  preview y el guardar, otro reproceso o un pedido pueden haber consumido
+  esos lotes, así que el server tiene que revalidar al escribir y
+  devolver una propuesta fresca en vez de guardar lo viejo.
+- **Y las dos chocan con la regla de operario.** El desglose son nombres
+  de proveedor, fechas y cantidades: números del sistema. Hoy Reproceso
+  filtra por stock **sin mostrar la cifra**, a propósito. Mostrar el
+  desglose obliga a decidir una de dos: el reproceso deja de ser pantalla
+  de operario, o el desglose vive en Administración. Además, "nadie elige
+  lote — lo reparte el sistema" está escrito en el docstring de
+  `crear_reproceso` y **impreso en la pantalla de Stock por Guía**:
+  dejarlo editar es revertir eso, no ajustarlo.
+
+**3. `sin_lote` no desaparece: se angosta.** Son DOS cosas distintas con
+el mismo nombre, y solo una se apaga al trabar:
+
+- **El consumo guardado** (`reprocesos_consumos.origen = 'sin_lote'`) lo
+  escribe únicamente `crear_reproceso`. Con el freno deja de generarse
+  **para las guías nuevas**, pero **sigue existiendo para las viejas** —
+  Frutamax ya tiene guías con esos consumos. `completar_costo_reproceso`
+  y la pantalla de Guías R tienen que seguir tratándolo.
+- **El sobrante calculado** (`repartir_fifo(...)["sin_lote"]`, en
+  `core/stock.py`) es el resto de CUALQUIER salida que ningún lote cubre:
+  renglones armados, mermas, ajustes negativos. Ese **sigue igual**,
+  porque armar un pedido no traba (la etapa 5 avisa y nada más).
+  Alimenta "Salidas sin lote" en Stock del Sistema, el cartel de Stock
+  por Guía, y el motivo `sin_lote` de la Rentabilidad Real.
+
+O sea: trabar el reproceso lleva `sin_lote` de dos fuentes a una. El
+concepto y sus pantallas se quedan.
+
 ## Pendiente con nombre propio: el sistema no sabe en qué envase vino un bulto
 
 Relevado el 29/08/2026, al intentar implementar la regla del envase de la
