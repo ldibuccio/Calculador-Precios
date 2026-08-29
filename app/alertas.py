@@ -20,10 +20,15 @@ calculando" no pueden verse iguales. Por eso el que muestra compara
 calculada_el contra el reloj, cada vez.
 
 EL VENCIMIENTO ES MÁS LARGO QUE EL RECÁLCULO, A PROPÓSITO
-Se recalcula cada 12 horas y se marca vencida a las 18: una corrida perdida no
+Se recalcula cada 6 horas y se marca vencida a las 9: una corrida perdida no
 dispara el aviso, dos sí. Mismo criterio que la alerta de casilla, que tampoco
 grita al primer fallo — una alerta que grita por nada se deja de mirar en una
 semana.
+
+El vencimiento acompaña al recálculo y no es un número suelto: si se cambia
+uno hay que mover el otro, o la regla de "una perdida no, dos sí" se rompe en
+silencio. Con recálculo 6 y vencimiento 18 harían falta TRES corridas perdidas
+para que el banner avise que la foto está vieja.
 """
 
 import logging
@@ -41,8 +46,9 @@ from app.db import (
 logger = logging.getLogger(__name__)
 
 # Cada cuánto se recalcula, y a partir de cuándo la foto se considera vencida.
-HORAS_RECALCULO = 12
-HORAS_VENCIMIENTO = 18
+# El vencimiento va entre una y dos corridas: una perdida no avisa, dos sí.
+HORAS_RECALCULO = 6
+HORAS_VENCIMIENTO = 9
 
 
 @dataclass(frozen=True)

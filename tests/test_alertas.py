@@ -193,9 +193,15 @@ def test_pasadas_las_horas_de_recalculo_hay_que_recalcular():
     assert hay_que_recalcular([_fila(calculada_el=vieja)], AHORA) is True
 
 
-def test_el_vencimiento_es_mas_largo_que_el_recalculo():
-    """A propósito: una corrida perdida no dispara el aviso, dos sí."""
-    assert HORAS_VENCIMIENTO > HORAS_RECALCULO
+def test_el_vencimiento_cae_entre_una_y_dos_corridas():
+    """Una corrida perdida no dispara el aviso, dos sí.
+
+    No alcanza con que el vencimiento sea MAYOR que el recálculo: si es
+    más del doble hacen falta tres corridas perdidas para que el banner
+    avise, y la regla se rompe en silencio al cambiar solo uno de los dos
+    números.
+    """
+    assert HORAS_RECALCULO < HORAS_VENCIMIENTO <= 2 * HORAS_RECALCULO
 
 
 # ---------------------------------------------------------------------------
