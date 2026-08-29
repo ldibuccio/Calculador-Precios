@@ -18029,3 +18029,23 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
              "Armar Pedido", "Stock"]
     posiciones = [cuerpo.index(t) for t in orden]
     assert posiciones == sorted(posiciones), dict(zip(orden, posiciones))
+
+
+def test_stock_por_guia_nombra_los_bultos_tomados_por_guias_R_en_las_salidas():
+    """total_salidas suma CUATRO cosas, no tres.
+
+    El texto se escribió cuando los reprocesos no existían y nombraba solo
+    pedidos, mermas y ajustes. Desde que existen, los bultos tomados para
+    armar cajas quedaban adentro del número sin figurar en ningún lado:
+    quien tomó 300 bultos para una guía R no los encontraba y creía que el
+    sistema los había perdido.
+    """
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Redondo"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 648.0, [])),
+    ):
+        respuesta = cliente.get("/administracion/stock/sistema/1")
+
+    cuerpo = " ".join(respuesta.text.split("</style>")[-1].split())
+    assert "Salieron 648 bultos en total" in cuerpo
+    assert "bultos tomados por guías R" in cuerpo

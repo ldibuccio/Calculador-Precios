@@ -94,7 +94,13 @@
 
   <div class="resumen {% if stock < 0 %}negativo{% endif %}">
     <div class="numero">{{ articulo.nombre }}: {{ stock|numero }} bultos</div>
-    <div class="detalle">Salieron {{ total_salidas|numero }} bultos en total (armado de pedidos, mermas y ajustes negativos).</div>
+    {# Los cuatro conceptos que suma total_salidas, no tres: el texto se
+       escribió cuando los reprocesos todavía no existían, y desde que
+       existen los bultos que se toman para armar cajas quedaban adentro
+       del número sin estar nombrados en ningún lado. Alguien que tomó 300
+       bultos para una guía R no los encontraba. #}
+    <div class="detalle">Salieron {{ total_salidas|numero }} bultos en total: armado de pedidos,
+      bultos tomados por guías R, mermas y ajustes negativos.</div>
   </div>
 
   {% if sin_lote %}
