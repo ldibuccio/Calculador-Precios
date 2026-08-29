@@ -68,6 +68,11 @@
 
   <div class="tarjeta">
     <h2>Pedidos</h2>
+    {# La URL sigue siendo /deposito/* porque el rename de esas 19 rutas es
+       la fase 3 de la etapa 0, que está diferida (ver db/APLICADO.md). El
+       botón se muda igual: la navegación es lo que usa la persona, y no
+       tiene por qué esperar al renombre. #}
+    <a class="boton" href="/deposito/pedido/cargar">Cargar Pedido</a>
     <a class="boton" href="/administracion/pedidos/buscar">Buscar Pedidos</a>
   </div>
 

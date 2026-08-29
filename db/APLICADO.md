@@ -185,6 +185,15 @@ Se difirió a pedido de Lionel el 28/08 para no comerse el sábado y llegar
 con las etapas 2 y 3 del modelo nuevo antes del lunes de corte. No bloquea
 nada: la navegación ya quedó coherente con las fases 1 y 2.
 
+**Mudado a mano el 29/08, antes de la fase 3**: el botón **Cargar
+Pedido** pasó del hub de Depósito a la tarjeta Pedidos de Administración
+(el depósito arma lo que ya está cargado; transcribir el mail del cliente
+es tarea de administración). La **URL sigue siendo `/deposito/pedido/cargar`**,
+porque renombrarla es justamente el trabajo de la fase 3. Cuando se
+retome, esa ruta y su `/leer` y `/confirmar` van del lado de
+Administración, y sus dos pantallas (`deposito_pedido_cargar.html` y
+`deposito_pedido_revision.html`) ya tienen la barra apuntando ahí.
+
 ## Pasos manuales que NO son SQL (por base)
 
 | Paso | Frutamax | Palmala |

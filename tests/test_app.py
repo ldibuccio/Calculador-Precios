@@ -12318,10 +12318,36 @@ def test_ver_deposito_muestra_los_accesos_a_pedido():
 
     assert respuesta.status_code == 200
     assert 'href="/deposito/pedido"' in respuesta.text
-    assert 'href="/deposito/pedido/cargar"' in respuesta.text
+    assert 'href="/deposito/pedido/armar"' in respuesta.text
     # Buscar Pedidos se mudó a Administración: es consulta, no operación.
     assert "/administracion/pedidos/buscar" not in respuesta.text
     assert "Buscar Pedidos" not in respuesta.text
+    # Y Cargar Pedido también: el depósito arma lo que ya está cargado, no
+    # transcribe el mail del cliente.
+    assert "Cargar Pedido" not in respuesta.text
+
+
+def test_administracion_tiene_cargar_pedido_en_la_tarjeta_de_pedidos():
+    with patch("app.main._banner_alertas", return_value=None):
+        respuesta = cliente.get("/administracion")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert 'href="/deposito/pedido/cargar"' in cuerpo
+    # Va en Pedidos, junto a Buscar, y no en otra tarjeta.
+    pedidos = cuerpo.split("<h2>Pedidos</h2>")[1].split("</div>")[0]
+    assert "Cargar Pedido" in pedidos
+    assert "Buscar Pedidos" in pedidos
+
+
+def test_la_pantalla_de_cargar_pedido_vuelve_a_ADMINISTRACION():
+    # Si el botón se muda pero la barra no, el atrás devuelve a un Depósito
+    # donde ese botón ya no está — el mismo resto que dejó la fase 2.
+    with patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR):
+        respuesta = cliente.get("/deposito/pedido/cargar")
+
+    assert respuesta.status_code == 200
+    assert 'href="/deposito"' not in respuesta.text
+    assert "/administracion" in respuesta.text
 
 
 def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
