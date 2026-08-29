@@ -116,6 +116,10 @@
     text-decoration: none;
   }
   form.enlinea { display: inline; }
+  /* La barra de navegación es sticky y mide unos 60px: sin esto, el salto
+     al ancla deja el aviso de "guardado" JUSTO DEBAJO de la barra, tapado.
+     Se carga a ciegas, que es lo que el ancla venía a evitar. */
+  #carga { display: block; scroll-margin-top: 4.5rem; }
 </style>
 </head>
 <body>
@@ -228,9 +232,9 @@
   <div class="tarjeta">
     <h2>Lo ya cargado</h2>
     <div class="total">
-      <span><span class="cifra">{{ "%g"|format(cargado.total_bultos) }}</span>
+      <span><span class="cifra">{{ cargado.total_bultos|numero }}</span>
         <span class="rotulo">bultos</span></span>
-      <span><span class="cifra">${{ "{:,.2f}".format(cargado.total_pesos)|replace(",", "@")|replace(".", ",")|replace("@", ".") }}</span>
+      <span><span class="cifra">{{ cargado.total_pesos|moneda }}</span>
         <span class="rotulo">en total</span></span>
     </div>
 
@@ -240,9 +244,9 @@
       <div class="renglon">
         <div class="que">
           <div class="nombre">{{ fila.articulo_nombre }}</div>
-          <div class="detalle">{{ "%g"|format(fila.cantidad|float) }} bultos × ${{ "%g"|format(fila.costo_por_bulto|float) }}</div>
+          <div class="detalle">{{ fila.cantidad|numero }} bultos × {{ fila.costo_por_bulto|moneda }}</div>
         </div>
-        <div class="plata">${{ "%g"|format(fila.cantidad|float * fila.costo_por_bulto|float) }}</div>
+        <div class="plata">{{ (fila.cantidad|float * fila.costo_por_bulto|float)|moneda }}</div>
         <form class="enlinea" method="post" action="/administracion/stock/inicial/anular">
           <input type="hidden" name="clase" value="sueltos">
           <input type="hidden" name="renglon_id" value="{{ fila.id }}">
@@ -263,10 +267,10 @@
           <div class="nombre">{{ fila.ficha_nombre or fila.articulo_nombre }}</div>
           <div class="detalle">
             {% if fila.cliente_nombre %}{{ fila.cliente_nombre }} · {% endif %}Guía R{{ fila.id }} ·
-            {{ "%g"|format(fila.bultos_primera|float) }} cajas × ${{ "%g"|format(fila.costo_por_bulto_primera|float) }}
+            {{ fila.bultos_primera|numero }} cajas × {{ fila.costo_por_bulto_primera|moneda }}
           </div>
         </div>
-        <div class="plata">${{ "%g"|format(fila.bultos_primera|float * fila.costo_por_bulto_primera|float) }}</div>
+        <div class="plata">{{ (fila.bultos_primera|float * fila.costo_por_bulto_primera|float)|moneda }}</div>
         <form class="enlinea" method="post" action="/administracion/stock/inicial/anular">
           <input type="hidden" name="clase" value="armadas">
           <input type="hidden" name="renglon_id" value="{{ fila.id }}">

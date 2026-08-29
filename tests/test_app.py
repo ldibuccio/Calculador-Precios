@@ -17407,6 +17407,9 @@ def test_stock_inicial_sueltos_guarda_con_la_fecha_de_corte_y_vuelve_al_mismo_ar
     # todo: son muchos renglones seguidos.
     assert "articulo_id=7" in respuesta.headers["location"]
     assert respuesta.headers["location"].endswith("#carga")
+    # El importe del aviso se escribe igual que el del listado: $1.500, no
+    # $1500. Verlos distintos en la misma pantalla hace dudar del número.
+    assert "%241.500" in respuesta.headers["location"]
 
 
 def test_stock_inicial_sueltos_sin_costo_da_400_y_no_guarda():
@@ -17509,12 +17512,12 @@ def test_stock_inicial_muestra_lo_cargado_con_el_total_de_las_dos_formas():
 
     cuerpo = respuesta.text.split("</style>")[-1]
     # Para saber por dónde va y no cargar dos veces lo mismo.
-    assert "40 bultos × $1500" in cuerpo
-    assert "20 cajas × $2200" in cuerpo
+    assert "40 bultos × $1.500" in cuerpo
+    assert "20 cajas × $2.200" in cuerpo
     assert "Banana Ecuador" in cuerpo
     # El total, de las dos formas juntas.
     assert "60</span>" in cuerpo
-    assert "$104.000,00" in cuerpo
+    assert "$104.000" in cuerpo
 
 
 def test_stock_inicial_anular_pasa_la_clase_y_vuelve_al_mismo_articulo():
@@ -17547,3 +17550,27 @@ def test_administracion_tiene_el_boton_del_stock_inicial():
         respuesta = cliente.get("/administracion")
 
     assert 'href="/administracion/stock/inicial"' in respuesta.text
+
+
+def test_stock_inicial_los_importes_grandes_no_salen_en_notacion_cientifica():
+    """120 bultos a $8.500 son más de un millón, y ahí es donde se rompía.
+
+    La primera versión formateaba a mano con %g y mostraba "$1.02e+06" en
+    la columna de plata: el número que hay que mirar para saber si la
+    carga va bien, ilegible justo cuando la carga ya avanzó.
+    """
+    cargado = {
+        "sueltos": [{"id": 1, "articulo_id": 7, "articulo_nombre": "Tomate Redondo",
+                     "cantidad": 120, "costo_por_bulto": 8500,
+                     "fecha_operacion": date(2026, 8, 31), "creado_en": None}],
+        "armadas": [],
+        "total_bultos": 120,
+        "total_pesos": 1020000.0,
+    }
+    respuesta = _pantalla_stock_inicial(cargado=cargado)
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "e+" not in cuerpo
+    assert "$1.020.000" in cuerpo
+    # Y el detalle usa el mismo formato que el total: $8.500, no $8500.
+    assert "120 bultos × $8.500" in cuerpo

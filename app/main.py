@@ -6616,7 +6616,7 @@ def cargar_stock_inicial_sueltos(
     return _volver_a_stock_inicial(
         articulo["id"],
         aviso=(f"Cargados {_formatear_numero(bultos_valor)} bultos sueltos de {articulo['nombre']} "
-               f"a ${_formatear_numero(costo_valor)} cada uno."),
+               f"a {_formatear_moneda(costo_valor)} cada uno."),
     )
 
 
@@ -6673,7 +6673,7 @@ def cargar_stock_inicial_armadas(
     return _volver_a_stock_inicial(
         articulo["id"],
         aviso=(f"Cargadas {_formatear_numero(cajas_valor)} cajas armadas de {ficha['nombre']} "
-               f"a ${_formatear_numero(costo_valor)} cada una."),
+               f"a {_formatear_moneda(costo_valor)} cada una."),
     )
 
 
