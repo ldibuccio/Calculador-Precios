@@ -303,6 +303,45 @@ su propio historial de descuento/utilidad y sus propios Envases (con su
 propio historial de costo); Fichas de logística conecta un Artículo con un
 Cliente y el Envase que usa.
 
+## El plan del modelo nuevo (E0–E6)
+
+Aprobado el 28/08/2026 **con el orden tal cual**, y anotado acá el
+29/08 porque hasta entonces solo vivía en el chat: se perdió una vez y
+frenó el arranque de una etapa. El orden no es de conveniencia, es de
+dependencia — cada una necesita que la anterior exista.
+
+| # | Qué | Estado |
+|---|-----|--------|
+| **E0** | Rename Facturación → Administración + reordenamiento de navegación | Fases 1 y 2 y el "resto" (los botones de atrás) **en main**. **Fase 3 diferida**: partir `/deposito/pedido`. |
+| **E1** | `ficha_id` en `reprocesos` + "sin asignar" explícito | **En main** |
+| **E2** | Fecha de corte (31/08/2026) y stock inicial con tipo propio | **En main** |
+| **E3** | `conteos_stock` con `ficha_id`; Stock Físico y Cotejo por porción | **En main** |
+| **E4** | El FIFO que nunca consume un lote posterior a la salida | Pendiente, **a propósito después del lunes** |
+| **E5** | El pedido descuenta del formato de la ficha, no del artículo, con la tolerancia | En curso |
+| **E6** | Alerta de reprocesos sin asignar + advertencia en Gerencia | Pendiente |
+
+**E1 es la piedra angular** y por eso va primera: sin saber a qué ficha
+fueron las cajas de una guía R no existe el número contra el cual
+comparar, y E3 no se puede hacer.
+
+**E4 va después del lunes a propósito.** Toca `atribuir_costos_fifo`
+(`core/costo_real.py`) y `repartir_fifo` (`core/stock.py`) para que el
+FIFO nunca consuma un lote posterior a la salida. Eso **mueve números**,
+y con datos viejos adentro no se puede distinguir el arreglo de la
+basura previa: haría falta decidir si un cambio es la corrección o el
+ruido de lo que ya estaba mal. Con el corte pasado, cualquier cambio que
+se vea es el arreglo. No necesita migración.
+
+**E6** cuenta **solo los reprocesos posteriores al 31/08/2026**. Si
+contara todos, Frutamax nacería con 36 casos que nadie puede resolver, y
+una alerta que arranca en rojo permanente es una alerta que se deja de
+mirar. Incluye la advertencia en Gerencia con el número de bultos sin
+costear.
+
+**Lo que NO es una etapa:** la ventana de 10 días (diez días y dentro
+del mes en curso) pertenece a la **carga retroactiva en
+Administración**, que todavía no está asignada a ninguna etapa.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
