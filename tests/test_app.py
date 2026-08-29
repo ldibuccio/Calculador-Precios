@@ -17247,11 +17247,16 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
     """
     guias = [dict(GUIAS_R_DE_PRUEBA[0], id=2, articulo_id=5, ficha_id=None,
                   ficha_nombre=None, anulado_el=None)]
-    fichas = [{"id": 901, "articulo_id": 5, "cliente_nombre": "Día",
+    # Las MISMAS claves que devuelve listar_fichas_de_todos_los_clientes:
+    # cliente_id, no cliente_nombre. La fixture vieja traía un
+    # cliente_nombre que esa consulta nunca devolvió, y por eso los tests
+    # pasaban mientras la pantalla real tiraba 500 en producción.
+    fichas = [{"id": 901, "articulo_id": 5, "cliente_id": 1,
                "nombre_cliente": "Banana Bolivia", "articulo_nombre": "Banana"}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
@@ -17262,6 +17267,9 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
     # La caja y la excepción NO comparten grupo.
     assert cuerpo.index("Banana Bolivia") < cuerpo.index('label="Si no sabés"')
     assert "Sin asignar" in cuerpo
+    # La opción dice de qué cliente es la ficha: dos fichas con el mismo
+    # nombre de dos clientes distintos serían indistinguibles.
+    assert "Banana Bolivia (Día)" in cuerpo
 
 
 def test_una_guia_anulada_no_ofrece_asignar_ficha():

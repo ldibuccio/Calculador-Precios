@@ -7635,11 +7635,25 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
         )
 
     # Para completar la ficha de una guía sin asignar: las fichas de ESE
-    # artículo, cualquiera sea el cliente. Una consulta sola.
+    # artículo, cualquiera sea el cliente. Dos consultas: las fichas y los
+    # nombres de los clientes.
+    #
+    # El nombre del cliente NO viene con la ficha —
+    # listar_fichas_de_todos_los_clientes trae cliente_id y nada más— y
+    # leerlo de ahí tiraba la pantalla entera con un KeyError apenas
+    # hubiera una ficha cargada. Se resuelve con el mismo mapa que ya usan
+    # las otras pantallas que necesitan el nombre.
+    try:
+        nombres_clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+        fichas = listar_fichas_de_todos_los_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
     fichas_por_articulo: dict = {}
-    for ficha in listar_fichas_de_todos_los_clientes():
+    for ficha in fichas:
+        cliente = nombres_clientes.get(ficha["cliente_id"], "cliente sin nombre")
         fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(
-            {"id": ficha["id"], "nombre": f"{_nombre_de_ficha(ficha)} ({ficha['cliente_nombre']})"}
+            {"id": ficha["id"], "nombre": f"{_nombre_de_ficha(ficha)} ({cliente})"}
         )
     for fichas in fichas_por_articulo.values():
         fichas.sort(key=lambda f: f["nombre"])
