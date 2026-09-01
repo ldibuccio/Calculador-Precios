@@ -193,6 +193,7 @@ from app.db import (
     listar_ajustes_vacios_por_rango,
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
+    listar_articulos_para_reproceso,
     contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
@@ -7402,14 +7403,14 @@ def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
 
 def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
     try:
-        # El selector lista SOLO los artículos con stock disponible, POR
-        # NOMBRE, SIN cantidades: saber que "hay tomate" no es un número
+        # El selector lista los artículos que se pueden reprocesar, POR
+        # NOMBRE y SIN cantidades: saber que "hay tomate" no es un número
         # del sistema — los números no viajan a la pantalla del operario.
-        con_stock = [
-            {"id": f["articulo_id"], "nombre": f["nombre"]}
-            for f in stock_deposito_por_articulo()
-            if f["stock"] > 0
-        ]
+        # El filtro mira el total del artículo O sus bultos sueltos: el
+        # total baja también cuando salen cajas ya armadas, así que un
+        # artículo con la pila suelta intacta desaparecía del selector
+        # justo cuando había que cargar la guía R que lo explicaba.
+        con_stock = listar_articulos_para_reproceso()
         clientes = listar_clientes()
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
         fichas_elegibles = _fichas_por_cliente_y_articulo()
