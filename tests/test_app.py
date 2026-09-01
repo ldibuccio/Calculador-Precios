@@ -16168,13 +16168,18 @@ def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
 # --- Reproceso (tanda 1): pantalla de operario y Guías R ---
 
 
-def _get_reproceso(articulos_stock=None, fichas=None):
-    # Las fichas ahora se piden TODAS de una y cada una dice de qué cliente
-    # es: acá se le dan las mismas a los dos clientes del selector, que es
-    # lo que hacía el parche de a-un-cliente.
+def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None):
+    # articulos_stock son los artículos CON SUELTOS que devuelve la base ya
+    # filtrados: desde el 31/08 el filtro vive en listar_articulos_para_reproceso
+    # (probado en test_db) y no en la ruta.
+    # Las fichas se piden TODAS de una y cada una dice de qué cliente es: acá
+    # se le dan las mismas a los dos clientes del selector.
     todas = [dict(f, cliente_id=c["id"]) for c in CLIENTES_PARA_SELECTOR for f in (fichas or [])]
     with (
-        patch("app.main.stock_deposito_por_articulo", return_value=articulos_stock or []),
+        patch("app.main.listar_articulos_para_reproceso", return_value=articulos_stock or []),
+        patch("app.main.stock_deposito_por_articulo",
+              side_effect=espia_total or AssertionError(
+                  "El reproceso NO puede filtrar por el total del artículo: toma SUELTOS")),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=todas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -16183,19 +16188,31 @@ def _get_reproceso(articulos_stock=None, fichas=None):
         return cliente.get("/deposito/stock/reproceso")
 
 
-def test_reproceso_lista_solo_articulos_con_stock_y_sin_numeros():
-    respuesta = _get_reproceso(articulos_stock=[
-        {"articulo_id": 1, "nombre": "Banana", "stock": 37.5},
-        {"articulo_id": 2, "nombre": "Anco", "stock": -5.0},
-        {"articulo_id": 3, "nombre": "Kiwi", "stock": 0.0},
-    ])
+def test_reproceso_lista_los_articulos_con_sueltos_por_nombre_y_sin_numeros():
+    """El selector muestra lo que hay para TOMAR, que son los bultos sueltos.
+
+    Que la ruta no pueda tocar stock_deposito_por_articulo lo garantiza el
+    helper: si vuelve a filtrar por el total del artículo, revienta. Es la
+    falla del 31/08 en producción — el total baja cuando salen cajas ya
+    armadas, y el artículo desaparecía con la pila suelta intacta en el piso.
+    """
+    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}])
 
     assert respuesta.status_code == 200
-    # Solo lo que hay para tomar, POR NOMBRE: sin stock no aparece...
+    # Lo que hay para tomar, POR NOMBRE...
     assert "Banana" in respuesta.text
+    # ...y ningún artículo que la base no haya devuelto.
     assert "Anco" not in respuesta.text
     assert "Kiwi" not in respuesta.text
-    # ...y el número del sistema no viaja a la pantalla del operario.
+
+
+def test_reproceso_no_muestra_ninguna_cantidad_al_operario():
+    """Criterio Vacíos: el número del sistema no viaja a la pantalla del operario
+    ni escondido en el HTML. Por eso listar_articulos_para_reproceso devuelve id y
+    nombre y nada más — acá se comprueba que la ruta tampoco agrega ninguno."""
+    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}])
+
+    assert respuesta.status_code == 200
     assert "37.5" not in respuesta.text and "37,5" not in respuesta.text
 
 
@@ -16206,7 +16223,7 @@ def test_reproceso_pide_el_cliente_primero_y_la_ayuda_es_solo_de_su_ficha():
     fichas = [{"id": 901, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo",
                "articulo_nombre": "Tomate Perita", "nombre_cliente": None}]
     respuesta = _get_reproceso(
-        articulos_stock=[{"articulo_id": 1, "nombre": "Tomate Perita", "stock": 30.0}],
+        articulos_stock=[{"id": 1, "nombre": "Tomate Perita"}],
         fichas=fichas,
     )
 
@@ -16315,7 +16332,7 @@ def test_la_pantalla_de_reproceso_ofrece_las_fichas_del_cliente_y_del_articulo()
          "articulo_nombre": "Banana", "nombre_cliente": "Banana Ecuador"},
     ]
     respuesta = _get_reproceso(
-        articulos_stock=[{"articulo_id": 1, "nombre": "Banana", "stock": 30.0}],
+        articulos_stock=[{"id": 1, "nombre": "Banana"}],
         fichas=fichas,
     )
 
@@ -16332,7 +16349,7 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.obtener_cliente", return_value=None),
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Perita"}),
         patch("app.main.crear_reproceso") as mock_crear,
-        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.listar_articulos_para_reproceso", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -16350,7 +16367,7 @@ def test_reproceso_sin_cliente_da_400():
 
 
 def test_reproceso_sin_nada_producido_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
@@ -16363,7 +16380,7 @@ def test_reproceso_sin_nada_producido_da_400():
 
 
 def test_reproceso_fecha_futura_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.stock_deposito_por_articulo", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",

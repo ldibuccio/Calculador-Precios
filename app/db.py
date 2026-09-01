@@ -6410,6 +6410,68 @@ def _cajas_por_ficha(cursor) -> dict:
     return {(fila[0], fila[1]): float(fila[2]) for fila in cursor.fetchall()}
 
 
+def listar_articulos_para_reproceso() -> list[dict]:
+    """Los artículos que se pueden reprocesar: id y nombre, SIN cantidades.
+
+    Entra el artículo con TOTAL a favor (el criterio de siempre) O con
+    BULTOS SUELTOS a favor. La condición es OR y no un reemplazo, a
+    propósito: esto solo AGREGA a la lista de antes, nunca saca nada.
+
+    El que faltaba es el de los sueltos, y es la falla del 31/08 en
+    producción: si el depósito arma cajas de una ficha antes de cargar su
+    guía R, el TOTAL del artículo baja —puede llegar a cero— mientras la
+    pila suelta sigue intacta en el piso. Con el filtro por total, el
+    artículo desaparecía del selector exactamente cuando había que cargar
+    el reproceso que reconcilia esa diferencia; y sin ese reproceso la
+    diferencia no se cierra nunca. Es circular, y ese círculo se corta acá.
+
+    sueltos(art) = stock del artículo − Σ cajas de sus fichas: la misma
+    resta del Cotejo (_SQL_STOCK_PARTIDO), así las porciones suman
+    siempre el total y no se pierde ni se duplica nada.
+
+    Por qué OR y no "solo sueltos": un artículo cuyo stock son TODO cajas
+    de una ficha tiene sueltos en cero, y filtrando solo por sueltos
+    desaparecería. Reprocesar cajas ya armadas es raro pero el FIFO lo
+    admite (un lote de guía R es un lote como cualquier otro), así que
+    esta pantalla no es el lugar para prohibirlo — eso lo decide el freno
+    cuando llegue, a la vista y con motivo.
+
+    Devuelve id y nombre y NADA MÁS: es para una pantalla de operario, y
+    el número del sistema no viaja ahí ni escondido en el HTML (mismo
+    criterio que Vacíos).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cajas = _cajas_por_ficha(cursor)
+            cursor.execute(
+                _sql_sumas_stock(por_articulo=False)
+                + """
+                SELECT a.id, a.nombre,
+                       COALESCE(e.total, 0) + COALESCE(r.total, 0) + COALESCE(aj.total, 0)
+                       + COALESCE(rp.entradas, 0) - COALESCE(rp.salidas, 0)
+                       - COALESCE(s.total, 0) AS stock
+                FROM articulos a
+                LEFT JOIN entradas e ON e.articulo_id = a.id
+                LEFT JOIN salidas s ON s.articulo_id = a.id
+                LEFT JOIN reingresos r ON r.articulo_id = a.id
+                LEFT JOIN ajustes aj ON aj.articulo_id = a.id
+                LEFT JOIN reproc rp ON rp.articulo_id = a.id
+                ORDER BY a.nombre
+                """
+            )
+            filas = cursor.fetchall()
+        articulos = []
+        for articulo_id, nombre, stock in filas:
+            en_cajas = sum(v for (a, _), v in cajas.items() if a == articulo_id)
+            sueltos = round(float(stock) - en_cajas, 2)
+            if float(stock) > 0 or sueltos > 0:
+                articulos.append({"id": articulo_id, "nombre": nombre})
+        return articulos
+    finally:
+        conexion.close()
+
+
 def fichas_con_cajas_armadas() -> set:
     """Los ficha_id que HOY tienen cajas armadas disponibles (más de cero).
 

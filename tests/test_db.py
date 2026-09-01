@@ -4600,6 +4600,41 @@ def test_anular_stock_inicial_que_no_es_del_corte_avisa_y_no_commitea():
     conexion.commit.assert_not_called()
 
 
+def test_listar_articulos_para_reproceso_no_esconde_el_articulo_que_hay_que_reprocesar():
+    """El caso real del 31/08: el depósito armó cajas de una ficha ANTES de cargar
+    su guía R. El total del artículo bajó a cero, pero la pila suelta seguía en el
+    piso — y el selector de Reproceso lo escondía justo cuando había que cargar la
+    guía que reconcilia esa diferencia.
+
+    El filtro es total > 0 O sueltos > 0: solo AGREGA a la lista de antes.
+    """
+    from app.db import listar_articulos_para_reproceso
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.side_effect = [
+        # _cajas_por_ficha: (articulo_id, ficha_id, cajas)
+        [(19, 5, -44.0), (17, 7, 12.0)],
+        # El stock por artículo (las seis patas)
+        [(19, "Zapallito", 0.0), (17, "Berenjena", 12.0), (22, "Mango", 0.0), (9, "Pera", 5.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = listar_articulos_para_reproceso()
+
+    ids = [a["id"] for a in resultado]
+    # Zapallito: total 0 pero cajas en -44, o sea 44 SUELTOS en el piso. Tiene que estar.
+    assert 19 in ids
+    # Berenjena: sus 12 bultos son las 12 cajas de la ficha 7, sueltos en cero.
+    # Sigue estando, porque el total es a favor: esta entrega NO SACA NADA de la
+    # lista de antes. Reprocesar cajas ya armadas lo decide el freno, no acá.
+    assert 17 in ids
+    # Mango sin nada, afuera. Pera con 5 sueltos y sin fichas, adentro.
+    assert 22 not in ids
+    assert 9 in ids
+    # Y solo id y nombre: ninguna cantidad viaja a la pantalla del operario.
+    assert all(set(a) == {"id", "nombre"} for a in resultado)
+
+
 def test_fichas_con_cajas_armadas_devuelve_SOLO_ids_sin_cantidades():
     """La usa la pantalla de armado, que es de operario.
 
