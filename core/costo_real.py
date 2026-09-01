@@ -62,7 +62,7 @@ un número chico y cierto que uno grande y mentiroso.
 """
 
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
-from core.stock import lote_dirigido
+from core.stock import lote_dirigido, lote_posterior_a_la_salida
 
 ETIQUETAS_MOTIVO_REAL = {
     "sin_kilaje": "Renglón armado sin kilaje cargado",
@@ -117,7 +117,15 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     entradas: lotes con "orden", "cantidad", "tipo_lote" y "costo_bulto"
     (None = sin precio). salidas: con "orden" y "cantidad". Se rejuega la
     historia completa: lotes del más viejo al más nuevo, salidas en orden
-    cronológico, cada una consume del lote más viejo con resto.
+    cronológico, cada una consume del lote más viejo con resto QUE YA
+    EXISTÍA CUANDO ELLA OCURRIÓ.
+
+    Esa última condición es la que impide que el costeo viaje al futuro:
+    sin ella, una salida de hoy se costeaba contra una compra de la semana
+    que viene apenas se agotaban los lotes viejos, y un faltante quedaba
+    tapado con mercadería que todavía no había llegado. Ahora esa porción
+    cae a sin_lote y se ve. La comparación es por FECHA, no por momento de
+    carga: un lote cargado a la tarde cubre una salida de esa misma mañana.
 
     Una salida DIRIGIDA (con "lote_tipo" y "lote_origen_id": la merma que
     el operario cargó sabiendo qué lote se pudrió) sale primero de SU
@@ -173,11 +181,18 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
             pendiente = round(pendiente - bultos, 2)
             _consumir(elegido, bultos)
 
+        # El índice avanza SOLO sobre lotes agotados, que ya no vuelven. Un
+        # lote posterior a esta salida se saltea pero NO se pasa de largo:
+        # una salida más nueva sí va a poder consumirlo.
         while pendiente > 0 and indice < len(lotes):
             lote = lotes[indice]
             if lote["restante"] <= 0:
                 indice += 1
                 continue
+            if lote_posterior_a_la_salida(lote, salida):
+                # Los lotes están ordenados: de acá en adelante son todos
+                # posteriores. Esta salida no tiene con qué costearse.
+                break
             bultos = min(lote["restante"], pendiente)
             pendiente = round(pendiente - bultos, 2)
             _consumir(lote, bultos)

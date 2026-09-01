@@ -25,6 +25,41 @@ Todo en BULTOS (lo que se cuenta en el piso).
 """
 
 
+def fecha_de_orden(orden):
+    """La FECHA de un "orden" del FIFO, o None si ese orden no la trae.
+
+    El orden de este módulo es (fecha real del hecho, momento de carga):
+    la fecha manda y el momento solo desempata dentro del mismo día. Para
+    decidir si un lote ya existía cuando salió algo, lo que importa es la
+    FECHA — un lote cargado a la tarde cubre una salida de esa misma
+    mañana, porque en el galpón pasaron el mismo día.
+
+    Devuelve None para un orden sin fecha (el 0 del reparto por total, que
+    no sabe cuándo salió nada): sin fecha no hay regla que aplicar, y el
+    reparto se comporta como siempre.
+    """
+    if isinstance(orden, (tuple, list)) and orden:
+        return orden[0]
+    return None
+
+
+def lote_posterior_a_la_salida(lote, salida) -> bool:
+    """¿Este lote entró DESPUÉS de que esta salida ocurrió?
+
+    Un lote posterior no puede cubrir una salida anterior: la mercadería
+    todavía no estaba en el galpón. Es la regla que separa el FIFO de "más
+    viejo primero" de uno que viaja al futuro para tapar un faltante.
+
+    Sin fecha de un lado o del otro no se puede afirmar nada, y entonces no
+    se restringe: la regla avisa por lo que sabe, nunca por lo que supone.
+    """
+    fecha_lote = fecha_de_orden(lote.get("orden"))
+    fecha_salida = fecha_de_orden(salida.get("orden"))
+    if fecha_lote is None or fecha_salida is None:
+        return False
+    return fecha_lote > fecha_salida
+
+
 def salidas_para_reparto(total_salidas: float, dirigidas: list[dict] | None = None) -> list[dict]:
     """Arma la lista de salidas del reparto: el total de siempre + las mermas dirigidas a un lote.
 
@@ -79,29 +114,50 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
 
     # Primero las dirigidas: cada una tiene prioridad sobre SU lote (el
     # operario vio qué se pudrió). Lo que ese lote no cubre cae al FIFO.
-    pendiente = 0.0
+    # El lote elegido se respeta aunque sea posterior: el operario lo está
+    # SEÑALANDO con el dedo, no adivinándolo — si dice que se pudrió ése,
+    # se pudrió ése, y discutirle la fecha sería negarle el piso.
+    restos = []
     for salida in salidas:
         cantidad = float(salida["cantidad"])
         lote = lote_dirigido(lotes, salida)
-        if lote is None:
-            pendiente += cantidad
-            continue
-        consumo = min(lote["restante"], cantidad)
-        lote["consumido"] += consumo
-        lote["restante"] -= consumo
-        pendiente += cantidad - consumo
+        if lote is not None:
+            consumo = min(lote["restante"], cantidad)
+            lote["consumido"] += consumo
+            lote["restante"] -= consumo
+            cantidad -= consumo
+        if cantidad > 0:
+            restos.append((salida, cantidad))
 
-    for lote in lotes:
-        if pendiente <= 0:
-            break
-        consumo = min(lote["restante"], pendiente)
-        lote["consumido"] += consumo
-        lote["restante"] -= consumo
-        pendiente -= consumo
+    # Y después el FIFO de siempre, salida por salida y en orden: cada una
+    # consume del lote más viejo con resto que YA EXISTÍA cuando ella
+    # ocurrió. Un lote posterior no puede taparla — para eso hace falta un
+    # reproceso o un ajuste con su fecha, y mientras no esté, la salida
+    # queda SIN LOTE y a la vista.
+    if restos and all(fecha_de_orden(s.get("orden")) is not None for s, _ in restos):
+        restos.sort(key=lambda par: par[0]["orden"])
+
+    sin_lote = 0.0
+    for salida, cantidad in restos:
+        pendiente = cantidad
+        for lote in lotes:
+            if pendiente <= 0:
+                break
+            if lote["restante"] <= 0:
+                continue
+            if lote_posterior_a_la_salida(lote, salida):
+                # Los lotes vienen ordenados: de acá en adelante son todos
+                # posteriores, no hay nada más que mirar para esta salida.
+                break
+            consumo = min(lote["restante"], pendiente)
+            lote["consumido"] += consumo
+            lote["restante"] -= consumo
+            pendiente -= consumo
+        sin_lote += pendiente
 
     total_entradas = sum(float(e["cantidad"]) for e in entradas)
     return {
         "lotes": lotes,
-        "sin_lote": round(pendiente, 2),
+        "sin_lote": round(sin_lote, 2),
         "stock": round(total_entradas - total_salidas, 2),
     }
