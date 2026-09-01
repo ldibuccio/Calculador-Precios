@@ -313,11 +313,16 @@ El domingo se carga el stock inicial a mano.
 
 En orden, para el martes o miércoles:
 
-1. **E4 — el FIFO que no viaja al futuro.** Es la primera **cuando haya
-   datos nuevos suficientes**, y no antes: mueve números, así que con
-   pocos días de datos post-corte no se distingue el arreglo del ruido.
-   Toca `atribuir_costos_fifo` (`core/costo_real.py`) y `repartir_fifo`
-   (`core/stock.py`). Sin migración.
+1. **E4 — el FIFO que no viaja al futuro.** Va **sola y primera** (decisión
+   del dueño el 31/08): mueve costos, y con otros cambios encima no se
+   distingue el arreglo del ruido. Toca `atribuir_costos_fifo`
+   (`core/costo_real.py`) y `repartir_fifo` (`core/stock.py`). No cambia
+   ninguna pantalla. Sin migración.
+   **Antes de tocar `repartir_fifo` hay que contestar la pregunta de la
+   fecha del reproceso** — ver "las guías R atrasadas quedan fechadas
+   después de las salidas que explican", más abajo. Y al leer los costos de
+   la primera semana, tener presente el arrastre del lunes que esa misma
+   sección describe: va a parecer que E4 quedó mal y no va a ser E4.
 
 2. **Elegir del stock que hay** — el lote de tres piezas que ya se perdió del
    plan tres veces: el **freno por stock del reproceso**, su **desglose
@@ -598,6 +603,64 @@ trabar:
 
 O sea: trabar el reproceso lleva `sin_lote` de dos fuentes a una. El
 concepto y sus pantallas se quedan.
+
+## Pendiente con nombre propio: las guías R atrasadas quedan fechadas después de las salidas que explican
+
+Anotado el 31/08/2026, **antes de E4 y antes de mirar los costos de esta
+semana**. Se escribe ahora justamente para no confundirlo después con un error
+de E4.
+
+### Qué pasa
+
+El lunes 31/08 el depósito armó cajas de varias fichas **antes** de cargar sus
+guías R, y el selector de Reproceso escondía esos artículos (ver la Entrega 0).
+Con el selector arreglado, esas guías se cargan **con fecha de hoy** — no con
+la del día en que la mercadería se procesó de verdad en el galpón.
+
+**E4 ordena el FIFO por la fecha real del hecho.** Con eso, una guía R cargada
+tarde queda fechada **después** de las salidas que la explican: el renglón de
+pedido salió el lunes, y la primera que lo cubre nace el martes. Un lote no
+puede ser consumido por una salida anterior a su fecha — que es exactamente la
+regla que E4 viene a imponer— así que esas salidas del lunes van a caer a
+`sin_lote` y a quedar sin costear.
+
+### Por qué hay que tenerlo escrito
+
+**Va a parecer que E4 quedó mal, y no va a ser E4.** Es la secuela del arrastre
+del lunes: datos cargados fuera de orden, no una regla mal implementada. Sin
+esto anotado, la primera lectura de los costos de la semana manda a revisar el
+código nuevo en lugar de mirar las fechas de las guías.
+
+Es acotado y no se propaga: solo alcanza a las guías R del arrastre. Una vez
+que el depósito vuelva al orden normal —reproceso primero, armado después— el
+problema no vuelve a aparecer **por esta causa**.
+
+### La pregunta abierta que E4 tiene que contestar (planteada por el dueño)
+
+**¿Conviene que el operario pueda cargar un reproceso con fecha anterior?**
+
+Si el sistema va a ordenar por fecha real, cargar todo con fecha de hoy ensucia
+el costeo **cada vez que haya un atraso**, no solo con el arrastre del lunes.
+Un depósito que procesa a la tarde y carga a la mañana siguiente tiene el mismo
+problema todos los días.
+
+Lo que hay que sopesar al diseñar E4, sin decidirlo antes:
+
+- **A favor**: la fecha real es el dato que el resto del módulo ya usa
+  (`fecha_operacion` en compras, movimientos y reprocesos es "la fecha REAL del
+  hecho, puede no ser la de carga"). Un reproceso que no la deja declarar es la
+  excepción, no la regla.
+- **En contra**: una fecha hacia atrás **reescribe el pasado del FIFO**. Los
+  consumos de una guía R se congelan al cargarla; los de las guías posteriores
+  ya congeladas no se recalculan. Insertar un lote antes de salidas ya costeadas
+  deja el documento congelado y el reparto vivo diciendo cosas distintas.
+- **El límite que ya existe para esto**: la ventana de carga retroactiva de
+  Administración (diez días y dentro del mes en curso) y su "Guardar igual" con
+  motivo escrito. Si la fecha hacia atrás entra, lo lógico es que entre por ahí
+  y no como un campo libre en la pantalla del operario.
+
+**No está decidido.** Es lo primero que E4 tiene que resolver antes de tocar
+`repartir_fifo`.
 
 ## Pendiente con nombre propio: el sistema no sabe en qué envase vino un bulto
 
