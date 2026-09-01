@@ -665,6 +665,31 @@ kilaje parecido puede colarse, y se acepta — es muchísimo menos malo que
 descontar de cualquier bulto del artículo sin mirar nada, que es lo que
 se hacía antes.
 
+## Observación de diseño (sin dueño ni urgencia): el tilde de retiro es un espejo de la recepción
+
+Visto en producción el 29/08/2026. **No es para tocar ahora.**
+
+Al recepcionar una compra en Depósito, si el retiro seguía pendiente el sistema
+lo marca solo: `estado_retiro = 'retirado'`, `retiro_origen = 'deposito'` y
+`retiro_procesado_el = now()` — **la misma hora que la recepción**.
+
+**Es razonable**: si la mercadería llegó al depósito, obviamente se retiró del
+puesto. Nadie va a ir a tildar dos veces lo mismo, y obligar a hacerlo sería
+trabajo de más para registrar algo que ya es evidente.
+
+**El costo es que el tilde de retiro deja de ser un control propio.** Pasa a
+ser un reflejo de la recepción, y con eso el dato pierde la capacidad de
+contestar una pregunta distinta: **mercadería pagada que nunca se retiró del
+puesto**. Hoy esa pregunta no se le puede hacer a `retiro_procesado_el`,
+porque para las compras recepcionadas siempre dice lo mismo que la recepción.
+
+**Lo único que salva parte del dato es `retiro_origen`**, que distingue
+`'deposito'` (el espejo) de `'logistica'` y de los `automatico_*`. O sea que
+las filas espejadas están identificadas, y si algún día hace falta el control
+de "pagado y nunca retirado", el camino no arranca de cero: arranca de separar
+esas filas y decidir qué se hace con ellas. **Pero eso todavía no está
+pensado, y no tiene dueño.**
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
