@@ -836,6 +836,27 @@ create index movimientos_stock_rechazo_segunda_idx
 -- ----------------------------------------------------------------------------
 -- 17. REPROCESOS (Guías R) y SEGUNDA
 -- ----------------------------------------------------------------------------
+-- La lista corta del depósito, para el selector de la excepción al freno del
+-- reproceso. Editable desde Administración, igual que los catálogos del
+-- puesto. Se da de BAJA con activo, nunca se borra: una excepción cargada
+-- apunta acá.
+create table operarios_deposito (
+    id        bigint generated always as identity primary key,
+    nombre    text not null check (btrim(nombre) <> ''),
+    activo    boolean not null default true,
+    creado_en timestamptz not null default now()
+);
+
+-- El nombre NORMALIZADO es lo único: "Juan", "juan" y " Juan " son la misma
+-- persona, y si entran como tres, contar por operario no cuenta nada.
+create unique index operarios_deposito_nombre_unico
+    on operarios_deposito (lower(btrim(nombre)));
+
+comment on table operarios_deposito is
+    'La lista corta del depósito, para el selector de la excepción al freno del reproceso. Editable desde Administración, igual que los catálogos del puesto. Se da de BAJA con activo, nunca se borra: una excepción cargada apunta acá.';
+comment on column operarios_deposito.activo is
+    'false = ya no aparece en el selector, pero sus excepciones viejas siguen contando. El nombre es único normalizado (minúsculas, sin espacios de más).';
+
 create table reprocesos (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
@@ -859,9 +880,11 @@ create table reprocesos (
     consumos_editados boolean not null default false,
     -- La excepción al freno: por qué se cargó sin remanente, y quién.
     -- El motivo ES la marca (NULL = no hubo excepción), para que no haya un
-    -- booleano que pueda contradecirlo.
+    -- booleano que pueda contradecirlo. El quién sale de una lista y no de un
+    -- campo libre: con texto libre la misma persona entra como "juan", "Juan"
+    -- y "jaun", y contar por operario deja de contar nada.
     excepcion_motivo text,
-    excepcion_operario text,
+    excepcion_operario_id bigint references operarios_deposito (id),
     -- El reproceso inicial PRODUCE SIN CONSUMIR: las cajas armadas que había
     -- en el piso el día del corte ya existen, y los cajones que las
     -- originaron no se van a cargar nunca. Vive en el dato (toma cero) y no
@@ -875,9 +898,9 @@ create table reprocesos (
     -- entraba igual.
     constraint reprocesos_excepcion_completa
         check (
-            (excepcion_motivo is null and excepcion_operario is null)
-            or (excepcion_motivo is not null and excepcion_operario is not null
-                and btrim(excepcion_motivo) <> '' and btrim(excepcion_operario) <> '')
+            (excepcion_motivo is null and excepcion_operario_id is null)
+            or (excepcion_motivo is not null and excepcion_operario_id is not null
+                and btrim(excepcion_motivo) <> '')
         )
 );
 
@@ -895,8 +918,8 @@ comment on column reprocesos.consumos_editados is
     'El operario corrigió el reparto por lote que propuso el server. false = el reparto es el que salió del FIFO. Va por guía y no por consumo: lo que hay que poder contestar es si el reparto lo declaró una persona, no qué renglón tocó.';
 comment on column reprocesos.excepcion_motivo is
     'Por qué se cargó esta guía pese al freno (no había remanente a la fecha). NULL = no hubo excepción: el motivo ES la marca, para que no haya un booleano que pueda contradecirlo.';
-comment on column reprocesos.excepcion_operario is
-    'Quién usó la excepción, declarado al cargar. El sistema no tiene identidad de operario (el acceso es una cookie compartida), así que es débil como identidad y alcanza para lo que se pidió: que si alguien la usa siempre, se vea.';
+comment on column reprocesos.excepcion_operario_id is
+    'Quién usó la excepción, elegido de operarios_deposito. Selector y no texto libre: con texto libre la misma persona entra como "juan", "Juan" y "jaun", y contar por operario deja de contar nada.';
 comment on column reprocesos.tipo is
     'normal = el reproceso de todos los días: toma bultos del stock y produce primera, segunda y merma. inicial = las cajas que ya estaban armadas en el piso el día del corte (31/08/2026): PRODUCEN SIN CONSUMIR (bultos_tomados = 0), porque los cajones que las originaron nunca se cargaron. El check obliga las dos cosas.';
 
@@ -908,7 +931,7 @@ create index reprocesos_ficha_idx
 -- Contar las excepciones al freno por operario y por día sin recorrer la
 -- tabla entera. Parcial: las guías sin excepción —casi todas— no entran.
 create index reprocesos_excepcion_idx
-    on reprocesos (fecha_operacion, excepcion_operario)
+    on reprocesos (fecha_operacion, excepcion_operario_id)
     where excepcion_motivo is not null;
 
 create table reprocesos_consumos (
