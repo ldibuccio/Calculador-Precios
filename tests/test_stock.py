@@ -7,6 +7,12 @@ def _lote(orden, cantidad, **extra):
     return dict({"orden": orden, "cantidad": cantidad}, **extra)
 
 
+def _dirigida(orden, cantidad, lote_tipo, lote_origen_id):
+    """Una merma DIRIGIDA: el operario señaló de qué lote sale."""
+    return {"orden": orden, "cantidad": cantidad,
+            "lote_tipo": lote_tipo, "lote_origen_id": lote_origen_id}
+
+
 def test_fifo_consume_del_lote_mas_viejo_primero():
     entradas = [_lote(2, 10, nombre="nueva"), _lote(1, 8, nombre="vieja")]
     reparto = repartir_fifo(entradas, [{"orden": 3, "cantidad": 5}])
@@ -92,7 +98,7 @@ def test_merma_dirigida_sale_de_su_lote_y_no_del_mas_viejo():
         _lote(1, 80, tipo_lote="guia", origen_id=55, nombre="cajones viejos"),
         _lote(2, 40, tipo_lote="reproceso", origen_id=9, nombre="guia R"),
     ]
-    salidas = salidas_para_reparto(0, [{"cantidad": 10, "lote_tipo": "reproceso", "lote_origen_id": 9}])
+    salidas = salidas_para_reparto([_dirigida(3, 10, "reproceso", 9)])
     reparto = repartir_fifo(entradas, salidas)
 
     por_nombre = {l["nombre"]: l for l in reparto["lotes"]}
@@ -108,7 +114,7 @@ def test_merma_dirigida_que_no_entra_en_su_lote_cae_al_fifo():
         _lote(1, 80, tipo_lote="guia", origen_id=55, nombre="cajones viejos"),
         _lote(2, 4, tipo_lote="reproceso", origen_id=9, nombre="guia R"),
     ]
-    salidas = salidas_para_reparto(0, [{"cantidad": 10, "lote_tipo": "reproceso", "lote_origen_id": 9}])
+    salidas = salidas_para_reparto([_dirigida(3, 10, "reproceso", 9)])
     reparto = repartir_fifo(entradas, salidas)
 
     por_nombre = {l["nombre"]: l for l in reparto["lotes"]}
@@ -119,7 +125,7 @@ def test_merma_dirigida_que_no_entra_en_su_lote_cae_al_fifo():
 
 def test_merma_dirigida_a_un_lote_que_ya_no_existe_cae_al_fifo():
     entradas = [_lote(1, 80, tipo_lote="guia", origen_id=55, nombre="cajones viejos")]
-    salidas = salidas_para_reparto(0, [{"cantidad": 10, "lote_tipo": "reproceso", "lote_origen_id": 999}])
+    salidas = salidas_para_reparto([_dirigida(3, 10, "reproceso", 999)])
     reparto = repartir_fifo(entradas, salidas)
 
     assert reparto["lotes"][0]["restante"] == 70
@@ -132,7 +138,7 @@ def test_la_dirigida_tiene_prioridad_sobre_las_salidas_comunes():
         _lote(1, 5, tipo_lote="guia", origen_id=55, nombre="vieja"),
         _lote(2, 5, tipo_lote="reproceso", origen_id=9, nombre="guia R"),
     ]
-    salidas = salidas_para_reparto(5, [{"cantidad": 5, "lote_tipo": "reproceso", "lote_origen_id": 9}])
+    salidas = salidas_para_reparto([{"orden": 3, "cantidad": 5}, _dirigida(3, 5, "reproceso", 9)])
     reparto = repartir_fifo(entradas, salidas)
 
     por_nombre = {l["nombre"]: l for l in reparto["lotes"]}
@@ -141,10 +147,13 @@ def test_la_dirigida_tiene_prioridad_sobre_las_salidas_comunes():
     assert reparto["stock"] == 0
 
 
-def test_sin_dirigidas_el_reparto_es_el_de_siempre():
-    salidas = salidas_para_reparto(5)
-    assert salidas == [{"orden": 0, "cantidad": 5}]
-    assert salidas_para_reparto(0) == []
+def test_salidas_para_reparto_saca_las_de_cantidad_cero():
+    """Desde E4 las salidas llegan una por una y fechadas: acá ya no se arma
+    nada, solo se sacan las que no sacan nada (el reproceso inicial toma cero)."""
+    salidas = [{"orden": 1, "cantidad": 5}, {"orden": 2, "cantidad": 0}]
+
+    assert salidas_para_reparto(salidas) == [{"orden": 1, "cantidad": 5}]
+    assert salidas_para_reparto([]) == []
 
 
 # --- E4: el FIFO no viaja al futuro ---
@@ -195,10 +204,10 @@ def test_un_lote_del_mismo_dia_si_cubre_la_salida():
 
 
 def test_sin_fechas_el_reparto_se_comporta_como_siempre():
-    """Compatibilidad: un reparto por total (orden 0, sin fecha) no puede aplicar
-    la regla, así que no la aplica. Avisa por lo que sabe, nunca por lo que supone."""
+    """Compatibilidad: una salida sin fecha no puede aplicar la regla, así que no
+    la aplica. Avisa por lo que sabe, nunca por lo que supone."""
     entradas = [_lote_fechado(1, 5), _lote_fechado(10, 100)]
-    reparto = repartir_fifo(entradas, salidas_para_reparto(20))
+    reparto = repartir_fifo(entradas, salidas_para_reparto([{"orden": 0, "cantidad": 20}]))
 
     assert reparto["lotes"][0]["restante"] == 0
     assert reparto["lotes"][1]["restante"] == 85
@@ -214,3 +223,53 @@ def test_la_merma_dirigida_alcanza_su_lote_aunque_sea_posterior():
 
     assert reparto["lotes"][0]["restante"] == 20
     assert reparto["sin_lote"] == 0
+
+
+# --- E4: qué quedaba en cada lote a una fecha ---
+
+from core.stock import reparto_a_la_fecha  # noqa: E402
+
+
+def test_a_la_fecha_no_cuenta_los_lotes_que_todavia_no_habian_entrado():
+    """Es la pregunta que le va a hacer el freno: "¿había con qué el día que el
+    operario dice que reprocesó?". Un lote que entró después no cuenta, aunque
+    hoy esté ahí lleno."""
+    entradas = [_lote_fechado(1, 10), _lote_fechado(20, 500)]
+    reparto = reparto_a_la_fecha(entradas, [], date(2026, 9, 5))
+
+    assert [l["restante"] for l in reparto["lotes"]] == [10]
+    assert reparto["stock"] == 10
+
+
+def test_a_la_fecha_no_cuenta_las_salidas_posteriores():
+    """La otra punta: lo que salió después no puede achicar la foto de ese día."""
+    entradas = [_lote_fechado(1, 10)]
+    salidas = [_salida_fechada(3, 4), _salida_fechada(20, 6)]
+    reparto = reparto_a_la_fecha(entradas, salidas, date(2026, 9, 5))
+
+    assert reparto["lotes"][0]["restante"] == 6
+    assert reparto["stock"] == 6
+
+
+def test_a_la_fecha_del_dia_mismo_incluye_lo_de_ese_dia():
+    """El corte es <= la fecha: lo que pasó ese día entra, igual que en la regla
+    del lote posterior."""
+    entradas = [_lote_fechado(5, 10)]
+    salidas = [_salida_fechada(5, 3)]
+    reparto = reparto_a_la_fecha(entradas, salidas, date(2026, 9, 5))
+
+    assert reparto["lotes"][0]["restante"] == 7
+
+
+def test_a_la_fecha_de_hoy_da_lo_mismo_que_el_reparto_normal():
+    """La foto del pasado y el reparto de hoy son LA MISMA cuenta con distinto
+    recorte. Si se separan, los números dejan de cerrar y nadie se entera."""
+    entradas = [_lote_fechado(1, 10), _lote_fechado(3, 20)]
+    salidas = [_salida_fechada(2, 4), _salida_fechada(4, 8)]
+
+    completo = repartir_fifo(entradas, salidas)
+    a_la_fecha = reparto_a_la_fecha(entradas, salidas, date(2026, 9, 30))
+
+    assert [l["restante"] for l in a_la_fecha["lotes"]] == [l["restante"] for l in completo["lotes"]]
+    assert a_la_fecha["sin_lote"] == completo["sin_lote"]
+    assert a_la_fecha["stock"] == completo["stock"]

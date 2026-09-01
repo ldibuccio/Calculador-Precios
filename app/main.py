@@ -6251,14 +6251,12 @@ def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str], movimien
     distintos, salen separadas). Es el mismo reparto del detalle por
     artículo, subido al listado: nada se guarda, se calcula cada vez.
 
-    Recibe los movimientos ya traídos (entradas, total de salidas y mermas
-    dirigidas) en vez de ir a buscarlos: el listado los pide TODOS de una,
-    para no abrir una conexión por artículo.
+    Recibe los movimientos ya traídos (entradas y salidas fechadas) en vez
+    de ir a buscarlos: el listado los pide TODOS de una, para no abrir una
+    conexión por artículo.
     """
-    entradas, total_salidas, dirigidas = movimientos
-    for e in entradas:
-        e["orden"] = (e["fecha_orden"], e["momento_orden"])
-    reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
+    entradas, salidas = movimientos
+    reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
 
     armados = []
     for lote in reparto["lotes"]:
@@ -6334,15 +6332,13 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         articulo = obtener_articulo(articulo_id)
         if articulo is None:
             raise HTTPException(status_code=404, detail="Artículo no encontrado")
-        entradas, total_salidas, dirigidas = entradas_y_salidas_stock_articulo(articulo_id)
+        entradas, salidas = entradas_y_salidas_stock_articulo(articulo_id)
     except HTTPException:
         raise
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    for e in entradas:
-        e["orden"] = (e["fecha_orden"], e["momento_orden"])
-    reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
+    reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
     con_resto = [l for l in reparto["lotes"] if l["restante"] > 0]
     agotados = [l for l in reparto["lotes"] if l["restante"] <= 0]
     return templates.TemplateResponse(
@@ -6354,7 +6350,7 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],
             "stock": reparto["stock"],
-            "total_salidas": total_salidas,
+            "total_salidas": sum(float(s["cantidad"]) for s in salidas),
         },
     )
 
@@ -6774,10 +6770,8 @@ def _lotes_con_resto(articulo_id: int) -> list[dict]:
     lote con lo que el operario reconoce en el piso: la guía y el
     proveedor, o la guía R con el cliente para el que se armó.
     """
-    entradas, total_salidas, dirigidas = entradas_y_salidas_stock_articulo(articulo_id)
-    for e in entradas:
-        e["orden"] = (e["fecha_orden"], e["momento_orden"])
-    reparto = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))
+    entradas, salidas = entradas_y_salidas_stock_articulo(articulo_id)
+    reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
 
     lotes = []
     for lote in reparto["lotes"]:
@@ -7578,12 +7572,10 @@ def _cruces_primera_reproceso() -> list[dict]:
 
     cruces = []
     for articulo in articulos:
-        entradas, _, _ = movimientos[articulo["articulo_id"]]
+        # entradas y salidas ya vienen con su "orden" armado desde la base:
+        # una sola definición del orden FIFO para todo el sistema.
+        entradas, _ = movimientos[articulo["articulo_id"]]
         salidas = salidas_por_articulo[articulo["articulo_id"]]
-        for e in entradas:
-            e["orden"] = (e["fecha_orden"], e["momento_orden"])
-        for s in salidas:
-            s["orden"] = (s["fecha_orden"], s["momento_orden"])
         for salida in atribuir_costos_fifo(entradas, salidas):
             if salida["tipo"] != "armado" or salida.get("cliente_id") is None:
                 continue
@@ -8428,12 +8420,11 @@ def _datos_rentabilidad_real(cliente_id: int, fecha_desde, fecha_hasta, articulo
     articulos_datos = []
     fechas_pedido = set()
     for articulo in articulos:
-        entradas, _, _ = movimientos[articulo["articulo_id"]]
+        # entradas y salidas ya vienen con su "orden" armado desde la base:
+        # una sola definición del orden FIFO para todo el sistema.
+        entradas, _ = movimientos[articulo["articulo_id"]]
         salidas = salidas_por_articulo[articulo["articulo_id"]]
-        for e in entradas:
-            e["orden"] = (e["fecha_orden"], e["momento_orden"])
         for s in salidas:
-            s["orden"] = (s["fecha_orden"], s["momento_orden"])
             if (
                 s["tipo"] == "armado"
                 and s["cliente_id"] == cliente_id

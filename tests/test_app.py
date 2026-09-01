@@ -15371,16 +15371,16 @@ def test_stock_sistema_muestra_los_reingresos_aparte_siempre():
 
 def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
     entradas = [
-        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
          "tipo_lote": "guia", "fecha_lote": date(2026, 8, 20), "detalle": "Norte 15",
          "motivo": None, "cantidad": 8.0},
-        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10),
+        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10), "orden": (date(2026, 8, 22), datetime(2026, 8, 22, 10)),
          "tipo_lote": "guia", "fecha_lote": date(2026, 8, 22), "detalle": "Norte 15",
          "motivo": None, "cantidad": 10.0},
     ]
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, 11.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, _salidas_fifo(11.0))),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -15396,7 +15396,7 @@ def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
 def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 5.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(5.0))),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
 
@@ -15498,7 +15498,7 @@ def test_merma_sin_motivo_da_400():
         patch("app.main.crear_movimiento_stock") as mock_crear,
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
     ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
@@ -15515,7 +15515,7 @@ def test_merma_cantidad_negativa_da_400():
         patch("app.main.crear_movimiento_stock") as mock_crear,
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
     ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
@@ -15629,11 +15629,11 @@ def test_el_form_del_reingreso_pide_la_fecha_de_la_vuelta_no_la_del_pedido():
 
 
 LOTES_MERMA_DE_PRUEBA = [
-    {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+    {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
      "tipo_lote": "guia", "origen_id": 55, "fecha_lote": date(2026, 8, 20),
      "detalle": "Norte 15", "motivo": None, "cantidad": 80.0, "costo_bulto": 500.0,
      "cliente_lote_id": None},
-    {"fecha_orden": date(2026, 8, 24), "momento_orden": datetime(2026, 8, 24, 10),
+    {"fecha_orden": date(2026, 8, 24), "momento_orden": datetime(2026, 8, 24, 10), "orden": (date(2026, 8, 24), datetime(2026, 8, 24, 10)),
      "tipo_lote": "reproceso", "origen_id": 9, "fecha_lote": date(2026, 8, 24),
      "detalle": "Día", "motivo": None, "cantidad": 40.0, "costo_bulto": 1800.0,
      "cliente_lote_id": 1},
@@ -15646,7 +15646,7 @@ def test_merma_ofrece_los_lotes_del_articulo_con_el_mas_viejo_por_default():
     with (
         patch("app.main.listar_articulos", return_value=[{"id": 2, "nombre": "Tomate Perita"}]),
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, 0.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, _salidas_fifo(0.0))),
     ):
         respuesta = cliente.get("/deposito/stock/merma?articulo_id=2")
 
@@ -15667,7 +15667,7 @@ def test_merma_lista_un_lote_de_compra_sin_guia_con_la_fecha_del_hecho():
     with (
         patch("app.main.listar_articulos", return_value=[{"id": 2, "nombre": "Tomate Perita"}]),
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(sin_guia, 0.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(sin_guia, _salidas_fifo(0.0))),
     ):
         respuesta = cliente.get("/deposito/stock/merma?articulo_id=2")
 
@@ -15678,7 +15678,7 @@ def test_merma_lista_un_lote_de_compra_sin_guia_con_la_fecha_del_hecho():
 def test_merma_dirigida_a_un_lote_guarda_el_lote_y_lo_dice_en_el_aviso():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, 0.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, _salidas_fifo(0.0))),
         patch("app.main.crear_movimiento_stock") as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 26)),
     ):
@@ -15700,7 +15700,7 @@ def test_merma_a_un_lote_que_ya_no_tiene_bultos_da_400():
     with (
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, 200.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, _salidas_fifo(200.0))),
         patch("app.main.crear_movimiento_stock") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -16165,6 +16165,19 @@ def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
     assert "Desde entonces hubo movimientos" not in respuesta.text
 
 
+def _salidas_fifo(total, fecha=None):
+    """Las salidas del FIFO de stock, ya fechadas (desde E4 van una por una).
+
+    Los tests que solo miran cuánto salió pasan el total y les alcanza con una
+    salida; la fecha por default es bien posterior a los lotes de prueba, para
+    que la regla de "un lote posterior no cubre la salida" no cambie lo que el
+    test estaba midiendo.
+    """
+    if not total:
+        return []
+    return [{"orden": (fecha or date(2030, 1, 1), 0), "cantidad": total}]
+
+
 # --- Reproceso (tanda 1): pantalla de operario y Guías R ---
 
 
@@ -16551,10 +16564,10 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
         reproceso_primera=40.0, reproceso_tomados=20.0, segunda=3.0, stock=120.0,
     )
     entradas_fifo = [
-        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
          "tipo_lote": "guia", "origen_id": 55, "fecha_lote": date(2026, 8, 20),
          "detalle": "Norte 15", "motivo": None, "cantidad": 100.0, "cliente_lote_id": None},
-        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10),
+        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10), "orden": (date(2026, 8, 22), datetime(2026, 8, 22, 10)),
          "tipo_lote": "reproceso", "origen_id": 7, "fecha_lote": date(2026, 8, 22),
          "detalle": "Día", "motivo": None, "cantidad": 40.0, "cliente_lote_id": 1},
     ]
@@ -16563,7 +16576,7 @@ def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
         patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
         patch("app.main.total_reingresos_rechazo", return_value=0.0),
         patch("app.main.entradas_y_salidas_stock_articulos",
-              return_value={1: (entradas_fifo, 20.0, [])}) as mock_fifo,
+              return_value={1: (entradas_fifo, _salidas_fifo(20.0))}) as mock_fifo,
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas_dia),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
@@ -16861,11 +16874,11 @@ def test_rentabilidad_real_sin_mermas_no_muestra_el_bloque_de_mermas():
 
 
 def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
-    entradas = [{"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10),
+    entradas = [{"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
                  "tipo_lote": "guia", "origen_id": 9, "fecha_lote": date(2026, 8, 20),
                  "detalle": "Norte", "motivo": None, "cantidad": 10.0, "costo_bulto": 500.0}]
     # La salida de armado lleva su FICHA: es lo que ancla el precio.
-    salidas = [{"fecha_orden": date(2026, 8, 25), "momento_orden": datetime(2026, 8, 25, 13),
+    salidas = [{"fecha_orden": date(2026, 8, 25), "momento_orden": datetime(2026, 8, 25, 13), "orden": (date(2026, 8, 25), datetime(2026, 8, 25, 13)),
                 "tipo": "armado", "fecha": date(2026, 8, 25), "cantidad": 4.0,
                 "unidades": 64.0, "cliente_id": 1, "motivo": None, "bultos_segunda": None,
                 "ficha_id": 901}]
@@ -16873,7 +16886,7 @@ def test_rentabilidad_real_junta_historia_completa_y_ancla_precios_por_fecha():
         patch("app.main.articulos_con_salidas_stock",
               return_value=[{"articulo_id": 1, "nombre": "Banana", "grupo": "fruta"}]) as mock_articulos,
         patch("app.main.devoluciones_vinculadas_por_rango", return_value=[]),
-        patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, 4.0, [])}),
+        patch("app.main.entradas_y_salidas_stock_articulos", return_value={1: (entradas, _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: salidas}),
         patch("app.main.calcular_listados_para_negociar_precios",
               side_effect=lambda cliente_id, momentos: {
@@ -17238,8 +17251,11 @@ def test_cargar_importe_invalido_no_guarda():
 
 
 def _entrada_reproceso_cruce(reproceso_id, cliente_id, cliente_nombre, bultos):
+    # "orden" incluido: desde E4 lo arma la base, no la pantalla, y el fixture
+    # tiene que traer lo mismo que la consulta de verdad.
     return {
         "fecha_orden": date(2026, 8, 24), "momento_orden": datetime(2026, 8, 24, 10),
+        "orden": (date(2026, 8, 24), datetime(2026, 8, 24, 10)),
         "tipo_lote": "reproceso", "origen_id": reproceso_id, "fecha_lote": date(2026, 8, 24),
         "detalle": cliente_nombre, "motivo": None, "cantidad": bultos, "costo_bulto": 1000.0,
         "cliente_lote_id": cliente_id,
@@ -17249,6 +17265,7 @@ def _entrada_reproceso_cruce(reproceso_id, cliente_id, cliente_nombre, bultos):
 def _salida_armado_cruce(cliente_id, bultos):
     return {
         "fecha_orden": date(2026, 8, 25), "momento_orden": datetime(2026, 8, 25, 13),
+        "orden": (date(2026, 8, 25), datetime(2026, 8, 25, 13)),
         "tipo": "armado", "fecha": date(2026, 8, 25), "cantidad": bultos,
         "unidades": None, "cliente_id": cliente_id, "motivo": None, "bultos_segunda": None,
     }
@@ -17262,7 +17279,7 @@ def test_cruce_de_primera_detecta_bultos_que_salieron_a_otro_cliente():
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulos",
-              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
+              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(2, 4.0)]}),
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
@@ -17282,7 +17299,7 @@ def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulos",
-              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
+              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(1, 4.0)]}),
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
@@ -17434,7 +17451,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulos",
-              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], 4.0, [])}),
+              return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], _salidas_fifo(4.0))}),
         patch("app.main.salidas_stock_articulos", return_value={1: [_salida_armado_cruce(2, 4.0)]}),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
@@ -17519,7 +17536,7 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
     # El detalle FIFO cuelga del Stock del Sistema.
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 0.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
     assert ancla.format(destino="/administracion/stock/sistema") in respuesta.text
@@ -18110,7 +18127,7 @@ def test_stock_por_guia_nombra_los_bultos_tomados_por_guias_R_en_las_salidas():
     """
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Redondo"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], 648.0, [])),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(648.0))),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 

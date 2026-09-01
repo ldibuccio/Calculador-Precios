@@ -60,23 +60,23 @@ def lote_posterior_a_la_salida(lote, salida) -> bool:
     return fecha_lote > fecha_salida
 
 
-def salidas_para_reparto(total_salidas: float, dirigidas: list[dict] | None = None) -> list[dict]:
-    """Arma la lista de salidas del reparto: el total de siempre + las mermas dirigidas a un lote.
+def salidas_para_reparto(salidas: list[dict]) -> list[dict]:
+    """Deja las salidas listas para el reparto: las de cantidad cero se van.
 
-    Las dirigidas viajan aparte del total (no están sumadas adentro)
-    porque el reparto tiene que saber a qué lote va cada una.
+    Desde E4 las salidas llegan UNA POR UNA y FECHADAS (es la misma lista
+    que usa el FIFO de costo), así que acá ya no hay nada que armar. Antes
+    esta función fabricaba UN total sin fecha más las mermas dirigidas
+    aparte, y ese total sin fecha era exactamente lo que dejaba al reparto
+    consumir un lote posterior a la salida.
+
+    Las dirigidas tampoco viajan aparte: cada una es una salida más con su
+    lote_tipo y lote_origen_id encima, así que no hay forma de contarlas dos
+    veces ni de olvidarse de restarlas del total.
+
+    Se filtran las de cantidad cero —el reproceso inicial toma cero, por
+    ejemplo— porque una salida que no saca nada solo agrega ruido al reparto.
     """
-    salidas = [{"orden": 0, "cantidad": total_salidas}] if total_salidas else []
-    for dirigida in dirigidas or []:
-        salidas.append(
-            {
-                "orden": 0,
-                "cantidad": float(dirigida["cantidad"]),
-                "lote_tipo": dirigida["lote_tipo"],
-                "lote_origen_id": dirigida["lote_origen_id"],
-            }
-        )
-    return salidas
+    return [s for s in salidas if float(s["cantidad"]) != 0]
 
 
 def lote_dirigido(lotes: list[dict], salida: dict) -> dict | None:
@@ -161,3 +161,26 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
         "sin_lote": round(sin_lote, 2),
         "stock": round(total_entradas - total_salidas, 2),
     }
+
+
+def reparto_a_la_fecha(entradas: list[dict], salidas: list[dict], fecha) -> dict:
+    """El reparto tal como estaba AL CERRAR el día `fecha`: qué quedaba en cada lote.
+
+    Es `repartir_fifo` sobre la historia recortada a esa fecha — nada más
+    que eso, y a propósito: si la foto del pasado se calculara distinto que
+    el reparto de hoy, las dos cuentas se irían separando y nadie se daría
+    cuenta hasta que los números no cierren.
+
+    Recorta las DOS puntas: los lotes que todavía no habían entrado y las
+    salidas que todavía no habían ocurrido. Un lote sin fecha nunca se
+    recorta (no se puede afirmar que no estuviera), que es el mismo criterio
+    de `lote_posterior_a_la_salida`: se decide por lo que se sabe.
+
+    La usan el freno del reproceso ("¿había remanente el día que dice el
+    operario?") y los dos desgloses editables, que tienen que proponer un
+    reparto contra el stock de la fecha del hecho y no contra el de hoy.
+    """
+    def hasta_la_fecha(filas):
+        return [f for f in filas if (fecha_de_orden(f.get("orden")) or fecha) <= fecha]
+
+    return repartir_fifo(hasta_la_fecha(entradas), hasta_la_fecha(salidas))
