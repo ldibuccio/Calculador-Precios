@@ -721,6 +721,79 @@ vivo". Registra y delata, jamás traba, que es el criterio de todo el módulo.
 **No entra en E4**: se anota acá y se decide cuando el freno y el desglose estén
 andando, que es cuando se va a saber si molesta de verdad.
 
+## Pendiente con nombre propio: el reparto congelado y el vivo pueden decir cosas distintas, y nadie lo ve
+
+Anotado el 31/08/2026, al decidir la fecha retroactiva del reproceso.
+**Va DESPUÉS del freno y el desglose**, no antes: recién con esos dos andando
+se va a saber si esto molesta de verdad o si es un cartel que nadie mira.
+
+### El problema
+
+Los consumos de una guía R se congelan al cargarla (`reprocesos_consumos`) y
+**no se recalculan nunca**. Cualquier cosa que cambie el pasado del FIFO —
+corregir una recepción, o ahora cargar un reproceso con fecha hacia atrás—
+deja el documento congelado diciendo una cosa y el reparto vivo diciendo otra.
+
+**Es silencioso por construcción**, y eso es lo que lo hace un pendiente:
+
+- El congelado se lee en **un solo lugar**: `listar_reprocesos_con_consumos`,
+  la pantalla de Guías R.
+- El vivo lo usan Stock del Sistema, Stock por Guía, el selector de lote de la
+  merma dirigida y la alerta de cruce.
+- **Nadie los muestra juntos.** Se puede llegar a que Stock por Guía muestre
+  una compra con resto que el documento de la guía R dice haber consumido, y
+  que nadie lo vea nunca.
+
+**La plata no diverge** (ver la decisión de la fecha retroactiva, más arriba):
+`costo_total` y `costo_por_bulto_primera` quedan congelados y el FIFO vivo usa
+ese mismo número como costo del lote de primera. Lo que diverge es la
+trazabilidad. Por eso esto no es urgente — y por eso tampoco desaparece solo.
+
+### La salida: mostrarlo, no arreglarlo
+
+**Recalcular está descartado** y el argumento que lo decide ya está escrito:
+corregir una recepción produce exactamente esta divergencia, y el propio
+comentario de `reprocesos_consumos` dice que *"el stock vivo se reacomoda pero
+esta trazabilidad y su costo no se mueven"*. Es una decisión vieja, no una
+omisión.
+
+Lo que sí vale la pena es **comparar los dos repartos y marcar la guía cuando
+dejan de coincidir**. Es **solo lectura**: rejugar el FIFO vivo del artículo y
+contrastarlo contra los consumos guardados, sin escribir nada, sin recalcular
+ningún costo. Convierte una contradicción muda en una marca en Guías R — *"el
+reparto de esta guía ya no coincide con el vivo"*. Registra y delata, jamás
+traba, que es el criterio de todo el módulo.
+
+**Lo que hay que decidir cuando se haga**, y no antes: si la marca alcanza o si
+hay que poder ver las dos versiones lado a lado; y si conviene contarlas en una
+alerta de Auditoría o dejarlo como marca por guía. Contarlas tiene el riesgo de
+siempre: una alerta que arranca con muchos casos que nadie puede resolver se
+deja de mirar.
+
+## Observación de diseño (sin dueño ni urgencia): la alerta de cruce de cliente puede aparecer y desaparecer sola
+
+Anotado el 31/08/2026, **antes de que pase**, para que cuando alguien lo reporte
+como bug ya esté explicado.
+
+La alerta de **cruce de cliente** —"esta primera se armó para X y el FIFO se la
+atribuyó a un pedido de Y"— **no se guarda: se recalcula viva** en cada carga de
+pantalla, corriendo `atribuir_costos_fifo` sobre las entradas y salidas del
+momento.
+
+Consecuencia: **cualquier cosa que cambie el pasado del FIFO puede hacerla
+aparecer o desaparecer sin que nadie haya tocado esa guía.** Una carga
+retroactiva de reproceso (habilitada el 31/08) es exactamente eso, y también lo
+es corregir una recepción vieja.
+
+**No es plata y no es un error**: es una alerta derivada de un cálculo que
+cambió de insumos. Pero va a parecer errática — un cruce que estaba ayer y hoy
+no está, sin que nadie haya hecho nada visible— y alguien lo va a reportar como
+bug. Cuando pase, la respuesta es ésta, no una investigación.
+
+**Si algún día molesta de verdad**, la salida no es congelar la alerta (sería
+guardar un dato derivado, justo lo que el módulo evita a propósito) sino decir
+en la pantalla que se calcula al momento. Sin dueño y sin urgencia.
+
 ## Pendiente con nombre propio: el sistema no sabe en qué envase vino un bulto
 
 Relevado el 29/08/2026, al intentar implementar la regla del envase de la
