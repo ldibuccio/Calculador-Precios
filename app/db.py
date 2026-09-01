@@ -6109,10 +6109,17 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
 def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
     """La cuenta de lotes y salidas de VARIOS artículos, con el cursor abierto.
 
-    Devuelve {articulo_id: (entradas, total_salidas, dirigidas)}, con una
-    entrada por cada id pedido — el que no tiene ningún movimiento sale con
-    listas vacías y cero, nunca ausente: un artículo que no aparece rompería
-    al que lo lee, y "sin movimiento" es un resultado, no un faltante.
+    Devuelve {articulo_id: (entradas, salidas)}, con una entrada por cada id
+    pedido — el que no tiene ningún movimiento sale con listas vacías, nunca
+    ausente: un artículo que no aparece rompería al que lo lee, y "sin
+    movimiento" es un resultado, no un faltante.
+
+    Desde E4 las salidas vienen UNA POR UNA y FECHADAS, no como un total.
+    Ese total sin fecha era lo que le permitía al reparto de stock consumir
+    un lote posterior a la salida para tapar un faltante. Las mermas
+    dirigidas ya no viajan aparte: cada una es una salida más, con su
+    lote_tipo y su lote_origen_id encima, así que no hay forma de contarlas
+    dos veces ni de olvidarse de restarlas.
 
     Son las MISMAS tres consultas de siempre con "= ANY(%s)" en vez de "= %s".
     Antes se corrían una vez por artículo, con su conexión cada vez: el listado
@@ -6180,72 +6187,25 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
     columnas = [descripcion[0] for descripcion in cursor.description]
     for fila in cursor.fetchall():
         lote = dict(zip(columnas, fila))
+        # El "orden" del FIFO se arma acá y en ningún otro lado: antes cada
+        # pantalla lo rehacía con la misma línea copiada, y alcanzaba con que
+        # una se olvidara para que su reparto ordenara por otra cosa.
+        lote["orden"] = (lote["fecha_orden"], lote["momento_orden"])
         entradas_por_articulo[lote.pop("articulo_id")].append(lote)
 
-    cursor.execute(
-        """
-        WITH vigentes AS (
-            SELECT DISTINCT ON (cliente_id, fecha_operacion) id
-            FROM pedidos WHERE anulado_el IS NULL
-            ORDER BY cliente_id, fecha_operacion, creado_en DESC
-        ),
-        armados AS (
-            SELECT r.articulo_id, SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
-            FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
-            WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
-              AND r.articulo_id = ANY(%s)
-            GROUP BY r.articulo_id
-        ),
-        negativos AS (
-            SELECT articulo_id, -SUM(cantidad) AS total FROM movimientos_stock
-            WHERE anulado_el IS NULL AND cantidad < 0 AND articulo_id = ANY(%s)
-            GROUP BY articulo_id
-        ),
-        tomados AS (
-            SELECT articulo_id, SUM(bultos_tomados) AS total FROM reprocesos
-            WHERE anulado_el IS NULL AND articulo_id = ANY(%s)
-            GROUP BY articulo_id
-        )
-        -- unnest y no una tabla: así sale una fila por CADA id pedido, tenga
-        -- movimientos o no. Sin esto, un artículo sin nada quedaría afuera.
-        SELECT pedidos_ids.id,
-               COALESCE(a.total, 0) + COALESCE(n.total, 0) + COALESCE(t.total, 0)
-        FROM unnest(%s::bigint[]) AS pedidos_ids(id)
-        LEFT JOIN armados a ON a.articulo_id = pedidos_ids.id
-        LEFT JOIN negativos n ON n.articulo_id = pedidos_ids.id
-        LEFT JOIN tomados t ON t.articulo_id = pedidos_ids.id
-        """,
-        (ids, ids, ids, ids),
-    )
-    total_por_articulo = {articulo_id: float(total) for articulo_id, total in cursor.fetchall()}
-
-    # Las mermas DIRIGIDAS a un lote viajan aparte del total (ya están
-    # sumadas adentro): el reparto necesita saber a qué lote va cada una
-    # para descontarla de ahí y no del más viejo.
-    cursor.execute(
-        """
-        SELECT -cantidad AS cantidad, lote_tipo, lote_origen_id, articulo_id
-        FROM movimientos_stock
-        WHERE anulado_el IS NULL AND articulo_id = ANY(%s) AND lote_tipo IS NOT NULL
-        ORDER BY articulo_id, fecha_operacion, creado_en
-        """,
-        (ids,),
-    )
-    columnas = [descripcion[0] for descripcion in cursor.description]
-    for fila in cursor.fetchall():
-        dirigida = dict(zip(columnas, fila))
-        dirigidas_por_articulo[dirigida.pop("articulo_id")].append(dirigida)
+    # Las SALIDAS son las mismas que usa el FIFO de costo, ya fechadas y
+    # tipadas: desde E4 hay UNA sola definición de "qué salió y cuándo".
+    # Antes acá se armaba un total sin fecha, y ese total era justamente lo
+    # que dejaba al reparto de stock consumir lotes del futuro.
+    salidas_por_articulo = _salidas_stock_varios(cursor, ids)
 
     resultado = {}
     for articulo_id in ids:
-        dirigidas = dirigidas_por_articulo[articulo_id]
-        # El total NO puede contarlas dos veces: se restan del bloque general.
-        total = total_por_articulo[articulo_id] - sum(float(d["cantidad"]) for d in dirigidas)
-        resultado[articulo_id] = (entradas_por_articulo[articulo_id], total, dirigidas)
+        resultado[articulo_id] = (entradas_por_articulo[articulo_id], salidas_por_articulo[articulo_id])
     return resultado
 
 
-def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], float, list[dict]]:
+def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], list[dict]]:
     """La cuenta interna de lotes y salidas de UN artículo, con el cursor abierto.
 
     La usa crear_reproceso, que necesita rejugar el FIFO adentro de su propia
@@ -6256,9 +6216,9 @@ def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], flo
 
 
 def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
-    """Los lotes, el total de salidas y las mermas dirigidas de VARIOS artículos, en UNA conexión.
+    """Los lotes y las salidas fechadas de VARIOS artículos, en UNA conexión.
 
-    Devuelve {articulo_id: (entradas, total_salidas, dirigidas)}. Es la que
+    Devuelve {articulo_id: (entradas, salidas)}. Es la que
     usan las pantallas que miran muchos artículos de una (Stock del Sistema,
     Guías R, Rentabilidad Real): antes abrían una conexión por artículo.
     """
@@ -6273,7 +6233,7 @@ def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
 
 
 def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], float, list[dict]]:
-    """Los lotes de entrada de un artículo (orden FIFO), el total de bultos salidos y las mermas dirigidas a un lote.
+    """Los lotes de entrada de un artículo (orden FIFO) y sus salidas, una por una y fechadas.
 
     Entradas: compras recepcionadas (el lote es la guía: fecha + proveedor),
     reingresos por rechazo que quedaron en stock, ajustes positivos y la
@@ -6706,6 +6666,27 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
         conexion.close()
 
 
+def lotes_a_la_fecha(articulo_id: int, fecha) -> dict:
+    """Qué quedaba en cada lote de un artículo AL CERRAR el día `fecha`.
+
+    Es la pregunta que necesitan el freno del reproceso ("¿había remanente
+    el día que dice el operario?") y los desgloses editables, que proponen
+    un reparto contra el stock de la fecha del hecho y no contra el de hoy.
+
+    Devuelve lo mismo que repartir_fifo: {"lotes", "sin_lote", "stock"}, con
+    los lotes de más viejo a más nuevo y su restante a esa fecha.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+    finally:
+        conexion.close()
+    from core.stock import reparto_a_la_fecha, salidas_para_reparto
+
+    return reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), fecha)
+
+
 def crear_reproceso(
     articulo_id: int,
     bultos_tomados: float,
@@ -6740,10 +6721,8 @@ def crear_reproceso(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            entradas, total_salidas, dirigidas = _entradas_y_salidas_stock(cursor, articulo_id)
-            for e in entradas:
-                e["orden"] = (e["fecha_orden"], e["momento_orden"])
-            lotes = repartir_fifo(entradas, salidas_para_reparto(total_salidas, dirigidas))["lotes"]
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            lotes = repartir_fifo(entradas, salidas_para_reparto(salidas))["lotes"]
 
             consumos = []
             pendiente = float(bultos_tomados)
@@ -7227,12 +7206,70 @@ def articulos_con_salidas_stock(cliente_id: int, fecha_desde, fecha_hasta) -> li
         conexion.close()
 
 
+# CADA salida individual, tipada y fechada. Es la MISMA lista que usan el FIFO
+# de costo y el de stock: desde E4 hay una sola definición de "qué salió y
+# cuándo", y no dos que se puedan ir separando con el tiempo.
+_SQL_SALIDAS_STOCK = """
+    WITH vigentes AS (
+        SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id, fecha_operacion
+        FROM pedidos WHERE anulado_el IS NULL
+        ORDER BY cliente_id, fecha_operacion, creado_en DESC
+    )
+    SELECT * FROM (
+        SELECT (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
+               r.armado_el AS momento_orden,
+               'armado' AS tipo,
+               v.fecha_operacion AS fecha,
+               COALESCE(r.cantidad_armada, r.cantidad) AS cantidad,
+               r.kilos_enviados AS unidades,
+               v.cliente_id AS cliente_id,
+               NULL AS motivo,
+               NULL::numeric AS bultos_segunda,
+               NULL AS lote_tipo,
+               NULL::bigint AS lote_origen_id,
+               r.ficha_id,
+               r.articulo_id AS articulo_id
+        FROM pedidos_renglones r
+        JOIN vigentes v ON v.id = r.pedido_id
+        WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
+        UNION ALL
+        SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
+               -m.cantidad, NULL, NULL, m.motivo, NULL,
+               m.lote_tipo, m.lote_origen_id, NULL, m.articulo_id
+        FROM movimientos_stock m
+        WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
+        UNION ALL
+        SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
+               rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
+               NULL, NULL, NULL, rp.articulo_id
+        FROM reprocesos rp
+        WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
+    ) salidas
+    ORDER BY articulo_id, fecha_orden, momento_orden
+"""
+
+
+def _salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
+    """{articulo_id: [salidas fechadas]}, con el cursor abierto. Una lista por id pedido, vacía si no tuvo ninguna."""
+    ids = list(articulo_ids)
+    por_articulo = {articulo_id: [] for articulo_id in ids}
+    if not ids:
+        return por_articulo
+    cursor.execute(_SQL_SALIDAS_STOCK, (ids, ids, ids))
+    columnas = [descripcion[0] for descripcion in cursor.description]
+    for fila in cursor.fetchall():
+        salida = dict(zip(columnas, fila))
+        salida["orden"] = (salida["fecha_orden"], salida["momento_orden"])
+        por_articulo[salida.pop("articulo_id")].append(salida)
+    return por_articulo
+
+
 def salidas_stock_articulos(articulo_ids: list[int]) -> dict:
     """CADA salida individual de VARIOS artículos, tipada y en orden cronológico — TODA la historia.
 
     Devuelve {articulo_id: [salidas]}, con una lista por cada id pedido
-    (vacía si no tuvo ninguna). Misma consulta de siempre con "= ANY(%s)":
-    antes se corría una vez por artículo, con su conexión cada vez.
+    (vacía si no tuvo ninguna). Es `_salidas_stock_varios` con su propia
+    conexión, para el que la llama de afuera de una transacción.
 
     La atribución FIFO de la Rentabilidad Real necesita el pasado
     completo (qué lote consumió cada salida depende de todas las
@@ -7245,59 +7282,12 @@ def salidas_stock_articulos(articulo_ids: list[int]) -> dict:
     El orden FIFO es el mismo del resto del módulo: fecha real del hecho
     + momento de carga de desempate; el armado, por su instante de tilde.
     """
-    ids = list(articulo_ids)
-    if not ids:
+    if not articulo_ids:
         return {}
-    por_articulo = {articulo_id: [] for articulo_id in ids}
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                WITH vigentes AS (
-                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id, fecha_operacion
-                    FROM pedidos WHERE anulado_el IS NULL
-                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
-                )
-                SELECT * FROM (
-                    SELECT (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_orden,
-                           r.armado_el AS momento_orden,
-                           'armado' AS tipo,
-                           v.fecha_operacion AS fecha,
-                           COALESCE(r.cantidad_armada, r.cantidad) AS cantidad,
-                           r.kilos_enviados AS unidades,
-                           v.cliente_id AS cliente_id,
-                           NULL AS motivo,
-                           NULL::numeric AS bultos_segunda,
-                           NULL AS lote_tipo,
-                           NULL::bigint AS lote_origen_id,
-                           r.ficha_id,
-                           r.articulo_id AS articulo_id
-                    FROM pedidos_renglones r
-                    JOIN vigentes v ON v.id = r.pedido_id
-                    WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
-                    UNION ALL
-                    SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
-                           -m.cantidad, NULL, NULL, m.motivo, NULL,
-                           m.lote_tipo, m.lote_origen_id, NULL, m.articulo_id
-                    FROM movimientos_stock m
-                    WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
-                    UNION ALL
-                    SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
-                           rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
-                           NULL, NULL, NULL, rp.articulo_id
-                    FROM reprocesos rp
-                    WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
-                ) salidas
-                ORDER BY articulo_id, fecha_orden, momento_orden
-                """,
-                (ids, ids, ids),
-            )
-            columnas = [descripcion[0] for descripcion in cursor.description]
-            for fila in cursor.fetchall():
-                salida = dict(zip(columnas, fila))
-                por_articulo[salida.pop("articulo_id")].append(salida)
-        return por_articulo
+            return _salidas_stock_varios(cursor, articulo_ids)
     finally:
         conexion.close()
 

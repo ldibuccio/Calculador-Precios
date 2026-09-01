@@ -3811,10 +3811,13 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
         ("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("fecha_lote",), ("detalle",), ("motivo",),
         ("cantidad",), ("articulo_id",),
     ]
-    cursor.fetchall.side_effect = [[], _total_salidas(2, 20.0), []]
+    cursor.fetchall.side_effect = [
+        [(date(2026, 8, 20), "10:00", "guia", None, None, None, 30.0, 2)],
+        [],  # las salidas: ninguna
+    ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        entradas, salidas, dirigidas = entradas_y_salidas_stock_articulo(2)
+        entradas, salidas = entradas_y_salidas_stock_articulo(2)
 
     consulta_entradas = cursor.execute.call_args_list[0].args[0]
     # El lote de una compra es su guía; el orden, el instante de recepción.
@@ -3828,17 +3831,19 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     # Un rechazo mandado a segunda no es lote de stock: no entra al FIFO.
     assert "m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock'" in consulta_entradas
 
+    # Desde E4 las salidas son las MISMAS que las del FIFO de costo: una por
+    # una, fechadas, y las dirigidas adentro con su lote_tipo — ya no hay un
+    # total sin fecha ni una tercera consulta aparte.
+    assert cursor.execute.call_count == 2
     consulta_salidas = cursor.execute.call_args_list[1].args[0]
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta_salidas
-    assert "cantidad < 0" in consulta_salidas
-    assert salidas == 20.0
+    assert "m.cantidad < 0" in consulta_salidas
+    assert "m.lote_tipo, m.lote_origen_id" in consulta_salidas
+    assert salidas == []
 
-    # Las mermas dirigidas a un lote salen aparte, para que el reparto
-    # sepa de qué lote descontarlas (acá no hay ninguna).
-    consulta_dirigidas = cursor.execute.call_args_list[2].args[0]
-    assert "lote_tipo IS NOT NULL" in consulta_dirigidas
-    assert dirigidas == []
-    assert entradas == []
+    # Y la entrada viaja con su "orden" ya armado, para que ninguna pantalla
+    # tenga que rehacerlo.
+    assert entradas[0]["orden"] == (date(2026, 8, 20), "10:00")
 
 
 def test_entradas_de_varios_articulos_devuelve_una_entrada_por_cada_id_pedido():
@@ -3848,21 +3853,22 @@ def test_entradas_de_varios_articulos_devuelve_una_entrada_por_cada_id_pedido():
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0, articulo_id=2)],
-        [(2, 20.0), (7, 0.0)],
-        [],
+        [_salida_fifo(date(2026, 8, 22), 20.0, articulo_id=2)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         movimientos = entradas_y_salidas_stock_articulos([2, 7])
 
     assert sorted(movimientos) == [2, 7]
-    entradas_2, total_2, dirigidas_2 = movimientos[2]
+    entradas_2, salidas_2 = movimientos[2]
     assert [e["origen_id"] for e in entradas_2] == [101]
-    assert (total_2, dirigidas_2) == (20.0, [])
-    assert movimientos[7] == ([], 0.0, [])
-    # Tres consultas en total (lotes, total de salidas, dirigidas), no tres
-    # por artículo — y una sola conexión.
-    assert cursor.execute.call_count == 3
+    assert [s["cantidad"] for s in salidas_2] == [20.0]
+    # El que no tuvo nada sale con las dos listas vacías, nunca ausente.
+    assert movimientos[7] == ([], [])
+    # DOS consultas en total (lotes y salidas), no dos por artículo — y una
+    # sola conexión. Desde E4 la tercera (las dirigidas aparte) ya no existe:
+    # cada dirigida es una salida más.
+    assert cursor.execute.call_count == 2
     assert conexion.close.call_count == 1
 
 
@@ -4069,9 +4075,16 @@ def _lote_compra(origen_id, fecha, cantidad, costo, articulo_id=1):
             cantidad, costo, None, articulo_id)
 
 
-def _total_salidas(articulo_id, total):
-    """La fila del total de salidas: ahora viene por artículo, no como escalar suelto."""
-    return [(articulo_id, total)]
+def _salida_fifo(fecha, cantidad, articulo_id=1):
+    """Una salida fechada, con la forma ancha de COLUMNAS_LOTES.
+
+    Desde E4 las salidas del FIFO de stock son las mismas del de costo y se
+    leen con cursor.description, igual que los lotes: la conexión falsa tiene
+    una sola description, así que la fila de salida viaja con el mismo ancho.
+    Lo que el reparto mira de acá es fecha_orden, momento_orden y cantidad.
+    """
+    return (fecha, datetime(2026, 8, fecha.day, 12), None, None, None, None, None,
+            cantidad, None, None, articulo_id)
 
 
 def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
@@ -4079,14 +4092,13 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # salieron 5 → restos 3 y 10. Tomo 6: 3 del 101 y 3 del 102 (FIFO).
     conexion, cursor = _conexion_falsa(filas_fetchone=[(12,)])
     cursor.description = COLUMNAS_LOTES
-    # Las tres tandas de fetchall: lotes, total de salidas y mermas dirigidas.
+    # Las dos tandas de fetchall: lotes y salidas fechadas.
     cursor.fetchall.side_effect = [
         [
             _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
             _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
         ],
-        _total_salidas(1, 5.0),
-        [],
+        [_salida_fifo(date(2026, 8, 24), 5.0)],
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -4119,8 +4131,7 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
             _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
             _lote_compra(102, date(2026, 8, 22), 10.0, None),
         ],
-        _total_salidas(1, 0.0),
-        [],  # sin mermas dirigidas
+        [],  # sin salidas
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -4139,8 +4150,7 @@ def test_crear_reproceso_lo_que_excede_los_lotes_queda_sin_lote():
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)],
-        _total_salidas(1, 0.0),
-        [],
+        [],  # sin salidas
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -4299,14 +4309,20 @@ def test_salidas_de_varios_articulos_devuelve_una_lista_por_cada_id_pedido():
     from app.db import salidas_stock_articulos
 
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("fecha_orden",), ("tipo",), ("articulo_id",)]
-    cursor.fetchall.return_value = [(date(2026, 8, 21), "armado", 2)]
+    # Las columnas son las que devuelve la consulta de verdad: momento_orden
+    # va porque desde E4 la salida viaja con su "orden" armado acá, en un solo
+    # lugar, y no en cada pantalla que la consume.
+    cursor.description = [("fecha_orden",), ("momento_orden",), ("tipo",), ("articulo_id",)]
+    cursor.fetchall.return_value = [(date(2026, 8, 21), "10:00", "armado", 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         salidas = salidas_stock_articulos([2, 7])
 
     assert sorted(salidas) == [2, 7]
-    assert salidas[2] == [{"fecha_orden": date(2026, 8, 21), "tipo": "armado"}]
+    assert salidas[2] == [{
+        "fecha_orden": date(2026, 8, 21), "momento_orden": "10:00", "tipo": "armado",
+        "orden": (date(2026, 8, 21), "10:00"),
+    }]
     assert salidas[7] == []
     # UNA sola consulta para los dos, y sin abrir una conexión por artículo.
     assert cursor.execute.call_count == 1
