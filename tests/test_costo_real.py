@@ -42,6 +42,64 @@ def test_atribucion_cada_salida_conoce_su_costo_por_lote():
     assert all(s["bultos_sin_costo"] == 0 for s in resultado)
 
 
+def test_atribucion_no_cuesta_una_salida_contra_una_compra_posterior():
+    """E4: el costeo no viaja al futuro.
+
+    Antes, agotados los lotes viejos, la salida seguía comiendo hacia adelante y
+    se costeaba contra una compra que todavía no había llegado — un faltante
+    tapado con mercadería inexistente, y con un costo que además no era el suyo.
+    Ahora esa porción cae a sin_lote, que es lo que de verdad pasó.
+    """
+    entradas = [
+        _lote((date(2026, 9, 1), 0), 5, 1000.0),
+        _lote((date(2026, 9, 10), 0), 100, 9999.0),
+    ]
+    salidas = [{"orden": (date(2026, 9, 3), 0), "cantidad": 20}]
+
+    resultado = atribuir_costos_fifo(entradas, salidas)
+
+    assert resultado[0]["bultos_sin_costo"] == 15
+    assert resultado[0]["motivos_sin_costo"] == {"sin_lote": 15}
+    # Con una porción sin costo, la salida entera queda sin costo: mejor un
+    # número chico y cierto que uno grande y mentiroso.
+    assert resultado[0]["costo"] is None
+    # Y el lote del futuro no se tocó: sus 100 siguen enteros para después.
+    assert sum(c["bultos"] for c in resultado[0]["consumos_lotes"]) == 5
+
+
+def test_atribucion_el_lote_salteado_lo_consume_la_salida_posterior():
+    """El lote del futuro no se pierde para siempre: la salida que vino después
+    sí lo alcanza. Por eso el índice del recorrido no puede pasarlo de largo
+    cuando una salida anterior lo saltea."""
+    entradas = [
+        _lote((date(2026, 9, 1), 0), 5, 1000.0),
+        _lote((date(2026, 9, 10), 0), 100, 2000.0),
+    ]
+    salidas = [
+        {"orden": (date(2026, 9, 3), 0), "cantidad": 20},
+        {"orden": (date(2026, 9, 20), 0), "cantidad": 30},
+    ]
+
+    resultado = atribuir_costos_fifo(entradas, salidas)
+
+    assert resultado[0]["bultos_sin_costo"] == 15
+    # La del día 20 sí puede: el lote del día 10 ya existía para ella.
+    assert resultado[1]["bultos_sin_costo"] == 0
+    assert resultado[1]["costo"] == 30 * 2000.0
+
+
+def test_atribucion_un_lote_del_mismo_dia_si_cuesta_la_salida():
+    """La comparación es por FECHA, no por momento de carga: el reproceso que se
+    carga a la tarde cubre el pedido que salió esa misma mañana."""
+    entradas = [_lote((date(2026, 9, 5), 999), 10, 1500.0)]
+    salidas = [{"orden": (date(2026, 9, 5), 1), "cantidad": 8}]
+
+    resultado = atribuir_costos_fifo(entradas, salidas)
+
+    assert resultado[0]["bultos_sin_costo"] == 0
+    assert resultado[0]["costo"] == 8 * 1500.0
+
+
 def test_atribucion_porcion_sin_precio_deja_la_salida_sin_costo_con_motivo():
     entradas = [_lote(1, 5, None, tipo_lote="ajuste"), _lote(2, 10, 1000.0)]
     salidas = [{"orden": 3, "cantidad": 8}]

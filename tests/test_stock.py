@@ -145,3 +145,72 @@ def test_sin_dirigidas_el_reparto_es_el_de_siempre():
     salidas = salidas_para_reparto(5)
     assert salidas == [{"orden": 0, "cantidad": 5}]
     assert salidas_para_reparto(0) == []
+
+
+# --- E4: el FIFO no viaja al futuro ---
+
+from datetime import date  # noqa: E402
+
+
+def _lote_fechado(dia, cantidad, **extra):
+    return dict({"orden": (date(2026, 9, dia), dia), "cantidad": cantidad}, **extra)
+
+
+def _salida_fechada(dia, cantidad, **extra):
+    return dict({"orden": (date(2026, 9, dia), dia), "cantidad": cantidad}, **extra)
+
+
+def test_una_salida_no_puede_consumir_un_lote_posterior():
+    """El corazón de E4. Antes, agotado el lote viejo, la salida seguía comiendo
+    hacia adelante y tapaba el faltante con mercadería que todavía no había
+    llegado. Ahora esa porción queda SIN LOTE y se ve."""
+    entradas = [_lote_fechado(1, 5, nombre="vieja"), _lote_fechado(10, 100, nombre="futura")]
+    reparto = repartir_fifo(entradas, [_salida_fechada(3, 20)])
+
+    assert reparto["lotes"][0]["restante"] == 0      # se comió la vieja entera
+    assert reparto["lotes"][1]["restante"] == 100    # la futura ni se tocó
+    assert reparto["sin_lote"] == 15                 # y los 15 que faltan se ven
+
+
+def test_una_salida_posterior_si_consume_el_lote_que_la_anterior_no_podia():
+    """El lote salteado no se pierde: la salida que vino después sí lo alcanza.
+    Por eso el índice del recorrido no puede pasarlo de largo."""
+    entradas = [_lote_fechado(1, 5), _lote_fechado(10, 100)]
+    reparto = repartir_fifo(entradas, [_salida_fechada(3, 20), _salida_fechada(20, 30)])
+
+    assert reparto["lotes"][0]["restante"] == 0
+    assert reparto["lotes"][1]["restante"] == 70     # la del día 20 sí lo consumió
+    assert reparto["sin_lote"] == 15                 # solo lo de la salida del día 3
+
+
+def test_un_lote_del_mismo_dia_si_cubre_la_salida():
+    """La comparación es por FECHA, no por momento de carga: en el galpón las dos
+    cosas pasaron el mismo día, y el reproceso que se carga a la tarde cubre el
+    pedido que salió a la mañana."""
+    entradas = [dict(_lote_fechado(5, 10), orden=(date(2026, 9, 5), 999))]
+    reparto = repartir_fifo(entradas, [dict(_salida_fechada(5, 8), orden=(date(2026, 9, 5), 1))])
+
+    assert reparto["lotes"][0]["restante"] == 2
+    assert reparto["sin_lote"] == 0
+
+
+def test_sin_fechas_el_reparto_se_comporta_como_siempre():
+    """Compatibilidad: un reparto por total (orden 0, sin fecha) no puede aplicar
+    la regla, así que no la aplica. Avisa por lo que sabe, nunca por lo que supone."""
+    entradas = [_lote_fechado(1, 5), _lote_fechado(10, 100)]
+    reparto = repartir_fifo(entradas, salidas_para_reparto(20))
+
+    assert reparto["lotes"][0]["restante"] == 0
+    assert reparto["lotes"][1]["restante"] == 85
+    assert reparto["sin_lote"] == 0
+
+
+def test_la_merma_dirigida_alcanza_su_lote_aunque_sea_posterior():
+    """La dirigida es una excepción deliberada: el operario SEÑALA el lote que se
+    pudrió, no lo adivina. Discutirle la fecha sería negarle el piso."""
+    entradas = [_lote_fechado(10, 30, tipo_lote="reproceso", origen_id=9)]
+    salidas = [dict(_salida_fechada(3, 10), lote_tipo="reproceso", lote_origen_id=9)]
+    reparto = repartir_fifo(entradas, salidas)
+
+    assert reparto["lotes"][0]["restante"] == 20
+    assert reparto["sin_lote"] == 0
