@@ -635,32 +635,91 @@ Es acotado y no se propaga: solo alcanza a las guías R del arrastre. Una vez
 que el depósito vuelva al orden normal —reproceso primero, armado después— el
 problema no vuelve a aparecer **por esta causa**.
 
-### La pregunta abierta que E4 tiene que contestar (planteada por el dueño)
+### DECIDIDO (31/08): la fecha hacia atrás entra, y entra por la ventana retroactiva
 
-**¿Conviene que el operario pueda cargar un reproceso con fecha anterior?**
+**¿Conviene que el operario pueda cargar un reproceso con fecha anterior?
+Sí.** Decisión del dueño el 31/08.
 
-Si el sistema va a ordenar por fecha real, cargar todo con fecha de hoy ensucia
-el costeo **cada vez que haya un atraso**, no solo con el arrastre del lunes.
-Un depósito que procesa a la tarde y carga a la mañana siguiente tiene el mismo
-problema todos los días.
+El argumento que la decide: **la fecha real ya es la regla en todo el resto
+del módulo** — `fecha_operacion` en compras, movimientos y reprocesos está
+documentada como "la fecha REAL del hecho, puede no ser la de carga". El
+reproceso cargándose siempre con fecha de hoy es la excepción, no al revés. Y
+sin esto, **cada atraso ensucia el costeo**: no es un caso raro, es lo que pasa
+todas las semanas.
 
-Lo que hay que sopesar al diseñar E4, sin decidirlo antes:
+**Por dónde entra: la ventana retroactiva de Administración**, con su "Guardar
+igual" y motivo escrito. **NO como campo libre en la pantalla del operario.**
+Mismo criterio que la excepción del freno: posible, visible y contable, pero
+nunca tan cómoda como el camino normal.
 
-- **A favor**: la fecha real es el dato que el resto del módulo ya usa
-  (`fecha_operacion` en compras, movimientos y reprocesos es "la fecha REAL del
-  hecho, puede no ser la de carga"). Un reproceso que no la deja declarar es la
-  excepción, no la regla.
-- **En contra**: una fecha hacia atrás **reescribe el pasado del FIFO**. Los
-  consumos de una guía R se congelan al cargarla; los de las guías posteriores
-  ya congeladas no se recalculan. Insertar un lote antes de salidas ya costeadas
-  deja el documento congelado y el reparto vivo diciendo cosas distintas.
-- **El límite que ya existe para esto**: la ventana de carga retroactiva de
-  Administración (diez días y dentro del mes en curso) y su "Guardar igual" con
-  motivo escrito. Si la fecha hacia atrás entra, lo lógico es que entre por ahí
-  y no como un campo libre en la pantalla del operario.
+### Lo que la ventana NO resuelve: el documento congelado y el reparto vivo
 
-**No está decidido.** Es lo primero que E4 tiene que resolver antes de tocar
-`repartir_fifo`.
+Una fecha hacia atrás mete un lote **antes** de salidas ya costeadas. Los
+consumos de las guías R posteriores están congelados en `reprocesos_consumos` y
+**no se recalculan nunca**. Queda el documento diciendo una cosa y el reparto
+vivo diciendo otra. Relevado en el código el 31/08:
+
+**1. Qué tan grave es, y si se ve.**
+
+**La plata NO diverge.** `reprocesos.costo_total` y `costo_por_bulto_primera`
+quedan congelados al cargar, y el FIFO vivo usa `rp.costo_por_bulto_primera`
+como costo del lote de primera. O sea que **todo lo que está río abajo de una
+guía R usa el número congelado**: un lote retroactivo insertado antes no mueve
+ni un peso ya informado.
+
+Lo que diverge es **la trazabilidad**: de qué lote dice la guía R que salió cada
+bulto. Y es **silenciosa por construcción**, porque las dos versiones no se
+cruzan en ninguna pantalla:
+
+- El documento congelado se lee en **un solo lugar**:
+  `listar_reprocesos_con_consumos` → la pantalla de Guías R.
+- El reparto vivo lo usan Stock del Sistema, Stock por Guía, el selector de lote
+  de la merma dirigida y la alerta de cruce de cliente.
+- **Nadie los muestra juntos**, así que nadie ve la contradicción. Se puede
+  llegar a que Stock por Guía muestre una compra con resto que el documento de
+  la guía R dice haber consumido.
+
+**Lo único que sí se mueve solo** es la **alerta de cruce de cliente**: se
+recalcula viva en cada carga de pantalla, así que puede empezar o dejar de
+aparecer cuando entra un lote retroactivo. No es plata, es una alerta.
+
+**2. Sí conviene avisar, con el molde que ya existe.**
+
+El mismo patrón de dos toques de las señas: `contar_senas_afectadas_por_valor`
+cuenta ANTES de escribir nada, la pantalla muestra el número y pide el segundo
+toque. Acá el equivalente es contar **las guías R no anuladas del MISMO
+artículo con `fecha_operacion` igual o posterior a la fecha nueva**: son las
+únicas cuyo reparto podría dejar de coincidir. Es un `count(*)`, sin rejugar
+ningún FIFO.
+
+El texto tiene que decir las dos cosas, porque la segunda es la que evita el
+susto: *"Hay N guías R de este artículo con fecha igual o posterior. Su reparto
+por lote puede dejar de coincidir con el vivo. **Su costo no cambia.**"*
+
+**3. Recalcular es una lata que NO conviene abrir. Y no hace falta.**
+
+Tres razones, en orden de peso:
+
+- **Ya está decidido, y para este mismo caso.** El comentario de
+  `reprocesos_consumos` dice: *"Documento congelado: si después se corrige una
+  recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se
+  mueven."* Corregir una recepción produce **exactamente** esta divergencia, y
+  ya se resolvió a favor de congelar. La fecha retroactiva no abre un problema
+  nuevo: hace más frecuente uno que ya está aceptado.
+- **Recalcular mueve plata de meses cerrados.** Recalcular los consumos obliga a
+  recalcular `costo_total` y `costo_por_bulto_primera`, que es lo que la
+  Rentabilidad Real ya informó.
+- **Y cascadea.** Una guía R puede consumir la primera de otra guía R a su costo
+  congelado. Recalcular la primera cambia el costo de la segunda, y así hacia
+  adelante sin final claro.
+
+**Lo que sí vale la pena, en vez de recalcular:** hacer **visible** la
+divergencia donde hoy es muda. Comparar el reparto congelado contra el vivo es
+solo lectura, no recalcula nada, y convierte una contradicción silenciosa en una
+marca en la pantalla de Guías R — "el reparto de esta guía ya no coincide con el
+vivo". Registra y delata, jamás traba, que es el criterio de todo el módulo.
+**No entra en E4**: se anota acá y se decide cuando el freno y el desglose estén
+andando, que es cuando se va a saber si molesta de verdad.
 
 ## Pendiente con nombre propio: el sistema no sabe en qué envase vino un bulto
 
