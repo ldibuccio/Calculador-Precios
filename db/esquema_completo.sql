@@ -713,7 +713,8 @@ comment on table dias_sin_pedido is
 create table movimientos_stock (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
-    tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo', 'stock_inicial')),
+    tipo text not null check (tipo in ('ajuste', 'merma', 'reingreso_rechazo', 'stock_inicial',
+                                       'cierre_modelo_viejo')),
     cantidad numeric not null check (cantidad <> 0),
     motivo text not null check (btrim(motivo) <> ''),
     cliente_id bigint references clientes (id),
@@ -766,6 +767,8 @@ create table movimientos_stock (
 
 comment on table movimientos_stock is
     'Movimientos de stock del depósito que no salen de otra tabla: ajustes (incluido el stock inicial), mermas y reingresos por rechazo del cliente. En BULTOS. Nunca pisan el stock: el stock por artículo se calcula siempre (compras recepcionadas + estos movimientos − renglones armados).';
+comment on column movimientos_stock.tipo is
+    'ajuste (corrección de registro), merma (siempre negativa), reingreso_rechazo (siempre positivo, lo que volvió del cliente), stock_inicial (los bultos que había en el piso el día del corte, con costo), cierre_modelo_viejo (el compensatorio por artículo que cancela el saldo del modelo anterior al corte: signo libre, sin costo, y fuera de mermas y rentabilidad por su tipo).';
 comment on column movimientos_stock.cantidad is
     'Bultos, con signo: ajuste ±, merma siempre negativa, reingreso siempre positivo.';
 comment on column movimientos_stock.fecha_operacion is
@@ -896,6 +899,21 @@ comment on table reprocesos_consumos is
     'De qué lote salió cada bulto tomado, escrito por el server corriendo FIFO al cargar (el operario no elige lote). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
 comment on column reprocesos_consumos.origen is
     'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), o sin_lote (se tomó más de lo que los lotes cubrían: el piso es la verdad, no se traba).';
+
+-- El respaldo de las fichas que el corte del modelo pone en NULL.
+-- Al cortar, las guías R pre-corte con ficha asignada dejan de contar POR
+-- FICHA (sus cajas siguen contando en el total del artículo, que el
+-- compensatorio lleva a cero). El dato viejo no se pierde: queda acá, que es a
+-- la vez el registro de qué se tocó y lo único que hace posible un rollback
+-- exacto. Nace vacía y solo se llena el día del corte de esa empresa.
+create table corte_respaldo_fichas_reprocesos (
+    reproceso_id bigint primary key references reprocesos (id),
+    ficha_id     bigint not null references fichas_logistica (id),
+    guardado_el  timestamptz not null default now()
+);
+
+comment on table corte_respaldo_fichas_reprocesos is
+    'Qué ficha tenía cada guía R antes de que el corte del modelo se la pusiera en NULL. Una fila por guía tocada. No se borra: es el rastro de la puesta a cero.';
 
 create table remitos_segunda (
     id bigint generated always as identity primary key,

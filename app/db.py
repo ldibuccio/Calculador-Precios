@@ -4204,10 +4204,17 @@ def cargar_valor_sena(tipo_envase_id: int, monto, vigente_desde) -> None:
 
 
 def listar_senas_pendientes() -> list[dict]:
-    """Entradas vigentes con la seña sin resolver, para la pantalla Pendientes de Pago (cajera). Más viejas primero.
+    """Entradas vigentes con la seña sin resolver, para la pantalla Pendientes de Pago (cajera). LAS MÁS NUEVAS ARRIBA.
 
     Pendiente = los TRES cierres en NULL (ni pagada, ni vale, ni anulada)
     y el movimiento vigente (no anulado).
+
+    El orden es el de la caja, no el de una cola: lo que se acaba de
+    recibir es lo que alguien va a venir a cobrar ahora, y tiene que
+    estar a la vista sin scrollear. Las viejas bajan solas — son las de
+    la gente que no vino a cobrar, y ésas no se pierden: quedan abajo
+    para siempre y la alerta de Auditoría las cuenta aparte
+    (contar_senas_pendientes_viejas).
     """
     conexion = obtener_conexion()
     try:
@@ -4227,7 +4234,7 @@ def listar_senas_pendientes() -> list[dict]:
                 + """
                 WHERE v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL
                   AND v.anulado_el IS NULL
-                ORDER BY v.creado_en
+                ORDER BY v.creado_en DESC, v.id DESC
                 """
             )
             columnas = [descripcion[0] for descripcion in cursor.description]

@@ -76,6 +76,7 @@ bases estén marcadas.
 | `agregar_corte_y_stock_inicial.sql` (etapa 2 del modelo nuevo: la fecha de corte, el tipo `stock_inicial` con costo, y el reproceso inicial que produce sin consumir) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **36 guías R**, 0 con tipo distinto de `normal` — el default hizo lo suyo) | ✅ 2026-08-28 (verificado: 12/12 OK; corte en 2026-08-31; **0 guías R**, nada que convertir) |
 | `agregar_stock_inicial_a_consumos.sql` (arrastre de la etapa 2: el lote de stock inicial también puede CONSUMIRSE. La migración anterior lo dejó entrar pero no salir, y el primer reproceso normal después del corte reventaba sin guardar la guía) | ✅ 2026-08-28 (verificado: 4/4 OK; **68 consumos** intactos, coherente con las 36 guías R) | ✅ 2026-08-28 (verificado: 4/4 OK; **0 consumos**, coherente con las 0 guías R) |
 | `agregar_ficha_a_conteos.sql` (etapa 3 del modelo nuevo: el conteo físico dice de qué ficha es lo que contó; NULL después del corte = los bultos sueltos) | ✅ 2026-08-29 (verificado: 7/7 OK; **31 conteos**, 0 con ficha: todos pre-corte) | ✅ 2026-08-29 (verificado: 7/7 OK; **51 conteos**, 0 con ficha: todos pre-corte) |
+| `agregar_cierre_modelo_viejo.sql` (el corte de Frutamax: el tipo propio del movimiento compensatorio que cancela el saldo del modelo viejo, y la tabla de respaldo de las fichas que el corte pone en NULL) | ✅ 2026-08-29 | — el corte es solo de Frutamax; Palmala no se toca |
 
 ## Riesgos verificados contra producción y descartados
 
@@ -231,3 +232,86 @@ Administración, y sus dos pantallas (`deposito_pedido_cargar.html` y
 | Copia inicial del catálogo (`scripts/copiar_catalogo_empresa.py`, o a mano por el navegador con `db/generar_inserts_catalogo.sql`) | — es el origen | ✅ 2026-08-19 (8 tablas verificadas) |
 | Revisión a mano de parámetros de clientes y costos de envase copiados | — | ✅ 2026-08-19 |
 | Verificación de esquema (`verificar_esquema.sql` en las dos bases, comparar) | ✅ 2026-08-19 (13/13 firmas idénticas) | ✅ 2026-08-19 (13/13 firmas idénticas) |
+
+## El corte del modelo — Frutamax (31/08/2026)
+
+Scripts de DATOS, no de esquema: se corren UNA vez, en Frutamax y solo en
+Frutamax. Cada uno tiene su guarda: si los 18 ids de la foto no traen los
+nombres esperados, el script se corta sin escribir nada.
+
+| Script | Frutamax | Palmala |
+|---|---|---|
+| `corte_frutamax_puesta_a_cero_y_carga.sql` (compensatorio por artículo calculado como −1 × las seis patas, los 18 movimientos de stock inicial, los 2 reprocesos iniciales y el `ficha_id` en NULL de las guías R pre-corte) | ✅ 2026-08-29 — **aplicado, pero con el incidente de abajo: terminó con error y escribió igual** | — no corresponde |
+| `corte_frutamax_verificador.sql` (las seis patas contra la foto aprobada; 12 verificaciones) | ❌ **NUNCA SE CORRIÓ** — también usa vistas y tablas temporales, así que habría fallado igual | — no corresponde |
+| `corte_frutamax_rollback.sql` (deshace la carga y devuelve las fichas desde el respaldo; se corta si ya hubo operación después del corte) | — no hizo falta | — no corresponde |
+
+### Lo que pasó al correr el corte (29/08/2026) — leer antes de reusar estos scripts
+
+El script terminó con **`relation "foto" does not exist`** y **escribió todo
+igual**. El editor SQL de Supabase **no sostiene el `begin`**: confirma cada
+sentencia por su cuenta, y la vista/tabla temporal que se creaba arriba ya no
+existía cuando la usaba la sentencia de abajo. El error cayó *después* de que
+los cuatro pasos estaban aplicados.
+
+**Terminó bien por casualidad, no por diseño.** Si el error hubiera caído en el
+medio, quedaba media base cortada y media no, sin transacción que lo deshiciera.
+
+Ya había pasado antes con el verificador de una migración y se trató como un
+problema del verificador. Era del **entorno**. La regla que sale de acá está en
+`CLAUDE.md`, sección "SQL para el editor de Supabase": nada de temporales, y
+todo lo que tenga que ser todo-o-nada adentro de un único `do $$ ... end $$`.
+
+### Cabo cerrado: el verificador de la migración no dejó residuos
+
+El verificador de `agregar_cierre_modelo_viejo.sql` tiene el mismo defecto
+—temp table y un `rollback` que ahí no revierte nada—, así que pudo haber
+dejado escritas en `movimientos_stock` las filas de prueba que inserta. El
+control de stock **no lo habría delatado**: el compensatorio del corte se come
+cualquier saldo anterior y deja el número correcto igual.
+
+Se comprobó a mano con una consulta de residuos (filas con `motivo = 'prueba'`,
+o de tipo `cierre_modelo_viejo` / `stock_inicial` con un motivo distinto del que
+escribe el script). **Cero filas en Frutamax**: no quedó ninguna fila de prueba,
+y todos los movimientos de cierre y de stock inicial tienen su motivo correcto.
+**Cerrado, no queda pendiente.**
+
+### Qué respaldó el corte de verdad — y qué NO se verificó
+
+**El verificador de las 12 NUNCA SE CORRIÓ.** También usa vistas y tablas
+temporales, así que habría fallado por la misma razón que el script de carga.
+Queda escrito acá con todas las letras porque **decir "12/12" sobre una
+verificación que no existió es exactamente lo que dentro de seis meses hace
+confiar en un control que nunca pasó.**
+
+Lo que sí respaldó el corte fueron **dos consultas de una sola sentencia,
+armadas a mano en el chat** (una sentencia = el editor las corre bien):
+
+1. **Stock y conteos.** El stock artículo por artículo contra la foto, con las
+   seis patas, más los cuatro conteos: **22 cierres, 18 iniciales, 2
+   reprocesos, 0 guías pre-corte con ficha.** Todo OK.
+2. **La plata.** **531 bultos por $17.522.615,76**, **37 cajas por
+   $437.215,92**, y `bultos_tomados = 0` en los reprocesos iniciales. Todo OK.
+
+**LO QUE NO SE VERIFICÓ NUNCA** (las verificaciones 04, 05, 11 y 12 del
+verificador que no corrió):
+
+- **04** — que ningún artículo quede con **sueltos negativos**, que es el
+  síntoma de las cajas fantasma de una ficha.
+- **05** — las **cajas por ficha**: que solo la ficha 5 tenga 25 y la 7 tenga
+  12, y ninguna otra ficha tenga nada.
+- **11** — que **el FIFO arranque limpio**: que ningún lote viejo haya quedado
+  con resto.
+- **12** — que **ningún lote con resto haya quedado sin precio**.
+
+Las cuatro miran cosas que las dos consultas que sí se corrieron NO cubren: el
+stock por artículo puede dar exacto y aun así estar mal repartido entre fichas,
+o arrastrar un lote sin precio que ensucie el costo del primer reproceso.
+
+**DEUDA ABIERTA.** El corte se aplicó **sin la atomicidad que el script
+prometía** y **sin las cuatro verificaciones de arriba**.
+`corte_frutamax_puesta_a_cero_y_carga.sql` y `corte_frutamax_verificador.sql`
+**siguen escritos con temporales y con un `begin` que no protege nada**: hay
+que reescribirlos sin temporales **antes de que alguien los reuse** — por
+ejemplo para el corte de Palmala, que sigue pendiente. Tal como están hoy,
+volverían a fallar igual. Cuando se reescriba el verificador, **se corre en
+Frutamax para cerrar el hueco de las cuatro**, aunque sea después del arranque.
