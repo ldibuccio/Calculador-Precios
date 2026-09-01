@@ -2752,6 +2752,22 @@ def test_listar_senas_pendientes_exige_los_tres_cierres_en_null():
     assert "v.anulado_el IS NULL" in consulta
 
 
+def test_listar_senas_pendientes_pone_las_mas_nuevas_arriba():
+    """La cajera necesita ver arriba lo que se acaba de recibir: es lo que alguien
+    viene a cobrar ahora. Las viejas —la gente que no vino— bajan solas y quedan
+    abajo, sin perderse."""
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_senas_pendientes()
+
+    consulta = cursor.execute.call_args[0][0]
+    assert "ORDER BY v.creado_en DESC" in consulta
+    # El desempate por id evita que dos señas del mismo instante bailen de
+    # lugar entre una carga y la siguiente.
+    assert "v.creado_en DESC, v.id DESC" in consulta
+
+
 def test_listar_senas_resueltas_trae_el_tipo_de_cierre_y_su_fecha():
     conexion, cursor = _conexion_falsa(filas_fetchall=[])
 
