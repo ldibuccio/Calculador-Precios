@@ -855,13 +855,30 @@ create table reprocesos (
     -- asignado indistinguible de uno sin asignar.
     ficha_id bigint references fichas_logistica (id),
     tipo text not null default 'normal' check (tipo in ('normal', 'inicial')),
+    -- El operario corrigió el reparto por lote que propuso el server.
+    consumos_editados boolean not null default false,
+    -- La excepción al freno: por qué se cargó sin remanente, y quién.
+    -- El motivo ES la marca (NULL = no hubo excepción), para que no haya un
+    -- booleano que pueda contradecirlo.
+    excepcion_motivo text,
+    excepcion_operario text,
     -- El reproceso inicial PRODUCE SIN CONSUMIR: las cajas armadas que había
     -- en el piso el día del corte ya existen, y los cajones que las
     -- originaron no se van a cargar nunca. Vive en el dato (toma cero) y no
     -- en el código, porque el cálculo de stock ya resta SUM(bultos_tomados).
     constraint reprocesos_bultos_tomados_check
         check ((tipo = 'inicial' and bultos_tomados = 0)
-               or (tipo = 'normal' and bultos_tomados > 0))
+               or (tipo = 'normal' and bultos_tomados > 0)),
+    -- Los dos datos de la excepción viajan juntos y ninguno puede ir vacío.
+    -- Los "is not null" NO son redundantes: en Postgres un check que evalúa a
+    -- NULL se da por cumplido, y sin ellos una guía con motivo y sin quién
+    -- entraba igual.
+    constraint reprocesos_excepcion_completa
+        check (
+            (excepcion_motivo is null and excepcion_operario is null)
+            or (excepcion_motivo is not null and excepcion_operario is not null
+                and btrim(excepcion_motivo) <> '' and btrim(excepcion_operario) <> '')
+        )
 );
 
 comment on table reprocesos is
@@ -874,6 +891,12 @@ comment on column reprocesos.cliente_id is
     'Para quién se armó la primera (dato de trazabilidad: el stock sigue sin dueño). NULL = guía vieja, sin cliente. La alerta de Auditoría cruza este cliente contra el de los pedidos que el FIFO atribuye a esta primera.';
 comment on column reprocesos.ficha_id is
     'A qué ficha fueron las cajas de primera de esta guía R. NULL tiene dos significados que separa la fecha de corte (31/08/2026): antes del corte = dato viejo que no se completa; después = SIN ASIGNAR, y hay que completarlo. No se deriva de (articulo_id, cliente_id): un cliente puede tener varias fichas del mismo artículo, así que esa derivación es ambigua por diseño.';
+comment on column reprocesos.consumos_editados is
+    'El operario corrigió el reparto por lote que propuso el server. false = el reparto es el que salió del FIFO. Va por guía y no por consumo: lo que hay que poder contestar es si el reparto lo declaró una persona, no qué renglón tocó.';
+comment on column reprocesos.excepcion_motivo is
+    'Por qué se cargó esta guía pese al freno (no había remanente a la fecha). NULL = no hubo excepción: el motivo ES la marca, para que no haya un booleano que pueda contradecirlo.';
+comment on column reprocesos.excepcion_operario is
+    'Quién usó la excepción, declarado al cargar. El sistema no tiene identidad de operario (el acceso es una cookie compartida), así que es débil como identidad y alcanza para lo que se pidió: que si alguien la usa siempre, se vea.';
 comment on column reprocesos.tipo is
     'normal = el reproceso de todos los días: toma bultos del stock y produce primera, segunda y merma. inicial = las cajas que ya estaban armadas en el piso el día del corte (31/08/2026): PRODUCEN SIN CONSUMIR (bultos_tomados = 0), porque los cajones que las originaron nunca se cargaron. El check obliga las dos cosas.';
 
@@ -881,6 +904,12 @@ comment on column reprocesos.tipo is
 -- que importa es el de "cuántas cajas hay de esta ficha".
 create index reprocesos_ficha_idx
     on reprocesos (ficha_id) where ficha_id is not null;
+
+-- Contar las excepciones al freno por operario y por día sin recorrer la
+-- tabla entera. Parcial: las guías sin excepción —casi todas— no entran.
+create index reprocesos_excepcion_idx
+    on reprocesos (fecha_operacion, excepcion_operario)
+    where excepcion_motivo is not null;
 
 create table reprocesos_consumos (
     id bigint generated always as identity primary key,
