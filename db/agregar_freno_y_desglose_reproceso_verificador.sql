@@ -1,7 +1,110 @@
--- VERIFICADOR de db/agregar_freno_y_desglose_reproceso.sql.
--- UNA sola consulta que devuelve filas: el editor de Supabase muestra solo el
--- resultado de la última, y no muestra los NOTICE. Solo lectura.
--- Se espera OK en las 9.
+-- VERIFICADOR de la etapa 2 (freno + desglose del reproceso).
+--
+-- SE PEGA EN DOS VECES, NO DE CORRIDO. El editor de Supabase muestra solo el
+-- resultado de la ÚLTIMA sentencia: si se pegan juntos y el bloque `do` falla,
+-- la tabla de abajo se muestra igual y el error queda tapado — que es
+-- exactamente el modo de fallar que este verificador viene a evitar.
+--
+--   PASO 1: el bloque `do`. Tiene que terminar SIN DECIR NADA. Si dice algo,
+--           el check no hace lo que dice y no hay nada más que mirar.
+--   PASO 2: la consulta final. Se espera OK en las 9.
+--
+-- DOS PARTES, y la primera es la que importa:
+--
+--   El bloque `do` PRUEBA QUE EL CHECK RECHAZA. Leer que un constraint existe
+--   no dice nada sobre si funciona — en Postgres un check que evalúa a NULL se
+--   da por cumplido, y así se nos coló uno que dejaba pasar una excepción sin
+--   operario. Acá se intentan los tres casos malos de verdad; si alguno ENTRA,
+--   el bloque corta con el detalle y la consulta final no llega a correrse,
+--   que es el resultado correcto: un check roto es un freno, no un renglón
+--   más de una tabla.
+--
+--   NO DEJA NADA: lo que se inserta para probar se borra en el mismo bloque, y
+--   el bloque es UNA sentencia, así que si algo revienta se deshace entero.
+--   La consulta final vuelve a comprobar que no quedó ninguna fila de prueba.
+--
+--   La consulta final LEE el resto (columnas, índices, comentarios) y devuelve
+--   filas: el editor de Supabase muestra solo el resultado de la última.
+--
+-- Se espera que el PASO 1 no diga nada y el PASO 2 dé OK en las 9.
+
+-- ===================== PASO 1 — PROBAR QUE EL CHECK RECHAZA =====================
+
+do $$
+declare
+    art bigint;
+    op  bigint;
+    id_guia bigint;
+    ok boolean;
+    malos text := '';
+begin
+    select id into art from articulos limit 1;
+    if art is null then
+        raise exception 'La base no tiene artículos: el verificador no puede probar el check.';
+    end if;
+
+    insert into operarios_deposito (nombre) values ('__prueba del verificador__')
+    returning id into op;
+
+    -- 1. Motivo SIN operario tiene que rebotar.
+    ok := false;
+    begin
+        insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                                bultos_segunda, bultos_merma, excepcion_motivo)
+        values (art, current_date, 10, 8, 1, 1, '__prueba__')
+        returning id into id_guia;
+        delete from reprocesos where id = id_guia;
+    exception when check_violation then ok := true; end;
+    if not ok then malos := malos || 'entró una excepción CON MOTIVO Y SIN OPERARIO; '; end if;
+
+    -- 2. Operario SIN motivo tiene que rebotar.
+    ok := false;
+    begin
+        insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                                bultos_segunda, bultos_merma, excepcion_operario_id)
+        values (art, current_date, 10, 8, 1, 1, op)
+        returning id into id_guia;
+        delete from reprocesos where id = id_guia;
+    exception when check_violation then ok := true; end;
+    if not ok then malos := malos || 'entró una excepción CON OPERARIO Y SIN MOTIVO; '; end if;
+
+    -- 3. Motivo en blanco tiene que rebotar: no es una excepción, es un pase libre.
+    ok := false;
+    begin
+        insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                                bultos_segunda, bultos_merma, excepcion_motivo, excepcion_operario_id)
+        values (art, current_date, 10, 8, 1, 1, '   ', op)
+        returning id into id_guia;
+        delete from reprocesos where id = id_guia;
+    exception when check_violation then ok := true; end;
+    if not ok then malos := malos || 'entró una excepción CON EL MOTIVO EN BLANCO; '; end if;
+
+    -- 4. Y la completa tiene que ENTRAR, o el check estaría trabando de más.
+    ok := true;
+    begin
+        insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                                bultos_segunda, bultos_merma, excepcion_motivo, excepcion_operario_id)
+        values (art, current_date, 10, 8, 1, 1, '__prueba__', op)
+        returning id into id_guia;
+        delete from reprocesos where id = id_guia;
+    exception when others then ok := false; end;
+    if not ok then malos := malos || 'NO entró una excepción completa (el check traba de más); '; end if;
+
+    -- 5. Y el nombre normalizado tiene que ser único.
+    ok := false;
+    begin
+        insert into operarios_deposito (nombre) values ('  __PRUEBA DEL VERIFICADOR__ ');
+    exception when unique_violation then ok := true; end;
+    if not ok then malos := malos || 'entraron dos operarios con el mismo nombre normalizado; '; end if;
+
+    delete from operarios_deposito where nombre ilike '%prueba del verificador%';
+
+    if malos <> '' then
+        raise exception 'EL CHECK NO HACE LO QUE DICE: %', malos;
+    end if;
+end $$;
+
+-- ===================== PASO 2 — LEER LO QUE QUEDÓ ARMADO =======================
 select n, verificacion, resultado from (
     select 1 as n, '01 - operarios_deposito existe y arranca vacía' as verificacion,
            case when not exists (select 1 from pg_class where relname = 'operarios_deposito')
@@ -38,8 +141,12 @@ select n, verificacion, resultado from (
       and c.confrelid = 'operarios_deposito'::regclass
 
     union all
-    select 6, '06 - el check exige motivo Y operario juntos, y el motivo no vacío',
-           case when count(*) = 1 then 'OK' else 'FALLA: el check no está' end
+    -- El bloque de arriba ya PROBÓ que rechaza; esto solo confirma que el que
+    -- rechaza es el constraint que creemos, con el nombre que las migraciones
+    -- futuras van a nombrar para reemplazarlo.
+    select 6, '06 - el check que rechaza es reprocesos_excepcion_completa',
+           case when count(*) = 1 then 'OK — y el bloque de arriba probó que rechaza'
+                else 'FALLA: el check no está' end
     from pg_constraint
     where conrelid = 'reprocesos'::regclass and conname = 'reprocesos_excepcion_completa'
 
@@ -51,9 +158,11 @@ select n, verificacion, resultado from (
       and indexdef like '%WHERE (excepcion_motivo IS NOT NULL)%'
 
     union all
-    select 8, '08 - las guías que ya existían quedaron sin excepción y sin editar',
-           case when count(*) = 0 then 'OK — ' || (select count(*) from reprocesos) || ' guías intactas'
-                else 'FALLA: ' || count(*) || ' guías tocadas' end
+    select 8, '08 - las guías que ya existían quedaron sin excepción y sin editar, y la prueba no dejó nada',
+           case when count(*) = 0
+                     and not exists (select 1 from operarios_deposito where nombre ilike '%prueba del verificador%')
+                then 'OK — ' || (select count(*) from reprocesos) || ' guías intactas'
+                else 'FALLA: ' || count(*) || ' guías tocadas, o quedó una fila de prueba' end
     from reprocesos
     where consumos_editados or excepcion_motivo is not null or excepcion_operario_id is not null
 
