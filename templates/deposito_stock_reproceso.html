@@ -66,6 +66,60 @@
     cursor: pointer;
   }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
+
+  /* LA PARED: el freno. No hay botón para pasarla — solo para ir a
+     resolverla. Por eso los enlaces son botones grandes y el texto dice
+     quién carga cada cosa. */
+  .pared {
+    background: #fee2e2;
+    border: 2px solid #dc2626;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: #7f1d1d;
+  }
+  .pared-titulo { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 800; }
+  .pared-cuenta { margin: 0 0 0.5rem; font-size: 1rem; }
+  .pared-lotes { margin: 0 0 0.75rem; padding-left: 1.1rem; font-size: 0.95rem; }
+  .pared-lotes li { margin-bottom: 0.15rem; }
+  .pared p { margin: 0.6rem 0 0; font-size: 0.95rem; line-height: 1.35; }
+  .pared-botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+  .boton-ir {
+    flex: 1 1 45%;
+    text-align: center;
+    padding: 0.9rem 0.6rem;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+  .administracion { font-weight: 700; }
+
+  /* EL DESGLOSE. Plegado por default: el que no quiere mirar nada
+     confirma y listo. Fecha y cantidad, nada más — el proveedor solo
+     aparece cuando hay dos lotes del mismo día. */
+  .desglose { border: 1px solid #ddd; border-radius: 10px; padding: 0.75rem; margin-top: 1rem; background: #fafafa; }
+  .desglose-cabecera { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .desglose-cabecera strong { font-size: 1rem; }
+  .desglose-resumen { margin: 0.4rem 0 0; font-size: 0.95rem; color: #444; line-height: 1.35; }
+  .boton-cambiar {
+    padding: 0.7rem 1rem;
+    min-width: 6.5rem;
+    background: #fff;
+    border: 1px solid #7c3aed;
+    color: #7c3aed;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .fila-lote { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; }
+  .fila-lote span { flex: 1; font-size: 0.95rem; }
+  .fila-lote input { width: 5.5rem; margin-top: 0; padding: 0.7rem 0.5rem; text-align: right; }
+  .desglose-total { margin: 0.75rem 0 0; font-size: 0.95rem; font-weight: 700; color: #166534; }
+  .desglose-total.no-cierra { color: #b91c1c; }
 </style>
 </head>
 <body>
@@ -80,6 +134,38 @@
   {% if error %}
   <div class="error">{{ error }}</div>
   {% endif %}
+
+  {# LA PARED. El reproceso es 100% o nada: si no hay stock a la fecha, no
+     se carga. No hay "la cargo igual" — lo único que se ofrece es ir a
+     cargar lo que falta. El mismo bloque lo usa el JS para avisar ANTES de
+     que apriete Guardar: el texto de qué hacer está escrito UNA vez. #}
+  <div class="pared" id="pared" {% if not freno %}hidden{% endif %}>
+    <p class="pared-titulo" id="pared-titulo">
+      {%- if freno %}No alcanza para {{ freno.declarado }} bultos de {{ freno.articulo }} el {{ freno.fecha }}.{% endif -%}
+    </p>
+    <p class="pared-cuenta" id="pared-cuenta">
+      {%- if freno %}Declaraste {{ freno.declarado }} y ese día había {{ freno.disponible }}.{% endif -%}
+    </p>
+    <ul class="pared-lotes" id="pared-lotes">
+      {%- if freno %}
+      {%- for lote in freno.lotes %}
+      <li>{{ lote.fecha }}{% if lote.detalle %} · {{ lote.detalle }}{% endif %} — {{ lote.restante }}</li>
+      {%- endfor %}
+      {%- if not freno.lotes %}<li>Ese día no había ningún lote de este artículo.</li>{% endif %}
+      {%- endif %}
+    </ul>
+    <p>Si la mercadería salió igual, falta cargar algo antes: una recepción, un ingreso, o la guía R que la armó.</p>
+    <p><strong>Las tres las cargás vos:</strong></p>
+    <div class="pared-botones">
+      <a class="boton-ir" href="/deposito/recepcion">Recepción Compras</a>
+      <a class="boton-ir" href="/deposito/ingresar">Ingresar Mercadería</a>
+    </div>
+    <p><strong>Recepción Compras:</strong> llegó una compra y todavía no la recepcionaste.<br>
+       <strong>Ingresar Mercadería:</strong> entró sin compra, de otro lado.<br>
+       <strong>Reproceso</strong> (esta misma pantalla): estas cajas salieron de otra guía R que falta cargar.</p>
+    <p>Fijate también la fecha: si el reproceso fue otro día, cambiala acá abajo.</p>
+    <p class="administracion">Si la compra no te aparece para recepcionar, esa la carga Administración: avisales antes de seguir.</p>
+  </div>
 
   {# Pantalla de OPERARIO: sin costos ni números del sistema. El selector
      lista solo artículos con stock, por nombre — sin cantidades. #}
@@ -135,9 +221,23 @@
       <label for="fecha">Fecha del reproceso</label>
       <input type="date" id="fecha" name="fecha" max="{{ hoy }}" value="{{ precarga.fecha or hoy }}">
 
+      {# EL DESGLOSE. Aparece solo cuando ya hay artículo, cantidad y fecha:
+         antes no hay nada que mostrar. Plegado muestra UNA línea; el que
+         quiere mirar toca Cambiar. La edición es OPCIONAL, siempre. #}
+      <div class="desglose" id="desglose" hidden>
+        <div class="desglose-cabecera">
+          <strong>De dónde sale</strong>
+          <button type="button" class="boton-cambiar" id="boton-cambiar" onclick="alternarEdicion()">Cambiar</button>
+        </div>
+        <p class="desglose-resumen" id="desglose-resumen"></p>
+        <div id="desglose-filas" hidden></div>
+        <p class="desglose-total" id="desglose-total" hidden></p>
+      </div>
+      <input type="hidden" id="reparto" name="reparto" value="">
+
       <button type="submit" class="boton-guardar">Guardar reproceso</button>
     </form>
-    <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. El sistema arma la guía R solo, tomando del lote más viejo. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
+    <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. De dónde sale lo propone el sistema, del lote más viejo primero, y lo podés cambiar antes de guardar. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
   </div>
 
   <script>
@@ -207,7 +307,207 @@
         : "Este cliente no tiene fichas cargadas de este artículo: va a quedar sin asignar.";
     }
 
+    // ---- EL DESGLOSE: de qué lotes sale lo que declaró ----
+    // La propuesta la calcula el SERVER, con el mismo propuesta_fifo que
+    // despues escribe los consumos. Rehacer el "mas viejo primero" acá
+    // sería escribir la regla dos veces, y la copia de la pantalla se iría
+    // separando de la que guarda sin que nadie lo note. Acá solo se dibuja.
+    var LOTES = [];
+    var PROPUESTA = {};
+    var EDITANDO = false;
+    var TOCADO = false;
+    var ULTIMO_PEDIDO = null;
+    var demora = null;
+
+    function camposDelDesglose() {
+      return {
+        articulo: document.getElementById("articulo_id").value,
+        bultos: parseFloat(document.getElementById("bultos_tomados").value),
+        fecha: document.getElementById("fecha").value,
+      };
+    }
+
+    function pedirDesglose() {
+      const campos = camposDelDesglose();
+      if (!campos.articulo || !(campos.bultos > 0)) {
+        LOTES = [];
+        document.getElementById("desglose").hidden = true;
+        document.getElementById("pared").hidden = true;
+        return;
+      }
+      const url = "/deposito/stock/reproceso/desglose?articulo_id=" + encodeURIComponent(campos.articulo)
+        + "&fecha=" + encodeURIComponent(campos.fecha)
+        + "&bultos=" + encodeURIComponent(campos.bultos);
+      const esteP = {};
+      ULTIMO_PEDIDO = esteP;
+      fetch(url)
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (datos) {
+          // Si mientras tanto cambió algo, esta respuesta ya no sirve.
+          if (ULTIMO_PEDIDO !== esteP || !datos) { return; }
+          LOTES = datos.lotes;
+          PROPUESTA = datos.propuesta;
+          TOCADO = false;
+          EDITANDO = false;
+          dibujarPared(datos, campos);
+          dibujarDesglose(datos.alcanza);
+        })
+        .catch(function () {
+          // Sin desglose se sigue: el freno de verdad está en el server y
+          // no depende de que esta llamada haya salido bien.
+        });
+    }
+
+    function nombreArticulo() {
+      const select = document.getElementById("articulo_id");
+      return select.selectedIndex >= 0 ? select.options[select.selectedIndex].text : "";
+    }
+
+    // La MISMA pared que pinta el server cuando el freno traba, adelantada
+    // acá para que no llegue a chocarla. El texto de qué hacer ya está en
+    // el HTML: esto solo completa los números.
+    function dibujarPared(datos, campos) {
+      const pared = document.getElementById("pared");
+      if (datos.alcanza) { pared.hidden = true; return; }
+      const fecha = campos.fecha ? campos.fecha.split("-").reverse().slice(0, 2).join("/") : "";
+      document.getElementById("pared-titulo").textContent =
+        "No alcanza para " + campos.bultos + " bultos de " + nombreArticulo() + " el " + fecha + ".";
+      document.getElementById("pared-cuenta").textContent =
+        "Declaraste " + campos.bultos + " y ese día había " + datos.disponible + ".";
+      const lista = document.getElementById("pared-lotes");
+      lista.innerHTML = "";
+      LOTES.forEach(function (lote) {
+        const li = document.createElement("li");
+        li.textContent = (lote.detalle ? lote.fecha + " · " + lote.detalle : lote.fecha) + " — " + lote.restante;
+        lista.appendChild(li);
+      });
+      if (!LOTES.length) {
+        const li = document.createElement("li");
+        li.textContent = "Ese día no había ningún lote de este artículo.";
+        lista.appendChild(li);
+      }
+      pared.hidden = false;
+    }
+
+    function dibujarDesglose(alcanza) {
+      const caja = document.getElementById("desglose");
+      // Si no alcanza, el detalle ya está en la pared: repetirlo abajo solo
+      // agrega ruido a una pantalla que ya dice que no se puede.
+      if (!alcanza || !LOTES.length) { caja.hidden = true; return; }
+      caja.hidden = false;
+      dibujarFilas();
+      mostrarResumen();
+      document.getElementById("desglose-filas").hidden = !EDITANDO;
+      document.getElementById("desglose-total").hidden = !EDITANDO;
+      document.getElementById("boton-cambiar").textContent = EDITANDO ? "Listo" : "Cambiar";
+    }
+
+    function bultosDe(lote) {
+      const fila = document.getElementById("lote-" + lote.clave);
+      if (fila) { return parseFloat(fila.value) || 0; }
+      return PROPUESTA[lote.clave] || 0;
+    }
+
+    function mostrarResumen() {
+      // La línea plegada es la que lee el que NO abre el desglose, así que
+      // dos lotes del mismo día no pueden quedar los dos como "del 02/09":
+      // ahí el proveedor deja de ser un dato de más y pasa a ser lo único
+      // que los distingue. Es la misma regla de los renglones.
+      const partes = LOTES.filter(function (l) { return bultosDe(l) > 0; })
+        .map(function (l) {
+          return bultosDe(l) + " del " + l.fecha + (l.detalle ? " de " + l.detalle : "");
+        });
+      const lista = partes.length > 1
+        ? partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1]
+        : partes.join("");
+      document.getElementById("desglose-resumen").textContent = TOCADO
+        ? "Como lo dejaste vos: " + lista + "."
+        : "Del más viejo primero: " + lista + ".";
+    }
+
+    function dibujarFilas() {
+      const caja = document.getElementById("desglose-filas");
+      caja.innerHTML = "";
+      LOTES.forEach(function (lote) {
+        const fila = document.createElement("div");
+        fila.className = "fila-lote";
+        const texto = document.createElement("span");
+        texto.textContent = (lote.detalle ? lote.fecha + " · " + lote.detalle : lote.fecha)
+          + " · quedan " + lote.restante;
+        const campo = document.createElement("input");
+        campo.type = "number";
+        campo.id = "lote-" + lote.clave;
+        campo.min = "0";
+        campo.max = String(lote.restante);
+        campo.step = "0.01";
+        campo.value = String(PROPUESTA[lote.clave] || 0);
+        campo.addEventListener("input", function () { TOCADO = true; mostrarTotal(); mostrarResumen(); });
+        fila.appendChild(texto);
+        fila.appendChild(campo);
+        caja.appendChild(fila);
+      });
+      mostrarTotal();
+    }
+
+    function totalRepartido() {
+      return LOTES.reduce(function (suma, lote) { return Math.round((suma + bultosDe(lote)) * 100) / 100; }, 0);
+    }
+
+    function mostrarTotal() {
+      const pedido = parseFloat(document.getElementById("bultos_tomados").value) || 0;
+      const total = totalRepartido();
+      const linea = document.getElementById("desglose-total");
+      const diferencia = Math.round((pedido - total) * 100) / 100;
+      // "Repartido 14 de 20" solo. dice que algo no está: el que lo mira
+      // tiene que hacer la resta él, y con el pulgar encima del teclado.
+      linea.textContent = "Repartido " + total + " de " + pedido
+        + (diferencia > 0 ? " — faltan " + diferencia : "")
+        + (diferencia < 0 ? " — sobran " + (-diferencia) : "");
+      linea.classList.toggle("no-cierra", diferencia !== 0);
+    }
+
+    function alternarEdicion() {
+      EDITANDO = !EDITANDO;
+      document.getElementById("desglose-filas").hidden = !EDITANDO;
+      document.getElementById("desglose-total").hidden = !EDITANDO;
+      document.getElementById("boton-cambiar").textContent = EDITANDO ? "Listo" : "Cambiar";
+    }
+
+    // Solo viaja lo que el operario TOCÓ. Si no tocó nada, el campo va
+    // vacío y el server usa su propia propuesta: la edición es opcional de
+    // punta a punta, y el default no se manda de vuelta para que no pueda
+    // llegar desactualizado.
+    document.querySelector("form").addEventListener("submit", function (evento) {
+      const campo = document.getElementById("reparto");
+      if (!TOCADO || !LOTES.length) { campo.value = ""; return; }
+      const pedido = parseFloat(document.getElementById("bultos_tomados").value) || 0;
+      if (totalRepartido() !== pedido) {
+        // Un botón que no hace nada se lee como una pantalla colgada. Se
+        // abre el desglose, se lleva a la vista y se dice cuánto falta.
+        evento.preventDefault();
+        EDITANDO = true;
+        document.getElementById("desglose-filas").hidden = false;
+        document.getElementById("desglose-total").hidden = false;
+        document.getElementById("boton-cambiar").textContent = "Listo";
+        mostrarTotal();
+        document.getElementById("desglose").scrollIntoView({ block: "center" });
+        return;
+      }
+      campo.value = JSON.stringify(LOTES.map(function (lote) {
+        return { tipo_lote: lote.tipo_lote, origen_id: lote.origen_id, bultos: bultosDe(lote) };
+      }));
+    });
+
+    ["articulo_id", "fecha"].forEach(function (id) {
+      document.getElementById(id).addEventListener("change", pedirDesglose);
+    });
+    document.getElementById("bultos_tomados").addEventListener("input", function () {
+      clearTimeout(demora);
+      demora = setTimeout(pedirDesglose, 350);
+    });
+
     mostrarAyudaFicha();
+    pedirDesglose();
   </script>
 </body>
 </html>

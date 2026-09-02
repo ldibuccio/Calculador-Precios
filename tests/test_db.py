@@ -4063,6 +4063,8 @@ from app.db import (  # noqa: E402
     anular_reproceso,
     crear_reproceso,
     listar_reprocesos_por_rango,
+    RepartoDesactualizado,
+    StockInsuficienteParaReproceso,
 )
 
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
@@ -4112,7 +4114,9 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     assert "INSERT INTO reprocesos" in inserts[0].args[0]
     # El último es la FICHA a la que fueron las cajas de primera: None acá
     # significa SIN ASIGNAR, que en la pantalla se elige a propósito.
-    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None)
+    # El False del final es consumos_editados: el operario no tocó el
+    # desglose, así que va la propuesta FIFO tal cual.
+    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False)
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
     assert inserts[2].args[1] == (12, "compra", 102, 102, 3.0, 1200.0)
@@ -4143,9 +4147,13 @@ def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     assert inserts[2].args[1][5] is None
 
 
-def test_crear_reproceso_lo_que_excede_los_lotes_queda_sin_lote():
-    # El piso es la verdad: si tomó 5 y los lotes cubren 3, no se traba —
-    # los 2 de más quedan como consumo sin_lote, a la vista.
+def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
+    """Lo que ANTES quedaba como consumo sin_lote. El reproceso es 100% o nada.
+
+    El sin_lote del reproceso congelaba un costo incompleto PARA SIEMPRE: no
+    hay compra a la que irle a buscar el importe, porque esos bultos no
+    existieron. Por eso acá —y solo acá— el depósito sí se traba.
+    """
     conexion, cursor = _conexion_falsa(filas_fetchone=[(14,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
@@ -4154,13 +4162,180 @@ def test_crear_reproceso_lo_que_excede_los_lotes_queda_sin_lote():
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))
+        with pytest.raises(StockInsuficienteParaReproceso) as levantada:
+            crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25))
+
+    # La excepción trae lo que la pantalla necesita para explicarlo sola.
+    assert levantada.value.declarado == 5.0
+    assert levantada.value.disponible == 3.0
+    assert [lote["origen_id"] for lote in levantada.value.lotes] == [101]
+    # Y NO se escribió nada: ni la guía, ni un consumo, ni un commit.
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
+    """Decidido el 01/09. El neto puede venir negativo de antes; los restantes no.
+
+    Lote de 10 el 20/08 y una salida de 25 el 22/08: el neto es −15, pero
+    los restantes suman 0. Lo que se prueba es que el número contra el que
+    compara el freno NUNCA es negativo — si mirara el neto, pedir 4 sería
+    "faltan 19" y el mensaje hablaría de un agujero que no es de esta guía.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(15,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 20), 10.0, 1000.0)],
+        [_salida_fifo(date(2026, 8, 22), 25.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(StockInsuficienteParaReproceso) as levantada:
+            crear_reproceso(1, 4, 4, 0, 0, date(2026, 8, 25))
+
+    assert levantada.value.disponible == 0.0
+
+
+def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
+    """El caso real del 31/08: el depósito arma las cajas y carga la guía R después.
+
+    Lote de 44 el 30/08 y una salida de 44 el 31/08. Si las salidas del
+    mismo día contaran, el disponible sería 0 y el operario quedaría trabado
+    justo cuando está cargando lo que explica esa salida. Dentro de un día
+    el sistema no tiene orden: guarda fechas, no horas.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(16,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 30), 44.0, 1000.0)],
+        [_salida_fifo(date(2026, 8, 31), 44.0)],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 44, 40, 0, 4, date(2026, 8, 31))
+
+    assert numero == 16
+    inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    assert inserts[1].args[1] == (16, "compra", 101, 101, 44.0, 1000.0)
+
+
+def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
+    """La otra punta del recorte: entradas hasta la fecha INCLUSIVE.
+
+    Tomó 8 el 20/08. El lote de 10 llegó el 22/08, dos días después: no
+    puede cubrir un reproceso que ya había pasado.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(17,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(102, date(2026, 8, 22), 10.0, 1200.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(StockInsuficienteParaReproceso) as levantada:
+            crear_reproceso(1, 8, 8, 0, 0, date(2026, 8, 20))
+
+    assert levantada.value.disponible == 0.0
+
+
+def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
+    """La edición del desglose: dentro de lo que hay de cada lote.
+
+    Dos lotes con 8 y 10. El FIFO propondría 8 del viejo y 2 del nuevo; el
+    operario dice que sacó 3 del viejo y 7 del nuevo, y eso es lo que se
+    congela —con el costo de los lotes que ÉL eligió— y queda marcado con
+    consumos_editados, que es lo que después deja saber que ese reparto no
+    lo eligió el sistema.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(18,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+            _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
+        ],
+        [],
+    ]
+    reparto = [
+        {"tipo_lote": "guia", "origen_id": 101, "bultos": 3.0},
+        {"tipo_lote": "guia", "origen_id": 102, "bultos": 7.0},
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
-    assert inserts[1].args[1] == (14, "compra", 101, 101, 3.0, 1000.0)
-    assert inserts[2].args[1] == (14, "sin_lote", None, None, 2.0, None)
-    # Con un consumo sin costo, la guía queda con costo incompleto.
-    assert inserts[0].args[1][6] is None
+    assert inserts[0].args[1][-1] is True
+    assert inserts[1].args[1] == (18, "compra", 101, 101, 3.0, 1000.0)
+    assert inserts[2].args[1] == (18, "compra", 102, 102, 7.0, 1200.0)
+    # 3×1000 + 7×1200 = 11400, y no los 9800 del FIFO.
+    assert inserts[0].args[1][6] == 11400.0
+
+
+def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
+    """La edición es opcional: mandar la misma propuesta no es haberla cambiado."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(19,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+            _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
+        ],
+        [],
+    ]
+    igual_al_fifo = [
+        {"tipo_lote": "guia", "origen_id": 101, "bultos": 8.0},
+        {"tipo_lote": "guia", "origen_id": 102, "bultos": 2.0},
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=igual_al_fifo)
+
+    inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    assert inserts[0].args[1][-1] is False
+
+
+def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
+    """Se revalida SIEMPRE en el server: entre el desglose y el Guardar el stock se mueve."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(20,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [
+            _lote_compra(101, date(2026, 8, 20), 8.0, 1000.0),
+            _lote_compra(102, date(2026, 8, 22), 10.0, 1200.0),
+        ],
+        [],
+    ]
+    reparto = [
+        {"tipo_lote": "guia", "origen_id": 101, "bultos": 9.0},  # quedaban 8
+        {"tipo_lote": "guia", "origen_id": 102, "bultos": 1.0},
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(RepartoDesactualizado):
+            crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
+
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
+    """Si lo repartido no da los bultos que declaró, no hay guía: la diferencia
+    no puede caer en ningún lado —no existe el sin_lote— así que se frena."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(21,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(RepartoDesactualizado):
+            crear_reproceso(1, 5, 4, 0, 1, date(2026, 8, 25),
+                            reparto=[{"tipo_lote": "guia", "origen_id": 101, "bultos": 4.0}])
+
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
 
 
 def test_anular_reproceso_es_baja_logica():

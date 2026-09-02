@@ -194,6 +194,9 @@ from app.db import (
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_para_reproceso,
+    lotes_para_reproceso,
+    StockInsuficienteParaReproceso,
+    RepartoDesactualizado,
     listar_operarios_deposito,
     crear_operario_deposito,
     cambiar_estado_operario_deposito,
@@ -6329,7 +6332,10 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     """El detalle FIFO de un artículo: qué queda de cada lote (guía, reingreso, ajuste) y cuánto salió sin lote.
 
     El reparto se calcula acá, cada vez (core/stock.py): las salidas
-    consumen del lote más viejo primero. Nadie elige lote nunca.
+    consumen del lote más viejo primero. La ÚNICA salida que puede no
+    seguir ese orden es la que alguien señaló a propósito —una merma
+    dirigida, o el desglose que el operario corrigió al cargar una guía
+    R—, y esa elección queda guardada, no se adivina desde acá.
     """
     try:
         articulo = obtener_articulo(articulo_id)
@@ -7470,7 +7476,37 @@ def _ayudas_ficha_por_cliente_y_articulo() -> dict[str, str]:
     return ayudas
 
 
-def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):
+def _desglose_para_pantalla(lotes: list[dict]) -> list[dict]:
+    """Los lotes como los ve el OPERARIO: fecha y cantidad, y nada más.
+
+    El proveedor aparece SOLO cuando hay dos lotes del mismo día y sin él
+    no se distinguirían. En 390px un renglón cargado de datos se vuelve
+    ilegible y el operario deja de mirarlo, que es lo contrario de lo que
+    el desglose busca. La regla es de la PANTALLA, no del dato: el detalle
+    completo sigue estando en Guías R, que es de Administración.
+    """
+    visibles = [lote for lote in lotes if lote["restante"] > 0]
+    del_mismo_dia = {}
+    for lote in visibles:
+        del_mismo_dia[lote["fecha_lote"]] = del_mismo_dia.get(lote["fecha_lote"], 0) + 1
+    return [
+        {
+            "clave": f"{lote['tipo_lote']}:{lote['origen_id']}",
+            "tipo_lote": lote["tipo_lote"],
+            "origen_id": lote["origen_id"],
+            # Un lote sin fecha existe (una compra sin guía): se dice, no se
+            # muestra en blanco, o el renglón queda empezando por un guion.
+            "fecha": _formatear_fecha_corta(lote["fecha_lote"]) or "sin fecha",
+            "restante": round(float(lote["restante"]), 2),
+            # Solo para desempatar: si ese día hay un lote solo, no viaja.
+            "detalle": (lote["detalle"] or "") if del_mismo_dia[lote["fecha_lote"]] > 1 else "",
+        }
+        for lote in visibles
+    ]
+
+
+def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None,
+                                   freno=None, status_code: int = 200):
     try:
         # El selector lista los artículos que se pueden reprocesar, POR
         # NOMBRE y SIN cantidades: saber que "hay tomate" no es un número
@@ -7495,6 +7531,7 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "hoy": _hoy_argentina().isoformat(),
         "aviso": aviso,
         "error": error,
+        "freno": freno,
     }
     return templates.TemplateResponse(request, "deposito_stock_reproceso.html", contexto, status_code=status_code)
 
@@ -7502,6 +7539,76 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
 @app.get("/deposito/stock/reproceso")
 def ver_reproceso_stock(request: Request, aviso: str | None = None):
     return _renderizar_pantalla_reproceso(request, aviso=aviso)
+
+
+@app.get("/deposito/stock/reproceso/desglose")
+def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
+    """De qué lotes saldría este reproceso: lo que la pantalla dibuja mientras el operario carga.
+
+    La propuesta la calcula el SERVER con el mismo `propuesta_fifo` que
+    después escribe los consumos. Rehacer el "más viejo primero" en
+    JavaScript sería escribir la regla dos veces, y la copia de la pantalla
+    se iría separando de la que guarda sin que nadie lo note.
+
+    `alcanza` es el freno adelantado: el mismo número, para poder avisar
+    antes de que apriete Guardar. Pero el freno de verdad está en
+    crear_reproceso — esto es cortesía, no control.
+    """
+    from core.stock import bultos_en_los_lotes, propuesta_fifo
+
+    hoy = _hoy_argentina()
+    try:
+        fecha_valor = date.fromisoformat(fecha.strip()) if fecha.strip() else hoy
+    except ValueError:
+        fecha_valor = hoy
+    try:
+        reparto = lotes_para_reproceso(articulo_id, fecha_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    disponible = bultos_en_los_lotes(reparto)
+    propuesta = {
+        f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
+        for c in propuesta_fifo(reparto["lotes"], bultos)
+    }
+    return JSONResponse(
+        {
+            "lotes": _desglose_para_pantalla(reparto["lotes"]),
+            "disponible": disponible,
+            "alcanza": round(float(bultos) - disponible, 2) <= 0,
+            "propuesta": propuesta,
+        }
+    )
+
+
+def _reparto_del_formulario(texto: str) -> tuple[str | None, list[dict] | None]:
+    """Lo que el operario editó en el desglose, tal como viaja en el form.
+
+    None = no tocó nada, y entonces va la propuesta FIFO. Un JSON roto no
+    se ignora en silencio: si la pantalla mandó algo y no se entiende, se
+    frena — guardar "lo que se pudo leer" sería inventarle un reparto.
+    """
+    if not texto.strip():
+        return None, None
+    try:
+        filas = json.loads(texto)
+    except ValueError:
+        return "No se entendió de qué lotes sale: volvé a tocar Cambiar y confirmá.", None
+    if not isinstance(filas, list):
+        return "No se entendió de qué lotes sale: volvé a tocar Cambiar y confirmá.", None
+    reparto = []
+    for fila in filas:
+        try:
+            reparto.append(
+                {
+                    "tipo_lote": str(fila["tipo_lote"]),
+                    "origen_id": int(fila["origen_id"]),
+                    "bultos": float(fila["bultos"]),
+                }
+            )
+        except (TypeError, ValueError, KeyError, IndexError):
+            return "No se entendió de qué lotes sale: volvé a tocar Cambiar y confirmá.", None
+    return None, reparto
 
 
 def _numero_form_o_cero(texto: str, que: str) -> tuple[str | None, float | None]:
@@ -7528,19 +7635,29 @@ def cargar_reproceso_ruta(
     bultos_merma: str = Form(""),
     fecha: str = Form(""),
     ficha_id: str = Form(""),
+    reparto: str = Form(""),
 ):
-    """El operario declara la transformación; el server corre el FIFO y congela consumos y costo.
+    """El operario declara la transformación; el server frena, reparte y congela consumos y costo.
 
     El cliente para el que se arma la primera queda en la guía R como
     DATO (trazabilidad + la alerta de cruce de Auditoría): el stock sigue
-    sin dueño y el armado no se restringe — el sistema registra y delata,
-    no traba. Pantalla de OPERARIO: nunca traba por stock (el piso es su
-    verdad — si tomó más de lo que el sistema cree, queda sin_lote y la
-    alerta avisa), y el aviso repite solo lo que cargó — jamás costos ni
-    números del sistema. Sin correlación entre tomado y producido: un
-    cajón de 16 puede dar tres cajas de 6.
+    sin dueño y el armado no se restringe.
+
+    ESTA PANTALLA SÍ TRABA POR STOCK, y es la única del depósito que lo
+    hace. En el armado de un pedido el piso es la verdad y el camión sale
+    igual; acá lo que se congela es un COSTO que después no se corrige
+    nunca, así que el reproceso es 100% o nada. Cuando no alcanza, la
+    pantalla vuelve entera —con todo lo que cargó— y dice qué ir a cargar
+    antes; no hay forma de guardarlo igual.
+
+    El aviso repite solo lo que cargó: jamás costos. Sin correlación entre
+    tomado y producido: un cajón de 16 puede dar tres cajas de 6.
     """
     error, tomados_valor = _validar_bultos_positivos(bultos_tomados, "tomados")
+
+    reparto_valor = None
+    if not error:
+        error, reparto_valor = _reparto_del_formulario(reparto)
 
     primera_valor = segunda_valor = merma_valor = None
     if not error:
@@ -7592,6 +7709,19 @@ def cargar_reproceso_ruta(
         }
         return _renderizar_pantalla_reproceso(request, precarga=precarga, error=error, status_code=400)
 
+    # Todo lo que cargó, listo para devolvérselo intacto si el freno traba:
+    # la pared no le puede costar volver a tipear la pantalla entera.
+    precarga = {
+        "cliente_id": cliente_id,
+        "articulo_id": articulo_id,
+        "bultos_tomados": bultos_tomados,
+        "bultos_primera": bultos_primera,
+        "bultos_segunda": bultos_segunda,
+        "bultos_merma": bultos_merma,
+        "fecha": fecha,
+        "ficha_id": ficha_id,
+    }
+
     # "sin_asignar" es una ELECCIÓN, no el resultado de no contestar: el
     # select la ofrece como opción y es obligatorio elegir algo. Eso es lo
     # que después deja distinguir "no lo sabía" de "me lo salteé".
@@ -7602,7 +7732,33 @@ def cargar_reproceso_ruta(
     try:
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
-            cliente_id=cliente["id"], ficha_id=ficha_valor,
+            cliente_id=cliente["id"], ficha_id=ficha_valor, reparto=reparto_valor,
+        )
+    except StockInsuficienteParaReproceso as freno:
+        # EL FRENO. No hay "la cargo igual": la pantalla vuelve con todo
+        # puesto, le dice cuánto había ese día y de qué lotes, y a dónde ir
+        # a cargar lo que falta.
+        return _renderizar_pantalla_reproceso(
+            request,
+            precarga=precarga,
+            freno={
+                "articulo": articulo["nombre"],
+                "fecha": fecha_valor.strftime("%d/%m"),
+                "declarado": _formatear_numero(freno.declarado),
+                "disponible": _formatear_numero(freno.disponible),
+                "lotes": _desglose_para_pantalla(freno.lotes),
+            },
+            status_code=400,
+        )
+    except RepartoDesactualizado as desactualizado:
+        # Alguien movió el stock entre que se dibujó el desglose y este
+        # Guardar. Se le dice qué pasó y la pantalla vuelve a pedir la
+        # propuesta fresca: nunca se guarda un reparto que ya no se cumple.
+        return _renderizar_pantalla_reproceso(
+            request,
+            precarga=precarga,
+            error=f"{desactualizado} Cambió el stock mientras cargabas: mirá de nuevo de dónde sale.",
+            status_code=400,
         )
     except Exception as error_db:
         return _renderizar_pantalla_reproceso(

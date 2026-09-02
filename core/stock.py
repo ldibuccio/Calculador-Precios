@@ -24,6 +24,8 @@ traba. Sin lote elegido (el default), todo funciona como antes.
 Todo en BULTOS (lo que se cuenta en el piso).
 """
 
+from datetime import timedelta
+
 
 def fecha_de_orden(orden):
     """La FECHA de un "orden" del FIFO, o None si ese orden no la trae.
@@ -163,7 +165,7 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
     }
 
 
-def reparto_a_la_fecha(entradas: list[dict], salidas: list[dict], fecha) -> dict:
+def reparto_a_la_fecha(entradas: list[dict], salidas: list[dict], fecha, salidas_hasta=None) -> dict:
     """El reparto tal como estaba AL CERRAR el día `fecha`: qué quedaba en cada lote.
 
     Es `repartir_fifo` sobre la historia recortada a esa fecha — nada más
@@ -179,8 +181,92 @@ def reparto_a_la_fecha(entradas: list[dict], salidas: list[dict], fecha) -> dict
     La usan el freno del reproceso ("¿había remanente el día que dice el
     operario?") y los dos desgloses editables, que tienen que proponer un
     reparto contra el stock de la fecha del hecho y no contra el de hoy.
-    """
-    def hasta_la_fecha(filas):
-        return [f for f in filas if (fecha_de_orden(f.get("orden")) or fecha) <= fecha]
 
-    return repartir_fifo(hasta_la_fecha(entradas), hasta_la_fecha(salidas))
+    `salidas_hasta` recorta las salidas por una fecha distinta que las
+    entradas. El default es la misma —la foto honesta del pasado—; el
+    reproceso la corre un día para atrás, y por qué lo hace está escrito en
+    `reparto_para_reproceso`.
+    """
+    def hasta(filas, tope):
+        return [f for f in filas if (fecha_de_orden(f.get("orden")) or tope) <= tope]
+
+    return repartir_fifo(hasta(entradas, fecha), hasta(salidas, fecha if salidas_hasta is None else salidas_hasta))
+
+
+def reparto_para_reproceso(entradas: list[dict], salidas: list[dict], fecha) -> dict:
+    """El reparto contra el que se mide un reproceso del día `fecha`.
+
+    Recorte ASIMÉTRICO, decidido el 01/09: entradas HASTA LA FECHA
+    INCLUSIVE, salidas HASTA EL DÍA ANTERIOR. Las salidas del mismo día no
+    cuentan, y no es una concesión: dentro de un día el sistema no tiene
+    orden —guarda fechas, no horas—, así que descontar una salida del mismo
+    día es afirmar un orden que no sabemos, y afirmarlo justo en contra del
+    que está reprocesando. Es la misma simetría que ya se acepta del otro
+    lado: un lote cargado a la tarde cubre una salida de esa misma mañana.
+
+    Es UNA sola definición a propósito. La usan las TRES cosas que tienen
+    que ver los mismos lotes: el freno ("¿alcanzaba ese día?"), el desglose
+    que se le muestra al operario, y la escritura de los consumos. Si el
+    freno midiera contra una lista y la escritura consumiera de otra, la
+    pantalla aprobaría un reparto que la base después no puede cumplir.
+    """
+    return reparto_a_la_fecha(entradas, salidas, fecha, salidas_hasta=fecha - timedelta(days=1))
+
+
+def bultos_en_los_lotes(reparto: dict) -> float:
+    """Contra qué número compara el freno: la SUMA DE LOS RESTANTES, no el neto.
+
+    Decidido el 01/09. Este número NUNCA puede ser negativo —los restantes
+    son >= 0 por construcción— y el negativo del neto vive en `sin_lote`,
+    que es otra cosa. Con eso, "¿qué pasa si el stock ya venía negativo?" no
+    llega a plantearse: el freno no mira ese número. Trabar a un operario
+    por un agujero que ya estaba ahí antes de que tocara nada sería trabarlo
+    por lo mismo que está arreglando.
+    """
+    return round(sum(float(lote["restante"]) for lote in reparto["lotes"]), 2)
+
+
+def propuesta_fifo(lotes: list[dict], total: float) -> list[dict]:
+    """Del más viejo primero: cuánto sale de cada lote para juntar `total`.
+
+    Es el default del desglose y lo que se escribe si el operario no toca
+    nada. Devuelve solo los lotes que aportan algo. Si los lotes no llegan a
+    cubrir `total`, devuelve lo que hay: el que decide que eso no se puede
+    guardar es el freno, no esta función.
+    """
+    consumos = []
+    pendiente = round(float(total), 2)
+    for lote in lotes:
+        if pendiente <= 0:
+            break
+        if lote["restante"] <= 0:
+            continue
+        bultos = round(min(float(lote["restante"]), pendiente), 2)
+        pendiente = round(pendiente - bultos, 2)
+        consumos.append({"tipo_lote": lote["tipo_lote"], "origen_id": lote["origen_id"], "bultos": bultos})
+    return consumos
+
+
+def validar_reparto_declarado(lotes: list[dict], total: float, reparto: list[dict]) -> str | None:
+    """El reparto que editó el operario, ¿se puede cumplir? Devuelve el motivo, o None si está bien.
+
+    Se revalida SIEMPRE en el server contra los lotes frescos, aunque la
+    pantalla ya lo haya chequeado: entre que se dibujó el desglose y se
+    apretó Guardar, otro pudo armar un pedido y mover los restantes. Si algo
+    cambió, el motivo vuelve a la pantalla junto con una propuesta nueva.
+    """
+    por_lote = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in lotes}
+    suma = 0.0
+    for fila in reparto:
+        lote = por_lote.get((fila.get("tipo_lote"), fila.get("origen_id")))
+        if lote is None:
+            return "Uno de los lotes que elegiste ya no está disponible."
+        bultos = float(fila.get("bultos") or 0)
+        if bultos < 0:
+            return "No se puede tomar una cantidad negativa de un lote."
+        if round(bultos - float(lote["restante"]), 2) > 0:
+            return "De uno de los lotes pediste más de lo que quedaba."
+        suma = round(suma + bultos, 2)
+    if round(suma - float(total), 2) != 0:
+        return "Lo repartido entre los lotes no da los bultos que declaraste."
+    return None

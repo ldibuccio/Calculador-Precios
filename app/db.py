@@ -6779,12 +6779,37 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
         conexion.close()
 
 
-def lotes_a_la_fecha(articulo_id: int, fecha) -> dict:
-    """Qué quedaba en cada lote de un artículo AL CERRAR el día `fecha`.
+class StockInsuficienteParaReproceso(Exception):
+    """El freno: a la fecha del reproceso los lotes no llegaban a lo declarado.
 
-    Es la pregunta que necesitan el freno del reproceso ("¿había remanente
-    el día que dice el operario?") y los desgloses editables, que proponen
-    un reparto contra el stock de la fecha del hecho y no contra el de hoy.
+    El reproceso es 100% o nada. No hay salida de escape y no hay `sin_lote`:
+    lo que no se puede explicar con lotes reales no se guarda, porque un
+    consumo sin lote congela un costo incompleto que después no se corrige
+    nunca (no hay compra a la que irle a buscar el importe).
+
+    Lleva encima TODO lo que la pantalla necesita para explicarlo sin volver
+    a preguntarle nada a la base: cuánto declaró, cuánto había ese día, y el
+    detalle por lote.
+    """
+
+    def __init__(self, declarado: float, disponible: float, lotes: list[dict]):
+        self.declarado = declarado
+        self.disponible = disponible
+        self.lotes = lotes
+        super().__init__(f"El stock a esa fecha no alcanza: declaró {declarado} y había {disponible}.")
+
+
+class RepartoDesactualizado(Exception):
+    """El reparto que llegó de la pantalla ya no se puede cumplir contra los lotes de ahora."""
+
+
+def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
+    """Los lotes contra los que se mide un reproceso de esa fecha, y qué quedaba en cada uno.
+
+    Es la consulta que alimenta el desglose de la pantalla. Corre el MISMO
+    `reparto_para_reproceso` que después usan el freno y la escritura dentro
+    de `crear_reproceso`: el operario tiene que ver exactamente los lotes que
+    el guardado va a consumir, no una foto parecida.
 
     Devuelve lo mismo que repartir_fifo: {"lotes", "sin_lote", "stock"}, con
     los lotes de más viejo a más nuevo y su restante a esa fecha.
@@ -6795,9 +6820,9 @@ def lotes_a_la_fecha(articulo_id: int, fecha) -> dict:
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
     finally:
         conexion.close()
-    from core.stock import reparto_a_la_fecha, salidas_para_reparto
+    from core.stock import reparto_para_reproceso, salidas_para_reparto
 
-    return reparto_a_la_fecha(entradas, salidas_para_reparto(salidas), fecha)
+    return reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha)
 
 
 def crear_reproceso(
@@ -6809,18 +6834,28 @@ def crear_reproceso(
     fecha_operacion,
     cliente_id: int | None = None,
     ficha_id: int | None = None,
+    reparto: list[dict] | None = None,
 ) -> int:
-    """Carga una guía R: el SERVER corre el FIFO acá y congela consumos y costo. Devuelve el número de guía.
+    """Carga una guía R: el SERVER frena, reparte y congela consumos y costo. Devuelve el número de guía.
 
-    Los consumos salen de repartir lo tomado entre los lotes con resto,
-    del más viejo primero — el operario no elige lote jamás. Si lo tomado
-    supera lo que los lotes cubren, el resto queda como consumo
-    'sin_lote' (el piso es la verdad: no se traba, y la diferencia queda
-    a la vista). El costo por bulto se congela del importe de la compra
-    de cada lote (o del costo de primera si el lote es de otra guía R);
-    un lote sin precio deja el consumo sin costo, y con UN consumo sin
-    costo la guía queda con costo_total NULL = "costo incompleto" —
-    nunca se promedia con números inventados. Todo en UNA transacción.
+    EL FRENO VIVE ACÁ, y acá solo. Es el único camino que escribe una guía
+    R, así que ponerlo en la ruta sería escribir la regla dos veces y dejar
+    que se separen. Si a la fecha del reproceso los lotes no llegan a cubrir
+    lo declarado, levanta StockInsuficienteParaReproceso y NO escribe nada:
+    el reproceso es 100% o nada, y ya no existe el consumo 'sin_lote' por
+    esta vía —el que quedaba congelaba un costo incompleto para siempre.
+
+    `reparto` es lo que el operario editó en el desglose: [{"tipo_lote",
+    "origen_id", "bultos"}]. None = no tocó nada y va la propuesta FIFO (del
+    más viejo primero), que es el caso normal. Se revalida siempre contra
+    los lotes frescos de esta misma transacción; si ya no se puede cumplir,
+    levanta RepartoDesactualizado y tampoco escribe.
+
+    El costo por bulto se congela del importe de la compra de cada lote (o
+    del costo de primera si el lote es de otra guía R); un lote sin precio
+    deja el consumo sin costo, y con UN consumo sin costo la guía queda con
+    costo_total NULL = "costo incompleto" — nunca se promedia con números
+    inventados. Todo en UNA transacción.
 
     ficha_id: a qué ficha fueron las cajas de primera. None = SIN
     ASIGNAR, y en la pantalla eso se elige a propósito, no se llega por
@@ -6829,37 +6864,53 @@ def crear_reproceso(
     recibe Banana Ecuador — así que esa derivación es ambigua por diseño
     y lo va a ser siempre.
     """
-    from core.stock import repartir_fifo, salidas_para_reparto
+    from core.stock import (
+        bultos_en_los_lotes,
+        propuesta_fifo,
+        reparto_para_reproceso,
+        salidas_para_reparto,
+        validar_reparto_declarado,
+    )
 
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
-            lotes = repartir_fifo(entradas, salidas_para_reparto(salidas))["lotes"]
+            # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
+            # de reparto_para_reproceso. El freno, el desglose que vio el
+            # operario y esta escritura miran la MISMA lista: si midieran
+            # contra listas distintas, la pantalla aprobaría un reparto que
+            # acá no se puede cumplir.
+            a_la_fecha = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha_operacion)
+            lotes = a_la_fecha["lotes"]
 
+            disponible = bultos_en_los_lotes(a_la_fecha)
+            if round(float(bultos_tomados) - disponible, 2) > 0:
+                raise StockInsuficienteParaReproceso(float(bultos_tomados), disponible, lotes)
+
+            editados = False
+            if reparto is None:
+                declarado = propuesta_fifo(lotes, bultos_tomados)
+            else:
+                motivo = validar_reparto_declarado(lotes, bultos_tomados, reparto)
+                if motivo is not None:
+                    raise RepartoDesactualizado(motivo)
+                declarado = [fila for fila in reparto if float(fila.get("bultos") or 0) > 0]
+                editados = declarado != propuesta_fifo(lotes, bultos_tomados)
+
+            por_lote = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in lotes}
             consumos = []
-            pendiente = float(bultos_tomados)
-            for lote in lotes:
-                if pendiente <= 0:
-                    break
-                if lote["restante"] <= 0:
-                    continue
-                bultos = min(lote["restante"], pendiente)
-                pendiente = round(pendiente - bultos, 2)
+            for fila in declarado:
+                lote = por_lote[(fila["tipo_lote"], fila["origen_id"])]
                 origen = "compra" if lote["tipo_lote"] == "guia" else lote["tipo_lote"]
                 consumos.append(
                     {
                         "origen": origen,
                         "compra_id": lote["origen_id"] if origen == "compra" else None,
                         "origen_id": lote["origen_id"],
-                        "bultos": bultos,
+                        "bultos": float(fila["bultos"]),
                         "costo_por_bulto": float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None,
                     }
-                )
-            if pendiente > 0:
-                consumos.append(
-                    {"origen": "sin_lote", "compra_id": None, "origen_id": None,
-                     "bultos": pendiente, "costo_por_bulto": None}
                 )
 
             costo_total = None
@@ -6875,13 +6926,13 @@ def crear_reproceso(
                 INSERT INTO reprocesos
                     (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                      bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-                     cliente_id, ficha_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     cliente_id, ficha_id, consumos_editados)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                  bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-                 cliente_id, ficha_id),
+                 cliente_id, ficha_id, editados),
             )
             reproceso_id = cursor.fetchone()[0]
             for c in consumos:
@@ -7083,6 +7134,10 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        -- desaparecer del listado, que es justo donde se
                        -- la va a completar.
                        rp.ficha_id,
+                       -- true = el operario cambió el reparto por lote que
+                       -- le propuso el FIFO. Se muestra: un costo que no
+                       -- eligió el sistema tiene que poder distinguirse.
+                       rp.consumos_editados,
                        COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
