@@ -46,3 +46,34 @@ De acá en adelante:
 Esto no es una preferencia de estilo: es el entorno donde el SQL corre de
 verdad. Un script probado en Postgres local puede estar correcto y aun así
 romper —o peor, escribir a medias— en el editor.
+
+## Una regla de negocio no puede estar escrita dos veces
+
+Si la misma regla vive en el código y en la base, son **dos** reglas: se
+separan sin que nadie lo note, y la que rechaza deja de ser la que el código
+cree que rechaza.
+
+Pasó con los operarios del depósito. "Es la misma persona" estaba escrito dos
+veces —un pre-chequeo en Python y un índice único en Postgres— y las dos
+versiones plegaban mayúsculas y espacios pero ninguna plegaba tildes. Se cargó
+**"ruben" al lado de "Rubén" y entraron los dos**. Los tests no lo agarraron
+porque mockeaban la base y verificaban el *mensaje*, no la regla.
+
+De acá en adelante:
+
+1. **Decide la base; el código traduce el error.** Nada de preguntar antes
+   "¿ya existe?" para después insertar: se intenta la operación y se atrapa la
+   violación del constraint. Si el constraint cambia, el código lo acompaña
+   solo.
+2. **Cuando el código necesita repetir una expresión de la base** (por ejemplo
+   para buscar al que ya está y poder nombrarlo), va **una sola vez**, en una
+   constante, con un comentario que diga de qué migración salió.
+3. **Si el constraint rechaza y el código no encuentra el motivo, eso se
+   dice.** Es la señal de que las dos reglas se volvieron a separar, y tragarla
+   es cómo se pierde meses después.
+
+Corolario: **una regla de unicidad no puede depender de una extensión de
+Postgres.** `unaccent` hay que habilitarla por proyecto, y una regla que se
+pierde el día que se crea la base de la empresa siguiente no es una regla. Lo
+que se pueda escribir en SQL puro (`translate`, `lower`, `btrim`) viaja con el
+esquema y no se olvida.

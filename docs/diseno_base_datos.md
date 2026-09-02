@@ -546,9 +546,11 @@ comprado el 20/08, salió entero el 25/08, reproceso del 31/08  -> TRABA
 base rechaza el blanco, pero eso deja pasar "ok" y "urgente" — motivos que
 dentro de tres meses no le sirven a nadie, que es justo cuando se los va a
 mirar. Diez alcanza para "falta guía" y descarta el monosílabo. **Es el primer
-mínimo de largo del sistema y va SOLO acá**, a propósito: el resto de los
-motivos (ajuste, merma, reingreso) se piden obligatorios y nada más, y no hay
-razón para endurecerlos de arrastre.
+mínimo de largo del sistema y va SOLO acá**, y el motivo lo dio el dueño: los
+motivos de ajuste, merma y reingreso **los escribe alguien de Administración
+mirando un caso puntual**; éste **lo escribe un operario apurado para poder
+seguir**. No es la misma situación, y endurecer los otros de arrastre sería
+cobrarle a quien ya escribe bien.
 
 **El desglose por lote muestra lo MÍNIMO para elegir: fecha y cantidad.** El
 proveedor aparece **solo cuando hace falta para distinguir dos lotes del mismo
