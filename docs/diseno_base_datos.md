@@ -303,6 +303,62 @@ su propio historial de descuento/utilidad y sus propios Envases (con su
 propio historial de costo); Fichas de logística conecta un Artículo con un
 Cliente y el Envase que usa.
 
+## PARA RETOMAR — anotado el 02/09/2026, con el lote de "elegir del stock" terminado
+
+**Se para acá a propósito y no se arranca nada más.** Esta semana entraron el
+corte y cinco entregas. **El lunes 31/08 se rompió justo por tener piezas a
+medias**, y ahora que están completas hay que verlas andando con gente real
+antes de construir encima. Lo mismo que se decidió el 29/08 y por lo mismo:
+acumular cambios sin ver ninguno andando en la operación real es cómo se
+llega a no poder distinguir qué rompió qué.
+
+### Lo que quedó terminado y desplegado
+
+- **El freno del reproceso y su desglose editable.** 100% o nada: si no hay
+  stock a la fecha no se carga, y `crear_reproceso` **ya no puede escribir un
+  `sin_lote`** — el camino por el que nacía una guía con costo incompleto
+  para siempre.
+- **La salida de escape del freno, sacada** de punta a punta: la pantalla de
+  Operarios, la tabla `operarios_deposito` y las dos columnas de la
+  excepción. El motivo está escrito para que no vuelva a proponerse.
+- **La pasada global de dirigidas en `atribuir_costos_fifo`**, que puso a los
+  dos FIFO a emparejar igual.
+- **La Entrega 3**: el que arma un pedido dice de qué lote lo sacó. Avisa y
+  no traba.
+
+### Las dos que son LA MISMA PREGUNTA
+
+Y la pregunta es **cuántas correcciones hace el depósito de verdad**. Las dos
+se contestan mirando el sistema andando, no razonando:
+
+1. **La función de emparejamiento única** (el "Nivel 2", con su sección
+   propia más abajo). Hoy los dos FIFO emparejan igual porque se los
+   arregló, no porque no puedan separarse. Con la Entrega 3, cada renglón
+   corregido es una salida señalada: de raro pasa a rutina.
+2. **La corrección del armado no se ve desde ningún listado** (su
+   observación, más abajo). Si se corrige seguido, van a existir costos que
+   eligió una persona y nadie va a poder distinguir de los que calculó el
+   sistema.
+
+Si el depósito corrige poco, las dos pueden esperar. Si corrige mucho, las
+dos se vuelven necesarias — y en ese orden.
+
+### El resto de la cola, sin orden entre ellas
+
+- **E6** (la etapa que falta del plan del modelo nuevo).
+- **El corte de Palmala.** Antes hay que **reescribir los scripts del corte
+  sin tablas temporales** y **correr los chequeos 04, 05, 11 y 12**, que
+  nunca se corrieron (ver `db/APLICADO.md`).
+- **E0 fase 3**: el rename de las 19 rutas `/deposito/*` que hoy son de
+  Administración.
+- **La lentitud de Frutamax.**
+- Las **guías R atrasadas**; el **reparto congelado contra el vivo**; el
+  **envase**; la **alerta de cruce que aparece y desaparece sola**; el
+  **tilde de retiro**.
+- La etiqueta de `cierre_modelo_viejo` en `ETIQUETAS_MOVIMIENTO_STOCK`;
+  `verificar_esquema.sql` va por 14 de 41 tablas; `conteo_id` en
+  `ajustes_vacios`; **Costos Fijos tanda 2**.
+
 ## Para retomar (anotado el 29/08/2026, antes del corte)
 
 Se corta acá a propósito. **Quedan desplegadas E0 (parcial), E1, E2, E3 y
