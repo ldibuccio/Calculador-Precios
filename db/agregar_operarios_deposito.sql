@@ -1,3 +1,14 @@
+-- ############################################################################
+-- ATENCIÓN — NO REUSAR. LO QUE CREA ESTE SCRIPT SE BORRÓ EL 02/09/2026.
+--
+-- `operarios_deposito` y `excepcion_operario_id` existían para la salida de
+-- escape del freno del reproceso, que se descartó: el reproceso es 100% o
+-- nada. Los borró db/sacar_excepcion_del_freno.sql.
+--
+-- Queda como registro de lo que se corrió el 01/09. Correrlo de nuevo
+-- volvería a crear una tabla que ningún código usa.
+-- ############################################################################
+
 -- ARRASTRE DE LA ETAPA 2: el operario de la excepción pasa de TEXTO LIBRE a
 -- SELECTOR contra una lista.
 --

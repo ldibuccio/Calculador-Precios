@@ -1,3 +1,16 @@
+-- ############################################################################
+-- ATENCIÓN — NO REUSAR. LA TABLA QUE ARREGLA ESTE SCRIPT SE BORRÓ EL 02/09/2026.
+--
+-- Corregía el índice único de `operarios_deposito` para que plegara tildes y
+-- espacios del medio ("ruben" al lado de "Rubén" habían entrado los dos). Esa
+-- tabla ya no existe: la borró db/sacar_excepcion_del_freno.sql junto con el
+-- resto de la excepción al freno.
+--
+-- Se guarda igual porque la LECCIÓN sobrevive y está en CLAUDE.md: una regla
+-- de negocio no puede estar escrita dos veces, y una regla de unicidad no
+-- puede depender de una extensión de Postgres.
+-- ############################################################################
+
 -- ARREGLO: el nombre único del operario tenía que plegar los ACENTOS y los
 -- ESPACIOS DE ADENTRO.
 --
