@@ -581,6 +581,39 @@ comment on column pedidos_renglones.kilos_enviados is 'Kilos REALES con los que 
 comment on column pedidos_renglones.anulado_el is 'Renglón que no se va a armar: anulado (baja lógica), fuera del progreso, nunca borrado.';
 comment on column pedidos_renglones.ficha_id is 'La ficha con la que el cliente pidió este renglón: la clave de VENTA (precio, kilaje, envase y el nombre que ve el que arma). Sale del código del cliente al matchear. articulo_id sigue al lado como clave de COMPRA — es lo que descuenta stock, y dos fichas del mismo artículo descuentan del mismo stock. NULL = renglón sin identificar, o ficha borrada después.';
 
+-- De qué lote dijo EL QUE ARMA que sacó los bultos de un renglón. Guarda SOLO
+-- LA EXCEPCIÓN: si acepta lo que propone el FIFO no se escribe una fila, y un
+-- renglón sin filas acá se reparte como siempre. No cubre necesariamente el
+-- renglón entero — lo que no esté elegido cae al FIFO. Acá se AVISA Y NO SE
+-- TRABA: el camión sale igual. No guarda costo (lo calcula la Rentabilidad
+-- Real cada vez), al revés que reprocesos_consumos, que es el documento
+-- completo de una guía R con su costo congelado.
+create table pedidos_renglones_lotes_elegidos (
+    id         bigint generated always as identity primary key,
+    renglon_id bigint not null references pedidos_renglones (id) on delete cascade,
+    -- Polimórfico y SIN FK, igual que movimientos_stock.lote_tipo: el lote se
+    -- resuelve rejugando el FIFO, no siguiendo una relación.
+    lote_tipo  text not null
+               check (lote_tipo in ('guia', 'reproceso', 'reingreso_rechazo',
+                                    'ajuste', 'stock_inicial')),
+    lote_origen_id bigint not null,
+    bultos     numeric not null check (bultos > 0),
+    creado_en  timestamptz not null default now(),
+    -- El mismo lote no puede aparecer dos veces en el mismo renglón: serían dos
+    -- verdades sobre lo mismo. Pero SÍ puede estar en dos renglones distintos,
+    -- que es lo normal.
+    unique (renglon_id, lote_tipo, lote_origen_id)
+);
+
+comment on table pedidos_renglones_lotes_elegidos is
+    'De qué lote dijo el que arma que sacó los bultos de un renglón. SOLO LA EXCEPCIÓN: si acepta lo que propone el FIFO no se escribe nada, y un renglón sin filas acá se reparte como siempre. No cubre necesariamente el renglón entero — lo que no esté elegido cae al FIFO. Se borra al destildar o anular el renglón. No guarda costo: el costo lo calcula la Rentabilidad Real cada vez, del lote que le toque.';
+comment on column pedidos_renglones_lotes_elegidos.lote_tipo is
+    'guia (lote de compra recepcionada), reproceso (primera de una guía R), reingreso_rechazo, ajuste o stock_inicial. Mismo vocabulario que movimientos_stock.lote_tipo y que core/stock.py: los tres tienen que nombrar los lotes igual o el reparto deja de encontrarlos.';
+comment on column pedidos_renglones_lotes_elegidos.lote_origen_id is
+    'id del lote en la tabla de su lote_tipo (compras, reprocesos o movimientos_stock). Polimórfico a propósito y sin FK, igual que en la merma dirigida: el lote se resuelve rejugando el FIFO.';
+comment on column pedidos_renglones_lotes_elegidos.bultos is
+    'Cuántos bultos de ese renglón salieron de ese lote. La suma de las filas de un renglón NO tiene que dar lo armado: el resto cae al FIFO. Acá se avisa y no se traba — el camión sale igual.';
+
 create index pedidos_renglones_pedido_idx on pedidos_renglones (pedido_id);
 create index pedidos_renglones_sin_identificar_idx
     on pedidos_renglones (pedido_id) where articulo_id is null;
