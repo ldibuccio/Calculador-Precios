@@ -4616,6 +4616,113 @@ def test_anular_stock_inicial_que_no_es_del_corte_avisa_y_no_commitea():
     conexion.commit.assert_not_called()
 
 
+def _conexion_operario_repetido(quien):
+    """La conexión falsa del caso "el índice rechazó": el INSERT tira
+    UniqueViolation y la búsqueda posterior devuelve al que ya está."""
+    import psycopg2
+
+    conexion, cursor = _conexion_falsa()
+    cursor.execute.side_effect = psycopg2.errors.UniqueViolation()
+    buscar = MagicMock()
+    buscar.fetchone.return_value = quien
+    buscar.__enter__ = MagicMock(return_value=buscar)
+    buscar.__exit__ = MagicMock(return_value=False)
+    conexion.cursor.side_effect = [cursor, buscar]
+    return conexion, cursor
+
+
+def test_crear_operario_deja_que_decida_el_INDICE_y_no_una_regla_propia():
+    """La regla de "es la misma persona" vive SOLO en el índice único.
+
+    Cuando el código tenía su propio chequeo previo, las dos reglas se
+    separaron sin que nadie lo notara: ninguna plegaba tildes y "ruben" entró
+    al lado de "Rubén". Ahora se intenta el INSERT y se atrapa la violación —
+    si el índice cambia, el código lo acompaña solo.
+    """
+    from app.db import crear_operario_deposito
+
+    conexion, cursor = _conexion_operario_repetido(("Rubén", True))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="Ya está cargado como «Rubén»"):
+            crear_operario_deposito("  ruben ")
+
+    # Lo PRIMERO que hace es intentar el INSERT, no preguntar.
+    assert "INSERT INTO operarios_deposito" in cursor.execute.call_args[0][0]
+    conexion.rollback.assert_called_once()
+    conexion.commit.assert_not_called()
+
+
+def test_crear_operario_de_alguien_dado_de_baja_dice_que_hay_que_reactivarlo():
+    """Cargarlo de nuevo no es una opción: el índice único lo rechaza. Si el
+    mensaje no dice "reactivalo", esa persona queda fuera del sistema."""
+    from app.db import crear_operario_deposito
+
+    conexion, _ = _conexion_operario_repetido(("Sergio", False))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="reactivalo"):
+            crear_operario_deposito("sergio")
+
+
+def test_crear_operario_avisa_si_el_indice_rechaza_y_no_encuentra_a_nadie():
+    """Si el índice rechaza pero la búsqueda no encuentra a nadie, las dos
+    reglas se volvieron a separar. Eso se dice, no se traga en silencio."""
+    from app.db import crear_operario_deposito
+
+    conexion, _ = _conexion_operario_repetido(None)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="revisar el índice único"):
+            crear_operario_deposito("quien sea")
+
+
+def test_la_normalizacion_del_nombre_pliega_tildes():
+    """La expresión que busca al repetido tiene que ser LA MISMA del índice
+    (db/normalizar_nombre_operario.sql). Si alguna se toca sin la otra, vuelve
+    el duplicado silencioso que encontramos con la pantalla andando."""
+    from app.db import _NOMBRE_OPERARIO_NORMALIZADO
+
+    expresion = _NOMBRE_OPERARIO_NORMALIZADO.format("nombre")
+    assert "translate" in expresion
+    assert "áéíóúüñÁÉÍÓÚÜÑ" in expresion
+    assert "aeiouunAEIOUUN" in expresion
+    assert "lower" in expresion and "btrim" in expresion
+
+
+def test_listar_operarios_por_default_trae_solo_los_activos():
+    """Lo que va al selector son los activos. Las bajas las pide expresamente la
+    pantalla de Administración, que tiene que poder reactivarlas."""
+    from app.db import listar_operarios_deposito
+
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = [("id",), ("nombre",), ("activo",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_operarios_deposito()
+        solo_activos = cursor.execute.call_args[0][0]
+        listar_operarios_deposito(incluir_bajas=True)
+        con_bajas = cursor.execute.call_args[0][0]
+
+    assert "WHERE activo" in solo_activos
+    assert "WHERE activo" not in con_bajas
+
+
+def test_cambiar_estado_de_un_operario_que_no_existe_es_un_error_de_dato():
+    """Un id que no está no es una falla del sistema: es un dato mal pasado, y
+    tiene que salir como 400 con mensaje, nunca como 500."""
+    from app.db import cambiar_estado_operario_deposito
+
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 0
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="no existe"):
+            cambiar_estado_operario_deposito(999, activo=False)
+
+    conexion.commit.assert_not_called()
+
+
 def test_listar_articulos_para_reproceso_no_esconde_el_articulo_que_hay_que_reprocesar():
     """El caso real del 31/08: el depósito armó cajas de una ficha ANTES de cargar
     su guía R. El total del artículo bajó a cero, pero la pila suelta seguía en el

@@ -6,6 +6,7 @@ core/lector_comandas.py.
 """
 
 import os
+import re
 from contextlib import contextmanager
 
 import psycopg2
@@ -6368,6 +6369,118 @@ def _cajas_por_ficha(cursor) -> dict:
     """
     cursor.execute(_SQL_STOCK_PARTIDO)
     return {(fila[0], fila[1]): float(fila[2]) for fila in cursor.fetchall()}
+
+
+# --- Operarios del depósito (la lista del selector de la excepción) ---
+
+
+def listar_operarios_deposito(incluir_bajas: bool = False) -> list[dict]:
+    """La lista del depósito. Por default SOLO los activos, que es lo que va al selector.
+
+    incluir_bajas=True lo usa la pantalla de Administración, que tiene que
+    poder reactivar a alguien: si el dado de baja no se ve, la única forma de
+    volver a tenerlo es cargarlo de nuevo — y el índice único lo rechazaría,
+    dejando a esa persona fuera del sistema para siempre.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, nombre, activo
+                FROM operarios_deposito
+                {filtro}
+                ORDER BY activo DESC, lower(btrim(nombre))
+                """.format(filtro="" if incluir_bajas else "WHERE activo")
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+# Cómo se decide que dos nombres son la misma persona. La MISMA expresión que
+# usa el índice único de la base (db/normalizar_nombre_operario.sql), y por eso
+# está escrita una sola vez: cuando el código tenía su propia versión, la del
+# código plegaba mayúsculas y espacios y la del índice también — pero NINGUNA
+# plegaba tildes, y "ruben" entró al lado de "Rubén" sin que nada avisara.
+# Ahora el que decide es SIEMPRE el índice; esto solo sirve para buscar al que
+# ya está y poder nombrarlo.
+_NOMBRE_OPERARIO_NORMALIZADO = (
+    "lower(translate(regexp_replace(btrim({}), '\\s+', ' ', 'g'),"
+    " 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))"
+)
+
+
+def crear_operario_deposito(nombre: str) -> int:
+    """Agrega a alguien a la lista. Devuelve su id.
+
+    El repetido escrito distinto —"ruben" contra "Rubén"— lo rechaza EL ÍNDICE
+    ÚNICO DE LA BASE, y acá se intenta el INSERT y se atrapa esa violación en
+    vez de preguntar antes. Es a propósito: un chequeo previo en Python es una
+    segunda regla que se puede separar de la del índice sin que nadie lo note,
+    y eso ya pasó una vez con las tildes. La base decide; el código solo
+    traduce.
+
+    El mensaje NOMBRA al que ya está: "ya existe" a secas manda a buscar en una
+    lista donde el otro puede no aparecer si está dado de baja.
+    """
+    limpio = re.sub(r"\s+", " ", nombre or "").strip()
+    if not limpio:
+        raise ValueError("El nombre del operario es obligatorio.")
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            try:
+                cursor.execute(
+                    "INSERT INTO operarios_deposito (nombre) VALUES (%s) RETURNING id", (limpio,)
+                )
+                nuevo_id = cursor.fetchone()[0]
+            except psycopg2.errors.UniqueViolation:
+                conexion.rollback()
+                with conexion.cursor() as buscar:
+                    buscar.execute(
+                        "SELECT nombre, activo FROM operarios_deposito WHERE "
+                        + _NOMBRE_OPERARIO_NORMALIZADO.format("nombre")
+                        + " = "
+                        + _NOMBRE_OPERARIO_NORMALIZADO.format("%s"),
+                        (limpio,),
+                    )
+                    fila = buscar.fetchone()
+                if fila is None:
+                    # El índice rechazó pero no encontramos a nadie: las dos
+                    # reglas se separaron otra vez. Se dice, no se traga.
+                    raise ValueError(
+                        "Ese nombre ya está cargado, pero no se pudo encontrar cuál es. Avisá que hay que revisar el índice único."
+                    ) from None
+                estado = "" if fila[1] else " (está dado de baja: reactivalo en vez de cargarlo)"
+                raise ValueError(f"Ya está cargado como «{fila[0]}»{estado}.") from None
+        conexion.commit()
+        return nuevo_id
+    finally:
+        conexion.close()
+
+
+def cambiar_estado_operario_deposito(operario_id: int, activo: bool) -> None:
+    """Da de baja o reactiva. NUNCA borra.
+
+    Borrar no es una opción y por eso no existe la función: la FK de
+    reprocesos.excepcion_operario_id es sin ON DELETE, así que borrar a alguien
+    con excepciones cargadas reventaría — y borrarlo cuando todavía no tiene
+    ninguna dejaría el sistema en dos estados distintos según el historial, que
+    es peor que no poder borrar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE operarios_deposito SET activo = %s WHERE id = %s", (activo, operario_id)
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("Ese operario no existe.")
+        conexion.commit()
+    finally:
+        conexion.close()
 
 
 def listar_articulos_para_reproceso() -> list[dict]:

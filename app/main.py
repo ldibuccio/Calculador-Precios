@@ -194,6 +194,9 @@ from app.db import (
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_para_reproceso,
+    listar_operarios_deposito,
+    crear_operario_deposito,
+    cambiar_estado_operario_deposito,
     contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
@@ -6561,6 +6564,78 @@ def _volver_a_stock_inicial(articulo_id, aviso=None, error=None):
     if error:
         parametros["error"] = error
     return RedirectResponse(url=f"/administracion/stock/inicial?{urlencode(parametros)}#carga", status_code=303)
+
+
+# --- Operarios del depósito (Administración) ---
+#
+# La lista que alimenta el selector de la excepción al freno del reproceso.
+# Va ANTES que el freno y no después: con la lista vacía, una excepción no se
+# puede completar, y el freno sin salida deja al depósito trabado.
+
+
+def _renderizar_operarios(request: Request, *, aviso=None, error=None, status_code: int = 200):
+    try:
+        operarios = listar_operarios_deposito(incluir_bajas=True)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(
+        request,
+        "administracion_operarios.html",
+        {
+            "activos": [o for o in operarios if o["activo"]],
+            "bajas": [o for o in operarios if not o["activo"]],
+            "aviso": aviso,
+            "error": error,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/administracion/operarios")
+def ver_operarios(request: Request, aviso: str | None = None, error: str | None = None):
+    """La lista del depósito: alta, baja y reactivación. NUNCA borrado."""
+    return _renderizar_operarios(request, aviso=aviso, error=error)
+
+
+@app.post("/administracion/operarios")
+def crear_operario(request: Request, nombre: str = Form("")):
+    """Agrega a alguien a la lista.
+
+    El nombre repetido escrito distinto lo rechaza el índice único de la base;
+    acá se muestra como un mensaje que NOMBRA al que ya está, no como un 500.
+    """
+    try:
+        crear_operario_deposito(nombre)
+    except ValueError as error:
+        return _renderizar_operarios(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return RedirectResponse(url="/administracion/operarios?aviso=Operario+agregado.", status_code=303)
+
+
+@app.post("/administracion/operarios/{operario_id}/baja")
+def dar_de_baja_operario(request: Request, operario_id: int):
+    """Sale del selector, pero sus excepciones viejas siguen contando."""
+    try:
+        cambiar_estado_operario_deposito(operario_id, activo=False)
+    except ValueError as error:
+        return _renderizar_operarios(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return RedirectResponse(url="/administracion/operarios?aviso=Operario+dado+de+baja.", status_code=303)
+
+
+@app.post("/administracion/operarios/{operario_id}/reactivar")
+def reactivar_operario(request: Request, operario_id: int):
+    """Vuelve al selector. Es la única forma de recuperar a alguien: el índice
+    único impide cargarlo de nuevo, así que sin esto quedaría afuera para siempre."""
+    try:
+        cambiar_estado_operario_deposito(operario_id, activo=True)
+    except ValueError as error:
+        return _renderizar_operarios(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return RedirectResponse(url="/administracion/operarios?aviso=Operario+reactivado.", status_code=303)
 
 
 @app.get("/administracion/stock/inicial")
