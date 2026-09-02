@@ -836,32 +836,12 @@ create index movimientos_stock_rechazo_segunda_idx
 -- ----------------------------------------------------------------------------
 -- 17. REPROCESOS (Guías R) y SEGUNDA
 -- ----------------------------------------------------------------------------
--- La lista corta del depósito, para el selector de la excepción al freno del
--- reproceso. Editable desde Administración, igual que los catálogos del
--- puesto. Se da de BAJA con activo, nunca se borra: una excepción cargada
--- apunta acá.
-create table operarios_deposito (
-    id        bigint generated always as identity primary key,
-    nombre    text not null check (btrim(nombre) <> ''),
-    activo    boolean not null default true,
-    creado_en timestamptz not null default now()
-);
-
--- El nombre NORMALIZADO es lo único: "Rubén Pérez", "ruben perez" y
--- "  RUBEN   PEREZ " son la misma persona, y si entran como tres, contar por
--- operario no cuenta nada. Se pliegan mayúsculas, TILDES y todos los espacios
--- de más — también los del MEDIO, que btrim no toca. Con translate y
--- regexp_replace, no con la extensión unaccent: una regla de unicidad que
--- depende de una extensión instalada se puede perder al crear la empresa
--- siguiente.
-create unique index operarios_deposito_nombre_unico
-    on operarios_deposito (lower(translate(regexp_replace(btrim(nombre), '\s+', ' ', 'g'), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN')));
-
-comment on table operarios_deposito is
-    'La lista corta del depósito, para el selector de la excepción al freno del reproceso. Editable desde Administración, igual que los catálogos del puesto. Se da de BAJA con activo, nunca se borra: una excepción cargada apunta acá.';
-comment on column operarios_deposito.activo is
-    'false = ya no aparece en el selector, pero sus excepciones viejas siguen contando. El nombre es único PLEGANDO mayúsculas, TILDES y todos los espacios de más (los de las puntas y los del medio): "Rubén Pérez", "ruben perez" y "  RUBEN   PEREZ " son la misma persona.';
-
+-- NO HAY tabla de operarios del depósito, y no es un olvido: existió entre el
+-- 01/09 y el 02/09 para la salida de escape del freno del reproceso, que se
+-- descartó. El reproceso es 100% o nada — si no hay stock a la fecha, no se
+-- carga, y no hay excepción que anotar. La borró
+-- db/sacar_excepcion_del_freno.sql junto con excepcion_motivo,
+-- excepcion_operario_id, su check y su índice.
 create table reprocesos (
     id bigint generated always as identity primary key,
     articulo_id bigint not null references articulos (id),
@@ -883,30 +863,13 @@ create table reprocesos (
     tipo text not null default 'normal' check (tipo in ('normal', 'inicial')),
     -- El operario corrigió el reparto por lote que propuso el server.
     consumos_editados boolean not null default false,
-    -- La excepción al freno: por qué se cargó sin remanente, y quién.
-    -- El motivo ES la marca (NULL = no hubo excepción), para que no haya un
-    -- booleano que pueda contradecirlo. El quién sale de una lista y no de un
-    -- campo libre: con texto libre la misma persona entra como "juan", "Juan"
-    -- y "jaun", y contar por operario deja de contar nada.
-    excepcion_motivo text,
-    excepcion_operario_id bigint references operarios_deposito (id),
     -- El reproceso inicial PRODUCE SIN CONSUMIR: las cajas armadas que había
     -- en el piso el día del corte ya existen, y los cajones que las
     -- originaron no se van a cargar nunca. Vive en el dato (toma cero) y no
     -- en el código, porque el cálculo de stock ya resta SUM(bultos_tomados).
     constraint reprocesos_bultos_tomados_check
         check ((tipo = 'inicial' and bultos_tomados = 0)
-               or (tipo = 'normal' and bultos_tomados > 0)),
-    -- Los dos datos de la excepción viajan juntos y ninguno puede ir vacío.
-    -- Los "is not null" NO son redundantes: en Postgres un check que evalúa a
-    -- NULL se da por cumplido, y sin ellos una guía con motivo y sin quién
-    -- entraba igual.
-    constraint reprocesos_excepcion_completa
-        check (
-            (excepcion_motivo is null and excepcion_operario_id is null)
-            or (excepcion_motivo is not null and excepcion_operario_id is not null
-                and btrim(excepcion_motivo) <> '')
-        )
+               or (tipo = 'normal' and bultos_tomados > 0))
 );
 
 comment on table reprocesos is
@@ -921,10 +884,6 @@ comment on column reprocesos.ficha_id is
     'A qué ficha fueron las cajas de primera de esta guía R. NULL tiene dos significados que separa la fecha de corte (31/08/2026): antes del corte = dato viejo que no se completa; después = SIN ASIGNAR, y hay que completarlo. No se deriva de (articulo_id, cliente_id): un cliente puede tener varias fichas del mismo artículo, así que esa derivación es ambigua por diseño.';
 comment on column reprocesos.consumos_editados is
     'El operario corrigió el reparto por lote que propuso el server. false = el reparto es el que salió del FIFO. Va por guía y no por consumo: lo que hay que poder contestar es si el reparto lo declaró una persona, no qué renglón tocó.';
-comment on column reprocesos.excepcion_motivo is
-    'Por qué se cargó esta guía pese al freno (no había remanente a la fecha). NULL = no hubo excepción: el motivo ES la marca, para que no haya un booleano que pueda contradecirlo.';
-comment on column reprocesos.excepcion_operario_id is
-    'Quién usó la excepción, elegido de operarios_deposito. Selector y no texto libre: con texto libre la misma persona entra como "juan", "Juan" y "jaun", y contar por operario deja de contar nada.';
 comment on column reprocesos.tipo is
     'normal = el reproceso de todos los días: toma bultos del stock y produce primera, segunda y merma. inicial = las cajas que ya estaban armadas en el piso el día del corte (31/08/2026): PRODUCEN SIN CONSUMIR (bultos_tomados = 0), porque los cajones que las originaron nunca se cargaron. El check obliga las dos cosas.';
 
@@ -932,12 +891,6 @@ comment on column reprocesos.tipo is
 -- que importa es el de "cuántas cajas hay de esta ficha".
 create index reprocesos_ficha_idx
     on reprocesos (ficha_id) where ficha_id is not null;
-
--- Contar las excepciones al freno por operario y por día sin recorrer la
--- tabla entera. Parcial: las guías sin excepción —casi todas— no entran.
-create index reprocesos_excepcion_idx
-    on reprocesos (fecha_operacion, excepcion_operario_id)
-    where excepcion_motivo is not null;
 
 create table reprocesos_consumos (
     id bigint generated always as identity primary key,
@@ -953,9 +906,9 @@ create table reprocesos_consumos (
 );
 
 comment on table reprocesos_consumos is
-    'De qué lote salió cada bulto tomado, escrito por el server corriendo FIFO al cargar (el operario no elige lote). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
+    'De qué lote salió cada bulto tomado, escrito por el server al cargar: propone el FIFO y el operario puede corregirlo dentro de lo que hay de cada lote (reprocesos.consumos_editados dice si lo corrigió). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
 comment on column reprocesos_consumos.origen is
-    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), o sin_lote (se tomó más de lo que los lotes cubrían: el piso es la verdad, no se traba).';
+    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), o sin_lote. sin_lote YA NO SE ESCRIBE: desde el 02/09 el freno no deja cargar una guía R que los lotes no cubran, porque ese consumo congelaba un costo incompleto para siempre. El valor queda en el check por las guías viejas que lo tienen.';
 
 -- El respaldo de las fichas que el corte del modelo pone en NULL.
 -- Al cortar, las guías R pre-corte con ficha asignada dejan de contar POR
