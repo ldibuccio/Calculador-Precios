@@ -1,4 +1,5 @@
--- ARREGLO: el nombre único del operario tenía que plegar también los ACENTOS.
+-- ARREGLO: el nombre único del operario tenía que plegar los ACENTOS y los
+-- ESPACIOS DE ADENTRO.
 --
 -- El índice quedó como lower(btrim(nombre)), que pliega mayúsculas y espacios
 -- pero NO tildes. Encontrado con la pantalla andando: se cargó "ruben" al lado
@@ -7,6 +8,14 @@
 --
 -- Y es el caso MÁS común en castellano, no un borde: la mitad de los nombres
 -- del depósito llevan tilde y nadie la escribe siempre.
+--
+-- LOS ESPACIOS DE ADENTRO son el mismo problema con otra cara, y salió
+-- probando este arreglo: `btrim` saca los espacios de las PUNTAS pero no
+-- colapsa los del medio, así que "Rubén  Pérez" con dos espacios entraba al
+-- lado de "Rubén Pérez". Colapsarlos estaba escrito SOLO en Python — otra vez
+-- la misma regla en dos lugares, que es de lo que se trata la regla de
+-- CLAUDE.md. Ahora el índice lo hace por su cuenta y el código solo prolija lo
+-- que guarda.
 --
 -- `translate` y no la extensión `unaccent` a propósito: unaccent hay que
 -- habilitarla en el proyecto, y una regla de unicidad que depende de una
@@ -28,7 +37,7 @@ begin
     select string_agg(nombres, '; ') into duplicados from (
         select string_agg(nombre, ' / ') as nombres
         from operarios_deposito
-        group by lower(translate(btrim(nombre), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))
+        group by lower(translate(regexp_replace(btrim(nombre), '\s+', ' ', 'g'), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))
         having count(*) > 1
     ) d;
     if duplicados is not null then
@@ -41,8 +50,8 @@ begin
         drop index operarios_deposito_nombre_unico;
     end if;
     create unique index operarios_deposito_nombre_unico
-        on operarios_deposito (lower(translate(btrim(nombre), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN')));
+        on operarios_deposito (lower(translate(regexp_replace(btrim(nombre), '\s+', ' ', 'g'), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN')));
 
     comment on column operarios_deposito.activo is
-        'false = ya no aparece en el selector, pero sus excepciones viejas siguen contando. El nombre es único PLEGANDO mayúsculas, espacios de más Y TILDES: "Rubén", "ruben" y " RUBEN " son la misma persona.';
+        'false = ya no aparece en el selector, pero sus excepciones viejas siguen contando. El nombre es único PLEGANDO mayúsculas, TILDES y todos los espacios de más (los de las puntas y los del medio): "Rubén Pérez", "ruben perez" y "  RUBEN   PEREZ " son la misma persona.';
 end $$;

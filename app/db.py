@@ -6407,7 +6407,8 @@ def listar_operarios_deposito(incluir_bajas: bool = False) -> list[dict]:
 # Ahora el que decide es SIEMPRE el índice; esto solo sirve para buscar al que
 # ya está y poder nombrarlo.
 _NOMBRE_OPERARIO_NORMALIZADO = (
-    "lower(translate(btrim({}), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))"
+    "lower(translate(regexp_replace(btrim({}), '\\s+', ' ', 'g'),"
+    " 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))"
 )
 
 
