@@ -133,6 +133,23 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     que se pudrió, no el del cajón viejo que el FIFO hubiera elegido. Lo
     que su lote no cubre cae al FIFO de siempre.
 
+    Las dirigidas se resuelven TODAS ANTES del FIFO, en una pasada aparte,
+    y eso NO es una optimización: es la única forma de que esta función y
+    `repartir_fifo` emparejen igual. Hasta el 02/09 acá el reclamo dirigido
+    se resolvía adentro del turno cronológico de cada salida, así que una
+    salida ANTERIOR sin dirigir se llevaba el lote antes de que la dirigida
+    llegara a pedirlo — y quedaba el stock diciendo que el lote fue para la
+    que lo eligió mientras el costo se lo cobraba a la otra. La misma regla
+    escrita dos veces, separándose. Medido en producción: cero mermas
+    dirigidas, así que el arreglo no movió un solo número; entró como
+    blindaje antes de que el armado de pedido empiece a generar dirigidas
+    de a decenas.
+
+    El que elige GANA sobre cualquier otro reclamo, incluso el de una salida
+    anterior: la está SEÑALANDO con el dedo, no adivinando. La salida
+    anterior que se queda sin lote no desaparece ni se costea dos veces —
+    cae a sin_lote, y se ve.
+
     A cada salida le agrega: "costo" ($ total, o None si alguna porción
     no tiene precio), "bultos_sin_costo", "motivos_sin_costo"
     ({motivo: bultos}) y "consumos_lotes" (qué lote cubrió cada porción,
@@ -142,49 +159,57 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     """
     lotes = [dict(e, restante=float(e["cantidad"])) for e in sorted(entradas, key=lambda e: e["orden"])]
     resultado = sorted((dict(s) for s in salidas), key=lambda s: s["orden"])
+    # La cuenta de cada salida vive afuera del bucle porque ahora se llena en
+    # DOS pasadas: primero las dirigidas de todas, después el FIFO.
+    cuentas = {
+        id(salida): {"pendiente": float(salida["cantidad"]), "costo": 0.0,
+                     "sin_costo": 0.0, "motivos": {}, "consumos": []}
+        for salida in resultado
+    }
 
-    indice = 0
+    def _consumir(salida, lote, bultos):
+        cuenta = cuentas[id(salida)]
+        lote["restante"] -= bultos
+        cuenta["pendiente"] = round(cuenta["pendiente"] - bultos, 2)
+        costo_porcion = bultos * float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None
+        cuenta["consumos"].append(
+            {
+                "tipo_lote": lote["tipo_lote"],
+                "origen_id": lote.get("origen_id"),
+                "cliente_lote_id": lote.get("cliente_lote_id"),
+                "detalle": lote.get("detalle"),
+                "bultos": bultos,
+                # El costo de ESTA porción: es lo que permite partir la
+                # merma en cruda y trabajada cuando una sola salida
+                # consumió lotes de los dos tipos.
+                "costo": costo_porcion,
+            }
+        )
+        if lote["costo_bulto"] is not None:
+            cuenta["costo"] += bultos * float(lote["costo_bulto"])
+        else:
+            cuenta["sin_costo"] += bultos
+            motivo = _MOTIVO_POR_TIPO_LOTE.get(lote["tipo_lote"], "ajuste_sin_costo")
+            cuenta["motivos"][motivo] = cuenta["motivos"].get(motivo, 0.0) + bultos
+
+    # PASADA 1 — las dirigidas, TODAS, antes de cualquier FIFO. Es la misma
+    # pasada global que hace repartir_fifo, y tiene que ser global por lo
+    # mismo: si se resolviera adentro del turno de cada salida, una salida
+    # anterior sin dirigir se llevaría el lote antes de que la dirigida
+    # llegue a pedirlo, y las dos funciones emparejarían distinto.
     for salida in resultado:
-        pendiente = float(salida["cantidad"])
-        costo = 0.0
-        sin_costo = 0.0
-        motivos: dict[str, float] = {}
-        consumos: list[dict] = []
-
-        def _consumir(lote, bultos):
-            nonlocal costo, sin_costo
-            lote["restante"] -= bultos
-            costo_porcion = bultos * float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None
-            consumos.append(
-                {
-                    "tipo_lote": lote["tipo_lote"],
-                    "origen_id": lote.get("origen_id"),
-                    "cliente_lote_id": lote.get("cliente_lote_id"),
-                    "detalle": lote.get("detalle"),
-                    "bultos": bultos,
-                    # El costo de ESTA porción: es lo que permite partir la
-                    # merma en cruda y trabajada cuando una sola salida
-                    # consumió lotes de los dos tipos.
-                    "costo": costo_porcion,
-                }
-            )
-            if lote["costo_bulto"] is not None:
-                costo += bultos * float(lote["costo_bulto"])
-            else:
-                sin_costo += bultos
-                motivo = _MOTIVO_POR_TIPO_LOTE.get(lote["tipo_lote"], "ajuste_sin_costo")
-                motivos[motivo] = motivos.get(motivo, 0.0) + bultos
-
         elegido = lote_dirigido(lotes, salida)
         if elegido is not None and elegido["restante"] > 0:
-            bultos = min(elegido["restante"], pendiente)
-            pendiente = round(pendiente - bultos, 2)
-            _consumir(elegido, bultos)
+            _consumir(salida, elegido, min(elegido["restante"], cuentas[id(salida)]["pendiente"]))
 
-        # El índice avanza SOLO sobre lotes agotados, que ya no vuelven. Un
-        # lote posterior a esta salida se saltea pero NO se pasa de largo:
-        # una salida más nueva sí va a poder consumirlo.
-        while pendiente > 0 and indice < len(lotes):
+    # PASADA 2 — el FIFO de siempre con lo que quedó pendiente. El índice
+    # avanza SOLO sobre lotes agotados, que ya no vuelven (incluidos los que
+    # vació la pasada de arriba). Un lote posterior a esta salida se saltea
+    # pero NO se pasa de largo: una salida más nueva sí va a poder consumirlo.
+    indice = 0
+    for salida in resultado:
+        cuenta = cuentas[id(salida)]
+        while cuenta["pendiente"] > 0 and indice < len(lotes):
             lote = lotes[indice]
             if lote["restante"] <= 0:
                 indice += 1
@@ -193,17 +218,17 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
                 # Los lotes están ordenados: de acá en adelante son todos
                 # posteriores. Esta salida no tiene con qué costearse.
                 break
-            bultos = min(lote["restante"], pendiente)
-            pendiente = round(pendiente - bultos, 2)
-            _consumir(lote, bultos)
-        if pendiente > 0:
-            sin_costo += pendiente
-            motivos["sin_lote"] = motivos.get("sin_lote", 0.0) + pendiente
+            _consumir(salida, lote, min(lote["restante"], cuenta["pendiente"]))
+        if cuenta["pendiente"] > 0:
+            cuenta["sin_costo"] += cuenta["pendiente"]
+            cuenta["motivos"]["sin_lote"] = cuenta["motivos"].get("sin_lote", 0.0) + cuenta["pendiente"]
 
-        salida["bultos_sin_costo"] = round(sin_costo, 2)
-        salida["motivos_sin_costo"] = motivos
-        salida["consumos_lotes"] = consumos
-        salida["costo"] = round(costo, 2) if sin_costo == 0 else None
+    for salida in resultado:
+        cuenta = cuentas[id(salida)]
+        salida["bultos_sin_costo"] = round(cuenta["sin_costo"], 2)
+        salida["motivos_sin_costo"] = cuenta["motivos"]
+        salida["consumos_lotes"] = cuenta["consumos"]
+        salida["costo"] = round(cuenta["costo"], 2) if cuenta["sin_costo"] == 0 else None
     return resultado
 
 

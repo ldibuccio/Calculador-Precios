@@ -849,6 +849,65 @@ vivo". Registra y delata, jamás traba, que es el criterio de todo el módulo.
 **No entra en E4**: se anota acá y se decide cuando el freno y el desglose estén
 andando, que es cuando se va a saber si molesta de verdad.
 
+## Pendiente con nombre propio: los dos FIFO son dos implementaciones del mismo emparejamiento
+
+Anotado el 02/09/2026, el día que uno de los dos se separó del otro y lo
+agarramos de casualidad.
+
+### Qué pasó
+
+`repartir_fifo` (stock) resolvía **todas** las salidas dirigidas en una
+pasada global, antes del FIFO. `atribuir_costos_fifo` (costo) resolvía el
+reclamo dirigido **adentro del turno cronológico de cada salida**. Con eso,
+una salida anterior sin dirigir se llevaba el lote antes de que la dirigida
+llegara a pedirlo, y quedaba **el stock diciendo que el lote fue para la que
+lo eligió mientras el costo se lo cobraba a la otra**.
+
+Medido antes de tocar nada: **cero mermas dirigidas en las dos bases**, así
+que el arreglo no movió un solo número. Entró como blindaje.
+
+**Ningún test lo agarró, y no por descuido:** no se duplicaba nada, nada
+desaparecía, los totales por lote coincidían y el `sin_lote` agregado
+también. Lo único que difería era **la pareja (salida, lote)**, que es justo
+lo que ningún test miraba.
+
+### Por qué el arreglo no alcanza
+
+El arreglo del 02/09 movió la pasada de dirigidas y clavó el caso con tests
+que **fallan** si los dos repartos emparejan distinto. Pero son tests **por
+escenario**, no una garantía estructural, y el motivo está escrito en el
+código: **`repartir_fifo` no expone qué salida se quedó cada lote** — solo
+el restante por lote y el `sin_lote` total. Así que el test no puede
+comparar un reparto contra el otro: compara cada uno contra una expectativa
+escrita a mano. Sirve para los casos que alguien se acordó de escribir.
+
+Y eso es, otra vez, **una regla de negocio escrita dos veces** (ver
+`CLAUDE.md`): los dos algoritmos hacen lo mismo —dirigidas, después FIFO,
+saltando el lote posterior a la salida— en dos lugares distintos. La
+diferencia entre ellos era el bug.
+
+### La salida: UNA sola función de emparejamiento
+
+Que exista una función que devuelva las parejas `(salida, lote, bultos)`, y
+que `repartir_fifo` y `atribuir_costos_fifo` sean **dos lecturas de esa
+misma pareja**: una suma por lote, la otra multiplica por el costo. Ahí la
+divergencia deja de estar *detectada* y pasa a ser **imposible**.
+
+### Cuándo
+
+**No corre urgencia mientras no haya dirigidas.** Con cero mermas dirigidas,
+la divergencia no puede hacer daño.
+
+**Pero apenas entre la Entrega 3, cada renglón corregido del armado es una
+dirigida**, y de raro pasa a rutina. Ahí el arreglo del 02/09 queda siendo
+un test por escenario sosteniendo algo que debería ser imposible por
+construcción.
+
+**Se decide DESPUÉS de que la Entrega 3 esté andando, mirando cuántas
+correcciones hace el depósito de verdad.** Si son muchas, el Nivel 2 se
+vuelve necesario. Es una reescritura del núcleo del FIFO, y no se hace a
+ciegas ni el mismo día que arranca otra entrega.
+
 ## Pendiente con nombre propio: el reparto congelado y el vivo pueden decir cosas distintas, y nadie lo ve
 
 Anotado el 31/08/2026, al decidir la fecha retroactiva del reproceso.

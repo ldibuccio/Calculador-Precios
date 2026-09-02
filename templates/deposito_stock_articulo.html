@@ -105,7 +105,7 @@
 
   {% if sin_lote %}
   <div class="tarjeta-sin-lote">
-    <strong>{{ sin_lote|numero }} bultos salieron sin lote:</strong> ninguna guía los cubre. Falta cargar el reproceso o el ajuste que los explique — no se cuelgan de una guía vacía para no falsear la trazabilidad.
+    <strong>{{ sin_lote|numero }} bultos salieron sin lote:</strong> ninguna guía los cubre. Puede ser que falte cargar el reproceso o el ajuste que los explique, o que otra salida se haya llevado ese lote a propósito: el que arma un pedido y el que carga una merma pueden SEÑALAR de qué lote salieron, y lo que señalan gana sobre el orden del FIFO. En los dos casos los bultos quedan acá y no se cuelgan de una guía vacía, para no falsear la trazabilidad.
   </div>
   {% endif %}
 

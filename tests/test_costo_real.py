@@ -3,6 +3,7 @@
 from datetime import date
 
 from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
+from core.stock import repartir_fifo
 
 
 def _lote(orden, cantidad, costo, tipo_lote="guia"):
@@ -24,6 +25,94 @@ def _armado(fecha, cantidad, unidades, cliente_id=1, orden=None, ficha_id=901):
 
 
 # --- atribuir_costos_fifo ---
+
+
+def test_el_lote_ELEGIDO_va_a_la_misma_salida_en_los_DOS_repartos():
+    """El test que faltaba, y el que impide que las dos cuentas se separen.
+
+    Un lote de 10. Una salida ANTERIOR sin dirigir que lo consumiría entero
+    por FIFO, y una POSTERIOR que lo elige con el dedo. Los dos repartos
+    tienen que estar de acuerdo en quién se lo quedó.
+
+    Antes del 02/09 no lo estaban: el stock se lo daba a la que lo eligió y
+    el costo se lo cobraba a la anterior, porque acá el reclamo dirigido se
+    resolvía adentro del turno cronológico de cada salida en vez de en una
+    pasada global. No se duplicaba nada y nada desaparecía —por eso ningún
+    test lo agarró—, pero las dos funciones emparejaban distinto.
+
+    NO ALCANZA con verificar que no se duplica: eso pasaba en verde con el
+    bug adentro. Lo que se verifica es el EMPAREJAMIENTO.
+    """
+    lote_elegido = _lote((date(2026, 9, 1), 1), 10, 1000.0)
+    lote_elegido["origen_id"] = 77
+    anterior = {"orden": (date(2026, 9, 2), 2), "cantidad": 10}
+    la_que_elige = {"orden": (date(2026, 9, 3), 3), "cantidad": 10,
+                    "lote_tipo": "guia", "lote_origen_id": 77}
+
+    stock = repartir_fifo([lote_elegido], [dict(anterior), dict(la_que_elige)])
+    costo = atribuir_costos_fifo([lote_elegido], [dict(anterior), dict(la_que_elige)])
+
+    # STOCK: el lote se consumió entero y la anterior quedó sin nada.
+    assert stock["lotes"][0]["restante"] == 0
+    assert stock["sin_lote"] == 10
+
+    # COSTO: el MISMO lote tiene que estar en la MISMA salida. Acá se rompía.
+    de_la_anterior, de_la_que_elige = costo
+    assert [(c["origen_id"], c["bultos"]) for c in de_la_que_elige["consumos_lotes"]] == [(77, 10.0)]
+    assert de_la_que_elige["costo"] == 10000.0
+
+    # Y la que se quedó sin el lote no desaparece ni se costea de prestado:
+    # cae a sin_lote, con su motivo, igual que en el reparto de stock.
+    assert de_la_anterior["consumos_lotes"] == []
+    assert de_la_anterior["costo"] is None
+    assert de_la_anterior["motivos_sin_costo"] == {"sin_lote": 10.0}
+
+    # Y el lote se cobró UNA sola vez entre las dos.
+    assert sum(c["bultos"] for s in costo for c in s["consumos_lotes"]) == 10
+
+
+def test_el_lote_elegido_gana_aunque_lo_pida_una_salida_de_ANTES_y_le_sobre():
+    """La misma regla con la dirigida tomando solo una parte: lo que no se
+    lleva vuelve al FIFO y lo agarra la anterior, sin quedar colgado."""
+    lote_elegido = _lote((date(2026, 9, 1), 1), 10, 1000.0)
+    lote_elegido["origen_id"] = 77
+    anterior = {"orden": (date(2026, 9, 2), 2), "cantidad": 10}
+    la_que_elige = {"orden": (date(2026, 9, 3), 3), "cantidad": 4,
+                    "lote_tipo": "guia", "lote_origen_id": 77}
+
+    stock = repartir_fifo([lote_elegido], [dict(anterior), dict(la_que_elige)])
+    de_la_anterior, de_la_que_elige = atribuir_costos_fifo(
+        [lote_elegido], [dict(anterior), dict(la_que_elige)]
+    )
+
+    assert stock["lotes"][0]["restante"] == 0
+    assert stock["sin_lote"] == 4  # la anterior se quedó corta por los 4 elegidos
+    assert [(c["origen_id"], c["bultos"]) for c in de_la_que_elige["consumos_lotes"]] == [(77, 4.0)]
+    assert [(c["origen_id"], c["bultos"]) for c in de_la_anterior["consumos_lotes"]] == [(77, 6.0)]
+    assert de_la_anterior["motivos_sin_costo"] == {"sin_lote": 4.0}
+
+
+def test_una_dirigida_a_un_lote_POSTERIOR_no_le_saca_nada_a_nadie():
+    """El caso normal de hoy: la merma señala un lote que ninguna salida
+    anterior podía tocar (es posterior a ellas). Nada se mueve — es lo que
+    hace que el arreglo del 02/09 no haya cambiado un solo número en
+    producción, donde no hay una sola merma dirigida."""
+    viejo = _lote((date(2026, 9, 1), 1), 10, 1000.0)
+    viejo["origen_id"] = 77
+    nuevo = _lote((date(2026, 9, 5), 5), 10, 3000.0)
+    nuevo["origen_id"] = 99
+    anterior = {"orden": (date(2026, 9, 3), 3), "cantidad": 10}
+    dirigida = {"orden": (date(2026, 9, 6), 6), "cantidad": 4,
+                "lote_tipo": "guia", "lote_origen_id": 99}
+
+    de_la_anterior, de_la_dirigida = atribuir_costos_fifo(
+        [viejo, nuevo], [dict(anterior), dict(dirigida)]
+    )
+
+    assert de_la_anterior["costo"] == 10000.0
+    assert de_la_dirigida["costo"] == 12000.0
+
+
 
 
 def test_atribucion_cada_salida_conoce_su_costo_por_lote():
