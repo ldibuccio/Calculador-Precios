@@ -47,6 +47,31 @@ Esto no es una preferencia de estilo: es el entorno donde el SQL corre de
 verdad. Un script probado en Postgres local puede estar correcto y aun así
 romper —o peor, escribir a medias— en el editor.
 
+## `git push origin main` parado en otra rama no falla ni avisa
+
+Pasó el 02/09. Dos commits quedaron en la rama, se corrió
+`git push origin main`, y **el push salió con código 0**: como `main` no
+había cambiado, git no imprimió ninguna línea de actualización — solo el
+`branch 'main' set up to track` de siempre. Se leyó como "subió", y lo que
+en realidad pasó fue que no había nada que subir. Los archivos que se creían
+desplegados estuvieron una hora sin estar.
+
+`git push origin <rama>` empuja **esa rama**, no en la que estás parado.
+Commitear en una rama y pushear otra es un no-op silencioso, y el silencio
+es el problema: no hay error que leer.
+
+De acá en adelante, después de cualquier push que se dé por desplegado:
+
+1. **Se verifica con `git rev-list --left-right --count origin/<rama>...<rama>`**,
+   que tiene que dar `0 0`. Un "push exitoso" sin líneas de actualización no
+   es prueba de nada.
+2. **Antes de commitear se mira en qué rama se está.** El commit va donde
+   estás parado, no donde creés.
+3. **La ausencia de error no es confirmación.** Es la misma familia que el
+   editor de Supabase que escribe a medias y el verificador que nunca se
+   corrió: lo que hay que mirar es el estado final, no que el comando no se
+   haya quejado.
+
 ## Una regla de negocio no puede estar escrita dos veces
 
 Si la misma regla vive en el código y en la base, son **dos** reglas: se
