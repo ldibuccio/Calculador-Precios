@@ -477,6 +477,45 @@ De esa regla salen las dos piezas del reproceso, y van juntas:
   nombrara: estaba definida en la conversación de diseño y E5 salió con los
   dos avisos y sin la elección. No se discutió sacarla; simplemente no entró.
 
+### DECIDIDO (02/09): la salida de escape del freno NO va, y no vuelve
+
+**Se propuso, se diseñó, se migró — y se sacó antes de escribir una línea
+del código que la usaba.** Queda anotada acá, con fecha y con el motivo,
+para que dentro de tres meses no vuelva a aparecer como si fuera una idea
+nueva.
+
+**Qué era.** Cuando el freno trabara, dejarlo cargar igual marcando el
+reproceso como excepción: un motivo escrito a mano y el operario que la
+usó, elegido de una lista. De ahí salieron la tabla `operarios_deposito`,
+la pantalla Administración → Depósito, y las columnas
+`reprocesos.excepcion_motivo` y `reprocesos.excepcion_operario_id`.
+
+**Por qué se sacó: contradecía una decisión que ya estaba tomada y
+justificada acá arriba.** *"El reproceso se hace 100% bien o no se hace."*
+*"Si no hay remanente en el sistema, no se puede cargar. Punto. No es
+'avisa y sigue'."* Una excepción con motivo **es** "avisa y sigue" con más
+pasos: el reproceso queda cargado igual, el costo queda congelado igual, y
+lo único que se gana es un texto que nadie va a leer — salvo el día en que
+alguien vaya a buscar por qué esta guía tiene el costo mal, que es
+exactamente el día en que ya no se puede arreglar.
+
+**Y el argumento que la sostenía no existe.** Se propuso para no frenar la
+operación, pero **el freno no frena la operación**: el pedido sale igual,
+el camión sale igual. Lo único que se traba es la carga de la guía R, y
+eso se destraba yendo a cargar lo que falta — una recepción, un ingreso, o
+la guía R que armó esa mercadería. Esa mercadería hay que cargarla de
+todas formas. La excepción no ahorraba trabajo: solo permitía no hacerlo.
+
+**Si el freno traba seguido, la respuesta NO es la excepción.** Es una de
+dos, y las dos se arreglan cargando bien, no anotando por qué no se
+cargó: o la fecha del reproceso está mal (para eso está la ventana
+retroactiva del 31/08), o falta cargar mercadería.
+
+**Lo que queda del diseño de la excepción** —la lista de operarios, el
+motivo de 10 caracteres, el segundo toque en la pantalla— **se va con
+ella.** No es material reutilizable esperando otro uso: existía para
+sostener esta idea y sin ella no sostiene nada.
+
 ### La tercera pieza: el armado de pedido tampoco deja elegir del stock
 
 Anotado el 29/08/2026. **Es la misma pieza aplicada a la otra pantalla**, y
@@ -540,17 +579,15 @@ toma 20 con fecha 03/08 y ese día solo había 5 comprados       -> TRABA
 comprado el 20/08, salió entero el 25/08, reproceso del 31/08  -> TRABA
 ```
 
-### Dos reglas de pantalla del freno y el desglose (01/09)
+### Reglas de pantalla del freno y el desglose (01/09)
 
-**El motivo de la excepción pide un mínimo de 10 caracteres.** El check de la
-base rechaza el blanco, pero eso deja pasar "ok" y "urgente" — motivos que
-dentro de tres meses no le sirven a nadie, que es justo cuando se los va a
-mirar. Diez alcanza para "falta guía" y descarta el monosílabo. **Es el primer
-mínimo de largo del sistema y va SOLO acá**, y el motivo lo dio el dueño: los
-motivos de ajuste, merma y reingreso **los escribe alguien de Administración
-mirando un caso puntual**; éste **lo escribe un operario apurado para poder
-seguir**. No es la misma situación, y endurecer los otros de arrastre sería
-cobrarle a quien ya escribe bien.
+**~~El motivo de la excepción pide un mínimo de 10 caracteres.~~ ANULADA el
+02/09: se fue con la salida de escape.** Se deja anotada porque el
+razonamiento sigue valiendo si algún día aparece otro texto que escriba un
+operario apurado —el blanco lo rechaza el check, pero "ok" y "urgente"
+pasan, y son inútiles justo el día en que se los va a leer—. Pero **hoy el
+sistema no tiene ningún mínimo de largo**, y no lo tiene a propósito: era
+el único, y existía solo para la excepción.
 
 **El desglose por lote muestra lo MÍNIMO para elegir: fecha y cantidad.** El
 proveedor aparece **solo cuando hace falta para distinguir dos lotes del mismo
@@ -566,10 +603,11 @@ traba.** Es correcto —la mercadería salió antes de existir— pero le va a p
 al depósito cada vez que arme después de medianoche o cargue la fecha corrida
 un día.
 
-**Si el contador de excepciones se llena de esos casos, la respuesta NO es
-aflojar el freno: es que la fecha del reproceso está mal cargada**, y para eso
-está la ventana retroactiva que se decidió el 31/08. Queda escrito acá para que
-la primera racha de excepciones no se lea como "el freno molesta".
+**Si eso empieza a pasar seguido, la respuesta NO es aflojar el freno: es
+que la fecha del reproceso está mal cargada**, y para eso está la ventana
+retroactiva que se decidió el 31/08. Queda escrito acá para que la primera
+racha de trabas no se lea como "el freno molesta" — que fue, textualmente,
+de dónde salió la salida de escape que se sacó el 02/09.
 
 ### Las tres objeciones, y por qué ninguna alcanza para recortarlo
 
