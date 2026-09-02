@@ -115,7 +115,16 @@ select orden, objeto, estado from (
                              where table_name = 'reprocesos' and column_name = 'consumos_editados')
                 then '✅ está, como tiene que estar' else '❌ FALTA: se borró de más' end
     union all
-    select 7, 'guías R vigentes (no las toca nadie)',
-           (select count(*)::text from reprocesos where anulado_el is null)
+    -- Las TRES cifras, no una. Un solo número acá invita a compararlo con
+    -- otro que se midió distinto: el verificador del 01/09 anotó 78 con un
+    -- count(*) PELADO (anuladas incluidas), y "vigentes" solo son las que
+    -- tienen anulado_el en NULL. Comparar esos dos números da una
+    -- diferencia que no existe. Un conteo suelto, sin decir qué contó, es
+    -- una alarma falsa esperando fecha.
+    select 7, 'guías R: total / vigentes / anuladas (no las toca nadie)',
+           (select count(*)::text || ' total · '
+                || count(*) filter (where anulado_el is null)::text || ' vigentes · '
+                || count(*) filter (where anulado_el is not null)::text || ' anuladas'
+            from reprocesos)
 ) resultado
 order by orden;

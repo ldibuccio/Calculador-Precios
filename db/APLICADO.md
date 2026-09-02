@@ -77,10 +77,54 @@ bases estén marcadas.
 | `agregar_stock_inicial_a_consumos.sql` (arrastre de la etapa 2: el lote de stock inicial también puede CONSUMIRSE. La migración anterior lo dejó entrar pero no salir, y el primer reproceso normal después del corte reventaba sin guardar la guía) | ✅ 2026-08-28 (verificado: 4/4 OK; **68 consumos** intactos, coherente con las 36 guías R) | ✅ 2026-08-28 (verificado: 4/4 OK; **0 consumos**, coherente con las 0 guías R) |
 | `agregar_ficha_a_conteos.sql` (etapa 3 del modelo nuevo: el conteo físico dice de qué ficha es lo que contó; NULL después del corte = los bultos sueltos) | ✅ 2026-08-29 (verificado: 7/7 OK; **31 conteos**, 0 con ficha: todos pre-corte) | ✅ 2026-08-29 (verificado: 7/7 OK; **51 conteos**, 0 con ficha: todos pre-corte) |
 | `agregar_cierre_modelo_viejo.sql` (el corte de Frutamax: el tipo propio del movimiento compensatorio que cancela el saldo del modelo viejo, y la tabla de respaldo de las fichas que el corte pone en NULL) | ✅ 2026-08-29 | — el corte es solo de Frutamax; Palmala no se toca |
-| `agregar_freno_y_desglose_reproceso.sql` (etapa 2 de "elegir del stock que hay": la marca del reparto declarado por el operario, y el motivo + operario de la excepción al freno) | ✅ 2026-09-01 (verificado: 7/7; **78 guías intactas**, ninguna con excepción ni editada) | ✅ 2026-09-01 (verificado: 7/7; **0 guías**, nada que tocar) |
-| `agregar_operarios_deposito.sql` (arrastre: el operario de la excepción pasa de TEXTO LIBRE a SELECTOR contra `operarios_deposito`. La decisión del selector llegó después de correr la anterior) | ✅ 2026-09-01 (paso 1: los 5 casos correctos; paso 2: 9/9; **78 guías intactas**, `operarios_deposito` vacía) | ✅ 2026-09-01 (paso 1: los 5 casos correctos; paso 2: 9/9; **0 guías**, `operarios_deposito` vacía) |
+| `agregar_freno_y_desglose_reproceso.sql` (etapa 2 de "elegir del stock que hay": la marca del reparto declarado por el operario, y el motivo + operario de la excepción al freno) | ✅ 2026-09-01 (verificado: 7/7; **78 filas en `reprocesos` al 01/09** —`count(*)` pelado, anuladas incluidas—, ninguna con excepción ni editada) | ✅ 2026-09-01 (verificado: 7/7; **0 guías**, nada que tocar) |
+| `agregar_operarios_deposito.sql` (arrastre: el operario de la excepción pasa de TEXTO LIBRE a SELECTOR contra `operarios_deposito`. La decisión del selector llegó después de correr la anterior) | ✅ 2026-09-01 (paso 1: los 5 casos correctos; paso 2: 9/9; **78 filas en `reprocesos` al 01/09** —el mismo `count(*)` pelado—, `operarios_deposito` vacía) | ✅ 2026-09-01 (paso 1: los 5 casos correctos; paso 2: 9/9; **0 guías**, `operarios_deposito` vacía) |
 | `normalizar_nombre_operario.sql` (el nombre único del operario tenía que plegar también las TILDES **y los espacios del medio**: se cargó "ruben" al lado de "Rubén" y entraron los dos) | ✅ 2026-09-01 (paso 1: los 5 casos; paso 2: 5/5, sin índices con la regla vieja) | ✅ 2026-09-01 (paso 1: los 5 casos; paso 2: 5/5, sin índices con la regla vieja) |
-| `sacar_excepcion_del_freno.sql` (la marcha atrás del 02/09: la salida de escape del freno se descartó — el reproceso es 100% o nada. Borra `excepcion_motivo`, `excepcion_operario_id`, el check `reprocesos_excepcion_completa`, el índice `reprocesos_excepcion_idx` y la tabla `operarios_deposito`. **NO toca `consumos_editados`**, que la usa el desglose. Aborta sin borrar nada si encuentra un solo dato cargado) | ⏳ pendiente | ⏳ pendiente |
+| `sacar_excepcion_del_freno.sql` (la marcha atrás del 02/09: la salida de escape del freno se descartó — el reproceso es 100% o nada. Borra `excepcion_motivo`, `excepcion_operario_id`, el check `reprocesos_excepcion_completa`, el índice `reprocesos_excepcion_idx` y la tabla `operarios_deposito`. **NO toca `consumos_editados`**, que la usa el desglose. Aborta sin borrar nada si encuentra un solo dato cargado) | ⏳ **corrida el 02/09, SIN confirmar**: los cinco objetos borrados y `consumos_editados` intacta, pero el chequeo 7 dio **74 vigentes** y falta contrastarlo contra el total (ver abajo) | ⏳ **corrida el 02/09, SIN confirmar**: los cinco borrados, `consumos_editados` intacta, 0 guías |
+
+### ABIERTO (02/09): los 74 de Frutamax NO se pueden comparar con los 78
+
+**No se pasa la fila a ✅ hasta que este número cierre.** Regla de siempre:
+si un número no cuadra con lo esperado, se frena y se averigua antes de
+marcar.
+
+**Y lo más probable es que la diferencia no exista.** Los dos números NO
+miden lo mismo:
+
+| | qué contó | dio |
+|---|---|---|
+| Verificador del 01/09, chequeo 08 | `select count(*) from reprocesos` — **todas las filas, anuladas incluidas** | 78 |
+| Limpieza del 02/09, chequeo 07 | `count(*) ... where anulado_el is null` — **solo vigentes** | 74 |
+
+Si Frutamax tiene 4 guías R anuladas —de cualquier fecha, no
+necesariamente de estos días— los dos números son el MISMO estado escrito
+de dos formas, y no pasó nada. La limpieza no toca `reprocesos`: no tiene
+un solo `delete`, `update` ni `insert` sobre esa tabla.
+
+**Qué lo cierra:**
+
+```sql
+select count(*) as total,
+       count(*) filter (where anulado_el is null)     as vigentes,
+       count(*) filter (where anulado_el is not null) as anuladas,
+       max(creado_en)                                 as ultima_cargada,
+       max(anulado_el)                                as ultima_anulada
+from reprocesos;
+```
+
+- `total = 78` y `anuladas = 4` → no se creó ni se borró nada desde el
+  01/09; los 4 son anulaciones y la fila pasa a ✅.
+- `total > 78` → además se cargaron guías nuevas estos días (normal), y hay
+  que rehacer la cuenta con `total − anuladas`.
+- `total < 78` → **ahí sí hay algo que mirar**: desaparecieron filas, y eso
+  ningún script de esta semana lo hace.
+
+**La lección, y es del script, no de la base: un conteo que no dice qué
+contó es una alarma falsa esperando fecha.** El chequeo 07 de
+`sacar_excepcion_del_freno.sql` mostraba un número solo, y ese número
+invitaba a compararlo con otro medido distinto. Ya está corregido: muestra
+total, vigentes y anuladas, las tres. **De acá en adelante, todo número que
+entre a este archivo dice de qué consulta salió.**
 
 ## Riesgos verificados contra producción y descartados
 
