@@ -78,7 +78,7 @@ bases estén marcadas.
 | `agregar_ficha_a_conteos.sql` (etapa 3 del modelo nuevo: el conteo físico dice de qué ficha es lo que contó; NULL después del corte = los bultos sueltos) | ✅ 2026-08-29 (verificado: 7/7 OK; **31 conteos**, 0 con ficha: todos pre-corte) | ✅ 2026-08-29 (verificado: 7/7 OK; **51 conteos**, 0 con ficha: todos pre-corte) |
 | `agregar_cierre_modelo_viejo.sql` (el corte de Frutamax: el tipo propio del movimiento compensatorio que cancela el saldo del modelo viejo, y la tabla de respaldo de las fichas que el corte pone en NULL) | ✅ 2026-08-29 | — el corte es solo de Frutamax; Palmala no se toca |
 | `agregar_freno_y_desglose_reproceso.sql` (etapa 2 de "elegir del stock que hay": la marca del reparto declarado por el operario, y el motivo + operario de la excepción al freno) | ✅ 2026-09-01 (verificado: 7/7; **78 guías intactas**, ninguna con excepción ni editada) | ✅ 2026-09-01 (verificado: 7/7; **0 guías**, nada que tocar) |
-| `agregar_operarios_deposito.sql` (arrastre: el operario de la excepción pasa de TEXTO LIBRE a SELECTOR contra `operarios_deposito`. La decisión del selector llegó después de correr la anterior) | ⬜ pendiente (verificador de 9, en dos pasos) | ⬜ pendiente (verificador de 9, en dos pasos) |
+| `agregar_operarios_deposito.sql` (arrastre: el operario de la excepción pasa de TEXTO LIBRE a SELECTOR contra `operarios_deposito`. La decisión del selector llegó después de correr la anterior) | ✅ 2026-09-01 (paso 1: los 5 casos correctos; paso 2: 9/9; **78 guías intactas**, `operarios_deposito` vacía) | ✅ 2026-09-01 (paso 1: los 5 casos correctos; paso 2: 9/9; **0 guías**, `operarios_deposito` vacía) |
 
 ## Riesgos verificados contra producción y descartados
 
