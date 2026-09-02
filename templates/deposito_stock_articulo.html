@@ -129,7 +129,7 @@
     {% else %}
     <p class="vacio">No queda nada de ningún lote.</p>
     {% endif %}
-    <p class="ayuda">FIFO: las salidas consumen siempre del lote más viejo. Nadie elige lote — lo reparte el sistema, y se reacomoda solo si se corrige una recepción o se destilda un renglón.</p>
+    <p class="ayuda">FIFO: las salidas consumen del lote más viejo, y el reparto se reacomoda solo si se corrige una recepción o se destilda un renglón. Lo único que no sigue ese orden es lo que alguien señaló a propósito: una merma dirigida a su lote, o el desglose que el operario corrigió al cargar una guía R.</p>
   </div>
 
   {% if agotados %}

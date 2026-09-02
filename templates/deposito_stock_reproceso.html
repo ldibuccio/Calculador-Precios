@@ -237,7 +237,7 @@
 
       <button type="submit" class="boton-guardar">Guardar reproceso</button>
     </form>
-    <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. El sistema arma la guía R solo, tomando del lote más viejo. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
+    <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. De dónde sale lo propone el sistema, del lote más viejo primero, y lo podés cambiar antes de guardar. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
   </div>
 
   <script>
@@ -409,11 +409,20 @@
     }
 
     function mostrarResumen() {
+      // La línea plegada es la que lee el que NO abre el desglose, así que
+      // dos lotes del mismo día no pueden quedar los dos como "del 02/09":
+      // ahí el proveedor deja de ser un dato de más y pasa a ser lo único
+      // que los distingue. Es la misma regla de los renglones.
       const partes = LOTES.filter(function (l) { return bultosDe(l) > 0; })
-        .map(function (l) { return bultosDe(l) + " del " + l.fecha; });
+        .map(function (l) {
+          return bultosDe(l) + " del " + l.fecha + (l.detalle ? " de " + l.detalle : "");
+        });
+      const lista = partes.length > 1
+        ? partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1]
+        : partes.join("");
       document.getElementById("desglose-resumen").textContent = TOCADO
-        ? "Como lo dejaste vos: " + partes.join(" y ") + "."
-        : "Del más viejo primero: " + partes.join(" y ") + ".";
+        ? "Como lo dejaste vos: " + lista + "."
+        : "Del más viejo primero: " + lista + ".";
     }
 
     function dibujarFilas() {
@@ -448,8 +457,13 @@
       const pedido = parseFloat(document.getElementById("bultos_tomados").value) || 0;
       const total = totalRepartido();
       const linea = document.getElementById("desglose-total");
-      linea.textContent = "Repartido " + total + " de " + pedido;
-      linea.classList.toggle("no-cierra", total !== pedido);
+      const diferencia = Math.round((pedido - total) * 100) / 100;
+      // "Repartido 14 de 20" solo. dice que algo no está: el que lo mira
+      // tiene que hacer la resta él, y con el pulgar encima del teclado.
+      linea.textContent = "Repartido " + total + " de " + pedido
+        + (diferencia > 0 ? " — faltan " + diferencia : "")
+        + (diferencia < 0 ? " — sobran " + (-diferencia) : "");
+      linea.classList.toggle("no-cierra", diferencia !== 0);
     }
 
     function alternarEdicion() {
@@ -468,12 +482,15 @@
       if (!TOCADO || !LOTES.length) { campo.value = ""; return; }
       const pedido = parseFloat(document.getElementById("bultos_tomados").value) || 0;
       if (totalRepartido() !== pedido) {
+        // Un botón que no hace nada se lee como una pantalla colgada. Se
+        // abre el desglose, se lleva a la vista y se dice cuánto falta.
         evento.preventDefault();
         EDITANDO = true;
         document.getElementById("desglose-filas").hidden = false;
         document.getElementById("desglose-total").hidden = false;
         document.getElementById("boton-cambiar").textContent = "Listo";
         mostrarTotal();
+        document.getElementById("desglose").scrollIntoView({ block: "center" });
         return;
       }
       campo.value = JSON.stringify(LOTES.map(function (lote) {

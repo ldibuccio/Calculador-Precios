@@ -6332,7 +6332,10 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     """El detalle FIFO de un artículo: qué queda de cada lote (guía, reingreso, ajuste) y cuánto salió sin lote.
 
     El reparto se calcula acá, cada vez (core/stock.py): las salidas
-    consumen del lote más viejo primero. Nadie elige lote nunca.
+    consumen del lote más viejo primero. La ÚNICA salida que puede no
+    seguir ese orden es la que alguien señaló a propósito —una merma
+    dirigida, o el desglose que el operario corrigió al cargar una guía
+    R—, y esa elección queda guardada, no se adivina desde acá.
     """
     try:
         articulo = obtener_articulo(articulo_id)

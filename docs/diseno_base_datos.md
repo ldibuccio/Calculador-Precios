@@ -689,16 +689,39 @@ los casos que se vieron. Está escrito para no creer que resuelve más de
 lo que resuelve. Cerrar ese agujero (revalidar los consumos cuando cambia
 un lote) es otra cosa y todavía no tiene dueño.
 
+### LO QUE EL FRENO CIERRA DE VERDAD (02/09, con el Merge B ya escrito)
+
+**`crear_reproceso` ya no puede escribir un `sin_lote`.** Ese era el
+agujero de fondo — una guía con costo incompleto para siempre, sin compra a
+la que irle a buscar el importe. **El freno no es solo una traba: cierra el
+camino por el que nacía plata imposible de costear.**
+
+Es la frase que hay que leer si alguna vez el freno parece caro. Lo que se
+compra con él no es prolijidad de stock: es que no vuelva a existir un
+bulto que salió, que se cobró, y cuyo costo no se puede completar nunca —
+porque esos bultos no existieron y no hay dónde ir a buscarles el precio.
+Trabar la carga, en cambio, cuesta ir a cargar una recepción que hay que
+cargar igual.
+
+**Corolario de pantalla, y es la excepción correcta a "avisa, no traba":**
+el desglose muestra "Repartido 14 de 20 — faltan 6" y **Guardar no sale
+hasta que cierre**. Un reparto que no suma no es una diferencia entre el
+piso y el sistema —esas se respetan siempre— sino **un reparto mal hecho**,
+y la diferencia no tiene dónde caer: el `sin_lote` que la habría absorbido
+es justamente el que se cerró. El reproceso es 100% o nada también acá
+adentro.
+
 ### `sin_lote` no desaparece: se angosta
 
 Son DOS cosas distintas con el mismo nombre, y solo una se apaga al
 trabar:
 
 - **El consumo guardado** (`reprocesos_consumos.origen = 'sin_lote'`) lo
-  escribe únicamente `crear_reproceso`. Con el freno deja de generarse
-  **para las guías nuevas**, pero **sigue existiendo para las viejas** —
-  Frutamax ya tiene guías con esos consumos. `completar_costo_reproceso`
-  y la pantalla de Guías R tienen que seguir tratándolo.
+  escribía únicamente `crear_reproceso`, y desde el Merge B **ya no puede
+  escribirlo**: el freno levanta antes de insertar nada. Pero **sigue
+  existiendo para las viejas** — Frutamax ya tiene guías con esos consumos.
+  `completar_costo_reproceso` y la pantalla de Guías R tienen que seguir
+  tratándolo.
 - **El sobrante calculado** (`repartir_fifo(...)["sin_lote"]`, en
   `core/stock.py`) es el resto de CUALQUIER salida que ningún lote cubre:
   renglones armados, mermas, ajustes negativos. Ese **sigue igual**,
