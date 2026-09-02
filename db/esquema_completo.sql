@@ -847,15 +847,18 @@ create table operarios_deposito (
     creado_en timestamptz not null default now()
 );
 
--- El nombre NORMALIZADO es lo único: "Juan", "juan" y " Juan " son la misma
--- persona, y si entran como tres, contar por operario no cuenta nada.
+-- El nombre NORMALIZADO es lo único: "Juan", "juan", " Juan " y "Rubén"/"ruben"
+-- son la misma persona, y si entran como cuatro, contar por operario no cuenta
+-- nada. Las TILDES se pliegan con translate y no con la extensión unaccent: una
+-- regla de unicidad que depende de una extensión instalada es una regla que se
+-- puede perder al crear la empresa siguiente.
 create unique index operarios_deposito_nombre_unico
-    on operarios_deposito (lower(btrim(nombre)));
+    on operarios_deposito (lower(translate(btrim(nombre), 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN')));
 
 comment on table operarios_deposito is
     'La lista corta del depósito, para el selector de la excepción al freno del reproceso. Editable desde Administración, igual que los catálogos del puesto. Se da de BAJA con activo, nunca se borra: una excepción cargada apunta acá.';
 comment on column operarios_deposito.activo is
-    'false = ya no aparece en el selector, pero sus excepciones viejas siguen contando. El nombre es único normalizado (minúsculas, sin espacios de más).';
+    'false = ya no aparece en el selector, pero sus excepciones viejas siguen contando. El nombre es único PLEGANDO mayúsculas, espacios de más Y TILDES: "Rubén", "ruben" y " RUBEN " son la misma persona.';
 
 create table reprocesos (
     id bigint generated always as identity primary key,

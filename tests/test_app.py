@@ -16178,6 +16178,93 @@ def _salidas_fifo(total, fecha=None):
     return [{"orden": (fecha or date(2030, 1, 1), 0), "cantidad": total}]
 
 
+# --- Operarios del depósito (Administración) ---
+
+
+def _get_operarios(operarios):
+    with patch("app.main.listar_operarios_deposito", return_value=operarios):
+        return cliente.get("/administracion/operarios")
+
+
+def test_operarios_separa_los_activos_de_los_dados_de_baja():
+    """Los de baja tienen que verse: es la ÚNICA forma de reactivar a alguien.
+    El índice único impide cargarlo de nuevo, así que si no aparece queda afuera
+    del sistema para siempre."""
+    respuesta = _get_operarios([
+        {"id": 1, "nombre": "Rubén", "activo": True},
+        {"id": 2, "nombre": "Sergio", "activo": False},
+    ])
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    assert "Rubén" in texto and "Sergio" in texto
+    assert "/administracion/operarios/1/baja" in texto
+    assert "/administracion/operarios/2/reactivar" in texto
+    # Y al revés: al activo no se le ofrece reactivar, ni al de baja dar de baja.
+    assert "/administracion/operarios/1/reactivar" not in texto
+    assert "/administracion/operarios/2/baja" not in texto
+
+
+def test_operarios_nunca_ofrece_borrar():
+    """Borrar no es una opción y por eso no existe el botón: la FK de
+    reprocesos.excepcion_operario_id es sin ON DELETE, y borrar a alguien con
+    excepciones cargadas reventaría con un 500."""
+    respuesta = _get_operarios([{"id": 1, "nombre": "Rubén", "activo": True}])
+
+    assert "borrar" not in respuesta.text.lower()
+    assert "eliminar" not in respuesta.text.lower()
+
+
+def test_operarios_con_la_lista_vacia_dice_que_el_freno_no_va_a_poder():
+    """Con la lista vacía la excepción es imposible de completar. La pantalla lo
+    dice acá, que es donde se arregla."""
+    respuesta = _get_operarios([])
+
+    assert "No hay nadie cargado" in respuesta.text
+    assert "excepción" in respuesta.text
+
+
+def test_operario_repetido_escrito_distinto_lo_dice_nombrando_al_que_esta():
+    """"Ya existe" a secas manda a buscar en una lista, y si el otro está dado de
+    baja ni siquiera aparece. El mensaje tiene que nombrarlo."""
+    with (
+        patch("app.main.crear_operario_deposito",
+              side_effect=ValueError("Ya está cargado como «Rubén».")),
+        patch("app.main.listar_operarios_deposito", return_value=[]),
+    ):
+        respuesta = cliente.post("/administracion/operarios", data={"nombre": "ruben"})
+
+    assert respuesta.status_code == 400
+    assert "Ya está cargado como «Rubén»" in respuesta.text
+
+
+def test_operario_nuevo_redirige_con_aviso():
+    with patch("app.main.crear_operario_deposito", return_value=7) as mock_crear:
+        respuesta = cliente.post("/administracion/operarios", data={"nombre": " Rubén "},
+                                 follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(" Rubén ")
+    assert "aviso=" in respuesta.headers["location"]
+
+
+def test_baja_y_reactivacion_del_operario():
+    with patch("app.main.cambiar_estado_operario_deposito") as mock_cambiar:
+        baja = cliente.post("/administracion/operarios/3/baja", follow_redirects=False)
+        alta = cliente.post("/administracion/operarios/3/reactivar", follow_redirects=False)
+
+    assert baja.status_code == 303 and alta.status_code == 303
+    assert mock_cambiar.call_args_list[0].args == (3,)
+    assert mock_cambiar.call_args_list[0].kwargs == {"activo": False}
+    assert mock_cambiar.call_args_list[1].kwargs == {"activo": True}
+
+
+def test_administracion_ofrece_la_pantalla_de_operarios():
+    respuesta = cliente.get("/administracion")
+
+    assert 'href="/administracion/operarios"' in respuesta.text
+
+
 # --- Reproceso (tanda 1): pantalla de operario y Guías R ---
 
 

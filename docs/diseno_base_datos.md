@@ -540,6 +540,23 @@ toma 20 con fecha 03/08 y ese día solo había 5 comprados       -> TRABA
 comprado el 20/08, salió entero el 25/08, reproceso del 31/08  -> TRABA
 ```
 
+### Dos reglas de pantalla del freno y el desglose (01/09)
+
+**El motivo de la excepción pide un mínimo de 10 caracteres.** El check de la
+base rechaza el blanco, pero eso deja pasar "ok" y "urgente" — motivos que
+dentro de tres meses no le sirven a nadie, que es justo cuando se los va a
+mirar. Diez alcanza para "falta guía" y descarta el monosílabo. **Es el primer
+mínimo de largo del sistema y va SOLO acá**, a propósito: el resto de los
+motivos (ajuste, merma, reingreso) se piden obligatorios y nada más, y no hay
+razón para endurecerlos de arrastre.
+
+**El desglose por lote muestra lo MÍNIMO para elegir: fecha y cantidad.** El
+proveedor aparece **solo cuando hace falta para distinguir dos lotes del mismo
+día**. En 390px un renglón cargado de datos se vuelve ilegible y el operario
+deja de mirarlo — que es exactamente lo contrario de lo que el desglose busca.
+La regla es de la pantalla, no del dato: el detalle completo sigue estando en
+Guías R, que es de Administración.
+
 ### Lo que el freno NO cubre, y qué hacer cuando pase
 
 **Si el reproceso es de un día y las cajas salieron el día ANTERIOR, se

@@ -105,12 +105,22 @@ begin
         malos := malos || E'\n  NO ENTRÓ una excepción completa (el check traba de más): ' || sqlerrm;
     end;
 
-    -- 5. Y el nombre normalizado tiene que ser único.
+    -- 5. Y el nombre normalizado tiene que ser único: mayúsculas y espacios...
     begin
         insert into operarios_deposito (nombre) values ('  __PRUEBA DEL VERIFICADOR__ ');
-        malos := malos || E'\n  ENTRARON dos operarios con el mismo nombre normalizado';
+        malos := malos || E'\n  ENTRARON dos operarios con mayúsculas y espacios distintos';
     exception when unique_violation then
-        bien := bien || E'\n  rechaza el operario repetido con otra forma de escribirlo';
+        bien := bien || E'\n  rechaza el repetido con otras mayúsculas y espacios';
+    end;
+
+    -- 6. ...Y TILDES. Este caso se agregó DESPUÉS de que "ruben" entrara al
+    -- lado de "Rubén" con la pantalla andando: el índice plegaba mayúsculas y
+    -- espacios pero no tildes, y es el caso más común en castellano.
+    begin
+        insert into operarios_deposito (nombre) values ('__prueba dél verificadór__');
+        malos := malos || E'\n  ENTRARON dos operarios que solo se distinguen por TILDES';
+    exception when unique_violation then
+        bien := bien || E'\n  rechaza el repetido escrito con tildes';
     end;
 
     if malos <> '' then
