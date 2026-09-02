@@ -10,7 +10,12 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.db import DATABASE_URL_ENV_VAR, obtener_conexion
+from app.db import (
+    DATABASE_URL_ENV_VAR,
+    obtener_conexion,
+    RepartoDesactualizado,
+    StockInsuficienteParaReproceso,
+)
 from app.main import (
     SECTORES,
     _ICONO_INICIO,
@@ -16355,7 +16360,8 @@ def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
 
     assert respuesta.status_code == 303
     # El cliente queda en la guía R como DATO (el stock sigue sin dueño).
-    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=None)
+    mock_crear.assert_called_once_with(1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=None,
+                                       reparto=None)
     destino = respuesta.headers["location"]
     # "Guía R12: tomé 30... para Día..." — lo cargado, jamás costos ni stock.
     assert "Gu%C3%ADa+R12" in destino
@@ -16390,7 +16396,7 @@ def test_el_reproceso_guarda_A_QUE_FICHA_fueron_las_cajas():
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
-        1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901
+        1, 30.0, 20.0, 5.0, 5.0, date(2026, 8, 25), cliente_id=1, ficha_id=901, reparto=None
     )
     # Asignada, el aviso no dice nada de "sin asignar".
     assert "sin+asignar" not in respuesta.headers["location"]
@@ -16417,9 +16423,193 @@ def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
-        1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None
+        1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None, reparto=None
     )
     assert "sin+asignar" in respuesta.headers["location"]
+
+
+def _pantalla_de_reproceso_con(datos, **parches):
+    """El POST del reproceso con el cliente y el artículo ya resueltos."""
+    contexto = {
+        "app.main.obtener_cliente": {"id": 1, "nombre": "Día"},
+        "app.main.obtener_articulo": {"id": 1, "nombre": "Zapallito"},
+        "app.main.listar_articulos_para_reproceso": [{"id": 1, "nombre": "Zapallito"}],
+        "app.main.listar_clientes": [{"id": 1, "nombre": "Día"}],
+        "app.main._ayudas_ficha_por_cliente_y_articulo": {},
+        "app.main._fichas_por_cliente_y_articulo": {},
+    }
+    with ExitStack() as pila:
+        for destino, valor in contexto.items():
+            pila.enter_context(patch(destino, return_value=valor))
+        pila.enter_context(patch("app.main._hoy_argentina", return_value=date(2026, 9, 2)))
+        for destino, parche in parches.items():
+            pila.enter_context(patch(destino, **parche))
+        return cliente.post("/deposito/stock/reproceso", data=datos, follow_redirects=False)
+
+
+def test_el_freno_devuelve_la_pantalla_ENTERA_y_dice_QUE_HACER():
+    """No hay salida de escape: el reproceso es 100% o nada.
+
+    Lo que la pared tiene que dejar en claro no es que está trabado —eso ya
+    lo sabe— sino qué ir a cargar y quién lo carga. Y todo lo que tipeó
+    tiene que volver puesto: la pared no se puede pagar con volver a cargar
+    la pantalla entera.
+    """
+    freno = StockInsuficienteParaReproceso(40.0, 25.0, [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "Norte 15", "restante": 13.0},
+        {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
+         "detalle": "Vitale", "restante": 12.0},
+    ])
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "40",
+         "bultos_primera": "30", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-09-02", "ficha_id": "901"},
+        **{"app.main.crear_reproceso": {"side_effect": freno}},
+    )
+
+    assert respuesta.status_code == 400
+    texto = respuesta.text
+    # Qué declaró y qué había: los dos números, sin vueltas.
+    assert "No alcanza para 40 bultos de Zapallito el 02/09." in texto
+    assert "Declaraste 40 y ese día había 25." in texto
+    # El detalle por lote: fecha y cantidad.
+    assert "28/08" in texto and "13" in texto
+    # QUÉ HACER, y quién lo hace.
+    assert "falta cargar algo antes" in texto
+    assert 'href="/deposito/recepcion"' in texto
+    assert 'href="/deposito/ingresar"' in texto
+    assert "esa la carga Administración" in texto
+    # Y NADA de cargarlo igual.
+    assert "igual" not in texto.split("Las tres las cargás vos")[1].split("</div>")[0]
+    # Todo lo que cargó, de vuelta en su lugar.
+    assert 'value="40"' in texto and 'value="30"' in texto
+    assert 'value="2026-09-02"' in texto
+
+
+def test_el_freno_con_CERO_lotes_ese_dia_igual_explica_que_hacer():
+    """El caso más áspero: no hay ni un lote. El mensaje no puede quedar en
+    una lista vacía."""
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "5",
+         "bultos_primera": "5", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-09-02", "ficha_id": "901"},
+        **{"app.main.crear_reproceso": {"side_effect": StockInsuficienteParaReproceso(5.0, 0.0, [])}},
+    )
+
+    assert respuesta.status_code == 400
+    assert "Ese día no había ningún lote de este artículo." in respuesta.text
+    assert "falta cargar algo antes" in respuesta.text
+
+
+def test_el_desglose_que_edito_el_operario_viaja_al_server():
+    with patch("app.main.crear_reproceso", return_value=31) as mock_crear:
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "2",
+             "fecha": "2026-09-02", "ficha_id": "901",
+             "reparto": '[{"tipo_lote": "guia", "origen_id": 101, "bultos": 3}]'},
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["reparto"] == [
+        {"tipo_lote": "guia", "origen_id": 101, "bultos": 3.0}
+    ]
+
+
+def test_un_reparto_ilegible_NO_se_guarda_a_medias():
+    """Si la pantalla mandó algo y no se entiende, se frena. Guardar "lo que
+    se pudo leer" sería inventarle al operario un reparto que no eligió."""
+    with patch("app.main.crear_reproceso") as mock_crear:
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "2",
+             "fecha": "2026-09-02", "ficha_id": "901", "reparto": "{roto"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "No se entendió de qué lotes sale" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_el_reparto_desactualizado_vuelve_a_la_pantalla_sin_guardar():
+    """Entre el desglose y el Guardar alguien movió el stock."""
+    with patch("app.main.crear_reproceso",
+               side_effect=RepartoDesactualizado("De uno de los lotes pediste más de lo que quedaba.")):
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "2",
+             "fecha": "2026-09-02", "ficha_id": "901",
+             "reparto": '[{"tipo_lote": "guia", "origen_id": 101, "bultos": 10}]'},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Cambió el stock mientras cargabas" in respuesta.text
+    assert 'value="10"' in respuesta.text
+
+
+def test_el_desglose_muestra_el_proveedor_SOLO_para_desempatar_el_mismo_dia():
+    """En 390px un renglón cargado de datos se vuelve ilegible y el operario
+    deja de mirarlo. La regla es de la pantalla, no del dato: el detalle
+    completo sigue en Guías R."""
+    lotes = [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "Norte 15", "restante": 13.0},
+        {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
+         "detalle": "Vitale", "restante": 12.0},
+        {"tipo_lote": "guia", "origen_id": 103, "fecha_lote": date(2026, 9, 2),
+         "detalle": "Rodríguez", "restante": 5.0},
+    ]
+
+    with patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 30}):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-02&bultos=20").json()
+
+    # El 28/08 está solo ese día: no necesita proveedor.
+    assert datos["lotes"][0] == {"clave": "guia:101", "tipo_lote": "guia", "origen_id": 101,
+                                 "fecha": "28/08", "restante": 13.0, "detalle": ""}
+    # Los dos del 02/09 sí, o no se distinguen.
+    assert datos["lotes"][1]["detalle"] == "Vitale"
+    assert datos["lotes"][2]["detalle"] == "Rodríguez"
+
+
+def test_el_desglose_propone_del_mas_viejo_primero_y_avisa_si_no_alcanza():
+    lotes = [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "Norte 15", "restante": 13.0},
+        {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
+         "detalle": "Vitale", "restante": 12.0},
+    ]
+    with patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 25}):
+        alcanza = cliente.get("/deposito/stock/reproceso/desglose"
+                              "?articulo_id=1&fecha=2026-09-02&bultos=20").json()
+        no_alcanza = cliente.get("/deposito/stock/reproceso/desglose"
+                                 "?articulo_id=1&fecha=2026-09-02&bultos=40").json()
+
+    assert alcanza["disponible"] == 25.0
+    assert alcanza["alcanza"] is True
+    assert alcanza["propuesta"] == {"guia:101": 13.0, "guia:102": 7.0}
+    # El mismo número que va a usar el freno: es una sola definición.
+    assert no_alcanza["alcanza"] is False
+    assert no_alcanza["disponible"] == 25.0
+
+
+def test_los_lotes_VACIOS_no_llegan_a_la_pantalla():
+    """Un lote sin nada que dar no es una opción: solo ocupa renglón."""
+    lotes = [
+        {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+         "detalle": "Norte 15", "restante": 0.0},
+        {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
+         "detalle": "Vitale", "restante": 12.0},
+    ]
+    with patch("app.main.lotes_para_reproceso",
+               return_value={"lotes": lotes, "sin_lote": 0, "stock": 12}):
+        datos = cliente.get("/deposito/stock/reproceso/desglose"
+                            "?articulo_id=1&fecha=2026-09-02&bultos=5").json()
+
+    assert [lote["clave"] for lote in datos["lotes"]] == ["guia:102"]
 
 
 def test_la_pantalla_de_reproceso_ofrece_las_fichas_del_cliente_y_del_articulo():
@@ -17426,6 +17616,31 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     # Y la que falta se completa desde acá, con LAS DOS fichas del artículo.
     assert 'action="/administracion/stock/guias-r/2/asignar-ficha"' in cuerpo
     assert "Banana Ecuador" in cuerpo
+
+
+def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
+    """La otra mitad del desglose editable: que se pueda saber después.
+
+    Un costo congelado contra los lotes que eligió una persona no es lo
+    mismo que uno que salió del FIFO, y la única forma de distinguirlos
+    dentro de tres meses es que la guía lo diga.
+    """
+    guias = [
+        dict(GUIAS_R_DE_PRUEBA[0], id=1, ficha_id=None, ficha_nombre=None,
+             anulado_el=None, consumos_editados=True),
+        dict(GUIAS_R_DE_PRUEBA[0], id=2, ficha_id=None, ficha_nombre=None,
+             anulado_el=None, consumos_editados=False),
+    ]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert cuerpo.count("lo eligió el operario, no el FIFO") == 1
 
 
 def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():

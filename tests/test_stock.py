@@ -273,3 +273,102 @@ def test_a_la_fecha_de_hoy_da_lo_mismo_que_el_reparto_normal():
     assert [l["restante"] for l in a_la_fecha["lotes"]] == [l["restante"] for l in completo["lotes"]]
     assert a_la_fecha["sin_lote"] == completo["sin_lote"]
     assert a_la_fecha["stock"] == completo["stock"]
+
+
+# --- El freno del reproceso y el desglose (Merge B) ---
+
+from core.stock import (  # noqa: E402
+    bultos_en_los_lotes,
+    propuesta_fifo,
+    reparto_para_reproceso,
+    validar_reparto_declarado,
+)
+
+
+def _lote_con_origen(dia, cantidad):
+    """Un lote como llega de la base: con su tipo y su origen, que es como lo
+    nombran el desglose y el reparto que vuelve de la pantalla."""
+    return _lote_fechado(dia, cantidad, tipo_lote="guia", origen_id=dia)
+
+
+def test_para_el_reproceso_las_salidas_DEL_MISMO_DIA_no_cuentan():
+    """El caso real del 31/08: el depósito arma las cajas y después carga la
+    guía R que las explica. Si la salida del mismo día contara, el operario
+    quedaría trabado justo por lo que está arreglando."""
+    entradas = [_lote_fechado(4, 44)]
+    salidas = [_salida_fechada(5, 44)]
+
+    assert reparto_para_reproceso(entradas, salidas, date(2026, 9, 5))["lotes"][0]["restante"] == 44
+    # Y con el recorte simétrico —el de la foto honesta del pasado— da 0.
+    assert reparto_a_la_fecha(entradas, salidas, date(2026, 9, 5))["lotes"][0]["restante"] == 0
+
+
+def test_para_el_reproceso_las_salidas_del_dia_ANTERIOR_si_cuentan():
+    """El recorte corre un día, no borra la historia."""
+    entradas = [_lote_fechado(1, 44)]
+    salidas = [_salida_fechada(4, 44)]
+
+    assert reparto_para_reproceso(entradas, salidas, date(2026, 9, 5))["lotes"][0]["restante"] == 0
+
+
+def test_para_el_reproceso_las_entradas_del_dia_mismo_SI_cuentan():
+    """El recorte es asimétrico a propósito: las entradas siguen entrando hasta
+    la fecha inclusive. La mercadería que llegó a la mañana se reprocesa a la
+    tarde, y eso pasa todos los días."""
+    entradas = [_lote_fechado(5, 30)]
+
+    assert reparto_para_reproceso(entradas, [], date(2026, 9, 5))["lotes"][0]["restante"] == 30
+
+
+def test_el_numero_del_freno_NUNCA_es_negativo():
+    """Contra la SUMA DE LOS RESTANTES, no contra el neto. El neto de acá es
+    −15 y vive en sin_lote, que es otra cosa: trabar a un operario por un
+    agujero anterior sería trabarlo por lo mismo que está arreglando."""
+    entradas = [_lote_fechado(1, 10)]
+    salidas = [_salida_fechada(2, 25)]
+    reparto = reparto_para_reproceso(entradas, salidas, date(2026, 9, 5))
+
+    assert reparto["stock"] == -15
+    assert bultos_en_los_lotes(reparto) == 0
+
+
+def test_la_propuesta_es_del_mas_viejo_primero_y_no_nombra_los_lotes_vacios():
+    entradas = [_lote_con_origen(1, 8), _lote_con_origen(3, 10)]
+    lotes = reparto_para_reproceso(entradas, [], date(2026, 9, 5))["lotes"]
+
+    assert propuesta_fifo(lotes, 10) == [
+        {"tipo_lote": "guia", "origen_id": 1, "bultos": 8.0},
+        {"tipo_lote": "guia", "origen_id": 3, "bultos": 2.0},
+    ]
+    # Con lo que cubre el primero, el segundo ni aparece.
+    assert propuesta_fifo(lotes, 5) == [{"tipo_lote": "guia", "origen_id": 1, "bultos": 5.0}]
+
+
+def test_la_propuesta_devuelve_lo_que_hay_y_no_es_ella_la_que_traba():
+    """Si no alcanza, propuesta_fifo no inventa ni levanta nada: el que decide
+    que eso no se guarda es el freno, y está escrito en un solo lugar."""
+    lotes = reparto_para_reproceso([_lote_con_origen(1, 3)], [], date(2026, 9, 5))["lotes"]
+
+    assert propuesta_fifo(lotes, 5) == [{"tipo_lote": "guia", "origen_id": 1, "bultos": 3.0}]
+
+
+def test_el_reparto_editado_se_valida_lote_por_lote_y_por_el_total():
+    lotes = reparto_para_reproceso([_lote_con_origen(1, 8), _lote_con_origen(3, 10)], [], date(2026, 9, 5))["lotes"]
+    bien = [
+        {"tipo_lote": "guia", "origen_id": 1, "bultos": 3},
+        {"tipo_lote": "guia", "origen_id": 3, "bultos": 7},
+    ]
+
+    assert validar_reparto_declarado(lotes, 10, bien) is None
+    # De un lote no se puede sacar más de lo que quedaba...
+    assert validar_reparto_declarado(
+        lotes, 10, [{"tipo_lote": "guia", "origen_id": 1, "bultos": 10}]
+    ) is not None
+    # ...ni repartir menos de lo declarado: la diferencia no tiene dónde caer.
+    assert validar_reparto_declarado(
+        lotes, 10, [{"tipo_lote": "guia", "origen_id": 1, "bultos": 8}]
+    ) is not None
+    # ...ni nombrar un lote que a esa fecha no existe.
+    assert validar_reparto_declarado(
+        lotes, 10, [{"tipo_lote": "guia", "origen_id": 99, "bultos": 10}]
+    ) is not None

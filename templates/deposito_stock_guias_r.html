@@ -103,6 +103,7 @@
     color: #444;
   }
   .consumo .sin-costo { color: #b45309; font-weight: 700; }
+  .editado { margin: 0.55rem 0 0; font-size: 0.85rem; color: #6d28d9; font-weight: 700; }
   .tarjeta.anulada { opacity: 0.6; }
   .tarjeta.anulada .numero-guia { text-decoration: line-through; }
   .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 700; }
@@ -242,6 +243,9 @@
     <div class="costo">Costo: {{ g.costo_total|moneda }} total{% if g.costo_por_bulto_primera is not none %} · {{ g.costo_por_bulto_primera|moneda }} por caja de primera{% endif %}</div>
     {% else %}
     <div class="costo costo-incompleto">COSTO INCOMPLETO: algún lote consumido no tiene precio (compra sin precio, stock inicial o reingreso).</div>
+    {% endif %}
+    {% if g.consumos_editados %}
+    <p class="editado">De qué lote salió cada bulto lo eligió el operario, no el FIFO.</p>
     {% endif %}
     <div class="consumos">
       {% for c in g.consumos %}
