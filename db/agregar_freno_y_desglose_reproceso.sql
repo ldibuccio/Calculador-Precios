@@ -1,3 +1,17 @@
+-- ############################################################################
+-- OJO — DE ESTE SCRIPT SOBREVIVE LA MITAD.
+--
+-- `consumos_editados` SIGUE EN PIE: la usa el desglose editable del
+-- reproceso y Guías R la muestra.
+--
+-- `excepcion_motivo`, `excepcion_operario_id`, el check
+-- reprocesos_excepcion_completa y el índice reprocesos_excepcion_idx SE
+-- BORRARON el 02/09/2026 (db/sacar_excepcion_del_freno.sql): la salida de
+-- escape del freno se descartó, el reproceso es 100% o nada.
+--
+-- No reusar entero. Queda como registro de lo que se corrió el 01/09.
+-- ############################################################################
+
 -- ETAPA 2 DE "ELEGIR DEL STOCK QUE HAY": el freno del reproceso y su
 -- desglose editable. Las dos piezas van juntas y por eso comparten migración.
 --

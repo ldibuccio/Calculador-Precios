@@ -1,3 +1,20 @@
+-- ############################################################################
+-- ATENCIÓN — NO REUSAR. QUEDÓ DESACTUALIZADO EL 02/09/2026.
+--
+-- Este verificador chequea CINCO objetos que ya no existen: las columnas
+-- excepcion_motivo y excepcion_operario_id, el check
+-- reprocesos_excepcion_completa, el índice reprocesos_excepcion_idx y la
+-- tabla operarios_deposito. Los borró db/sacar_excepcion_del_freno.sql
+-- cuando se dio marcha atrás con la salida de escape del freno.
+--
+-- Correrlo hoy da rojo en los chequeos 04, 05, 06 y 07 — y eso NO es un
+-- problema de la base: es que este archivo verifica un diseño que se
+-- descartó. Queda como registro de lo que se corrió el 01/09, nada más.
+--
+-- Lo único de esta migración que sigue en pie es consumos_editados
+-- (chequeos 01 y 02), que la usa el desglose editable.
+-- ############################################################################
+
 -- VERIFICADOR de la etapa 2 (freno + desglose del reproceso).
 --
 -- SE PEGA EN DOS VECES, NO DE CORRIDO. El editor de Supabase muestra solo el
