@@ -5,8 +5,10 @@
 -- la tabla de abajo se muestra igual y el error queda tapado — que es
 -- exactamente el modo de fallar que este verificador viene a evitar.
 --
---   PASO 1: el bloque `do`. Tiene que terminar SIN DECIR NADA. Si dice algo,
---           el check no hace lo que dice y no hay nada más que mirar.
+--   PASO 1: el bloque `do`. SIEMPRE termina en error, a propósito: así deshace
+--           lo que insertó para probar, sin depender de ningún `delete`. Lo que
+--           hay que leer es el mensaje — dice "PASO 1 OK" o nombra los
+--           problemas.
 --   PASO 2: la consulta final. Se espera OK en las 9.
 --
 -- DOS PARTES, y la primera es la que importa:
@@ -29,14 +31,31 @@
 -- Se espera que el PASO 1 no diga nada y el PASO 2 dé OK en las 9.
 
 -- ===================== PASO 1 — PROBAR QUE EL CHECK RECHAZA =====================
+--
+-- ESTE BLOQUE SIEMPRE TERMINA EN ERROR, A PROPÓSITO. El veredicto viene en el
+-- mensaje de esa excepción. Un "ERROR" acá NO significa que algo salió mal:
+-- significa que el verificador corrió. Lo que hay que leer es el texto.
+--
+-- POR QUÉ ASÍ, y no "termina en silencio si está todo bien": un `do` es UNA
+-- sentencia, así que la excepción del final DESHACE TODO lo que el bloque
+-- insertó — pase lo que pase y sin depender de que los `delete` de limpieza
+-- estén bien escritos. La versión anterior limpiaba a mano y tenía un agujero:
+-- si el índice único no existiera, el operario duplicado del caso 5 entraba y
+-- la limpieza dependía de que un `ilike` atrapara las dos variantes. Con el
+-- raise deliberado no puede quedar residuo POR CONSTRUCCIÓN.
+--
+-- Verificado antes de mandarlo: la base no tiene NINGÚN trigger de usuario ni
+-- regla propia, así que un insert directo en `reprocesos` no escribe en
+-- `reprocesos_consumos` (eso lo hace crear_reproceso desde el código) ni en
+-- `movimientos_stock`. Y las dos FKs que apuntan a `reprocesos` son NO ACTION:
+-- un borrado no arrastra nada en silencio.
 
 do $$
 declare
     art bigint;
     op  bigint;
-    id_guia bigint;
-    ok boolean;
     malos text := '';
+    bien  text := '';
 begin
     select id into art from articulos limit 1;
     if art is null then
@@ -47,61 +66,57 @@ begin
     returning id into op;
 
     -- 1. Motivo SIN operario tiene que rebotar.
-    ok := false;
     begin
         insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                                 bultos_segunda, bultos_merma, excepcion_motivo)
-        values (art, current_date, 10, 8, 1, 1, '__prueba__')
-        returning id into id_guia;
-        delete from reprocesos where id = id_guia;
-    exception when check_violation then ok := true; end;
-    if not ok then malos := malos || 'entró una excepción CON MOTIVO Y SIN OPERARIO; '; end if;
+        values (art, current_date, 10, 8, 1, 1, '__prueba__');
+        malos := malos || E'\n  ENTRÓ una excepción CON MOTIVO Y SIN OPERARIO';
+    exception when check_violation then
+        bien := bien || E'\n  rechaza motivo sin operario';
+    end;
 
     -- 2. Operario SIN motivo tiene que rebotar.
-    ok := false;
     begin
         insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                                 bultos_segunda, bultos_merma, excepcion_operario_id)
-        values (art, current_date, 10, 8, 1, 1, op)
-        returning id into id_guia;
-        delete from reprocesos where id = id_guia;
-    exception when check_violation then ok := true; end;
-    if not ok then malos := malos || 'entró una excepción CON OPERARIO Y SIN MOTIVO; '; end if;
+        values (art, current_date, 10, 8, 1, 1, op);
+        malos := malos || E'\n  ENTRÓ una excepción CON OPERARIO Y SIN MOTIVO';
+    exception when check_violation then
+        bien := bien || E'\n  rechaza operario sin motivo';
+    end;
 
     -- 3. Motivo en blanco tiene que rebotar: no es una excepción, es un pase libre.
-    ok := false;
     begin
         insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                                 bultos_segunda, bultos_merma, excepcion_motivo, excepcion_operario_id)
-        values (art, current_date, 10, 8, 1, 1, '   ', op)
-        returning id into id_guia;
-        delete from reprocesos where id = id_guia;
-    exception when check_violation then ok := true; end;
-    if not ok then malos := malos || 'entró una excepción CON EL MOTIVO EN BLANCO; '; end if;
+        values (art, current_date, 10, 8, 1, 1, '   ', op);
+        malos := malos || E'\n  ENTRÓ una excepción CON EL MOTIVO EN BLANCO';
+    exception when check_violation then
+        bien := bien || E'\n  rechaza el motivo en blanco';
+    end;
 
     -- 4. Y la completa tiene que ENTRAR, o el check estaría trabando de más.
-    ok := true;
     begin
         insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
                                 bultos_segunda, bultos_merma, excepcion_motivo, excepcion_operario_id)
-        values (art, current_date, 10, 8, 1, 1, '__prueba__', op)
-        returning id into id_guia;
-        delete from reprocesos where id = id_guia;
-    exception when others then ok := false; end;
-    if not ok then malos := malos || 'NO entró una excepción completa (el check traba de más); '; end if;
+        values (art, current_date, 10, 8, 1, 1, '__prueba__', op);
+        bien := bien || E'\n  deja entrar la excepción completa';
+    exception when others then
+        malos := malos || E'\n  NO ENTRÓ una excepción completa (el check traba de más): ' || sqlerrm;
+    end;
 
     -- 5. Y el nombre normalizado tiene que ser único.
-    ok := false;
     begin
         insert into operarios_deposito (nombre) values ('  __PRUEBA DEL VERIFICADOR__ ');
-    exception when unique_violation then ok := true; end;
-    if not ok then malos := malos || 'entraron dos operarios con el mismo nombre normalizado; '; end if;
-
-    delete from operarios_deposito where nombre ilike '%prueba del verificador%';
+        malos := malos || E'\n  ENTRARON dos operarios con el mismo nombre normalizado';
+    exception when unique_violation then
+        bien := bien || E'\n  rechaza el operario repetido con otra forma de escribirlo';
+    end;
 
     if malos <> '' then
-        raise exception 'EL CHECK NO HACE LO QUE DICE: %', malos;
+        raise exception E'PASO 1 — HAY PROBLEMAS:%\n\n(y esto SÍ es un problema; nada quedó escrito)', malos;
     end if;
+    raise exception E'PASO 1 OK — el check hace lo que dice:%\n\nEste error es DELIBERADO: deshace lo que la prueba insertó. Seguí con el paso 2.', bien;
 end $$;
 
 -- ===================== PASO 2 — LEER LO QUE QUEDÓ ARMADO =======================
