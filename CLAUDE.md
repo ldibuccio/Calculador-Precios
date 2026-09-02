@@ -42,6 +42,24 @@ De acá en adelante:
 3. **Lo que tenga que verse va en UNA sola consulta final que devuelva
    filas** (el editor muestra solo el resultado de la última, y no muestra
    los NOTICE).
+4. **Los bloques largos se TRUNCAN, y no fallan limpio.** Pasó el 02/09 con
+   un verificador de 5983 caracteres: el editor lo cortó a la mitad —en el
+   medio de un caso— y le **concatenó código propio abajo**, un
+   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` con un comentario "Added by
+   Supabase". El error que devolvió fue `unterminated dollar-quoted string`,
+   que no dice una palabra de lo que pasó de verdad, y deja sin saber qué se
+   ejecutó.
+
+   Así que **no es solo que el editor no sostenga transacciones ni
+   temporales: tiene un límite de largo**, y pasarlo no da un error honesto.
+   **Ningún bloque que se mande al editor pasa los 2500 caracteres.** Lo que
+   no entre se parte en bloques cortos, cada uno capaz de correrse solo y de
+   deshacerse solo con su propio `raise`.
+
+   Lo único que salva de esto es que **un bloque `do` es UNA sentencia**: o
+   parsea entero o no ejecuta nada. Un `do` truncado no escribe a medias. Pero
+   eso vale para el `do`, no para un script de varias sentencias sueltas —
+   ahí sí se ejecuta lo que alcanzó a parsear (regla 1).
 
 Esto no es una preferencia de estilo: es el entorno donde el SQL corre de
 verdad. Un script probado en Postgres local puede estar correcto y aun así

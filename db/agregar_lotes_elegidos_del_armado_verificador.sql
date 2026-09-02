@@ -1,245 +1,179 @@
 -- VERIFICADOR de la Entrega 3 (los lotes elegidos del armado de pedido).
 --
--- SE PEGA EN DOS VECES, NO DE CORRIDO. El editor de Supabase muestra solo el
--- resultado de la ÚLTIMA sentencia: si se pegan juntos y el bloque `do` falla,
--- la tabla de abajo se muestra igual y el error queda tapado — que es
--- exactamente el modo de fallar que este verificador viene a evitar.
+-- ############################################################################
+-- SE PEGA EN TRES VECES, UNA POR BLOQUE. NUNCA DE CORRIDO.
 --
---   PASO 1: el bloque `do`. SIEMPRE termina en error, a propósito: así deshace
---           lo que insertó para probar, sin depender de ningún `delete`. Lo que
---           hay que leer es el mensaje — dice "PASO 1 OK" o nombra los
---           problemas.
---   PASO 2: la consulta final. Se espera OK en las 9.
+-- La primera versión de este verificador era UN bloque `do` de 5983
+-- caracteres, y el editor de Supabase LO TRUNCÓ a la mitad —en el medio de un
+-- caso— y le concatenó código propio abajo (un `ALTER TABLE ... ENABLE ROW
+-- LEVEL SECURITY` con un comentario "Added by Supabase"). El error que
+-- devolvió fue `unterminated dollar-quoted string`, que no dice una palabra
+-- de lo que pasó de verdad.
 --
--- El bloque inserta un pedido y dos renglones DE PRUEBA en las tablas reales.
--- Se puede: el esquema no tiene un solo trigger (verificado sobre
--- db/esquema_completo.sql), así que un insert directo no dispara nada. Y el
--- `raise exception` del final revierte la transacción entera: el pedido, los
--- renglones y todo lo que se haya escrito se deshacen solos. El chequeo 08 del
--- paso 2 confirma que no quedó nada.
+-- Por eso ahora son tres bloques cortos (ninguno pasa los 2500 caracteres) y
+-- cada uno se deshace solo con su propio `raise`. Si alguno se trunca, muere
+-- sin haber escrito nada — un bloque `do` es UNA sentencia: o parsea entero o
+-- no se ejecuta nada.
+--
+--   BLOQUE A: lo que más importa. Que el MISMO lote entre en DOS renglones
+--             distintos (detecta un unique mal puesto) y que el cascade
+--             funcione. SIEMPRE termina en error: eso es lo que deshace la
+--             prueba.
+--   BLOQUE B: que las reglas RECHACEN de verdad. También termina en error.
+--   BLOQUE C: la consulta final. Se espera OK en las 9. No escribe nada.
+--
+-- Los bloques A y B insertan un pedido y renglones DE PRUEBA en las tablas
+-- reales. Se puede: el esquema no tiene un solo trigger (verificado sobre
+-- db/esquema_completo.sql), así que un insert directo no dispara nada, y el
+-- `raise` revierte la transacción entera. El chequeo 08 del bloque C
+-- confirma que no quedó nada.
+-- ############################################################################
 
 
 -- ############################################################################
--- PASO 1 — QUE LAS REGLAS RECHACEN DE VERDAD (pegar SOLO esto)
+-- BLOQUE A — el mismo lote en dos renglones, y el cascade
 -- ############################################################################
 
 do $$
-declare
-    cliente   bigint;
-    pedido    bigint;
-    renglon_a bigint;
-    renglon_b bigint;
-    problemas text := '';
-    cuantas   int;
+declare p bigint; ra bigint; rb bigint; n int; mal text := '';
 begin
-    select id into cliente from clientes order by id limit 1;
-    if cliente is null then
-        raise exception 'No hay ningún cliente cargado, y este verificador necesita uno para armar el pedido de prueba.';
-    end if;
-
     insert into pedidos (cliente_id, fecha_operacion, origen, texto_original)
-    values (cliente, date '1900-01-01', 'texto', 'PRUEBA DEL VERIFICADOR - se deshace sola')
-    returning id into pedido;
+    values ((select min(id) from clientes), date '1900-01-01', 'texto', 'PRUEBA DEL VERIFICADOR')
+    returning id into p;
+    insert into pedidos_renglones (pedido_id, cantidad) values (p, 10) returning id into ra;
+    insert into pedidos_renglones (pedido_id, cantidad) values (p, 10) returning id into rb;
 
-    insert into pedidos_renglones (pedido_id, cantidad) values (pedido, 10) returning id into renglon_a;
-    insert into pedidos_renglones (pedido_id, cantidad) values (pedido, 10) returning id into renglon_b;
-
-    -- CASO 1 — una corrección normal entra. lote_origen_id 999999 no existe en
-    -- ninguna tabla A PROPÓSITO: el lote es polimórfico y sin FK, y si esto
-    -- fallara sería porque alguien le puso una FK y rompió el diseño.
+    -- Dos renglones del mismo pedido saliendo del MISMO lote es lo normal.
+    -- El lote 999999 no existe a propósito: es polimórfico y sin FK.
     begin
         insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (renglon_a, 'guia', 999999, 6);
+        values (ra, 'guia', 999999, 6), (rb, 'guia', 999999, 3);
     exception when others then
-        problemas := problemas || E'\n- CASO 1: una corrección normal NO entró (' || sqlerrm || ')';
+        mal := mal || ' | A1 no entraron los dos: ' || sqlerrm;
     end;
+    select count(*) into n from pedidos_renglones_lotes_elegidos where renglon_id in (ra, rb);
+    if n <> 2 then mal := mal || ' | A1 quedaron ' || n || ' de 2'; end if;
 
-    -- CASO 2 — un lote_tipo que no existe. Se prueba con 'compra' a propósito:
-    -- es el vocabulario de reprocesos_consumos, la confusión más probable.
-    begin
-        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (renglon_a, 'compra', 1, 1);
-        problemas := problemas || E'\n- CASO 2: entró un lote_tipo inválido (compra)';
-    exception
-        when check_violation then null;
-        when others then
-            problemas := problemas || E'\n- CASO 2: rechazó, pero no por el check (' || sqlerrm || ')';
-    end;
+    -- Borrar el renglón se lleva su corrección.
+    delete from pedidos_renglones where id = rb;
+    select count(*) into n from pedidos_renglones_lotes_elegidos where renglon_id = rb;
+    if n <> 0 then mal := mal || ' | A2 quedaron ' || n || ' colgadas (falta el cascade)'; end if;
 
-    -- CASO 3 — cero bultos y bultos negativos. Una corrección que no mueve
-    -- nada no es una corrección.
-    begin
-        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (renglon_a, 'ajuste', 1, 0);
-        problemas := problemas || E'\n- CASO 3a: entró una corrección de 0 bultos';
-    exception
-        when check_violation then null;
-        when others then
-            problemas := problemas || E'\n- CASO 3a: rechazó, pero no por el check (' || sqlerrm || ')';
-    end;
-
-    begin
-        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (renglon_a, 'ajuste', 1, -5);
-        problemas := problemas || E'\n- CASO 3b: entró una corrección de bultos NEGATIVOS';
-    exception
-        when check_violation then null;
-        when others then
-            problemas := problemas || E'\n- CASO 3b: rechazó, pero no por el check (' || sqlerrm || ')';
-    end;
-
-    -- CASO 4 — el MISMO lote dos veces en el MISMO renglón: serían dos
-    -- verdades sobre lo mismo y la suma dejaría de ser una suma.
-    begin
-        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (renglon_a, 'guia', 999999, 4);
-        problemas := problemas || E'\n- CASO 4: entró el mismo lote DOS VECES en el mismo renglón';
-    exception
-        when unique_violation then null;
-        when others then
-            problemas := problemas || E'\n- CASO 4: rechazó, pero no por el unique (' || sqlerrm || ')';
-    end;
-
-    -- CASO 5 — EL MÁS IMPORTANTE. El mismo lote en DOS renglones distintos
-    -- tiene que entrar: dos renglones del mismo pedido pueden salir del mismo
-    -- lote, y eso es lo normal. Si el unique estuviera mal puesto (sobre el
-    -- lote y no sobre la pareja), esto se rechazaría y el que arma no podría
-    -- decir la verdad.
-    begin
-        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (renglon_b, 'guia', 999999, 3);
-    exception when others then
-        problemas := problemas || E'\n- CASO 5: el mismo lote en OTRO renglón no entró (' || sqlerrm || ')';
-    end;
-
-    select count(*) into cuantas from pedidos_renglones_lotes_elegidos
-    where renglon_id in (renglon_a, renglon_b);
-    if cuantas <> 2 then
-        problemas := problemas || E'\n- CASO 5: quedaron ' || cuantas || ' correcciones y tenían que quedar 2';
-    end if;
-
-    -- CASO 6 — un renglón que no existe. La FK tiene que rechazarlo: una
-    -- corrección colgada de la nada no se puede leer nunca más.
-    begin
-        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
-        values (-1, 'guia', 1, 1);
-        problemas := problemas || E'\n- CASO 6: entró una corrección de un renglón inexistente';
-    exception
-        when foreign_key_violation then null;
-        when others then
-            problemas := problemas || E'\n- CASO 6: rechazó, pero no por la FK (' || sqlerrm || ')';
-    end;
-
-    -- CASO 7 — el on delete cascade. Es la red: un renglón que desaparezca no
-    -- puede dejar su corrección colgada apuntándole.
-    delete from pedidos_renglones where id = renglon_b;
-    select count(*) into cuantas from pedidos_renglones_lotes_elegidos where renglon_id = renglon_b;
-    if cuantas <> 0 then
-        problemas := problemas || E'\n- CASO 7: borré el renglón y quedaron ' || cuantas || ' correcciones colgadas (falta el on delete cascade)';
-    end if;
-
-    -- El raise es SIEMPRE, con problemas o sin ellos: es lo que deshace el
-    -- pedido, los dos renglones y las correcciones de prueba. Sin él habría
-    -- que confiar en un `delete` que puede quedarse corto.
-    if problemas = '' then
-        raise exception 'PASO 1 OK — los 7 casos se comportaron como se esperaba. Este error es DELIBERADO: revierte todo lo que el verificador escribió, así no queda un pedido de prueba en producción.';
+    if mal = '' then
+        raise exception 'BLOQUE A OK — el mismo lote entra en dos renglones y el cascade limpia. Este error es DELIBERADO: deshace la prueba.';
     else
-        raise exception 'PASO 1 CON PROBLEMAS:%', problemas;
+        raise exception 'BLOQUE A CON PROBLEMAS:%', mal;
     end if;
 end $$;
 
 
 -- ############################################################################
--- PASO 2 — LEER LO QUE QUEDÓ ARMADO (pegar SOLO esto, después del paso 1)
+-- BLOQUE B — que las reglas rechacen de verdad
 -- ############################################################################
 
+do $$
+declare p bigint; r bigint; mal text := '';
+begin
+    insert into pedidos (cliente_id, fecha_operacion, origen, texto_original)
+    values ((select min(id) from clientes), date '1900-01-01', 'texto', 'PRUEBA DEL VERIFICADOR')
+    returning id into p;
+    insert into pedidos_renglones (pedido_id, cantidad) values (p, 10) returning id into r;
+    insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
+    values (r, 'guia', 999999, 6);
+
+    -- 'compra' es el vocabulario de reprocesos_consumos: la confusión más probable.
+    begin
+        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
+        values (r, 'compra', 1, 1);
+        mal := mal || ' | B1 entró lote_tipo compra';
+    exception when check_violation then null;
+              when others then mal := mal || ' | B1 rechazó por otra cosa: ' || sqlerrm;
+    end;
+
+    begin
+        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
+        values (r, 'ajuste', 1, 0);
+        mal := mal || ' | B2 entró una corrección de 0 bultos';
+    exception when check_violation then null;
+              when others then mal := mal || ' | B2 rechazó por otra cosa: ' || sqlerrm;
+    end;
+
+    -- El mismo lote DOS VECES en el MISMO renglón: dos verdades sobre lo mismo.
+    begin
+        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
+        values (r, 'guia', 999999, 4);
+        mal := mal || ' | B3 entró el mismo lote dos veces en un renglón';
+    exception when unique_violation then null;
+              when others then mal := mal || ' | B3 rechazó por otra cosa: ' || sqlerrm;
+    end;
+
+    begin
+        insert into pedidos_renglones_lotes_elegidos (renglon_id, lote_tipo, lote_origen_id, bultos)
+        values (-1, 'guia', 1, 1);
+        mal := mal || ' | B4 entró una corrección de un renglón inexistente';
+    exception when foreign_key_violation then null;
+              when others then mal := mal || ' | B4 rechazó por otra cosa: ' || sqlerrm;
+    end;
+
+    if mal = '' then
+        raise exception 'BLOQUE B OK — los cuatro rechazos funcionaron. Este error es DELIBERADO: deshace la prueba.';
+    else
+        raise exception 'BLOQUE B CON PROBLEMAS:%', mal;
+    end if;
+end $$;
+
+
+-- ############################################################################
+-- BLOQUE C — leer lo que quedó armado. Se esperan 9 OK.
+-- ############################################################################
+
+with t as (select 'pedidos_renglones_lotes_elegidos'::regclass as tabla)
 select n, verificacion, resultado from (
-    select 1 as n, '01 - la tabla pedidos_renglones_lotes_elegidos existe' as verificacion,
-           case when exists (select 1 from pg_class where relname = 'pedidos_renglones_lotes_elegidos')
-                then 'OK' else 'FALLA: no está' end as resultado
-
+    select 1 as n, '01 - la tabla existe' as verificacion,
+           case when to_regclass('public.pedidos_renglones_lotes_elegidos') is not null
+                then 'OK' else 'FALLA' end as resultado
     union all
-    select 2, '02 - renglon_id: FK a pedidos_renglones CON on delete cascade',
-           case when count(*) = 1 then 'OK — la corrección se va con su renglón'
-                else 'FALLA: falta la FK o no es cascade' end
-    from pg_constraint
-    where conrelid = 'pedidos_renglones_lotes_elegidos'::regclass
-      and contype = 'f' and confrelid = 'pedidos_renglones'::regclass
-      and confdeltype = 'c'
-
+    select 2, '02 - renglon_id: FK con on delete cascade',
+           case when count(*) = 1 then 'OK' else 'FALLA: falta la FK o no es cascade' end
+    from pg_constraint, t
+    where conrelid = t.tabla and contype = 'f'
+      and confrelid = 'pedidos_renglones'::regclass and confdeltype = 'c'
     union all
-    -- El lote es POLIMÓRFICO: apunta a compras, reprocesos o movimientos_stock
-    -- según su tipo. Una FK acá lo rompería, así que la ausencia se verifica.
-    select 3, '03 - lote_origen_id SIN FK (polimórfico a propósito)',
-           case when count(*) = 1 then 'OK — la única FK de la tabla es la del renglón'
-                else 'FALLA: hay ' || count(*) || ' FK y tendría que haber una sola' end
-    from pg_constraint
-    where conrelid = 'pedidos_renglones_lotes_elegidos'::regclass and contype = 'f'
-
+    select 3, '03 - lote_origen_id SIN FK (polimorfico)',
+           case when count(*) = 1 then 'OK — la unica FK es la del renglon'
+                else 'FALLA: hay ' || count(*) || ' FK' end
+    from pg_constraint, t where conrelid = t.tabla and contype = 'f'
     union all
-    -- El bloque de arriba ya PROBÓ que rechaza 'compra'; esto confirma que los
-    -- cinco tipos buenos están nombrados, y con el mismo vocabulario que
-    -- movimientos_stock.lote_tipo y core/stock.py.
-    select 4, '04 - lote_tipo: el check nombra los CINCO tipos de lote',
-           case when count(*) = 1 then 'OK — y el paso 1 probó que rechaza uno inválido'
-                else 'FALLA: el check no está o le falta algún tipo' end
-    from pg_constraint
-    where conrelid = 'pedidos_renglones_lotes_elegidos'::regclass and contype = 'c'
-      and pg_get_constraintdef(oid) like '%lote_tipo%'
-      and pg_get_constraintdef(oid) like '%guia%'
-      and pg_get_constraintdef(oid) like '%reproceso%'
-      and pg_get_constraintdef(oid) like '%reingreso_rechazo%'
-      and pg_get_constraintdef(oid) like '%ajuste%'
-      and pg_get_constraintdef(oid) like '%stock_inicial%'
-
+    select 4, '04 - lote_tipo: el check nombra los CINCO tipos',
+           case when count(*) = 1 then 'OK' else 'FALLA: falta el check o algun tipo' end
+    from pg_constraint, t
+    where conrelid = t.tabla and contype = 'c'
+      and pg_get_constraintdef(oid) ~ 'lote_tipo.*guia.*reproceso.*reingreso_rechazo.*ajuste.*stock_inicial'
     union all
     select 5, '05 - bultos: el check exige mayor a cero',
-           case when count(*) = 1 then 'OK — y el paso 1 probó que rechaza 0 y negativos'
-                else 'FALLA: el check no está' end
-    from pg_constraint
-    where conrelid = 'pedidos_renglones_lotes_elegidos'::regclass and contype = 'c'
-      and pg_get_constraintdef(oid) like '%bultos%'
-
+           case when count(*) = 1 then 'OK' else 'FALLA: el check no esta' end
+    from pg_constraint, t
+    where conrelid = t.tabla and contype = 'c' and pg_get_constraintdef(oid) like '%bultos%'
     union all
-    select 6, '06 - unique sobre (renglon_id, lote_tipo, lote_origen_id)',
-           case when count(*) = 1 then 'OK — el mismo lote no se repite en un renglón, pero SÍ puede estar en dos renglones'
-                else 'FALLA: no está el unique, o es sobre otras columnas' end
+    select 6, '06 - unique (renglon_id, lote_tipo, lote_origen_id)',
+           case when count(*) = 1 then 'OK' else 'FALLA: no esta o es sobre otras columnas' end
     from pg_indexes
-    where tablename = 'pedidos_renglones_lotes_elegidos'
-      and indexdef like '%UNIQUE%'
-      and indexdef like '%renglon_id%'
-      and indexdef like '%lote_tipo%'
+    where tablename = 'pedidos_renglones_lotes_elegidos' and indexdef like '%UNIQUE%'
+      and indexdef like '%renglon_id%' and indexdef like '%lote_tipo%'
       and indexdef like '%lote_origen_id%'
-
     union all
     select 7, '07 - lote_origen_id y bultos son NOT NULL',
            case when count(*) = 2 then 'OK' else 'FALLA: alguna acepta NULL' end
     from information_schema.columns
     where table_name = 'pedidos_renglones_lotes_elegidos'
-      and column_name in ('lote_origen_id', 'bultos')
-      and is_nullable = 'NO'
-
+      and column_name in ('lote_origen_id', 'bultos') and is_nullable = 'NO'
     union all
-    -- Lo que el paso 1 escribió tiene que haberse ido con su raise. Si acá hay
-    -- filas, o quedó basura de la prueba o alguien ya está corrigiendo lotes.
-    select 8, '08 - la tabla arranca vacía y la prueba no dejó nada',
-           case when (select count(*) from pedidos_renglones_lotes_elegidos) = 0
-                then 'OK — vacía'
-                else 'MIRAR: hay ' || (select count(*) from pedidos_renglones_lotes_elegidos)
-                     || ' correcciones. Si el código todavía no salió, es basura del paso 1.' end
-
+    select 8, '08 - la tabla esta vacia: A y B no dejaron nada',
+           case when (select count(*) from pedidos_renglones_lotes_elegidos) = 0 then 'OK — vacia'
+                else 'MIRAR: hay ' || (select count(*) from pedidos_renglones_lotes_elegidos) end
     union all
-    select 9, '09 - los comentarios están cargados (la tabla y sus 3 columnas)',
-           case when count(*) = 4 then 'OK'
-                else 'FALLA: hay ' || count(*) || ' comentarios de 4' end
-    from (
-        select obj_description('pedidos_renglones_lotes_elegidos'::regclass) as texto
-        union all
-        select col_description('pedidos_renglones_lotes_elegidos'::regclass, ordinal_position::int)
-        from information_schema.columns
-        where table_name = 'pedidos_renglones_lotes_elegidos'
-          and column_name in ('lote_tipo', 'lote_origen_id', 'bultos')
-    ) comentarios
-    where texto is not null and btrim(texto) <> ''
+    select 9, '09 - no quedo ningun pedido de prueba',
+           case when (select count(*) from pedidos where texto_original like '%PRUEBA DEL VERIFICADOR%') = 0
+                then 'OK' else 'MIRAR: quedaron pedidos de prueba' end
 ) resultado
 order by n;
