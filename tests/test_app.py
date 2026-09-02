@@ -18349,3 +18349,86 @@ def test_stock_por_guia_nombra_los_bultos_tomados_por_guias_R_en_las_salidas():
     cuerpo = " ".join(respuesta.text.split("</style>")[-1].split())
     assert "Salieron 648 bultos en total" in cuerpo
     assert "bultos tomados por guías R" in cuerpo
+
+
+# --- Entrega 3: de qué lote salió un renglón armado ---
+
+
+def test_el_desglose_de_un_renglon_armado_trae_la_propuesta_y_los_lotes():
+    desglose = {
+        "articulo_id": 1,
+        "armado": 15.0,
+        "editado": False,
+        "lotes": [
+            {"tipo_lote": "guia", "origen_id": 101, "fecha_lote": date(2026, 8, 28),
+             "detalle": "Norte 15", "restante": 13.0},
+            {"tipo_lote": "guia", "origen_id": 102, "fecha_lote": date(2026, 9, 2),
+             "detalle": "Vitale", "restante": 8.0},
+        ],
+        "propuesta": {"guia:101": 13.0, "guia:102": 2.0},
+    }
+    with patch("app.main.desglose_de_renglon_armado", return_value=desglose):
+        datos = cliente.get("/deposito/pedido/renglones/55/lotes").json()
+
+    assert datos["armado"] == 15.0
+    assert datos["editado"] is False
+    assert datos["propuesta"] == {"guia:101": 13.0, "guia:102": 2.0}
+    # Fecha y cantidad; el proveedor no viaja porque cada día tiene un lote solo.
+    assert datos["lotes"][0] == {"clave": "guia:101", "tipo_lote": "guia", "origen_id": 101,
+                                 "fecha": "28/08", "restante": 13.0, "detalle": ""}
+
+
+def test_un_renglon_SIN_TILDAR_no_tiene_desglose_que_mostrar():
+    """Antes del tilde esta pantalla no muestra números del sistema: el que
+    arma todavía no declaró nada, y si los ve arma contra el sistema en vez
+    de contra el piso."""
+    with patch("app.main.desglose_de_renglon_armado", return_value=None):
+        respuesta = cliente.get("/deposito/pedido/renglones/55/lotes")
+
+    assert respuesta.status_code == 404
+
+
+def test_guardar_de_donde_salio_manda_solo_lo_que_eligio():
+    with patch("app.main.guardar_lotes_elegidos") as mock_guardar:
+        respuesta = cliente.post(
+            "/deposito/pedido/7/renglones/55/lotes",
+            data={"cliente_id": "1", "fecha": "2026-09-02", "sucursal": "VL",
+                  "reparto": '[{"tipo_lote": "guia", "origen_id": 101, "bultos": 5}]'},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(
+        55, [{"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5.0}]
+    )
+
+
+def test_aceptar_la_propuesta_BORRA_la_correccion_y_vuelve_al_FIFO():
+    """Se guarda SOLO la excepción: un reparto vacío no deja ninguna fila, y
+    un renglón sin filas se reparte por FIFO como siempre. El default nunca
+    se escribe, así que no puede quedar viejo cuando cambie el stock."""
+    with patch("app.main.guardar_lotes_elegidos") as mock_guardar:
+        respuesta = cliente.post(
+            "/deposito/pedido/7/renglones/55/lotes",
+            data={"cliente_id": "1", "fecha": "2026-09-02", "sucursal": "VL", "reparto": "[]"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once_with(55, [])
+
+
+def test_guardar_de_donde_salio_NO_TRABA_si_no_llega_a_lo_armado():
+    """La diferencia con el reproceso, y es toda la entrega: acá el camión ya
+    salió. Lo que no se reparta cae al FIFO o a sin_lote, como hasta hoy."""
+    with patch("app.main.guardar_lotes_elegidos") as mock_guardar:
+        respuesta = cliente.post(
+            "/deposito/pedido/7/renglones/55/lotes",
+            data={"cliente_id": "1", "fecha": "2026-09-02", "sucursal": "VL",
+                  "reparto": '[{"tipo_lote": "guia", "origen_id": 101, "bultos": 2}]'},
+            follow_redirects=False,
+        )
+
+    # 2 sobre un renglón de 15: se guarda igual, sin un solo freno.
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once()

@@ -92,6 +92,44 @@ def test_el_lote_elegido_gana_aunque_lo_pida_una_salida_de_ANTES_y_le_sobre():
     assert de_la_anterior["motivos_sin_costo"] == {"sin_lote": 4.0}
 
 
+def test_el_costo_del_renglon_corregido_sale_de_los_lotes_que_ELIGIO():
+    """Lo que hace que la corrección sirva de algo: el costo la sigue.
+
+    Si el stock respetara los lotes elegidos y el costo siguiera calculando
+    por FIFO, el que arma vería que su corrección "entró" y la rentabilidad
+    seguiría diciendo otra cosa. Es el mismo emparejamiento, una sola vez.
+    """
+    viejo = _lote((date(2026, 9, 1), 1), 10, 1000.0)
+    viejo["origen_id"] = 77
+    nuevo = _lote((date(2026, 9, 2), 2), 10, 3000.0)
+    nuevo["origen_id"] = 88
+    renglon = {"orden": (date(2026, 9, 5), 5), "cantidad": 4,
+               "lotes_elegidos": [{"lote_tipo": "guia", "lote_origen_id": 88, "bultos": 4}]}
+
+    (resultado,) = atribuir_costos_fifo([viejo, nuevo], [renglon])
+
+    # El FIFO habría costeado 4 × 1000. Se respeta lo que dijo: 4 × 3000.
+    assert resultado["costo"] == 12000.0
+    assert [(c["origen_id"], c["bultos"]) for c in resultado["consumos_lotes"]] == [(88, 4.0)]
+
+
+def test_lo_que_el_renglon_no_reparte_se_cuesta_por_FIFO():
+    """Avisa y no traba también en el costo: la parte sin elegir se cuesta
+    del más viejo, y el renglón queda con costo completo igual."""
+    viejo = _lote((date(2026, 9, 1), 1), 10, 1000.0)
+    viejo["origen_id"] = 77
+    nuevo = _lote((date(2026, 9, 2), 2), 10, 3000.0)
+    nuevo["origen_id"] = 88
+    renglon = {"orden": (date(2026, 9, 5), 5), "cantidad": 5,
+               "lotes_elegidos": [{"lote_tipo": "guia", "lote_origen_id": 88, "bultos": 2}]}
+
+    (resultado,) = atribuir_costos_fifo([viejo, nuevo], [renglon])
+
+    # 2 × 3000 elegidos + 3 × 1000 del más viejo.
+    assert resultado["costo"] == 9000.0
+    assert resultado["bultos_sin_costo"] == 0
+
+
 def test_una_dirigida_a_un_lote_POSTERIOR_no_le_saca_nada_a_nadie():
     """El caso normal de hoy: la merma señala un lote que ninguna salida
     anterior podía tocar (es posterior a ellas). Nada se mueve — es lo que

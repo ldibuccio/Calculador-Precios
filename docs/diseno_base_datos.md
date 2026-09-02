@@ -849,6 +849,26 @@ vivo". Registra y delata, jamás traba, que es el criterio de todo el módulo.
 **No entra en E4**: se anota acá y se decide cuando el freno y el desglose estén
 andando, que es cuando se va a saber si molesta de verdad.
 
+## Observación de diseño (sin dueño ni urgencia): la corrección del armado no se ve desde ningún listado
+
+Anotada el 02/09/2026, al terminar la Entrega 3. **Es un "ya que estamos" que
+NO entró a propósito**, para no agrandar la última pieza del lote.
+
+En las guías R, un reparto que eligió el operario se distingue de uno que
+salió del FIFO: la pantalla lo dice ("de qué lote salió cada bulto lo eligió
+el operario"). **En el armado no hay equivalente.** La corrección se ve
+abriendo el renglón en Armar Pedido, y en ningún listado de Administración —
+ni en Rentabilidad Real, que es donde ese costo se mira.
+
+Mientras las correcciones sean pocas no molesta. Si el depósito empieza a
+corregir seguido, van a existir costos que una persona eligió y nadie va a
+poder distinguir de los que calculó el sistema, que es exactamente la
+distinción que `consumos_editados` vino a hacer del otro lado.
+
+**Se mira después de ver el sistema funcionando unos días**, junto con la
+decisión sobre la función de emparejamiento única: son la misma pregunta —
+cuántas correcciones hace el depósito de verdad.
+
 ## Pendiente con nombre propio: los dos FIFO son dos implementaciones del mismo emparejamiento
 
 Anotado el 02/09/2026, el día que uno de los dos se separó del otro y lo

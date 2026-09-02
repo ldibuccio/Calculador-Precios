@@ -4830,13 +4830,132 @@ def marcar_renglon_armado(renglon_id: int, cantidad_armada=None, kilos_enviados=
                 "UPDATE pedidos_renglones SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s WHERE id = %s",
                 (cantidad_armada, kilos_enviados, renglon_id),
             )
+            # Vuelve a tildar: la corrección vieja se va. Puede estar
+            # cambiando la cantidad, y una corrección que reparte 15 bultos
+            # sobre un renglón que ahora manda 8 es una mentira guardada.
+            _borrar_lotes_elegidos(cursor, renglon_id)
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def _borrar_lotes_elegidos(cursor, renglon_id: int) -> None:
+    """Borra la corrección del renglón. Va con el cursor abierto: nunca se
+    borra por su cuenta, siempre adentro de la operación que la invalida."""
+    cursor.execute("DELETE FROM pedidos_renglones_lotes_elegidos WHERE renglon_id = %s", (renglon_id,))
+
+
+def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
+    """De qué lotes salió este renglón armado, para mostrárselo al que lo armó.
+
+    Devuelve None si el renglón no existe o todavía no está tildado: ANTES DEL
+    TILDE no hay nada que mostrar, y no es un detalle de implementación. La
+    pantalla de armado no puede enseñar números del sistema mientras el que
+    arma todavía no declaró nada —si los ve, arma contra el sistema en vez de
+    contra el piso—; después del tilde ya declaró cuánto mandó, y lo que ve es
+    de dónde sale.
+
+    Los lotes que ofrece son los que había A LA FECHA DEL ARMADO contando solo
+    las salidas ANTERIORES a este renglón: es "cuánto quedaba en ese lote
+    cuando armaste", que es lo único que el que armó puede reconocer.
+
+    Límite conocido, anotado y no tapado: una salida SEÑALADA posterior (otra
+    corrección, o una merma dirigida) se lleva su lote antes que este renglón
+    en el reparto de verdad, y esta propuesta no la ve. Es el mismo agujero
+    que el pendiente "los dos FIFO son dos implementaciones del mismo
+    emparejamiento": se cierra con la función de emparejamiento única, no
+    escribiendo acá una tercera versión del reparto.
+    """
+    from core.stock import propuesta_fifo, reparto_a_la_fecha, salidas_para_reparto
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.articulo_id, COALESCE(r.cantidad_armada, r.cantidad), r.armado_el
+                FROM pedidos_renglones r
+                WHERE r.id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                """,
+                (renglon_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None or fila[0] is None:
+                return None
+            articulo_id, armado, _armado_el = fila[0], float(fila[1]), fila[2]
+
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+    finally:
+        conexion.close()
+
+    esta = next((s for s in salidas if s.get("renglon_id") == renglon_id), None)
+    if esta is None:
+        return None
+
+    anteriores = [s for s in salidas if s["orden"] < esta["orden"]]
+    reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(anteriores), esta["orden"][0])
+    elegidos = esta.get("lotes_elegidos")
+
+    return {
+        "articulo_id": articulo_id,
+        "armado": armado,
+        "lotes": reparto["lotes"],
+        "editado": bool(elegidos),
+        # Lo que ya eligió, o la propuesta del más viejo primero si no tocó nada.
+        "propuesta": (
+            {f"{e['lote_tipo']}:{e['lote_origen_id']}": float(e["bultos"]) for e in elegidos}
+            if elegidos
+            else {f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
+                  for c in propuesta_fifo(reparto["lotes"], armado)}
+        ),
+    }
+
+
+def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
+    """De qué lote dijo el que arma que sacó este renglón. Reemplaza lo anterior.
+
+    Se guarda SOLO LA EXCEPCIÓN: con `lotes` vacío no queda ninguna fila, y un
+    renglón sin filas se reparte por FIFO como siempre. Aceptar la propuesta
+    es no guardar nada — el default nunca se escribe, así que no puede quedar
+    viejo cuando cambie el stock.
+
+    Borra y reescribe en UNA transacción en vez de actualizar fila por fila:
+    la corrección es un documento chico y entero, no un conjunto de renglones
+    con vida propia.
+
+    Lo que NO valida acá: que la suma dé lo armado. Acá se AVISA Y NO SE
+    TRABA — lo que no esté elegido cae al FIFO, igual que hoy. Lo único que
+    rechaza es lo imposible, y lo rechaza la base: más de lo que hay en un
+    lote no se puede pedir, pero eso lo mira quien arma la propuesta.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            _borrar_lotes_elegidos(cursor, renglon_id)
+            for lote in lotes:
+                if float(lote["bultos"]) <= 0:
+                    continue
+                cursor.execute(
+                    """
+                    INSERT INTO pedidos_renglones_lotes_elegidos
+                        (renglon_id, lote_tipo, lote_origen_id, bultos)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (renglon_id, lote["lote_tipo"], lote["lote_origen_id"], lote["bultos"]),
+                )
         conexion.commit()
     finally:
         conexion.close()
 
 
 def desmarcar_renglon_armado(renglon_id: int) -> None:
-    """Destilda un renglón (toque por error, o apareció el stock): vuelve arriba, sin cantidad parcial."""
+    """Destilda un renglón (toque por error, o apareció el stock): vuelve arriba, sin cantidad parcial.
+
+    Y BORRA LA CORRECCIÓN de lotes, en la misma transacción: el tilde se fue,
+    así que ya no hay salida de la que decir de dónde salió. Dejarla sería una
+    corrección apuntando a una cantidad que ya no existe, esperando a que
+    alguien vuelva a tildar con otro número.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -4844,6 +4963,7 @@ def desmarcar_renglon_armado(renglon_id: int) -> None:
                 "UPDATE pedidos_renglones SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL WHERE id = %s",
                 (renglon_id,),
             )
+            _borrar_lotes_elegidos(cursor, renglon_id)
         conexion.commit()
     finally:
         conexion.close()
@@ -4866,6 +4986,8 @@ def anular_renglon_pedido(renglon_id: int) -> None:
                 """,
                 (renglon_id,),
             )
+            # Un renglón anulado no manda nada: su corrección de lotes tampoco.
+            _borrar_lotes_elegidos(cursor, renglon_id)
         conexion.commit()
     finally:
         conexion.close()
@@ -7284,6 +7406,7 @@ _SQL_SALIDAS_STOCK = """
                NULL AS lote_tipo,
                NULL::bigint AS lote_origen_id,
                r.ficha_id,
+               r.id AS renglon_id,
                r.articulo_id AS articulo_id
         FROM pedidos_renglones r
         JOIN vigentes v ON v.id = r.pedido_id
@@ -7291,13 +7414,13 @@ _SQL_SALIDAS_STOCK = """
         UNION ALL
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                -m.cantidad, NULL, NULL, m.motivo, NULL,
-               m.lote_tipo, m.lote_origen_id, NULL, m.articulo_id
+               m.lote_tipo, m.lote_origen_id, NULL, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
         UNION ALL
         SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
                rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
-               NULL, NULL, NULL, rp.articulo_id
+               NULL, NULL, NULL, NULL::bigint, rp.articulo_id
         FROM reprocesos rp
         WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
     ) salidas
@@ -7313,9 +7436,38 @@ def _salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
         return por_articulo
     cursor.execute(_SQL_SALIDAS_STOCK, (ids, ids, ids))
     columnas = [descripcion[0] for descripcion in cursor.description]
+    salidas = []
     for fila in cursor.fetchall():
         salida = dict(zip(columnas, fila))
         salida["orden"] = (salida["fecha_orden"], salida["momento_orden"])
+        salidas.append(salida)
+
+    # Las correcciones del que arma: de qué lote dijo que sacó cada renglón.
+    # Son la EXCEPCIÓN —la enorme mayoría de los renglones no tiene ninguna—,
+    # así que se piden en UNA consulta para todos y se cuelgan de su salida.
+    # Un renglón sin filas queda sin "lotes_elegidos" y se reparte como
+    # siempre: el default no se guarda nunca.
+    renglones = [s["renglon_id"] for s in salidas if s["renglon_id"] is not None]
+    elegidos_por_renglon = {}
+    if renglones:
+        cursor.execute(
+            """
+            SELECT renglon_id, lote_tipo, lote_origen_id, bultos
+            FROM pedidos_renglones_lotes_elegidos
+            WHERE renglon_id = ANY(%s)
+            ORDER BY id
+            """,
+            (renglones,),
+        )
+        for renglon_id, lote_tipo, lote_origen_id, bultos in cursor.fetchall():
+            elegidos_por_renglon.setdefault(renglon_id, []).append(
+                {"lote_tipo": lote_tipo, "lote_origen_id": lote_origen_id, "bultos": float(bultos)}
+            )
+
+    for salida in salidas:
+        elegidos = elegidos_por_renglon.get(salida["renglon_id"])
+        if elegidos:
+            salida["lotes_elegidos"] = elegidos
         por_articulo[salida.pop("articulo_id")].append(salida)
     return por_articulo
 

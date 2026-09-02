@@ -62,7 +62,7 @@ un número chico y cierto que uno grande y mentiroso.
 """
 
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
-from core.stock import lote_dirigido, lote_posterior_a_la_salida
+from core.stock import lote_posterior_a_la_salida, lotes_senalados
 
 ETIQUETAS_MOTIVO_REAL = {
     "sin_kilaje": "Renglón armado sin kilaje cargado",
@@ -127,11 +127,12 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     cae a sin_lote y se ve. La comparación es por FECHA, no por momento de
     carga: un lote cargado a la tarde cubre una salida de esa misma mañana.
 
-    Una salida DIRIGIDA (con "lote_tipo" y "lote_origen_id": la merma que
-    el operario cargó sabiendo qué lote se pudrió) sale primero de SU
-    lote, y por lo tanto se cuesta al costo de ESE lote — el de la guía R
-    que se pudrió, no el del cajón viejo que el FIFO hubiera elegido. Lo
-    que su lote no cubre cae al FIFO de siempre.
+    Una salida SEÑALADA sale primero de SUS lotes, y por lo tanto se cuesta
+    al costo de ESOS lotes — no al del cajón viejo que el FIFO hubiera
+    elegido. Lo que sus lotes no cubren cae al FIFO de siempre. Son dos: la
+    merma dirigida (un lote, sin cantidad) y la corrección del que arma un
+    pedido (varios lotes con su cantidad, en `lotes_elegidos`). El detalle
+    está en `lotes_senalados`.
 
     Las dirigidas se resuelven TODAS ANTES del FIFO, en una pasada aparte,
     y eso NO es una optimización: es la única forma de que esta función y
@@ -198,9 +199,12 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
     # anterior sin dirigir se llevaría el lote antes de que la dirigida
     # llegue a pedirlo, y las dos funciones emparejarían distinto.
     for salida in resultado:
-        elegido = lote_dirigido(lotes, salida)
-        if elegido is not None and elegido["restante"] > 0:
-            _consumir(salida, elegido, min(elegido["restante"], cuentas[id(salida)]["pendiente"]))
+        for lote, pedidos in lotes_senalados(lotes, salida):
+            pendiente = cuentas[id(salida)]["pendiente"]
+            if pendiente <= 0:
+                break
+            if lote["restante"] > 0:
+                _consumir(salida, lote, min(lote["restante"], pedidos, pendiente))
 
     # PASADA 2 — el FIFO de siempre con lo que quedó pendiente. El índice
     # avanza SOLO sobre lotes agotados, que ya no vuelven (incluidos los que

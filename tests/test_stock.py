@@ -372,3 +372,64 @@ def test_el_reparto_editado_se_valida_lote_por_lote_y_por_el_total():
     assert validar_reparto_declarado(
         lotes, 10, [{"tipo_lote": "guia", "origen_id": 99, "bultos": 10}]
     ) is not None
+
+
+# --- Entrega 3: el que arma puede señalar VARIOS lotes ---
+
+def test_el_renglon_corregido_sale_de_los_lotes_que_eligio_y_no_del_mas_viejo():
+    """La corrección del armado: varios lotes con su cantidad, en UNA salida.
+
+    Sigue siendo una salida y no varias a propósito: si se partiera en una por
+    lote, los kilos enviados y la ficha se contarían una vez por lote y la
+    Rentabilidad Real sumaría los kilos multiplicados.
+    """
+    entradas = [_lote_con_origen(1, 10), _lote_con_origen(3, 10)]
+    salida = dict(_salida_fechada(5, 8), lotes_elegidos=[
+        {"lote_tipo": "guia", "lote_origen_id": 3, "bultos": 6},
+        {"lote_tipo": "guia", "lote_origen_id": 1, "bultos": 2},
+    ])
+
+    reparto = repartir_fifo(entradas, [salida])
+
+    # El FIFO solo habría tomado 8 del lote 1. Se respeta lo que dijo.
+    assert [l["restante"] for l in reparto["lotes"]] == [8, 4]
+    assert reparto["sin_lote"] == 0
+
+
+def test_lo_que_el_que_arma_NO_reparte_cae_al_FIFO(): 
+    """Acá se avisa y no se traba: la corrección no tiene que cubrir el
+    renglón entero. Lo que queda suelto sale del más viejo, como siempre."""
+    entradas = [_lote_con_origen(1, 10), _lote_con_origen(3, 10)]
+    salida = dict(_salida_fechada(5, 8), lotes_elegidos=[
+        {"lote_tipo": "guia", "lote_origen_id": 3, "bultos": 5},
+    ])
+
+    reparto = repartir_fifo(entradas, [salida])
+
+    # 5 del lote nuevo porque lo eligió; los 3 que faltan, del viejo.
+    assert [l["restante"] for l in reparto["lotes"]] == [7, 5]
+    assert reparto["sin_lote"] == 0
+
+
+def test_un_lote_elegido_que_ya_no_existe_se_saltea_y_vuelve_al_FIFO():
+    """El reparto se rejuega sobre los hechos de HOY. Si se corrigió una
+    recepción y el lote desapareció, esa porción no se cuelga de la nada."""
+    entradas = [_lote_con_origen(1, 10)]
+    salida = dict(_salida_fechada(5, 4), lotes_elegidos=[
+        {"lote_tipo": "guia", "lote_origen_id": 99, "bultos": 4},
+    ])
+
+    reparto = repartir_fifo(entradas, [salida])
+
+    assert reparto["lotes"][0]["restante"] == 6
+    assert reparto["sin_lote"] == 0
+
+
+def test_la_merma_dirigida_sigue_andando_igual_con_un_solo_lote():
+    """La merma dirigida es el caso de UN lote sin cantidad, y no cambió."""
+    entradas = [_lote_con_origen(1, 10), _lote_con_origen(3, 10)]
+    salida = dict(_salida_fechada(5, 4), lote_tipo="guia", lote_origen_id=3)
+
+    reparto = repartir_fifo(entradas, [salida])
+
+    assert [l["restante"] for l in reparto["lotes"]] == [10, 6]

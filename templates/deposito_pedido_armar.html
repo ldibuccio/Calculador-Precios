@@ -162,6 +162,37 @@
     cursor: pointer;
     white-space: nowrap;
   }
+  /* DE DÓNDE SALIÓ. Solo en el renglón YA ARMADO: antes del tilde esta
+     pantalla no muestra números del sistema. Plegado por default — el que
+     no quiere mirar nada no mira nada. */
+  .salio-de { border-top: 1px dashed #ddd; margin-top: 0.55rem; padding-top: 0.55rem; }
+  .salio-de-resumen { margin: 0 0 0.5rem; font-size: 0.85rem; color: #444; line-height: 1.35; }
+  .boton-lotes {
+    padding: 0.6rem 0.8rem;
+    background: #fff;
+    color: #7c3aed;
+    border: 1px solid #7c3aed;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .fila-lote-armado { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
+  .fila-lote-armado span { flex: 1; font-size: 0.85rem; color: #444; }
+  .fila-lote-armado input {
+    width: 5rem; padding: 0.55rem 0.4rem; text-align: right;
+    border: 1px solid #ccc; border-radius: 8px; font-size: 1rem;
+  }
+  /* Amarillo y NO rojo, y el botón queda habilitado: acá se avisa y no se
+     traba. Lo que no se reparta cae al FIFO — el camión ya salió. */
+  .total-lotes { margin: 0.6rem 0 0; font-size: 0.85rem; font-weight: 700; color: #166534; }
+  .total-lotes.falta { color: #92400e; }
+  .boton-guardar-lotes {
+    margin-top: 0.5rem; padding: 0.7rem 1rem; width: 100%;
+    background: #7c3aed; color: #fff; border: none; border-radius: 8px;
+    font-size: 0.95rem; font-weight: 700; cursor: pointer;
+  }
   .campo-kilos { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.35rem; }
   .campo-kilos label { font-size: 0.85rem; color: #444; white-space: nowrap; }
   .campo-kilos input {
@@ -616,11 +647,31 @@
         </p>
         {% endif %}
       </div>
-      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
+      <div class="acciones-renglon-armar">
+        {# El desglose se pide RECIÉN al tocar: son números del sistema y no
+           viajan a la pantalla hasta que alguien los pide. Y no hace falta
+           una consulta por renglón al abrir la sección. #}
+        <button type="button" class="boton-lotes" onclick="verLotes({{ r.id }}, {{ pedido.id }})"
+                id="ver-lotes-{{ r.id }}">De dónde salió</button>
+        <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/desarmar">
+          <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+          <input type="hidden" name="fecha" value="{{ fecha }}">
+          <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
+          <button type="submit" class="boton-destildar">Destildar</button>
+        </form>
+      </div>
+    </div>
+    <div class="salio-de" id="salio-de-{{ r.id }}" hidden>
+      <p class="salio-de-resumen" id="resumen-lotes-{{ r.id }}"></p>
+      <form method="post" action="/deposito/pedido/{{ pedido.id }}/renglones/{{ r.id }}/lotes"
+            id="lotes-{{ r.id }}" hidden>
         <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
         <input type="hidden" name="fecha" value="{{ fecha }}">
         <input type="hidden" name="sucursal" value="{{ sucursal_elegida.sucursal }}">
-        <button type="submit" class="boton-destildar">Destildar</button>
+        <input type="hidden" name="reparto" value="">
+        <div id="filas-lotes-{{ r.id }}"></div>
+        <p class="total-lotes" id="total-lotes-{{ r.id }}"></p>
+        <button type="submit" class="boton-guardar-lotes">Guardar de dónde salió</button>
       </form>
     </div>
     {% endfor %}
@@ -672,6 +723,111 @@
       const total = Math.round(porBulto * bultos * 100) / 100;
       aviso.textContent = "Manda " + numeroCorto(bultos) + " bultos × " + numeroCorto(porBulto) + sufijo + " = " + numeroCorto(total) + sufijo + ".";
     }
+
+    // ---- DE DÓNDE SALIÓ: el desglose por lote del renglón YA ARMADO ----
+    // La propuesta la calcula el SERVER, con el mismo propuesta_fifo que usa
+    // el reproceso. Acá solo se dibuja: rehacer el "más viejo primero" en
+    // JavaScript sería escribir la regla dos veces.
+    var LOTES_POR_RENGLON = {};
+
+    function verLotes(renglonId, pedidoId) {
+      const caja = document.getElementById("salio-de-" + renglonId);
+      const boton = document.getElementById("ver-lotes-" + renglonId);
+      if (!caja.hidden) { caja.hidden = true; boton.textContent = "De dónde salió"; return; }
+
+      boton.textContent = "Buscando...";
+      fetch("/deposito/pedido/renglones/" + renglonId + "/lotes")
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (datos) {
+          if (!datos) { boton.textContent = "No se pudo ver"; return; }
+          LOTES_POR_RENGLON[renglonId] = datos;
+          dibujarLotes(renglonId);
+          caja.hidden = false;
+          boton.textContent = "Ocultar";
+        })
+        .catch(function () { boton.textContent = "No se pudo ver"; });
+    }
+
+    function dibujarLotes(renglonId) {
+      const datos = LOTES_POR_RENGLON[renglonId];
+      const filas = document.getElementById("filas-lotes-" + renglonId);
+      filas.innerHTML = "";
+      datos.lotes.forEach(function (lote) {
+        const fila = document.createElement("div");
+        fila.className = "fila-lote-armado";
+        const texto = document.createElement("span");
+        texto.textContent = (lote.detalle ? lote.fecha + " · " + lote.detalle : lote.fecha)
+          + " · quedaban " + lote.restante;
+        const campo = document.createElement("input");
+        campo.type = "number";
+        campo.id = "lote-" + renglonId + "-" + lote.clave;
+        campo.min = "0";
+        campo.max = String(lote.restante);
+        campo.step = "0.01";
+        campo.value = String(datos.propuesta[lote.clave] || 0);
+        campo.addEventListener("input", function () { mostrarTotalLotes(renglonId); });
+        fila.appendChild(texto);
+        fila.appendChild(campo);
+        filas.appendChild(fila);
+      });
+      document.getElementById("lotes-" + renglonId).hidden = false;
+      mostrarResumenLotes(renglonId);
+      mostrarTotalLotes(renglonId);
+    }
+
+    function bultosDeLote(renglonId, lote) {
+      const campo = document.getElementById("lote-" + renglonId + "-" + lote.clave);
+      return campo ? (parseFloat(campo.value) || 0) : 0;
+    }
+
+    function mostrarResumenLotes(renglonId) {
+      const datos = LOTES_POR_RENGLON[renglonId];
+      // Dos lotes del mismo día no pueden quedar los dos como "del 02/09":
+      // ahí el proveedor es lo único que los distingue.
+      const partes = datos.lotes.filter(function (l) { return bultosDeLote(renglonId, l) > 0; })
+        .map(function (l) {
+          return bultosDeLote(renglonId, l) + " del " + l.fecha + (l.detalle ? " de " + l.detalle : "");
+        });
+      const lista = partes.length > 1
+        ? partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1]
+        : partes.join("");
+      document.getElementById("resumen-lotes-" + renglonId).textContent = !partes.length
+        ? "No hay lotes cargados de este artículo a esa fecha: salió sin lote."
+        : (datos.editado ? "Lo dijiste vos: " : "Del más viejo primero: ") + lista + ".";
+    }
+
+    function mostrarTotalLotes(renglonId) {
+      const datos = LOTES_POR_RENGLON[renglonId];
+      const total = datos.lotes.reduce(function (suma, l) {
+        return Math.round((suma + bultosDeLote(renglonId, l)) * 100) / 100;
+      }, 0);
+      const falta = Math.round((datos.armado - total) * 100) / 100;
+      const linea = document.getElementById("total-lotes-" + renglonId);
+      // Amarillo y no rojo, y Guardar sigue habilitado: acá se avisa y no se
+      // traba. Lo que falte cae al FIFO — el camión ya salió.
+      linea.textContent = "Repartido " + total + " de " + datos.armado
+        + (falta > 0 ? " — " + falta + " sin lote" : "")
+        + (falta < 0 ? " — " + (-falta) + " de más" : "");
+      linea.classList.toggle("falta", falta !== 0);
+      mostrarResumenLotes(renglonId);
+    }
+
+    // Solo viaja lo que tiene bultos: los ceros no se guardan, y un reparto
+    // todo en cero borra la corrección y vuelve al FIFO.
+    document.querySelectorAll('form[id^="lotes-"]').forEach(function (form) {
+      form.addEventListener("submit", function () {
+        const renglonId = form.id.split("-")[1];
+        const datos = LOTES_POR_RENGLON[renglonId];
+        form.querySelector('[name="reparto"]').value = JSON.stringify(
+          (datos ? datos.lotes : [])
+            .filter(function (l) { return bultosDeLote(renglonId, l) > 0; })
+            .map(function (l) {
+              return { tipo_lote: l.tipo_lote, origen_id: l.origen_id,
+                       bultos: bultosDeLote(renglonId, l) };
+            })
+        );
+      });
+    });
   </script>
 
   <a class="volver-boton" href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}">Volver a las sucursales</a>

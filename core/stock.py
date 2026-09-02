@@ -96,6 +96,41 @@ def lote_dirigido(lotes: list[dict], salida: dict) -> dict | None:
     )
 
 
+def lotes_senalados(lotes: list[dict], salida: dict) -> list[tuple[dict, float]]:
+    """Los lotes que ALGUIEN ELIGIÓ para esta salida, con cuánto sale de cada uno.
+
+    Dos formas de señalar, y son la misma cosa con distinta cantidad de lotes:
+
+    - `lote_tipo` + `lote_origen_id`: UN lote, sin cantidad. Es la merma
+      dirigida — el operario dice cuál se pudrió y sale todo lo que ese lote
+      pueda cubrir.
+    - `lotes_elegidos`: [{"lote_tipo", "lote_origen_id", "bultos"}], VARIOS
+      lotes con su cantidad. Es la corrección del que arma un pedido.
+
+    El renglón corregido sigue siendo UNA salida y no varias: si se partiera
+    en una salida por lote, todo lo que cuelga de la salida —los kilos
+    enviados, la ficha, el cliente— se contaría una vez por lote, y la
+    Rentabilidad Real sumaría los kilos multiplicados.
+
+    Un lote elegido que ya no existe se saltea en silencio: el reparto se
+    rejuega sobre los hechos de hoy, y si una recepción se corrigió y el lote
+    desapareció, esa porción vuelve al FIFO como cualquier otra.
+    """
+    elegidos = salida.get("lotes_elegidos")
+    if elegidos:
+        senalados = []
+        for fila in elegidos:
+            lote = lote_dirigido(lotes, {"lote_tipo": fila["lote_tipo"],
+                                         "lote_origen_id": fila["lote_origen_id"]})
+            if lote is not None:
+                senalados.append((lote, float(fila["bultos"])))
+        return senalados
+
+    lote = lote_dirigido(lotes, salida)
+    # Sin cantidad: la merma dirigida saca de su lote todo lo que pueda.
+    return [(lote, float(salida["cantidad"]))] if lote is not None else []
+
+
 def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
     """Reparte las salidas entre las entradas por orden de fecha (FIFO).
 
@@ -114,20 +149,22 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
     lotes = [dict(e, restante=float(e["cantidad"]), consumido=0.0) for e in sorted(entradas, key=lambda e: e["orden"])]
     total_salidas = sum(float(s["cantidad"]) for s in salidas)
 
-    # Primero las dirigidas: cada una tiene prioridad sobre SU lote (el
-    # operario vio qué se pudrió). Lo que ese lote no cubre cae al FIFO.
-    # El lote elegido se respeta aunque sea posterior: el operario lo está
-    # SEÑALANDO con el dedo, no adivinándolo — si dice que se pudrió ése,
-    # se pudrió ése, y discutirle la fecha sería negarle el piso.
+    # Primero las SEÑALADAS: cada una tiene prioridad sobre SUS lotes (el
+    # operario vio qué se pudrió, o el que armó dijo de dónde sacó). Lo que
+    # esos lotes no cubren cae al FIFO.
+    # El lote elegido se respeta aunque sea posterior: lo están SEÑALANDO con
+    # el dedo, no adivinándolo — si dicen que salió de ése, salió de ése, y
+    # discutirles la fecha sería negarles el piso.
     restos = []
     for salida in salidas:
         cantidad = float(salida["cantidad"])
-        lote = lote_dirigido(lotes, salida)
-        if lote is not None:
-            consumo = min(lote["restante"], cantidad)
+        for lote, pedidos in lotes_senalados(lotes, salida):
+            if cantidad <= 0:
+                break
+            consumo = min(lote["restante"], pedidos, cantidad)
             lote["consumido"] += consumo
             lote["restante"] -= consumo
-            cantidad -= consumo
+            cantidad = round(cantidad - consumo, 2)
         if cantidad > 0:
             restos.append((salida, cantidad))
 

@@ -195,6 +195,8 @@ from app.db import (
     listar_articulos,
     listar_articulos_para_reproceso,
     lotes_para_reproceso,
+    desglose_de_renglon_armado,
+    guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
     contar_fichas_por_articulo,
@@ -11916,6 +11918,69 @@ def armar_renglon_pedido_ruta(
         marcar_renglon_armado(renglon_id, cantidad_armada_valor, kilos_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo marcar el renglón: {error_db}") from error_db
+
+    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+
+
+@app.get("/deposito/pedido/renglones/{renglon_id}/lotes")
+def lotes_del_renglon_armado(renglon_id: int):
+    """De qué lotes salió un renglón YA ARMADO: lo que la tarjeta muestra plegado.
+
+    Solo después del tilde, y eso lo decide db.desglose_de_renglon_armado
+    devolviendo None: antes, la pantalla de armado no puede mostrar números
+    del sistema — si el que arma los ve, arma contra el sistema en vez de
+    contra el piso. Después del tilde ya declaró cuánto mandó.
+    """
+    try:
+        desglose = desglose_de_renglon_armado(renglon_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if desglose is None:
+        raise HTTPException(status_code=404, detail="Ese renglón no está armado.")
+
+    return JSONResponse(
+        {
+            "armado": desglose["armado"],
+            "editado": desglose["editado"],
+            "lotes": _desglose_para_pantalla(desglose["lotes"]),
+            "propuesta": desglose["propuesta"],
+        }
+    )
+
+
+@app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/lotes")
+def guardar_lotes_del_renglon_ruta(
+    pedido_id: int,
+    renglon_id: int,
+    cliente_id: int = Form(...),
+    fecha: str = Form(""),
+    sucursal: str = Form(""),
+    reparto: str = Form(""),
+):
+    """El que arma dice de qué lote sacó los bultos. AVISA Y NO TRABA.
+
+    Al revés que el reproceso: acá no hay freno. Si lo que reparte no llega a
+    lo que mandó, la diferencia cae al FIFO o a sin_lote, como hasta hoy —el
+    camión ya salió y el piso es la verdad—. Lo único imposible es pedirle a
+    un lote más de lo que tenía, y eso lo ataja la pantalla.
+
+    Se guarda SOLO LA EXCEPCIÓN: con el reparto vacío no queda ninguna fila y
+    el renglón vuelve a repartirse por FIFO. Aceptar la propuesta es no
+    guardar nada.
+    """
+    error, reparto_valor = _reparto_del_formulario(reparto)
+    if error is None:
+        try:
+            guardar_lotes_elegidos(
+                renglon_id,
+                [
+                    {"lote_tipo": fila["tipo_lote"], "lote_origen_id": fila["origen_id"],
+                     "bultos": fila["bultos"]}
+                    for fila in (reparto_valor or [])
+                ],
+            )
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"No se pudo guardar de dónde salió: {error_db}") from error_db
 
     return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
 

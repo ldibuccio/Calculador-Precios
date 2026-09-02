@@ -3128,14 +3128,18 @@ def test_marcar_renglon_armado_completo_y_parcial():
     with patch("app.db.obtener_conexion", return_value=conexion):
         marcar_renglon_armado(11)
 
-    consulta, parametros = cursor.execute.call_args.args
+    consulta, parametros = cursor.execute.call_args_list[0].args
     assert "SET armado_el = now(), cantidad_armada = %s, kilos_enviados = %s" in consulta
     assert parametros == (None, None, 11)
+    # Y en la MISMA transacción se va la corrección de lotes vieja: puede
+    # estar cambiando la cantidad, y una corrección que reparte 15 bultos
+    # sobre un renglón que ahora manda 8 es una mentira guardada.
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
 
     conexion2, cursor2 = _conexion_falsa()
     with patch("app.db.obtener_conexion", return_value=conexion2):
         marcar_renglon_armado(11, 12.0, 120.0)
-    assert cursor2.execute.call_args.args[1] == (12.0, 120.0, 11)
+    assert cursor2.execute.call_args_list[0].args[1] == (12.0, 120.0, 11)
 
 
 def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
@@ -3144,9 +3148,12 @@ def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
     with patch("app.db.obtener_conexion", return_value=conexion):
         desmarcar_renglon_armado(12)
 
-    consulta, parametros = cursor.execute.call_args.args
+    consulta, parametros = cursor.execute.call_args_list[0].args
     assert "SET armado_el = NULL, cantidad_armada = NULL" in consulta
     assert parametros == (12,)
+    # El tilde se fue: ya no hay salida de la que decir de dónde salió.
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
+    assert cursor.execute.call_args_list[1].args[1] == (12,)
 
 
 def test_crear_pedido_corregido_traslada_los_tildes_solo_a_renglones_identicos():
@@ -3598,8 +3605,10 @@ def test_anular_renglon_pedido_limpia_el_tilde_y_sus_numeros():
     with patch("app.db.obtener_conexion", return_value=conexion):
         anular_renglon_pedido(11)
 
-    consulta = cursor.execute.call_args.args[0]
+    consulta = cursor.execute.call_args_list[0].args[0]
     assert "SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL" in consulta
+    # Un renglón anulado no manda nada: su corrección de lotes tampoco.
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
     conexion.commit.assert_called_once()
 
 
@@ -4067,14 +4076,17 @@ from app.db import (  # noqa: E402
     StockInsuficienteParaReproceso,
 )
 
+# renglon_id va al final: las salidas de armado lo traen (es lo que las ata a
+# sus lotes elegidos) y los lotes no, pero la conexión falsa tiene UNA sola
+# description para las dos cosas, así que la columna viaja en las dos.
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
                   ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",),
-                  ("cliente_lote_id",), ("articulo_id",)]
+                  ("cliente_lote_id",), ("articulo_id",), ("renglon_id",)]
 
 
 def _lote_compra(origen_id, fecha, cantidad, costo, articulo_id=1):
     return (fecha, datetime(2026, 8, fecha.day, 10), "guia", origen_id, fecha, "Norte 15", None,
-            cantidad, costo, None, articulo_id)
+            cantidad, costo, None, articulo_id, None)
 
 
 def _salida_fifo(fecha, cantidad, articulo_id=1):
@@ -4086,7 +4098,7 @@ def _salida_fifo(fecha, cantidad, articulo_id=1):
     Lo que el reparto mira de acá es fecha_orden, momento_orden y cantidad.
     """
     return (fecha, datetime(2026, 8, fecha.day, 12), None, None, None, None, None,
-            cantidad, None, None, articulo_id)
+            cantidad, None, None, articulo_id, None)
 
 
 def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
@@ -4487,8 +4499,14 @@ def test_salidas_de_varios_articulos_devuelve_una_lista_por_cada_id_pedido():
     # Las columnas son las que devuelve la consulta de verdad: momento_orden
     # va porque desde E4 la salida viaja con su "orden" armado acá, en un solo
     # lugar, y no en cada pantalla que la consume.
-    cursor.description = [("fecha_orden",), ("momento_orden",), ("tipo",), ("articulo_id",)]
-    cursor.fetchall.return_value = [(date(2026, 8, 21), "10:00", "armado", 2)]
+    # renglon_id va porque cada salida de armado tiene que poder encontrar los
+    # lotes que el que armó eligió para ella.
+    cursor.description = [("fecha_orden",), ("momento_orden",), ("tipo",), ("renglon_id",),
+                          ("articulo_id",)]
+    cursor.fetchall.side_effect = [
+        [(date(2026, 8, 21), "10:00", "armado", 55, 2)],
+        [],  # ese renglón no tiene lotes elegidos: se reparte como siempre
+    ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         salidas = salidas_stock_articulos([2, 7])
@@ -4496,12 +4514,18 @@ def test_salidas_de_varios_articulos_devuelve_una_lista_por_cada_id_pedido():
     assert sorted(salidas) == [2, 7]
     assert salidas[2] == [{
         "fecha_orden": date(2026, 8, 21), "momento_orden": "10:00", "tipo": "armado",
-        "orden": (date(2026, 8, 21), "10:00"),
+        "renglon_id": 55, "orden": (date(2026, 8, 21), "10:00"),
     }]
+    # Sin corrección no hay clave: el default del FIFO no se guarda nunca.
+    assert "lotes_elegidos" not in salidas[2][0]
     assert salidas[7] == []
-    # UNA sola consulta para los dos, y sin abrir una conexión por artículo.
-    assert cursor.execute.call_count == 1
-    assert cursor.execute.call_args.args[1] == ([2, 7], [2, 7], [2, 7])
+    # DOS consultas para los dos artículos y todos sus renglones —las salidas
+    # y los lotes elegidos—, sin abrir una conexión por artículo ni pedir las
+    # correcciones renglón por renglón.
+    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_args_list[0].args[1] == ([2, 7], [2, 7], [2, 7])
+    # Y la de los lotes elegidos pide TODOS los renglones de una.
+    assert cursor.execute.call_args_list[1].args[1] == ([55],)
 
 
 def test_la_funcion_de_a_uno_es_la_de_varios_con_un_solo_id():
@@ -4845,3 +4869,43 @@ def test_fichas_con_cajas_armadas_devuelve_SOLO_ids_sin_cantidades():
     assert resultado == {11, 13}
     # Y son ids pelados, sin ninguna cantidad adentro.
     assert all(isinstance(x, int) for x in resultado)
+
+
+def test_guardar_lotes_elegidos_borra_y_reescribe_y_los_ceros_no_entran():
+    """La corrección es un documento chico y ENTERO, no filas con vida propia.
+
+    Y guarda SOLO la excepción: un lote en cero no es una corrección, es no
+    haber elegido ese lote. Con la lista vacía no queda ninguna fila y el
+    renglón vuelve a repartirse por FIFO — aceptar la propuesta es no guardar
+    nada, así que el default nunca puede quedar viejo.
+    """
+    from app.db import guardar_lotes_elegidos
+
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_lotes_elegidos(55, [
+            {"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5},
+            {"lote_tipo": "guia", "lote_origen_id": 102, "bultos": 0},
+        ])
+
+    consultas = [c.args[0] for c in cursor.execute.call_args_list]
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in consultas[0]
+    assert cursor.execute.call_args_list[0].args[1] == (55,)
+    # Un solo INSERT: el de cero no entra.
+    assert len([c for c in consultas if "INSERT INTO" in c]) == 1
+    assert cursor.execute.call_args_list[1].args[1] == (55, "guia", 101, 5)
+    conexion.commit.assert_called_once()
+
+
+def test_guardar_lotes_elegidos_vacio_deja_el_renglon_sin_correccion():
+    from app.db import guardar_lotes_elegidos
+
+    conexion, cursor = _conexion_falsa()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_lotes_elegidos(55, [])
+
+    consultas = [c.args[0] for c in cursor.execute.call_args_list]
+    assert len(consultas) == 1
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in consultas[0]
