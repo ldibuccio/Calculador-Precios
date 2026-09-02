@@ -112,6 +112,22 @@ puntual, nunca como referencia de "cuántas hay".
 
 ## Riesgos verificados contra producción y descartados
 
+### El RLS en `true` es el estado NORMAL — DESCARTADO 02/09/2026
+
+Al revisar si el editor de Supabase había ejecutado un
+`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` que pegó solo, se miró
+`relrowsecurity` y dio **`true` en las ocho tablas chequeadas**.
+
+**No es algo que haya cambiado ese día: Supabase lo activa por defecto**, y
+la app funciona porque conecta con el **rol dueño**, que no está sujeto a las
+políticas. Queda anotado para que la próxima vez que alguien vea
+`relrowsecurity = true` no lo lea como una alteración reciente ni salga a
+buscar qué la causó.
+
+En la misma verificación: cero pedidos de prueba, cero filas en
+`pedidos_renglones_lotes_elegidos`, y ninguna tabla `cliente` (singular)
+creada. El ALTER ajeno no llegó a ejecutarse.
+
 Cosas que se sospecharon, se midieron en las dos bases y NO existen. Se
 anotan para que no se vuelvan a investigar desde cero.
 

@@ -42,24 +42,28 @@ De acá en adelante:
 3. **Lo que tenga que verse va en UNA sola consulta final que devuelva
    filas** (el editor muestra solo el resultado de la última, y no muestra
    los NOTICE).
-4. **Los bloques largos se TRUNCAN, y no fallan limpio.** Pasó el 02/09 con
-   un verificador de 5983 caracteres: el editor lo cortó a la mitad —en el
-   medio de un caso— y le **concatenó código propio abajo**, un
-   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` con un comentario "Added by
-   Supabase". El error que devolvió fue `unterminated dollar-quoted string`,
-   que no dice una palabra de lo que pasó de verdad, y deja sin saber qué se
-   ejecutó.
+4. **Los bloques largos se TRUNCAN, y cuando truncan PEGAN SQL AJENO.** Pasó
+   el 02/09 con un verificador de 5983 caracteres. El editor lo cortó a la
+   mitad —en el medio de un caso— y **le concatenó código propio abajo**: un
+   `ALTER TABLE cliente ENABLE ROW LEVEL SECURITY` con un comentario "Added
+   by Supabase". El error que devolvió fue `unterminated dollar-quoted
+   string`, que no dice una palabra de lo que pasó de verdad.
 
-   Así que **no es solo que el editor no sostenga transacciones ni
-   temporales: tiene un límite de largo**, y pasarlo no da un error honesto.
-   **Ningún bloque que se mande al editor pasa los 2500 caracteres.** Lo que
-   no entre se parte en bloques cortos, cada uno capaz de correrse solo y de
-   deshacerse solo con su propio `raise`.
+   **Eso es peor que un límite de largo.** No es que el script se corte y
+   falle: es que lo que termina corriendo **no es el script que se mandó**.
+   Esta vez el corte cayó adentro del `do` y dejó un dollar-quote abierto, así
+   que el ALTER ajeno quedó dentro de una cadena sin cerrar y no se ejecutó
+   (verificado contra la base: no quedó nada escrito). **Si el corte hubiera
+   caído después del `end $$;`, ese ALTER habría sido una sentencia válida y
+   habría corrido.** La seguridad de "un `do` es UNA sentencia, o parsea
+   entero o no ejecuta nada" **solo vale si el corte cae ADENTRO del bloque**,
+   y dónde cae no lo decidimos nosotros.
 
-   Lo único que salva de esto es que **un bloque `do` es UNA sentencia**: o
-   parsea entero o no ejecuta nada. Un `do` truncado no escribe a medias. Pero
-   eso vale para el `do`, no para un script de varias sentencias sueltas —
-   ahí sí se ejecuta lo que alcanzó a parsear (regla 1).
+   Por eso: **ningún bloque que se mande al editor pasa los 2500
+   caracteres.** Lo que no entre se parte en bloques cortos, cada uno capaz de
+   correrse solo y de deshacerse solo con su propio `raise`. Y ante un error
+   raro de sintaxis, **primero se mira qué quedó escrito en la base**, antes
+   de suponer que no se ejecutó nada.
 
 Esto no es una preferencia de estilo: es el entorno donde el SQL corre de
 verdad. Un script probado en Postgres local puede estar correcto y aun así
