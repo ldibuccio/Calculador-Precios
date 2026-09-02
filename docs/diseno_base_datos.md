@@ -504,6 +504,54 @@ fecha**, y eso es exactamente lo que E4 deja listo. Antes de E4, el desglose
 que se le muestre al que arma un pedido cargado con demora estaría mal por la
 misma causa que rompería el freno.
 
+### DECIDIDO (01/09): contra qué número compara el freno
+
+**Contra la SUMA DE LOS RESTANTES DE LOS LOTES, no contra el neto.**
+
+Ese número **nunca puede ser negativo**: los restantes son ≥ 0 por
+construcción, y el negativo del neto vive en `sin_lote`, que es otra cosa. Con
+eso la pregunta "¿qué pasa cuando el stock a esa fecha ya viene negativo?" no
+llega a plantearse — el freno no mira ese número. Era la objeción del dueño y
+es la que forzó este diseño: trabar a un operario por un agujero que ya estaba
+ahí antes de que tocara nada sería trabarlo por lo mismo que está arreglando.
+
+**El recorte es asimétrico, a propósito: entradas HASTA la fecha inclusive,
+salidas HASTA EL DÍA ANTERIOR.** Las salidas del mismo día no cuentan.
+
+Sale de la regla que E4 ya fijó: **dentro de un día el sistema no tiene
+orden** — guarda fechas, no horas. Descontar una salida del mismo día es
+afirmar un orden que no sabemos, y afirmarlo justo en contra del que está
+reprocesando. Es la misma simetría que ya aceptamos del otro lado: un lote
+cargado a la tarde cubre una salida de esa misma mañana.
+
+Medido con el código, sobre el caso real del 31/08 (Zapallito: 44 sueltos + 25
+cajas del corte, y el depósito arma 69 cajas ese mismo día antes de cargar la
+guía R). El operario carga después la guía que falta, tomando 44:
+
+```
+neto al cierre del día        disponible =  0   ->  LO TRABA
+salidas del día no cuentan    disponible = 69   ->  PASA
+```
+
+**Y no es un colador.** Los dos casos de inconsistencia real siguen trabados:
+
+```
+toma 20 con fecha 03/08 y ese día solo había 5 comprados       -> TRABA
+comprado el 20/08, salió entero el 25/08, reproceso del 31/08  -> TRABA
+```
+
+### Lo que el freno NO cubre, y qué hacer cuando pase
+
+**Si el reproceso es de un día y las cajas salieron el día ANTERIOR, se
+traba.** Es correcto —la mercadería salió antes de existir— pero le va a pasar
+al depósito cada vez que arme después de medianoche o cargue la fecha corrida
+un día.
+
+**Si el contador de excepciones se llena de esos casos, la respuesta NO es
+aflojar el freno: es que la fecha del reproceso está mal cargada**, y para eso
+está la ventana retroactiva que se decidió el 31/08. Queda escrito acá para que
+la primera racha de excepciones no se lea como "el freno molesta".
+
 ### Las tres objeciones, y por qué ninguna alcanza para recortarlo
 
 **La regla de operario.** El desglose son números del sistema, sí. Pero
