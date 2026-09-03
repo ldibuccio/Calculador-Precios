@@ -195,6 +195,7 @@ from app.db import (
     listar_articulos,
     listar_articulos_para_reproceso,
     lotes_para_reproceso,
+    dependencias_del_lote_de_compra,
     desglose_de_renglon_armado,
     guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
@@ -3954,20 +3955,31 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
 
 
 def _renderizar_pantalla_corregir_recepcion(
-    request: Request, compra_id: int, *, error: str | None = None, status_code: int = 200
+    request: Request, compra_id: int, *, error: str | None = None, aviso=None,
+    precarga=None, status_code: int = 200
 ):
     try:
         compra = obtener_detalle_compra(compra_id)
+        # La lista va ARRIBA del formulario y ANTES de escribir nada: el que
+        # corrige tiene que decidir qué número poner, y eso depende de qué se
+        # llevó el lote.
+        dependencias = dependencias_del_lote_de_compra(compra_id) if compra else None
+        clientes = {c["id"]: c["nombre"] for c in listar_clientes()} if dependencias else {}
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     if compra is None:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
 
+    if dependencias:
+        for renglon in dependencias["renglones"]:
+            renglon["cliente_nombre"] = clientes.get(renglon["cliente_id"], "Sin cliente")
+
     return templates.TemplateResponse(
         request,
         "compra_corregir_recepcion.html",
-        {"compra": compra, "error": error},
+        {"compra": compra, "error": error, "dependencias": dependencias,
+         "aviso": aviso, "precarga": precarga or {}},
         status_code=status_code,
     )
 
@@ -4012,6 +4024,7 @@ def corregir_recepcion_compra_ruta(
     cantidad_total_real: str = Form(""),
     cantidad_cajones_rechazada: str = Form(""),
     motivo_rechazo: str = Form(""),
+    confirmado: str = Form(""),
 ):
     puerta = _puerta_de_gerencia_para_escribir(request)
     if puerta is not None:
@@ -4037,6 +4050,34 @@ def corregir_recepcion_compra_ruta(
 
     if error:
         return _renderizar_pantalla_corregir_recepcion(request, compra_id, error=error, status_code=400)
+
+    # EL SEGUNDO TOQUE, y solo cuando algo se rompe de verdad. Se simula el
+    # reparto con el número nuevo: si no queda ningún bulto sin lote ni
+    # ninguna guía R sin poder reconstruirse, guarda de una. Un cartel que
+    # aparece igual se deja de leer, y entonces no sirve el día que importa.
+    if not confirmado.strip():
+        try:
+            impacto = dependencias_del_lote_de_compra(compra_id, nueva_cantidad=cajones_valor)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if impacto and (impacto["sin_lote_de_mas"] > 0 or impacto["guias_rotas"]):
+            return _renderizar_pantalla_corregir_recepcion(
+                request,
+                compra_id,
+                aviso={
+                    "sin_lote_de_mas": _formatear_numero(impacto["sin_lote_de_mas"]),
+                    "guias_rotas": impacto["guias_rotas"],
+                    "entraron": _formatear_numero(impacto["entraron"]),
+                    "nueva": _formatear_numero(cajones_valor),
+                },
+                precarga={
+                    "cantidad_cajones_real": cantidad_cajones_real,
+                    "cantidad_total_real": cantidad_total_real,
+                    "cantidad_cajones_rechazada": cantidad_cajones_rechazada,
+                    "motivo_rechazo": motivo_rechazo,
+                },
+                status_code=400,
+            )
 
     try:
         corregir_recepcion_compra(
