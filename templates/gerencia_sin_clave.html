@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Falta la clave de Gerencia</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h1 { font-size: 1.15rem; margin: 0 0 0.75rem; color: #991b1b; }
+  p { font-size: 0.95rem; line-height: 1.4; margin: 0 0 0.75rem; }
+  code {
+    background: #f3f4f6;
+    padding: 0.1rem 0.35rem;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+  .volver {
+    display: block;
+    margin-top: 1rem;
+    padding: 0.9rem;
+    text-align: center;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    color: #444;
+    text-decoration: none;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+  <div class="tarjeta">
+    <h1>Esta pantalla está cerrada porque falta su clave</h1>
+    {# El default de Gerencia es al reves que acá: las pantallas de
+       consulta se abren igual sin clave, para que un deploy no trabe
+       nada. Esta ESCRIBE, asi que sin puerta no entra nadie. #}
+    <p>Corregir una recepción mueve la cotización del artículo y puede dejar
+       sin explicación el costo que una guía R ya congeló. No es una pantalla
+       que pueda quedar abierta a cualquiera que sepa la dirección.</p>
+    <p>Falta cargar la variable <code>{{ variable }}</code> en Railway, en
+       <strong>el servicio de esta empresa</strong> (cada una tiene la suya).
+       En cuanto esté, esta pantalla pide la clave y se puede usar.</p>
+    <p>Las demás pantallas de Gerencia siguen funcionando: son de consulta y
+       no se traban por esto.</p>
+    <a class="volver" href="/inicio">Volver a Inicio</a>
+  </div>
+</body>
+</html>

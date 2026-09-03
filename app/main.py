@@ -479,6 +479,33 @@ def _pantalla_clave_gerencia(request: Request, *, volver: str | None = None, err
     )
 
 
+def _puerta_de_gerencia_para_escribir(request: Request):
+    """La puerta de Gerencia para una pantalla que ESCRIBE. Devuelve None si puede pasar.
+
+    Se diferencia del resto de Gerencia en una sola cosa, y es a propósito:
+    **sin clave configurada NO deja pasar**. Las pantallas de consulta
+    (rentabilidades, costos fijos) se abren igual mientras la variable no
+    esté cargada, para que un deploy no trabe nada; acá el default se da
+    vuelta. Una rentabilidad que se ve de más es un problema; una pantalla
+    que corrige una recepción —y que puede dejar sin explicación el costo
+    congelado de una guía R— abierta a cualquiera que sepa la URL es otro.
+
+    Y lo dice con nombre y apellido: qué variable falta y dónde cargarla.
+    Un "no autorizado" sin explicación manda a buscar un permiso que no
+    existe.
+    """
+    if _clave_gerencia() is None:
+        return templates.TemplateResponse(
+            request,
+            "gerencia_sin_clave.html",
+            {"variable": CLAVE_GERENCIA_ENV_VAR},
+            status_code=503,
+        )
+    if not _acceso_gerencia_valido(request):
+        return _pantalla_clave_gerencia(request)
+    return None
+
+
 def _pantalla_clave_control(request: Request, *, volver: str | None = None, error: str | None = None):
     """La puerta de la zona de control: pide la clave y vuelve a la pantalla que se quería ver."""
     if volver is None:
@@ -3946,18 +3973,38 @@ def _renderizar_pantalla_corregir_recepcion(
 
 
 @app.get("/compras/{compra_id}/corregir-recepcion")
+def ver_corregir_recepcion_url_vieja(compra_id: int):
+    """La URL vieja: la pantalla se mudó a Gerencia, detrás de la clave.
+
+    Redirige en vez de romper, igual que /gerencia/auditoria cuando la
+    Auditoría se mudó a su sector propio: un link guardado en el celular de
+    alguien no puede terminar en un 404.
+    """
+    return RedirectResponse(url=f"/gerencia/compras/{compra_id}/corregir-recepcion", status_code=301)
+
+
+@app.get("/gerencia/compras/{compra_id}/corregir-recepcion")
 def ver_corregir_recepcion_compra(request: Request, compra_id: int):
     """Formulario para corregir los valores reales de una compra ya recepcionada (ej. error de tipeo en Depósito).
+
+    VIVE EN GERENCIA, y tiene que vivir acá: la cookie de la clave se emite
+    con path="/gerencia", así que en cualquier otra URL no viaja y la puerta
+    no existiría. La zona es la del manejo de la plata porque esto mueve la
+    cotización del artículo y puede dejar sin explicación el costo congelado
+    de una guía R — no es una pantalla de operación.
 
     Bloqueada la corrección en sí en corregir_recepcion_compra, pero la
     pantalla se muestra igual (con un aviso) si alguien llega acá con una
     compra que no está recepcionada — mismo criterio que el resto de la
     app: nunca una pantalla en blanco sin explicar por qué.
     """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
     return _renderizar_pantalla_corregir_recepcion(request, compra_id)
 
 
-@app.post("/compras/{compra_id}/corregir-recepcion")
+@app.post("/gerencia/compras/{compra_id}/corregir-recepcion")
 def corregir_recepcion_compra_ruta(
     request: Request,
     compra_id: int,
@@ -3966,6 +4013,10 @@ def corregir_recepcion_compra_ruta(
     cantidad_cajones_rechazada: str = Form(""),
     motivo_rechazo: str = Form(""),
 ):
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
     error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
     if not error:
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)

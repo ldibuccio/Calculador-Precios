@@ -87,6 +87,15 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
 1. **Se verifica con `git rev-list --left-right --count origin/<rama>...<rama>`**,
    que tiene que dar `0 0`. Un "push exitoso" sin líneas de actualización no
    es prueba de nada.
+
+   **Y se verifica sobre la rama en la que se está parado, no sobre la que
+   se quiso empujar.** Pasó el 02/09, un día después de escribir esta regla:
+   el commit fue a `main` (era donde estaba parado), el push fue a la rama, y
+   el `rev-list` de la rama dio `0 0` — correcto y vacío, porque la rama no
+   tenía nada pendiente. La verificación pasó en verde mientras el commit
+   estaba en otro lado. Lo agarró el hook de git al cerrar, no la regla.
+   `git branch --show-current` antes de commitear, y `git status` después del
+   push: si dice "ahead", el commit no está donde se cree.
 2. **Antes de commitear se mira en qué rama se está.** El commit va donde
    estás parado, no donde creés.
 3. **La ausencia de error no es confirmación.** Es la misma familia que el

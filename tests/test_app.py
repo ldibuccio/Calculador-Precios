@@ -3093,7 +3093,7 @@ def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
-    assert 'href="/compras/30/corregir-recepcion"' in respuesta.text
+    assert 'href="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
 
 
 def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion():
@@ -3105,7 +3105,7 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
-    assert 'href="/compras/30/corregir-recepcion"' not in respuesta.text
+    assert 'href="/gerencia/compras/30/corregir-recepcion"' not in respuesta.text
 
 
 def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
@@ -3143,18 +3143,42 @@ def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
     assert '<div class="aviso">Se corrigió la recepción de esta compra.</div>' in respuesta.text
 
 
+@pytest.fixture(autouse=True)
+def _puerta_de_gerencia_abierta(request):
+    """Los tests de Corregir Recepción entran con la clave puesta.
+
+    La pantalla vive en Gerencia y ESCRIBE, así que sin CLAVE_GERENCIA
+    configurada no deja pasar (ver _puerta_de_gerencia_para_escribir). Esa
+    puerta tiene sus propios tests, abajo; estos prueban la pantalla, así
+    que la cruzan como la cruza una persona: con la clave y su cookie.
+    """
+    nombre = request.node.name.lower()
+    # Los tests de LA PUERTA se cruzan solos: si esta fixture les pusiera la
+    # cookie, probarían la pantalla en vez del control.
+    if "corregir_recepcion" not in nombre or "clave" in nombre or "url_vieja" in nombre:
+        yield
+        return
+    from app.main import _firma_acceso_gerencia
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
+        try:
+            yield
+        finally:
+            cliente.cookies.clear()
+
+
 def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
-        respuesta = cliente.get("/compras/30/corregir-recepcion")
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
     assert "Saturno" in respuesta.text
     assert "Mzn Red" in respuesta.text
-    assert 'action="/compras/30/corregir-recepcion"' in respuesta.text
+    assert 'action="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
     assert 'id="cajones-real"' in respuesta.text
     assert 'value="10"' in respuesta.text
     # Por kilo: precarga con contenido_por_cajon_real (kilos de UN bulto).
@@ -3174,7 +3198,7 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
-        respuesta = cliente.get("/compras/30/corregir-recepcion")
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
     # Por unidad/cubeta también precarga con contenido_por_cajon_real (lo
@@ -3190,7 +3214,7 @@ def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formula
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
-        respuesta = cliente.get("/compras/30/corregir-recepcion")
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
     assert "no hay valores reales para corregir" in respuesta.text
@@ -3202,14 +3226,14 @@ def test_ver_corregir_recepcion_compra_inexistente_da_404():
         patch("app.main.obtener_detalle_compra", return_value=None),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
-        respuesta = cliente.get("/compras/999/corregir-recepcion")
+        respuesta = cliente.get("/gerencia/compras/999/corregir-recepcion")
 
     assert respuesta.status_code == 404
 
 
 def test_ver_corregir_recepcion_compra_error_de_base_da_500():
     with patch("app.main.obtener_detalle_compra", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/compras/30/corregir-recepcion")
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 500
 
@@ -3217,7 +3241,7 @@ def test_ver_corregir_recepcion_compra_error_de_base_da_500():
 def test_corregir_recepcion_compra_ruta_guarda_y_redirige():
     with patch("app.main.corregir_recepcion_compra", return_value=None) as mock_corregir:
         respuesta = cliente.post(
-            "/compras/30/corregir-recepcion",
+            "/gerencia/compras/30/corregir-recepcion",
             data={"cantidad_cajones_real": "30", "cantidad_total_real": "2400"},
             follow_redirects=False,
         )
@@ -3233,7 +3257,7 @@ def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargado
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
-        respuesta = cliente.get("/compras/30/corregir-recepcion")
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 200
     assert 'name="cantidad_cajones_rechazada"' in respuesta.text
@@ -3245,7 +3269,7 @@ def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargado
 def test_corregir_recepcion_compra_ruta_corrige_el_rechazo_parcial():
     with patch("app.main.corregir_recepcion_compra", return_value=None) as mock_corregir:
         respuesta = cliente.post(
-            "/compras/30/corregir-recepcion",
+            "/gerencia/compras/30/corregir-recepcion",
             data={
                 "cantidad_cajones_real": "7",
                 "cantidad_total_real": "18",
@@ -3265,7 +3289,7 @@ def test_corregir_recepcion_compra_ruta_con_rechazo_invalido_da_400():
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
     ):
         respuesta = cliente.post(
-            "/compras/30/corregir-recepcion",
+            "/gerencia/compras/30/corregir-recepcion",
             data={
                 "cantidad_cajones_real": "7",
                 "cantidad_total_real": "18",
@@ -3284,7 +3308,7 @@ def test_corregir_recepcion_compra_ruta_sin_datos_muestra_error_sin_guardar():
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
     ):
         respuesta = cliente.post(
-            "/compras/30/corregir-recepcion",
+            "/gerencia/compras/30/corregir-recepcion",
             data={"cantidad_cajones_real": "", "cantidad_total_real": "2400"},
         )
 
@@ -3302,7 +3326,7 @@ def test_corregir_recepcion_compra_ruta_bloqueada_da_400():
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
     ):
         respuesta = cliente.post(
-            "/compras/30/corregir-recepcion",
+            "/gerencia/compras/30/corregir-recepcion",
             data={"cantidad_cajones_real": "30", "cantidad_total_real": "2400"},
         )
 
@@ -3316,7 +3340,7 @@ def test_corregir_recepcion_compra_ruta_error_de_base_da_500():
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
     ):
         respuesta = cliente.post(
-            "/compras/30/corregir-recepcion",
+            "/gerencia/compras/30/corregir-recepcion",
             data={"cantidad_cajones_real": "30", "cantidad_total_real": "2400"},
         )
 
@@ -18432,3 +18456,100 @@ def test_guardar_de_donde_salio_NO_TRABA_si_no_llega_a_lo_armado():
     # 2 sobre un renglón de 15: se guarda igual, sin un solo freno.
     assert respuesta.status_code == 303
     mock_guardar.assert_called_once()
+
+
+# --- La puerta de Corregir Recepción (Gerencia) ---
+
+
+def test_corregir_recepcion_SIN_CLAVE_CONFIGURADA_no_deja_pasar():
+    """El default de Gerencia se da vuelta acá, y es lo que hace que la
+    pantalla sirva: las de consulta se abren igual mientras la variable no
+    esté cargada, para que un deploy no trabe nada. Esta ESCRIBE — puede
+    dejar sin explicación el costo congelado de una guía R— así que sin
+    puerta no entra nadie.
+
+    Si esto se rompiera, la pantalla quedaría abierta a cualquiera que sepa
+    la dirección en la empresa a la que le falte la variable, y nadie se
+    enteraría: se vería normal.
+    """
+    with patch("app.main._clave_gerencia", return_value=None):
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 503
+    # Y dice QUÉ falta y DÓNDE cargarlo: un "no autorizado" pelado manda a
+    # buscar un permiso que no existe.
+    assert "CLAVE_GERENCIA" in respuesta.text
+    assert "Railway" in respuesta.text
+
+
+def test_corregir_recepcion_SIN_CLAVE_tampoco_deja_GUARDAR():
+    """La puerta va en las dos rutas. Solo en el GET, cualquiera podría
+    guardar mandando el POST directo."""
+    with patch("app.main._clave_gerencia", return_value=None), \
+         patch("app.main.corregir_recepcion_compra") as mock_guardar:
+        respuesta = cliente.post(
+            "/gerencia/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "10", "cantidad_total_real": "40"},
+        )
+
+    assert respuesta.status_code == 503
+    mock_guardar.assert_not_called()
+
+
+def test_corregir_recepcion_con_clave_pero_sin_cookie_pide_la_clave():
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
+
+    assert respuesta.status_code == 401
+    assert "clave" in respuesta.text.lower()
+
+
+def test_la_url_vieja_de_corregir_recepcion_redirige_a_la_de_gerencia():
+    """La pantalla se mudó: un link guardado en el celular de alguien no
+    puede terminar en un 404. Mismo criterio que /gerencia/auditoria."""
+    respuesta = cliente.get("/compras/30/corregir-recepcion", follow_redirects=False)
+
+    assert respuesta.status_code == 301
+    assert respuesta.headers["location"] == "/gerencia/compras/30/corregir-recepcion"
+
+
+def test_desde_el_detalle_se_llega_a_corregir_y_la_clave_devuelve_A_ESA_COMPRA():
+    """El que va a corregir viene mirando esa compra, no entrando por el hub.
+
+    Así que el botón sigue estando en el detalle, y la puerta tiene que
+    devolverlo AL MISMO renglón: si la clave lo dejara en el hub de
+    Gerencia, tendría que volver a buscar la compra — y con el número mal
+    ya adentro de la cabeza, que es justo cuando se busca otra.
+    """
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        # 1. Sin cookie, la pantalla de la compra pide la clave...
+        puerta = cliente.get("/gerencia/compras/30/corregir-recepcion")
+        assert puerta.status_code == 401
+        # ...y se acuerda de a dónde volver.
+        assert 'value="/gerencia/compras/30/corregir-recepcion"' in puerta.text
+
+        # 2. Con la clave correcta, vuelve a ESA compra y no al hub.
+        try:
+            entrada = cliente.post(
+                "/gerencia/clave",
+                data={"clave": "secreta", "volver": "/gerencia/compras/30/corregir-recepcion"},
+                follow_redirects=False,
+            )
+            assert entrada.status_code == 303
+            assert entrada.headers["location"] == "/gerencia/compras/30/corregir-recepcion"
+        finally:
+            cliente.cookies.clear()
+
+
+def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave():
+    """Que el botón diga Gerencia no es decoración: sin eso, el que lo toca
+    se encuentra una pantalla de clave sin entender por qué."""
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="recepcionado")
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert 'href="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
+    assert "Gerencia" in respuesta.text
