@@ -18850,3 +18850,28 @@ def test_una_alerta_sin_titulo_corto_usa_el_largo():
     (alerta,) = unir([definicion], [])
 
     assert alerta["titulo_corto"] == "Compras sin precio de compra cargado"
+
+
+def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
+    """Descartar el formulario en curso, no anular una guía guardada (eso es
+    "Anular guía" en Guías R).
+
+    Es un ENLACE y no un botón a propósito: cancelar no le manda nada al
+    server, así que no hay forma de que borre algo. Lo que había cargado
+    —incluido un reparto editado en el desglose— se descarta solo, porque
+    nunca se escribió.
+    """
+    with (
+        patch("app.main.listar_articulos_para_reproceso", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main._ayudas_ficha_por_cliente_y_articulo", return_value={}),
+        patch("app.main._fichas_por_cliente_y_articulo", return_value={}),
+    ):
+        respuesta = cliente.get("/deposito/stock/reproceso")
+
+    texto = respuesta.text
+    assert '<a class="boton-cancelar" href="/deposito/stock">Cancelar</a>' in texto
+    # Sin confirmación: el que aprieta Cancelar quiere salir, no discutir.
+    assert "confirm(" not in texto.split("boton-cancelar")[1][:400]
+    # Y Guardar se lleva el ancho: los dos juntos, pero no del mismo peso.
+    assert "flex: 2;" in texto and "flex: 1;" in texto

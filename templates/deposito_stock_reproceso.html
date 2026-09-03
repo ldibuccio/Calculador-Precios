@@ -52,10 +52,11 @@
     background: #fff;
   }
   .ayuda-ficha { color: #2563eb; font-size: 0.85rem; margin: 0.25rem 0 0; min-height: 1em; }
+  /* Los dos juntos, pero NO del mismo peso: Guardar manda y se lleva el
+     ancho. Un Cancelar igual de grande al lado se toca por error. */
+  .acciones { display: flex; gap: 0.6rem; margin-top: 1.1rem; align-items: stretch; }
   button.boton-guardar {
-    display: block;
-    width: 100%;
-    margin-top: 1.1rem;
+    flex: 2;
     padding: 1rem;
     background: #7c3aed;
     color: #fff;
@@ -64,6 +65,26 @@
     font-size: 1.1rem;
     font-weight: 800;
     cursor: pointer;
+  }
+  /* Es un ENLACE y no un botón a propósito: cancelar es salir de la
+     pantalla, no mandarle nada al server. Así no hay forma de que borre
+     algo, ni siquiera por error — lo que había en el formulario nunca se
+     escribió. Y de paso esquiva la trampa de especificidad de esta
+     plantilla, donde un selector de elemento le gana a una clase suelta. */
+  a.boton-cancelar {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem 0.5rem;
+    background: #fff;
+    color: #555;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-decoration: none;
+    box-sizing: border-box;
   }
   .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; }
 
@@ -235,7 +256,14 @@
       </div>
       <input type="hidden" id="reparto" name="reparto" value="">
 
-      <button type="submit" class="boton-guardar">Guardar reproceso</button>
+      {# Sin confirmación: el que aprieta Cancelar quiere salir, no discutir,
+         y como no se guardó nada no hay nada que perder. Si había un
+         desglose propuesto o un reparto editado, se descartan solos —
+         nunca se escribieron. #}
+      <div class="acciones">
+        <button type="submit" class="boton-guardar">Guardar reproceso</button>
+        <a class="boton-cancelar" href="/deposito/stock">Cancelar</a>
+      </div>
     </form>
     <p class="ayuda">No hace falta que las cantidades cierren entre sí: un cajón grande puede dar varias cajas chicas. De dónde sale lo propone el sistema, del lote más viejo primero, y lo podés cambiar antes de guardar. Si te equivocaste, se anula desde Guías R y se carga de nuevo.</p>
   </div>
