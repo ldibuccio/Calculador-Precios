@@ -104,7 +104,7 @@
     {% else %}
     <p class="estimado">Comprado: {{ compra.cantidad_cajones|numero }} cajones × {{ compra.contenido_por_cajon|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</p>
 
-    <form method="post" action="/compras/{{ compra.id }}/corregir-recepcion">
+    <form method="post" action="/gerencia/compras/{{ compra.id }}/corregir-recepcion">
       <label for="cajones-real">Cajones reales</label>
       <input type="number" id="cajones-real" name="cantidad_cajones_real" min="0" step="0.01"
              value="{{ compra.cantidad_cajones_real }}">
