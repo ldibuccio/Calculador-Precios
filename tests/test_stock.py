@@ -433,3 +433,64 @@ def test_la_merma_dirigida_sigue_andando_igual_con_un_solo_lote():
     reparto = repartir_fifo(entradas, [salida])
 
     assert [l["restante"] for l in reparto["lotes"]] == [10, 6]
+
+
+# --- Corregir Recepción: simular antes de avisar ---
+
+from core.stock import documentos_que_no_entran, sin_lote_si_el_lote_cambia  # noqa: E402
+
+
+def test_bajar_un_lote_NO_deja_bultos_sin_lote_si_hay_otros_que_lo_cubren():
+    """El caso B.1, y es el que decide que el amarillo sirva.
+
+    Dos lotes de 10 y una salida de 12. Bajar el primero a 5 no rompe nada:
+    el FIFO reacomoda contra el segundo. Un aviso que saltara por "bajaste la
+    cantidad" gritaría en falso justo acá, que es el caso más común — y un
+    cartel que aparece igual se deja de leer.
+    """
+    entradas = [_lote_con_origen(1, 10), _lote_con_origen(3, 10)]
+    salidas = [_salida_fechada(5, 12)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 1, 5)
+
+    assert antes == 0
+    assert despues == 0
+
+
+def test_bajar_un_lote_por_debajo_de_lo_que_salio_deja_bultos_sin_lote():
+    """El caso B.2: no hay otro lote que absorba, y la cuenta es exacta."""
+    entradas = [_lote_con_origen(1, 10)]
+    salidas = [_salida_fechada(5, 10)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 1, 6)
+
+    assert antes == 0
+    assert despues == 4  # 10 salieron, el lote ahora da 6
+
+
+def test_SUBIR_un_lote_nunca_deja_nada_sin_lote():
+    """Por eso el aviso no se pregunta al subir: un lote más grande cubre lo
+    mismo y más."""
+    entradas = [_lote_con_origen(3, 10)]
+    salidas = [_salida_fechada(1, 4), _salida_fechada(5, 8)]
+
+    antes, despues = sin_lote_si_el_lote_cambia(entradas, salidas, "guia", 3, 20)
+
+    assert despues <= antes
+
+
+def test_los_documentos_congelados_que_no_entran_se_nombran_del_mas_nuevo_para_atras():
+    """Se acumula desde la más VIEJA porque es el orden en que el lote se
+    gastó: las que entran quedan bien, las que se pasan son las que van a
+    quedar diciendo algo que ya no se puede reconstruir."""
+    consumos = [
+        {"reproceso_id": 38, "bultos": 12},
+        {"reproceso_id": 41, "bultos": 18},
+    ]
+
+    # Con 25 entra la primera (12) y la segunda se pasa (12 + 18 = 30).
+    assert [g["reproceso_id"] for g in documentos_que_no_entran(consumos, 25)] == [41]
+    # Con 30 entran las dos justo.
+    assert documentos_que_no_entran(consumos, 30) == []
+    # Con 5 no entra ninguna.
+    assert [g["reproceso_id"] for g in documentos_que_no_entran(consumos, 5)] == [38, 41]

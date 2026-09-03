@@ -307,3 +307,54 @@ def validar_reparto_declarado(lotes: list[dict], total: float, reparto: list[dic
     if round(suma - float(total), 2) != 0:
         return "Lo repartido entre los lotes no da los bultos que declaraste."
     return None
+
+
+def sin_lote_si_el_lote_cambia(entradas, salidas, tipo_lote, origen_id, nueva_cantidad) -> tuple[float, float]:
+    """(sin_lote de ahora, sin_lote si ese lote pasara a tener `nueva_cantidad`).
+
+    Es la cuenta del aviso de Corregir Recepción, y se hace SIMULANDO en vez
+    de estimando: se corre el mismo reparto dos veces y se compara. Bajar un
+    lote no rompe siempre —si el artículo tiene otros, el FIFO reacomoda las
+    salidas solo—, así que un aviso que salte por "bajaste la cantidad"
+    gritaría casi siempre en falso, y un cartel que aparece igual se deja de
+    leer. Acá el amarillo aparece solo cuando la diferencia es mayor a cero.
+
+    Subir tampoco se pregunta desde afuera: un lote más grande cubre lo mismo
+    y más, así que la diferencia da cero o negativa y no hay nada que avisar.
+    """
+    de_ahora = repartir_fifo(entradas, salidas)["sin_lote"]
+    con_el_nuevo = repartir_fifo(
+        [
+            dict(lote, cantidad=nueva_cantidad)
+            if lote.get("tipo_lote") == tipo_lote and lote.get("origen_id") == origen_id
+            else lote
+            for lote in entradas
+        ],
+        salidas,
+    )["sin_lote"]
+    return de_ahora, con_el_nuevo
+
+
+def documentos_que_no_entran(consumos: list[dict], nueva_cantidad: float) -> list[dict]:
+    """Los consumos CONGELADOS que ya no caben en el lote, del más nuevo para atrás.
+
+    `consumos`: [{"bultos", ...}] de la más vieja a la más nueva. Se acumula
+    desde la más vieja porque es el orden en que el lote se fue gastando: las
+    que entran en el número nuevo quedan bien, y las que se pasan son las que
+    van a quedar diciendo algo que ya no se puede reconstruir.
+
+    Nombrarlas de a una, y no decir "algunas", es la diferencia entre poder
+    resolverlo y quedarse mirando el cartel: lo que hay que hacer es anular
+    ESAS guías y volver a cargarlas.
+
+    Solo mira los documentos congelados. Los renglones armados no entran acá
+    a propósito: su reparto se recalcula, así que ceden solos y no hay nada
+    que ir a corregir a mano.
+    """
+    acumulado = 0.0
+    no_entran = []
+    for consumo in consumos:
+        acumulado = round(acumulado + float(consumo["bultos"]), 2)
+        if acumulado > float(nueva_cantidad):
+            no_entran.append(consumo)
+    return no_entran

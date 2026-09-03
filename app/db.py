@@ -2099,6 +2099,107 @@ def recepcionar_compra(
         conexion.close()
 
 
+def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None = None) -> dict | None:
+    """Qué salió del lote de esta compra, y qué pasaría si su cantidad bajara.
+
+    Es lo que la pantalla de Corregir Recepción muestra ARRIBA del formulario:
+    el que corrige tiene que decidir qué número poner, y eso depende de qué se
+    llevó el lote. Con "editar y avisar" la decisión ya está tomada cuando
+    llega el cartel.
+
+    Devuelve None si la compra no existe o no está recepcionada (no hay lote).
+
+    Las dos mitades NO son la misma clase de dato, y la pantalla lo dice:
+
+    - `guias_r` sale de `reprocesos_consumos`, que es un documento CONGELADO:
+      es exacto y no se mueve nunca, pase lo que pase acá.
+    - `renglones` lo calcula el FIFO en el momento, así que puede cambiar solo
+      si mañana se corrige otra recepción. Sale de `atribuir_costos_fifo`, la
+      misma función que ya corre la alerta de cruce en Guías R — no hay una
+      segunda versión del reparto escrita para esta pantalla.
+
+    Con `nueva_cantidad` agrega el impacto medido: cuántos bultos que hoy
+    tienen lote se quedarían sin lote, y qué guías R quedarían sin poder
+    reconstruirse. Simulado, no estimado.
+    """
+    from core.costo_real import atribuir_costos_fifo
+    from core.stock import documentos_que_no_entran, salidas_para_reparto, sin_lote_si_el_lote_cambia
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT articulo_id, cantidad_cajones_real, estado FROM compras WHERE id = %s",
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None or fila[2] != "recepcionado" or fila[1] is None:
+                return None
+            articulo_id, entraron = fila[0], float(fila[1])
+
+            # Los consumos CONGELADOS de este lote, de la guía más vieja a la
+            # más nueva: es el orden en que el lote se fue gastando.
+            cursor.execute(
+                """
+                SELECT rp.id, rp.fecha_operacion, rc.bultos
+                FROM reprocesos_consumos rc
+                JOIN reprocesos rp ON rp.id = rc.reproceso_id
+                WHERE rc.compra_id = %s AND rp.anulado_el IS NULL
+                ORDER BY rp.fecha_operacion, rp.id
+                """,
+                (compra_id,),
+            )
+            guias_r = [
+                {"reproceso_id": f[0], "fecha": f[1], "bultos": float(f[2])}
+                for f in cursor.fetchall()
+            ]
+
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+    finally:
+        conexion.close()
+
+    renglones = []
+    for salida in atribuir_costos_fifo(entradas, salidas):
+        if salida.get("tipo") != "armado":
+            continue
+        bultos = sum(
+            c["bultos"] for c in salida["consumos_lotes"]
+            if c["tipo_lote"] == "guia" and c["origen_id"] == compra_id
+        )
+        if bultos <= 0:
+            continue
+        # "Lo eligió a mano" sale gratis: los lotes elegidos ya vienen
+        # colgados de la salida desde que existe la corrección del armado.
+        elegidos = salida.get("lotes_elegidos") or []
+        renglones.append(
+            {
+                "cliente_id": salida.get("cliente_id"),
+                "fecha": salida.get("fecha"),
+                "bultos": round(bultos, 2),
+                "elegido_a_mano": any(
+                    e["lote_tipo"] == "guia" and e["lote_origen_id"] == compra_id for e in elegidos
+                ),
+            }
+        )
+
+    resultado = {
+        "entraron": entraron,
+        "guias_r": guias_r,
+        "renglones": renglones,
+        "salieron": round(sum(g["bultos"] for g in guias_r) + sum(r["bultos"] for r in renglones), 2),
+        "sin_lote_de_mas": 0.0,
+        "guias_rotas": [],
+    }
+
+    if nueva_cantidad is not None and round(float(nueva_cantidad) - entraron, 2) < 0:
+        limpias = salidas_para_reparto(salidas)
+        antes, despues = sin_lote_si_el_lote_cambia(entradas, limpias, "guia", compra_id, float(nueva_cantidad))
+        resultado["sin_lote_de_mas"] = round(max(despues - antes, 0.0), 2)
+        resultado["guias_rotas"] = documentos_que_no_entran(guias_r, float(nueva_cantidad))
+
+    return resultado
+
+
 def corregir_recepcion_compra(
     compra_id: int,
     cantidad_cajones_real: float,

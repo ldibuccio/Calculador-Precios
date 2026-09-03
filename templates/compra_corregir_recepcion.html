@@ -25,6 +25,32 @@
     font-size: 0.8rem;
     margin: 0 0 0.85rem;
   }
+  /* LA LISTA: contexto para decidir, antes de escribir nada. Gris cuando no
+     hay nada colgando — el amarillo se guarda para cuando algo se rompe. */
+  .dependencias { border: 1px solid #ddd; border-radius: 10px; padding: 0.9rem; margin-bottom: 1rem; background: #fafafa; }
+  .dependencias h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .dependencias .titular { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 700; }
+  .dependencias .vacio { margin: 0; font-size: 0.95rem; color: #666; line-height: 1.4; }
+  .dependencias h4 { margin: 0.8rem 0 0.3rem; font-size: 0.8rem; color: #666; letter-spacing: 0.03em; }
+  .dependencias ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; color: #444; }
+  .dependencias li { margin-bottom: 0.15rem; }
+  .a-mano { color: #6d28d9; font-weight: 700; }
+  .dependencias .asimetria { margin: 0.85rem 0 0; font-size: 0.85rem; color: #666; line-height: 1.4; }
+  /* EL AVISO. Molde de las señas: amarillo (mirá esto), no rojo (está mal).
+     Y solo aparece cuando la simulación dice que algo se rompe. */
+  .advertencia { background: #fef3c7; color: #92400e; padding: 0.9rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.95rem; }
+  .advertencia p { margin: 0 0 0.75rem; }
+  .advertencia .grande { font-weight: 800; font-size: 1rem; }
+  .advertencia .que-se-guarda { font-weight: 400; background: rgba(255, 255, 255, 0.6); border-radius: 6px; padding: 0.5rem 0.7rem; }
+  .advertencia-botones { display: flex; gap: 0.5rem; }
+  .advertencia-botones form { flex: 1; margin: 0; }
+  .advertencia-botones button, .advertencia-botones .boton-no {
+    width: 100%; padding: 0.8rem; border-radius: 8px; font-size: 0.95rem;
+    font-weight: 700; box-sizing: border-box; cursor: pointer; text-align: center;
+    text-decoration: none; display: block;
+  }
+  button.boton-igual { background: #b45309; color: #fff; border: none; }
+  .boton-no { background: #fff; color: #444; border: 1px solid #ccc; }
   .error {
     background: #fee2e2;
     color: #991b1b;
@@ -103,6 +129,85 @@
     </div>
     {% else %}
     <p class="estimado">Comprado: {{ compra.cantidad_cajones|numero }} cajones × {{ compra.contenido_por_cajon|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</p>
+
+    {# EL AVISO DEL SEGUNDO TOQUE. Solo aparece cuando la simulación dice que
+       algo se rompe: bajar el lote no rompe siempre, y un cartel que aparece
+       igual se deja de leer justo el día que importa. #}
+    {% if aviso %}
+    <div class="advertencia">
+      {% if aviso.sin_lote_de_mas != "0" %}
+      <p class="grande">Con {{ aviso.nueva }}, {{ aviso.sin_lote_de_mas }} bultos que hoy tienen lote se quedan sin lote.</p>
+      {% else %}
+      <p class="grande">Con {{ aviso.nueva }}, una guía R queda diciendo algo que ya no se puede reconstruir.</p>
+      {% endif %}
+      <p class="que-se-guarda">De {{ aviso.entraron }} bultos a {{ aviso.nueva }}.</p>
+      {% if aviso.sin_lote_de_mas != "0" %}
+      <p>Van a aparecer en "Salidas sin lote", en Stock del Sistema. No es un error: es la señal de que salió mercadería que ninguna guía cubre.</p>
+      {% endif %}
+      {% if aviso.guias_rotas %}
+      {# Se nombran de a una: "algunas" deja mirando el cartel sin poder
+         resolverlo. Lo que hay que hacer es anular ESAS y cargarlas de nuevo. #}
+      <p>Y {% if aviso.guias_rotas|length == 1 %}la guía R{{ aviso.guias_rotas[0].reproceso_id }} va{% else %}las guías
+        {% for g in aviso.guias_rotas %}R{{ g.reproceso_id }}{% if not loop.last %}, {% endif %}{% endfor %} van{% endif %}
+        a seguir diciendo que tomaron bultos de este lote. Ese costo está congelado y no se recalcula: si el número
+        nuevo es el correcto, anulalas y volvé a cargarlas.</p>
+      <p><strong>Nadie te lo va a volver a avisar: si no las vas a anular ahora, anotalas.</strong></p>
+      {% endif %}
+      <div class="advertencia-botones">
+        <form method="post" action="/gerencia/compras/{{ compra.id }}/corregir-recepcion">
+          <input type="hidden" name="cantidad_cajones_real" value="{{ precarga.cantidad_cajones_real }}">
+          <input type="hidden" name="cantidad_total_real" value="{{ precarga.cantidad_total_real }}">
+          <input type="hidden" name="cantidad_cajones_rechazada" value="{{ precarga.cantidad_cajones_rechazada }}">
+          <input type="hidden" name="motivo_rechazo" value="{{ precarga.motivo_rechazo }}">
+          <input type="hidden" name="confirmado" value="1">
+          <button type="submit" class="boton-igual">Guardar igual</button>
+        </form>
+        <a class="boton-no" href="/compras/{{ compra.id }}/detalle">No, volver</a>
+      </div>
+    </div>
+    {% endif %}
+
+    {# LA LISTA, antes del formulario: el que corrige tiene que decidir qué
+       número poner, y eso depende de qué se llevó el lote. #}
+    {% if dependencias %}
+    <div class="dependencias">
+      <h3>Qué salió de este lote</h3>
+      {% if not dependencias.guias_r and not dependencias.renglones %}
+      <p class="vacio">Nada todavía. Los {{ dependencias.entraron|numero }} bultos siguen enteros:
+        ninguna guía R ni ningún renglón armado salió de acá.</p>
+      {% else %}
+      <p class="titular">De los {{ dependencias.entraron|numero }} bultos que entraron,
+        ya salieron {{ dependencias.salieron|numero }}.</p>
+
+      {% if dependencias.guias_r %}
+      <h4>GUÍAS R — {{ dependencias.guias_r|length }},
+        {{ dependencias.guias_r|sum(attribute="bultos")|numero }} bultos</h4>
+      <ul>
+        {% for g in dependencias.guias_r %}
+        <li>R{{ g.reproceso_id }} · {{ g.fecha|fecha_corta }} · {{ g.bultos|numero }} bultos</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if dependencias.renglones %}
+      <h4>RENGLONES ARMADOS — {{ dependencias.renglones|length }},
+        {{ dependencias.renglones|sum(attribute="bultos")|numero }} bultos</h4>
+      <ul>
+        {% for r in dependencias.renglones %}
+        <li>{{ r.cliente_nombre }} · {{ r.fecha|fecha_corta }} · {{ r.bultos|numero }} bultos{% if r.elegido_a_mano %}
+          <span class="a-mano">— lo eligió a mano</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {# Sin esto, alguien abre la pantalla dos veces, ve números distintos y
+         lo reporta como bug. Es la asimetría de fondo del modelo. #}
+      <p class="asimetria">Las guías R están congeladas: dicen esto para siempre, pase lo que pase acá.
+        Los renglones armados los reparte el FIFO cada vez, así que pueden cambiar solos si se corrige
+        otra recepción.</p>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <form method="post" action="/gerencia/compras/{{ compra.id }}/corregir-recepcion">
       <label for="cajones-real">Cajones reales</label>

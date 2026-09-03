@@ -984,6 +984,44 @@ correcciones hace el depósito de verdad.** Si son muchas, el Nivel 2 se
 vuelve necesario. Es una reescritura del núcleo del FIFO, y no se hace a
 ciegas ni el mismo día que arranca otra entrega.
 
+## Pendiente con nombre propio: una guía R puede quedar diciendo un número que el sistema SABE que está mal
+
+Anotado el 02/09/2026, al hacer la guarda de Corregir Recepción. **Va CRUZADO
+con el pendiente de acá abajo** (el reparto congelado contra el vivo): son la
+misma pregunta escrita dos veces — **cómo hacer visible que un documento
+congelado y el cálculo vivo dejaron de coincidir.** Lo que se decida para uno
+tiene que servir para el otro.
+
+**Qué pasa.** Al corregir una recepción hacia abajo, la pantalla avisa —con
+el número exacto— que la guía R41 va a quedar diciendo que tomó 18 bultos de
+un lote que ahora tiene 25, y que hay que anularla y cargarla de nuevo. **Si
+el que corrige aprieta "Guardar igual" y no la anula, eso no se ve en ningún
+lado después.** Se buscaron los cinco lugares donde podría aparecer:
+
+| Dónde | ¿Se ve? |
+|---|---|
+| La guía R en Guías R | **No.** Sigue mostrando sus consumos y un costo total completo. |
+| Alerta "Guías R con costo incompleto" | **No.** Cuenta `costo_total IS NULL`; éste está congelado y completo. |
+| Alerta "Stock de depósito en negativo" | **Casi nunca.** Cuenta el NETO bajo cero, y `sin_lote` puede ser > 0 con neto positivo. |
+| Banner de Stock del Sistema | **Casi nunca**, por lo mismo. |
+| Stock por Guía del artículo | **Sí**, pero solo si alguien entra a ese artículo puntual. |
+
+**Es la única pieza de todo este trabajo donde el sistema muestra un número
+que sabe que está mal.** Por ahora lo único que se hizo es dejar de mentirle
+al que está por apretar: el aviso dice *"nadie te lo va a volver a avisar, si
+no la vas a anular ahora, anotala"*. No arregla el agujero; lo deja dicho.
+
+## Observación chica (sin dueño): el banner "Salidas sin lote" muestra otra cosa
+
+Anotada el 02/09/2026. En Stock del Sistema, el banner dice **"Salidas sin
+lote: N bultos"** y el N sale de `-sum(stock)` de los artículos con NETO
+negativo — que no es el `sin_lote` del reparto. Son dos números distintos y
+coinciden solo a veces; es justo la distinción que el freno del reproceso
+obligó a hacer explícita.
+
+Es chica y es vieja, pero **es un nombre que miente en una pantalla que se
+mira todos los días**, así que va temprano en la cola cuando se retome.
+
 ## Pendiente con nombre propio: el reparto congelado y el vivo pueden decir cosas distintas, y nadie lo ve
 
 Anotado el 31/08/2026, al decidir la fecha retroactiva del reproceso.

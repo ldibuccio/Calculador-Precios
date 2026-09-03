@@ -3159,7 +3159,13 @@ def _puerta_de_gerencia_abierta(request):
         yield
         return
     from app.main import _firma_acceso_gerencia
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    # La lista de dependencias sale de la base: por default, lote sin usar.
+    # Los tests que la miran la parchean ellos con lo que necesitan.
+    with (
+        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch("app.main.dependencias_del_lote_de_compra", return_value=None),
+        patch("app.main.listar_clientes", return_value=[]),
+    ):
         cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
         try:
             yield
@@ -18553,3 +18559,143 @@ def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave(
 
     assert 'href="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
     assert "Gerencia" in respuesta.text
+
+
+# --- Corregir Recepción: la lista de dependencias y el segundo toque ---
+
+SIN_USAR = {"entraron": 40.0, "guias_r": [], "renglones": [], "salieron": 0.0,
+            "sin_lote_de_mas": 0.0, "guias_rotas": []}
+
+
+def _dependencias_usadas(**extra):
+    base = {
+        "entraron": 40.0,
+        "guias_r": [{"reproceso_id": 38, "fecha": date(2026, 9, 1), "bultos": 12.0},
+                    {"reproceso_id": 41, "fecha": date(2026, 9, 2), "bultos": 18.0}],
+        "renglones": [{"cliente_id": 1, "fecha": date(2026, 9, 2), "bultos": 2.0,
+                       "elegido_a_mano": False},
+                      {"cliente_id": 1, "fecha": date(2026, 9, 1), "bultos": 2.0,
+                       "elegido_a_mano": True}],
+        "salieron": 34.0,
+        "sin_lote_de_mas": 0.0,
+        "guias_rotas": [],
+    }
+    base.update(extra)
+    return base
+
+
+def test_corregir_recepcion_con_el_lote_SIN_USAR_lo_dice_en_una_linea_y_sin_cartel():
+    """El amarillo se guarda para cuando algo se rompe. Si aparece igual, en
+    dos meses se deja de leer."""
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.dependencias_del_lote_de_compra", return_value=SIN_USAR),
+        patch("app.main.listar_clientes", return_value=[]),
+    ):
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
+
+    assert "Nada todavía" in respuesta.text
+    # El cartel amarillo ni se dibuja (el CSS está siempre; el bloque no).
+    assert '<div class="advertencia">' not in respuesta.text
+
+
+def test_corregir_recepcion_lista_las_guias_R_y_los_renglones_por_separado():
+    """Son dos clases de dato distintas y la pantalla lo dice: las guías R
+    están congeladas, los renglones los recalcula el FIFO cada vez."""
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
+        patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Día"}]),
+    ):
+        respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
+
+    texto = respuesta.text
+    assert "ya salieron 34" in texto
+    assert "R41" in texto and "R38" in texto
+    assert "Día" in texto
+    # El que corrigió el reparto a mano se marca: es el que decidió una persona.
+    assert "lo eligió a mano" in texto
+    # Y la asimetría, escrita: sin esto, dos aperturas con números distintos
+    # se leen como un bug.
+    assert "pueden cambiar solos" in texto
+
+
+def test_corregir_recepcion_bajar_sin_romper_nada_guarda_DE_UNA():
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.corregir_recepcion_compra") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "35", "cantidad_total_real": "40"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once()
+
+
+def test_corregir_recepcion_bajando_de_mas_pide_el_SEGUNDO_TOQUE():
+    impacto = _dependencias_usadas(sin_lote_de_mas=5.0)
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.corregir_recepcion_compra") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "25", "cantidad_total_real": "40"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "5 bultos que hoy tienen lote se quedan sin lote" in respuesta.text
+    assert "De 40 bultos a 25." in respuesta.text
+    mock_guardar.assert_not_called()
+
+
+def test_corregir_recepcion_el_aviso_NOMBRA_la_guia_R_rota():
+    """"Algunas" deja mirando el cartel: lo que hay que hacer es anular ESAS."""
+    impacto = _dependencias_usadas(
+        sin_lote_de_mas=5.0,
+        guias_rotas=[{"reproceso_id": 41, "fecha": date(2026, 9, 2), "bultos": 18.0}],
+    )
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.corregir_recepcion_compra"),
+    ):
+        respuesta = cliente.post(
+            "/gerencia/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "25", "cantidad_total_real": "40"},
+        )
+
+    assert "la guía R41 va" in respuesta.text
+    # Y le dice la verdad al que está por apretar Guardar igual: esto no se
+    # ve en ningún lado después.
+    assert "Nadie te lo va a volver a avisar" in respuesta.text
+
+
+def test_corregir_recepcion_confirmado_SI_guarda_sin_volver_a_simular():
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.dependencias_del_lote_de_compra") as mock_impacto,
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.corregir_recepcion_compra") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/gerencia/compras/30/corregir-recepcion",
+            data={"cantidad_cajones_real": "25", "cantidad_total_real": "40",
+                  "confirmado": "1"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_guardar.assert_called_once()
+    # Con el segundo toque ni se vuelve a simular: ya decidió.
+    mock_impacto.assert_not_called()
