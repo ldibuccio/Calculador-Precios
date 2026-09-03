@@ -54,6 +54,13 @@
   }
   .boton-sucursal .detalle { display: block; font-size: 0.85rem; font-weight: 500; opacity: 0.9; margin-top: 0.2rem; }
   .boton-sucursal.completa { background: #16a34a; }
+  /* AMARILLO = quedó algo por hacer. El color refleja lo que falta HOY, no
+     lo que se tocó (mismo criterio del Cotejo): un pedido terminado con
+     renglones incompletos no está listo, y mostrarlo en verde con un tilde
+     le dice al que mira que no hay nada que hacer. Texto oscuro porque el
+     ámbar con blanco no se lee al sol. */
+  .boton-sucursal.atencion { background: #f59e0b; color: #422006; }
+  .boton-sucursal.atencion .detalle { opacity: 1; }
   .aviso-diff {
     background: #fef9c3;
     color: #713f12;
@@ -443,10 +450,10 @@
     <h2>Pedidos para armar</h2>
     {% if pendientes_listado %}
       {% for p in pendientes_listado %}
-      <a class="boton-sucursal {% if p.completo %}completa{% endif %}"
+      <a class="boton-sucursal {% if p.completo %}completa{% elif p.motivos %}atencion{% endif %}"
          href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
         Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados{% if p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados{% if p.completo %} · COMPLETO ✔{% elif p.motivos %} · {{ p.motivos|join(", ") }}{% endif %}{% if p.sin_identificar and not p.motivos %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
       </a>
       {% endfor %}
     {% elif terminados_listado %}
@@ -467,10 +474,13 @@
     <summary>Ver terminados ({{ terminados_listado|length }})</summary>
     <div class="tarjeta">
       {% for p in terminados_listado %}
-      <a class="boton-sucursal completa"
+      {# El verde estaba FIJO acá: TERMINADO es "alguien tocó el botón", no
+         "salió completo". Un pedido cerrado con renglones cortos o sin
+         identificar sale amarillo. #}
+      <a class="boton-sucursal {% if p.completo %}completa{% else %}atencion{% endif %}"
          href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
         Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% endif %}
-        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados · TERMINADO ✔ — entrá para reabrirlo si hace falta</span>
+        <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados · TERMINADO{% if p.completo %} ✔{% elif p.motivos %} · {{ p.motivos|join(", ") }}{% endif %} — entrá para reabrirlo si hace falta</span>
       </a>
       {% endfor %}
     </div>
@@ -518,7 +528,9 @@
   <div class="tarjeta">
     <h2>Pedido del {{ fecha_mostrar }} — elegí la sucursal</h2>
     {% for s in sucursales %}
-    <a class="boton-sucursal {% if s.total_renglones > 0 and s.armados == s.total_renglones %}completa{% endif %}"
+    {# Verde solo si está todo armado Y ninguno corto: los incompletos ya se
+       contaban acá y solo se decían en el texto. #}
+    <a class="boton-sucursal {% if s.total_renglones > 0 and s.armados == s.total_renglones and not s.incompletos %}completa{% elif s.incompletos %}atencion{% endif %}"
        href="/deposito/pedido/armar?cliente_id={{ cliente_id }}&fecha={{ fecha }}&sucursal={{ s.sucursal }}">
       {{ s.sucursal }} — {{ s.armados }} de {{ s.total_renglones }} artículos armados
       <span class="detalle">{% if s.orden_compra %}OC {{ s.orden_compra }}{% else %}sin OC{% endif %}{% if s.incompletos %} · {{ s.incompletos }} incompleto{{ "s" if s.incompletos != 1 else "" }}{% endif %}</span>

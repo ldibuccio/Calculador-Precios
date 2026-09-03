@@ -59,6 +59,11 @@ class DefinicionAlerta:
     TODAS siempre, así que no se lista acá — si hubiera que listarla, sería un
     ítem más para olvidarse, y una alerta olvidada es una alerta invisible.
     Puede ir a varios: modulos=("compras", "deposito").
+
+    titulo_corto: el mismo título para el BANNER, que es una cinta que corre
+    en 390px: ahí un título largo se lee a medias y el número queda para el
+    final. Vacío = se usa el título entero, que es lo normal. Auditoría
+    muestra SIEMPRE el largo: ahí sobra lugar y la aclaración sirve.
     """
 
     codigo: str
@@ -67,6 +72,7 @@ class DefinicionAlerta:
     texto_link: str
     contar: Callable
     modulos: tuple = field(default_factory=tuple)
+    titulo_corto: str = ""
 
 
 def normalizar_conteo(resultado) -> dict:
@@ -247,6 +253,7 @@ def unir(definiciones, estado) -> list:
             logger.exception("No se pudo armar el link de la alerta %s", definicion.codigo)
             url = "/auditoria"
         unidas.append({
+            "titulo_corto": definicion.titulo_corto or definicion.titulo,
             "codigo": definicion.codigo,
             "titulo": definicion.titulo,
             "url": url,

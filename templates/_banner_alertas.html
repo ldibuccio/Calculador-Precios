@@ -21,7 +21,10 @@
   {% elif _a.casos is none %}
     {% set _ = _avisos.append({"texto": "Sin calcular todavía: " ~ _a.titulo, "url": "/auditoria"}) %}
   {% else %}
-    {% set _ = _avisos.append({"texto": _a.titulo ~ " (" ~ _a.casos ~ ")", "url": _a.url}) %}
+    {# La FECHA del caso más viejo, cuando la alerta la tiene. "Pedidos
+       incompletos (3)" no dice si es de hoy o de la semana pasada, y esa es
+       justo la diferencia entre ir ahora o después. #}
+    {% set _ = _avisos.append({"texto": _a.titulo_corto ~ " (" ~ _a.casos ~ ")" ~ (" — desde el " ~ _a.mas_viejo|fecha_corta if _a.mas_viejo else ""), "url": _a.url}) %}
   {% endif %}
 {% endfor %}
 {% if banner and banner.frescura and banner.frescura.vencida %}

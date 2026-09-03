@@ -15252,7 +15252,12 @@ def test_armar_esconde_los_terminados_en_una_seccion_plegada():
     assert texto.index("Pedido del 20/08/2026") < texto.index("Ver terminados (1)")
     assert texto.index("Ver terminados (1)") < texto.index("Pedido del 21/08/2026")
     assert "COMPLETO ✔" in texto
-    assert "TERMINADO ✔ — entrá para reabrirlo" in texto
+    # El cerrado de este caso quedó a 18 de 32: TERMINADO sin tilde, con lo
+    # que le falta. El tilde es solo para el que salió completo — antes el
+    # verde y el ✔ iban fijos y le decían al que mira que no hay nada que
+    # hacer.
+    assert "TERMINADO · 14 sin armar — entrá para reabrirlo" in texto
+    assert "TERMINADO ✔" not in texto
 
     # Todo terminado: la lista principal lo dice y apunta a la sección.
     todos_cerrados = [dict(listado[1])]
@@ -15285,8 +15290,11 @@ def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
 
     assert respuesta.status_code == 200
     assert 'href="/administracion/pedidos/buscar?cliente_id=1"' in respuesta.text
-    # Cerrado explícitamente: TERMINADO ✔ aunque no esté completo (2 de 3).
-    assert "TERMINADO ✔" in respuesta.text
+    # Cerrado explícitamente y a 2 de 3: TERMINADO, pero SIN tilde y diciendo
+    # qué falta. "Terminado" es que alguien tocó el botón, no que salió
+    # completo.
+    assert "TERMINADO · 1 sin armar" in respuesta.text
+    assert "TERMINADO ✔" not in respuesta.text
 
 
 def test_ver_pedido_muestra_los_mails_trabados_del_cliente_con_revisar():
@@ -18702,3 +18710,143 @@ def test_corregir_recepcion_confirmado_SI_guarda_sin_volver_a_simular():
     mock_guardar.assert_called_once()
     # Con el segundo toque ni se vuelve a simular: ya decidió.
     mock_impacto.assert_not_called()
+
+
+# --- El color de la tarjeta: lo que queda por hacer, no lo que se tocó ---
+
+
+def _pedido_listado(**extra):
+    base = {"id": 60, "fecha_operacion": date(2026, 8, 21), "origen": "mail",
+            "creado_en": datetime(2026, 8, 21, 12, 0), "armado_cerrado_el": None,
+            "renglones_totales": 53, "renglones_armados": 53, "sin_identificar": 0,
+            "renglones_cortos": 0}
+    base.update(extra)
+    return base
+
+
+def _armar_con(listado):
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=listado),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+    ):
+        return cliente.get("/deposito/pedido/armar?cliente_id=1")
+
+
+def test_un_pedido_TERMINADO_con_renglones_cortos_NO_va_en_verde():
+    """El verde que mentía. "53 de 53" cuenta renglones TILDADOS, y uno
+    tildado con "armé 12 de 15" cuenta como armado: el pedido salía verde con
+    un tilde y le decía al que mira que no hay nada que hacer."""
+    respuesta = _armar_con([_pedido_listado(
+        armado_cerrado_el=datetime(2026, 8, 21, 18, 0), renglones_cortos=4)])
+
+    texto = respuesta.text
+    assert "atencion" in texto
+    assert "4 armados de menos" in texto
+    # Y no queda ni el verde ni el tilde.
+    assert "boton-sucursal completa" not in texto
+    assert "TERMINADO ✔" not in texto
+
+
+def test_un_pedido_TERMINADO_con_renglones_SIN_IDENTIFICAR_tampoco_va_en_verde():
+    """Los sin identificar ni siquiera entran en renglones_totales: un pedido
+    con 5 decía "53 de 53 · TERMINADO ✔" en verde. Es el verde que miente en
+    su forma más pura."""
+    respuesta = _armar_con([_pedido_listado(
+        armado_cerrado_el=datetime(2026, 8, 21, 18, 0), sin_identificar=5)])
+
+    assert "atencion" in respuesta.text
+    assert "5 sin identificar" in respuesta.text
+    assert "TERMINADO ✔" not in respuesta.text
+
+
+def test_un_pedido_TERMINADO_dejando_renglones_sin_armar_tampoco():
+    respuesta = _armar_con([_pedido_listado(
+        armado_cerrado_el=datetime(2026, 8, 21, 18, 0), renglones_armados=48)])
+
+    assert "5 sin armar" in respuesta.text
+    assert "TERMINADO ✔" not in respuesta.text
+
+
+def test_el_pedido_que_SI_salio_completo_sigue_en_verde_con_su_tilde():
+    """El amarillo tiene que significar algo: si apareciera igual en los que
+    están bien, en dos meses se deja de mirar."""
+    respuesta = _armar_con([_pedido_listado(armado_cerrado_el=datetime(2026, 8, 21, 18, 0))])
+
+    texto = respuesta.text
+    assert "TERMINADO ✔" in texto
+    # El CSS del amarillo está siempre; la clase en la tarjeta, no.
+    assert 'class="boton-sucursal atencion"' not in texto
+
+
+def test_armar_de_MAS_no_cuenta_como_incompleto_en_las_sucursales():
+    """El bug del "!=": la alerta de Auditoría ya lo tenía con "<" y la
+    pantalla no. Un renglón de 18 sobre 15 pedidos figuraba como incompleto,
+    y con eso el color habría dicho que falta mercadería donde sobró."""
+    renglones = [
+        {"id": 1, "sucursal": "VL", "articulo_id": 1, "ficha_id": 901, "nombre_venta": "Banana",
+         "cantidad": 15, "armado_el": datetime(2026, 8, 21, 9, 0), "cantidad_armada": 18,
+         "kilos_enviados": 180.0, "anulado_el": None, "texto_codigo": None,
+         "texto_descripcion": None},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_mails_pedido_sin_procesar_de_cliente", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value={
+            "id": 7, "cliente_id": 1, "fecha_operacion": date(2026, 8, 21),
+            "reemplaza_a_pedido_id": None, "armado_cerrado_el": None, "origen": "mail",
+            "recibido_el": datetime(2026, 8, 21, 12, 0)}),
+        patch("app.main.listar_sucursales_pedido", return_value=[{"sucursal": "VL", "oc": None}]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21")
+
+    # Armó 18 de 15: está completo, no incompleto. (El "incompleto" del
+    # comentario del CSS no cuenta: se mira la tarjeta.)
+    assert "· 1 incompleto" not in respuesta.text
+    assert "boton-sucursal completa" in respuesta.text
+
+
+def test_el_banner_dice_DESDE_CUANDO_y_con_el_titulo_corto():
+    """"Pedidos incompletos (3)" no dice si es de hoy o de la semana pasada,
+    y esa es la diferencia entre ir ahora o después. El título va corto
+    porque el banner es una cinta que corre en 390px; Auditoría muestra el
+    largo, que ahí sobra lugar."""
+    from app.alertas import DefinicionAlerta, unir
+
+    definicion = DefinicionAlerta(
+        codigo="pedidos_incompletos",
+        titulo="Pedidos con renglones incompletos (se armó menos de lo pedido)",
+        titulo_corto="Pedidos incompletos",
+        url="/deposito/pedido",
+        texto_link="Ver en Pedido",
+        contar=lambda: {"casos": 3, "mas_viejo": date(2026, 8, 28)},
+        modulos=("deposito",),
+    )
+    estado = [{"codigo": "pedidos_incompletos", "casos": 3, "mas_viejo": date(2026, 8, 28),
+               "calculada_el": None, "error": None, "duracion_ms": None}]
+
+    (alerta,) = unir([definicion], estado)
+
+    assert alerta["titulo_corto"] == "Pedidos incompletos"
+    assert alerta["titulo"].startswith("Pedidos con renglones incompletos")
+    assert alerta["mas_viejo"] == date(2026, 8, 28)
+
+
+def test_una_alerta_sin_titulo_corto_usa_el_largo():
+    """Vacío = el título entero, que es lo normal: 14 de las 16 alertas no
+    necesitan uno corto y no hay que ponérselo."""
+    from app.alertas import DefinicionAlerta, unir
+
+    definicion = DefinicionAlerta(
+        codigo="compras_sin_precio", titulo="Compras sin precio de compra cargado",
+        url="/compras/pendientes", texto_link="Ver", contar=lambda: 1, modulos=("compras",),
+    )
+
+    (alerta,) = unir([definicion], [])
+
+    assert alerta["titulo_corto"] == "Compras sin precio de compra cargado"

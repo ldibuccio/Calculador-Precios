@@ -128,6 +128,19 @@ De acá en adelante:
    dice.** Es la señal de que las dos reglas se volvieron a separar, y tragarla
    es cómo se pierde meses después.
 
+Corolario 2, y es de la COSTUMBRE, no de la regla: **cuando se arregla una
+copia, hay que ir a buscar la otra.** Pasó TRES veces en la misma semana. El
+`btrim` que plegaba espacios en Python y no en el índice. El emparejamiento
+del FIFO, arreglado en `repartir_fifo` y viejo en `atribuir_costos_fifo`. Y
+el `!=` de los renglones incompletos, arreglado en la alerta de Auditoría y
+vivo en la pantalla que se mira todos los días — con el agravante de que el
+docstring de la alerta **explicaba el bug** que la pantalla seguía teniendo.
+
+La regla de arriba dice dónde tiene que vivir la regla. Esto dice qué hacer
+el día que se arregla: **buscar el mismo criterio en el resto del código
+antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
+la frase alcanza, y es más barato que la tercera vez.
+
 Corolario: **una regla de unicidad no puede depender de una extensión de
 Postgres.** `unaccent` hay que habilitarla por proyecto, y una regla que se
 pierde el día que se crea la base de la empresa siguiente no es una regla. Lo

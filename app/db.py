@@ -5678,8 +5678,14 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
 
     Una fila por fecha (el vigente: el más nuevo sin anular), con lo justo
     para verlos de un vistazo sin entrar a cada uno: renglones
-    identificados, cuántos están armados y cuántos quedaron sin
-    identificar — "Pedido del 22/08 — 18 de 32 armados".
+    identificados, cuántos están armados, cuántos quedaron sin identificar y
+    cuántos se armaron CORTOS — "Pedido del 22/08 — 18 de 32 armados".
+
+    Los cortos son la cuarta cuenta y entraron el 02/09: "18 de 32" mira
+    renglones TILDADOS, y un renglón tildado con "armé 12 de 15" cuenta como
+    armado. Sin este número, un pedido con diez renglones cortos decía
+    "32 de 32" en verde y con un tilde — le decía al que mira que no hay
+    nada que hacer.
     """
     conexion = obtener_conexion()
     try:
@@ -5701,7 +5707,16 @@ def listar_pedidos_vigentes_con_armado(cliente_id: int, fecha_desde) -> list[dic
                           AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
                           AND r.armado_el IS NOT NULL) AS renglones_armados,
                        (SELECT COUNT(*) FROM pedidos_renglones r
-                        WHERE r.pedido_id = p.id AND r.articulo_id IS NULL) AS sin_identificar
+                        WHERE r.pedido_id = p.id AND r.articulo_id IS NULL) AS sin_identificar,
+                       -- Armados con MENOS bultos de los pedidos. El "<" y no
+                       -- "<>": armar de más no es incompleto. Mismo criterio
+                       -- que contar_pedidos_incompletos, para que la tarjeta y
+                       -- la alerta no puedan decir cosas distintas.
+                       (SELECT COUNT(*) FROM pedidos_renglones r
+                        WHERE r.pedido_id = p.id AND r.articulo_id IS NOT NULL
+                          AND r.anulado_el IS NULL AND r.sucursal IS NOT NULL
+                          AND r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
+                          AND r.cantidad_armada < r.cantidad) AS renglones_cortos
                 FROM pedidos p
                 WHERE p.cliente_id = %s AND p.anulado_el IS NULL AND p.fecha_operacion >= %s
                 ORDER BY p.fecha_operacion, p.creado_en DESC

@@ -132,6 +132,9 @@
   }
   .item-pedido .detalle { display: block; font-size: 0.85rem; font-weight: 500; opacity: 0.9; margin-top: 0.15rem; }
   .item-pedido.completo { background: #16a34a; }
+  /* Mismo criterio que Armar: amarillo = quedó algo por hacer. */
+  .item-pedido.atencion { background: #f59e0b; color: #422006; }
+  .item-pedido.atencion .detalle { opacity: 1; }
   .item-pedido.abierto { outline: 3px solid #1e3a8a; }
   /* Días esperados SIN pedido: se cierran cargando el pedido o marcando "no hubo". */
   .dia-faltante {
@@ -357,10 +360,10 @@
     </div>
     {% endfor %}
     {% for p in pedidos_listado %}
-    <a class="item-pedido {% if p.completo %}completo{% endif %} {% if p.fecha == fecha %}abierto{% endif %}"
+    <a class="item-pedido {% if p.completo %}completo{% elif p.motivos %}atencion{% endif %} {% if p.fecha == fecha %}abierto{% endif %}"
        href="/deposito/pedido?cliente_id={{ cliente_id }}&fecha={{ p.fecha }}">
       Pedido del {{ p.fecha_mostrar }}{% if p.es_hoy %} — HOY{% elif p.es_futuro %} — próximo{% endif %}
-      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados{% if p.cerrado %} · TERMINADO ✔{% elif p.completo %} · COMPLETO ✔{% endif %}{% if p.sin_identificar %} · {{ p.sin_identificar }} sin identificar{% endif %}</span>
+      <span class="detalle">{{ p.renglones_armados }} de {{ p.renglones_totales }} artículos armados{% if p.cerrado %} · TERMINADO{% if p.completo %} ✔{% endif %}{% elif p.completo %} · COMPLETO ✔{% endif %}{% if not p.completo and p.motivos %} · {{ p.motivos|join(", ") }}{% endif %}</span>
     </a>
     {% endfor %}
     {% for m in dias_marcados | default([]) %}

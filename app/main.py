@@ -8272,6 +8272,7 @@ ALERTAS = [
     DefinicionAlerta(
         codigo="pedidos_sin_identificar",
         titulo="Pedidos con renglones sin identificar",
+        titulo_corto="Pedidos sin identificar",
         url="/deposito/pedido",
         texto_link="Ver en Pedido",
         modulos=("deposito",),
@@ -8280,6 +8281,10 @@ ALERTAS = [
     DefinicionAlerta(
         codigo="pedidos_incompletos",
         titulo="Pedidos con renglones incompletos (se armó menos de lo pedido)",
+        # En el banner va corto: es una cinta que corre en 390px y el título
+        # largo se leía a medias, con el número recién al final. En Auditoría
+        # sigue el largo, que ahí sobra lugar y la aclaración sirve.
+        titulo_corto="Pedidos incompletos",
         url="/deposito/pedido",
         texto_link="Ver en Pedido",
         modulos=("deposito",),
@@ -10784,6 +10789,31 @@ def _fecha_pedido_o_hoy(fecha_texto: str | None):
 DIAS_PASADOS_LISTADO_PEDIDOS = 7
 
 
+def _motivos_de_atencion(pedido: dict) -> list[str]:
+    """Por qué este pedido no está listo, dicho corto y en orden de resolución.
+
+    Los TRES casos que pintan de amarillo, y ninguno más: armado corto,
+    renglones sin armar en un pedido ya terminado, y renglones sin
+    identificar. Cada uno tiene su alerta en Auditoría —los dos primeros en
+    `pedidos_incompletos`, el tercero en `pedidos_sin_identificar`—, así que
+    el color de la tarjeta y el banner no pueden decir cosas distintas.
+
+    El kilaje fuera de tolerancia NO entra a propósito: es una diferencia
+    contra la ficha, no contra lo que pidió el cliente, y mezclarlo diluye lo
+    que el color significa.
+    """
+    motivos = []
+    cortos = pedido.get("renglones_cortos", 0)
+    if cortos:
+        motivos.append(f"{cortos} armado{'s' if cortos != 1 else ''} de menos")
+    sin_armar = pedido["renglones_totales"] - pedido["renglones_armados"]
+    if pedido.get("armado_cerrado_el") is not None and sin_armar > 0:
+        motivos.append(f"{sin_armar} sin armar")
+    if pedido["sin_identificar"]:
+        motivos.append(f"{pedido['sin_identificar']} sin identificar")
+    return motivos
+
+
 def _listado_de_pedidos(cliente_id: int, hoy) -> list[dict]:
     """Los pedidos del listado (últimos 7 días + todos los futuros), con HOY primero y su estado a la vista.
 
@@ -10813,13 +10843,25 @@ def _listado_de_pedidos(cliente_id: int, hoy) -> list[dict]:
                 "sin_identificar": pedido["sin_identificar"],
                 # Cierre explícito del armado ("Terminar pedido").
                 "cerrado": pedido.get("armado_cerrado_el") is not None,
-                # Completo = todos los identificados armados y ninguno sin
-                # identificar: se marca, no desaparece.
+                "renglones_cortos": pedido.get("renglones_cortos", 0),
+                # Completo = todos los identificados armados, ninguno sin
+                # identificar y NINGUNO ARMADO CORTO: se marca, no desaparece.
+                #
+                # Lo de los cortos entró el 02/09 y es el fondo del asunto: el
+                # color tiene que reflejar LO QUE QUEDA POR HACER, no lo que se
+                # tocó (mismo criterio del Cotejo). Un pedido con renglones
+                # incompletos no está terminado, y mostrarlo en verde con un
+                # tilde le dice al que mira que no hay nada que hacer.
                 "completo": (
                     pedido["renglones_totales"] > 0
                     and pedido["renglones_armados"] == pedido["renglones_totales"]
                     and pedido["sin_identificar"] == 0
+                    and pedido.get("renglones_cortos", 0) == 0
                 ),
+                # Lo que le falta, en el orden en que se resuelve. Va como
+                # texto y no como booleano: un amarillo que no dice por qué
+                # obliga a entrar a los tres pedidos para encontrar cuál era.
+                "motivos": _motivos_de_atencion(pedido),
             }
         )
     return listado
@@ -11068,8 +11110,13 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
         sucursal["armado_real"] = sum(
             float(r["cantidad_armada"]) if r["cantidad_armada"] is not None else float(r["cantidad"]) for r in armados
         )
+        # El "<" y no "<>": armar de MÁS no es incompleto. La alerta de
+        # Auditoría ya lo tenía bien y la pantalla no — la misma regla escrita
+        # dos veces, y la copia que quedó vieja es la que se mira todos los
+        # días. Si el color depende de esto, un pedido donde sobró mercadería
+        # saldría amarillo diciendo que falta.
         sucursal["incompletos"] = sum(
-            1 for r in armados if r["cantidad_armada"] is not None and float(r["cantidad_armada"]) != float(r["cantidad"])
+            1 for r in armados if r["cantidad_armada"] is not None and float(r["cantidad_armada"]) < float(r["cantidad"])
         )
 
     sin_identificar = [r for r in renglones if r["articulo_id"] is None]
@@ -11786,10 +11833,11 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         propios = [r for r in identificados if r["sucursal"] == s["sucursal"]]
         s["total_renglones"] = len(propios)
         s["armados"] = sum(1 for r in propios if r["armado_el"] is not None)
+        # "<" y no "<>": ver el mismo conteo en _renderizar_pedido.
         s["incompletos"] = sum(
             1 for r in propios
             if r["armado_el"] is not None and r["cantidad_armada"] is not None
-            and float(r["cantidad_armada"]) != float(r["cantidad"])
+            and float(r["cantidad_armada"]) < float(r["cantidad"])
         )
 
     sin_identificar = sum(1 for r in renglones if r["articulo_id"] is None)

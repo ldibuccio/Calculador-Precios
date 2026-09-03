@@ -3662,8 +3662,12 @@ def test_listar_pedidos_vigentes_con_armado_no_cuenta_los_anulados():
         listar_pedidos_vigentes_con_armado(1, date(2026, 8, 15))
 
     consulta = cursor.execute.call_args.args[0]
-    # Los anulados quedan fuera del progreso ("18 de 32 armados").
-    assert consulta.count("r.anulado_el IS NULL") == 2
+    # Los anulados quedan fuera del progreso ("18 de 32 armados"): en el
+    # total, en los armados y en los ARMADOS CORTOS, que es la cuarta cuenta.
+    assert consulta.count("r.anulado_el IS NULL") == 3
+    # Y los cortos son con "<": armar de MÁS no es incompleto, igual que en
+    # contar_pedidos_incompletos. Las dos tienen que decir lo mismo.
+    assert "r.cantidad_armada < r.cantidad" in consulta
     assert "p.armado_cerrado_el" in consulta
 
 
