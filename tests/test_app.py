@@ -18655,6 +18655,9 @@ def test_corregir_recepcion_bajando_de_mas_pide_el_SEGUNDO_TOQUE():
     assert respuesta.status_code == 400
     assert "5 bultos que hoy tienen lote se quedan sin lote" in respuesta.text
     assert "De 40 bultos a 25." in respuesta.text
+    # Y abajo queda EL NÚMERO QUE ESCRIBIÓ, no el viejo: ver 40 otra vez se
+    # leería como que no se guardó nada.
+    assert 'value="25"' in respuesta.text
     mock_guardar.assert_not_called()
 
 

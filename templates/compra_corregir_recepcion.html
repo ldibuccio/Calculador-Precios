@@ -50,7 +50,7 @@
     text-decoration: none; display: block;
   }
   button.boton-igual { background: #b45309; color: #fff; border: none; }
-  .boton-no { background: #fff; color: #444; border: 1px solid #ccc; }
+  .boton-no { background: #fff; color: #444; border: 1px solid #ccc; flex: 1; }
   .error {
     background: #fee2e2;
     color: #991b1b;
@@ -147,11 +147,16 @@
       {% if aviso.guias_rotas %}
       {# Se nombran de a una: "algunas" deja mirando el cartel sin poder
          resolverlo. Lo que hay que hacer es anular ESAS y cargarlas de nuevo. #}
-      <p>Y {% if aviso.guias_rotas|length == 1 %}la guía R{{ aviso.guias_rotas[0].reproceso_id }} va{% else %}las guías
-        {% for g in aviso.guias_rotas %}R{{ g.reproceso_id }}{% if not loop.last %}, {% endif %}{% endfor %} van{% endif %}
-        a seguir diciendo que tomaron bultos de este lote. Ese costo está congelado y no se recalcula: si el número
-        nuevo es el correcto, anulalas y volvé a cargarlas.</p>
-      <p><strong>Nadie te lo va a volver a avisar: si no las vas a anular ahora, anotalas.</strong></p>
+      {% if aviso.guias_rotas|length == 1 %}
+      <p>Y la guía R{{ aviso.guias_rotas[0].reproceso_id }} va a seguir diciendo que tomó
+        {{ aviso.guias_rotas[0].bultos|numero }} bultos de este lote. Ese costo está congelado y no se
+        recalcula: si el número nuevo es el correcto, anulala y volvé a cargarla.</p>
+      {% else %}
+      <p>Y las guías {% for g in aviso.guias_rotas %}R{{ g.reproceso_id }}{% if not loop.last %}, {% endif %}{% endfor %}
+        van a seguir diciendo que tomaron bultos de este lote. Ese costo está congelado y no se recalcula:
+        si el número nuevo es el correcto, anulalas y volvé a cargarlas.</p>
+      {% endif %}
+      <p><strong>Nadie te lo va a volver a avisar: si no {% if aviso.guias_rotas|length == 1 %}la vas a anular ahora, anotala{% else %}las vas a anular ahora, anotalas{% endif %}.</strong></p>
       {% endif %}
       <div class="advertencia-botones">
         <form method="post" action="/gerencia/compras/{{ compra.id }}/corregir-recepcion">
@@ -211,8 +216,11 @@
 
     <form method="post" action="/gerencia/compras/{{ compra.id }}/corregir-recepcion">
       <label for="cajones-real">Cajones reales</label>
+      {# La precarga gana sobre lo guardado: si el aviso lo hizo volver, abajo
+         tiene que estar el número QUE ESCRIBIÓ, no el viejo. Ver el número
+         de antes acá sería leerlo como que no se guardó nada. #}
       <input type="number" id="cajones-real" name="cantidad_cajones_real" min="0" step="0.01"
-             value="{{ compra.cantidad_cajones_real }}">
+             value="{{ precarga.cantidad_cajones_real or compra.cantidad_cajones_real }}">
 
       {% if compra.unidad_compra == "kilo" %}
       <label for="total-real">Kilos por cajón/bulto (real)</label>
@@ -222,7 +230,7 @@
       <label for="total-real">Unidades por cajón/bulto (real)</label>
       {% endif %}
       <input type="number" id="total-real" name="cantidad_total_real" min="0" step="0.01"
-             value="{{ compra.contenido_por_cajon_real }}">
+             value="{{ precarga.cantidad_total_real or compra.contenido_por_cajon_real }}">
 
       <label for="rechazados">Bultos rechazados (vacío si no hubo rechazo)</label>
       <input type="number" id="rechazados" name="cantidad_cajones_rechazada" min="0" step="0.01"
