@@ -18511,3 +18511,45 @@ def test_la_url_vieja_de_corregir_recepcion_redirige_a_la_de_gerencia():
 
     assert respuesta.status_code == 301
     assert respuesta.headers["location"] == "/gerencia/compras/30/corregir-recepcion"
+
+
+def test_desde_el_detalle_se_llega_a_corregir_y_la_clave_devuelve_A_ESA_COMPRA():
+    """El que va a corregir viene mirando esa compra, no entrando por el hub.
+
+    Así que el botón sigue estando en el detalle, y la puerta tiene que
+    devolverlo AL MISMO renglón: si la clave lo dejara en el hub de
+    Gerencia, tendría que volver a buscar la compra — y con el número mal
+    ya adentro de la cabeza, que es justo cuando se busca otra.
+    """
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        # 1. Sin cookie, la pantalla de la compra pide la clave...
+        puerta = cliente.get("/gerencia/compras/30/corregir-recepcion")
+        assert puerta.status_code == 401
+        # ...y se acuerda de a dónde volver.
+        assert 'value="/gerencia/compras/30/corregir-recepcion"' in puerta.text
+
+        # 2. Con la clave correcta, vuelve a ESA compra y no al hub.
+        try:
+            entrada = cliente.post(
+                "/gerencia/clave",
+                data={"clave": "secreta", "volver": "/gerencia/compras/30/corregir-recepcion"},
+                follow_redirects=False,
+            )
+            assert entrada.status_code == 303
+            assert entrada.headers["location"] == "/gerencia/compras/30/corregir-recepcion"
+        finally:
+            cliente.cookies.clear()
+
+
+def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave():
+    """Que el botón diga Gerencia no es decoración: sin eso, el que lo toca
+    se encuentra una pantalla de clave sin entender por qué."""
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="recepcionado")
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert 'href="/gerencia/compras/30/corregir-recepcion"' in respuesta.text
+    assert "Gerencia" in respuesta.text
