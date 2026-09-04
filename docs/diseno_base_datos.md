@@ -1298,6 +1298,50 @@ persona tiene a mano; el mapa dice cuál es la herramienta que hace falta. Acá
 la diferencia entre las dos fue una vía de borrado permanente sobre mercadería
 que sí entró.
 
+## Pendiente con nombre propio: el botón Eliminar de Buscar Compras se muestra sin mirar el estado
+
+Encontrado el 04/09 verificando en producción. **No se arregló**, queda anotado
+con la causa, que no es la que parece a primera vista.
+
+### El síntoma y la causa no son lo mismo
+
+El síntoma es un cartel: *"Esta compra ya fue retirada"* aparece arriba de los
+resultados de Buscar Compras, despegado de la fila que lo provocó, y en el
+**mismo recuadro amarillo** que usa *"Se muestran las primeras N compras de M"*
+— o sea que un rechazo y un aviso informativo se ven idénticos. Y no nombra
+cuál compra: en una lista de treinta filas, "Esta compra" no señala nada.
+
+Pero eso es el síntoma. **La causa es que el botón Eliminar se dibuja en TODAS
+las filas, sin ninguna condición sobre el estado.** No hay un `{% if %}` en
+`compras_buscar.html`: el botón está igual en una recepcionada, en una retirada
+y en una borrable. El usuario aprieta, confirma, y recién ahí el server le dice
+que no. El mensaje existe porque el botón nunca dijo que no se podía.
+
+### Es la familia del "Ajustar a lo contado"
+
+Un botón que no debería estar ahí. El de Cotejo precargaba un ajuste
+destructivo y el de acá ofrece un borrado que va a ser rechazado: en los dos
+casos la pantalla invita a hacer algo que el sistema no va a permitir (o que no
+convenía permitir), y el error se cobra después, cuando ya se apretó.
+
+**La forma de encontrar esta familia es distinta de las otras dos.** No se
+grepea el criterio ni el campo: se mira **qué botones ofrece una pantalla y
+contra qué los valida el server**. Donde la pantalla ofrece más de lo que el
+server acepta, hay un cartel de rechazo esperando a alguien.
+
+### Qué haría falta
+
+Tres cosas, en ese orden de importancia:
+
+1. Que el botón no aparezca (o aparezca apagado, con el motivo) cuando la
+   compra no se puede borrar. La regla ya existe y está en un solo lugar
+   (`_SQL_COMPRA_BORRABLE`); lo que falta es poder preguntarla por fila sin
+   duplicarla en la plantilla — probablemente una columna calculada en la
+   consulta de la búsqueda, para que la pantalla lea el veredicto en vez de
+   reimplementarlo.
+2. Que el rechazo NO comparta recuadro con los avisos informativos.
+3. Que el mensaje nombre la compra, no diga "Esta compra".
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
