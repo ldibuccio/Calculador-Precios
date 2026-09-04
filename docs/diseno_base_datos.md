@@ -1342,6 +1342,26 @@ Tres cosas, en ese orden de importancia:
 2. Que el rechazo NO comparta recuadro con los avisos informativos.
 3. Que el mensaje nombre la compra, no diga "Esta compra".
 
+## Pendiente chico (va cuando se vuelva a tocar SQL): el comentario de `retiro_origen` quedó viejo
+
+`comment on column compras.retiro_origen` enumera solo *"logistica, deposito,
+migracion o ingreso_directo"*. Los dos valores automáticos —`automatico_carro`
+y `automatico_cooperativa`— **existen en el `check` de la línea de al lado** y
+no están en el comentario: se agregaron después y nadie volvió a tocarlo.
+
+No rompe nada, y por eso mismo importa: es la señal de siempre —un comentario
+que afirma algo que dejó de ser cierto— y es justo el campo del que dependió el
+arreglo del borrado del 04/09. Lo arregla un `comment on` suelto, una sentencia,
+bien abajo del límite del editor. Va en el próximo commit que lleve SQL, no
+antes: no vale mandar una migración de una sola línea para esto.
+
+### La medición que motivó el arreglo (04/09)
+
+Corrido el desglose de `compras` por estado/estado_retiro/retiro_origen en las
+dos bases: en **Frutamax había 8 compras `pendiente` + `automatico_cooperativa`
+del 04/09**. Ocho compras del día que el comprador no podía borrar ni cancelar,
+por un retiro que nadie hizo. No era un caso teórico.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
