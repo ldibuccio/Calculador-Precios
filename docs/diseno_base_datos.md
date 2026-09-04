@@ -790,6 +790,27 @@ concepto y sus pantallas se quedan.
 
 ## Pendiente con nombre propio: las guías R atrasadas quedan fechadas después de las salidas que explican
 
+> **Cómo se ve esto desde la pantalla (agregado el 04/09).** Un
+> `sin_procesar` negativo en Stock del Sistema **es este mismo problema**,
+> mirado desde el otro lado. Ver la sección de la cuenta 3, más abajo: la
+> aritmética cierra, y lo que el número está diciendo es que hay guías R
+> fechadas después de las salidas que deberían cubrir.
+>
+> **Y ahí hay un problema de diseño propio, que no es urgente pero es real:**
+> el operario lee *"−48 sin procesar"* y entiende **que faltan 48 bultos**.
+> Lo que falta son **guías R**. Es una señal disfrazada de número de stock, en
+> la misma columna donde todos los demás números sí son bultos.
+>
+> Eso **se dice con palabras, no con un número negativo**. Un cartel del tipo
+> *"hay salidas anteriores a las guías R que las explican"* comunica lo que
+> pasa; un −48 en una columna de bultos comunica lo contrario de lo que pasa
+> — e invita a un ajuste, que es justo lo que no hay que hacer.
+>
+> No está diseñado ni pedido. Queda acá y no como pendiente aparte **a
+> propósito**: es esta misma cosa vista desde la pantalla, y separarlos haría
+> que se arreglara uno y quedara el otro.
+
+
 Anotado el 31/08/2026, **antes de E4 y antes de mirar los costos de esta
 semana**. Se escribe ahora justamente para no confundirlo después con un error
 de E4.
@@ -1780,12 +1801,15 @@ diferencia falsa hasta que esa porción se vuelva a contar.
 hace útil. Pero hay que saberlo antes de que alguien mire un cotejo viejo y
 concluya que el arreglo no funcionó.
 
-## ABIERTO Y GRANDE: la cuenta 3 (el FIFO rejugado) puede no reconciliar con el total
+## VERIFICADA Y SANA: la cuenta 3 (el FIFO rejugado) reconcilia; un `sin_procesar` negativo NO es un error de cálculo
 
-Encontrado el 04/09, y **es más grande que las fichas y el backfill juntos**.
-Con esto **se paró la línea de trabajo del backfill** (lo ya corrido en Frutamax
-queda: recuperó dato real y los controles del N dieron bien; lo que se paró es
-Palmala y seguir adelante).
+Abierto y cerrado el 04/09. Se abrió como *"puede no reconciliar, y es más grande
+que las fichas y el backfill juntos"*; **se midió y reconcilia**. Queda escrito
+con la identidad para que el día que alguien vea un `sin_procesar` negativo no
+vuelva a empezar de cero.
+
+(Se paró igual la línea de trabajo del backfill mientras esto se resolvía. Lo ya
+corrido en Frutamax queda: recuperó dato real y los controles del N dieron bien.)
 
 ### El síntoma
 
@@ -1829,15 +1853,59 @@ Todas usan el mismo `restante`, ninguna quedó cubierta:
    compara contra la suma de los restantes: si están inflados, **deja pasar guías
    R que no debería**.
 
-### Lo que hay que medir, y en este orden
+### La identidad que lo cierra, y de dónde sale
 
-1. **Cómo reparte el FIFO las salidas de Pepino**: cuánto consume de compras,
-   cuánto de guías R, y cuánto cae en `sin_lote`. Ahí se ve por qué quedan 74 en
-   lotes de reproceso mientras el artículo tiene 26.
-2. **Si `Σ restantes + sin_lote` reconcilia con el total de las seis patas.**
-   Ésta es la que decide: si no reconcilia, la cuenta 3 tiene un problema propio
-   y las cuatro pantallas vienen mostrando —y el freno decidiendo— sobre números
-   que no cierran.
+`repartir_fifo` consume las salidas contra los lotes en orden, y lo que no puede
+atribuir cae en `sin_lote`. De ahí, sin suponer nada:
+
+```
+Σ restantes (todos los lotes) = Σ entradas − Σ salidas + sin_lote
+```
+
+Y como el total de las seis patas es `Σ entradas − Σ salidas`:
+
+```
+Σ restantes (todos) = total + sin_lote
+```
+
+`sin_procesar` no resta todos los restantes: resta **solo los de tipo
+reproceso**. Y como ningún `restante` puede ser negativo por construcción:
+
+```
+Σ restante(reproceso) ≤ Σ restantes(todos) = total + sin_lote
+sin_procesar = total − Σ restante(reproceso)  ≥  −sin_lote
+```
+
+**Un `sin_procesar` negativo está acotado por abajo por `sin_lote`.** No puede
+bajar de ahí, y si lo hiciera sí habría un problema de cálculo.
+
+La cota daba, para el 04/09: Pepino `sin_lote ≥ 48`, Zapallito `sin_lote ≥ 58`.
+**Verificado en producción contra el `sin_lote` que ya muestra
+`/administracion/stock/sistema/{articulo_id}`: la cuenta cierra.**
+
+### Entonces qué ES un `sin_procesar` negativo
+
+**Una señal real, no un error.** `sin_lote` crece cuando el FIFO no puede
+atribuir una salida a ningún lote, y desde **E4** hay una causa concreta: **el
+FIFO nunca consume un lote posterior a la salida.** Una guía R cargada *después*
+de las salidas que produjo no puede cubrirlas — esas salidas caen en `sin_lote`
+y la guía R queda con su restante intacto.
+
+O sea: **`sin_procesar` negativo = hay guías R fechadas después de las salidas
+que deberían cubrir.** Es exactamente *"las guías R atrasadas"*, visto desde la
+pantalla de stock (ver esa sección).
+
+### Lo que queda abierto de esto
+
+Una sola cosa, y es de definición, no de cálculo: **el FIFO toma como lote todo
+`movimientos_stock` con `cantidad > 0`, sin mirar `destino_rechazo`.** El total
+de las seis patas, en cambio, excluye los reingresos que fueron a `'segunda'` o
+`'reproceso'`: esos no vuelven al stock normal.
+
+Si un artículo tiene un reingreso mandado a segunda, **el FIFO le arma un lote
+que el total no cuenta**, y eso infla los restantes contra el total por una vía
+que la identidad de arriba NO acota. Hay que medirlo por artículo; no está
+medido todavía.
 
 ### El saldo de la ronda, para no perderlo
 
