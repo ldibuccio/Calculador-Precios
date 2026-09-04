@@ -1523,6 +1523,80 @@ lo barato es **pedir un motivo más útil en la pantalla del ajuste** —un
 desplegable de causas frecuentes más el texto libre— para que al menos la razón
 sea reconstruible aunque el autor no lo sea. No está decidido ni pedido.
 
+## El caso más claro de la primera familia: nueve días de pedidos sin ficha (27/08 al 04/09/2026)
+
+Tres fallos alineados para que nadie lo viera. Vale escrito entero porque cada
+uno por separado parece inofensivo.
+
+### Qué pasó
+
+`_intentar_auto_confirmar` no guarda los renglones que le da el matcher: los
+**vuelve a armar**, copiando campo por campo. Esa copia tenía cinco campos y le
+faltaba `ficha_id`. Como `crear_pedido` lee `renglon.get("ficha_id")`, cada
+pedido auto-confirmado se guardó con el artículo bien y **la ficha en NULL**.
+
+El matcheo **funcionaba**: resolvía la ficha, derivaba el artículo de ella,
+guardaba el artículo y tiraba la ficha. Por eso el síntoma tenía una forma rara
+que despistó dos veces — **cero renglones "sin identificar" Y cero con ficha, al
+mismo tiempo**.
+
+### La cronología, al minuto
+
+| cuándo | qué |
+|---|---|
+| **24/08 14:59** | `1d562b4` crea el auto-confirmado con esa copia de cinco campos. **Correcto**: `pedidos_renglones.ficha_id` todavía no existía. |
+| **26/08 18:48** | `2334c39` — la migración que agrega `ficha_id` a `pedidos_renglones`. |
+| **26/08 19:12** | **`0117328`** — el matcher pasa a devolver ficha y **el POST de la revisión a mano** la guarda. **No toca la copia del auto-confirmado**: cero coincidencias en su diff. |
+| 26/08 20:20 | `9d7d4f5` cambia los candidatos del matcher a fichas. Tampoco la toca. |
+| **27/08** | primer pedido auto-confirmado después del deploy. Sin ficha, y así todos los días. |
+| **04/09** | encontrado. `git log -S "renglones_guardar.append"` devuelve **una sola línea en toda la historia**: la del 24/08. |
+
+`0117328` **no rompió nada: dejó atrás una copia.** Es la primera familia
+textual — la construcción del renglón estaba escrita dos veces y se completó
+una sola.
+
+### Los tres fallos que lo escondieron
+
+**1. La regla estaba escrita dos veces.** El POST manual y el auto-confirmado
+arman el mismo dict desde fuentes distintas. Arreglar uno no toca al otro, y
+nada los vincula.
+
+**2. La base tenía MEDIA regla.** El CHECK
+`pedidos_renglones_ficha_solo_identificados` es
+`articulo_id is not null or ficha_id is null`: prohíbe *ficha sin artículo* y
+**permite justo lo contrario**. La única guarda que podía atajarlo cubría la
+dirección que no pasó.
+
+**3. El test miraba los campos que sobrevivieron.** El del camino feliz
+comparaba `(sucursal, articulo_id, cantidad)` — tres de cinco, sin `ficha_id`.
+Escrito el 24, cuando la ficha no existía. **Pasó nueve días en verde.** Mismo
+patrón que los tests de los operarios del depósito: verificaba la forma del
+resultado, no la regla.
+
+### El daño, más allá de los renglones
+
+Dos cosas nacieron sobre datos ya rotos y **nunca funcionaron bien en
+producción**:
+
+- **El Cotejo por ficha (E3, 29/08)**: la cuenta por ficha recibe entradas (los
+  reprocesos) y **ninguna salida**. Cada guía R que se carga infla esa ficha y
+  nada la baja.
+- **El aviso "no hay cajas de esta ficha" (E5, 29/08)**: usa la misma cuenta
+  vía `fichas_con_cajas_armadas`, así que dice que **hay** cajas de fichas que
+  ya salieron. Falla en la dirección que no avisa.
+
+### Lo que deja como costumbre
+
+**Cuando una estructura gana un campo, hay que ir a buscar quién más la arma.**
+No alcanza con grepear el campo nuevo: hay que grepear a los que **construyen**
+esa estructura. Acá el grep que lo habría encontrado el mismo día era
+`crear_pedido(` — dos llamadores, uno actualizado y otro no.
+
+Y el corolario para los tests: **un test que compara un subconjunto de campos no
+protege los que no mira.** Cuando lo que se guarda es una estructura, se compara
+la estructura entera, y que falle al agregar un campo es la función, no la
+molestia.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha

@@ -14223,8 +14223,32 @@ def test_auto_confirmar_camino_feliz_crea_el_pedido_y_confirma_el_mail():
     assert args.args[1] == date(2026, 8, 23)
     assert args.args[2] == "mail"
     # Renglones expandidos por sucursal con cantidad, identificados.
+    #
+    # Se compara el renglón COMPLETO, no tres campos elegidos. La versión
+    # vieja miraba (sucursal, articulo_id, cantidad) y por eso pasó NUEVE
+    # DÍAS en verde mientras el auto-confirmado guardaba todos los pedidos
+    # sin ficha_id (27/08 al 04/09/2026): el campo que faltaba no estaba
+    # entre los que el test miraba. Si mañana el renglón gana un campo,
+    # este test tiene que fallar hasta que alguien decida qué va ahí.
     renglones = args.args[5]
-    assert {(r["sucursal"], r["articulo_id"], r["cantidad"]) for r in renglones} == {("VL", 1, 225.0), ("BZ", 2, 40.0)}
+    assert sorted(renglones, key=lambda r: r["sucursal"]) == [
+        {
+            "sucursal": "BZ",
+            "articulo_id": 2,
+            "ficha_id": 902,
+            "texto_codigo": "90102",
+            "texto_descripcion": "BATATA",
+            "cantidad": 40.0,
+        },
+        {
+            "sucursal": "VL",
+            "articulo_id": 1,
+            "ficha_id": 901,
+            "texto_codigo": "90101",
+            "texto_descripcion": "BANANA",
+            "cantidad": 225.0,
+        },
+    ]
     assert args.kwargs["mail_message_id"] == MAIL_AUTO_DE_PRUEBA["message_id"]
     mock_confirmar.assert_called_once_with(9, 77, motivo="Confirmado automáticamente")
     mock_lectura.assert_called_once_with(9, leido_con_ia=False)

@@ -12878,6 +12878,16 @@ def _intentar_auto_confirmar(mail: dict) -> bool:
     # Todos los candados cerraron: se guarda con la MISMA expansión de
     # renglones que el confirmar a mano (por sucursal con cantidad; un
     # renglón sin ninguna cantidad se guarda igual, sin sucursal y en 0).
+    #
+    # OJO AL COPIAR CAMPOS ACÁ. Esta expansión rearma el dict en vez de
+    # reusar el que ya trae _armar_renglones_pedido_desde_bloque, así que
+    # es una SEGUNDA COPIA de "qué campos tiene un renglón" — la primera
+    # es el POST de la revisión a mano. Del 27/08 al 04/09/2026 esta copia
+    # se olvidó de ficha_id: el matcheo resolvía la ficha, derivaba el
+    # artículo de ella, guardaba el artículo y tiraba la ficha. Nueve días
+    # de pedidos sin ficha, sin un solo error, porque el CHECK de la tabla
+    # prohíbe "ficha sin artículo" y permite justo lo contrario.
+    # Si mañana el renglón gana un campo, HAY QUE AGREGARLO ACÁ TAMBIÉN.
     renglones_guardar = []
     for renglon in renglones:
         con_cantidad = False
@@ -12890,6 +12900,7 @@ def _intentar_auto_confirmar(mail: dict) -> bool:
                 {
                     "sucursal": nombre_sucursal,
                     "articulo_id": renglon["articulo_id"],
+                    "ficha_id": renglon["ficha_id"],
                     "texto_codigo": renglon["texto_codigo"],
                     "texto_descripcion": renglon["texto_descripcion"],
                     "cantidad": cantidad_valor,
@@ -12900,6 +12911,7 @@ def _intentar_auto_confirmar(mail: dict) -> bool:
                 {
                     "sucursal": None,
                     "articulo_id": renglon["articulo_id"],
+                    "ficha_id": renglon["ficha_id"],
                     "texto_codigo": renglon["texto_codigo"],
                     "texto_descripcion": renglon["texto_descripcion"],
                     "cantidad": 0,
