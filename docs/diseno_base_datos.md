@@ -1362,6 +1362,67 @@ dos bases: en **Frutamax había 8 compras `pendiente` + `automatico_cooperativa`
 del 04/09**. Ocho compras del día que el comprador no podía borrar ni cancelar,
 por un retiro que nadie hizo. No era un caso teórico.
 
+## A DECIDIR MIRANDO, no razonando (04/09): si la alerta de pedidos incompletos se va del banner
+
+Está tomada la decisión de **no decidir todavía**, y eso es a propósito. Queda
+escrito para que cuando se retome, la discusión no se vuelva a hacer de cero.
+
+### El argumento para sacarla
+
+La cinta de alertas del hub de Depósito mezcla dos cosas que no son lo mismo:
+
+- *"Mercadería sin recepcionar hace más de 48 horas"* — **andá y hacelo**. El
+  número baja cuando alguien trabaja.
+- *"Pedidos incompletos"* — **esto ya pasó, mirá el número**. No baja tocando
+  nada: cuando el camión salió, ese pedido no se completa nunca más. Solo se
+  va solo, cuando sale de la ventana de siete días.
+
+Una alerta que nadie puede bajar termina siendo ruido de fondo, y el costo no
+es esa alerta: es que **enseña a ignorar la cinta entera**, incluidas las que sí
+son accionables. Ese es el argumento, y sigue en pie.
+
+### Por qué NO se saca ahora
+
+Porque el mismo día se pintaron de **ámbar las tarjetas** de los pedidos con
+renglones incompletos. O sea que el dato ahora está en **dos lugares**: en el
+color de la tarjeta (donde se arma, en el momento) y en el banner. Sacarlo del
+banner el mismo día que se agregó el color sería decidir sobre un
+comportamiento que todavía no ocurrió.
+
+**Lo que hay que mirar, unos días:** si el depósito ignora el banner. Si lo
+ignora, se muda a Auditoría con el argumento de arriba, que ya está escrito y
+no hay que volver a construirlo. Si lo mira, se queda.
+
+### La ventana se queda en 7, y no es un plazo
+
+Confirmado el 04/09. **Siete días no es tiempo para actuar** — cuando el camión
+salió no hay nada que hacer con ese pedido, así que como plazo de acción
+cualquier número es igual de arbitrario. La ventana es para leer el **patrón**:
+un pedido incompleto suelto no dice nada; tres en una semana del mismo cliente
+o del mismo artículo sí (falta stock sistemáticamente, o se pide algo que no se
+compra). Siete es el mínimo con el que se ve un patrón; con dos se ve ruido.
+
+Corolario: **si algún día molesta, la palanca NO es acortar la ventana.** Eso
+dejaría igual una alerta que nadie puede resolver, y encima perdería lo único
+para lo que sirve. La palanca es dónde vive la alerta.
+
+### Los dos sietes que coincidían por casualidad (arreglado el 04/09)
+
+Existían dos: la ventana de la alerta (`timedelta(days=7)` escrito a mano en su
+lambda) y `DIAS_PASADOS_LISTADO_PEDIDOS`, que decide qué pedidos lista
+`/deposito/pedido`. Coincidían en el valor y **ninguno mencionaba al otro**.
+
+El síntoma habría sido feo y silencioso: el día que alguien cambiara uno, el
+banner habría contado pedidos que la pantalla adonde lleva no muestra — el link
+diciendo *"3"* y la pantalla mostrando 2, sin ningún error en ningún lado.
+
+Se arregló **derivando, no comentando**: la alerta lee
+`DIAS_PASADOS_LISTADO_PEDIDOS`. Un comentario que dijera "es el mismo 7 que el
+otro" es exactamente la clase de comentario que envejece —la señal de las dos
+primeras familias—; una derivación no puede separarse. La dirección es esa y no
+la inversa: **manda lo que la pantalla LISTA y la alerta lo sigue**, porque la
+restricción real es que una alerta no cuente lo que su pantalla no muestra.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha

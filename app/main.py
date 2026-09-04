@@ -335,6 +335,23 @@ ORIGENES_RETIRO_LABELS = {
     "automatico_carro": "Retiro a cargo del Carrero (automático)",
     "automatico_cooperativa": "Retiro a cargo de la Cooperativa (automático)",
 }
+# Hasta cuándo se ven los pedidos pasados en los listados de Pedido y
+# Armar Pedido (los FUTUROS van siempre): un pedido armado no desaparece
+# al día siguiente — queda consultable una semana. Tocar acá si el dueño
+# quiere más historia a mano.
+#
+# La alerta pedidos_incompletos usa ESTE MISMO número para su ventana, y no
+# por casualidad: una alerta no puede contar pedidos que la pantalla adonde
+# lleva no muestra. Si fueran dos sietes sueltos, el día que alguien cambiara
+# uno el banner diría "3" y la pantalla mostraría 2, sin ningún error. Por eso
+# la alerta lo lee de acá en vez de repetirlo: un comentario que dijera "es el
+# mismo 7 que el otro" envejece; una derivación no puede separarse.
+#
+# La dirección es esta y no la inversa: manda lo que la pantalla LISTA, y la
+# alerta lo sigue. Alargar el listado hace que la alerta mire más atrás, que
+# es correcto; acortarlo la achica sola, que también.
+DIAS_PASADOS_LISTADO_PEDIDOS = 7
+
 ARGENTINA = timezone(timedelta(hours=-3))
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 
@@ -8452,7 +8469,20 @@ ALERTAS = [
         # CON ventana, al revés que las compras sin precio: un pedido que ya
         # salió incompleto no se puede completar después. Sin ventana quedaría
         # en la lista para siempre, sin forma de resolverlo ni limpiarlo.
-        contar=lambda: contar_pedidos_incompletos(_hoy_argentina() - timedelta(days=7)),
+        #
+        # La ventana NO es un plazo para actuar: cuando el camión salió ya no
+        # hay nada que hacer con ese pedido. Es para leer el PATRÓN — uno
+        # suelto no dice nada, tres en una semana del mismo cliente o del
+        # mismo artículo sí (falta stock sistemáticamente, o se pide algo que
+        # no se compra). Siete días es el mínimo con el que se ve un patrón;
+        # con dos se ve ruido.
+        #
+        # El número sale de DIAS_PASADOS_LISTADO_PEDIDOS, no de un 7 escrito
+        # acá: contar pedidos que /deposito/pedido no lista dejaría el banner
+        # diciendo un número y la pantalla mostrando otro.
+        contar=lambda: contar_pedidos_incompletos(
+            _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)
+        ),
     ),
     DefinicionAlerta(
         codigo="mails_sin_confirmar",
@@ -10941,13 +10971,6 @@ def _fecha_pedido_o_hoy(fecha_texto: str | None):
         return date.fromisoformat(fecha_texto)
     except ValueError:
         return hoy
-
-
-# Hasta cuándo se ven los pedidos pasados en los listados de Pedido y
-# Armar Pedido (los FUTUROS van siempre): un pedido armado no desaparece
-# al día siguiente — queda consultable una semana. Tocar acá si el dueño
-# quiere más historia a mano.
-DIAS_PASADOS_LISTADO_PEDIDOS = 7
 
 
 def _motivos_de_atencion(pedido: dict) -> list[str]:

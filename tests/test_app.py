@@ -19159,3 +19159,28 @@ def test_ninguna_plantilla_mete_un_nombre_a_mano_dentro_de_una_cadena_de_javascr
 
     assert culpables == [], "Escapan de más (usar |tojson): " + ", ".join(culpables)
 
+
+# --- Los dos sietes ---
+
+def test_la_ventana_de_pedidos_incompletos_sale_del_listado_y_no_de_un_7_suelto():
+    # Eran dos sietes que coincidian por casualidad y no se nombraban: el de
+    # la alerta y el del listado de /deposito/pedido. El dia que alguien
+    # cambiara uno, el banner habria contado pedidos que la pantalla adonde
+    # lleva no muestra — el link diciendo "3" y la pantalla mostrando 2, sin
+    # ningun error. Este test falla si vuelven a separarse.
+    from app.main import ALERTAS, DIAS_PASADOS_LISTADO_PEDIDOS
+
+    alerta = next(a for a in ALERTAS if a.codigo == "pedidos_incompletos")
+    # Un valor DISTINTO de 7 a proposito: si el lambda tuviera el numero
+    # escrito a mano, este test pasaría igual con 7 y no probaría nada.
+    with (
+        patch("app.main.DIAS_PASADOS_LISTADO_PEDIDOS", 3),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.contar_pedidos_incompletos", return_value={"casos": 0, "mas_viejo": None}) as mock_contar,
+    ):
+        alerta.contar()
+
+    mock_contar.assert_called_once_with(HOY_DE_PRUEBA - timedelta(days=3))
+    # Y el default sigue siendo el de la pantalla, sin sorpresas.
+    assert DIAS_PASADOS_LISTADO_PEDIDOS == 7
+
