@@ -1251,6 +1251,53 @@ hay dos caminos y ninguno está elegido:
 Lo que **no** hay que hacer es dejar el docstring como está: es lo que hace que
 el próximo que lo lea crea que tiene una salida que no tiene.
 
+## De dónde salió el ABM de proveedores de compras (04/09), y por qué el pedido original no era el arreglo
+
+Vale la pena dejarlo escrito porque el camino importa más que la pantalla.
+
+### El caso real
+
+Un proveedor cargado con el **código equivocado**. No se podía arreglar: el
+nombre sí se corrige solo (cargar otra compra con el mismo código lo pisa,
+"la última corrección manda"), pero el código **es la identidad**
+(`codigo_puesto`, unique), así que renombrarlo no lo convierte en el que se
+quiso cargar. Y no había ninguna forma de sacarlo de la lista. Quedaba para
+siempre en el selector de carga, esperando que alguien lo eligiera por error.
+
+### El pedido original era otro, y tomado literal habría sido peor
+
+Lo que se pidió primero fue **"editar y borrar todo, con clave de gerencia"**.
+Suena razonable y es la reacción natural a un dato que no se puede corregir.
+Pero tomado literal habría abierto **el borrado de compras recibidas** — las
+que tienen kilaje real pesado, que crearon lote, y de las que cuelgan costos
+congelados en `reprocesos_consumos`. Una vía de borrado ahí hay que custodiarla
+para siempre, y el caso que la motivaba no la necesitaba para nada.
+
+### Lo que lo destrabó fue el MAPA, no el pedido
+
+El pedido se paró y se hizo un relevamiento: qué botones hay, qué deja hacer
+cada estado, qué se puede deshacer. De ese mapa salieron **dos problemas
+distintos**, que el pedido original mezclaba en uno:
+
+1. **El rechazo total era un estado terminal sin salida** — no se deshacía, no
+   se editaba, no se eliminaba. Se arregló con un **deshacer** acotado al día,
+   que nunca puede tocar una recepcionada porque solo acepta `rechazado`. Cero
+   borrado nuevo.
+2. **El proveedor mal cargado** — que no tenía nada que ver con el anterior, y
+   se resolvió con una **baja lógica** que no borra ni bloquea nada.
+
+Ninguno de los dos necesitó abrir el borrado, y ninguno necesitó clave de
+gerencia. **La pantalla salió del mapa, no del pedido.**
+
+### La regla que deja
+
+Cuando el pedido llega con la forma de una solución ("dame permiso para
+borrar"), lo que hay que relevar es **qué está bloqueado y por qué**, no cómo
+implementar ese permiso. El pedido nombra el dolor con la herramienta que la
+persona tiene a mano; el mapa dice cuál es la herramienta que hace falta. Acá
+la diferencia entre las dos fue una vía de borrado permanente sobre mercadería
+que sí entró.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
