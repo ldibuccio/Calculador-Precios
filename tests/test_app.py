@@ -4142,9 +4142,44 @@ def test_ver_recepcion_confirmacion_es_en_el_lugar_no_confirm_nativo():
     assert "onclick=\"mostrarConfirmacion('1', 'rechazar')\"" in respuesta.text
     assert "onclick=\"mostrarConfirmacion('1', 'no-ingreso')\"" in respuesta.text
     assert "¿Recepcionar Tomate Cherry?" in respuesta.text
-    assert "¿Rechazo total de Tomate Cherry? No se puede deshacer." in respuesta.text
-    # "No ingresó" ya NO dice "No se puede deshacer" -- ahora sí se puede.
+    # El rechazo total ya NO dice "No se puede deshacer": se puede, el
+    # mismo día, y la confirmación tiene que decir dónde.
+    bloque_rechazo = respuesta.text.split('id="confirmacion-rechazar-1"')[1].split("</div>")[0]
+    assert "¿Rechazo total de Tomate Cherry?" in bloque_rechazo
+    assert "No se puede deshacer" not in bloque_rechazo
+    assert 'se puede deshacer hoy desde "Procesados hoy"' in bloque_rechazo
+    # El rechazo PARCIAL sí sigue diciendo que no se puede deshacer: ese
+    # recepciona el resto, crea lote y genera la devolución.
+    bloque_parcial = respuesta.text.split('id="confirmacion-rechazo-parcial-1"')[1].split("</div>")[0]
+    assert "No se puede deshacer." in bloque_parcial
+    # Y el que confirma dice qué confirma: dos "Sí" idénticos en la misma
+    # posición confirmaban cosas opuestas.
+    assert ">Sí, rechazar todo<" in respuesta.text
     assert "¿Tomate Cherry nunca llegó al depósito?" in respuesta.text
+
+
+def test_ver_recepcion_recibir_va_solo_y_los_otros_tres_abajo():
+    # La causa del rechazo apretado por error no es que falte confirmación
+    # -- ya son dos pasos en la propia pantalla -- sino que el destructivo
+    # estaba pegado a Recibir, que es el que se aprieta casi siempre.
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert 'class="boton-exito boton-recibir"' in respuesta.text
+    assert "Si algo salió mal:" in respuesta.text
+    # Recibir queda FUERA de la fila donde están los otros tres.
+    fila_problemas = respuesta.text.split("Si algo salió mal:")[1].split("</div>")[0]
+    assert "Rechazo total" in fila_problemas
+    assert "Rechazo parcial" in fila_problemas
+    assert "No ingresó" in fila_problemas
+    assert ">Recibir<" not in fila_problemas
+    # button.clase, no .clase suelta: "button { }" de arriba le gana por
+    # especificidad a una clase sola (ya nos pasó en Reproceso).
+    assert ".acciones-renglon button.boton-ancho" in respuesta.text
 
 
 def test_ver_recepcion_sin_pendientes_muestra_mensaje_vacio():
@@ -4485,7 +4520,10 @@ def test_ver_recepcion_con_procesado_recepcionado_dice_recibiste_y_no_deja_desha
     assert respuesta.status_code == 200
     assert "Recibiste" in respuesta.text
     assert "Mango" in respuesta.text
-    assert "No se puede deshacer." in respuesta.text
+    # Recepcionar creó un lote de stock: eso no se deshace desde acá, y el
+    # aviso dice por dónde se corrige en vez de dejarlo en la nada.
+    assert "Ya se recepcionó: para corregirla hace falta Gerencia." in respuesta.text
+    assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
 
 
 def test_ver_recepcion_con_procesado_rechazado_dice_rechazaste():
@@ -4554,7 +4592,9 @@ def test_ver_recepcion_panel_procesados_hoy_muestra_cantidad_y_kilos_recibidos()
     assert "Recibido: 10 cajones" not in respuesta.text
 
 
-def test_ver_recepcion_panel_procesados_hoy_rechazado_muestra_aviso_no_boton():
+def test_ver_recepcion_panel_procesados_hoy_rechazado_deja_deshacer():
+    # Una rechazada no escribió ningún valor real ni creó lote: deshacerla
+    # no puede mover un número de stock ni un costo congelado.
     procesado_rechazado = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1], estado="rechazado")
     with (
         patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
@@ -4563,7 +4603,20 @@ def test_ver_recepcion_panel_procesados_hoy_rechazado_muestra_aviso_no_boton():
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
-    assert "No se puede deshacer." in respuesta.text
+    assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' in respuesta.text
+    assert "Ya se recepcionó" not in respuesta.text
+
+
+def test_ver_recepcion_panel_procesados_hoy_recepcionado_no_deja_deshacer():
+    procesado = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1], estado="recepcionado")
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[procesado]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    assert "Ya se recepcionó: para corregirla hace falta Gerencia." in respuesta.text
     assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
 
 
@@ -4580,18 +4633,29 @@ def test_ver_recepcion_sin_procesados_hoy_muestra_mensaje_vacio():
 
 
 def test_deshacer_no_ingreso_compra_ruta_redirige_sin_procesado():
-    with patch("app.main.deshacer_no_ingresado_compra", return_value=None) as mock_deshacer:
+    with patch("app.main.deshacer_procesado_compra", return_value="no_ingresado") as mock_deshacer:
         respuesta = cliente.post("/deposito/recepcion/1/deshacer-no-ingreso", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/deposito/recepcion"
+    # Sin tarjeta efímera (procesado): la compra se va del panel y
+    # reaparece entre las pendientes, y el aviso dice que eso pasó.
+    assert respuesta.headers["location"].startswith("/deposito/recepcion?aviso=")
+    assert "procesado=" not in respuesta.headers["location"]
     mock_deshacer.assert_called_once_with(1)
+
+
+def test_deshacer_de_un_rechazo_avisa_que_era_un_rechazo():
+    with patch("app.main.deshacer_procesado_compra", return_value="rechazado"):
+        respuesta = cliente.post("/deposito/recepcion/1/deshacer-no-ingreso", follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "Rechazo+deshecho" in respuesta.headers["location"]
 
 
 def test_deshacer_no_ingreso_compra_ruta_bloqueado_da_400():
     with (
         patch(
-            "app.main.deshacer_no_ingresado_compra",
+            "app.main.deshacer_procesado_compra",
             side_effect=ValueError("Esta compra ya fue recepcionada o rechazada, no se puede deshacer."),
         ),
         patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
@@ -4605,7 +4669,7 @@ def test_deshacer_no_ingreso_compra_ruta_bloqueado_da_400():
 
 def test_deshacer_no_ingreso_compra_ruta_error_de_base_da_500():
     with (
-        patch("app.main.deshacer_no_ingresado_compra", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.deshacer_procesado_compra", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):

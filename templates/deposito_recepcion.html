@@ -99,6 +99,12 @@
   }
   .acciones-renglon form { flex: 1 1 45%; margin: 0; }
   .acciones-renglon button { flex: 1 1 45%; }
+  /* Recibir es el que se aprieta casi siempre: va solo, a todo el ancho,
+     para que el dedo no tenga al lado un boton de "algo salio mal". */
+  .acciones-compra { display: flex; flex-direction: column; gap: 0.5rem; }
+  .titulo-problemas { margin: 0.2rem 0 0; font-size: 0.8rem; color: #6b7280; }
+  /* button.clase, no .clase suelta: button de arriba le gana por especificidad. */
+  .acciones-renglon button.boton-ancho { flex: 1 1 100%; }
   button {
     width: 100%;
     padding: 0.75rem;
@@ -188,12 +194,12 @@
       {% endif %}
       <strong>{{ recien_procesado.articulo_nombre }}</strong> ({{ recien_procesado.proveedor_codigo_puesto }})
     </p>
-    {% if recien_procesado.estado == "no_ingresado" %}
+    {% if recien_procesado.deshacer_bloqueado %}
+    <p class="aviso-bloqueo">Ya se recepcionó: para corregirla hace falta Gerencia.</p>
+    {% else %}
     <form method="post" action="/deposito/recepcion/{{ recien_procesado.id }}/deshacer-no-ingreso">
       <button type="submit" class="boton-secundario">Deshacer</button>
     </form>
-    {% else %}
-    <p class="aviso-bloqueo">No se puede deshacer.</p>
     {% endif %}
   </div>
   {% endif %}
@@ -213,7 +219,7 @@
         <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|kilos }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|kilos }}{{ p.unidad_compra|sufijo_unidad }}</p>
         {% endif %}
         {% if p.deshacer_bloqueado %}
-        <p class="aviso-bloqueo">No se puede deshacer.</p>
+        <p class="aviso-bloqueo">Ya se recepcionó: para corregirla hace falta Gerencia.</p>
         {% else %}
         <form method="post" action="/deposito/recepcion/{{ p.id }}/deshacer-no-ingreso">
           <button type="submit" class="boton-secundario">Deshacer</button>
@@ -263,11 +269,14 @@
                  value="{{ c.contenido_por_cajon }}">
         </form>
 
-        <div class="acciones-renglon" id="acciones-{{ c.id }}">
-          <button type="button" class="boton-exito" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
-          <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
-          <button type="button" class="boton-advertencia" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazo-parcial')">Rechazo parcial</button>
-          <button type="button" class="boton-neutro" onclick="mostrarConfirmacion('{{ c.id }}', 'no-ingreso')">No ingresó</button>
+        <div class="acciones-compra" id="acciones-{{ c.id }}">
+          <button type="button" class="boton-exito boton-recibir" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
+          <p class="titulo-problemas">Si algo salió mal:</p>
+          <div class="acciones-renglon">
+            <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
+            <button type="button" class="boton-advertencia" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazo-parcial')">Rechazo parcial</button>
+            <button type="button" class="boton-neutro boton-ancho" onclick="mostrarConfirmacion('{{ c.id }}', 'no-ingreso')">No ingresó</button>
+          </div>
         </div>
 
         <div class="confirmacion" id="confirmacion-recibir-{{ c.id }}">
@@ -279,10 +288,10 @@
         </div>
 
         <div class="confirmacion" id="confirmacion-rechazar-{{ c.id }}">
-          <p class="texto-confirmacion">¿Rechazo total de {{ c.articulo_nombre }}? No se puede deshacer.</p>
+          <p class="texto-confirmacion">¿Rechazo total de {{ c.articulo_nombre }}? Si te equivocaste, se puede deshacer hoy desde "Procesados hoy".</p>
           <div class="acciones-renglon">
             <form method="post" action="/deposito/recepcion/{{ c.id }}/rechazar">
-              <button type="submit" class="boton-peligro">Sí</button>
+              <button type="submit" class="boton-peligro">Sí, rechazar todo</button>
             </form>
             <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'rechazar')">No</button>
           </div>

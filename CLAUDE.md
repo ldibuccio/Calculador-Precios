@@ -146,3 +146,37 @@ Postgres.** `unaccent` hay que habilitarla por proyecto, y una regla que se
 pierde el día que se crea la base de la empresa siguiente no es una regla. Lo
 que se pueda escribir en SQL puro (`translate`, `lower`, `btrim`) viaja con el
 esquema y no se olvida.
+
+## La otra familia: a una regla le crece otra encima
+
+Distinta de la de arriba, y se busca distinto. Acá la regla está escrita **una
+sola vez** y sigue diciendo lo que decía. Lo que cambió es que **otra regla,
+escrita para otra cosa, terminó pisando su resultado**.
+
+Pasó el 04/09 con `eliminar_compra`. Su docstring dice, textual: *"'pendiente'
+y 'rechazado'/'cancelado' se siguen pudiendo borrar sin restricción"*. Era
+cierto el día que se escribió. Después se agregó `_auto_retirar_si_corresponde`
+—para las recepciones, con su propio argumento válido—, `rechazar_compra` la
+reusó, y eso empezó a dejar `estado_retiro = 'retirado'`, que es justo lo que
+`eliminar_compra` bloquea tres líneas más abajo. **Nadie tocó la regla de
+borrado y la regla de borrado cambió.** Peor: cambió *a veces*, porque si
+Logística ya había cancelado el retiro la función no lo pisa — o sea que hoy
+borrar una rechazada depende de qué pasó antes en otro módulo.
+
+La diferencia práctica es **cómo se encuentra cada una**:
+
+- La regla escrita dos veces se encuentra **grepeando el criterio**: aparece
+  dos veces y las dos difieren.
+- Esta se encuentra **grepeando el campo**: alguien lo escribe en un lado y
+  alguien lo lee como guarda en otro, y entre los dos no hay ninguna mención
+  cruzada. Ninguna de las dos funciones nombra a la otra.
+
+De acá en adelante: **cuando una función nueva escriba un campo de estado,
+grepear quién más LEE ese campo como guarda**, antes de darla por hecha. Y al
+revés: una guarda que depende de un campo que escriben otros lleva escrito de
+dónde puede venir ese valor.
+
+La señal de que ya pasó es la misma en las dos familias: **un comentario que
+afirma algo que dejó de ser cierto.** Ninguno de los dos mintió cuando se
+escribió — envejecieron sin que nadie los tocara. Es el mismo síntoma del
+docstring de la alerta que explicaba el bug que la pantalla seguía teniendo.

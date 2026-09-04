@@ -103,7 +103,7 @@ from app.db import (
     crear_cliente,
     crear_compra,
     crear_compras_de_comanda,
-    deshacer_no_ingresado_compra,
+    deshacer_procesado_compra,
     deshacer_retiro_compra,
     crear_envase,
     listar_envases_con_costo,
@@ -1220,20 +1220,34 @@ def test_listar_compras_procesadas_hoy_retiro_filtra_por_tipo_y_fecha():
 
 
 def test_compra_tiene_deshacer_recepcion_bloqueado():
+    # Recepcionar escribe cantidades reales y crea un lote de stock: eso
+    # no se deshace desde Recepción, se corrige por Gerencia. El rechazo
+    # parcial también queda 'recepcionado', así que cae del mismo lado.
     assert compra_tiene_deshacer_recepcion_bloqueado("recepcionado") is True
-    assert compra_tiene_deshacer_recepcion_bloqueado("rechazado") is True
-    # no_ingresado sí se puede deshacer: no hay ningún conteo real que
-    # se pierda, nunca se llegó a contar nada.
+    # no_ingresado y rechazado sí se pueden deshacer: ninguno de los dos
+    # escribió un valor real ni creó un lote, no hay nada que se pierda.
+    assert compra_tiene_deshacer_recepcion_bloqueado("rechazado") is False
     assert compra_tiene_deshacer_recepcion_bloqueado("no_ingresado") is False
     assert compra_tiene_deshacer_recepcion_bloqueado("pendiente") is False
     assert compra_tiene_deshacer_recepcion_bloqueado(None) is False
 
 
-def test_deshacer_no_ingresado_compra_vuelve_todo_a_pendiente():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("no_ingresado",)])  # SELECT estado
+def test_compra_tiene_deshacer_retiro_bloqueado_no_acompana_al_de_recepcion():
+    # Las dos funciones devolvían ("recepcionado", "rechazado") y ahora la
+    # de Recepción dejó solo "recepcionado". Son DOS reglas distintas que
+    # coincidían en el valor: mientras la compra está rechazada la
+    # mercadería sí llegó al depósito, así que Logística no tiene que
+    # poder desmarcar ese retiro. Un grep del par encuentra las dos y
+    # tienta a cambiarlas juntas — este test es el que lo frena.
+    assert compra_tiene_deshacer_retiro_bloqueado("rechazado") is True
+    assert compra_tiene_deshacer_recepcion_bloqueado("rechazado") is False
+
+
+def test_deshacer_procesado_compra_vuelve_todo_a_pendiente():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("no_ingresado", None)])  # SELECT estado, retiro_origen
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        deshacer_no_ingresado_compra(32)
+        estado = deshacer_procesado_compra(32)
 
     consulta, parametros = cursor.execute.call_args_list[1].args
     assert "estado = 'pendiente'" in consulta
@@ -1243,15 +1257,50 @@ def test_deshacer_no_ingresado_compra_vuelve_todo_a_pendiente():
     assert "cantidad_kilos_real = NULL" in consulta
     assert "cantidad_fraccion_real = NULL" in consulta
     assert parametros == (32,)
+    # Un "No ingresó" nunca tocó el retiro: no hay segundo UPDATE.
+    assert cursor.execute.call_count == 2
+    assert estado == "no_ingresado"
     conexion.commit.assert_called_once()
 
 
-def test_deshacer_no_ingresado_compra_bloqueado_si_ya_fue_recepcionada():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado",)])
+def test_deshacer_procesado_compra_rechazada_revierte_el_retiro_que_puso_el_rechazo():
+    # rechazar_compra llama a _auto_retirar_si_corresponde, que marca
+    # retirado con retiro_origen='deposito'. Si no se revierte, la compra
+    # queda "retirada" y eliminar_compra la sigue bloqueando: el deshacer
+    # no destrabaría nada.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("rechazado", "deposito")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        estado = deshacer_procesado_compra(32)
+
+    consulta_retiro, parametros = cursor.execute.call_args_list[2].args
+    assert "estado_retiro = 'pendiente'" in consulta_retiro
+    assert "retiro_procesado_el = NULL" in consulta_retiro
+    assert "retiro_origen = NULL" in consulta_retiro
+    assert parametros == (32,)
+    assert estado == "rechazado"
+    conexion.commit.assert_called_once()
+
+
+def test_deshacer_procesado_compra_rechazada_no_pisa_el_retiro_de_logistica():
+    # Si el retiro lo tildó Logística (otro origen), el dato es de ellos y
+    # no se toca: solo se revierte lo que escribió el propio rechazo.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("rechazado", "clark")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        deshacer_procesado_compra(32)
+
+    # SELECT + el UPDATE del estado, y nada más.
+    assert cursor.execute.call_count == 2
+    conexion.commit.assert_called_once()
+
+
+def test_deshacer_procesado_compra_bloqueado_si_ya_fue_recepcionada():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
-            deshacer_no_ingresado_compra(32)
+            deshacer_procesado_compra(32)
             assert False, "tenía que lanzar ValueError"
         except ValueError as error:
             assert "no se puede deshacer" in str(error)

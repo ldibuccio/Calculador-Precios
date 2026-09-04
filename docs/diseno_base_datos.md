@@ -1186,6 +1186,71 @@ de "pagado y nunca retirado", el camino no arranca de cero: arranca de separar
 esas filas y decidir qué se hace con ellas. **Pero eso todavía no está
 pensado, y no tiene dueño.**
 
+## Pendiente con nombre propio: hoy borrar una compra rechazada depende de qué hizo Logística antes
+
+Encontrado el 04/09 relevando la salida del rechazo total. **No se arregla
+ahora** — el deshacer del mismo día lo destraba por otro lado —, pero queda
+escrito porque la grieta sigue ahí.
+
+### Qué pasa
+
+El docstring de `eliminar_compra` dice, textual:
+
+> `'pendiente' y 'rechazado'/'cancelado' se siguen pudiendo borrar sin restricción.`
+
+Eso hoy es falso, y no de manera pareja: **depende de qué hizo Logística**.
+
+- Si el retiro estaba `pendiente` cuando se rechazó: `rechazar_compra` llama a
+  `_auto_retirar_si_corresponde`, que lo marca `retirado`. Y `eliminar_compra`
+  bloquea por `estado_retiro = 'retirado'`. **No se puede borrar.**
+- Si el retiro estaba `cancelado`: `_auto_retirar_si_corresponde` NO lo pisa a
+  propósito (devuelve un aviso en vez de escribir). El estado sigue siendo
+  `cancelado`, que `eliminar_compra` no bloquea. **Sí se puede borrar.**
+
+Dos compras rechazadas idénticas para el que las mira se comportan distinto
+según algo que pasó antes, en otro módulo, y que la pantalla no muestra.
+
+### El patrón que la produjo: a la regla le creció otra encima
+
+Esto **no** es "la misma regla escrita dos veces" (el caso de los operarios,
+donde dos copias de un mismo criterio se separaron). Acá hay **una sola** regla
+de borrado, escrita una sola vez, y sigue diciendo lo que decía. Lo que pasó es
+que **otra regla, escrita para otra cosa, terminó pisando su resultado**:
+`_auto_retirar_si_corresponde` se agregó para las recepciones —"si llegó al
+depósito, alguien la retiró"—, `rechazar_compra` la reusó porque el argumento
+también le aplicaba, y el efecto colateral fue apagar una salida en una función
+que nadie tocó.
+
+Es una familia distinta, y conviene tenerla identificada porque **se busca
+distinto**:
+
+- La regla escrita dos veces se encuentra **grepeando el criterio**: aparece
+  dos veces y las dos versiones difieren.
+- Esta se encuentra **grepeando el campo**: `estado_retiro` se escribe en un
+  lado y se lee como guarda en otro, y entre los dos no hay ninguna mención
+  cruzada. El código de `eliminar_compra` no nombra a `_auto_retirar_si_
+  corresponde` ni al revés.
+
+Y la señal de que pasó es la misma en las dos familias: **un comentario que
+afirma algo que dejó de ser cierto.** El docstring no mintió cuando se escribió
+— envejeció sin que nadie lo tocara. Igual que el docstring de la alerta que
+explicaba el bug que la pantalla seguía teniendo.
+
+### Qué hacer el día que se retome
+
+No destrabar el borrado. La salida buena ya está: **deshacer** devuelve la
+compra a `pendiente` y desde ahí el borrado vuelve a estar gobernado por las
+reglas de siempre. Lo que falta es que la grieta deje de existir, y para eso
+hay dos caminos y ninguno está elegido:
+
+1. Que `eliminar_compra` mire también el `estado`, no solo el retiro, y diga lo
+   mismo en los dos casos.
+2. Que el docstring diga la verdad de hoy: que una rechazada no se borra,
+   salvo la grieta del `cancelado`.
+
+Lo que **no** hay que hacer es dejar el docstring como está: es lo que hace que
+el próximo que lo lea crea que tiene una salida que no tiene.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha

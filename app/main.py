@@ -114,7 +114,7 @@ from app.db import (
     desactivar_cliente_puesto,
     desactivar_proveedor_puesto,
     desactivar_tipo_envase_puesto,
-    deshacer_no_ingresado_compra,
+    deshacer_procesado_compra,
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
@@ -6289,16 +6289,30 @@ def no_ingreso_compra_ruta(request: Request, compra_id: int):
 
 
 @app.post("/deposito/recepcion/{compra_id}/deshacer-no-ingreso")
-def deshacer_no_ingreso_compra_ruta(request: Request, compra_id: int):
-    """Vuelve una compra marcada "No ingresó" a pendiente — tarjeta efímera o panel "Procesados hoy"."""
+def deshacer_procesado_compra_ruta(request: Request, compra_id: int):
+    """Vuelve a pendiente una compra marcada "No ingresó" o con "Rechazo total" — tarjeta efímera o panel "Procesados hoy".
+
+    La URL sigue diciendo "no-ingreso" por lo que ya está en el HTML y en
+    la memoria de los links; el nombre quedó corto cuando el deshacer pasó
+    a cubrir también el rechazo total (renombrar rutas es un pendiente
+    aparte, anotado). Lo que se puede deshacer lo decide una sola función,
+    compra_tiene_deshacer_recepcion_bloqueado, no el nombre de la ruta.
+    """
     try:
-        deshacer_no_ingresado_compra(compra_id)
+        estado_deshecho = deshacer_procesado_compra(compra_id)
     except ValueError as error_bloqueo:
         return _renderizar_pantalla_recepcion(request, error=str(error_bloqueo), status_code=400)
     except Exception as error_db:
         return _renderizar_pantalla_recepcion(request, error=f"No se pudo deshacer: {error_db}", status_code=500)
 
-    return RedirectResponse(url="/deposito/recepcion", status_code=303)
+    # La compra desaparece del panel y reaparece abajo, entre las
+    # pendientes: sin una línea que lo diga, el que lo toca no sabe si
+    # pasó algo y lo aprieta de nuevo.
+    if estado_deshecho == "rechazado":
+        aviso = "Rechazo deshecho: la compra volvió a la lista para recepcionar."
+    else:
+        aviso = "Listo: la compra volvió a la lista para recepcionar."
+    return RedirectResponse(url=f"/deposito/recepcion?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 # --- Stock del Depósito ---

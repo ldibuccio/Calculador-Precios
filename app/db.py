@@ -2310,42 +2310,71 @@ def marcar_compra_no_ingresada(compra_id: int) -> None:
 
 
 def compra_tiene_deshacer_recepcion_bloqueado(estado: str | None) -> bool:
-    """True si ya no se puede deshacer un "No ingresó" (ver /deposito/recepcion, deshacer_no_ingresado_compra).
+    """True si ya no se puede deshacer lo que se marcó en Recepción (ver /deposito/recepcion, deshacer_procesado_compra).
 
     Única definición de esta regla — la usan el panel "Procesados hoy" de
     Recepción (para mostrar el botón Deshacer o el aviso de por qué no) y
-    deshacer_no_ingresado_compra (para bloquear el guardado de verdad).
-    Recepcionada o rechazada: la mercadería ya se contó (o se rechazó
-    después de contarla), ese resultado ya es un hecho, no hay nada que
-    "deshacer" ahí — si hubo un error, se corrige por otro lado. Solo
-    no_ingresado se puede volver a pendiente: significa que nunca se
-    contó nada, así que no hay ningún conteo real que se pierda al
-    corregir el toque.
+    deshacer_procesado_compra (para bloquear el guardado de verdad).
+
+    Solo bloquea 'recepcionado'. Recepcionar escribe cantidades reales y
+    CREA UN LOTE de stock: deshacerlo movería stock, FIFO y costos ya
+    congelados en reprocesos_consumos. Eso no se deshace desde acá — se
+    corrige por Corregir Recepción, en Gerencia. El rechazo parcial es
+    una recepción (queda 'recepcionado'), así que cae en el mismo lado.
+
+    'no_ingresado' y 'rechazado' SÍ se pueden volver a pendiente: ninguno
+    de los dos escribió un valor real ni creó un lote (la única FK que
+    apunta a compras es reprocesos_consumos.compra_id, y ahí solo entran
+    lotes de compras recepcionadas). No hay ningún número de stock ni
+    ningún costo congelado que se pueda mover al deshacerlos.
+
+    OJO: compra_tiene_deshacer_retiro_bloqueado (el Deshacer de Logística)
+    devuelve el mismo par de estados que devolvía esta, y NO acompaña este
+    cambio: son dos reglas distintas que coincidían en el valor. Mientras
+    la compra está rechazada, la mercadería sí llegó al depósito, y
+    Logística no tiene que poder desmarcar ese retiro.
     """
-    return estado in ("recepcionado", "rechazado")
+    return estado == "recepcionado"
 
 
-def deshacer_no_ingresado_compra(compra_id: int) -> None:
-    """Vuelve una compra marcada "No ingresó" a pendiente de recepción (deshacer, ver /deposito/recepcion).
+def deshacer_procesado_compra(compra_id: int) -> str | None:
+    """Vuelve una compra marcada "No ingresó" o con "Rechazo total" a pendiente de recepción (deshacer, ver /deposito/recepcion).
 
     Vuelve estado a 'pendiente' y borra procesada_el junto con todos los
     valores reales (cantidad_cajones_real, contenido_por_cajon_real,
-    cantidad_kilos_real, cantidad_fraccion_real) — aunque marcar_compra_
-    no_ingresada nunca los llega a cargar, se limpian igual acá por las
-    dudas, mismo criterio "sin cicatriz" que deshacer_retiro_compra. No
-    toca estado_retiro: marcar_compra_no_ingresada tampoco lo tocaba.
-    Bloqueada (ValueError) si compra_tiene_deshacer_recepcion_bloqueado
-    ya dio True — re-chequeado acá adentro, no solo en la pantalla.
+    cantidad_kilos_real, cantidad_fraccion_real) — ni marcar_compra_no_
+    ingresada ni rechazar_compra los llegan a cargar, se limpian igual acá
+    por las dudas, mismo criterio "sin cicatriz" que deshacer_retiro_compra.
+    Bloqueada (ValueError) si compra_tiene_deshacer_recepcion_bloqueado ya
+    dio True — re-chequeado acá adentro, no solo en la pantalla.
+
+    El retiro se revierte SOLO si lo escribió este mismo rechazo, o sea si
+    retiro_origen = 'deposito' (rechazar_compra llama a _auto_retirar_si_
+    corresponde, que marca retirado con ese origen si el retiro estaba
+    pendiente). Se puede afirmar que fue el rechazo y no otra cosa porque
+    una compra rechazada NUNCA pasó por recepción, y recepcionar es lo
+    único que escribe ese origen. Cualquier otro origen es un tilde de
+    Logística y no se pisa; 'cancelado' tampoco, porque _auto_retirar
+    tampoco lo había pisado. Sin esta reversión el deshacer no destraba
+    nada: eliminar_compra bloquea por estado_retiro = 'retirado'.
+
+    Devuelve el estado que se deshizo ('rechazado' o 'no_ingresado'),
+    para que la pantalla pueda decir qué se deshizo.
+
+    Al volver a 'pendiente' la compra REENTRA al costeo con el estimado
+    (listar_compras_para_costeo excluye 'rechazado' y 'no_ingresado'). Por
+    eso el botón vive solo dentro del día, en "Procesados hoy": deshacer
+    un rechazo viejo le movería la cotización a un día ya cerrado.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT estado FROM compras WHERE id = %s", (compra_id,))
+            cursor.execute("SELECT estado, retiro_origen FROM compras WHERE id = %s", (compra_id,))
             fila = cursor.fetchone()
-            estado = fila[0] if fila else None
+            estado, retiro_origen = fila if fila else (None, None)
 
             if compra_tiene_deshacer_recepcion_bloqueado(estado):
-                raise ValueError("Esta compra ya fue recepcionada o rechazada, no se puede deshacer.")
+                raise ValueError("Esta compra ya fue recepcionada, no se puede deshacer.")
 
             cursor.execute(
                 """
@@ -2357,7 +2386,18 @@ def deshacer_no_ingresado_compra(compra_id: int) -> None:
                 """,
                 (compra_id,),
             )
+
+            if estado == "rechazado" and retiro_origen == "deposito":
+                cursor.execute(
+                    """
+                    UPDATE compras
+                    SET estado_retiro = 'pendiente', retiro_procesado_el = NULL, retiro_origen = NULL
+                    WHERE id = %s
+                    """,
+                    (compra_id,),
+                )
         conexion.commit()
+        return estado
     finally:
         conexion.close()
 
