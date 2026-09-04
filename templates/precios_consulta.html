@@ -217,7 +217,7 @@
   {% if cliente_id %}
   <script>
     const ARTICULOS_LISTA = [
-      {% for f in fichas_cliente %}{ id: {{ f.ficha_id }}, nombre: "{{ f.nombre }}" },{% endfor %}
+      {% for f in fichas_cliente %}{ id: {{ f.ficha_id }}, nombre: {{ f.nombre|tojson }} },{% endfor %}
     ];
 
     function normalizarBusquedaArticulo(texto) {

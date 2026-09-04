@@ -325,10 +325,10 @@
     }
 
     const PROVEEDORES_LISTA = [
-      {% for p in proveedores %}{ id: {{ p.id }}, codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+      {% for p in proveedores %}{ id: {{ p.id }}, codigo: {{ p.codigo_puesto|tojson }}, nombre: {{ p.nombre|tojson }} },{% endfor %}
     ];
     const ARTICULOS_LISTA = [
-      {% for a in articulos %}{ id: {{ a.id }}, nombre: "{{ a.nombre }}" },{% endfor %}
+      {% for a in articulos %}{ id: {{ a.id }}, nombre: {{ a.nombre|tojson }} },{% endfor %}
     ];
 
     function normalizarBusqueda(texto) {

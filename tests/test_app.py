@@ -16355,8 +16355,10 @@ def test_reproceso_pide_el_cliente_primero_y_la_ayuda_es_solo_de_su_ficha():
     # El selector de cliente aparece ANTES que el de artículo.
     assert texto.index('name="cliente_id"') < texto.index('name="articulo_id"')
     # Las ayudas viajan por (cliente, artículo): el JS muestra solo la del elegido.
-    assert '"1:1": "6 kg por caja, seg\\u00fan la ficha de D\\u00eda."' in texto
-    assert '"2:1": "6 kg por caja, seg\\u00fan la ficha de Vea."' in texto
+    # Los acentos van tal cual, no como \\u00XX: |tojson corre con
+    # ensure_ascii=False (ver app/main.py) para que el HTML se pueda leer.
+    assert '"1:1": "6 kg por caja, según la ficha de Día."' in texto
+    assert '"2:1": "6 kg por caja, según la ficha de Vea."' in texto
 
 
 def test_reproceso_guarda_con_cliente_y_el_aviso_repite_solo_lo_cargado():
@@ -19114,4 +19116,46 @@ def test_cargar_una_compra_de_un_proveedor_activo_no_avisa_nada():
 
     assert respuesta.status_code == 303
     assert "aviso=" not in respuesta.headers["location"]
+
+
+# --- El nombre con & escapado dos veces ---
+
+PROVEEDOR_CON_AMPERSAND = [{"id": 1, "codigo_puesto": "N01P02", "nombre": "RIO URUGUAY & GOLOSO"}]
+
+
+def test_el_nombre_con_ampersand_no_sale_escapado_dos_veces_en_el_autocompletar():
+    # Jinja escapaba el & dentro de una CADENA DE JAVASCRIPT, y el JS lo pone
+    # con textContent, que no desescapa: en pantalla se leía "&amp;". El JS
+    # estaba bien; sobraba el escape de la plantilla. Con |tojson el & viaja
+    # como \u0026 y el navegador lo devuelve a "&" al parsear el literal.
+    with (
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDOR_CON_AMPERSAND),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.status_code == 200
+    assert "&amp;amp;" not in respuesta.text
+    assert 'nombre: "RIO URUGUAY &amp; GOLOSO"' not in respuesta.text
+    assert "RIO URUGUAY \\u0026 GOLOSO" in respuesta.text
+
+
+def test_ninguna_plantilla_mete_un_nombre_a_mano_dentro_de_una_cadena_de_javascript():
+    # El corolario: cuando se arregla una copia hay que ir a buscar la otra.
+    # Eran 14 lugares en 13 plantillas con el mismo patrón; arreglar solo el
+    # que se vio en una captura es exactamente el error que ya nos costó tres
+    # veces esta semana.
+    import glob
+    import re
+
+    patron = re.compile(r'(nombre|codigo):\s*"\{\{')
+    culpables = []
+    for ruta in sorted(glob.glob("templates/*.html")):
+        with open(ruta, encoding="utf-8") as archivo:
+            for numero, linea in enumerate(archivo, 1):
+                if patron.search(linea):
+                    culpables.append(f"{ruta}:{numero}")
+
+    assert culpables == [], "Escapan de más (usar |tojson): " + ", ".join(culpables)
 

@@ -135,7 +135,7 @@
     // se puede usar igual — es la forma de cargar un proveedor nuevo (ej.
     // mercadería que llega fuera de hora, de alguien que nunca se compró).
     const PROVEEDORES_LISTA = [
-      {% for p in proveedores %}{ codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+      {% for p in proveedores %}{ codigo: {{ p.codigo_puesto|tojson }}, nombre: {{ p.nombre|tojson }} },{% endfor %}
     ];
 
     function normalizarBusquedaProveedor(texto) {

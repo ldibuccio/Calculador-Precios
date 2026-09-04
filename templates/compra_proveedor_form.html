@@ -132,7 +132,7 @@
 
   <script>
     const PROVEEDORES_CONOCIDOS = {
-      {% for p in proveedores %}"{{ p.codigo_puesto }}": "{{ p.nombre }}",{% endfor %}
+      {% for p in proveedores %}{{ p.codigo_puesto|tojson }}: {{ p.nombre|tojson }},{% endfor %}
     };
 
     function sugerirNombre() {

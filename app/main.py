@@ -782,6 +782,17 @@ SECTORES = {
 }
 
 templates.env.globals["SECTORES"] = SECTORES
+
+# |tojson es la forma correcta de meter un texto de la base adentro de una
+# cadena de JavaScript: escapa < > & ' como \u00XX, así que el navegador los
+# devuelve enteros al parsear el literal. Escribirlos a mano entre comillas
+# hacía que Jinja escapara el & a HTML y se leyera "&amp;" en pantalla.
+#
+# ensure_ascii=False para que los acentos NO salgan como \u00f3: "cajón"
+# tiene que poder leerse en el HTML igual que antes. Lo que hace falta
+# escapar (< > & ') lo escapa Jinja aparte, después del dumps, y eso no
+# depende de esta opción.
+templates.env.policies["json.dumps_kwargs"] = {"sort_keys": True, "ensure_ascii": False}
 templates.env.globals["ICONO_INICIO"] = _ICONO_INICIO
 templates.env.globals["NOMBRE_EMPRESA"] = NOMBRE_EMPRESA
 templates.env.globals["TIPO_RETIRO_DEFAULT"] = TIPO_RETIRO_DEFAULT

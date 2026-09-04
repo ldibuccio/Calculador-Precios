@@ -408,7 +408,7 @@
     const ARTICULOS_LISTA = [
       {% for a in fichas_cliente %}{
         id: {{ a.ficha_id }},
-        nombre: "{{ a.nombre }}",
+        nombre: {{ a.nombre|tojson }},
         precioVigente: {{ a.precio_vigente if a.precio_vigente is not none else "null" }},
         costoProductoUnidadVenta: {{ a.costo_producto_unidad_venta if a.costo_producto_unidad_venta is not none else "null" }},
         costoEnvaseUnidadVenta: {{ a.costo_envase_unidad_venta if a.costo_envase_unidad_venta is not none else "null" }},

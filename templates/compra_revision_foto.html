@@ -231,7 +231,7 @@
     // proveedor sugerido, entra a jugar esto. Si lo tipeado no matchea
     // nada, se puede usar igual (proveedor nuevo).
     const PROVEEDORES_LISTA = [
-      {% for p in proveedores %}{ codigo: "{{ p.codigo_puesto }}", nombre: "{{ p.nombre }}" },{% endfor %}
+      {% for p in proveedores %}{ codigo: {{ p.codigo_puesto|tojson }}, nombre: {{ p.nombre|tojson }} },{% endfor %}
     ];
 
     function normalizarBusquedaProveedor(texto) {

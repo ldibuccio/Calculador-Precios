@@ -145,7 +145,7 @@
     const TIPOS_POR_PROVEEDOR = {};
     {% for t in tipos %}
     (TIPOS_POR_PROVEEDOR["{{ t.proveedor_id }}"] = TIPOS_POR_PROVEEDOR["{{ t.proveedor_id }}"] || []).push(
-      { id: "{{ t.id }}", nombre: "{{ t.nombre }}" }
+      { id: "{{ t.id }}", nombre: {{ t.nombre|tojson }} }
     );
     {% endfor %}
     const TIPO_PRECARGADO = "{{ precarga.tipo_envase_id or '' }}";
