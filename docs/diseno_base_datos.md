@@ -1681,6 +1681,105 @@ Lo que queda por mirar, sin orden todavía:
   stock sin avisar — `_SQL_SUMAS_STOCK` suma esa columna sin `COALESCE`. La
   columna `compras_sin_real` de F lo mide.
 
+## Dos veces en una semana: un número mal calculado con un botón destructivo al lado
+
+El 04/09, en el Cotejo de Stock. Una semana antes, en el Cotejo de Vacíos. **Es
+el mismo bug con otra ropa**, y por eso vale escrito junto.
+
+### Lo que pasó ahora
+
+`_SQL_STOCK_PARTIDO` calculaba el saldo de cada ficha como
+`producidas − salidas`, **sin piso**. Ese saldo es negativo en dos casos
+perfectamente normales:
+
+- **El artículo no se reprocesa.** Manzana, pera, arándano, limón, pomelo salen
+  en el envase que vienen: cero guías R, cero producidas, y todas sus salidas
+  del otro lado. Negativo puro, que crece todos los días.
+- **Se armó desde la pila suelta**, porque no había cajas. También legítimo.
+
+Y como `sueltos = total − Σ cajas`, un Σ negativo **inflaba los sueltos por
+encima del total del artículo**, que es imposible:
+
+```
+Mzn Gob   total 63 · cajas -170 · sueltos 233
+Mzn Red   total 90 · cajas -175 · sueltos 265
+Arandano  total 30 · cajas -139 · sueltos 169
+```
+
+12 de 22 artículos. **El invariante "las porciones suman el total" seguía dando
+bien** —por eso nadie lo vio— pero el reparto entre porciones estaba mal.
+
+### Por qué es grave y no cosmético
+
+El Cotejo compara el conteo físico contra esa foto. El operario cuenta 63
+manzanas sueltas, el sistema dice 233, y la pantalla muestra una diferencia de
+−170 **con el botón "Ajustar" precargado al lado**.
+
+Y el botón está habilitado **exactamente ahí**: solo en los renglones de
+sueltos (`fila["diferencia"] != 0 and fila["ficha_id"] is None`). El comentario
+que lo justifica es correcto —*"un ajuste es por ARTÍCULO… si sobran cajas de
+Bolivia y faltan de Ecuador, el total está bien y ajustarlo lo rompería"*— pero
+**la premisa que lo sostiene, que los sueltos estén bien calculados, no se
+cumplía.** Apretarlo habría movido 170 bultos reales para tapar un error de
+reparto.
+
+### El hermano de hace una semana
+
+En el Cotejo de **Vacíos** pasó lo mismo: *"Ajustar a lo contado"* precargaba un
+ajuste destructivo, y **la pantalla se ponía en verde después de hacer el
+daño** — o sea que el propio arreglo borraba la evidencia de que no había que
+haberlo apretado.
+
+Los dos casos comparten la forma: **un número mal calculado, un botón que actúa
+sobre él, y una pantalla que después se ve sana.** Es la tercera familia, y esta
+es la variante peligrosa: no es un botón que va a ser rechazado, es uno que va a
+funcionar.
+
+### El arreglo, y por qué tocó más de una línea
+
+El saldo crudo se parte en dos: `disponibles = max(saldo, 0)` y
+`deficit = max(-saldo, 0)`. El piso **no** va en el SQL a propósito: ahí se
+perdería el déficit.
+
+Y hay un consumidor que dependía del negativo. `listar_articulos_para_reproceso`
+entraba un artículo si `stock > 0 OR sueltos > 0`, y en la falla de producción
+del **31/08** —el depósito arma cajas antes de cargar la guía R, el total del
+artículo cae a cero y la pila sigue en el piso— **lo único que lo salvaba era
+que el saldo negativo inflaba los sueltos**. Con el piso ese rebote desaparece y
+el artículo se habría escondido otra vez, justo cuando hay que reprocesarlo.
+
+El criterio pasa a nombrar lo que mira: `stock > 0 OR sueltos > 0 OR
+deficit > 0`. Es la misma información que traía el rebote, dicha en voz alta.
+
+## Pendiente con nombre propio: el déficit por ficha no tiene dónde vivir
+
+Del 04/09, y **queda abierto a propósito**.
+
+El piso arregla el número pero **silencia la única pista que había** de que
+falta cargar una guía R. Hoy el déficit se calcula y se usa (el selector de
+Reproceso), pero **no se muestra en ninguna pantalla**: se mira corriendo un SQL
+a mano.
+
+**Un dato que hay que acordarse de mirar no es una señal.** Esto está resuelto
+el día que el déficit tenga dónde vivir —una alerta de Auditoría, un cartel, una
+columna en una pantalla que alguien abre—, no antes. Mientras tanto lo único que
+logramos es **dejar de esconderlo adentro de un número equivocado**, que es
+mejor que antes y no es suficiente.
+
+## Los conteos ya congelados siguen mostrando la diferencia falsa
+
+`conteos_stock.stock_sistema` guarda la foto del sistema **del momento del
+conteo**, y no se recalcula — es lo que hace que el Cotejo sea un control
+cruzado y no una comparación contra un número que se mueve.
+
+Consecuencia del arreglo del piso: **todos los conteos cargados antes del 04/09
+conservan el número inflado**, así que sus cotejos van a seguir mostrando la
+diferencia falsa hasta que esa porción se vuelva a contar.
+
+**No se recalcula.** Reescribir una foto congelada rompería justamente lo que la
+hace útil. Pero hay que saberlo antes de que alguien mire un cotejo viejo y
+concluya que el arreglo no funcionó.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha

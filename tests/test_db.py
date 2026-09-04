@@ -5184,3 +5184,84 @@ def test_el_motivo_avisa_si_la_compra_ya_no_existe():
 
     assert _motivo_por_el_que_no_se_puede_eliminar(cursor, 30) == "Esa compra ya no existe."
 
+
+# --- El piso de la cuenta por ficha (04/09/2026) ---
+#
+# El saldo por ficha es "producidas - salidas" y PUEDE SER NEGATIVO: un
+# articulo que no se reprocesa (manzana, pera) no produce nunca, y uno que
+# si se reprocesa puede haberse armado desde la pila suelta. Sin piso, los
+# sueltos daban MAS que el total del articulo y el Cotejo ofrecia un ajuste
+# destructivo precargado para tapar esa diferencia inventada.
+
+from app.db import _cajas_por_ficha, _stock_de_ficha  # noqa: E402
+
+
+def _cursor_con_saldos(saldos, filas_extra=None):
+    """Un cursor falso cuyo primer fetchall son los saldos por ficha."""
+    cursor = MagicMock()
+    cursor.fetchall.side_effect = [saldos] + list(filas_extra or [])
+    return cursor
+
+
+def test_el_saldo_por_ficha_se_parte_en_disponibles_y_deficit():
+    cursor = _cursor_con_saldos([(1, 901, -170), (2, 902, 55)])
+
+    saldos = _cajas_por_ficha(cursor)
+
+    # Negativo: cero disponibles y el deficit con su tamaño.
+    assert saldos[(1, 901)] == (0.0, 170.0)
+    # Positivo: las cajas que hay, sin deficit.
+    assert saldos[(2, 902)] == (55.0, 0.0)
+
+
+def test_el_stock_de_una_ficha_nunca_es_negativo():
+    # Manzana Gob del 04/09: -170 en la cuenta cruda.
+    cursor = _cursor_con_saldos([(1, 901, -170)])
+
+    assert _stock_de_ficha(cursor, 1, 901) == 0.0
+
+
+def test_los_sueltos_no_pueden_superar_el_total_del_articulo():
+    # El caso que lo destapo: total 63, saldo por ficha -170. Sin piso los
+    # sueltos daban 233 -- mas que TODO el stock del articulo -- y el
+    # Cotejo mostraba una diferencia de 170 contra el conteo real.
+    cursor = _cursor_con_saldos([(1, 901, -170)])
+
+    with patch("app.db._stock_deposito_actual", return_value=63.0):
+        sueltos = _stock_de_ficha(cursor, 1, None)
+
+    assert sueltos == 63.0
+
+
+def test_las_fichas_con_cajas_no_incluyen_una_ficha_en_deficit():
+    conexion, _ = _conexion_falsa()
+    conexion.cursor.return_value = _cursor_con_saldos([(1, 901, -170), (2, 902, 3)])
+    conexion.cursor.return_value.__enter__ = MagicMock(return_value=conexion.cursor.return_value)
+    conexion.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        from app.db import fichas_con_cajas_armadas
+
+        assert fichas_con_cajas_armadas() == {902}
+
+
+def test_el_selector_de_reproceso_no_esconde_el_articulo_con_deficit():
+    # La falla de produccion del 31/08: el deposito arma cajas de una ficha
+    # ANTES de cargar su guia R, el total del articulo baja a cero y la pila
+    # suelta sigue intacta en el piso. Antes esto se salvaba de rebote,
+    # porque el saldo negativo inflaba los "sueltos"; con el piso ese rebote
+    # ya no existe y el criterio pasa a nombrar lo que mira: el DEFICIT.
+    cursor = _cursor_con_saldos(
+        [(1, 901, -100)],            # se armaron 100 cajas sin guia R
+        [[(1, "Banana", 0)]],        # y el total del articulo quedo en cero
+    )
+    conexion = MagicMock()
+    conexion.cursor.return_value = cursor
+    cursor.__enter__ = MagicMock(return_value=cursor)
+    cursor.__exit__ = MagicMock(return_value=False)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        from app.db import listar_articulos_para_reproceso
+
+        assert listar_articulos_para_reproceso() == [{"id": 1, "nombre": "Banana"}]
+

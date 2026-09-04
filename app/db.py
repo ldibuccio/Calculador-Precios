@@ -6836,14 +6836,44 @@ _SQL_STOCK_PARTIDO = """
 
 
 def _cajas_por_ficha(cursor) -> dict:
-    """{(articulo_id, ficha_id): stock de cajas armadas}, SOLO las fichas con algún movimiento.
+    """{(articulo_id, ficha_id): (disponibles, deficit)}, SOLO las fichas con algún movimiento.
 
     Una ficha sin nada reprocesado ni nada salido no aparece. Es a
     propósito: si el Cotejo listara todas las fichas de todos los clientes
     en cero, la pantalla se vuelve ilegible y se deja de mirar.
+
+    EL SALDO CRUDO PUEDE SER NEGATIVO, y por eso esto devuelve DOS números
+    en vez de uno. El SQL calcula `producidas − salidas` sin piso, y salir
+    de más es normal:
+
+    - Un artículo que NO SE REPROCESA (manzana, pera, arándano: salen en el
+      envase que vienen) tiene cero producidas y todas sus salidas del otro
+      lado. Su saldo es negativo puro y crece todos los días.
+    - Un artículo que sí se reprocesa puede haberse armado desde la PILA
+      SUELTA cuando no había cajas. También legítimo.
+
+    Una salida solo puede consumir cajas hasta lo que se produjo; el resto
+    salió de los sueltos. Por eso:
+
+      disponibles = max(saldo, 0)   ← lo que hay de verdad en cajas
+      deficit     = max(-saldo, 0)  ← lo que salió sin caja detrás
+
+    El piso NO va en el SQL: si se clavara ahí, el déficit se perdería y
+    con él la única pista de que falta cargar una guía R (ver
+    listar_articulos_para_reproceso, que lo necesita para no esconder el
+    artículo que hay que reprocesar — la falla de producción del 31/08).
+
+    Sin el piso, `sueltos = total − Σ cajas` daba MÁS que el total del
+    artículo, y el Cotejo ofrecía un ajuste destructivo precargado para
+    tapar esa diferencia inventada (04/09/2026: Manzana Gob, total 63,
+    sueltos 233, botón de ajuste por 170).
     """
     cursor.execute(_SQL_STOCK_PARTIDO)
-    return {(fila[0], fila[1]): float(fila[2]) for fila in cursor.fetchall()}
+    saldos = {}
+    for articulo_id, ficha_id, saldo in cursor.fetchall():
+        valor = float(saldo)
+        saldos[(articulo_id, ficha_id)] = (max(valor, 0.0), max(-valor, 0.0))
+    return saldos
 
 
 def listar_articulos_para_reproceso() -> list[dict]:
@@ -6899,9 +6929,10 @@ def listar_articulos_para_reproceso() -> list[dict]:
             filas = cursor.fetchall()
         articulos = []
         for articulo_id, nombre, stock in filas:
-            en_cajas = sum(v for (a, _), v in cajas.items() if a == articulo_id)
+            en_cajas = sum(d for (a, _), (d, _f) in cajas.items() if a == articulo_id)
+            deficit = sum(f for (a, _), (_d, f) in cajas.items() if a == articulo_id)
             sueltos = round(float(stock) - en_cajas, 2)
-            if float(stock) > 0 or sueltos > 0:
+            if float(stock) > 0 or sueltos > 0 or deficit > 0:
                 articulos.append({"id": articulo_id, "nombre": nombre})
         return articulos
     finally:
@@ -6926,8 +6957,8 @@ def fichas_con_cajas_armadas() -> set:
         with conexion.cursor() as cursor:
             return {
                 ficha_id
-                for (_, ficha_id), cajas in _cajas_por_ficha(cursor).items()
-                if cajas > 0
+                for (_, ficha_id), (disponibles, _deficit) in _cajas_por_ficha(cursor).items()
+                if disponibles > 0
             }
     finally:
         conexion.close()
@@ -6943,9 +6974,10 @@ def _stock_de_ficha(cursor, articulo_id: int, ficha_id: int | None) -> float:
     """
     cajas = _cajas_por_ficha(cursor)
     if ficha_id is not None:
-        return cajas.get((articulo_id, ficha_id), 0.0)
+        return cajas.get((articulo_id, ficha_id), (0.0, 0.0))[0]
     total = _stock_deposito_actual(cursor, articulo_id)
-    return round(total - sum(v for (a, _), v in cajas.items() if a == articulo_id), 2)
+    en_cajas = sum(disponibles for (a, _), (disponibles, _f) in cajas.items() if a == articulo_id)
+    return round(total - en_cajas, 2)
 
 
 def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None = None) -> None:
