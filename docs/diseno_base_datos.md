@@ -1423,6 +1423,106 @@ primeras familias—; una derivación no puede separarse. La dirección es esa y
 la inversa: **manda lo que la pantalla LISTA y la alerta lo sigue**, porque la
 restricción real es que una alerta no cuente lo que su pantalla no muestra.
 
+## Mapa: hay TRES cuentas distintas de "cajas armadas", y no son la misma
+
+Escrito el 04/09 después de confundirlas en una consulta y casi mandar a
+investigar el lugar equivocado. No es un bug: las tres existen a propósito y
+las tres están bien. Lo que faltaba era el mapa.
+
+### Las tres
+
+**1. El stock del ARTÍCULO** — `_sql_sumas_stock` + `_SQL_SALIDAS_STOCK`.
+Agrupa por `articulo_id`. Un renglón armado resta **sin mirar la ficha**.
+
+**2. El stock POR FICHA** — `_SQL_STOCK_PARTIDO`. Entradas:
+`reprocesos.bultos_primera` con `ficha_id`. Salidas: renglones armados con
+`r.ficha_id`. **Sí descuenta por ficha**, y las dos patas están en cajas: no
+mezcla unidades. Lo usan el Cotejo, Stock Físico, `fichas_con_cajas_armadas`
+(el armado) y `listar_articulos_para_reproceso`.
+
+**3. El desglose "Armado: 55 cajas para Día · R101"** de Stock del Sistema —
+`_desglose_stock_articulo`. **No sale de ninguna de las dos anteriores**:
+rejuega el FIFO (`repartir_fifo`) y toma los lotes de tipo `reproceso` con
+`restante > 0`. El cliente sale del lote y el tamaño de la ficha.
+
+Los **sueltos** son por resta: stock del artículo − Σ cajas de sus fichas. Así
+las porciones suman siempre el total y no se pierde ni se duplica nada.
+
+### Dónde 2 y 3 pueden decir cosas distintas
+
+**Pueden divergir, y es esperable**: la 2 empareja por `ficha_id` DECLARADA; la
+3 empareja por FIFO, o sea por orden y por lote. Un renglón de la ficha A puede,
+en el FIFO, consumir un lote de reproceso de la ficha B si el de A ya se agotó.
+
+Eso ya tiene su alerta —`cruce_primera_reproceso`— y no hay que "arreglarlo"
+haciendo que una copie a la otra: son dos preguntas distintas. La 2 contesta
+*"¿cuántas cajas de esta ficha deberían quedar según lo que se declaró?"*; la 3
+contesta *"¿de qué guía R salen las que quedan?"*.
+
+### El caso que sí las descuadra: un renglón armado SIN ficha
+
+Un renglón armado **sin `ficha_id`** resta del artículo (1) y participa del FIFO
+(3), pero **no resta en ninguna ficha** (2). Resultado: el stock por ficha queda
+inflado y los sueltos —que se calculan por resta— lo absorben en negativo.
+
+No es un error del cálculo: es dato incompleto. Pero conviene medirlo antes de
+sospechar del código, y se mide contando los renglones armados con
+`ficha_id IS NULL`.
+
+### Lo que E5 dejó pendiente, dicho con precisión
+
+E5 **no** es "que el pedido descuente por ficha" — eso existe (la cuenta 2).
+Lo que falta es lo que dice su fila: **descontar en el FORMATO de la ficha, no
+del artículo**. Hoy el contador del artículo resta el número crudo del renglón,
+sean 55 cajas de 6 kg o 55 cajones de 18.
+
+Por eso el contador del artículo **mezcla unidades**: una compra entra en
+cajones, el reproceso toma cajones y produce cajas, y el pedido saca cajas —
+todo sobre el mismo número. El reproceso es el punto de conversión. Un total de
+salidas de un artículo reprocesado **no es una cantidad homogénea**, y esa
+mezcla no es un bug suelto: **es exactamente la parte de E5 que no se hizo.**
+
+## Pendiente con nombre propio: un ajuste de stock no guarda quién lo cargó
+
+Encontrado el 04/09 investigando un ajuste de **225 bultos** de perita. **No se
+toca ahora**, queda escrito.
+
+### Qué falta
+
+`movimientos_stock` no tiene ninguna columna de usuario. De un ajuste quedan:
+
+- `motivo` — obligatorio y no vacío por constraint, pero **texto libre**: sirve
+  lo que haya escrito quien lo cargó, y nada más.
+- `creado_en` — cuándo se grabó.
+- `stock_sistema` — la foto del stock **antes** del movimiento, que es lo único
+  que permite reconstruir contra qué se ajustó.
+- `fecha_operacion` — la fecha real del hecho, que puede no ser la de carga.
+
+Falta **quién**. Y un ajuste es justamente donde más importa: es la única
+operación que puede tapar un faltante sin dejar rastro de su causa. Un ajuste de
+225 bultos con motivo "cotejo" y sin autor **no se puede reconstruir después**:
+no hay a quién preguntarle qué contó.
+
+### Por qué no se arregla solo agregando una columna
+
+Hoy **no hay sistema de permisos ni sesión de usuario**: nadie se loguea, así
+que no hay a quién atribuirle nada. Agregar `usuario_id` sin eso sería una
+columna que queda en NULL para siempre — peor que no tenerla, porque promete un
+dato que no está.
+
+Entonces esto no es "agregar una columna": **cuelga del sistema de permisos**,
+que ya está nombrado como pendiente en `eliminar_compra` ("cuando exista el
+sistema de permisos, un gerente podrá forzarlo con su acceso"). Es el segundo
+lugar que lo pide, y vale anotarlo como tal: **la falta de identidad de usuario
+ya tiene dos consecuencias concretas**, no una.
+
+### Mientras tanto
+
+Lo único que hay es el `motivo`. Si se quiere mejorar sin esperar los permisos,
+lo barato es **pedir un motivo más útil en la pantalla del ajuste** —un
+desplegable de causas frecuentes más el texto libre— para que al menos la razón
+sea reconstruible aunque el autor no lo sea. No está decidido ni pedido.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
