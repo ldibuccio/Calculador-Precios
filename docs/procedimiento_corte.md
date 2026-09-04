@@ -41,9 +41,47 @@ El campo de fecha está en la pantalla y acepta fechas hacia atrás. Desde el
 desactualizado y pide un segundo toque; el aviso dice, y es cierto, que **el
 costo no cambia**.
 
+### La lista de qué cargar
+
+Sale de `db/guias_r_que_faltan.sql`, dos consultas de solo lectura:
+
+- **La primera** da, por artículo y ficha: el primer día en rojo, cuántas
+  cajas faltan, y **qué hacer**. Distingue dos casos que se arreglan
+  distinto:
+  - *FALTA CARGAR*: salieron más cajas de las que se produjeron. Hay que
+    reconstruir la guía R.
+  - *FECHA MAL*: la guía R existe pero está fechada después de la salida que
+    explica. **No se carga otra**: se anula y se vuelve a cargar con la fecha
+    correcta, o queda anotada. Cargar una segunda sería inventar mercadería.
+- **La segunda** es el día a día de un artículo, con todo lo que entró y
+  salió y el saldo corriendo. Sirve para ver el hueco a ojo, e incluye las
+  guías R sin ficha, que la primera no ve.
+
+**Estas consultas no dan el `sin_lote` del FIFO** (los 88 de Pepino, los 109
+de Zapallito). Ese número vive en `repartir_fifo` y reescribirlo en SQL sería
+tener la regla escrita dos veces. Lo que dan es la cuenta por ficha, que es la
+que contesta *qué guía reconstruir*. Los dos números no tienen por qué
+coincidir: son cuentas distintas.
+
+### Si no se puede reconstruir todo, el corte va igual
+
+**Esto no bloquea el corte.** Si el depósito no puede reconstruir alguna guía
+—porque no se acuerda, o porque los números no cierran— se deja así y se
+sigue. **El conteo físico manda**: lo que no se pueda reconstruir queda
+absorbido por el compensatorio del PASO 4, que es exactamente para eso.
+
+**Pero hay que intentarlo**, y por una razón concreta: cada guía que se cargue
+bien es trazabilidad que se conserva. El compensatorio borra el descuadre; no
+guarda de dónde salió cada caja. Lo que se reconstruya hoy se sabe para
+siempre; lo que no, se pierde en un solo número.
+
+Lo que **no** hay que hacer es inventar una guía para que cierre. Una guía R
+con números fabricados es peor que el descuadre: el descuadre se ve, la guía
+inventada se lee como un dato.
+
 **Antes de seguir:** Depósito → Stock, y que no quede ningún artículo con
-`sin procesar` negativo por guías R que falten. Un `sin procesar` negativo que
-se arrastre al corte se cuenta como faltante.
+`sin procesar` negativo por guías R que falten **y se puedan cargar**. Las que
+se decidió no reconstruir se anotan y se siguen.
 
 Después del paso 1 esto ya no se puede hacer. **No hay apuro para empezar el
 paso 1 y sí lo hay para terminar el paso 0.**
