@@ -1780,6 +1780,78 @@ diferencia falsa hasta que esa porción se vuelva a contar.
 hace útil. Pero hay que saberlo antes de que alguien mire un cotejo viejo y
 concluya que el arreglo no funcionó.
 
+## ABIERTO Y GRANDE: la cuenta 3 (el FIFO rejugado) puede no reconciliar con el total
+
+Encontrado el 04/09, y **es más grande que las fichas y el backfill juntos**.
+Con esto **se paró la línea de trabajo del backfill** (lo ya corrido en Frutamax
+queda: recuperó dato real y los controles del N dieron bien; lo que se paró es
+Palmala y seguir adelante).
+
+### El síntoma
+
+Pepino en Stock del Sistema: **total 26, "Sin procesar" −48**, con el desglose
+mostrando cuatro guías R con restante 8+34+12+20 = **74**.
+
+```python
+fila["sin_procesar"] = fila["stock"] - sum(a["bultos"] for a in fila["armados"])
+```
+
+`armados` sale de `_desglose_stock_articulo`, que **rejuega el FIFO**. O sea:
+`26 − 74 = −48`.
+
+### Por qué el piso no lo tocó, y por qué NO hay que ponerle uno
+
+**El piso del 04/09 vive en `_cajas_por_ficha` (cuenta 2).** Esta pantalla usa la
+**cuenta 3**. Son dos emparejamientos distintos del mismo hecho: la 2 empareja
+por ficha DECLARADA, la 3 por orden CRONOLÓGICO. Nunca se tocaron.
+
+Y la diferencia con la cuenta 2 es la que importa: **un `restante` no puede ser
+negativo por construcción.** `repartir_fifo` consume hasta agotar y el sobrante
+cae en `sin_lote`. Así que el 74 **no es un negativo escondido: son restantes
+POSITIVOS que suman más que el total del artículo.**
+
+Eso no se arregla con un `max(0, …)`. Significa que **la suma de los lotes y el
+total de las seis patas no reconcilian**, y hasta saber por qué, cualquier piso
+taparía el síntoma sin tocar la causa.
+
+### Las cuatro pantallas que dependen de la cuenta 3
+
+Todas usan el mismo `restante`, ninguna quedó cubierta:
+
+1. **`ver_stock_sistema_deposito`** — el listado. Es de donde sale el −48, y es
+   la pantalla que el depósito mira todos los días.
+2. **`ver_stock_articulo_deposito`** — el detalle, que parte los lotes en "con
+   resto" y "agotados" y los lista uno por uno como si estuvieran en el piso.
+3. **`_lotes_con_resto`** — la lista para elegir a mano **qué lote se pudrió**.
+   Acá no solo muestra mal: **ofrece elegir bultos que pueden no existir**, y esa
+   elección se guarda en `movimientos_stock.lote_origen_id`.
+4. **`lotes_para_reproceso`** — el desglose que alimenta **el freno**. El freno
+   compara contra la suma de los restantes: si están inflados, **deja pasar guías
+   R que no debería**.
+
+### Lo que hay que medir, y en este orden
+
+1. **Cómo reparte el FIFO las salidas de Pepino**: cuánto consume de compras,
+   cuánto de guías R, y cuánto cae en `sin_lote`. Ahí se ve por qué quedan 74 en
+   lotes de reproceso mientras el artículo tiene 26.
+2. **Si `Σ restantes + sin_lote` reconcilia con el total de las seis patas.**
+   Ésta es la que decide: si no reconcilia, la cuenta 3 tiene un problema propio
+   y las cuatro pantallas vienen mostrando —y el freno decidiendo— sobre números
+   que no cierran.
+
+### El saldo de la ronda, para no perderlo
+
+**Se arreglaron dos cuentas y la que se mira todos los días es la tercera.** El
+mapa de las tres existía desde el 04/09 a la mañana; lo que faltó fue
+preguntarse, al poner el piso, **cuál de las tres alimentaba el número del
+síntoma**. La respuesta era la 3 y el piso fue a la 2.
+
+### Regla de trabajo mientras esto esté abierto
+
+**No se ajusta stock de ningún artículo con desglose.** Con tres cuentas
+diciendo cosas distintas del mismo artículo, un ajuste tapa un número que
+todavía no se entiende — y el botón está a un toque en el Cotejo.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha

@@ -165,6 +165,37 @@ Los dos síntomas que lo escondieron, y valen como señal para la próxima:
   compara la estructura ENTERA: que falle el día que alguien agrega un campo es
   la función del test, no una molestia.
 
+## Un fixture construido a partir de la hipótesis no prueba la hipótesis: la repite
+
+Pasó el 04/09. Del cliente llegaron dos números reales de pantalla —"74 cajas
+armadas y total 26"—. En vez de preguntarle a los datos **de dónde salía ese
+74**, se inventó una estructura que lo explicara (dos fichas, una en +74 y otra
+en −48, que antes se cancelaban), se armó un fixture que la codificaba, y se
+escribió *"el fixture reproduce tus números exactos"* como si eso confirmara
+algo.
+
+**No confirmaba nada.** Probaba que la aritmética propia era consistente consigo
+misma. La consulta que le preguntaba a los datos estaba escrita y a mano; se
+fabricó el caso en vez de correrla. Los datos después dijeron que había **una
+sola ficha** y que el 74 salía de otra cuenta entera.
+
+Es la misma familia que **"una captura en verde no prueba nada si el código
+viejo también la mostraba en verde"**, y que la ausencia de error del push
+silencioso: en los tres casos se confundió *no encontrar contradicción* con
+*haber verificado*.
+
+De acá en adelante:
+
+1. **Un fixture sirve para probar el CÓDIGO contra un caso conocido, nunca para
+   probar una hipótesis sobre datos que no se miraron.** Si la pregunta es "¿por
+   qué este número da esto?", la respuesta sale de la base, no de un `insert`
+   que se escribió para que diera eso.
+2. **Cuando hay una consulta lista que contesta la pregunta, se corre.** Razonar
+   mientras la herramienta está a mano es la forma cara de equivocarse.
+3. **Al explicar un número de producción, decir de dónde salió cada parte.** En
+   este caso el 74 y el 26 eran del cliente y la estructura de dos fichas era
+   invención — y no estaba dicho, que es lo que la volvió creíble.
+
 Corolario: **una regla de unicidad no puede depender de una extensión de
 Postgres.** `unaccent` hay que habilitarla por proyecto, y una regla que se
 pierde el día que se crea la base de la empresa siguiente no es una regla. Lo
