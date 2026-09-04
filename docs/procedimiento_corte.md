@@ -114,6 +114,12 @@ Se reemplaza la lista por lo contado: `(articulo_id, nombre, bultos, costo)`.
 El nombre va en el JOIN, así que **un id que apunte a otro artículo no entra**
 y el conteo hace fallar el bloque entero sin escribir nada.
 
+**Los bloques 4 y 6 vienen con `esperados` y los totales en 0 a propósito:
+tal como están fallan.** Las filas de ejemplo son solo la forma, y los números
+son los del corte del 31/08 — si quedaran prellenados, los totales del bloque
+5 también coincidirían y el corte entraría con la foto vieja sin que nada
+avise. Hay que escribir lo contado y los totales de la planilla.
+
 `esperados` es la cantidad de filas **de ese bloque**. Si la lista no entra en
 2500 caracteres, se parte en dos y se corren los dos, cada uno con su
 `esperados`; el orden no importa.

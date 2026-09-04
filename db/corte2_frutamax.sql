@@ -178,7 +178,8 @@ from movimientos_stock where tipo='cierre_modelo_viejo'
 -- SI NO ENTRA EN 2500 CARACTERES: partilo en dos y corré los dos, cada uno
 -- con su propio 'esperados'. El orden no importa; el total lo valida el 5.
 do $$
-declare corte date; esperados int := 18; n int;
+declare corte date; esperados int := 0;  -- filas DE ESTE bloque
+        n int;
 begin
   select fecha into corte from corte_modelo where id = 1;
   if not exists (select 1 from movimientos_stock
@@ -190,24 +191,11 @@ begin
   select f.aid, 'stock_inicial', f.bultos, 'Stock inicial del corte ('||corte||')',
          corte, 0, f.costo
   from (values
+    -- REEMPLAZAR POR LO CONTADO. Estas tres filas son solo la forma.
+    -- Con 18 filas el bloque queda en unos 2300 caracteres: entra.
     (29,'Morron Rojo',44::numeric,33000::numeric),
     (15,'Tomate Redondo',89,43846.15),
-    (20,'Morron Verde',25,20000),
-    (19,'Zapallito',44,35000),
-    (17,'Berenjena',17,25000),
-    (4,'Mzn Gob',73,28000),
-    (6,'Mzn Granny',25,60000),
-    (28,'Pomelo',21,10000),
-    (24,'Mandarina',41,11000),
-    (16,'Tomate Perita',45,48536.59),
-    (18,'Pepino',33,23857.14),
-    (7,'Mzn Red',20,55000),
-    (25,'Limon',23,10000),
-    (9,'Pera',5,27000),
-    (22,'Mango',4,53000),
-    (27,'Ombligo',8,10000),
-    (23,'Palta',10,60353.66),
-    (21,'Tomate Cherry',4,41584.91)
+    (18,'Pepino',33,23857.14)
   ) as f(aid, nom, bultos, costo)
   join articulos a on a.id=f.aid and a.nombre=f.nom
   where f.bultos > 0
@@ -231,8 +219,9 @@ from movimientos_stock where tipo='stock_inicial'
 -- vuelve a correr el 4. Ojo: un `raise` adentro de un `do` deshace también lo
 -- que ese mismo bloque hubiera borrado, así que el borrado va aparte.
 do $$
-declare corte date; esperados int := 18; bultos_esp numeric := 531;
-        plata_esp numeric := 17522615.76; n int; b numeric; p numeric;
+declare corte date; esperados int := 0; bultos_esp numeric := 0;
+        plata_esp numeric := 0;  -- LOS TRES TOTALES DE LA PLANILLA
+        n int; b numeric; p numeric;
 begin
   select fecha into corte from corte_modelo where id = 1;
   select count(*), coalesce(sum(cantidad),0),
@@ -257,7 +246,8 @@ from movimientos_stock where tipo='stock_inicial'
 -- ficha, no se escriben. MERCADERÍA SOLA, SIN CARTÓN: el envase se suma río
 -- abajo en la cotización y en la Rentabilidad Real; acá lo contaría dos veces.
 do $$
-declare corte date; esperados int := 2; n int;
+declare corte date; esperados int := 0;  -- filas de la lista
+        n int;
 begin
   select fecha into corte from corte_modelo where id = 1;
   if exists (select 1 from reprocesos where tipo='inicial' and fecha_operacion=corte) then
@@ -272,6 +262,7 @@ begin
   select fl.articulo_id, corte, 0, v.cajas, 0, 0,
          round(v.cajas*v.costo, 2), v.costo, fl.cliente_id, fl.id, 'inicial'
   from (values
+    -- REEMPLAZAR POR LO CONTADO: (ficha_id, cajas, costo por caja).
     (5, 25::numeric, 13125::numeric),
     (7, 12, 9090.91)
   ) as v(ficha_id, cajas, costo)
