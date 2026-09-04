@@ -349,6 +349,14 @@ dos se vuelven necesarias — y en ese orden.
 - **El corte de Palmala.** Antes hay que **reescribir los scripts del corte
   sin tablas temporales** y **correr los chequeos 04, 05, 11 y 12**, que
   nunca se corrieron (ver `db/APLICADO.md`).
+
+  **DECIDIDO el 04/09: Palmala todavía no lleva stock, y no lo va a llevar
+  hasta que Frutamax funcione fino.** Cuando arranque, arranca con un **corte
+  limpio y sin arrastre**. Consecuencia práctica y hay que tenerla presente:
+  **ninguna corrección de datos que se haga en Frutamax se replica en
+  Palmala** — ni el backfill de las fichas de los pedidos, ni ninguna otra.
+  Palmala no tiene el problema porque no tiene los datos. Cualquier "hay que
+  correrlo también allá" es un reflejo, no un pendiente.
 - **E0 fase 3**: el rename de las 19 rutas `/deposito/*` que hoy son de
   Administración.
 - **La lentitud de Frutamax.**
@@ -1880,8 +1888,29 @@ sin_procesar = total − Σ restante(reproceso)  ≥  −sin_lote
 bajar de ahí, y si lo hiciera sí habría un problema de cálculo.
 
 La cota daba, para el 04/09: Pepino `sin_lote ≥ 48`, Zapallito `sin_lote ≥ 58`.
-**Verificado en producción contra el `sin_lote` que ya muestra
-`/administracion/stock/sistema/{articulo_id}`: la cuenta cierra.**
+**Verificado en producción (Frutamax, 04/09) contra el `sin_lote` que ya muestra
+`/administracion/stock/sistema/{articulo_id}`. Los dos cierran exacto:**
+
+```
+Pepino      sin_lote  88   restantes 8+10+34+12+10+20+20 = 114   total  26
+            114 = 26 + 88   ✓
+
+Zapallito   sin_lote 109   restantes 1+1+54+50          = 106    total  -3
+            106 = -3 + 109  ✓
+```
+
+Dos cosas que valen de esos números:
+
+- **La cota se cumple con margen** (88 contra 48, 109 contra 58). No es un
+  empate raspando: sobra `sin_lote`, que es lo esperable si hay varias guías R
+  atrasadas y no una sola.
+- **Zapallito tiene el total NEGATIVO (−3) y la identidad se cumple igual.** No
+  hace falta que el stock esté sano para que la cuenta 3 reconcilie: son cosas
+  distintas, y esto lo prueba con un caso.
+
+Y el `sin_procesar` de Pepino cierra desde el otro lado: de los 114 restantes,
+74 son de lotes de reproceso (8+34+12+20) y 40 de otros tipos, así que
+`26 − 74 = −48`, el número de la pantalla.
 
 ### Entonces qué ES un `sin_procesar` negativo
 
