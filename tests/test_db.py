@@ -4126,9 +4126,11 @@ def test_contar_stock_deposito_negativo_hace_la_misma_cuenta_que_el_stock():
 
 from app.db import (  # noqa: E402
     anular_reproceso,
+    contar_guias_r_afectadas_por_fecha,
     crear_reproceso,
     listar_reprocesos_por_rango,
     RepartoDesactualizado,
+    ReprocesoAnteriorAlCorte,
     StockInsuficienteParaReproceso,
 )
 
@@ -4138,6 +4140,13 @@ from app.db import (  # noqa: E402
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
                   ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",),
                   ("cliente_lote_id",), ("articulo_id",), ("renglon_id",)]
+
+
+# La fecha de corte que devuelve corte_modelo. Es la PRIMERA consulta de
+# crear_reproceso —el piso de fecha— así que encabeza la cola de fetchone.
+# Va antes que todas las fechas de estos tests a propósito: acá se prueba
+# el FIFO, no el piso (el piso tiene los suyos).
+_CORTE = (date(2026, 8, 15),)
 
 
 def _lote_compra(origen_id, fecha, cantidad, costo, articulo_id=1):
@@ -4157,10 +4166,79 @@ def _salida_fifo(fecha, cantidad, articulo_id=1):
             cantidad, None, None, articulo_id, None)
 
 
+def test_el_piso_de_fecha_NO_deja_cargar_una_guia_R_ANTES_del_corte():
+    """Antes del corte el FIFO nuevo no rige: no hay lotes contra los que medir.
+
+    Y no escribe NADA: revienta antes de la consulta de lotes, que es lo
+    más barato de descartar.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 14))
+
+    assert levantada.value.corte == date(2026, 8, 15)
+    assert levantada.value.fecha == date(2026, 8, 14)
+    conexion.commit.assert_not_called()
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+
+
+def test_el_piso_SALE_de_corte_modelo_y_no_de_una_constante():
+    """El día del corte nuevo se cambia una fila y el piso la sigue solo.
+
+    Acá el corte es el 01/09, así que el 25/08 —que en todos los otros
+    tests entra— tiene que rebotar. Una constante clavada lo dejaría pasar.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 1),)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25))
+
+    assert levantada.value.corte == date(2026, 9, 1)
+
+
+def test_el_dia_DEL_corte_si_se_puede_cargar():
+    """El corte es el primer día del modelo nuevo, no el último del viejo.
+
+    El stock inicial se carga con esa misma fecha, así que un reproceso de
+    ese día tiene lotes contra los que medirse.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (30,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 15))
+
+    assert numero == 30
+
+
+def test_contar_guias_r_afectadas_mira_de_la_fecha_INCLUSIVE_hacia_adelante():
+    """`>=` y no `>`: el recorte del reproceso toma las entradas HASTA LA
+    FECHA INCLUSIVE, así que una guía R del mismo día también se repartiría
+    contra el lote nuevo. Y solo las 'normal': la inicial produce sin
+    consumir y no tiene reparto que se le desactualice."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(3,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert contar_guias_r_afectadas_por_fecha(7, date(2026, 8, 31)) == 3
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "fecha_operacion >= %s" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "tipo = 'normal'" in consulta
+    assert parametros == (7, date(2026, 8, 31))
+
+
 def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # Lotes: compra 101 (8 bultos a $1000, viejo) y 102 (10 a $1200). Ya
     # salieron 5 → restos 3 y 10. Tomo 6: 3 del 101 y 3 del 102 (FIFO).
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(12,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (12,)])
     cursor.description = COLUMNAS_LOTES
     # Las dos tandas de fetchall: lotes y salidas fechadas.
     cursor.fetchall.side_effect = [
@@ -4196,7 +4274,7 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
 def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     # Un lote sin importe (compra de la mañana sin precio, o stock
     # inicial): NO se promedia con números inventados — costo NULL.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(13,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (13,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4222,7 +4300,7 @@ def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
     hay compra a la que irle a buscar el importe, porque esos bultos no
     existieron. Por eso acá —y solo acá— el depósito sí se traba.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(14,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (14,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)],
@@ -4250,7 +4328,7 @@ def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
     compara el freno NUNCA es negativo — si mirara el neto, pedir 4 sería
     "faltan 19" y el mensaje hablaría de un agujero que no es de esta guía.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(15,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (15,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 10.0, 1000.0)],
@@ -4272,7 +4350,7 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
     justo cuando está cargando lo que explica esa salida. Dentro de un día
     el sistema no tiene orden: guarda fechas, no horas.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(16,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (16,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 30), 44.0, 1000.0)],
@@ -4293,7 +4371,7 @@ def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
     Tomó 8 el 20/08. El lote de 10 llegó el 22/08, dos días después: no
     puede cubrir un reproceso que ya había pasado.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(17,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (17,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(102, date(2026, 8, 22), 10.0, 1200.0)],
@@ -4316,7 +4394,7 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
     consumos_editados, que es lo que después deja saber que ese reparto no
     lo eligió el sistema.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(18,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (18,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4343,7 +4421,7 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
 
 def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
     """La edición es opcional: mandar la misma propuesta no es haberla cambiado."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(19,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (19,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4366,7 +4444,7 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
 
 def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
     """Se revalida SIEMPRE en el server: entre el desglose y el Guardar el stock se mueve."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(20,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (20,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4391,7 +4469,7 @@ def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
 def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
     """Si lo repartido no da los bultos que declaró, no hay guía: la diferencia
     no puede caer en ningún lado —no existe el sin_lote— así que se frena."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(21,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (21,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0)],
@@ -4407,7 +4485,7 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
 
 
 def test_anular_reproceso_es_baja_logica():
-    conexion, cursor = _conexion_falsa()
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         anular_reproceso(12)

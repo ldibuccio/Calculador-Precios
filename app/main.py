@@ -202,6 +202,7 @@ from app.db import (
     guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
+    ReprocesoAnteriorAlCorte,
     contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
@@ -235,6 +236,7 @@ from app.db import (
     listar_valores_sena,
     listar_historiales_valores_sena,
     contar_senas_afectadas_por_valor,
+    contar_guias_r_afectadas_por_fecha,
     cargar_valor_sena,
     listar_tipos_envase_puesto,
     listar_todos_los_proveedores,
@@ -7703,7 +7705,7 @@ def _desglose_para_pantalla(lotes: list[dict]) -> list[dict]:
 
 
 def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None,
-                                   freno=None, status_code: int = 200):
+                                   freno=None, advertencia=None, status_code: int = 200):
     try:
         # El selector lista los artículos que se pueden reprocesar, POR
         # NOMBRE y SIN cantidades: saber que "hay tomate" no es un número
@@ -7716,6 +7718,10 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         clientes = listar_clientes()
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
         fichas_elegibles = _fichas_por_cliente_y_articulo()
+        # El piso del selector de fecha. Es COMODIDAD, no la regla: la
+        # regla vive en crear_reproceso y es la que rechaza. Acá solo
+        # evita que el operario elija una fecha que después va a rebotar.
+        corte = fecha_corte()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -7726,9 +7732,11 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "fichas_elegibles": fichas_elegibles,
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
+        "corte": corte.isoformat(),
         "aviso": aviso,
         "error": error,
         "freno": freno,
+        "advertencia": advertencia,
     }
     return templates.TemplateResponse(request, "deposito_stock_reproceso.html", contexto, status_code=status_code)
 
@@ -7833,6 +7841,7 @@ def cargar_reproceso_ruta(
     fecha: str = Form(""),
     ficha_id: str = Form(""),
     reparto: str = Form(""),
+    confirmado: str = Form(""),
 ):
     """El operario declara la transformación; el server frena, reparte y congela consumos y costo.
 
@@ -7926,6 +7935,42 @@ def cargar_reproceso_ruta(
     if ficha_id.strip().isdigit():
         ficha_valor = int(ficha_id)
 
+    # EL AVISO DE LA FECHA HACIA ATRÁS, con el molde de las señas: se cuenta
+    # ANTES de escribir, la pantalla muestra el número y pide el segundo
+    # toque. Va antes del freno a propósito — si la fecha está mal, que la
+    # corrija antes de pelearse con el stock de un día que no es el suyo.
+    #
+    # Solo con fecha anterior a hoy: con la de hoy no hay ninguna guía R
+    # posterior, así que no hay nada que avisar y el camino normal no se
+    # paga un toque de más.
+    #
+    # Acá NO se pregunta si la fecha cae antes del corte, aunque en ese caso
+    # el aviso salga primero y el piso recién en el segundo toque. Repetir
+    # `fecha < fecha_corte()` en la ruta sería escribir la regla dos veces, y
+    # esa es la que ya nos costó cuatro veces. El `min=` del selector hace
+    # que ese caso no exista por la pantalla, y por POST a mano son dos
+    # carteles ciertos y nada escrito. Si algún día molesta, la salida es
+    # mover el aviso adentro de crear_reproceso, no copiar el piso acá.
+    if fecha_valor < _hoy_argentina() and confirmado != "1":
+        try:
+            afectadas = contar_guias_r_afectadas_por_fecha(articulo["id"], fecha_valor)
+        except Exception as error_db:
+            return _renderizar_pantalla_reproceso(
+                request, precarga=precarga,
+                error=f"No se pudo revisar la fecha: {error_db}", status_code=500,
+            )
+        if afectadas:
+            return _renderizar_pantalla_reproceso(
+                request,
+                precarga=precarga,
+                advertencia={
+                    "cantidad": afectadas,
+                    "articulo": articulo["nombre"],
+                    "fecha": fecha_valor.strftime("%d/%m/%Y"),
+                },
+                status_code=200,
+            )
+
     try:
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
@@ -7945,6 +7990,21 @@ def cargar_reproceso_ruta(
                 "disponible": _formatear_numero(freno.disponible),
                 "lotes": _desglose_para_pantalla(freno.lotes),
             },
+            status_code=400,
+        )
+    except ReprocesoAnteriorAlCorte as anterior:
+        # EL PISO. No hay "guardar igual": antes del corte el FIFO nuevo no
+        # rige, así que la guía no tendría contra qué medirse. Se dice la
+        # fecha con todas las letras para que no haya que adivinarla.
+        return _renderizar_pantalla_reproceso(
+            request,
+            precarga=precarga,
+            error=(
+                f"La fecha no puede ser anterior al {anterior.corte.strftime('%d/%m/%Y')}: "
+                "es el corte desde el que rige el stock nuevo, y antes de esa fecha no hay "
+                "lotes contra los que medir el reproceso. Si de verdad fue antes, avisale a "
+                "Administración."
+            ),
             status_code=400,
         )
     except RepartoDesactualizado as desactualizado:

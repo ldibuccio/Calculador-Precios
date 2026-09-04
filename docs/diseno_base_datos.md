@@ -865,6 +865,26 @@ igual" y motivo escrito. **NO como campo libre en la pantalla del operario.**
 Mismo criterio que la excepción del freno: posible, visible y contable, pero
 nunca tan cómoda como el camino normal.
 
+> **CORRECCIÓN DEL 04/09 — este párrafo describía algo que ya era falso el día
+> que se escribió.** El campo de fecha existe en la pantalla del operario
+> **desde el 25/08** (`869448a`, la primera tanda del reproceso):
+> `<input type="date" name="fecha" max="{{ hoy }}">`, con techo y **sin piso**,
+> y la única validación del POST era "no puede ser futura". La ventana
+> retroactiva de Administración, en cambio, **nunca se escribió**: no hay un
+> solo camino en el código que edite la `fecha_operacion` de un reproceso ya
+> cargado.
+>
+> O sea que durante seis días el documento afirmó lo contrario de lo que hacía
+> el sistema: decía que la fecha hacia atrás **entraría** por una pantalla que
+> no existe, mientras el operario ya la tenía libre y sin límite. Y la pared
+> del freno lo **invitaba** expresamente — *"Fijate también la fecha: si el
+> reproceso fue otro día, cambiala acá abajo."*
+>
+> Es el mismo síntoma de las dos familias: un texto que no mintió cuando se
+> escribió, salvo que este sí — nadie fue a mirar la pantalla. **Lo que faltaba
+> no era la capacidad: era el piso y el aviso.** Los dos entraron el 04/09 (ver
+> "El piso de la fecha y el aviso de la fecha hacia atrás", abajo).
+
 ### Lo que la ventana NO resuelve: el documento congelado y el reparto vivo
 
 Una fecha hacia atrás mete un lote **antes** de salidas ya costeadas. Los
@@ -884,13 +904,25 @@ Lo que diverge es **la trazabilidad**: de qué lote dice la guía R que salió c
 bulto. Y es **silenciosa por construcción**, porque las dos versiones no se
 cruzan en ninguna pantalla:
 
-- El documento congelado se lee en **un solo lugar**:
-  `listar_reprocesos_con_consumos` → la pantalla de Guías R.
-- El reparto vivo lo usan Stock del Sistema, Stock por Guía, el selector de lote
-  de la merma dirigida y la alerta de cruce de cliente.
-- **Nadie los muestra juntos**, así que nadie ve la contradicción. Se puede
-  llegar a que Stock por Guía muestre una compra con resto que el documento de
-  la guía R dice haber consumido.
+- El documento congelado se lee en **tres lugares** (revisado el 04/09; el
+  relevamiento del 31/08 decía "uno solo" y nombraba una función que ya no
+  existe, `listar_reprocesos_con_consumos`): `listar_reprocesos_por_rango` → la
+  pantalla de Guías R; `dependencias_del_lote_de_compra` → la simulación de
+  impacto al corregir una recepción; y `completar_costo_reproceso`, que
+  **rellena precios NULL y jamás re-reparte** — la congelación de la
+  trazabilidad está intacta.
+- El reparto vivo lo usan **siete**: `_desglose_stock_articulo` (el desglose
+  "Armado: N cajas para X · R101" del Stock del Depósito, la cuenta 3, que el
+  31/08 no existía), `ver_stock_articulo_deposito`, `_lotes_con_resto` (el
+  selector de la merma dirigida), `desglose_de_renglon_armado`,
+  `lotes_para_reproceso`, el freno de `crear_reproceso` y `atribuir_costos_fifo`
+  (Rentabilidad Real + alerta de cruce).
+- **"Nadie los muestra juntos" también dejó de ser cierto.**
+  `dependencias_del_lote_de_compra` los pone en la misma pantalla y su propio
+  docstring lo dice. No compara las dos versiones de lo mismo, así que sigue sin
+  delatar la contradicción — pero la superficie donde podrían chocar creció.
+- Se puede llegar a que Stock por Guía muestre una compra con resto que el
+  documento de la guía R dice haber consumido.
 
 **Lo único que sí se mueve solo** es la **alerta de cruce de cliente**: se
 recalcula viva en cada carga de pantalla, así que puede empezar o dejar de
@@ -1066,13 +1098,14 @@ deja el documento congelado diciendo una cosa y el reparto vivo diciendo otra.
 
 **Es silencioso por construcción**, y eso es lo que lo hace un pendiente:
 
-- El congelado se lee en **un solo lugar**: `listar_reprocesos_con_consumos`,
-  la pantalla de Guías R.
-- El vivo lo usan Stock del Sistema, Stock por Guía, el selector de lote de la
-  merma dirigida y la alerta de cruce.
-- **Nadie los muestra juntos.** Se puede llegar a que Stock por Guía muestre
-  una compra con resto que el documento de la guía R dice haber consumido, y
-  que nadie lo vea nunca.
+- El congelado se lee en **tres lugares** y el vivo en **siete** — el detalle
+  actualizado está arriba, en la decisión de la fecha retroactiva. El
+  relevamiento original decía "uno y cuatro" y nombraba
+  `listar_reprocesos_con_consumos`, que ya no existe.
+- **Casi nadie los muestra juntos**, y donde sí (la simulación de impacto de
+  una recepción) no se comparan entre sí. Se puede llegar a que Stock por Guía
+  muestre una compra con resto que el documento de la guía R dice haber
+  consumido, y que nadie lo vea nunca.
 
 **La plata no diverge** (ver la decisión de la fecha retroactiva, más arriba):
 `costo_total` y `costo_por_bulto_primera` quedan congelados y el FIFO vivo usa
@@ -2127,6 +2160,101 @@ el operario, y lo que está decidido esta semana es **parar y mirarlo correr con
 gente real antes de construir encima**. La rama **no se borra**: queda parada
 con este relevamiento hecho, para que el día que se retome no haya que volver a
 investigarla.
+
+## El piso de la fecha y el aviso de la fecha hacia atrás (04/09)
+
+La tercera de las tres cosas que tenían que estar cerradas antes del corte
+nuevo. Las otras dos ya estaban: la ficha perdiéndose en el auto-confirmado
+(arreglada el 04/09) y el reproceso tomando lo que no hay (el freno,
+desplegado el 02/09).
+
+### Lo que había
+
+El campo de fecha estaba desde el 25/08, con techo y **sin piso**, y el POST
+solo rechazaba las futuras. Una guía R fechada en 2024 entraba. No avisaba
+nada, y la pared del freno invitaba a moverla hacia atrás.
+
+### El piso SALE DEL CORTE, y esa es la decisión
+
+Antes de la fecha de corte los datos están declarados no confiables y fuera
+del alcance del FIFO nuevo (Decisiones confirmadas, punto 7). Una guía R
+fechada ahí metería el FIFO nuevo adentro de lo que el corte cerró.
+
+**Pero la fecha de corte se mueve.** Se va a mover este fin de semana
+(05 o 06/09): Lionel corta con el depósito cerrado, cuenta el remanente
+físico y vuelve a apoyar el stock en la realidad, porque hoy los números son
+inentendibles y **lo que nadie mira no delata ningún error nuevo**. Y se va a
+volver a mover después. Por eso el piso **no es una constante**:
+`crear_reproceso` lee `corte_modelo` con `_fecha_corte(cursor)`, dentro de la
+misma transacción.
+
+Es exactamente la lección de los dos sietes, aplicada antes de que duela: un
+`31/08` escrito a mano en el código habría quedado **mintiendo el lunes
+siguiente**, sin que nada avise — porque un piso que quedó viejo no falla,
+deja pasar.
+
+`_fecha_corte(cursor)` y `fecha_corte()` son la misma consulta escrita **una
+sola vez**: la segunda es la primera con conexión propia. Abrir una segunda
+conexión para leer una fila sería pagar dos veces por el mismo dato, pero
+copiar el SELECT sería peor — serían dos reglas.
+
+**El piso vive en `crear_reproceso`, con el freno de stock y por el mismo
+argumento**: es el único camino que escribe una guía R normal, así que
+ponerlo en la ruta sería escribirlo dos veces. El `min=` del selector es
+comodidad, no la regla: evita elegir una fecha que va a rebotar.
+
+### El aviso: segundo toque, y la frase del costo es obligatoria
+
+Molde de las señas (`contar_senas_afectadas_por_valor`): se cuenta **antes**
+de escribir, la pantalla muestra el número y pide el segundo toque.
+
+`contar_guias_r_afectadas_por_fecha` cuenta las guías R no anuladas del
+**mismo artículo** con `fecha_operacion >= la fecha nueva`. Es un `count(*)`,
+sin rejugar ningún FIFO. Tres decisiones adentro:
+
+- **`>=` y no `>`**: el recorte de `reparto_para_reproceso` toma las entradas
+  HASTA LA FECHA INCLUSIVE, así que una guía R del mismo día también se
+  repartiría contra el lote nuevo.
+- **Solo `tipo = 'normal'`**: la inicial produce sin consumir, no tiene una
+  sola fila en `reprocesos_consumos` y no hay reparto que se le desactualice.
+- **Solo con fecha anterior a hoy**: con la de hoy no hay ninguna guía R
+  posterior, así que el camino normal no paga un toque de más.
+
+El texto, con la frase obligatoria:
+
+> **Hay 3 guías R de Pepino con fecha igual o posterior al 31/08/2026.**
+> Su reparto por lote puede dejar de coincidir con el vivo. **Su costo no
+> cambia.**
+
+**La última oración no es cortesía: es la que evita el susto.** Lo primero
+que se piensa al leer "puede dejar de coincidir" es que se movió plata, y no
+se movió — `costo_total` y `costo_por_bulto_primera` quedan congelados al
+cargar, y el FIFO vivo usa ese mismo número como costo del lote de primera.
+Lo que puede divergir es la trazabilidad. Por eso la frase vive en la
+plantilla, escrita una sola vez, y hay un test que falla si desaparece.
+
+El segundo toque vale para **esa** fecha: si el operario la cambia después de
+leer el aviso, el JS vacía `confirmado` y el aviso se vuelve a pedir. Si no,
+leería "hay 3 guías del 31/08" y guardaría una del 25 sin que nadie contara
+nada.
+
+### Lo que NO entró, y por qué
+
+**El aviso blando a los 7 días.** Se propuso y se descartó el mismo día, por
+el argumento que lo desarmaba solo: **competiría con la corrección del
+arrastre justo cuando hace falta.** Las guías que faltaban eran del 31/08;
+una ventana de 7 días puesta la semana siguiente habría bloqueado
+exactamente la corrección que venía a habilitar. Y con el corte nuevo, todo
+lo anterior queda cortado por el piso igual.
+
+Queda anotado como pendiente sin dueño, no como algo que se olvidó.
+
+### Lo que esto NO arregla
+
+**No toca los 88 de Pepino ni los 109 de Zapallito.** Esto evita que se sigan
+generando; los que ya están se corrigen cargando las guías que faltan con su
+fecha real. Y eso **no dependía de esta entrega**: la pantalla ya lo permitía
+desde el 25/08.
 
 ## Decisiones confirmadas
 

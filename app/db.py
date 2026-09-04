@@ -6156,12 +6156,36 @@ def obtener_mail_de_pedido(pedido_id: int) -> dict | None:
 # --- La fecha de corte del modelo nuevo ---
 
 
+def _fecha_corte(cursor):
+    """La fecha de corte con un cursor YA abierto, para usarla dentro de una transacción.
+
+    La consulta está escrita acá y en ningún otro lado: `fecha_corte()`
+    es esta misma con conexión propia. El piso de fecha del reproceso la
+    necesita adentro de la transacción que ya tiene abierta, y abrir una
+    segunda conexión para leer una fila sería pagar dos veces por el
+    mismo dato — pero copiar el SELECT sería peor: serían dos reglas.
+    """
+    cursor.execute("SELECT fecha FROM corte_modelo WHERE id = 1")
+    fila = cursor.fetchone()
+    if fila is None:
+        raise RuntimeError(
+            "No hay fecha de corte cargada (corte_modelo está vacía): "
+            "la base quedó a medio configurar."
+        )
+    return fila[0]
+
+
 def fecha_corte():
     """La fecha desde la que rige el modelo nuevo (una sola fila en corte_modelo).
 
     Vive en la base y no en el código para que se lea de UN lugar: la
     usan el stock inicial, las guías R sin ficha (antes del corte un NULL
-    es dato viejo, después es "sin asignar") y todo lo que venga.
+    es dato viejo, después es "sin asignar"), el piso de fecha del
+    reproceso y todo lo que venga.
+
+    **Se lee, nunca se escribe a mano en el código.** El día que se haga
+    un corte nuevo se cambia esa fila y todo lo que la lee la sigue sola.
+    Una constante `31/08` suelta quedaría mintiendo el lunes siguiente.
 
     Si la fila no está, revienta a propósito: una base a medio configurar
     tiene que avisar, no elegir una fecha por su cuenta y costear contra
@@ -6170,14 +6194,7 @@ def fecha_corte():
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT fecha FROM corte_modelo WHERE id = 1")
-            fila = cursor.fetchone()
-        if fila is None:
-            raise RuntimeError(
-                "No hay fecha de corte cargada (corte_modelo está vacía): "
-                "la base quedó a medio configurar."
-            )
-        return fila[0]
+            return _fecha_corte(cursor)
     finally:
         conexion.close()
 
@@ -7198,6 +7215,57 @@ class RepartoDesactualizado(Exception):
     """El reparto que llegó de la pantalla ya no se puede cumplir contra los lotes de ahora."""
 
 
+class ReprocesoAnteriorAlCorte(Exception):
+    """La fecha del reproceso cae antes del corte del modelo nuevo, donde el FIFO nuevo no rige."""
+
+    def __init__(self, fecha, corte):
+        self.fecha = fecha
+        self.corte = corte
+        super().__init__(f"La fecha del reproceso ({fecha}) es anterior al corte ({corte}).")
+
+
+def contar_guias_r_afectadas_por_fecha(articulo_id: int, fecha) -> int:
+    """Cuántas guías R quedarían con el reparto desactualizado si se carga una con ESTA fecha.
+
+    Sirve para AVISAR antes de escribir, nunca para trabar: es el mismo
+    molde que `contar_senas_afectadas_por_valor`. La fecha vieja es
+    legítima —recién ahora se carga lo que pasó el lunes—, pero mete un
+    lote ANTES de salidas ya repartidas, y los consumos de las guías R
+    posteriores están congelados en `reprocesos_consumos` y no se
+    recalculan nunca. El que carga tiene que enterarse ANTES.
+
+    **La plata no se mueve** y por eso el aviso lo dice con todas las
+    letras: `costo_total` y `costo_por_bulto_primera` quedan congelados
+    al cargar, y el FIFO vivo usa ese mismo número como costo del lote de
+    primera. Lo que puede dejar de coincidir es la trazabilidad: de qué
+    lote dice cada guía R que salió cada bulto.
+
+    `>=` y no `>`: el recorte de `reparto_para_reproceso` toma las
+    entradas HASTA LA FECHA INCLUSIVE, así que una guía R del mismo día
+    también se repartiría contra el lote nuevo.
+
+    Solo las 'normal': la inicial produce sin consumir, no tiene ninguna
+    fila en `reprocesos_consumos` y no hay reparto que se le desactualice.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*)
+                FROM reprocesos
+                WHERE articulo_id = %s
+                  AND anulado_el IS NULL
+                  AND tipo = 'normal'
+                  AND fecha_operacion >= %s
+                """,
+                (articulo_id, fecha),
+            )
+            return cursor.fetchone()[0]
+    finally:
+        conexion.close()
+
+
 def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
     """Los lotes contra los que se mide un reproceso de esa fecha, y qué quedaba en cada uno.
 
@@ -7233,9 +7301,14 @@ def crear_reproceso(
 ) -> int:
     """Carga una guía R: el SERVER frena, reparte y congela consumos y costo. Devuelve el número de guía.
 
-    EL FRENO VIVE ACÁ, y acá solo. Es el único camino que escribe una guía
-    R, así que ponerlo en la ruta sería escribir la regla dos veces y dejar
-    que se separen. Si a la fecha del reproceso los lotes no llegan a cubrir
+    LOS DOS FRENOS VIVEN ACÁ, y acá solo. Es el único camino que escribe
+    una guía R normal, así que ponerlos en la ruta sería escribir la regla
+    dos veces y dejar que se separen. Son el de STOCK (lo de abajo) y el
+    de FECHA: nada antes del corte, leído de corte_modelo — antes de esa
+    fecha el FIFO nuevo no rige, y una guía R fechada ahí levanta
+    ReprocesoAnteriorAlCorte sin escribir nada.
+
+    Si a la fecha del reproceso los lotes no llegan a cubrir
     lo declarado, levanta StockInsuficienteParaReproceso y NO escribe nada:
     el reproceso es 100% o nada, y ya no existe el consumo 'sin_lote' por
     esta vía —el que quedaba congelaba un costo incompleto para siempre.
@@ -7270,6 +7343,21 @@ def crear_reproceso(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            # EL PISO DE LA FECHA, y va antes que nada porque es lo más
+            # barato de descartar. Antes del corte los datos están
+            # declarados no confiables y fuera del alcance del FIFO nuevo
+            # (Decisiones confirmadas, punto 7): una guía R fechada ahí
+            # metería el FIFO nuevo adentro de lo que el corte cerró, que
+            # es exactamente lo que el corte vino a evitar.
+            #
+            # Sale de corte_modelo y NO de una constante escrita acá: la
+            # fecha de corte se mueve cada vez que se hace un corte nuevo,
+            # y un 31/08 clavado en el código quedaría mintiendo el lunes
+            # siguiente sin que nada avise.
+            corte = _fecha_corte(cursor)
+            if fecha_operacion < corte:
+                raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
+
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
             # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
             # de reparto_para_reproceso. El freno, el desglose que vio el

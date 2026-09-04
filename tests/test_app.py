@@ -2,7 +2,7 @@ import base64
 import io
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import openpyxl
 import pypdfium2 as pdfium
@@ -14,6 +14,7 @@ from app.db import (
     DATABASE_URL_ENV_VAR,
     obtener_conexion,
     RepartoDesactualizado,
+    ReprocesoAnteriorAlCorte,
     StockInsuficienteParaReproceso,
 )
 from app.main import (
@@ -16329,6 +16330,10 @@ def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None):
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=todas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        # El piso del selector sale de corte_modelo, no de una constante.
+        # Acá va una fecha distinta de la real a propósito: si alguien
+        # clava el 31/08 en el código, este test lo agarra.
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
     ):
         return cliente.get("/deposito/stock/reproceso")
 
@@ -16484,6 +16489,13 @@ def _pantalla_de_reproceso_con(datos, **parches):
         for destino, valor in contexto.items():
             pila.enter_context(patch(destino, return_value=valor))
         pila.enter_context(patch("app.main._hoy_argentina", return_value=date(2026, 9, 2)))
+        if "app.main.fecha_corte" not in parches:
+            pila.enter_context(patch("app.main.fecha_corte", return_value=date(2026, 8, 31)))
+        if "app.main.contar_guias_r_afectadas_por_fecha" not in parches:
+            # Sin guías R posteriores no hay aviso: el camino de siempre.
+            pila.enter_context(
+                patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0)
+            )
         for destino, parche in parches.items():
             pila.enter_context(patch(destino, **parche))
         return cliente.post("/deposito/stock/reproceso", data=datos, follow_redirects=False)
@@ -16686,6 +16698,7 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
@@ -16699,7 +16712,7 @@ def test_reproceso_sin_cliente_da_400():
 
 
 def test_reproceso_sin_nada_producido_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
@@ -16712,7 +16725,7 @@ def test_reproceso_sin_nada_producido_da_400():
 
 
 def test_reproceso_fecha_futura_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",
@@ -16722,6 +16735,123 @@ def test_reproceso_fecha_futura_da_400():
     assert respuesta.status_code == 400
     assert "no puede ser futura" in respuesta.text
     mock_crear.assert_not_called()
+
+
+# --- El piso de la fecha y el aviso de la fecha hacia atrás (04/09) ---
+# Los tres caminos del corte: nada antes de la fecha de corte, aviso con
+# segundo toque cuando la fecha vieja mueve el reparto de guías R que ya
+# están, y el camino de siempre intacto cuando la fecha es la de hoy.
+
+
+def test_el_piso_de_la_fecha_sale_del_CORTE_y_no_de_una_constante():
+    """La fecha de corte se mueve cada vez que se hace un corte nuevo.
+
+    Por eso el rechazo dice la fecha que devuelve fecha_corte() y no un
+    31/08 escrito a mano: acá el corte es el 20/08 y el mensaje tiene que
+    decir 20/08. Si alguien clava la constante, este test lo agarra.
+    """
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-08-15", "ficha_id": "sin_asignar"},
+        **{"app.main.fecha_corte": {"return_value": date(2026, 8, 20)},
+           "app.main.crear_reproceso": {
+               "side_effect": ReprocesoAnteriorAlCorte(date(2026, 8, 15), date(2026, 8, 20))}},
+    )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser anterior al 20/08/2026" in respuesta.text
+    # La fecha real de hoy no puede aparecer: sería la constante clavada.
+    assert "31/08/2026" not in respuesta.text
+
+
+def test_la_fecha_hacia_atras_AVISA_cuantas_guias_R_quedan_desactualizadas():
+    """El molde de las señas: contar antes de escribir, mostrar y pedir el segundo toque.
+
+    Y la frase del costo es OBLIGATORIA. Es la que evita el susto: lo
+    primero que se piensa al leer "puede dejar de coincidir" es que se
+    movió plata, y no se movió — el costo está congelado.
+    """
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-08-31", "ficha_id": "sin_asignar"},
+        **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 3},
+           "app.main.crear_reproceso": {}},
+    )
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    assert "Hay 3" in texto and "guías R" in texto
+    assert "Zapallito" in texto
+    assert "31/08/2026" in texto
+    # LA FRASE. Sin ella el aviso asusta por la razón equivocada.
+    assert "Su costo no cambia." in texto
+    assert "Guardar igual" in texto
+
+
+def test_el_aviso_de_la_fecha_NO_escribe_nada():
+    """Contar va ANTES de escribir: el primer toque no puede dejar media guía R."""
+    with patch("app.main.crear_reproceso") as mock_crear:
+        _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+             "fecha": "2026-08-31", "ficha_id": "sin_asignar"},
+            **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 3}},
+        )
+    mock_crear.assert_not_called()
+
+
+def test_el_segundo_toque_guarda_con_la_fecha_vieja():
+    """Confirmado, entra con la fecha que el operario dijo: la fecha real es un dato, no un permiso."""
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-08-31", "ficha_id": "sin_asignar", "confirmado": "1"},
+        **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 3},
+           "app.main.crear_reproceso": {"return_value": 77}},
+    )
+
+    assert respuesta.status_code == 303
+    assert "R77" in respuesta.headers["location"]
+
+
+def test_sin_guias_R_posteriores_NO_avisa_y_guarda_derecho():
+    """Un aviso que aparece cuando no hay nada que avisar es un aviso que se deja de leer."""
+    with patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0) as mock_contar:
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+             "fecha": "2026-08-31", "ficha_id": "sin_asignar"},
+            **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 0},
+               "app.main.crear_reproceso": {"return_value": 78}},
+        )
+
+    assert respuesta.status_code == 303
+
+
+def test_con_la_fecha_de_HOY_no_se_cuenta_nada():
+    """El camino normal no paga un toque de más: con la fecha de hoy no hay
+    ninguna guía R posterior que se pueda desactualizar, así que ni se
+    pregunta."""
+    espia = MagicMock(return_value=9)
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-09-02", "ficha_id": "sin_asignar"},
+        **{"app.main.contar_guias_r_afectadas_por_fecha": {"new": espia},
+           "app.main.crear_reproceso": {"return_value": 79}},
+    )
+
+    assert respuesta.status_code == 303
+    espia.assert_not_called()
+
+
+def test_el_selector_de_fecha_tiene_el_piso_del_corte_puesto():
+    """Comodidad, no la regla: que no pueda elegir una fecha que va a rebotar."""
+    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}])
+
+    assert 'min="2026-08-20"' in respuesta.text
 
 
 GUIAS_R_DE_PRUEBA = [
@@ -18957,6 +19087,7 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main._ayudas_ficha_por_cliente_y_articulo", return_value={}),
         patch("app.main._fichas_por_cliente_y_articulo", return_value={}),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
     ):
         respuesta = cliente.get("/deposito/stock/reproceso")
 

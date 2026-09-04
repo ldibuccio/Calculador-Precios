@@ -104,6 +104,19 @@
   .pared-lotes { margin: 0 0 0.75rem; padding-left: 1.1rem; font-size: 0.95rem; }
   .pared-lotes li { margin-bottom: 0.15rem; }
   .pared p { margin: 0.6rem 0 0; font-size: 0.95rem; line-height: 1.35; }
+  /* EL AVISO DE LA FECHA HACIA ATRÁS. Amarillo y no rojo, a propósito:
+     la pared roja dice "no se puede", esto dice "mirá esto y confirmá".
+     Mismo criterio que la carga retroactiva de Vacíos. */
+  .aviso-fecha {
+    background: #fef9c3;
+    border: 2px solid #ca8a04;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: #713f12;
+  }
+  .aviso-fecha-titulo { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 800; }
+  .aviso-fecha p { margin: 0.6rem 0 0; font-size: 0.95rem; line-height: 1.35; }
   .pared-botones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
   .boton-ir {
     flex: 1 1 45%;
@@ -188,6 +201,24 @@
     <p class="administracion">Si la compra no te aparece para recepcionar, esa la carga Administración: avisales antes de seguir.</p>
   </div>
 
+  {# EL AVISO DE LA FECHA HACIA ATRÁS. Segundo toque, no pared: la fecha
+     vieja es legítima —recién ahora se carga lo que pasó el lunes— pero
+     mueve el reparto de las guías R que ya están. La frase del costo es
+     OBLIGATORIA y va acá, en la plantilla, escrita una sola vez: es la
+     que evita el susto, porque lo primero que se piensa al leer "puede
+     dejar de coincidir" es que se movió plata, y no se movió. #}
+  {% if advertencia %}
+  <div class="aviso-fecha">
+    <p class="aviso-fecha-titulo">
+      Hay {{ advertencia.cantidad }} {% if advertencia.cantidad == 1 %}guía R{% else %}guías R{% endif %}
+      de {{ advertencia.articulo }} con fecha igual o posterior al {{ advertencia.fecha }}.
+    </p>
+    <p>Su reparto por lote puede dejar de coincidir con el vivo. <strong>Su costo no cambia.</strong></p>
+    <p>Si el reproceso fue el {{ advertencia.fecha }}, tocá <strong>Guardar igual</strong> acá abajo.
+       Si la fecha está mal, corregila primero.</p>
+  </div>
+  {% endif %}
+
   {# Pantalla de OPERARIO: sin costos ni números del sistema. El selector
      lista solo artículos con stock, por nombre — sin cantidades. #}
   <div class="tarjeta">
@@ -240,7 +271,11 @@
              placeholder="0 si no se tiró nada" value="{{ precarga.bultos_merma or "" }}">
 
       <label for="fecha">Fecha del reproceso</label>
-      <input type="date" id="fecha" name="fecha" max="{{ hoy }}" value="{{ precarga.fecha or hoy }}">
+      {# min = la fecha de corte. Es comodidad: la regla que rechaza vive en
+         crear_reproceso y sale de corte_modelo, así que el día del corte
+         nuevo se mueve sola. Acá solo evita elegir una fecha que rebota. #}
+      <input type="date" id="fecha" name="fecha" min="{{ corte }}" max="{{ hoy }}"
+             value="{{ precarga.fecha or hoy }}">
 
       {# EL DESGLOSE. Aparece solo cuando ya hay artículo, cantidad y fecha:
          antes no hay nada que mostrar. Plegado muestra UNA línea; el que
@@ -261,7 +296,13 @@
          desglose propuesto o un reparto editado, se descartan solos —
          nunca se escribieron. #}
       <div class="acciones">
-        <button type="submit" class="boton-guardar">Guardar reproceso</button>
+        {# El segundo toque viaja acá. Si el operario cambia la fecha después
+           de leer el aviso, el JS lo vuelve a vaciar: el aviso es de ESA
+           fecha, no un permiso general para guardar cualquiera. #}
+        <input type="hidden" id="confirmado" name="confirmado" value="{% if advertencia %}1{% endif %}">
+        <button type="submit" class="boton-guardar">
+          {% if advertencia %}Guardar igual{% else %}Guardar reproceso{% endif %}
+        </button>
         <a class="boton-cancelar" href="/deposito/stock">Cancelar</a>
       </div>
     </form>
@@ -528,6 +569,13 @@
 
     ["articulo_id", "fecha"].forEach(function (id) {
       document.getElementById(id).addEventListener("change", pedirDesglose);
+    });
+
+    // El segundo toque vale para LA fecha que se avisó. Si la cambia, el
+    // aviso se vuelve a pedir: si no, leería "hay 3 guías del 31/08" y
+    // guardaría una del 25 sin que nadie contara nada.
+    document.getElementById("fecha").addEventListener("change", function () {
+      document.getElementById("confirmado").value = "";
     });
     document.getElementById("bultos_tomados").addEventListener("input", function () {
       clearTimeout(demora);
