@@ -999,21 +999,30 @@ def listar_todas_las_conversiones() -> list[dict]:
         conexion.close()
 
 
-def obtener_o_crear_proveedor_por_codigo(codigo_puesto: str, nombre: str) -> int:
+def obtener_o_crear_proveedor_por_codigo(codigo_puesto: str, nombre: str) -> tuple[int, bool]:
     """Busca un proveedor por codigo_puesto (la identidad) o lo crea; el nombre siempre se actualiza.
 
     "La última corrección manda": si el código ya existe pero con otro nombre guardado, se
     pisa con el nombre recién cargado.
+
+    Si el que encuentra estaba DADO DE BAJA, lo vuelve a activar: si llegó
+    mercadería con ese código, el proveedor existe, y dejarlo de baja haría
+    que el selector mienta — además de dejar la compra recién cargada
+    colgando de un proveedor invisible. Devuelve (id, reactivado), y el
+    segundo valor existe para que la pantalla lo pueda decir cuando pasa:
+    una baja que se deshace sola y en silencio es peor que no tenerla.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT id FROM proveedores WHERE codigo_puesto = %s", (codigo_puesto,))
+            cursor.execute("SELECT id, activo FROM proveedores WHERE codigo_puesto = %s", (codigo_puesto,))
             fila = cursor.fetchone()
+            reactivado = False
             if fila is not None:
-                proveedor_id = fila[0]
+                proveedor_id, activo = fila
+                reactivado = not activo
                 cursor.execute(
-                    "UPDATE proveedores SET nombre = %s, actualizado_en = now() WHERE id = %s",
+                    "UPDATE proveedores SET nombre = %s, activo = true, actualizado_en = now() WHERE id = %s",
                     (nombre, proveedor_id),
                 )
             else:
@@ -1023,13 +1032,46 @@ def obtener_o_crear_proveedor_por_codigo(codigo_puesto: str, nombre: str) -> int
                 )
                 proveedor_id = cursor.fetchone()[0]
         conexion.commit()
-        return proveedor_id
+        return proveedor_id, reactivado
     finally:
         conexion.close()
 
 
 def listar_proveedores() -> list[dict]:
-    """Devuelve todos los proveedores (id, codigo_puesto, nombre), para el autocompletar del alta."""
+    """Los proveedores ACTIVOS (id, codigo_puesto, nombre), para el autocompletar del alta de compras.
+
+    ÚNICO lugar donde se filtra por activo. Los llamadores no repiten el
+    WHERE: eligen entre esta y listar_todos_los_proveedores según para qué
+    piden la lista.
+
+    Acá va la lista de ELEGIR: cargar una compra, ingresar mercadería. Un
+    proveedor dado de baja no tiene que aparecer para elegir — para eso se
+    lo dio de baja.
+
+    Para FILTRAR una búsqueda va la otra (listar_todos_los_proveedores):
+    las compras viejas de un proveedor de baja siguen existiendo, y
+    esconderlo del filtro esconde historial que sí está.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id, codigo_puesto, nombre FROM proveedores WHERE activo ORDER BY codigo_puesto")
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_todos_los_proveedores() -> list[dict]:
+    """Todos los proveedores, de baja incluidos, para los FILTROS de búsqueda (Buscar Compras, Consultar Retiros).
+
+    Sin WHERE a propósito: dar de baja saca del selector de carga, no
+    borra las compras. Si el filtro escondiera al proveedor de baja, esas
+    compras dejarían de poder buscarse por él — y peor, la pantalla que
+    resuelve el nombre del filtro contra esta lista mostraría el filtro
+    vacío mientras filtra igual (ver _renderizar_pantalla_buscar_compras).
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
@@ -1037,6 +1079,78 @@ def listar_proveedores() -> list[dict]:
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()
         return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def listar_proveedores_para_abm() -> list[dict]:
+    """Todos los proveedores con su estado y CUÁNTAS COMPRAS tienen, para el ABM.
+
+    El conteo es lo que separa los dos casos que la pantalla tiene que
+    dejar distinguir antes de dar de baja: un fantasma recién creado por
+    un código mal tipeado (0 compras) de un proveedor de verdad que
+    alguien está por esconder sin querer. No bloquea nada — la FK queda
+    intacta y las compras siguen mostrando el nombre —, solo lo dice.
+
+    Los activos primero: los de baja son la excepción y van al final.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.id, p.codigo_puesto, p.nombre, p.activo,
+                       (SELECT COUNT(*) FROM compras c WHERE c.proveedor_id = p.id) AS compras
+                FROM proveedores p
+                ORDER BY p.activo DESC, p.codigo_puesto
+                """
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
+    finally:
+        conexion.close()
+
+
+def renombrar_proveedor(proveedor_id: int, nombre: str) -> None:
+    """Corrige el nombre de un proveedor de compras. Sin historial: es un tipeo, no otro proveedor.
+
+    El CÓDIGO no se toca nunca: codigo_puesto es la identidad (unique en
+    la base), y cambiarlo sería mover todas las compras del proveedor a
+    otro. Un código mal tipeado no se renombra — se da de baja.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE proveedores SET nombre = %s, actualizado_en = now() WHERE id = %s",
+                (nombre, proveedor_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("Ese proveedor ya no existe.")
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def cambiar_actividad_proveedor(proveedor_id: int, activo: bool) -> None:
+    """Da de baja (activo=False) o vuelve a dar de alta (activo=True) un proveedor de compras.
+
+    Una sola función para los dos sentidos: es el mismo UPDATE, y partirlo
+    en dos sería escribir dos veces la misma regla. No valida nada contra
+    las compras a propósito — la baja no borra ni bloquea, solo saca del
+    selector de carga (ver listar_proveedores).
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "UPDATE proveedores SET activo = %s, actualizado_en = now() WHERE id = %s",
+                (activo, proveedor_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("Ese proveedor ya no existe.")
+        conexion.commit()
     finally:
         conexion.close()
 

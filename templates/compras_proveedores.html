@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proveedores de Compras</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .aviso {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0 0 0.75rem; }
+  .renglon {
+    padding: 0.75rem 0;
+    border-top: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  .renglon:first-of-type { border-top: none; padding-top: 0; }
+  .renglon form { margin: 0; }
+  /* El renglon apila: en 390px el nombre y dos botones en una fila no
+     entran sin apretarse. Arriba nombre + Editar, abajo la meta y la
+     baja a todo el ancho -- lo vertical es lo que sobra en celular. */
+  .renglon-arriba { display: flex; align-items: center; gap: 0.5rem; }
+  .renglon-arriba strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .meta { color: #6b7280; font-size: 0.85rem; margin: 0.35rem 0 0.6rem; }
+  .codigo {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #374151;
+  }
+  /* De baja: gris y al final, para que se lea distinto de un activo sin
+     tener que buscar el boton para saber cual es cual. */
+  .renglon.de-baja strong { color: #9ca3af; }
+  .pill-baja {
+    display: inline-block;
+    background: #e5e7eb;
+    color: #4b5563;
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-left: 0.4rem;
+  }
+  .editar { display: none; margin-top: 0.6rem; }
+  .editar.visible { display: block; }
+  .editar input {
+    width: 100%;
+    padding: 0.7rem;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-sizing: border-box;
+    margin-bottom: 0.5rem;
+  }
+  .editar-botones { display: flex; gap: 0.5rem; }
+  .editar-botones button {
+    flex: 1;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .boton-guardar { background: #16a34a; color: #fff; }
+  .boton-cancelar { background: #e5e7eb; color: #374151; }
+  .boton-editar {
+    padding: 0.8rem 0.85rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 1px solid #1d4ed8;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .boton-baja, .boton-alta {
+    width: 100%;
+    padding: 0.8rem;
+    background: #fff;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .boton-baja { color: #dc2626; border: 1px solid #dc2626; }
+  .boton-alta { color: #15803d; border: 1px solid #15803d; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver {
+    display: block;
+    margin-top: 0.75rem;
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Proveedores de Compras" %}
+  {% set barra_atras = "/compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
+  {% endif %}
+
+  <!-- Proveedores de COMPRAS (los del Mercado, con codigo de puesto), nada
+       que ver con los proveedores del puesto de /puesto/envases. Acá no hay
+       alta: nacen solos al cargar una compra con un codigo nuevo. -->
+  <div class="tarjeta">
+    <h2>Proveedores ({{ proveedores|length }})</h2>
+    <p class="ayuda">No se cargan de acá: un proveedor nace solo cuando se carga una compra con un código nuevo. Editar corrige el nombre mal escrito — sigue siendo el mismo proveedor y sus compras no se mueven. El CÓDIGO no se puede cambiar: es su identidad. Si el código está mal tipeado, el proveedor se da de baja.</p>
+    {% if proveedores %}
+      {% for p in proveedores %}
+      <div class="renglon{% if not p.activo %} de-baja{% endif %}">
+        <div class="renglon-arriba">
+          <strong>{{ p.nombre }}{% if not p.activo %}<span class="pill-baja">De baja</span>{% endif %}</strong>
+          <button type="button" class="boton-editar" onclick="abrirEdicion('{{ p.id }}')">Editar</button>
+        </div>
+
+        {# El conteo de compras es lo que separa el fantasma de un codigo mal
+           tipeado (0 compras) del proveedor de verdad que alguien esta por
+           esconder sin querer. No bloquea: lo dice. #}
+        <p class="meta">
+          <span class="codigo">{{ p.codigo_puesto }}</span> ·
+          {% if p.compras == 0 %}sin compras cargadas{% elif p.compras == 1 %}1 compra{% else %}{{ p.compras }} compras{% endif %}
+        </p>
+
+        {% if p.activo %}
+        <form method="post" action="/compras/proveedores/{{ p.id }}/baja"
+              onsubmit="return confirm('¿Dar de baja a {{ p.nombre }} ({{ p.codigo_puesto }})?{% if p.compras %} Tiene {{ p.compras }} compra{{ 's' if p.compras != 1 }} cargada{{ 's' if p.compras != 1 }}, que quedan como están.{% endif %} Solo deja de aparecer para elegir al cargar una compra.');">
+          <button type="submit" class="boton-baja">Dar de baja</button>
+        </form>
+        {% else %}
+        <form method="post" action="/compras/proveedores/{{ p.id }}/alta">
+          <button type="submit" class="boton-alta">Dar de alta</button>
+        </form>
+        {% endif %}
+
+        {# Correccion de tipeo: el id y el codigo no se tocan, asi que las
+           compras viejas siguen colgando de este mismo proveedor. #}
+        <div class="editar" id="editar-{{ p.id }}">
+          <form method="post" action="/compras/proveedores/{{ p.id }}/renombrar">
+            <input type="text" id="nombre-{{ p.id }}" name="nombre" value="{{ p.nombre }}"
+                   aria-label="Nombre nuevo del proveedor" required>
+            <div class="editar-botones">
+              <button type="submit" class="boton-guardar">Guardar</button>
+              <button type="button" class="boton-cancelar" onclick="cerrarEdicion('{{ p.id }}')">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">Todavía no hay proveedores de compras cargados.</p>
+    {% endif %}
+  </div>
+
+  <a class="volver" href="/compras">Volver a Compras</a>
+
+  <script>
+    function abrirEdicion(id) {
+      const bloque = document.getElementById('editar-' + id);
+      bloque.classList.add('visible');
+      bloque.querySelector('input').focus();
+    }
+    function cerrarEdicion(id) {
+      document.getElementById('editar-' + id).classList.remove('visible');
+    }
+  </script>
+</body>
+</html>

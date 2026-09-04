@@ -1886,7 +1886,7 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
 def test_ver_buscar_compras_sin_filtros_usa_las_ultimas_48hs():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar,
     ):
@@ -1906,7 +1906,7 @@ def test_buscar_compras_cortada_por_el_tope_avisa_con_el_total():
     muchas = [dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], id=i) for i in range(TOPE_FILAS_BUSQUEDA + 1)]
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=muchas),
         patch("app.main.contar_compras_buscadas", return_value=1234) as mock_contar,
@@ -1921,7 +1921,7 @@ def test_buscar_compras_cortada_por_el_tope_avisa_con_el_total():
 def test_buscar_compras_sin_corte_no_cuenta_ni_avisa():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
         patch("app.main.contar_compras_buscadas") as mock_contar,
@@ -1936,7 +1936,7 @@ def test_buscar_compras_sin_corte_no_cuenta_ni_avisa():
 
 def test_ver_buscar_compras_con_filtros_de_fecha_proveedor_y_articulo():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA) as mock_buscar,
     ):
@@ -1955,7 +1955,7 @@ def test_ver_buscar_compras_con_filtros_de_fecha_proveedor_y_articulo():
 
 def test_ver_buscar_compras_muestra_contador_y_tabla():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
     ):
@@ -1974,7 +1974,7 @@ def test_ver_buscar_compras_el_link_editar_lleva_los_filtros_activos():
     # Para que Guardar/Volver de la edición vuelvan a ESTA búsqueda y no a
     # la default de 48hs.
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
     ):
@@ -2001,7 +2001,7 @@ def test_pantallas_de_carga_multiple_cancelan_al_hub():
 
 def test_ver_buscar_compras_sin_resultados_muestra_mensaje_y_no_boton_exportar():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]),
     ):
@@ -2014,7 +2014,7 @@ def test_ver_buscar_compras_sin_resultados_muestra_mensaje_y_no_boton_exportar()
 
 def test_ver_buscar_compras_con_resultados_muestra_boton_exportar():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
     ):
@@ -2028,7 +2028,7 @@ def test_ver_buscar_compras_con_resultados_muestra_boton_exportar():
 def test_ver_buscar_compras_fecha_invalida_muestra_error_y_usa_default():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]) as mock_buscar,
     ):
@@ -2043,7 +2043,7 @@ def test_ver_buscar_compras_fecha_invalida_muestra_error_y_usa_default():
 
 def test_ver_buscar_compras_fecha_desde_posterior_a_hasta_muestra_error():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]),
     ):
@@ -2054,7 +2054,7 @@ def test_ver_buscar_compras_fecha_desde_posterior_a_hasta_muestra_error():
 
 def test_ver_buscar_compras_incluye_buscadores_combinados():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]),
     ):
@@ -2190,7 +2190,7 @@ def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
     # trae padding/ancho propios) — necesita la clase .boton para tener un
     # área de toque cómoda en celular, no quedar chico/finito.
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
     ):
@@ -2206,7 +2206,7 @@ def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
         dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], tiene_fotos=False),
     ]
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=compras),
     ):
@@ -2226,7 +2226,7 @@ def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
 
 def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]),
     ):
@@ -2256,7 +2256,7 @@ def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
     with (
         patch("app.main._hoy_argentina", return_value=hoy),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post("/compras/nueva/manual", data=_datos_compra_manual(), follow_redirects=False)
@@ -2273,7 +2273,7 @@ def test_agregar_compra_manual_con_guardar_termina_en_buscar():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -2287,7 +2287,7 @@ def test_agregar_compra_manual_con_guardar_termina_en_buscar():
 
 def test_agregar_compra_manual_codigo_invalido_repuebla_todo_lo_tipeado():
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_proveedores", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
@@ -2307,7 +2307,7 @@ def test_agregar_compra_manual_codigo_invalido_repuebla_todo_lo_tipeado():
 
 def test_agregar_compra_manual_sin_nombre_muestra_error():
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.listar_proveedores", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
@@ -2322,7 +2322,7 @@ def test_agregar_compra_manual_renglon_invalido_no_crea_el_proveedor():
     # El proveedor se resuelve recién con el renglón validado: un error de
     # tipeo en la compra no deja proveedores nuevos colgados.
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.listar_proveedores", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
@@ -2335,7 +2335,7 @@ def test_agregar_compra_manual_renglon_invalido_no_crea_el_proveedor():
 
 def test_agregar_compra_manual_terminar_sin_nada_cargado_sale_sin_guardar():
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.crear_compra") as mock_crear,
     ):
         respuesta = cliente.post(
@@ -3902,7 +3902,7 @@ def test_eliminar_compra_ya_recepcionada_muestra_cartel_en_buscar_compras():
     # Nada de JSON crudo: el rechazo vuelve a la pantalla de Buscar Compras
     # con el mensaje como cartel legible.
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch(
@@ -3922,7 +3922,7 @@ def test_eliminar_compra_no_ingresada_muestra_cartel_y_conserva_filtros():
     # no la puede borrar desde Buscar Compras. El intento vuelve a la misma
     # búsqueda (los filtros viajan en el form) con el cartel.
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA) as mock_buscar,
         patch(
@@ -3942,7 +3942,7 @@ def test_eliminar_compra_no_ingresada_muestra_cartel_y_conserva_filtros():
 
 def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.eliminar_compra", return_value=[]) as mock_eliminar,
@@ -3972,7 +3972,7 @@ def test_eliminar_varias_compras_exitosa_muestra_aviso_y_conserva_filtros():
 
 def test_eliminar_varias_compras_sin_ninguna_seleccionada_no_hace_nada():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]),
         patch("app.main.eliminar_compra") as mock_eliminar,
@@ -3994,7 +3994,7 @@ def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicis
         return []
 
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.eliminar_compra", side_effect=eliminar_side_effect) as mock_eliminar,
@@ -4022,7 +4022,7 @@ def test_eliminar_varias_compras_una_falla_no_corta_el_lote_y_avisa_sin_tecnicis
 
 def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=COMPRAS_DE_PRUEBA),
         patch("app.main.eliminar_compra", side_effect=Exception("no se pudo conectar")),
@@ -5215,7 +5215,7 @@ def test_confirmar_compra_foto_exitosa_guarda_solo_los_confirmados():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo") as mock_aprender,
     ):
@@ -5255,7 +5255,7 @@ def test_confirmar_compra_foto_no_aprende_de_los_placeholders_del_lector():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo") as mock_aprender,
     ):
@@ -5279,7 +5279,7 @@ def test_confirmar_compra_foto_accion_guardar_va_directo_al_resumen_y_guarda_igu
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo") as mock_aprender,
     ):
@@ -5326,7 +5326,7 @@ def test_confirmar_compra_foto_sube_la_foto_una_vez_y_guarda_la_ruta_en_todos_lo
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-123-abcdef12.jpg") as mock_subir,
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
@@ -5353,7 +5353,7 @@ def test_confirmar_compra_foto_si_falla_la_subida_guarda_la_compra_igual_sin_fot
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.subir_foto_comanda", side_effect=RuntimeError("Supabase Storage rechazó la subida (403)")),
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
@@ -5462,7 +5462,7 @@ def test_confirmar_compra_foto_con_token_pasa_el_token_al_guardado():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.comanda_ya_guardada", return_value=False) as mock_ya_guardada,
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
@@ -5489,7 +5489,7 @@ def test_confirmar_compra_foto_reintento_con_token_ya_usado_no_guarda_de_nuevo()
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.comanda_ya_guardada", return_value=True),
         patch("app.main.subir_foto_comanda") as mock_subir,
         patch("app.main.crear_compras_de_comanda") as mock_crear,
@@ -5515,7 +5515,7 @@ def test_confirmar_compra_foto_si_falla_el_aprendizaje_la_comanda_queda_guardada
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo", side_effect=Exception("se cortó la conexión")),
     ):
@@ -6030,7 +6030,7 @@ def test_confirmar_compra_foto_con_foto_ruta_ya_subida_no_vuelve_a_subir():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.subir_foto_comanda") as mock_subir,
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
@@ -6055,7 +6055,7 @@ def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main.subir_foto_comanda", return_value="2026-08-06/n07p41-123-abcdef12.jpg") as mock_subir,
         patch("app.main.crear_compras_de_comanda", return_value=True) as mock_crear,
         patch("app.main.aprender_articulo"),
@@ -8923,7 +8923,7 @@ def test_elegir_proveedor_ingreso_directo_exitoso_redirige_con_proveedor_id():
     # poder cargar un proveedor nuevo por código de puesto (mercadería
     # que entra fuera de hora puede venir de un proveedor que nunca se
     # compró), no solo elegir uno ya existente.
-    with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200) as mock_proveedor:
+    with patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor:
         respuesta = cliente.post(
             "/deposito/ingresar/proveedor",
             data={"codigo_puesto": "n07p41", "nombre": "Saturno"},
@@ -8937,7 +8937,7 @@ def test_elegir_proveedor_ingreso_directo_exitoso_redirige_con_proveedor_id():
 
 def test_elegir_proveedor_ingreso_directo_codigo_invalido_muestra_error():
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main.listar_proveedores", return_value=[]),
     ):
         respuesta = cliente.post(
@@ -9770,7 +9770,8 @@ def test_titulo_grande_del_cuerpo_ya_no_aparece_en_ninguna_pantalla():
     assert "titulo-sector" not in respuesta.text
 
     with (
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        # Buscar Compras es un FILTRO: usa la lista completa, de baja incluidos.
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=[]),
     ):
@@ -10391,7 +10392,7 @@ def test_consultar_retiros_cortada_por_el_tope_avisa_y_oculta_los_totales():
     muchos = [dict(RETIROS_DE_PRUEBA[0], id=i) for i in range(TOPE_FILAS_BUSQUEDA + 1)]
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_retiros", return_value=muchos),
         patch("app.main.contar_retiros_buscados", return_value=2000) as mock_contar,
@@ -10407,7 +10408,7 @@ def test_consultar_retiros_cortada_por_el_tope_avisa_y_oculta_los_totales():
 def test_consultar_retiros_default_48hs_y_total_desglosado():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_retiros", return_value=RETIROS_DE_PRUEBA) as mock_buscar,
     ):
@@ -10442,7 +10443,7 @@ def test_consultar_retiros_marca_las_no_ingresadas_y_desglosa_el_neto():
     retiros[0]["estado"] = "no_ingresado"  # la de Carro de 10 bultos
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_retiros", return_value=retiros),
     ):
@@ -10459,7 +10460,7 @@ def test_consultar_retiros_marca_las_no_ingresadas_y_desglosa_el_neto():
 def test_consultar_retiros_pasa_los_filtros_a_la_consulta():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_retiros", return_value=[]) as mock_buscar,
     ):
@@ -10478,7 +10479,7 @@ def test_consultar_retiros_pasa_los_filtros_a_la_consulta():
 def test_consultar_retiros_ofrece_exportar_con_todos_los_filtros():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_retiros", return_value=RETIROS_DE_PRUEBA),
     ):
@@ -10543,7 +10544,7 @@ def test_exportar_retiros_pdf_fecha_invalida_da_400():
 def test_consultar_retiros_ofrece_cooperativa_en_el_filtro_de_tipo():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_retiros", return_value=[]),
     ):
@@ -14702,7 +14703,7 @@ def test_agregar_compra_manual_con_comanda_adjunta_la_cuelga_de_la_guia():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico") as mock_comprimir,
         patch("app.main.subir_foto_comanda", return_value="2026-08-22/n07p41-abc.jpg") as mock_subir,
         patch("app.main.crear_compra") as mock_crear,
@@ -14724,7 +14725,7 @@ def test_agregar_compra_manual_con_comanda_adjunta_la_cuelga_de_la_guia():
 
 def test_agregar_compra_manual_foto_ilegible_avisa_sin_crear_nada():
     with (
-        patch("app.main.obtener_o_crear_proveedor_por_codigo") as mock_proveedor,
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)) as mock_proveedor,
         patch("app.main._comprimir_foto_jpeg", return_value=None),
         patch("app.main.crear_compra") as mock_crear,
         patch("app.main.listar_proveedores", return_value=[]),
@@ -14747,7 +14748,7 @@ def test_agregar_compra_manual_si_storage_falla_la_compra_se_guarda_igual():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
         patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
-        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=200),
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
         patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico"),
         patch("app.main.subir_foto_comanda", side_effect=RuntimeError("sin conexión")),
         patch("app.main.crear_compra") as mock_crear,
@@ -18939,3 +18940,178 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
     assert "confirm(" not in texto.split("boton-cancelar")[1][:400]
     # Y Guardar se lleva el ancho: los dos juntos, pero no del mismo peso.
     assert "flex: 2;" in texto and "flex: 1;" in texto
+
+
+# --- ABM de proveedores de compras ---
+
+PROVEEDORES_ABM_DE_PRUEBA = [
+    {"id": 1, "codigo_puesto": "N01P02", "nombre": "Don Pedro", "activo": True, "compras": 12},
+    {"id": 2, "codigo_puesto": "L03P11", "nombre": "La Rosa", "activo": True, "compras": 1},
+    {"id": 3, "codigo_puesto": "N99P99", "nombre": "Tipeo Mal", "activo": False, "compras": 0},
+]
+
+
+def test_abm_proveedores_compras_muestra_codigo_estado_y_cuantas_compras():
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        respuesta = cliente.get("/compras/proveedores")
+
+    assert respuesta.status_code == 200
+    assert "N01P02" in respuesta.text
+    # El conteo es lo que separa el fantasma de un código mal tipeado del
+    # proveedor de verdad que alguien está por esconder sin querer.
+    assert "12 compras" in respuesta.text
+    assert "1 compra" in respuesta.text
+    assert "sin compras cargadas" in respuesta.text
+    assert "De baja" in respuesta.text
+
+
+def test_abm_proveedores_compras_no_ofrece_alta_de_proveedor_nuevo():
+    # Un proveedor de compras nace solo al cargar una compra con un código
+    # nuevo. Un alta acá crearía códigos sin ninguna compra detrás.
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        respuesta = cliente.get("/compras/proveedores")
+
+    assert 'action="/compras/proveedores/nuevo"' not in respuesta.text
+    assert "No se cargan de acá" in respuesta.text
+
+
+def test_abm_proveedores_compras_el_activo_ofrece_baja_y_el_de_baja_ofrece_alta():
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        respuesta = cliente.get("/compras/proveedores")
+
+    assert 'action="/compras/proveedores/1/baja"' in respuesta.text
+    assert 'action="/compras/proveedores/1/alta"' not in respuesta.text
+    # La baja no es un camino de ida.
+    assert 'action="/compras/proveedores/3/alta"' in respuesta.text
+    assert 'action="/compras/proveedores/3/baja"' not in respuesta.text
+
+
+def test_abm_proveedores_compras_la_confirmacion_de_baja_dice_cuantas_compras_tiene():
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        respuesta = cliente.get("/compras/proveedores")
+
+    assert "Tiene 12 compras cargadas, que quedan como están." in respuesta.text
+    assert "Solo deja de aparecer para elegir al cargar una compra." in respuesta.text
+
+
+def test_abm_proveedores_compras_no_deja_editar_el_codigo():
+    # codigo_puesto es la identidad: cambiarlo movería todas las compras a
+    # otro proveedor. El formulario de edición manda solo el nombre.
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        respuesta = cliente.get("/compras/proveedores")
+
+    bloque = respuesta.text.split('action="/compras/proveedores/1/renombrar"')[1].split("</form>")[0]
+    assert 'name="nombre"' in bloque
+    assert 'name="codigo_puesto"' not in bloque
+
+
+def test_renombrar_proveedor_compras_redirige_con_aviso():
+    with patch("app.main.renombrar_proveedor") as mock_renombrar:
+        respuesta = cliente.post(
+            "/compras/proveedores/7/renombrar", data={"nombre": "  Don   Pedro  "}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    # El nombre se normaliza igual que en el ABM del puesto.
+    mock_renombrar.assert_called_once_with(7, "Don Pedro")
+    assert "Proveedor+renombrado" in respuesta.headers["location"]
+
+
+def test_renombrar_proveedor_compras_sin_nombre_da_400():
+    with patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA):
+        respuesta = cliente.post("/compras/proveedores/7/renombrar", data={"nombre": "   "})
+
+    assert respuesta.status_code == 400
+    assert "El nombre del proveedor es obligatorio." in respuesta.text
+
+
+def test_baja_y_alta_de_proveedor_compras_usan_la_misma_funcion():
+    with patch("app.main.cambiar_actividad_proveedor") as mock_cambiar:
+        respuesta = cliente.post("/compras/proveedores/7/baja", follow_redirects=False)
+    assert respuesta.status_code == 303
+    mock_cambiar.assert_called_once_with(7, False)
+    assert "dado+de+baja" in respuesta.headers["location"]
+
+    with patch("app.main.cambiar_actividad_proveedor") as mock_cambiar:
+        respuesta = cliente.post("/compras/proveedores/7/alta", follow_redirects=False)
+    assert respuesta.status_code == 303
+    mock_cambiar.assert_called_once_with(7, True)
+    assert "dado+de+alta" in respuesta.headers["location"]
+
+
+def test_baja_de_proveedor_compras_que_ya_no_existe_da_400():
+    with (
+        patch("app.main.cambiar_actividad_proveedor", side_effect=ValueError("Ese proveedor ya no existe.")),
+        patch("app.main.listar_proveedores_para_abm", return_value=PROVEEDORES_ABM_DE_PRUEBA),
+    ):
+        respuesta = cliente.post("/compras/proveedores/7/baja")
+
+    assert respuesta.status_code == 400
+    assert "Ese proveedor ya no existe." in respuesta.text
+
+
+def test_el_hub_de_compras_lleva_al_abm_de_proveedores():
+    respuesta = cliente.get("/compras")
+    assert respuesta.status_code == 200
+    assert 'href="/compras/proveedores"' in respuesta.text
+
+
+def test_cargar_una_compra_con_el_codigo_de_un_proveedor_de_baja_lo_dice():
+    # La reactivación es correcta (si llegó mercadería, el proveedor
+    # existe), pero no puede ser silenciosa: el que lo dio de baja tiene
+    # que poder enterarse de que volvió.
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, True)),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.crear_compra"),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/manual",
+            data={
+                "codigo_puesto": "N01P02",
+                "nombre": "Don Pedro",
+                "articulo_id": str(ARTICULOS_CON_UNIDAD_COMPRA[0]["id"]),
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "20",
+                "importe": "1000",
+                "sena": "0",
+                "tipo_retiro": "Clark",
+                "accion": "agregar",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "aviso=" in respuesta.headers["location"]
+    assert "volvi%C3%B3+a+quedar+activo" in respuesta.headers["location"]
+
+
+def test_cargar_una_compra_de_un_proveedor_activo_no_avisa_nada():
+    with (
+        patch("app.main.obtener_o_crear_proveedor_por_codigo", return_value=(200, False)),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.crear_compra"),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/manual",
+            data={
+                "codigo_puesto": "N01P02",
+                "nombre": "Don Pedro",
+                "articulo_id": str(ARTICULOS_CON_UNIDAD_COMPRA[0]["id"]),
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "20",
+                "importe": "1000",
+                "sena": "0",
+                "tipo_retiro": "Clark",
+                "accion": "agregar",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert "aviso=" not in respuesta.headers["location"]
+

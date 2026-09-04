@@ -90,8 +90,12 @@ create table proveedores (
     nombre          text not null,
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now(),
-    codigo_puesto   text unique not null check (codigo_puesto ~ '^[NL][0-9]{2}P[0-9]{2}$')
+    codigo_puesto   text unique not null check (codigo_puesto ~ '^[NL][0-9]{2}P[0-9]{2}$'),
+    activo          boolean not null default true
 );
+
+comment on column proveedores.activo is
+    'false = dado de baja: deja de aparecer en el selector de carga de compras, y nada mas. Sus compras siguen intactas y siguen mostrando su nombre (la FK no se toca). Existe porque la identidad de un proveedor de compras es codigo_puesto, no el nombre: un codigo mal tipeado crea un proveedor fantasma que NO se puede arreglar renombrando, y la baja logica es su unica salida. El filtro vive en UN solo lugar (listar_proveedores en app/db.py), no en cada llamador.';
 
 comment on table proveedores is 'Proveedores del mercado. La identidad estable es codigo_puesto (ej. N07P41); el nombre es editable, la ultima correccion manda.';
 

@@ -51,6 +51,7 @@ from app.db import (
     anular_vacio_recibido,
     aprender_articulo,
     buscar_compras,
+    cambiar_actividad_proveedor,
     buscar_ingresos_deposito,
     buscar_retiros,
     cambiar_articulo_de_ficha,
@@ -184,6 +185,7 @@ from app.db import (
     registrar_mail_pedido,
     obtener_ultimo_tick_revision,
     registrar_revision_casilla,
+    renombrar_proveedor,
     renombrar_proveedor_puesto,
     renombrar_tipo_envase_puesto,
     registrar_tick_revision,
@@ -226,6 +228,7 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
+    listar_proveedores_para_abm,
     listar_proveedores_puesto,
     listar_senas_pendientes,
     listar_senas_resueltas,
@@ -234,6 +237,7 @@ from app.db import (
     contar_senas_afectadas_por_valor,
     cargar_valor_sena,
     listar_tipos_envase_puesto,
+    listar_todos_los_proveedores,
     listar_todas_las_conversiones,
     listar_ultimos_conteos_vacios,
     listar_vacios_devueltos_de_fecha,
@@ -1990,7 +1994,13 @@ def _renderizar_pantalla_buscar_compras(
         error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
 
     try:
-        proveedores = listar_proveedores()
+        # La lista COMPLETA, de baja incluidos: esto es un filtro de
+        # búsqueda, no un selector de carga. Las compras de un proveedor
+        # dado de baja siguen existiendo y hay que poder buscarlas por él
+        # — y si no estuviera en la lista, proveedor_nombre_actual (abajo)
+        # daría None y la pantalla mostraría el filtro vacío mientras
+        # filtra igual.
+        proveedores = listar_todos_los_proveedores()
         articulos = listar_articulos()
         # Tope para la pantalla: un rango ancho no puede tirar miles de
         # filas al celular. Se pide una de más para saber si hubo corte;
@@ -2415,7 +2425,10 @@ def ver_nueva_compra_foto(request: Request, error: str | None = None):
 
 
 @app.get("/compras/nueva")
-def ver_nueva_compra(request: Request, proveedor_id: int | None = None, error: str | None = None):
+def ver_nueva_compra(
+    request: Request, proveedor_id: int | None = None, error: str | None = None, aviso: str | None = None
+):
+    """aviso viene por la URL cuando hay algo que contar del guardado anterior (hoy: un proveedor que se reactivó)."""
     if proveedor_id is None:
         try:
             proveedores = listar_proveedores()
@@ -2452,6 +2465,7 @@ def ver_nueva_compra(request: Request, proveedor_id: int | None = None, error: s
             "proveedor": proveedor,
             "renglones_hoy": renglones_hoy,
             "error": error,
+            "aviso": aviso,
         },
     )
 
@@ -2551,9 +2565,10 @@ async def agregar_compra_manual(
     # El proveedor se crea/resuelve recién con el renglón ya validado: un
     # error de tipeo en la compra no deja proveedores nuevos colgados.
     try:
-        proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar el proveedor: {error_db}", 500)
+    aviso_reactivado = _aviso_proveedor_reactivado(reactivado, nombre_valor)
 
     foto_ruta = _subir_comanda_adjunta(comprimida, codigo_valor) if comprimida is not None else None
 
@@ -2583,7 +2598,7 @@ async def agregar_compra_manual(
     if accion == "terminar":
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
-    return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
+    return RedirectResponse(url=_url_nueva_compra(proveedor_id, aviso_reactivado), status_code=303)
 
 
 @app.post("/compras/nueva")
@@ -3282,7 +3297,8 @@ async def confirmar_compra_foto(request: Request):
         )
 
     try:
-        proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+        aviso_reactivado = _aviso_proveedor_reactivado(reactivado, nombre_valor)
 
         # Reintento de un guardado que YA entró: el server guardó y
         # commiteó, pero el teléfono se quedó sin internet antes de ver la
@@ -3385,7 +3401,121 @@ async def confirmar_compra_foto(request: Request):
     if accion == "guardar":
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
-    return RedirectResponse(url=f"/compras/nueva?proveedor_id={proveedor_id}", status_code=303)
+    return RedirectResponse(url=_url_nueva_compra(proveedor_id, aviso_reactivado), status_code=303)
+
+
+def _url_nueva_compra(proveedor_id: int, aviso: str | None) -> str:
+    """La vuelta a /compras/nueva con el proveedor ya elegido, y el aviso si hay algo que contar."""
+    parametros = {"proveedor_id": proveedor_id}
+    if aviso:
+        parametros["aviso"] = aviso
+    return f"/compras/nueva?{urlencode(parametros)}"
+
+
+def _aviso_proveedor_reactivado(reactivado: bool, nombre: str) -> str | None:
+    """El aviso de que cargar una compra volvió a activar un proveedor que estaba de baja.
+
+    Único lugar donde se escribe ese texto — lo usan las tres pantallas
+    que cargan por código (carga manual, comandas múltiples e Ingresar
+    Mercadería del depósito). Se dice porque una baja que se deshace sola
+    y en silencio es peor que no tener baja: el que lo dio de baja tiene
+    que poder enterarse de que volvió, y por qué.
+    """
+    if not reactivado:
+        return None
+    return (
+        f'"{nombre}" estaba dado de baja y volvió a quedar activo: llegó una compra con su código. '
+        "Si no corresponde, dalo de baja de nuevo en Compras → Proveedores."
+    )
+
+
+def _renderizar_pantalla_proveedores_compras(
+    request: Request, *, error: str | None = None, aviso: str | None = None, status_code: int = 200
+):
+    try:
+        proveedores = listar_proveedores_para_abm()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "compras_proveedores.html",
+        {"proveedores": proveedores, "error": error, "aviso": aviso},
+        status_code=status_code,
+    )
+
+
+@app.get("/compras/proveedores")
+def ver_proveedores_compras(request: Request, aviso: str | None = None):
+    """Proveedores de compras: corregir el nombre y dar de baja. NO hay alta.
+
+    Un proveedor de compras nace solo, al cargar una compra con un código
+    de puesto nuevo (obtener_o_crear_proveedor_por_codigo). Esta pantalla
+    existe por lo que ESO no permite arreglar: la identidad es
+    codigo_puesto, así que un código mal tipeado crea un proveedor
+    fantasma que no se puede corregir renombrando — la baja lógica es su
+    única salida. El nombre sí se corrige acá (y también solo, cargando
+    otra compra con el mismo código: "la última corrección manda").
+    """
+    return _renderizar_pantalla_proveedores_compras(request, aviso=aviso)
+
+
+@app.post("/compras/proveedores/{proveedor_id}/renombrar")
+def renombrar_proveedor_compras_ruta(request: Request, proveedor_id: int, nombre: str = Form("")):
+    """Corrige el nombre. El código no se toca nunca: es la identidad, cambiarlo movería todas sus compras."""
+    nombre_limpio = re.sub(r"\s+", " ", nombre).strip()
+    if not nombre_limpio:
+        return _renderizar_pantalla_proveedores_compras(
+            request, error="El nombre del proveedor es obligatorio.", status_code=400
+        )
+    try:
+        renombrar_proveedor(proveedor_id, nombre_limpio)
+    except ValueError as error:
+        return _renderizar_pantalla_proveedores_compras(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        return _renderizar_pantalla_proveedores_compras(
+            request, error=f"No se pudo renombrar el proveedor: {error_db}", status_code=500
+        )
+    parametros = urlencode({"aviso": f"Proveedor renombrado a '{nombre_limpio}'."})
+    return RedirectResponse(url=f"/compras/proveedores?{parametros}", status_code=303)
+
+
+@app.post("/compras/proveedores/{proveedor_id}/baja")
+def dar_de_baja_proveedor_compras_ruta(request: Request, proveedor_id: int):
+    """Baja lógica: lo saca del selector de carga y nada más. No borra ni bloquea nada.
+
+    A propósito NO se valida contra las compras: la FK queda intacta, las
+    compras viejas siguen mostrando el nombre y se siguen pudiendo buscar
+    por él (los filtros de búsqueda usan listar_todos_los_proveedores). La
+    pantalla muestra cuántas compras tiene antes de confirmar — decirlo,
+    no impedirlo.
+    """
+    return _cambiar_actividad_proveedor_compras(request, proveedor_id, activo=False)
+
+
+@app.post("/compras/proveedores/{proveedor_id}/alta")
+def dar_de_alta_proveedor_compras_ruta(request: Request, proveedor_id: int):
+    """Vuelve a activar un proveedor dado de baja por error. La baja no es un camino de ida."""
+    return _cambiar_actividad_proveedor_compras(request, proveedor_id, activo=True)
+
+
+def _cambiar_actividad_proveedor_compras(request: Request, proveedor_id: int, *, activo: bool):
+    """El cuerpo compartido de la baja y el alta: es el mismo guardado, cambia el valor y el texto."""
+    try:
+        cambiar_actividad_proveedor(proveedor_id, activo)
+    except ValueError as error:
+        return _renderizar_pantalla_proveedores_compras(request, error=str(error), status_code=400)
+    except Exception as error_db:
+        verbo = "dar de alta" if activo else "dar de baja"
+        return _renderizar_pantalla_proveedores_compras(
+            request, error=f"No se pudo {verbo} el proveedor: {error_db}", status_code=500
+        )
+    aviso = (
+        "Proveedor dado de alta: vuelve a aparecer para elegir al cargar una compra."
+        if activo
+        else "Proveedor dado de baja: deja de aparecer para elegir al cargar una compra. Sus compras quedan como están."
+    )
+    return RedirectResponse(url=f"/compras/proveedores?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 def _armar_aviso_bloqueo_edicion(estado: str | None, cantidad_bloqueada: bool, precio_bloqueado: bool) -> str:
@@ -5503,7 +5633,9 @@ def ver_consultar_retiros(
         error_fecha = "La fecha desde no puede ser posterior a la fecha hasta."
 
     try:
-        proveedores = listar_proveedores()
+        # La lista COMPLETA, igual que Buscar Compras: es un filtro de
+        # búsqueda sobre historial, no un selector de carga.
+        proveedores = listar_todos_los_proveedores()
         articulos = listar_articulos()
         # Mismo tope que Buscar Compras. OJO: si la lista se corta, los
         # totales de bultos NO se muestran — un total parcial usado para
@@ -5883,7 +6015,7 @@ def elegir_proveedor_ingreso_directo(request: Request, codigo_puesto: str = Form
         )
 
     try:
-        proveedor_id = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo(codigo_valor, nombre_valor)
     except Exception as error_db:
         try:
             proveedores = listar_proveedores()
@@ -5896,7 +6028,11 @@ def elegir_proveedor_ingreso_directo(request: Request, codigo_puesto: str = Form
             status_code=500,
         )
 
-    return RedirectResponse(url=f"/deposito/ingresar?proveedor_id={proveedor_id}", status_code=303)
+    parametros = {"proveedor_id": proveedor_id}
+    aviso_reactivado = _aviso_proveedor_reactivado(reactivado, nombre_valor)
+    if aviso_reactivado:
+        parametros["aviso"] = aviso_reactivado
+    return RedirectResponse(url=f"/deposito/ingresar?{urlencode(parametros)}", status_code=303)
 
 
 @app.post("/deposito/ingresar")

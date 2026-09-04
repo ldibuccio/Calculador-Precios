@@ -293,6 +293,7 @@ nombres esperados, el script se corta sin escribir nada.
 | `corte_frutamax_puesta_a_cero_y_carga.sql` (compensatorio por artículo calculado como −1 × las seis patas, los 18 movimientos de stock inicial, los 2 reprocesos iniciales y el `ficha_id` en NULL de las guías R pre-corte) | ✅ 2026-08-29 — **aplicado, pero con el incidente de abajo: terminó con error y escribió igual** | — no corresponde |
 | `corte_frutamax_verificador.sql` (las seis patas contra la foto aprobada; 12 verificaciones) | ❌ **NUNCA SE CORRIÓ** — también usa vistas y tablas temporales, así que habría fallado igual | — no corresponde |
 | `corte_frutamax_rollback.sql` (deshace la carga y devuelve las fichas desde el respaldo; se corta si ya hubo operación después del corte) | — no hizo falta | — no corresponde |
+| `agregar_activo_a_proveedores.sql` | ✅ | ✅ |
 
 ### Lo que pasó al correr el corte (29/08/2026) — leer antes de reusar estos scripts
 

@@ -4962,3 +4962,132 @@ def test_guardar_lotes_elegidos_vacio_deja_el_renglon_sin_correccion():
     consultas = [c.args[0] for c in cursor.execute.call_args_list]
     assert len(consultas) == 1
     assert "DELETE FROM pedidos_renglones_lotes_elegidos" in consultas[0]
+
+
+from app.db import (  # noqa: E402
+    cambiar_actividad_proveedor,
+    listar_proveedores,
+    listar_proveedores_para_abm,
+    listar_todos_los_proveedores,
+    obtener_o_crear_proveedor_por_codigo,
+    renombrar_proveedor,
+)
+
+
+def test_listar_proveedores_es_el_unico_lugar_que_filtra_por_activo():
+    # El filtro vive acá y en ningún llamador: los diez que piden la lista
+    # eligen entre esta y listar_todos_los_proveedores, no repiten el WHERE.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_proveedores()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "WHERE activo" in consulta
+    assert "ORDER BY codigo_puesto" in consulta
+
+
+def test_listar_todos_los_proveedores_no_filtra_nada():
+    # Es la lista de los FILTROS de búsqueda. Un proveedor de baja tiene
+    # compras viejas que siguen existiendo: si desapareciera del filtro,
+    # ese historial dejaría de poder buscarse por él.
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_todos_los_proveedores()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "WHERE" not in consulta
+
+
+def test_listar_proveedores_para_abm_trae_el_estado_y_cuantas_compras_tiene():
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_proveedores_para_abm()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "p.activo" in consulta
+    # El conteo separa el fantasma de un código mal tipeado (0 compras) del
+    # proveedor de verdad que alguien está por esconder sin querer.
+    assert "SELECT COUNT(*) FROM compras c WHERE c.proveedor_id = p.id" in consulta
+    # Los de baja al final: son la excepción.
+    assert "ORDER BY p.activo DESC, p.codigo_puesto" in consulta
+
+
+def test_obtener_o_crear_proveedor_por_codigo_reactiva_al_que_estaba_de_baja():
+    # Si llegó mercadería con ese código, el proveedor existe: dejarlo de
+    # baja haría que el selector mienta y que la compra recién cargada
+    # quede colgando de un proveedor invisible.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo("N01P02", "Don Pedro")
+
+    consulta, parametros = cursor.execute.call_args_list[1].args
+    assert "activo = true" in consulta
+    assert parametros == ("Don Pedro", 7)
+    assert (proveedor_id, reactivado) == (7, True)
+
+
+def test_obtener_o_crear_proveedor_por_codigo_no_dice_reactivado_si_ya_estaba_activo():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo("N01P02", "Don Pedro")
+
+    assert (proveedor_id, reactivado) == (7, False)
+
+
+def test_obtener_o_crear_proveedor_por_codigo_nuevo_no_es_una_reactivacion():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None, (9,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        proveedor_id, reactivado = obtener_o_crear_proveedor_por_codigo("N09P09", "Nuevo")
+
+    assert (proveedor_id, reactivado) == (9, False)
+
+
+def test_renombrar_proveedor_no_toca_el_codigo():
+    # codigo_puesto es la identidad: cambiarlo movería todas las compras
+    # del proveedor a otro. Un código mal tipeado se da de baja, no se
+    # renombra.
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        renombrar_proveedor(7, "Don Pedro")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "codigo_puesto" not in consulta
+    assert parametros == ("Don Pedro", 7)
+    conexion.commit.assert_called_once()
+
+
+def test_cambiar_actividad_proveedor_da_de_baja_y_de_alta_con_el_mismo_update():
+    for activo in (False, True):
+        conexion, cursor = _conexion_falsa()
+        cursor.rowcount = 1
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            cambiar_actividad_proveedor(7, activo)
+
+        consulta, parametros = cursor.execute.call_args.args
+        assert "SET activo = %s" in consulta
+        # La baja no borra ni valida contra las compras: solo saca del selector.
+        assert "DELETE" not in consulta
+        assert parametros == (activo, 7)
+
+
+def test_cambiar_actividad_proveedor_avisa_si_el_proveedor_ya_no_existe():
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 0
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            cambiar_actividad_proveedor(7, False)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert "ya no existe" in str(error)
+
+    conexion.commit.assert_not_called()

@@ -28,6 +28,14 @@
     margin-bottom: 1rem;
     font-size: 0.95rem;
   }
+  .aviso {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
   .campo-fijo {
     margin-top: 0.25rem;
     padding: 0.65rem;
@@ -130,6 +138,9 @@
   {% if modo == "nueva" %}
   {% if error %}
   <div class="error">{{ error }}</div>
+  {% endif %}
+  {% if aviso %}
+  <div class="aviso">{{ aviso }}</div>
   {% endif %}
 
   <div class="tarjeta">
