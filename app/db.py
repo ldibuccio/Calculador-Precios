@@ -1604,6 +1604,51 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
 # marcó el sistema, no una persona).
 ORIGEN_RETIRO_AUTOMATICO_POR_TIPO = {"Carro": "automatico_carro", "Cooperativa": "automatico_cooperativa"}
 
+# Los mismos valores de arriba, listos para meter en un IN de SQL. Se arman
+# DESDE la constante y no se reescriben a mano: si mañana se agrega un tipo
+# automático, esto lo acompaña solo. Son literales del código, no dato de
+# usuario — no hay nada que escapar acá.
+_ORIGENES_RETIRO_AUTOMATICO_SQL = ", ".join(
+    f"'{origen}'" for origen in sorted(ORIGEN_RETIRO_AUTOMATICO_POR_TIPO.values())
+)
+
+# La condición de "esta compra todavía se puede borrar", escrita UNA sola vez
+# y en SQL. La usan el borrado de a uno (eliminar_compra) y el Cancelar del
+# día (eliminar_compras_del_dia_por_proveedor). Antes vivía dos veces —tres
+# `if` en Python y un WHERE en la otra función—, y la excepción de abajo
+# habría entrado en una sola: el borrado de a uno y el Cancelar habrían
+# empezado a decir cosas distintas de la misma compra.
+#
+# Lo que bloquea: recepcionada (tiene kilaje real pesado y creó lote), "No
+# ingresó" (un registro de Depósito que el comprador no puede hacer
+# desaparecer borrando la compra) y retirada (alguien la sacó del puesto).
+#
+# LA EXCEPCIÓN, y es toda la razón de este cambio: un retiro de origen
+# automático NO es un hecho, es un default del alta. crear_compra marca
+# 'retirado' en el MISMO INSERT para Carro y Cooperativa, porque las maneja un
+# tercero que nunca entra al sistema y "se asume que retira" — nadie verificó
+# nada, y esas compras jamás aparecen en la cola de Logística. Mientras la
+# compra siga 'pendiente' (Depósito todavía no se expidió), ese retiro
+# supuesto no puede impedir que se borre una compra recién cargada: hasta
+# ahora una de Cooperativa nacía imposible de borrar, desde el segundo cero.
+#
+# Las dos condiciones van JUNTAS. Solo el origen dejaría borrar una rechazada
+# de Cooperativa, que hoy lo único que la bloquea es justamente el retiro (no
+# hay guarda por estado = 'rechazado'), y eso es cambiar una política, no
+# arreglar un bug. Solo el estado dejaría borrar una pendiente que Logística
+# tildó a mano, que sí es un hecho: una persona vio que salió del puesto.
+#
+# estado NULL (compras de antes de que existiera Recepción) no es 'pendiente':
+# siguen bloqueadas, a propósito.
+_SQL_COMPRA_BORRABLE = f"""
+    estado IS DISTINCT FROM 'recepcionado'
+    AND estado IS DISTINCT FROM 'no_ingresado'
+    AND (
+        estado_retiro IS DISTINCT FROM 'retirado'
+        OR (estado = 'pendiente' AND retiro_origen IN ({_ORIGENES_RETIRO_AUTOMATICO_SQL}))
+    )
+"""
+
 
 def crear_compra(
     fecha_operacion,
@@ -3152,18 +3197,61 @@ def actualizar_importe_compra(compra_id: int, importe: float) -> None:
         conexion.close()
 
 
-def eliminar_compra(compra_id: int) -> list[str]:
-    """Borra una compra (borrado real), salvo que ya haya pasado por Depósito o por el retiro.
+def _motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id: int) -> str:
+    """Traduce a un mensaje el rechazo del DELETE de eliminar_compra. La regla la decide el SQL (_SQL_COMPRA_BORRABLE), esto solo la cuenta.
 
-    Una compra recepcionada tiene kilaje real pesado, una retirada ya
-    salió del puesto, y una marcada "No ingresó" es un registro de
-    Depósito que tiene que quedar fijo (el comprador no puede hacerlo
-    desaparecer borrando la compra) — borrar cualquiera de las tres se
-    rechaza acá con un ValueError (el mensaje es el que se le muestra al
-    usuario tal cual). Por ahora esto no tiene excepción: cuando exista
-    el sistema de permisos, un gerente podrá forzarlo con su acceso,
-    pero eso no se resuelve en esta función. 'pendiente' y
-    'rechazado'/'cancelado' se siguen pudiendo borrar sin restricción.
+    Se llama SOLO cuando el DELETE no borró ninguna fila. El orden importa:
+    "No ingresó" va antes que el retiro porque para el usuario el dato
+    importante es que Depósito se expidió, no si además estaba retirada.
+
+    Si no encuentra el motivo, LO DICE en vez de tragarlo. Que el SQL
+    rechace y esta función no sepa por qué significa que la condición y su
+    traducción se separaron, y enterarse de eso es más importante que
+    mostrar un mensaje prolijo.
+    """
+    cursor.execute("SELECT estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
+    fila = cursor.fetchone()
+    if fila is None:
+        return "Esa compra ya no existe."
+
+    estado, estado_retiro = fila
+    if estado == "recepcionado":
+        return "Esta compra ya fue recepcionada, no se puede eliminar."
+    if estado == "no_ingresado":
+        return 'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
+    if estado_retiro == "retirado":
+        return "Esta compra ya fue retirada, no se puede eliminar."
+
+    return (
+        "No se pudo eliminar la compra y el sistema no sabe por qué: la regla que la rechazó "
+        "y el mensaje que la explica se separaron. Avisá que pasó esto."
+    )
+
+
+def eliminar_compra(compra_id: int) -> list[str]:
+    """Borra una compra (borrado real), salvo que ya haya pasado por Depósito o por un retiro de verdad.
+
+    Quién decide es el SQL, no esta función: el DELETE lleva pegada la
+    condición _SQL_COMPRA_BORRABLE —la misma que usa el Cancelar del día,
+    escrita una sola vez— y si no borra ninguna fila, recién ahí se lee la
+    compra para armar el mensaje (_motivo_por_el_que_no_se_puede_eliminar).
+    Se rechaza con un ValueError y el mensaje es el que se le muestra al
+    usuario tal cual. Por ahora esto no tiene excepción: cuando exista el
+    sistema de permisos, un gerente podrá forzarlo con su acceso, pero eso
+    no se resuelve acá.
+
+    Un retiro AUTOMÁTICO (Carro/Cooperativa) no bloquea mientras la compra
+    siga 'pendiente': ese "retirado" lo escribió crear_compra por default,
+    nadie lo verificó (ver _SQL_COMPRA_BORRABLE). Hasta el 04/09/2026 sí
+    bloqueaba, y una compra de Cooperativa nacía imposible de borrar.
+
+    Una RECHAZADA hoy queda bloqueada, pero de rebote: no hay ninguna
+    guarda por estado = 'rechazado' — lo que la frena es que rechazarla
+    marca el retiro (_auto_retirar_si_corresponde). Si algún día se decide
+    bloquearla a propósito, el motivo es que Depósito ya se expidió (igual
+    que "No ingresó"), no el retiro. Eso es una política a decidir, no un
+    bug; mientras tanto el caso real —un rechazo apretado por error— se
+    resuelve con el Deshacer del mismo día, que la devuelve a 'pendiente'.
 
     Las fotos cuelgan de la GUÍA (fotos_guia), no del renglón: borrar una
     compra no toca las fotos mientras la guía siga teniendo renglones.
@@ -3176,23 +3264,14 @@ def eliminar_compra(compra_id: int) -> list[str]:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT guia_id, estado, estado_retiro FROM compras WHERE id = %s", (compra_id,))
+            cursor.execute(
+                f"DELETE FROM compras WHERE id = %s AND ({_SQL_COMPRA_BORRABLE}) RETURNING guia_id",
+                (compra_id,),
+            )
             fila = cursor.fetchone()
-            guia_id, estado, estado_retiro = fila if fila else (None, None, None)
-
-            if estado == "recepcionado":
-                raise ValueError("Esta compra ya fue recepcionada, no se puede eliminar.")
-            if estado == "no_ingresado":
-                # Antes que el chequeo de retiro: para el usuario el dato
-                # importante es que Depósito la marcó "No ingresó", no si
-                # además estaba retirada.
-                raise ValueError(
-                    'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
-                )
-            if estado_retiro == "retirado":
-                raise ValueError("Esta compra ya fue retirada, no se puede eliminar.")
-
-            cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+            if fila is None:
+                raise ValueError(_motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id))
+            (guia_id,) = fila
 
             rutas_a_borrar: list[str] = []
             if guia_id is not None:
@@ -3377,10 +3456,16 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
     al toque, no queda nada pendiente del lado del cliente).
 
     Ya no es un DELETE ciego de todo el lote: las compras ya recepcionadas,
-    retiradas o marcadas "No ingresó" quedan afuera del borrado (mismo
-    criterio que eliminar_compra) — nunca en silencio, quien llama tiene
-    que avisar con los números que devuelve esta función, no dar por
-    hecho que se borró todo.
+    retiradas o marcadas "No ingresó" quedan afuera del borrado — nunca en
+    silencio, quien llama tiene que avisar con los números que devuelve
+    esta función, no dar por hecho que se borró todo.
+
+    El criterio no está escrito acá: es _SQL_COMPRA_BORRABLE, el mismo que
+    usa eliminar_compra, y ahí está la excepción que importa para este
+    Cancelar — una compra de Carro o Cooperativa que todavía está
+    'pendiente' SÍ se borra, aunque figure retirada, porque ese retiro lo
+    puso el alta por default y no lo verificó nadie. Antes contaba como
+    "protegida" y el comprador no podía descartar su propia carga.
 
     Devuelve {"borradas": int, "protegidas": int}.
     """
@@ -3394,12 +3479,10 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
             (total,) = cursor.fetchone()
 
             cursor.execute(
-                """
+                f"""
                 DELETE FROM compras
                 WHERE fecha_operacion = %s AND proveedor_id = %s
-                  AND estado IS DISTINCT FROM 'recepcionado'
-                  AND estado IS DISTINCT FROM 'no_ingresado'
-                  AND estado_retiro IS DISTINCT FROM 'retirado'
+                  AND ({_SQL_COMPRA_BORRABLE})
                 """,
                 (fecha_operacion, proveedor_id),
             )

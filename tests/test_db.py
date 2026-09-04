@@ -161,7 +161,7 @@ def test_eliminar_compra_ultima_de_su_guia_devuelve_las_fotos_sin_otros_usos():
     # de baja y se devuelven las rutas que ningúna otra guía usa.
     conexion, cursor = _conexion_falsa(
         [
-            (105, "pendiente", "pendiente"),  # SELECT guia_id, estado, estado_retiro
+            (105,),  # RETURNING guia_id del DELETE: borro de verdad
             (0,),  # COUNT de compras de la guía tras el DELETE: quedó vacía
             (0,),  # COUNT de otras guías usando la ruta: ninguna
         ],
@@ -180,7 +180,7 @@ def test_eliminar_compra_con_renglones_restantes_no_toca_las_fotos():
     # La guía sigue teniendo renglones: las fotos son de la GUÍA y se quedan.
     conexion, cursor = _conexion_falsa(
         [
-            (105, "pendiente", "pendiente"),
+            (105,),
             (2,),  # quedan 2 renglones en la guía
         ]
     )
@@ -190,7 +190,7 @@ def test_eliminar_compra_con_renglones_restantes_no_toca_las_fotos():
 
     assert resultado == []
     # SELECT compra + DELETE + COUNT de la guía: nada de fotos.
-    assert cursor.execute.call_count == 3
+    assert cursor.execute.call_count == 2  # DELETE + COUNT de la guía
     assert not any("fotos_guia" in ll.args[0] for ll in cursor.execute.call_args_list)
     conexion.commit.assert_called_once()
 
@@ -200,7 +200,7 @@ def test_eliminar_compra_foto_compartida_por_otra_guia_no_se_borra_del_storage()
     # guía saca SU registro, pero el archivo sigue mientras otra guía lo use.
     conexion, cursor = _conexion_falsa(
         [
-            (105, "pendiente", "pendiente"),
+            (105,),
             (0,),  # la guía quedó vacía
             (1,),  # otra guía sigue usando la misma ruta
         ],
@@ -220,7 +220,7 @@ def test_eliminar_compra_sin_guia_no_toca_fotos():
     # migración): se borra sin mirar fotos.
     conexion, cursor = _conexion_falsa(
         [
-            (None, "pendiente", "pendiente"),
+            (None,),  # RETURNING guia_id: borro, pero la compra no tenía guía
         ]
     )
 
@@ -228,13 +228,13 @@ def test_eliminar_compra_sin_guia_no_toca_fotos():
         resultado = eliminar_compra(30)
 
     assert resultado == []
-    assert cursor.execute.call_count == 2  # SELECT + DELETE
+    assert cursor.execute.call_count == 1  # solo el DELETE: sin guía no hay fotos que mirar
 
 
 def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
     conexion, cursor = _conexion_falsa(
         [
-            (105, "rechazado", "pendiente"),
+            (105,),
             (0,),
         ],
         filas_fetchall=[],
@@ -250,7 +250,7 @@ def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
 def test_eliminar_compra_cancelada_en_retiro_se_puede_borrar_igual_que_antes():
     conexion, cursor = _conexion_falsa(
         [
-            (105, "pendiente", "cancelado"),
+            (105,),
             (0,),
         ],
         filas_fetchall=[],
@@ -266,7 +266,8 @@ def test_eliminar_compra_cancelada_en_retiro_se_puede_borrar_igual_que_antes():
 def test_eliminar_compra_recepcionada_no_se_borra():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "recepcionado", "retirado"),  # SELECT foto_ruta, estado, estado_retiro
+            None,  # el DELETE no borro nada
+            ("recepcionado", "retirado"),  # el SELECT que arma el mensaje
         ]
     )
 
@@ -278,7 +279,7 @@ def test_eliminar_compra_recepcionada_no_se_borra():
             assert str(error) == "Esta compra ya fue recepcionada, no se puede eliminar."
 
     # Ni el DELETE ni ningún commit: se corta antes de tocar nada.
-    assert cursor.execute.call_count == 1
+    assert cursor.execute.call_count == 2  # el DELETE que no borró + el SELECT del mensaje
     conexion.commit.assert_not_called()
     conexion.close.assert_called_once()
 
@@ -289,7 +290,8 @@ def test_eliminar_compra_no_ingresada_no_se_borra():
     # eso, aunque la compra además estuviera retirada.
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "no_ingresado", "retirado"),  # SELECT foto_ruta, estado, estado_retiro
+            None,  # el DELETE no borro nada
+            ("no_ingresado", "retirado"),  # el SELECT que arma el mensaje
         ]
     )
 
@@ -300,14 +302,15 @@ def test_eliminar_compra_no_ingresada_no_se_borra():
         except ValueError as error:
             assert str(error) == 'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
 
-    assert cursor.execute.call_count == 1
+    assert cursor.execute.call_count == 2  # el DELETE que no borró + el SELECT del mensaje
     conexion.commit.assert_not_called()
 
 
 def test_eliminar_compra_retirada_no_se_borra():
     conexion, cursor = _conexion_falsa(
         [
-            ("2026-08-13/n07p41-123-abcdef12.jpg", "pendiente", "retirado"),  # SELECT foto_ruta, estado, estado_retiro
+            None,  # el DELETE no borro nada
+            ("pendiente", "retirado"),  # el SELECT que arma el mensaje
         ]
     )
 
@@ -318,7 +321,7 @@ def test_eliminar_compra_retirada_no_se_borra():
         except ValueError as error:
             assert str(error) == "Esta compra ya fue retirada, no se puede eliminar."
 
-    assert cursor.execute.call_count == 1
+    assert cursor.execute.call_count == 2  # el DELETE que no borró + el SELECT del mensaje
     conexion.commit.assert_not_called()
 
 
@@ -5091,3 +5094,93 @@ def test_cambiar_actividad_proveedor_avisa_si_el_proveedor_ya_no_existe():
             assert "ya no existe" in str(error)
 
     conexion.commit.assert_not_called()
+
+
+# --- El criterio de "esta compra todavía se puede borrar" ---
+#
+# La regla vive en SQL (_SQL_COMPRA_BORRABLE) y no en tres `if` de Python,
+# así que lo que hay que proteger acá es el TEXTO de la condición y que las
+# dos funciones que borran usen la MISMA. Con un cursor falso el WHERE no se
+# evalúa: un test de comportamiento sobre un mock no probaría la regla.
+
+from app.db import (  # noqa: E402
+    ORIGEN_RETIRO_AUTOMATICO_POR_TIPO,
+    _motivo_por_el_que_no_se_puede_eliminar,
+    _SQL_COMPRA_BORRABLE,
+    eliminar_compras_del_dia_por_proveedor,
+)
+
+
+def test_el_criterio_de_borrado_bloquea_lo_que_paso_por_deposito_o_por_un_retiro_real():
+    condicion = " ".join(_SQL_COMPRA_BORRABLE.split())
+    assert "estado IS DISTINCT FROM 'recepcionado'" in condicion
+    assert "estado IS DISTINCT FROM 'no_ingresado'" in condicion
+    assert "estado_retiro IS DISTINCT FROM 'retirado'" in condicion
+
+
+def test_el_retiro_automatico_no_bloquea_pero_solo_mientras_siga_pendiente():
+    # Las dos condiciones van juntas: solo el origen dejaría borrar una
+    # rechazada de Cooperativa (hoy lo único que la bloquea es el retiro),
+    # y solo el estado dejaría borrar una que Logística tildó a mano.
+    condicion = " ".join(_SQL_COMPRA_BORRABLE.split())
+    assert "estado = 'pendiente' AND retiro_origen IN (" in condicion
+
+
+def test_los_origenes_automaticos_del_sql_salen_de_la_constante_de_python():
+    # Si mañana se agrega un tipo automático, la condición lo acompaña sola:
+    # no hay una segunda lista escrita a mano adentro del SQL.
+    condicion = " ".join(_SQL_COMPRA_BORRABLE.split())
+    for origen in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO.values():
+        assert f"'{origen}'" in condicion
+
+
+def test_el_borrado_de_a_uno_y_el_cancelar_del_dia_usan_LA_MISMA_condicion():
+    # Este es el test que importa. El criterio estaba escrito dos veces —tres
+    # `if` en Python y un WHERE en el Cancelar del día—, y la excepción del
+    # retiro automático habría entrado en una sola: las dos pantallas habrían
+    # empezado a decir cosas distintas de la misma compra.
+    conexion, cursor = _conexion_falsa([(105,), (0,)], filas_fetchall=[])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_compra(30)
+    sql_de_a_uno = cursor.execute.call_args_list[0].args[0]
+
+    conexion, cursor = _conexion_falsa([(7,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_compras_del_dia_por_proveedor(date(2026, 9, 4), 3)
+    sql_del_dia = cursor.execute.call_args_list[1].args[0]
+
+    assert _SQL_COMPRA_BORRABLE in sql_de_a_uno
+    assert _SQL_COMPRA_BORRABLE in sql_del_dia
+
+
+def test_el_borrado_de_a_uno_decide_en_el_delete_y_no_antes():
+    # Decide la base; el código traduce el error. No hay un SELECT previo que
+    # pregunte "¿se puede?" para después borrar: eso es lo que se separa.
+    conexion, cursor = _conexion_falsa([(105,), (0,)], filas_fetchall=[])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_compra(30)
+
+    primera = cursor.execute.call_args_list[0].args[0]
+    assert primera.strip().startswith("DELETE FROM compras")
+    assert "RETURNING guia_id" in primera
+
+
+def test_el_motivo_dice_que_no_sabe_cuando_no_sabe():
+    # Que el SQL rechace y el traductor no encuentre el motivo significa que
+    # la condición y su mensaje se separaron. Tragarlo es cómo se pierde
+    # meses después.
+    cursor = MagicMock()
+    cursor.fetchone.return_value = ("pendiente", "pendiente")
+
+    motivo = _motivo_por_el_que_no_se_puede_eliminar(cursor, 30)
+
+    assert "no sabe por qué" in motivo
+    assert "se separaron" in motivo
+
+
+def test_el_motivo_avisa_si_la_compra_ya_no_existe():
+    cursor = MagicMock()
+    cursor.fetchone.return_value = None
+
+    assert _motivo_por_el_que_no_se_puede_eliminar(cursor, 30) == "Esa compra ya no existe."
+
