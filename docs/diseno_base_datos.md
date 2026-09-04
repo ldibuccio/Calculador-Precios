@@ -1949,6 +1949,185 @@ síntoma**. La respuesta era la 3 y el piso fue a la 2.
 diciendo cosas distintas del mismo artículo, un ajuste tapa un número que
 todavía no se entiende — y el botón está a un toque en el Cotejo.
 
+## El freno del reproceso mide bien: su permisividad es exactamente `sin_lote`
+
+Revisado el 04/09, y **descarta una frase mía del día anterior**: dije que el
+freno "puede dejar pasar guías que no debería". Salió de la sospecha de que la
+cuenta 3 no reconciliaba. Reconcilia, así que la frase se cae.
+
+**Contra qué compara** (`core/stock.py`, `bultos_en_los_lotes`): la **suma de
+los restantes**, nunca el neto. Está decidido el 01/09 y escrito en su
+docstring, con el motivo: *"trabar a un operario por un agujero que ya estaba
+ahí antes de que tocara nada sería trabarlo por lo mismo que está
+arreglando"*.
+
+Los números de Pepino lo cierran sin margen de interpretación:
+
+| | |
+|---|---|
+| suma de restantes (lo que el freno deja pasar) | 114 |
+| total (el neto del artículo) | 26 |
+| `sin_lote` | 88 |
+
+**114 = 26 + 88, exacto.** La diferencia entre lo que el freno habilita y el
+stock neto **es** `sin_lote`, ni un bulto más. El freno no se equivoca en la
+cuenta: deja pasar exactamente lo que el 01/09 se decidió no mirar.
+
+### Las tres piezas miran la MISMA lista, y eso es lo que sostiene el "100% o nada"
+
+Verificado llamada por llamada:
+
+- `lotes_para_reproceso` (`app/db.py`) → `reparto_para_reproceso(...)`, que es
+  el desglose que ve el operario.
+- El freno adentro de `crear_reproceso` → **la misma** `reparto_para_reproceso`,
+  recalculada dentro de la transacción.
+- La escritura de los consumos → `propuesta_fifo` / `validar_reparto_declarado`
+  sobre **esos mismos lotes**.
+
+No hay forma de que la pantalla apruebe un reparto que la escritura no pueda
+cumplir. El freno vive en `crear_reproceso` y en ningún otro lado, y
+`crear_reproceso` es el único camino que escribe una guía R.
+
+### Lo que sí queda en pie, y NO es el freno
+
+El freno no puede distinguir un `sin_lote` que viene de guías R atrasadas (E4)
+de uno que viene de cajas armadas de más. Los 88 de Pepino los trata igual en
+los dos casos.
+
+**Eso no se arregla endureciendo el freno.** Endurecerlo trabaría justo al que
+está corrigiendo el atraso — que es la razón por la que el 01/09 se eligió la
+suma de los restantes. Se arregla achicando `sin_lote`, que es E4. **El freno
+es la pieza calibrada; el descalibrado es el dato de entrada.**
+
+## `_lotes_con_resto` (la merma dirigida) hereda el mismo inflado, acotado
+
+`_lotes_con_resto` (`app/main.py`) rejuega el FIFO con **todas** las salidas y
+ofrece todo lote con `restante > 0`. Si el artículo tiene `sin_lote` alto, esos
+restantes están inflados por lo mismo que arriba: la lista puede ofrecer
+*"Guía R101, quedan 30"* cuando físicamente no hay nada.
+
+Es una **observación, no una urgencia**, y por tres razones:
+
+1. **El operario elige mirando la pila, no la lista.** El selector existe para
+   el caso "sé exactamente cuál se pudrió". Si el lote no está, no lo elige.
+2. **Si igual eligiera mal, el daño está acotado por construcción**
+   (`repartir_fifo`): `consumo = min(lote["restante"], pedidos, cantidad)`. Lo
+   que el lote no cubre no se inventa: cae al FIFO, y lo que el FIFO no cubre
+   cae a `sin_lote` — o sea que **queda a la vista** en vez de desaparecer.
+3. **Acá no hay freno a propósito**, y está en el docstring de la ruta:
+   *"registra y delata, jamás traba"*. Una merma es un hecho consumado: el
+   cajón ya se tiró, y trabarla sería perder el registro del hecho.
+
+La diferencia con el reproceso es esa: allá el número inflado habilita a
+**crear** stock que no existe; acá solo elige de **dónde** se resta algo que ya
+pasó. El total baja igual.
+
+**Cuando `sin_lote` se achique (E4), esto se achica solo.** No lleva código
+propio.
+
+## El CHECK ampliado de `pedidos_renglones` ESPERA a la baja lógica de fichas
+
+Decidido el 04/09, y el orden es la decisión: **baja lógica de fichas primero,
+el CHECK después.** Queda escrito para que no se retome el CHECK suelto.
+
+### Qué sería el CHECK ampliado
+
+Hoy `pedidos_renglones_ficha_solo_identificados` es
+`articulo_id is not null or ficha_id is null`: **media regla**, la mitad que no
+atajó los nueve días de pedidos sin ficha. La ampliación es el par atómico:
+`check ((articulo_id is null) = (ficha_id is null))`.
+
+### El lado del código ya está limpio, y eso cambia la urgencia
+
+Grepeados **los que construyen el renglón**, no el campo (corolario 3 de
+`CLAUDE.md`). Hoy son tres y **los tres escriben el par junto**:
+
+- `crear_pedido` — el INSERT, ya con `ficha_id` desde el arreglo del 04/09.
+- `asignar_ficha_a_renglon` — `SET ficha_id = fl.id, articulo_id = fl.articulo_id`,
+  el artículo sale de la ficha en el mismo UPDATE.
+- El traslado del armado, que no toca ninguno de los dos.
+
+**Ningún camino escribe `articulo_id` solo.** El agujero que el CHECK vendría a
+cerrar ya está cerrado en el código.
+
+### Por qué NO va ahora: el costo cae sobre una operación que sí se usa
+
+`pedidos_renglones.ficha_id` es `on delete set null`. Con el CHECK ampliado
+puesto, borrar una ficha con renglones haría `SET NULL` sobre filas que
+conservan su `articulo_id` → **violación del CHECK → el DELETE explota**. Y no
+se salva pasando la FK a `NO ACTION`: ahí falla por la foreign key. **En las dos
+variantes el borrado de una ficha con renglones deja de existir**; lo único que
+cambia es si el error es legible o crudo.
+
+Rompe dos funciones que hoy andan: `eliminar_ficha` y
+`cambiar_articulo_de_ficha`.
+
+Y el alcance es enorme: los renglones son el tráfico diario, así que
+**cualquier ficha que se haya pedido una vez pasa a ser imborrable**, y hoy no
+hay baja lógica de fichas como escape.
+
+**Eso es cambiar una política de operación para cerrar un agujero que ya no
+está abierto.** El CHECK sería un cinturón sobre un camino que se acaba de
+cerrar, y el precio lo paga una función que alguien usa.
+
+### La pieza que va primero, y por qué es la que destraba
+
+**Baja lógica de fichas.** Hoy borrar una ficha nulea renglones en silencio —el
+peligro que ya estaba anotado en `cambiar_articulo_de_ficha`— y **no hay
+alternativa**: borrar es el único camino. Con baja lógica, borrar deja de ser el
+único camino, nada queda huérfano, y **ahí el CHECK entra sin costo
+operativo**.
+
+### El detalle que no hay que olvidar el día que se retome: Palmala
+
+El CHECK no es corrección de datos, es esquema, y el esquema tiene que ser el
+mismo en las dos bases. Palmala corrió el mismo código entre el 27/08 y el
+04/09, así que tiene renglones con artículo y sin ficha, y **el
+`ALTER TABLE ... ADD CONSTRAINT` ahí falla** (falla limpio, sin escribir, pero
+falla). Palmala quedó fuera del backfill a propósito porque no lleva stock —
+esa decisión no se toca, así que el CHECK va a necesitar `not valid` en Palmala,
+o una limpieza propia. **Medirlo antes con una consulta de solo lectura, no
+suponerlo.**
+
+## La rama retenida de Stock Físico: qué se rescata y qué se rehace
+
+`origin/claude/retenido-stock-fisico` (`597896e`, 28/08): *"Stock Físico de
+Depósito: buscar los conteos de un día"* — un selector de fecha, "Volver a hoy",
+y el ofrecimiento del día contado más cercano cuando el día pedido está vacío.
+Nueve días parada. Revisada el 04/09 contra `main`.
+
+Su base es `15f617c`; desde ahí `main` se movió 24 commits sobre esos archivos,
+y **E3 (`9e51146`) reescribió la pantalla**. El veredicto por archivo:
+
+- **`app/db.py` — se rescata TAL CUAL.** `fecha_conteo_stock_mas_cercana` es
+  función nueva, no toca nada existente, y su consulta pide solo
+  `DISTINCT creado_en::date`: los campos que E3 le agregó a `conteos_stock`
+  (`ficha_id`, `stock_sistema`) no la rozan. Es además la pieza que tiene el
+  pensamiento adentro: mira para los dos lados, con empate gana el posterior, y
+  solo corre si el día pedido está vacío.
+- **`app/main.py` — se rehace, no se mergea.** E3 le cambió la firma a
+  `_renderizar_pantalla_stock_fisico_deposito` (le agregó `articulo_id` y
+  `fichas_por_articulo`) y la reestructuró en un dict `contexto`. El conflicto
+  es real pero mecánico: unas diez líneas.
+- **`templates/deposito_stock_fisico.html` — aplica casi entera.** E3 tocó el
+  formulario de carga (el selector de ficha), no el `<style>` ni el listado
+  "Contado hoy": los dos hunks de la rama caen en contexto que sigue existiendo
+  textual.
+- **`tests/test_app.py` — hay que agregarles un patch.** Mockean
+  `listar_articulos` pero no `_fichas_por_articulo`, que E3 metió en el render:
+  tal cual están, revientan con "Error al conectar con la base de datos".
+
+**E3 no invalidó la idea: la fortaleció.** Desde la etapa 3 la lista "Contado
+hoy" tiene un renglón por PORCIÓN (los sueltos y cada ficha), así que un día de
+conteo es mucho más largo y es más probable —no menos— que el operario quiera
+mirar lo que contó el martes.
+
+**Aun así no entra hoy**, y el motivo no es técnico: es una pantalla nueva para
+el operario, y lo que está decidido esta semana es **parar y mirarlo correr con
+gente real antes de construir encima**. La rama **no se borra**: queda parada
+con este relevamiento hecho, para que el día que se retome no haya que volver a
+investigarla.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
