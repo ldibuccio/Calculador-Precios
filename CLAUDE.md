@@ -141,6 +141,30 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 3, del 04/09 y es la CUARTA vez: **cuando una estructura gana un
+campo, hay que grepear quién la CONSTRUYE, no el campo nuevo.** Grepear el
+campo solo encuentra a los que ya lo usan — los que faltan, por definición, no
+lo nombran.
+
+`pedidos_renglones` ganó `ficha_id` el 26/08 a las 19:12. El POST de la
+revisión a mano se actualizó; el auto-confirmado, que **rearma el mismo dict**
+desde otra fuente, no. **Nueve días de pedidos guardados con el artículo bien y
+la ficha en NULL**, sin un solo error. El grep que lo habría encontrado esa
+misma noche era **`crear_pedido(`**: dos llamadores, uno actualizado y otro no.
+
+Los dos síntomas que lo escondieron, y valen como señal para la próxima:
+
+- **La base tenía MEDIA regla.** El CHECK prohibía "ficha sin artículo" y
+  permitía justo lo contrario. Una guarda que cubre una sola dirección deja
+  pasar la otra en silencio: al escribir un CHECK, preguntarse qué pasa con el
+  caso espejo.
+- **El test comparaba TRES campos de CINCO.** `(sucursal, articulo_id,
+  cantidad)` — `ficha_id` no estaba entre los que miraba, así que pasó los
+  nueve días en verde. **Un test que compara un subconjunto de campos no
+  protege los que no mira.** Cuando lo que se guarda es una estructura, se
+  compara la estructura ENTERA: que falle el día que alguien agrega un campo es
+  la función del test, no una molestia.
+
 Corolario: **una regla de unicidad no puede depender de una extensión de
 Postgres.** `unaccent` hay que habilitarla por proyecto, y una regla que se
 pierde el día que se crea la base de la empresa siguiente no es una regla. Lo

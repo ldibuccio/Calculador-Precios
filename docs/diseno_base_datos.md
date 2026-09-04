@@ -1597,6 +1597,90 @@ protege los que no mira.** Cuando lo que se guarda es una estructura, se compara
 la estructura entera, y que falle al agregar un campo es la función, no la
 molestia.
 
+## Deuda que dejamos nosotros: el corte partió la cuenta por ficha y nadie la cierra
+
+Anotado el 04/09. **Menor que el bug del auto-confirmado, pero es de las cosas
+que hicimos nosotros y en un mes no vamos a recordar.** No se arregla ahora.
+
+### Qué hizo el corte
+
+`db/corte_frutamax_puesta_a_cero_y_carga.sql`, paso 1:
+
+```
+update reprocesos set ficha_id = null
+where anulado_el is null and ficha_id is not null
+  and fecha_operacion < date '2026-08-31';
+```
+
+Con una guarda que exigía encontrar exactamente **2 guías R y 53 cajas**, y con
+respaldo en `corte_respaldo_fichas_reprocesos` para poder deshacerlo. Todo
+correcto y deliberado: las **entradas** por ficha anteriores al corte dejan de
+contar.
+
+### Lo que quedó sin cerrar
+
+**El corte no tocó `pedidos_renglones.ficha_id`.** Los renglones armados
+pre-corte que tienen ficha **siguen restando** en la cuenta por ficha
+(`_SQL_STOCK_PARTIDO`).
+
+Y **el compensatorio no los alcanza**: `cierre_modelo_viejo` es **un movimiento
+por ARTÍCULO**, y la cuenta por ficha no lee movimientos — solo
+`reprocesos.bultos_primera` menos renglones armados. El compensatorio lleva a
+cero el total del artículo y **no baja a nivel ficha**.
+
+Resultado: **la cuenta por ficha quedó sin las entradas pre-corte y con las
+salidas pre-corte.** Es un negativo estructural, por ficha, que ninguna carga
+posterior limpia y que ningún reproceso retroactivo corrige.
+
+Medido el 04/09 con el bloque G: **`pre_con_ficha` es alto en TODOS los
+artículos**, así que el arrastre existe y no es marginal.
+
+### Por qué no se arregla solo
+
+Las tres salidas posibles, ninguna elegida:
+
+1. **Nulear también los renglones pre-corte**, simétrico con lo que se hizo con
+   las guías R. Barato, pero pierde la trazabilidad de a qué ficha fue cada
+   renglón viejo — y esa es justamente la única forma de reconstruir un pedido
+   pasado.
+2. **Un compensatorio POR FICHA**, análogo al del artículo. Correcto, pero hay
+   que decidir contra qué se compensa: no hubo conteo físico por ficha antes
+   del 29/08, así que no existe el número.
+3. **Poner un piso de fecha en `_SQL_STOCK_PARTIDO`**, que ignore lo anterior
+   al corte. Es lo más parecido a lo que hace el resto del modelo, pero cambia
+   una consulta que hoy no tiene fecha y hay que ver qué más se mueve.
+
+**No decidir es una decisión válida mientras el número no se use para nada
+irreversible.** Hoy alimenta el Cotejo y el aviso de armado, que además vienen
+rotos por otra causa (el auto-confirmado). El orden razonable es: arreglar el
+auto-confirmado (hecho), hacer el backfill, y **recién ahí** mirar si el
+arrastre del corte sigue siendo visible o si quedó tapado por lo otro.
+
+## Abierto: los negativos de F no tienen explicación todavía
+
+Anotado el 04/09 para que no se pierda. **Redondo −41, Berenjena −46, Palta
+−35** en el bloque F: `armado_pedidos − reproc_primera − reingresos` da
+negativo, o sea que **se produjeron más cajas de las que salieron**.
+
+Lo que ya quedó **descartado**:
+
+- **No son renglones sin identificar.** El bloque J dio **cero** en todo el
+  período. Esa era la hipótesis principal y no se sostiene.
+- **No es el lado de la ficha.** F es a nivel ARTÍCULO, y ahí un renglón
+  descuenta tenga ficha o no. El bug del auto-confirmado no puede producir un
+  negativo en F.
+
+Lo que queda por mirar, sin orden todavía:
+
+- **Cajas de verdad en el piso**, producidas y no salidas. Lo decide el último
+  conteo físico por ficha, que es el bloque I.
+- **Reprocesos cargados de más** (un `bultos_primera` mal tipeado). Lo delata el
+  bloque D por fila: `kilos_de_los_cajones ÷ kg_por_caja_ficha` tiene que dar
+  mayor o igual que `primera + segunda + merma`.
+- **Compras recepcionadas sin `cantidad_cajones_real`**, que aportan **cero** al
+  stock sin avisar — `_SQL_SUMAS_STOCK` suma esa columna sin `COALESCE`. La
+  columna `compras_sin_real` de F lo mide.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
