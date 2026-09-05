@@ -4604,6 +4604,86 @@ def test_contar_reprocesos_costo_incompleto_solo_vigentes():
     assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 25)}
 
 
+def test_la_alerta_cuenta_SOLO_las_que_esperan_el_precio_de_una_compra():
+    """Una guía que consumió un lote sin precio POSIBLE no es una alerta.
+
+    Nadie la puede cerrar: el número no bajaría nunca y eso enseña a
+    ignorar el resto de las alertas.
+    """
+    from app.db import contar_reprocesos_costo_incompleto
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 8, 25))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_reprocesos_costo_incompleto()
+
+    consulta = " ".join(cursor.execute.call_args.args[0].split())
+    assert "NOT EXISTS" in consulta
+    assert "rc.costo_por_bulto IS NULL AND rc.origen <> 'compra'" in consulta
+
+
+def test_las_dos_consultas_del_costo_parten_por_LA_MISMA_condicion():
+    """Una sola regla ("¿puede llegar el precio?"), escrita una sola vez.
+
+    Si se escribiera dos veces, un día una diría "ajuste" y la otra no, y
+    una guía quedaría contada en las dos —o en ninguna— sin que nadie lo
+    note. Es la regla de la casa: el criterio va en una constante.
+    """
+    from app.db import (
+        _SQL_FALTA_UN_PRECIO_IMPOSIBLE,
+        contar_reprocesos_costo_incompleto,
+        contar_reprocesos_sin_costo_posible,
+    )
+
+    consultas = []
+    for funcion in (contar_reprocesos_costo_incompleto, contar_reprocesos_sin_costo_posible):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(0, None)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion()
+        consultas.append(" ".join(cursor.execute.call_args.args[0].split()))
+
+    condicion = " ".join(_SQL_FALTA_UN_PRECIO_IMPOSIBLE.split())
+    alerta, imposibles = consultas
+    # La misma condición en las dos, negada en una sola: eso es la partición.
+    assert condicion in alerta and condicion in imposibles
+    assert f"NOT {condicion}" in alerta
+    assert f"NOT {condicion}" not in imposibles
+    # Y las dos miran el mismo universo.
+    for consulta in consultas:
+        assert "anulado_el IS NULL AND costo_total IS NULL" in consulta
+
+
+def test_la_alerta_exige_que_HAYA_algo_que_completar():
+    """El `NOT EXISTS` solo era demasiado generoso: una guía sin costo y SIN
+    NINGÚN consumo sin precio lo cumple por vacío, y entraba a la alerta sin
+    tener nada que cargar. La condición tiene que ser la misma que la de la
+    pantalla, que exige `bool(faltantes)`.
+    """
+    from app.db import _SQL_FALTA_ALGUN_PRECIO, contar_reprocesos_costo_incompleto
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0, None)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_reprocesos_costo_incompleto()
+
+    consulta = " ".join(cursor.execute.call_args.args[0].split())
+    condicion = " ".join(_SQL_FALTA_ALGUN_PRECIO.split())
+    assert condicion in consulta
+    assert f"NOT {condicion}" not in consulta
+
+
+def test_contar_reprocesos_sin_costo_posible_solo_vigentes():
+    from app.db import contar_reprocesos_sin_costo_posible
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, date(2026, 8, 31))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_reprocesos_sin_costo_posible()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "anulado_el IS NULL AND costo_total IS NULL" in consulta
+    assert resultado == {"casos": 7, "mas_viejo": date(2026, 8, 31)}
+
+
 def test_anular_remito_segunda_es_baja_logica():
     from app.db import anular_remito_segunda
 

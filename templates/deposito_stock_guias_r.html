@@ -93,6 +93,25 @@
     border: 1px solid #facc15;
     color: #713f12;
   }
+  /* GRIS a propósito, no amarillo: el amarillo dice "hay algo que hacer" y acá
+     no hay nada que hacer nunca. Un pendiente eterno pintado de pendiente es
+     lo que enseña a no mirar los pendientes. */
+  .costo-imposible {
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    font-weight: 600;
+  }
+  .resumen-imposible {
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    border-radius: 8px;
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
   .consumos { margin-top: 0.55rem; border-top: 1px solid #eee; }
   .consumo {
     display: flex;
@@ -187,6 +206,18 @@
     <p class="ayuda">El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero. Corregir una guía es anularla y cargarla de nuevo.</p>
   </div>
 
+  {# El número que NO va al banner de alertas: guías que nadie va a poder
+     cerrar. Se muestra igual —esconderlo sería peor— pero acá, donde se lo
+     mira cuando se viene a mirar guías, y no todos los días en una cinta que
+     pide una acción que no existe. Es del TOTAL vigente, no del rango. #}
+  {% if sin_costo_posible and sin_costo_posible.casos %}
+  <div class="resumen-imposible">
+    <strong>{{ sin_costo_posible.casos }} {{ "guía" if sin_costo_posible.casos == 1 else "guías" }} sin costo posible</strong>{% if sin_costo_posible.mas_viejo %}, desde el {{ sin_costo_posible.mas_viejo|fecha_corta }}{% endif %}.
+    Consumieron un lote que no tiene precio ni lo puede tener (stock inicial sin costo, un reingreso, o el compensatorio del corte).
+    <strong>No hay nada que cargar para arreglarlas</strong>: no salen en las alertas por eso. Sus bultos aparecen nombrados en el “afuera del cálculo” de Rentabilidad Real, que es donde sirven.
+  </div>
+  {% endif %}
+
   {% if guias %}
   {% for g in guias %}
   <div class="tarjeta {% if g.anulado_el %}anulada{% endif %}">
@@ -241,8 +272,19 @@
     {% endif %}
     {% if g.costo_total is not none %}
     <div class="costo">Costo: {{ g.costo_total|moneda }} total{% if g.costo_por_bulto_primera is not none %} · {{ g.costo_por_bulto_primera|moneda }} por caja de primera{% endif %}</div>
+    {% elif g.costo_completable %}
+    <div class="costo costo-incompleto">COSTO INCOMPLETO: falta cargar el precio de alguna compra. Con “Completar costo” se cierra.</div>
     {% else %}
-    <div class="costo costo-incompleto">COSTO INCOMPLETO: algún lote consumido no tiene precio (compra sin precio, stock inicial o reingreso).</div>
+    {# Nombra QUÉ consumió, no solo que no se puede. "Un ajuste" y "el
+       compensatorio del corte" mandan a mirar lugares distintos. #}
+    <div class="costo costo-imposible">SIN COSTO POSIBLE: consumió
+      {%- for origen in g.origenes_sin_costo_posible %}
+      {%- if origen == "cierre_modelo_viejo" %} el compensatorio del corte
+      {%- elif origen == "ajuste" %} un ajuste
+      {%- elif origen == "stock_inicial" %} stock inicial cargado sin costo
+      {%- elif origen == "reingreso_rechazo" %} un reingreso por rechazo
+      {%- else %} un lote sin precio{% endif %}{% if not loop.last %} y{% endif %}
+      {%- endfor %}, que no tiene precio ni lo va a tener. No hay nada que cargar; estos bultos salen nombrados en el “afuera del cálculo” de Rentabilidad Real.</div>
     {% endif %}
     {% if g.consumos_editados %}
     <p class="editado">De qué lote salió cada bulto lo eligió el operario, no el FIFO.</p>
@@ -266,9 +308,16 @@
       {% endfor %}
     </div>
     {% endif %}
-    {% if not g.anulado_el and g.costo_total is none %}
+    {% if not g.anulado_el and g.costo_completable %}
     {# Rellena SOLO los costos que faltaban con precios ya cargados —
-       jamás pisa un costo congelado. #}
+       jamás pisa un costo congelado.
+
+       Y va SOLO donde puede hacer algo. Antes salía en toda guía sin costo,
+       incluidas las que consumieron un lote sin precio posible: ahí el botón
+       no tenía nada de dónde sacar el precio y siempre devolvía "sigue con
+       costo incompleto". Es el mismo defecto que esta plantilla ya le había
+       sacado a las anuladas tres bloques más arriba —"el cartel gritaba sin
+       ninguna acción detrás"—, vivo en la rama de al lado. #}
     <form method="post" action="/administracion/stock/guias-r/{{ g.id }}/completar-costo" style="display: inline;">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">

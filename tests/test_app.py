@@ -8147,7 +8147,7 @@ def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
     assert respuesta.status_code == 200
     assert "Compras sin precio de compra cargado (4)" in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
-    assert "Guías R con costo incompleto (1)" in respuesta.text
+    assert "Guías R esperando precio (1)" in respuesta.text
     assert "Mercadería sin recepcionar" not in respuesta.text
     # Arriba de los botones de carga, no mezclado ni después.
     assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/compras/nueva/manual"')
@@ -9585,7 +9585,7 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Stock de vacíos negativo" in respuesta.text
     assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
     assert 'href="/administracion/stock/sistema"' in respuesta.text
-    assert "Guías R con costo incompleto" in respuesta.text
+    assert "Guías R esperando el precio de una compra" in respuesta.text
     assert 'href="/administracion/stock/guias-r"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
@@ -17067,10 +17067,27 @@ GUIAS_R_DE_PRUEBA = [
 ]
 
 
+# La que SÍ se puede completar: lo único que le falta es el precio de una
+# COMPRA, que es lo que alguien puede ir a cargar. La R13 de arriba es el otro
+# caso —consumió un ajuste— y ésa no se puede cerrar nunca.
+GUIA_R_ESPERANDO_PRECIO = {
+    "id": 30, "articulo_id": 1, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 10.0,
+    "bultos_primera": 8.0, "bultos_segunda": 2.0, "bultos_merma": 0.0,
+    "costo_total": None, "costo_por_bulto_primera": None,
+    "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
+    "articulo_nombre": "Tomate Perita",
+    "consumos": [
+        {"origen": "compra", "origen_id": 103, "bultos": 10.0, "costo_por_bulto": None,
+         "guia_fecha": date(2026, 8, 24), "proveedor_nombre": "Norte 15"},
+    ],
+}
+
+
 def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
@@ -17095,10 +17112,11 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
 
 
 def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
-    # El cartel tiene que seguir estando donde SÍ hay algo que hacer.
-    guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
+    # El cartel tiene que seguir estando donde SÍ hay algo que hacer: le falta
+    # el precio de una COMPRA, y ese precio puede llegar.
     with (
-        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(GUIA_R_ESPERANDO_PRECIO)]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -17107,9 +17125,75 @@ def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
 
     cuerpo = respuesta.text.split("</style>")[-1]
     assert "COSTO INCOMPLETO" in cuerpo
-    assert "De un ajuste (ej. stock inicial)" in cuerpo
+    assert "De la guía 24/08 · Norte 15" in cuerpo
     # Y el botón que lo resuelve.
     assert "Completar costo" in cuerpo
+
+
+def test_guias_r_una_guia_SIN_COSTO_POSIBLE_no_ofrece_el_boton_que_no_puede_hacer_nada():
+    """Un ajuste, un stock inicial sin costo o el compensatorio del corte no
+    tienen precio ni lo van a tener: "Completar costo" no tiene de dónde
+    sacarlo y siempre devolvía "sigue con costo incompleto". El cartel gritaba
+    sin ninguna acción detrás, que es lo que esta pantalla ya le había sacado
+    a las anuladas.
+    """
+    guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "SIN COSTO POSIBLE" in cuerpo
+    assert "De un ajuste (ej. stock inicial)" in cuerpo
+    # El detalle se sigue viendo. Lo que NO va es el botón ni el cartel que
+    # promete que se arregla cargando algo.
+    assert "Completar costo" not in cuerpo
+    assert "COSTO INCOMPLETO" not in cuerpo
+
+
+def test_guias_r_el_consumo_del_compensatorio_no_se_puede_completar():
+    """El lote fantasma del corte: la base PROHÍBE que tenga costo."""
+    guia = dict(GUIAS_R_DE_PRUEBA[1], id=22, anulado_el=None, consumos=[
+        {"origen": "cierre_modelo_viejo", "origen_id": 9, "bultos": 4.0, "costo_por_bulto": None,
+         "guia_fecha": None, "proveedor_nombre": None},
+    ])
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Del cierre del modelo viejo (sin costo posible)" in cuerpo
+    assert "SIN COSTO POSIBLE" in cuerpo
+    assert "Completar costo" not in cuerpo
+
+
+def test_guias_r_muestra_el_total_de_las_que_no_se_pueden_cerrar_nunca():
+    """El número que NO va al banner: se ve acá, y con el "no hay nada que
+    cargar" al lado para que nadie lo lea como un pendiente."""
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[]),
+        patch("app.main.contar_reprocesos_sin_costo_posible",
+              return_value={"casos": 7, "mas_viejo": date(2026, 8, 31)}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "7 guías sin costo posible" in cuerpo
+    assert "31/08" in cuerpo
+    assert "No hay nada que cargar para arreglarlas" in cuerpo
 
 
 def test_guias_r_una_guia_ANULADA_no_grita_nada():
@@ -17124,6 +17208,7 @@ def test_guias_r_una_guia_ANULADA_no_grita_nada():
     cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=cruces),
@@ -17340,6 +17425,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
@@ -17349,16 +17435,21 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     # La R12 tiene costo completo y la R13 está ANULADA: ninguna lo lleva.
     assert "Completar costo" not in respuesta.text
 
-    con_incompleta = [dict(GUIAS_R_DE_PRUEBA[1], anulado_el=None)]
+    # La que sí lo lleva es la que espera el precio de una COMPRA. La R13
+    # consumió un ajuste: aunque esté vigente, no hay nada que completar.
+    con_incompleta = [dict(GUIA_R_ESPERANDO_PRECIO, id=13)]
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
-    assert respuesta.text.count("Completar costo") == 1
+    # Se cuenta el BOTÓN, no la frase: el cartel de arriba también nombra a
+    # "Completar costo" para decir que con eso se cierra.
+    assert respuesta.text.count('class="boton-completar"') == 1
     assert 'action="/administracion/stock/guias-r/13/completar-costo"' in respuesta.text
 
 
@@ -17963,6 +18054,7 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -17994,6 +18086,7 @@ def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -18020,6 +18113,7 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
                "nombre_cliente": "Banana Bolivia", "articulo_nombre": "Banana"}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -18043,6 +18137,7 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
                   ficha_nombre=None, anulado_el=datetime(2026, 8, 26, 10, 0))]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -18108,6 +18203,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_articulos_con_primera_de_cliente",

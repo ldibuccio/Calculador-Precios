@@ -7891,21 +7891,86 @@ def completar_costo_reproceso(reproceso_id: int) -> dict:
         conexion.close()
 
 
-def contar_reprocesos_costo_incompleto() -> dict:
-    """Auditoría: guías R vigentes con el costo sin cerrar (algún lote sin precio), y la más vieja.
+# La partición del costo sin cerrar, en UN solo lugar. La misma regla la
+# aplica la pantalla de Guías R por guía (`costo_completable` en main.py) sobre
+# los consumos que ya trajo: si se escribiera distinto en los dos lados, un día
+# el banner diría una cosa y el botón haría otra.
+#
+# Un consumo sin precio se puede llenar DESPUÉS solo si vino de una compra:
+# "Completar costo" copia `compras.importe`, y para eso necesita `compra_id`.
+# Cualquier otro origen —ajuste, stock inicial sin costo, reingreso,
+# cierre_modelo_viejo, sin_lote— NO TIENE de dónde sacar un precio, ni hoy ni
+# nunca. Las dos consultas de abajo son la misma partición, y por eso la
+# condición vive UNA sola vez acá: la alerta cuenta un lado y la pantalla el
+# otro, y no se pueden separar.
+_SQL_FALTA_ALGUN_PRECIO = """
+    EXISTS (SELECT 1 FROM reprocesos_consumos rc
+            WHERE rc.reproceso_id = rp.id AND rc.costo_por_bulto IS NULL)
+"""
 
-    Mientras haya una, la rentabilidad real de ese reproceso no se puede
-    calcular: o falta cargar el precio de una compra (se arregla con
-    "Completar costo"), o consumió stock inicial/reingreso/sin lote (no
-    hay precio posible y hay que saberlo).
+_SQL_FALTA_UN_PRECIO_IMPOSIBLE = """
+    EXISTS (SELECT 1 FROM reprocesos_consumos rc
+            WHERE rc.reproceso_id = rp.id
+              AND rc.costo_por_bulto IS NULL AND rc.origen <> 'compra')
+"""
+
+
+def contar_reprocesos_costo_incompleto() -> dict:
+    """Auditoría: guías R vigentes que ESPERAN un precio que puede llegar, y la más vieja.
+
+    Cuenta SOLO las que "Completar costo" va a poder cerrar: las que
+    quedaron sin costo porque falta cargar el precio de alguna compra.
+
+    Las que consumieron un lote sin precio POSIBLE quedan afuera a
+    propósito, y no es que se escondan: van a
+    `contar_reprocesos_sin_costo_posible`, que la pantalla de Guías R
+    muestra como dato, y cada salida suya ya aparece nombrada en el
+    "afuera del cálculo" de Rentabilidad Real. Contarlas acá tenía un
+    costo peor que el problema: son guías que NADIE puede arreglar, así
+    que la alerta no bajaba nunca —y una alerta que no se puede apagar
+    enseña a ignorar todas las alertas—. Se separaron el 06/09, cuando el
+    lote fantasma del compensatorio (804 bultos sin costo posible) hizo
+    inevitable lo que el modelo ya permitía desde el stock inicial.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos
+                f"""
+                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos rp
                 WHERE anulado_el IS NULL AND costo_total IS NULL
+                  AND {_SQL_FALTA_ALGUN_PRECIO}
+                  AND NOT {_SQL_FALTA_UN_PRECIO_IMPOSIBLE}
+                """
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def contar_reprocesos_sin_costo_posible() -> dict:
+    """Las guías R vigentes cuyo costo NO se va a poder cerrar nunca, y la más vieja.
+
+    El otro lado de `contar_reprocesos_costo_incompleto`. Las dos juntas
+    cubren todas las vigentes con `costo_total IS NULL` MENOS un caso que
+    no debería existir: una guía sin costo y sin ningún consumo sin
+    precio. Esa no entra en ninguna a propósito — no hay nada que
+    completar ni nada que declarar imposible, es una anomalía, y meterla
+    en cualquiera de las dos la escondería.
+
+    NO es una alerta y no tiene que serlo: no hay nada que hacer con
+    ellas. Es un dato de la pantalla de Guías R, para que el número se
+    pueda mirar sin que grite todos los días.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos rp
+                WHERE anulado_el IS NULL AND costo_total IS NULL
+                  AND {_SQL_FALTA_UN_PRECIO_IMPOSIBLE}
                 """
             )
             casos, mas_viejo = cursor.fetchone()

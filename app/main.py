@@ -93,6 +93,7 @@ from app.db import (
     anular_renglon_stock_inicial,
     completar_costo_reproceso,
     contar_reprocesos_costo_incompleto,
+    contar_reprocesos_sin_costo_posible,
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
@@ -8203,8 +8204,30 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
     try:
         guias = listar_reprocesos_por_rango(desde, hasta)
+        # Las que no se van a poder cerrar NUNCA. Van acá y no en el banner:
+        # no hay nada que hacer con ellas, y una alerta que no baja enseña a
+        # ignorar las que sí bajan. El número igual se mira, y es del total
+        # vigente, no del rango: si estuviera acotado al rango, correr las
+        # fechas lo haría subir y bajar como si algo se hubiera arreglado.
+        sin_costo_posible = contar_reprocesos_sin_costo_posible()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # Por guía: ¿"Completar costo" tiene algo que hacer acá? Sí solo si TODO lo
+    # que falta viene de compras, que son las únicas que pueden traer precio
+    # después. Es la misma partición que separa las dos consultas de arriba,
+    # y se calcula acá sobre los consumos que la pantalla ya trajo — no vale
+    # una tercera consulta, ni una tercera versión de la regla.
+    for guia in guias:
+        faltantes = [c for c in guia["consumos"] if c["costo_por_bulto"] is None]
+        guia["costo_completable"] = (
+            guia["costo_total"] is None
+            and bool(faltantes)
+            and all(c["origen"] == "compra" for c in faltantes)
+        )
+        guia["origenes_sin_costo_posible"] = sorted(
+            {c["origen"] for c in faltantes if c["origen"] != "compra"}
+        )
 
     # El detalle del cruce por guía: "N bultos salieron en pedidos de X".
     cruces_por_guia: dict = {}
@@ -8243,6 +8266,7 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
         "deposito_stock_guias_r.html",
         {
             "guias": guias,
+            "sin_costo_posible": sin_costo_posible,
             "cruces_por_guia": cruces_por_guia,
             "fichas_por_articulo": fichas_por_articulo,
             "fecha_desde": desde.isoformat(),
@@ -8384,7 +8408,7 @@ def completar_costo_reproceso_ruta(
         aviso = (
             f"La guía R{reproceso_id} sigue con costo incompleto: {resultado['sin_precio']} "
             f"{'consumo' if resultado['sin_precio'] == 1 else 'consumos'} sin precio posible "
-            f"(compra sin precio aún, stock inicial, reingreso o sin lote)."
+            f"(compra sin precio aún, stock inicial, reingreso, el compensatorio del corte, o sin lote)."
         )
     return RedirectResponse(
         url=f"/administracion/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta, 'aviso': aviso})}",
@@ -8561,10 +8585,15 @@ ALERTAS = [
     ),
     DefinicionAlerta(
         codigo="guias_r_costo_incompleto",
-        # Sin costo cerrado no hay rentabilidad real de ese reproceso: o falta
-        # el precio de una compra ("Completar costo" lo arregla), o consumió
-        # stock inicial/reingreso/sin lote.
-        titulo="Guías R con costo incompleto",
+        # Sin costo cerrado no hay rentabilidad real de ese reproceso. Cuenta
+        # SOLO las que esperan el precio de una compra, que es lo que alguien
+        # puede ir a cargar. Las que consumieron un lote sin precio POSIBLE
+        # (stock inicial, reingreso, el compensatorio del corte) no son una
+        # alerta: nadie las puede cerrar, así que el número no bajaría nunca y
+        # el resto de las alertas se aprendería a ignorar con él. Se ven en la
+        # pantalla de Guías R, y cada salida suya en el "afuera del cálculo".
+        titulo="Guías R esperando el precio de una compra",
+        titulo_corto="Guías R esperando precio",
         url="/administracion/stock/guias-r",
         # A los dos: se arregla cargando el precio de una compra que falta
         # (eso es Compras), pero el que cargó el reproceso es el que puede
