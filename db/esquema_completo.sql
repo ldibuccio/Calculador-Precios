@@ -933,7 +933,7 @@ create table reprocesos_consumos (
     id bigint generated always as identity primary key,
     reproceso_id bigint not null references reprocesos (id),
     origen text not null check (origen in ('compra', 'ajuste', 'reingreso_rechazo', 'reproceso',
-                                          'stock_inicial', 'sin_lote')),
+                                          'stock_inicial', 'sin_lote', 'cierre_modelo_viejo')),
     compra_id bigint references compras (id),
     origen_id bigint,
     bultos numeric not null check (bultos > 0),
@@ -945,7 +945,7 @@ create table reprocesos_consumos (
 comment on table reprocesos_consumos is
     'De qué lote salió cada bulto tomado, escrito por el server al cargar: propone el FIFO y el operario puede corregirlo dentro de lo que hay de cada lote (reprocesos.consumos_editados dice si lo corrigió). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
 comment on column reprocesos_consumos.origen is
-    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), o sin_lote. sin_lote YA NO SE ESCRIBE: desde el 02/09 el freno no deja cargar una guía R que los lotes no cubran, porque ese consumo congelaba un costo incompleto para siempre. El valor queda en el check por las guías viejas que lo tienen.';
+    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), cierre_modelo_viejo (el lote que el compensatorio positivo del corte le crea a un artículo que estaba en negativo: mercadería que no existe y sin costo posible), o sin_lote. sin_lote YA NO SE ESCRIBE: desde el 02/09 el freno no deja cargar una guía R que los lotes no cubran, porque ese consumo congelaba un costo incompleto para siempre. El valor queda en el check por las guías viejas que lo tienen.';
 
 -- El respaldo de las fichas que el corte del modelo pone en NULL.
 -- Al cortar, las guías R pre-corte con ficha asignada dejan de contar POR
