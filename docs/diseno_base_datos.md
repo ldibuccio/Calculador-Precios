@@ -2611,6 +2611,91 @@ Dos cosas a resolver al hacerlo:
 un saldo.** Si el resultado no tiene un significado físico —"hay −95 peritas"
 no lo tiene—, lo que corresponde es una frase, no una cifra.
 
+## URGENTE: el compensatorio POSITIVO crea un lote fantasma, y el próximo reproceso de ese artículo REVIENTA
+
+Encontrado el 06/09 por el dueño, leyendo el día a día de Tomate Perita.
+**Es más grave que "lotes sin costo": rompe la carga de guías R.**
+
+### El mecanismo
+
+Un artículo que estaba en NEGATIVO recibe un compensatorio **positivo** —
+Perita venía en −45, así que el corte sumó +45 para llevarlo a cero. Y las
+entradas del FIFO son, textual:
+
+```sql
+FROM movimientos_stock m
+WHERE m.anulado_el IS NULL AND m.cantidad > 0 ...
+```
+
+**`cantidad > 0`, sin mirar el tipo.** Así que ese compensatorio entra como un
+LOTE, con `tipo_lote = 'cierre_modelo_viejo'`. Mercadería que no existe.
+
+Los compensatorios NEGATIVOS no tienen el problema: entran como salida, que es
+lo correcto, y consumen los lotes viejos. **Por eso el desglose de Perita
+mostraba R101 y R116 con restante y el de otros artículos no.**
+
+### Las tres consecuencias, verificadas
+
+**1. El lote no tiene costo, y NO PUEDE tenerlo.** El CHECK
+`movimientos_stock_vinculo_solo_reingreso` dice
+`(tipo in ('reingreso_rechazo','stock_inicial') or costo_por_bulto is null)`:
+`cierre_modelo_viejo` tiene el costo **prohibido por la base**. Toda salida que
+el FIFO le atribuya queda sin costo posible.
+
+**2. EL PRÓXIMO REPROCESO DE ESE ARTÍCULO FALLA.** Reproducido contra
+Postgres, no deducido:
+
+```
+LOTES que el FIFO ofrece, del más viejo primero:
+   2026-09-04  cierre_modelo_viejo   restante 45.0  costo None
+   2026-09-05  stock_inicial         restante 10.0  costo 55000
+
+Una guía R de 5 bultos:
+   CheckViolation: new row for relation "reprocesos_consumos" violates
+   check constraint "reprocesos_consumos_origen_check"
+```
+
+`crear_reproceso` mapea `origen = tipo_lote` y `reprocesos_consumos.origen`
+solo acepta `('compra','ajuste','reingreso_rechazo','reproceso',
+'stock_inicial','sin_lote')`. **El compensatorio es el lote MÁS VIEJO** —está
+fechado el día anterior al corte— así que el FIFO lo ofrece primero y toda
+guía R de ese artículo lo toca. El operario pasa el freno y se come un error
+crudo de Postgres.
+
+**3. La merma dirigida lo ofrece y después lo rechaza.** `_lotes_con_resto` lo
+lista (tiene restante), con la etiqueta cruda porque no está en
+`ETIQUETAS_MOVIMIENTO_STOCK`; y el POST lo rechaza porque no está en
+`TIPOS_LOTE_STOCK`. Un lote que se ve en la lista y que el server dice que no
+es de la lista.
+
+### El tamaño se mide con `db/lotes_fantasma_del_compensatorio.sql`
+
+Dos consultas: cuántos lotes fantasma y de cuántos bultos por corte, y el
+detalle artículo por artículo. **Hay que correrlo para los dos cortes** — el
+del 31/08 dejó los suyos también.
+
+### Sobre excluirlo de las entradas del FIFO: no es gratis
+
+La idea correcta —un movimiento que existe para cancelar un saldo no es
+mercadería que llegó— **rompe la reconciliación de la cuenta 3** si se hace a
+secas, y conviene tenerlo claro antes de tocarlo:
+
+- El total del artículo (seis patas) suma el compensatorio adentro de
+  `ajustes` (`SUM(cantidad)` de todos los movimientos menos reingresos).
+- El FIFO calcula su propio `stock` = Σ entradas − Σ salidas.
+- Si se saca la entrada y se deja el total, los dos dejan de coincidir por
+  exactamente el compensatorio, y la identidad
+  `Σ restantes = total + sin_lote` —verificada el 04/09— deja de cerrar.
+
+Sacarlo de las dos puntas tampoco alcanza: el compensatorio negativo SÍ tiene
+que consumir, que es lo que hace bien hoy.
+
+**No hay un arreglo de una línea.** Las direcciones posibles, sin elegir
+ninguna todavía: que el FIFO ignore el tipo solo en las ENTRADAS y que el
+total lo acompañe; o que `reprocesos_consumos.origen` acepte el tipo y el lote
+quede como "sin costo posible" declarado; o que el corte no use un
+compensatorio positivo sino otra forma de llevar a cero un artículo negativo.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
