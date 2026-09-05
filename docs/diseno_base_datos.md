@@ -1718,6 +1718,52 @@ rotos por otra causa (el auto-confirmado). El orden razonable es: arreglar el
 auto-confirmado (hecho), hacer el backfill, y **recién ahí** mirar si el
 arrastre del corte sigue siendo visible o si quedó tapado por lo otro.
 
+### MEDIDO EL 04/09: el corte nuevo NO limpia esto. Lo AGRAVA.
+
+La pregunta la hizo el dueño antes del corte del fin de semana: *"si el corte
+vuelve a nulear las fichas de las guías R viejas pero no toca los renglones de
+pedido, ¿el lunes arrancamos con el mismo déficit estructural?"*. **No con el
+mismo: con uno peor.** Simulado contra Postgres descartable con el esquema
+completo, corriendo el bloque 2 del corte nuevo sobre un caso de prueba:
+
+| ficha | antes del corte | después |
+|---|---|---|
+| Pepino Bolsa | −145 | **−245** |
+| Zapallito Chico | **+5** | **−30** |
+| Perita Caja | **0** | **−12** |
+| Manzana Bolsa (sin guías R) | −18 | −18 |
+
+**Las fichas que hoy están sanas terminan negativas.** El mecanismo es el que
+ya estaba escrito arriba, llevado al extremo: nulear las fichas de las guías R
+anteriores al corte **saca el lado positivo y deja el negativo**. Cuanto más
+tarde el corte, más semana de guías R buenas se le quita.
+
+### La salida es la 3, y además hace innecesaria la 1
+
+Con un **piso de fecha en `_SQL_STOCK_PARTIDO`** —las dos patas desde el corte
+inclusive— el mismo caso da:
+
+| ficha | con piso de fecha |
+|---|---|
+| Pepino Bolsa | **+5** (exactamente lo contado) |
+| las demás | no aparecen |
+
+Y **da lo mismo con el bloque 2 corrido o sin correr**: verificado. O sea que
+el piso vuelve **innecesario** nulear las fichas — que es una escritura
+irreversible, hecha solo para tapar que la consulta no tiene fecha. Con el
+piso, las guías R viejas **conservan su ficha** (trazabilidad que hoy se
+pierde) y simplemente no cuentan.
+
+**Y es lo que ya hace el resto del modelo.** El total del artículo se rebasea
+en el corte con el compensatorio; la cuenta por ficha es la única que sigue
+sumando desde el principio de los tiempos. El piso no le agrega una regla
+nueva: le pone la que las otras ya tienen.
+
+Alcanza a cuatro lectores, y a los cuatro les mejora: el selector de
+Reproceso, el aviso de "no hay cajas de esta ficha" (E5), el
+`stock_sistema` del conteo por ficha y el Cotejo. Los cuatro ven hoy el
+negativo estructural.
+
 ## Abierto: los negativos de F no tienen explicación todavía
 
 Anotado el 04/09 para que no se pierda. **Redondo −41, Berenjena −46, Palta

@@ -43,7 +43,19 @@ costo no cambia**.
 
 ### La lista de qué cargar
 
-Sale de `db/guias_r_que_faltan.sql`, dos consultas de solo lectura:
+Sale de `db/guias_r_que_faltan.sql`, tres consultas de solo lectura. **Las dos
+primeras están acotadas**, y los dos recortes importan: desde la fecha de corte
+vigente inclusive (lo anterior lo trató el compensatorio del corte pasado y no
+se corrige), y solo artículos con al menos una guía R en el período (los que
+nunca se reprocesan no tienen nada que reconstruir; su déficit por ficha es
+otra cosa, E5).
+
+**Correr primero la consulta que cuenta.** Es el número que decide: si da tres
+o cuatro, el depósito las reconstruye a la mañana. Si sigue dando cientos, el
+paso 0 no es viable y **se salta entero** — el conteo físico manda y el
+compensatorio absorbe.
+
+Las tres:
 
 - **La primera** da, por artículo y ficha: el primer día en rojo, cuántas
   cajas faltan, y **qué hacer**. Distingue dos casos que se arreglan
