@@ -64,9 +64,9 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "deposito" %}
+  {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Remanente" %}
-  {% set barra_atras = "/deposito/stock" %}
+  {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
@@ -87,17 +87,25 @@
     <p class="vacio">No hay nada cargado.</p>
     {% endif %}
 
-    {# La pantalla muestra números del sistema, que es lo contrario del
-       criterio del resto del depósito. Con ésta abierta, el conteo de Stock
-       Físico deja de ser ciego si nadie avisa. Por eso lo dice acá. #}
-    <p class="para-contar"><strong>Esto es para mirar.</strong> Para contar se usa
-      <a href="/deposito/stock/fisico">Stock Físico</a>: ahí no se ven estos números, y
-      es justamente eso lo que hace que el conteo sirva.</p>
+    {# POR QUÉ ESTA PANTALLA NO ESTÁ EN DEPÓSITO, y no hay que volver a
+       ponerla ahí: muestra los números del sistema de lo que el operario
+       después tiene que contar. Con ésta a mano, el conteo de Stock Físico
+       se transcribe en vez de contarse, y un conteo transcripto no controla
+       nada — confirma lo que ya decía el sistema.
+
+       Nació en Depósito el 05/09 con un cartel que pedía no usarla para eso.
+       No alcanza: en el resto del módulo la regla es ESTRUCTURAL (el número
+       no llega al HTML ni escondido), y acá había degenerado en un "por
+       favor". Se mudó el 06/09. #}
+    <p class="para-contar"><strong>Esto es para mirar y para exportar.</strong> El conteo
+      se carga en <a href="/deposito/stock/fisico">Stock Físico</a>, que es del depósito y
+      no muestra ninguno de estos números: es justamente eso lo que hace que el conteo
+      sirva de control y no de copia.</p>
   </div>
 
   {% if porciones %}
   <div class="tarjeta">
-    <a class="boton-exportar" href="/deposito/stock/remanente/exportar-excel">Exportar Excel</a>
+    <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel">Exportar Excel</a>
     <p class="ayuda">Sale con una columna vacía para anotar lo contado al lado.</p>
   </div>
   {% endif %}

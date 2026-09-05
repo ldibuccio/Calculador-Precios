@@ -6554,19 +6554,28 @@ def _porciones_de_deposito() -> list[dict]:
     return porciones
 
 
-@app.get("/deposito/stock/remanente")
+@app.get("/administracion/stock/remanente")
 def ver_remanente_deposito(request: Request):
-    """Qué hay en el depósito, una porción por renglón. Para mirar, no para cargar."""
+    """Qué hay en el depósito, una porción por renglón. Para mirar y para exportar.
+
+    VIVE EN ADMINISTRACIÓN, no en Depósito, y es a propósito: muestra los
+    números del sistema de lo que el operario después tiene que contar en
+    Stock Físico. Con la lista a mano, el conteo se transcribe en vez de
+    contarse — y un conteo transcripto no controla nada, confirma lo que
+    el sistema ya decía. Es la misma regla que la pantalla de armado, que
+    no muestra el stock de la ficha: "si lo ve, arma contra el sistema en
+    vez de contra el piso".
+    """
     try:
         porciones = _porciones_de_deposito()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     return templates.TemplateResponse(
-        request, "deposito_stock_remanente.html", {"porciones": porciones, "hoy": _hoy_argentina()}
+        request, "administracion_stock_remanente.html", {"porciones": porciones, "hoy": _hoy_argentina()}
     )
 
 
-@app.get("/deposito/stock/remanente/exportar-excel")
+@app.get("/administracion/stock/remanente/exportar-excel")
 def exportar_remanente_deposito_excel():
     """El mismo remanente en Excel, con una columna vacía para anotar lo contado."""
     try:

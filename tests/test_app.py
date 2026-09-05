@@ -12973,7 +12973,7 @@ REMANENTE_FICHAS = [
 ]
 
 
-def _remanente(filas=None, cajas=None, fichas=None, url="/deposito/stock/remanente"):
+def _remanente(filas=None, cajas=None, fichas=None, url="/administracion/stock/remanente"):
     with (
         patch("app.main.stock_deposito_por_articulo",
               return_value=REMANENTE_FILAS if filas is None else filas),
@@ -13023,14 +13023,34 @@ def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
 
 
 def test_el_remanente_manda_a_Stock_Fisico_para_contar():
-    """Esta pantalla muestra números del sistema, que es lo contrario del
-    criterio del resto del depósito. Con ésta abierta, el conteo de Stock
-    Físico deja de ser ciego si nadie avisa — el que cuenta puede leer acá y
-    transcribir allá, y ahí se pierde el control cruzado."""
+    """Muestra números del sistema, que es lo contrario del criterio del
+    depósito. Dice dónde se cuenta de verdad, y por qué ahí no se ven."""
     texto = _remanente().text
 
-    assert "Esto es para mirar" in texto
+    assert "Esto es para mirar y para exportar" in texto
     assert '/deposito/stock/fisico' in texto
+
+
+def test_el_REMANENTE_NO_se_ofrece_desde_el_deposito():
+    """LA REGLA, y por eso tiene test propio: al operario no se le muestran
+    los números del sistema de lo que después tiene que contar. Con la lista
+    a mano, el conteo de Stock Físico se transcribe en vez de contarse, y un
+    conteo transcripto confirma al sistema en vez de controlarlo.
+
+    Estuvo un día en Depósito, en una tarjeta aparte y con un cartel que
+    pedía no usarlo para eso. Una tarjeta no es una frontera: los dos
+    botones estaban en la misma pantalla. Es la misma regla que la del
+    armado ("si lo ve, arma contra el sistema en vez de contra el piso"),
+    que ahí se cumple ESTRUCTURALMENTE — el número no llega al HTML.
+    """
+    deposito = cliente.get("/deposito/stock").text
+    assert "remanente" not in deposito.lower()
+
+    # Y donde sí vive: primero, que es la que se mira todos los días.
+    administracion = cliente.get("/administracion").text
+    assert '/administracion/stock/remanente' in administracion
+    assert (administracion.index('/administracion/stock/remanente')
+            < administracion.index('/administracion/stock/sistema'))
 
 
 def test_un_articulo_que_no_se_reprocesa_es_un_solo_renglon_pelado():
@@ -13058,7 +13078,7 @@ def test_el_excel_del_remanente_sale_con_la_columna_CONTADO_vacia():
 
     from openpyxl import load_workbook
 
-    respuesta = _remanente(url="/deposito/stock/remanente/exportar-excel")
+    respuesta = _remanente(url="/administracion/stock/remanente/exportar-excel")
 
     assert respuesta.status_code == 200
     assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]

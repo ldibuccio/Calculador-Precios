@@ -2898,6 +2898,70 @@ lotes fantasma hay hoy" y contesta otra cosa. Lo que queda vivo lo mide
 guías R salen sin costo. **Un número no se presenta con la etiqueta de otro**,
 aunque los dos sean de producción.
 
+## LA REGLA DEL CONTEO CIEGO: al operario no se le muestra el número que después tiene que contar (06/09)
+
+Escrita acá con nombre propio porque ya existía en tres pantallas, se cumplía
+sin problema, y **la rompió la primera pantalla nueva que se hizo** — la del
+Remanente, el 05/09. Va junto a la del armado, que es donde estaba mejor dicha:
+
+> *"SIN NÚMERO a propósito: esta pantalla es de operario y el stock del sistema
+> no puede viajar acá ni escondido — **si lo ve, arma contra el sistema en vez
+> de contra el piso**."*
+
+Y su corolario, que es el que le da el sentido: **un conteo que se transcribe
+no controla nada, confirma lo que el sistema ya decía.** El valor del conteo
+físico está enteramente en que quien cuenta NO sepa qué esperaba el sistema.
+Mostrarle el número no lo hace más fácil: lo hace inútil.
+
+### Dónde vale, y cómo se cumple
+
+Lo importante no es que se cumpla: es que se cumple **estructuralmente**, no con
+un cartel. El número no llega al HTML, ni escondido.
+
+| Pantalla | Cómo lo cumple |
+|---|---|
+| **Stock Físico** | `listar_conteos_stock_de_fecha` **no trae `stock_sistema` en el SELECT**. La regla está en el SQL, no en la plantilla. |
+| **Armado de pedidos** | El renglón lleva un booleano (`sin_cajas_de_la_ficha`), nunca la cantidad. |
+| **Lotes de un renglón** | `desglose_de_renglon_armado` devuelve `None` antes del tilde: los números aparecen recién **después** de que el operario declaró. |
+| **Reproceso** | El selector lista artículos con stock **por nombre, sin cantidades**. Los números salen recién en LA PARED, como motivo del rechazo — o sea después de la declaración. |
+| **Remitir Segunda** | Ídem: artículos con segunda por nombre, el pool no viaja. |
+| **Reingreso por rechazo** | *"Nada de costos ni de stock del sistema."* |
+
+### Cómo se rompió, que es la parte que sirve
+
+El Remanente nació en Depósito con **un cartel** que pedía no usarlo para
+contar, y en una tarjeta aparte titulada "Para mirar". Las dos cosas fallan por
+lo mismo: **una tarjeta no es una frontera y un cartel no es una guarda.** El
+operario tenía "Stock Físico" y "Remanente" a dos dedos de distancia en la
+misma pantalla. El comentario que se escribió ese día ya describía el peligro
+—*"con ésta abierta, el conteo de Stock Físico deja de ser ciego si nadie
+avisa"*— y aun así la respuesta fue pedirlo por favor en vez de mover la
+pantalla. **Cuando una regla se cumple estructuralmente en todos lados y en un
+lugar pasa a ser un texto, eso solo es la señal de que la pantalla está en el
+módulo equivocado.**
+
+Se mudó a Administración el 06/09 (`/administracion/stock/remanente`), primera
+en "Control de stock" porque es la que se mira todos los días. **Stock del
+Sistema no se reemplaza**: es la única que muestra las tres cuentas y el
+desglose por guía R, y es a donde apunta la alerta de stock negativo — queda
+como pantalla de auditoría, para cuando algo no cierre.
+
+### El único borde que quedó, y se decide cuando moleste
+
+**Merma muestra `quedan N` por lote.** Es un número del sistema en una pantalla
+de operario. No se sacó porque ahí no se está contando —se declara lo que se
+tiró— y el resto del lote es lo que permite elegir cuál. Pero el riesgo existe:
+un lote con 8 invita a escribir 8. Queda anotado como el borde de la regla, no
+como un descuido: **la regla es sobre el número que se va a DECLARAR, no sobre
+todo número del sistema.** Si algún día aparece una merma sospechosamente igual
+al resto de un lote, éste es el lugar donde mirar.
+
+### Al hacer una pantalla nueva
+
+Una sola pregunta: **¿alguien va a tener que contar, declarar o estimar
+alguno de estos números?** Si la respuesta es sí, la pantalla no va en el
+módulo de esa persona. No hay versión con cartel.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. **El `sin_procesar` negativo deja de ser un número.** Está desarrollado más
