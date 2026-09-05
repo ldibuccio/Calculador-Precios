@@ -13022,6 +13022,17 @@ def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
     assert "38" not in texto
 
 
+def test_el_remanente_manda_a_Stock_Fisico_para_contar():
+    """Esta pantalla muestra números del sistema, que es lo contrario del
+    criterio del resto del depósito. Con ésta abierta, el conteo de Stock
+    Físico deja de ser ciego si nadie avisa — el que cuenta puede leer acá y
+    transcribir allá, y ahí se pierde el control cruzado."""
+    texto = _remanente().text
+
+    assert "Esto es para mirar" in texto
+    assert '/deposito/stock/fisico' in texto
+
+
 def test_un_articulo_que_no_se_reprocesa_es_un_solo_renglon_pelado():
     """Manzana, pera, arándano: sin guías R con ficha, el nombre pelado se
     lleva el total entero. Sale del modelo, sin ninguna excepción escrita."""

@@ -36,6 +36,18 @@
     font-variant-numeric: tabular-nums;
   }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  /* No es una alerta: es la aclaración que evita que esta pantalla mate el
+     control cruzado del conteo. Se lee, no grita. */
+  .para-contar {
+    margin: 1rem 0 0;
+    padding: 0.75rem 0.85rem;
+    background: #f1f5f9;
+    border-radius: 8px;
+    color: #334155;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+  .para-contar a { color: #1d4ed8; font-weight: 700; }
   .boton-exportar {
     display: block;
     text-align: center;
@@ -74,6 +86,13 @@
     {% else %}
     <p class="vacio">No hay nada cargado.</p>
     {% endif %}
+
+    {# La pantalla muestra números del sistema, que es lo contrario del
+       criterio del resto del depósito. Con ésta abierta, el conteo de Stock
+       Físico deja de ser ciego si nadie avisa. Por eso lo dice acá. #}
+    <p class="para-contar"><strong>Esto es para mirar.</strong> Para contar se usa
+      <a href="/deposito/stock/fisico">Stock Físico</a>: ahí no se ven estos números, y
+      es justamente eso lo que hace que el conteo sirva.</p>
   </div>
 
   {% if porciones %}

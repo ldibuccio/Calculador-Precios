@@ -2557,6 +2557,60 @@ calculan el pool por separado: la columna `segunda` de
 por `segunda > 0`. **Los dos tienen que moverse juntos** o el remito va a
 ofrecer artículos que el stock ya no muestra.
 
+## LO PRÓXIMO: el `sin_procesar` negativo no puede seguir siendo un número
+
+Decidido el 06/09, y es **lo que sigue después del Remanente**. No es un
+descubrimiento: es un pendiente que ya estaba anotado y que **mordió tres
+veces**, cada vez con una causa distinta y siempre por el mismo motivo.
+
+### Por qué vuelve
+
+`sin_procesar = stock − Σ armados` es **una resta entre dos cuentas
+distintas**: el total del artículo (cuenta 1) menos el desglose del FIFO
+rejugado (cuenta 3). Cuando esas dos no están apoyadas en lo mismo, la resta
+da negativo — y se muestra en la misma columna, con el mismo formato, que un
+número de stock.
+
+**Un stock negativo significa algo. Este número no.** El que lo mira concluye
+que faltan bultos, y lo que falta son guías R.
+
+Las tres veces:
+
+1. **04/09** — Pepino −48 y Zapallito −54. Se creyó faltante de mercadería.
+   Eran guías R atrasadas: `sin_lote` 88 y 109, que cierran exacto.
+2. **05/09** — se verificó el piso de la cuenta por ficha mirando este
+   número, que sale de otra cuenta. No se movió, y con razón.
+3. **06/09** — después del corte: Perita −95, Zapallito −29, con los totales
+   perfectos. Otra vez la cuenta 3, que es la única que no se rebasea.
+
+### El arreglo, y por qué es del tamaño de un cartel
+
+**No es cambiar el cálculo.** Con la opción (c) decidida —la cuenta 3 se
+limpia sola con la rotación, y ponerle un piso separaría el listado del freno—
+el número va a seguir dando negativo cada tanto. Lo que hay que cambiar es
+**qué se muestra cuando da negativo**.
+
+En vez de `−95`, un cartel que diga lo que pasa: **"faltan guías R por
+cargar"**, con el número de cajas que el desglose no puede explicar. Eso es lo
+que el depósito puede accionar; el −95 no.
+
+Dos cosas a resolver al hacerlo:
+
+- **Dónde.** Es la pantalla de Stock del Sistema, en Administración. El
+  Remanente del depósito no lo tiene: sale de la cuenta 2 y solo muestra
+  porciones con más de cero.
+- **Con qué número.** El candidato natural es `sin_lote` del reparto, que ya
+  se calcula y es exactamente "salidas que ningún lote cubre". Habría que
+  confirmar que `−sin_procesar` y `sin_lote` coinciden en los casos reales
+  antes de mostrarlo — el 04/09 coincidían (88 y 109), pero eso es UNA
+  medición, no una regla probada.
+
+### La regla que deja
+
+**Un número derivado de dos cuentas distintas no se muestra con el formato de
+un saldo.** Si el resultado no tiene un significado físico —"hay −95 peritas"
+no lo tiene—, lo que corresponde es una frase, no una cifra.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
