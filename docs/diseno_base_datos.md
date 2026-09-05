@@ -2787,6 +2787,132 @@ compensar en positivo. Es la dirección 3 —cambiar cómo compensa el corte— 
 sigue abierta: no sirve para lo que ya está cargado, pero es lo que evita la
 próxima tanda.
 
+## La alerta del costo mezclaba dos poblaciones, y el botón que no podía nada (06/09)
+
+Salió de una pregunta del dueño sobre el lote fantasma —"¿esas guías se pueden
+completar alguna vez?"— y terminó destapando algo bastante más viejo.
+
+### La respuesta corta: no, no se pueden completar
+
+`completar_costo_reproceso` llena `SET costo_por_bulto = c.importe FROM compras
+c WHERE c.id = rc.compra_id`. El consumo del lote fantasma tiene
+`compra_id = NULL`: no hay fila de dónde copiar. El botón siempre devolvía
+*"sigue con costo incompleto"*.
+
+### El `costo_por_bulto = 0` se propuso y se descartó, y el argumento importa
+
+La idea era: la mercadería no existe, su costo es cero, no "desconocido".
+**Suena bien y es el caso equivocado.** El lote fantasma NO es mercadería
+inventada: es el **espejo contable de salidas viejas que quedaron registradas
+como `sin_lote`**. El artículo llegó a −45 porque faltaron ENTRADAS, no porque
+se hubiera evaporado stock. Cuando el depósito saque esos 45 cajones, van a ser
+cajones reales que alguien compró a algún precio. **Ese precio es desconocido,
+no cero.**
+
+Y un cero no se queda quieto: entra en `costo_por_bulto_primera` e infla el
+margen de Rentabilidad Real. La segunda es distinta —ahí el cero es una
+decisión del modelo ("todo el costo va a la primera"), no un tapón—.
+
+Lo decisivo es que la regla ya estaba escrita, en el docstring de
+`core/costo_real.py`, y ahí se llama a sí misma protagonista: *"lo que no se
+puede calcular no suma como cero — va al reporte 'afuera del cálculo' con
+motivo… mejor un número chico y cierto que uno grande y mentiroso."*
+
+### El problema real: la alerta mezclaba dos poblaciones
+
+"Guías R con costo incompleto" contaba juntas:
+
+- las que **esperan el precio de una compra** — alguien lo puede ir a cargar, y
+  "Completar costo" las cierra;
+- las que **consumieron un lote sin precio POSIBLE** (stock inicial sin costo,
+  reingreso, ajuste, el compensatorio del corte) — **nadie las puede cerrar
+  nunca**.
+
+Con las dos adentro, el número no bajaba. Y **una alerta que nadie puede apagar
+enseña a ignorar todas las alertas.**
+
+Lo llamativo es que **esa misma regla ya estaba escrita en este documento**,
+del 28/08, sobre la alerta de reprocesos sin ficha: *"si contara todos, nacería
+con 36 casos que nadie puede resolver, y una alerta que arranca en rojo
+permanente es una alerta que se deja de mirar."* Se aplicó a una alerta y no a
+la de al lado. Es la costumbre del corolario 2: **cuando se arregla una copia,
+hay que ir a buscar la otra.**
+
+La alerta ahora cuenta SOLO las completables. Las otras van a la pantalla de
+Guías R como dato, con el "no hay nada que cargar" al lado, y cada salida suya
+ya sale nombrada en el "afuera del cálculo" de Rentabilidad Real. La condición
+vive UNA sola vez (`_SQL_FALTA_ALGUN_PRECIO` y
+`_SQL_FALTA_UN_PRECIO_IMPOSIBLE`) porque la pantalla aplica la misma regla por
+guía: escrita dos veces, un día el banner diría una cosa y el botón haría otra.
+
+### EL HALLAZGO LATERAL, y vale igual o más
+
+**El botón "Completar costo" se mostraba en toda guía sin costo**, incluidas
+las de stock inicial, **desde antes del lote fantasma**. Es la misma falla que
+esa plantilla ya había corregido tres bloques más arriba, con el comentario
+todavía puesto — **vivía en la rama de al lado**:
+
+```jinja
+{# ... el botón "Completar costo" ya estaba escondido acá, con
+   lo cual el cartel gritaba sin ninguna acción detrás. #}
+{% if not g.anulado_el %}
+```
+
+El comentario describe exactamente el defecto que la rama de al lado seguía
+teniendo. Es el mismo síntoma del docstring de la alerta de Auditoría que
+explicaba el bug que la pantalla mostraba todos los días: **un comentario que
+dice la verdad sobre el caso que sí se arregló, y que por eso mismo tapa el que
+no.** Al arreglar una guarda, grepear la condición y mirar TODAS sus ramas, no
+solo la que se vino a tocar.
+
+### El motivo en Rentabilidad Real venía mal desde el 31/08
+
+`_MOTIVO_POR_TIPO_LOTE` no tenía `cierre_modelo_viejo`, así que caía en el
+default `ajuste_sin_costo` y la pantalla decía *"consumió un ajuste (sin costo
+posible)"*. **Manda a buscar un ajuste que no existe.** Ahora tiene motivo
+propio. Vale la pena ver por dónde entró: esas salidas NO fueron guías R —una
+guía R habría reventado con el `CheckViolation`— sino **pedidos armados y
+mermas**, que pasan por el mismo FIFO y no escriben en `reprocesos_consumos`.
+Por eso el problema estuvo cinco días saliendo por Rentabilidad Real sin que la
+alerta de guías R se enterara.
+
+### LO QUE ESTO NO RESUELVE, y queda escrito
+
+**Los 416 bultos de Perita, Mango y Zapallito que ya salieron sin costo siguen
+sin costo, y no hay forma de recuperarlo.** Lo único que cambia es que ahora se
+llaman por su nombre en Rentabilidad Real en vez de "un ajuste".
+
+Cómo se sabe que ya salieron, que es deducción y no medición: los tres
+recibieron un **segundo compensatorio positivo el 05/09**, y un compensatorio
+positivo existe justo porque el artículo estaba en NEGATIVO. Con el FIFO
+cronológico, un saldo negativo implica que **ningún** lote quedó con resto —si
+el más viejo tuviera, las salidas posteriores lo habrían tomado primero—. Son
+416 de los 726 del corte del 31/08.
+
+### Y una corrección de rotulado, de la misma familia
+
+`lotes_fantasma_del_compensatorio.sql` mide el **TAMAÑO** del compensatorio
+(`movimientos_stock.cantidad`), no lo que queda vivo. Se presentó como "cuántos
+lotes fantasma hay hoy" y contesta otra cosa. Lo que queda vivo lo mide
+`db/cuanto_queda_del_lote_fantasma.sql`, que es el número que decide cuántas
+guías R salen sin costo. **Un número no se presenta con la etiqueta de otro**,
+aunque los dos sean de producción.
+
+## LO PRÓXIMO, en orden (06/09)
+
+1. **El `sin_procesar` negativo deja de ser un número.** Está desarrollado más
+   arriba: un negativo ahí no es una cantidad, es "faltan guías R por cargar", y
+   mostrarlo como número invita a restarlo de algo.
+2. **La merma dirigida, con su migración.** Hoy `_lotes_con_resto` saltea el
+   lote fantasma —no se puede tirar lo que no existe— y eso alcanza para que no
+   ofrezca-y-rechace. Lo que falta es el CHECK de `movimientos_stock.lote_tipo`,
+   que es OTRO check, no el que se amplió el 06/09.
+3. **E5: el contador de artículos que mezcla cajones y cajas.**
+
+Después de esos tres sigue la cola de antes: baja lógica de fichas → el CHECK
+ampliado de `pedidos_renglones`; E4 (guías R atrasadas); los negativos de F; y
+la rama huérfana `origin/claude/retenido-stock-fisico`.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
