@@ -12279,9 +12279,19 @@ def armar_renglon_pedido_ruta(
         if cantidad_armada_valor <= 0:
             raise HTTPException(status_code=400, detail="La cantidad armada tiene que ser mayor a cero.")
         pedida = _numero_pedido_o_none(cantidad_pedida)
-        # Armó todo (o más): es un armado completo — el número redundante
-        # no se guarda, para que "incompleto" signifique siempre "menos".
-        if pedida is not None and cantidad_armada_valor >= pedida:
+        # NULL significa "armó EXACTAMENTE lo pedido", y por eso el número
+        # redundante no se guarda. Todo lo demás sí, y eso incluye armar de
+        # MÁS: hasta el 05/09 un 80 sobre 50 se guardaba como NULL —o sea
+        # 50— y los 30 de más salían del galpón sin quedar en ningún lado:
+        # ni en el stock, ni en la factura, ni en una pantalla.
+        #
+        # El camión ya salió con 80. Negar el registro no des-entrega la
+        # mercadería. Es la inversa del freno del reproceso, y a propósito:
+        # allá se traba porque se congela un costo que no se corrige nunca;
+        # acá no se congela nada y el hecho ya ocurrió.
+        #
+        # Queda entonces: NULL = exacto, < = incompleto, > = armó de más.
+        if pedida is not None and cantidad_armada_valor == pedida:
             cantidad_armada_valor = None
 
     kilos_valor = None

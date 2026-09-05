@@ -12778,8 +12778,9 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
     assert "Ya armado (1)" in respuesta.text
     assert "armó 12 de 20" in respuesta.text
     assert 'action="/deposito/pedido/50/renglones/12/desarmar"' in respuesta.text
-    # El gesto secundario para el incompleto.
-    assert "Armé menos" in respuesta.text
+    # El gesto secundario para cargar una cantidad distinta a la pedida.
+    # Ya no dice "Armé menos": desde el 05/09 también sirve para más.
+    assert "Armé otra cantidad" in respuesta.text
 
 
 def test_armar_el_atras_de_la_barra_sube_en_la_jerarquia_no_en_el_historial():
@@ -12872,8 +12873,8 @@ def test_armar_renglon_parcial_guarda_la_cantidad_real():
 
 
 def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
-    # "Armé menos" con la cantidad completa (o más) no es un incompleto:
-    # se guarda como armado normal, sin número redundante.
+    # EXACTAMENTE lo pedido: se guarda como armado normal, sin el número
+    # redundante. NULL significa "armó justo lo que pedían".
     with patch("app.main.marcar_renglon_armado") as mock_marcar:
         cliente.post(
             "/deposito/pedido/50/renglones/11/armar",
@@ -12883,6 +12884,76 @@ def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
         )
 
     mock_marcar.assert_called_once_with(11, None, None)
+
+
+def test_armar_DE_MAS_guarda_los_bultos_de_verdad():
+    """El camión ya salió con 80. Negar el registro no des-entrega nada.
+
+    Hasta el 05/09 un 80 sobre 50 se guardaba como None —o sea 50— y los 30
+    de más salían del galpón sin quedar en ningún lado: ni en el stock, ni
+    en la factura, ni en una pantalla. Ahora se guarda el 80.
+    """
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_armada": "80", "cantidad_pedida": "50"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(11, 80.0, None)
+
+
+def test_los_kilos_de_un_armado_DE_MAS_salen_por_los_bultos_de_verdad():
+    """Lo que se factura son los kilos que se mandaron.
+
+    Antes el kilaje se multiplicaba por lo PEDIDO, así que 80 bultos a 16 kg
+    se facturaban como 50 × 16 = 800. Ahora son 80 × 16 = 1280.
+    """
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_armada": "80", "cantidad_pedida": "50",
+                  "kilos_por_bulto": "16"},
+            follow_redirects=False,
+        )
+
+    mock_marcar.assert_called_once_with(11, 80.0, 1280.0)
+
+
+def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
+    """El ámbar significa "queda algo por hacer" y acá no queda nada.
+
+    Es el `!=` que quedó vivo en DOS plantillas cuando el resto del código
+    pasó a `<`. Estaba dormido porque el server nunca guardaba una cantidad
+    mayor a la pedida — y este cambio es justamente lo que lo despierta: sin
+    esto, un renglón donde SOBRÓ mercadería salía en ámbar pidiendo
+    atención.
+    """
+    renglones = [
+        dict(RENGLONES_ARMADO_DE_PRUEBA[1], id=12, cantidad=50.0, cantidad_armada=80.0),
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+
+    texto = respuesta.text
+    # Se VE, que es lo que hoy no pasa: el 80 no existía en ninguna pantalla.
+    assert '<span class="marca-de-mas">armó 80 de 50</span>' in texto
+    # Y NO con la clase del ámbar, que dice "queda algo por hacer".
+    assert '<span class="marca-incompleto">armó 80 de 50</span>' not in texto
+    # Tampoco cuenta como incompleto en el progreso de la sucursal.
+    assert "incompleto" not in texto.split("VL: ")[1].split("<")[0]
 
 
 def test_desarmar_renglon_destilda():

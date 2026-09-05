@@ -117,6 +117,16 @@
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
   }
+  /* Armó de MÁS: dato, no alerta. Ver el mismo bloque en el armado. */
+  .marca-de-mas {
+    display: inline-block;
+    background: #cbd5e1;
+    color: #1e293b;
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
   .tarjeta-sin-identificar { border: 2px solid #f59e0b; background: #fffbeb; }
   /* El listado multi-día: botones grandes, uno por pedido, con su estado. */
   .item-pedido {
@@ -433,8 +443,11 @@
       <div class="renglon">
         <span>{{ r.nombre_venta }}</span>
         <span class="cantidad">
-          {% if r.armado_el and r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
+          {# El "<" y no "!=": la segunda copia vieja del criterio. #}
+          {% if r.armado_el and r.cantidad_armada is not none and r.cantidad_armada|float < r.cantidad|float %}
           <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
+          {% elif r.armado_el and r.cantidad_armada is not none and r.cantidad_armada|float > r.cantidad|float %}
+          <span class="marca-de-mas">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
           {% else %}{{ r.cantidad|numero }}{% endif %}
         </span>
       </div>
