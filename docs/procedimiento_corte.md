@@ -17,29 +17,43 @@ arrancar limpia cuando se implemente.
 
 ## ANTES DE TODO: confirmar que el piso de fecha está andando
 
-Se desplegó el 04/09 (`d84ef5e`) y **se ve sin esperar al corte**, porque con
-la fecha todavía en 31/08 ya deja afuera todo lo anterior a esa fecha — que es
-el arrastre del corte pasado.
+**Se verifica con una consulta, no con una pantalla.** Corré
+`db/verificar_piso_por_ficha.sql`: calcula la cuenta por ficha de las dos
+formas —como estaba antes del 04/09 y como queda con el piso— y las pone al
+lado, con la columna `cambio`.
 
-Tres cosas para mirar, en orden de rapidez:
+- **Alguna fila con `cambio` distinto de cero** → el piso está aplicando.
+- **Todas en cero** → o no está aplicando, o no hay nada anterior al corte que
+  sacar. Avisá antes de seguir.
 
-1. **Stock del Depósito.** Los `sin procesar` negativos tienen que haberse
-   achicado, no desaparecido. Los que queden son déficit real post-corte.
-2. **El Cotejo por ficha.** Las fichas que hoy salen con un negativo grande y
-   sin explicación tienen que bajar a números chicos o desaparecer de la
-   lista. Una ficha que no tuvo movimiento desde el 31/08 **ya no aparece**:
-   eso es correcto, no es que se perdió.
-3. **El selector de Reproceso.** Ningún artículo tiene que desaparecer de la
-   lista. Si alguno desaparece, avisá antes del corte: el criterio mira
-   `sueltos` y `deficit`, y un déficit que se achica podría sacar un artículo
-   del selector — es la falla del 31/08 y no queremos repetirla.
+### Por qué NO se ve en ninguna pantalla, y es importante saberlo
 
-**Y la contra-prueba, que es la que confirma que no se rompió nada:** una
-ficha con guías R y salidas **posteriores** al 31/08 tiene que seguir dando
-el mismo número que antes. El piso no toca nada de este lado del corte.
+Corregido el 05/09, después de que la verificación anterior mandara a mirar la
+pantalla equivocada. **Ningún número visible del sistema sale de la cuenta por
+ficha.** Los cuatro lugares que la usan:
 
-Si algo de esto no da, **el corte va igual** —el compensatorio no depende de
-esta cuenta— pero avisá, porque el lunes se mira.
+| lector | qué hace con el número |
+|---|---|
+| `listar_articulos_para_reproceso` | decide si el artículo **aparece** en el selector. No muestra cifra. |
+| `fichas_con_cajas_armadas` | devuelve **solo ids**: el aviso de armado dice "hay/no hay". |
+| `_stock_de_ficha` | **congela** `stock_sistema` al crear un conteo. Los conteos viejos conservan el número viejo. |
+| el Cotejo | muestra ese `stock_sistema` **congelado**. No se recalcula. |
+
+O sea que el piso puede estar perfecto y **no mover nada de lo que se mira**:
+
+- **El "sin procesar" de Stock del Sistema es la CUENTA 3**, no la 2
+  (`fila["stock"] − Σ armados`, con `_desglose_stock_articulo`, el FIFO
+  rejugado). El piso no lo toca y no tiene por qué tocarlo.
+- **El Cotejo muestra fotos congeladas.** Solo un conteo NUEVO nace con el
+  número corregido — y el conteo del corte lo va a ser.
+
+**Dónde sí se va a ver, y es mañana:** los conteos que se carguen el día del
+corte congelan `stock_sistema` ya con el piso puesto. El Cotejo del lunes es la
+primera pantalla que lo refleja.
+
+**Y lo único a mirar en pantalla antes del corte** es que el **selector de
+Reproceso** no haya perdido ningún artículo. Es lo único que el piso puede
+cambiar a la vista, y es la falla del 31/08 que no queremos repetir.
 
 ## NO EMPEZAR HASTA QUE ESTO ESTÉ
 

@@ -196,6 +196,31 @@ De acá en adelante:
    este caso el 74 y el 26 eran del cliente y la estructura de dos fichas era
    invención — y no estaba dicho, que es lo que la volvió creíble.
 
+Corolario del 05/09, y es la SEGUNDA vez con el mismo fixture: **un número de
+un fixture no se presenta con la etiqueta de un dato de producción.** Se
+predijo "Pepino · Pepino Bolsa: −150 → −40" para verificar un arreglo. Los dos
+números salían de un fixture inventado; en producción no se movió nada. La
+tabla no decía en ninguna parte que fueran de prueba, y con el nombre del
+artículo real al lado se leyeron —con razón— como una predicción sobre la
+base. **Un fixture demuestra el MECANISMO, nunca la MAGNITUD**, y si el número
+sale de un fixture eso va escrito en la misma línea que el número.
+
+Corolario 2 del mismo día, y es peor que el anterior: **un arreglo se verifica
+en la pantalla que lee LA CUENTA QUE SE TOCÓ, no en la que tiene el nombre
+parecido.** El arreglo movía la cuenta 2 (`_SQL_STOCK_PARTIDO`, cajas por
+ficha) y la verificación mandaba a mirar el "sin procesar" de Stock del
+Sistema, que es la cuenta 3 (el FIFO rejugado). Nunca iba a moverse. Lo
+agravante: el mapa de las tres cuentas lo habíamos escrito nosotros dos días
+antes, justamente para no volver a confundirlas — y la trampa fue exactamente
+la que el mapa describe.
+
+**Antes de decir dónde mirar, hay que seguir el número desde la consulta hasta
+el pixel.** Si en el camino no hay ninguna pantalla, eso también es una
+respuesta y hay que decirlo: acá los cuatro lectores de la cuenta 2 o deciden
+si algo aparece, o devuelven solo ids, o congelan una foto — **ninguno muestra
+el número**, así que el arreglo era invisible y la verificación tenía que ser
+una consulta, no una pantalla.
+
 Corolario: **una regla de unicidad no puede depender de una extensión de
 Postgres.** `unaccent` hay que habilitarla por proyecto, y una regla que se
 pierde el día que se crea la base de la empresa siguiente no es una regla. Lo
