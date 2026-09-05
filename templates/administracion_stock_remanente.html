@@ -61,6 +61,49 @@
     text-decoration: none;
   }
   .ayuda { color: #666; font-size: 0.85rem; line-height: 1.4; margin: 0.75rem 0 0; }
+
+  /* LA SEPARACIÓN ES EL PUNTO. Arriba está lo que HAY; esto es un problema a
+     resolver, y si se mezclan vuelve a ser la pantalla vieja. Por eso no es
+     otra sección de la misma tarjeta: es una tarjeta propia, con un corte de
+     aire grande antes, fondo distinto y su propio título. */
+  .bloque-negativos {
+    margin-top: 2.5rem;
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .bloque-negativos h2 { color: #9a3412; }
+  .bloque-negativos .intro {
+    margin: 0 0 0.75rem;
+    color: #7c2d12;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+  /* SIN columna de números a la derecha, a propósito: si "45" cayera donde
+     caen los bultos de arriba se leería como una cantidad que hay. Acá el
+     número va adentro de la frase, que dice QUÉ pasó y no CUÁNTO hay. */
+  .negativo {
+    display: block;
+    padding: 0.8rem 0;
+    border-top: 1px solid #fed7aa;
+    color: #7c2d12;
+    text-decoration: none;
+  }
+  .negativo:first-of-type { border-top: none; }
+  .negativo .nombre { font-size: 1.05rem; font-weight: 700; display: block; }
+  .negativo .falta { font-size: 0.95rem; }
+  .negativo .ir { color: #9a3412; font-weight: 700; text-decoration: underline; }
+  .totales {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    margin: 0;
+    color: #666;
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
 </style>
 </head>
 <body>
@@ -106,8 +149,44 @@
   {% if porciones %}
   <div class="tarjeta">
     <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel">Exportar Excel</a>
-    <p class="ayuda">Sale con una columna vacía para anotar lo contado al lado.</p>
+    {# El Excel sale con las PORCIONES y nada más: es para ir a contar, y un
+       artículo en negativo no se cuenta — no hay pila que mirar. #}
+    <p class="ayuda">Sale con una columna vacía para anotar lo contado al lado. Van las porciones de arriba; los artículos con bultos sin explicar no entran, porque no hay nada que contar.</p>
   </div>
   {% endif %}
+
+  {# ABAJO Y APARTE, y la distancia es a propósito. Arriba está lo que HAY;
+     esto es un problema a resolver. Mezclarlos como un renglón más de la
+     lista sería volver a la pantalla que se acaba de borrar.
+
+     Y el número va DENTRO de la frase, nunca en la columna de la derecha:
+     un artículo en −45 no tiene menos cuarenta y cinco cajones, tiene 45
+     bultos que salieron sin que ninguna guía los cubra. "Faltan explicar
+     45" dice qué pasó; "−45" se lee como una cantidad y se resta de algo.
+     Es el mismo defecto del "sin procesar −95" que esta pantalla vino a
+     reemplazar. #}
+  {% if negativos %}
+  <div class="bloque-negativos">
+    <h2>Bultos que faltan explicar</h2>
+    <p class="intro">Salió mercadería que ninguna guía cubre. Puede faltar un reproceso o un ajuste
+      que la explique, alguien pudo sacar de más, o una salida se llevó ese lote porque lo señalaron
+      con el dedo. <strong>No es un error del sistema: es la señal.</strong></p>
+    {% for n in negativos %}
+    <a class="negativo" href="/administracion/stock/sistema/{{ n.articulo_id }}">
+      <span class="nombre">{{ n.nombre }}</span>
+      <span class="falta">Faltan explicar {{ n.faltan|numero }} bultos · <span class="ir">ver de qué lotes salió</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Los dos pools que van APARTE del stock normal. En chico: son contexto,
+     no lo que se viene a mirar. #}
+  <div class="tarjeta">
+    <p class="totales">
+      <span>{{ reingresos_total|numero }} bultos reingresados por rechazo (ya costeados y ya vendidos)</span>
+      <span>{{ segunda_total|numero }} bultos de segunda esperando el remito al Puesto</span>
+    </p>
+  </div>
 </body>
 </html>

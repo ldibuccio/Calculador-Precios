@@ -6266,10 +6266,11 @@ def stock_deposito_por_articulo() -> list[dict]:
     05/09 — ver el comentario adentro de la consulta. Es el único número de
     acá que se rebasea con una fecha; el resto lo rebasea el compensatorio.
 
-    LA LEEN DOS PANTALLAS y las dos salen de esta misma función: Stock del
-    Sistema y el selector de Remito de Segunda (que filtra por segunda > 0).
-    Que el cálculo esté acá y no repetido es lo que hace que no puedan
-    decir cosas distintas.
+    LA LEEN TRES PANTALLAS y las tres salen de esta misma función: el
+    Remanente (sus porciones, sus negativos y los dos totales), Stock por
+    Guía (la línea de las seis patas) y el selector de Remito de Segunda
+    (que filtra por segunda > 0). Que el cálculo esté acá y no repetido es
+    lo que hace que no puedan decir cosas distintas.
     """
     conexion = obtener_conexion()
     try:

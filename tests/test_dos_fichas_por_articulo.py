@@ -25,7 +25,6 @@ from app.main import (
     _armar_renglones_pedido_desde_bloque,
     _ayudas_ficha_por_cliente_y_articulo,
     _nombre_de_ficha,
-    _tamanos_de_caja_por_ficha,
     app,
 )
 
@@ -132,22 +131,13 @@ def test_con_una_sola_ficha_la_ayuda_queda_como_siempre():
     assert ayudas["1:1"] == "6 kg por caja, según la ficha de Día."
 
 
-def test_el_tamano_de_caja_del_stock_muestra_los_dos_posibles():
-    # Las fichas se piden TODAS de una (antes iba cliente por cliente):
-    # el cliente de cada una sale de la propia ficha.
-    with patch("app.main.listar_fichas_de_todos_los_clientes", return_value=DOS_FICHAS):
-        tamanos = _tamanos_de_caja_por_ficha()
-
-    assert tamanos["1:1"] == "6 kg o 10 kg"
-
-
-def test_dos_fichas_del_mismo_kilaje_no_repiten_el_tamano():
-    mismo_kilaje = [BANANA_BOLIVIA, {**BANANA_ECUADOR, "contenido_caja": 6}]
-    with patch("app.main.listar_fichas_de_todos_los_clientes", return_value=mismo_kilaje):
-        tamanos = _tamanos_de_caja_por_ficha()
-
-    # No hay ambigüedad que mostrar: las dos cajas son de 6 kg.
-    assert tamanos["1:1"] == "6 kg"
+# Acá vivían los dos tests de `_tamanos_de_caja_por_ficha` ("6 kg o 10 kg"
+# cuando la guía R no decía con qué ficha se armó). La función se borró el
+# 06/09 junto con Stock del Sistema, que era su único lector: la ambigüedad
+# existía porque esa pantalla desglosaba POR GUÍA R, y una guía R no guarda la
+# ficha. El Remanente lista POR FICHA —cada una es su propio renglón, con su
+# nombre— así que no hay dos tamaños posibles que mostrar. No es una prueba
+# que se perdió: es un caso que dejó de existir.
 
 
 # --- las pantallas ---

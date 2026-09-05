@@ -6498,7 +6498,7 @@ def _clave_alfabetica(texto: str) -> str:
     return "".join(c for c in sin_tildes if not unicodedata.combining(c)).lower()
 
 
-def _porciones_de_deposito() -> list[dict]:
+def _porciones_de_deposito(filas: list[dict] | None = None) -> list[dict]:
     """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
 
     En el piso NO hay "un artículo con un total": hay pilas distintas, en
@@ -6518,14 +6518,16 @@ def _porciones_de_deposito() -> list[dict]:
     escrita en la caja, así que tampoco podría verificarlo contando.
 
     Solo lo que tiene MÁS DE CERO. Una porción en cero no es una pila, y un
-    negativo no se puede contar: los negativos siguen a la vista en Stock
-    del Sistema, que es la pantalla de control.
+    negativo no se puede contar. Los negativos NO se pierden: van en su
+    propia sección abajo, separados y contados como "bultos que faltan
+    explicar" — ver `_negativos_de_deposito`.
 
     El orden agrupa por ARTÍCULO y después por tipo de porción, no por el
     texto que se muestra: así "Pomelo" y "Pomelo caja Día" caen juntas
     aunque la ficha se llame de otra forma.
     """
-    filas = stock_deposito_por_articulo()
+    if filas is None:
+        filas = stock_deposito_por_articulo()
     cajas = cajas_armadas_por_ficha()
     fichas = {f["id"]: f for f in listar_fichas_de_todos_los_clientes()}
 
@@ -6554,6 +6556,22 @@ def _porciones_de_deposito() -> list[dict]:
     return porciones
 
 
+def _negativos_de_deposito(filas: list[dict]) -> list[dict]:
+    """Los artículos con stock por debajo de cero: cuántos bultos FALTAN EXPLICAR.
+
+    Se devuelve `faltan` en POSITIVO a propósito, y no el stock en
+    negativo. Un artículo en −45 no tiene menos cuarenta y cinco cajones:
+    tiene 45 bultos que salieron y ninguna guía cubre. Mostrar "−45" en
+    una lista de cantidades invita a leerlo como stock y a restarlo de
+    algo — es el mismo defecto del "sin procesar −95" que esta pantalla
+    viene a reemplazar, y recrearlo abajo sería no haber entendido nada.
+    """
+    return [
+        {"articulo_id": f["articulo_id"], "nombre": f["nombre"], "faltan": round(-float(f["stock"]), 2)}
+        for f in filas if float(f["stock"]) < 0
+    ]
+
+
 @app.get("/administracion/stock/remanente")
 def ver_remanente_deposito(request: Request):
     """Qué hay en el depósito, una porción por renglón. Para mirar y para exportar.
@@ -6567,12 +6585,20 @@ def ver_remanente_deposito(request: Request):
     vez de contra el piso".
     """
     try:
-        porciones = _porciones_de_deposito()
+        filas = stock_deposito_por_articulo()
+        porciones = _porciones_de_deposito(filas)
+        contexto = {
+            "porciones": porciones,
+            "hoy": _hoy_argentina(),
+            # ABAJO Y APARTE: la lista de arriba es lo que HAY, esto es un
+            # problema a resolver. Mezclados vuelve a ser la pantalla vieja.
+            "negativos": _negativos_de_deposito(filas),
+            "reingresos_total": total_reingresos_rechazo(),
+            "segunda_total": sum(float(f["segunda"]) for f in filas),
+        }
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    return templates.TemplateResponse(
-        request, "administracion_stock_remanente.html", {"porciones": porciones, "hoy": _hoy_argentina()}
-    )
+    return templates.TemplateResponse(request, "administracion_stock_remanente.html", contexto)
 
 
 @app.get("/administracion/stock/remanente/exportar-excel")
@@ -6597,109 +6623,6 @@ def ver_stock_deposito(request: Request, aviso: str | None = None):
     return templates.TemplateResponse(request, "deposito_stock.html", {"aviso": aviso})
 
 
-def _tamanos_de_caja_por_ficha() -> dict[str, str]:
-    """El tamaño de la caja armada según la ficha, por "cliente_id:articulo_id" ("6 kg") — para el desglose del stock.
-
-    Con VARIAS fichas del mismo artículo para ese cliente y tamaños
-    distintos, se muestran los dos ("6 o 10 kg"): la guía R no guarda con
-    qué ficha se armó, así que elegir uno sería inventar. Si las dos fichas
-    tienen el mismo kilaje, no hay ambigüedad y se muestra uno solo.
-    """
-    tamanos: dict[str, str] = {}
-    por_clave: dict[str, list[str]] = {}
-    # TODAS las fichas en una consulta: antes se pedían cliente por cliente,
-    # que es el mismo N+1 que el del FIFO, escondido en otra pantalla.
-    for ficha in listar_fichas_de_todos_los_clientes():
-        if not ficha.get("contenido_caja"):
-            continue
-        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-        texto = f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-        clave = f"{ficha['cliente_id']}:{ficha['articulo_id']}"
-        if texto not in por_clave.setdefault(clave, []):
-            por_clave[clave].append(texto)
-
-    for clave, textos in por_clave.items():
-        tamanos[clave] = " o ".join(textos)
-    return tamanos
-
-
-def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str], movimientos: tuple) -> list[dict]:
-    """Las guías R con primera restante de un artículo, rejugando el FIFO: qué cajas armadas hay hoy, para quién y de qué tamaño.
-
-    Cada línea es una guía R con resto (si hay varias de tamaños
-    distintos, salen separadas). Es el mismo reparto del detalle por
-    artículo, subido al listado: nada se guarda, se calcula cada vez.
-
-    Recibe los movimientos ya traídos (entradas y salidas fechadas) en vez
-    de ir a buscarlos: el listado los pide TODOS de una, para no abrir una
-    conexión por artículo.
-    """
-    entradas, salidas = movimientos
-    reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
-
-    armados = []
-    for lote in reparto["lotes"]:
-        if lote.get("tipo_lote") != "reproceso" or lote["restante"] <= 0:
-            continue
-        clave_ficha = f"{lote['cliente_lote_id']}:{fila['articulo_id']}" if lote.get("cliente_lote_id") else None
-        armados.append({
-            "bultos": lote["restante"],
-            "cliente": lote.get("detalle"),
-            "tamano": tamanos_ficha.get(clave_ficha) if clave_ficha else None,
-            "guia": lote["origen_id"],
-            "fecha": lote["fecha_lote"],
-        })
-    return armados
-
-
-@app.get("/administracion/stock/sistema")
-def ver_stock_sistema_deposito(request: Request):
-    """Stock del Sistema por artículo (bultos), calculado siempre. Los negativos arriba, en rojo: son salidas sin explicar.
-
-    Un artículo con guías R vivas o segunda se muestra DESGLOSADO en el
-    listado (pedido del dueño 26/08: 80 cajones sin procesar + 40 cajas
-    armadas no son "120 bultos"): sin procesar, cada guía R con resto
-    (cliente y tamaño de caja según la ficha) y la segunda, con el total
-    al final. Un artículo sin nada de eso muestra solo su número.
-    """
-    try:
-        filas = stock_deposito_por_articulo()
-        reingresos_total = total_reingresos_rechazo()
-        # Las fichas se cargan una sola vez, y solo si algún artículo tiene
-        # primera de reproceso para desglosar.
-        tamanos_ficha = (
-            _tamanos_de_caja_por_ficha() if any(f["reproceso_primera"] for f in filas) else {}
-        )
-        # Los movimientos de TODOS los artículos con guía R, en una consulta.
-        con_primera = [f["articulo_id"] for f in filas if f["reproceso_primera"]]
-        movimientos = entradas_y_salidas_stock_articulos(con_primera)
-        for fila in filas:
-            fila["armados"] = (
-                _desglose_stock_articulo(fila, tamanos_ficha, movimientos[fila["articulo_id"]])
-                if fila["reproceso_primera"] else []
-            )
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    for fila in filas:
-        fila["sin_procesar"] = fila["stock"] - sum(a["bultos"] for a in fila["armados"])
-        fila["total_con_segunda"] = fila["stock"] + fila["segunda"]
-        fila["desglosada"] = bool(fila["armados"]) or bool(fila["segunda"])
-
-    negativos = [f for f in filas if f["stock"] < 0]
-    return templates.TemplateResponse(
-        request,
-        "deposito_stock_sistema.html",
-        {
-            "filas": filas,
-            "articulos_negativos": len(negativos),
-            "bultos_sin_lote": -sum(f["stock"] for f in negativos),
-            "reingresos_total": reingresos_total,
-            "segunda_total": sum(f.get("segunda", 0) for f in filas),
-        },
-    )
-
-
 @app.get("/administracion/stock/sistema/{articulo_id}")
 def ver_stock_articulo_deposito(request: Request, articulo_id: int):
     """El detalle FIFO de un artículo: qué queda de cada lote (guía, reingreso, ajuste) y cuánto salió sin lote.
@@ -6715,6 +6638,19 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         if articulo is None:
             raise HTTPException(status_code=404, detail="Artículo no encontrado")
         entradas, salidas = entradas_y_salidas_stock_articulo(articulo_id)
+        # LAS SEIS PATAS por separado. Vivían en el listado de Stock del
+        # Sistema, que se borró el 06/09 por confundir más de lo que
+        # ayudaba; la línea NO se fue con él porque es lo único que dice
+        # QUÉ pata movió cuando un total no cuadra, y este es el lugar
+        # donde se viene a mirar justamente eso.
+        #
+        # Sale de la MISMA función que todo el resto del módulo, aunque
+        # traiga todos los artículos para usar uno: una segunda consulta
+        # "solo para este artículo" sería una segunda versión de la cuenta,
+        # y esas se separan.
+        patas = next(
+            (f for f in stock_deposito_por_articulo() if f["articulo_id"] == articulo_id), None
+        )
     except HTTPException:
         raise
     except Exception as error_db:
@@ -6728,6 +6664,7 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         "deposito_stock_articulo.html",
         {
             "articulo": articulo,
+            "patas": patas,
             "lotes": con_resto,
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],
@@ -8354,7 +8291,7 @@ def cargar_remito_segunda_ruta(
 
     Pantalla de OPERARIO: el aviso repite solo lo cargado. No traba si
     remite más de lo que el pool dice — el piso es su verdad; el pool en
-    negativo se ve en Stock del Sistema.
+    negativo se ve en el Remanente (Administración).
     """
     error, cantidad_valor = _validar_bultos_positivos(cantidad, "remitidos")
 
@@ -8584,11 +8521,16 @@ ALERTAS = [
         # Salió más de lo que entró: salidas sin lote que un reproceso o un
         # ajuste tienen que explicar — o alguien sacó de más.
         titulo="Stock de depósito en negativo (salidas sin explicar)",
-        url="/administracion/stock/sistema",
-        texto_link="Ver en Stock del Sistema del Depósito",
-        # El banner va donde está la pantalla: Stock del Sistema se mudó
-        # a Administración, así que avisar en Depósito mandaría al
-        # operario a un módulo que ya no es suyo.
+        url="/administracion/stock/remanente",
+        texto_link="Ver en el Remanente",
+        # Apuntaba a Stock del Sistema, que se borró el 06/09. Va al
+        # Remanente, que es donde quedaron los negativos, en su sección
+        # aparte. NO va al Cotejo: ahí solo aparece lo que se contó, así que
+        # un artículo en negativo que nadie contó no se ve — y mandar a
+        # mirar donde el problema no está ya nos costó una vez.
+        #
+        # El banner sigue solo en Administración: avisar en Depósito
+        # mandaría al operario a un módulo que ya no es suyo.
         modulos=("administracion",),
         contar=lambda: contar_stock_deposito_negativo(),
     ),

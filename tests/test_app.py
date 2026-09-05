@@ -9584,7 +9584,9 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
     assert "Stock de vacíos negativo" in respuesta.text
     assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
-    assert 'href="/administracion/stock/sistema"' in respuesta.text
+    # Al Remanente, que es donde quedaron los negativos: Stock del Sistema se
+    # borró el 06/09 y la alerta habría llevado a un 404.
+    assert 'href="/administracion/stock/remanente"' in respuesta.text
     assert "Guías R esperando el precio de una compra" in respuesta.text
     assert 'href="/administracion/stock/guias-r"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
@@ -12973,7 +12975,8 @@ REMANENTE_FICHAS = [
 ]
 
 
-def _remanente(filas=None, cajas=None, fichas=None, url="/administracion/stock/remanente"):
+def _remanente(filas=None, cajas=None, fichas=None, reingresos=0,
+               url="/administracion/stock/remanente"):
     with (
         patch("app.main.stock_deposito_por_articulo",
               return_value=REMANENTE_FILAS if filas is None else filas),
@@ -12981,6 +12984,7 @@ def _remanente(filas=None, cajas=None, fichas=None, url="/administracion/stock/r
               return_value=REMANENTE_CAJAS if cajas is None else cajas),
         patch("app.main.listar_fichas_de_todos_los_clientes",
               return_value=REMANENTE_FICHAS if fichas is None else fichas),
+        patch("app.main.total_reingresos_rechazo", return_value=reingresos),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
     ):
         return cliente.get(url)
@@ -13031,6 +13035,61 @@ def test_el_remanente_manda_a_Stock_Fisico_para_contar():
     assert '/deposito/stock/fisico' in texto
 
 
+def test_los_negativos_van_ABAJO_Y_APARTE_de_las_porciones():
+    """La lista de arriba es lo que HAY; los negativos son un problema a
+    resolver. Si se mezclan como un renglón más, vuelve a ser la pantalla
+    que se borró."""
+    filas = [
+        {"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0, "reproceso_primera": 0.0, "segunda": 0.0},
+        {"articulo_id": 2, "nombre": "Palta", "stock": -45.0, "reproceso_primera": 0.0, "segunda": 0.0},
+    ]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
+
+    # Palta NO está entre las porciones: no hay pila que contar.
+    assert [n for n, _ in _porciones_en_pantalla(cuerpo)] == ["Berenjena"]
+    # Está en su propio bloque, y el bloque va DESPUÉS de la lista.
+    assert 'class="bloque-negativos"' in cuerpo
+    assert cuerpo.index('class="porcion"') < cuerpo.index('class="bloque-negativos"')
+    # Y linkea a Stock por Guía, que es la única puerta que le queda.
+    assert 'href="/administracion/stock/sistema/2"' in cuerpo
+
+
+def test_un_negativo_dice_QUE_PASO_no_cuanto_hay():
+    """Un artículo en −45 no tiene menos cuarenta y cinco cajones: tiene 45
+    bultos que salieron sin que ninguna guía los cubra. Mostrar "−45" en una
+    pantalla de cantidades invita a leerlo como stock y restarlo de algo — es
+    el mismo defecto del "sin procesar −95" que esta pantalla vino a
+    reemplazar."""
+    filas = [{"articulo_id": 2, "nombre": "Palta", "stock": -45.0,
+              "reproceso_primera": 0.0, "segunda": 0.0}]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
+
+    assert "Faltan explicar 45 bultos" in cuerpo
+    # El número NUNCA en la columna de la derecha, donde van los bultos que hay.
+    assert "-45" not in cuerpo and "−45" not in cuerpo
+    assert '<span class="cuanto">' not in cuerpo
+
+
+def test_sin_negativos_el_bloque_no_aparece():
+    filas = [{"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0,
+              "reproceso_primera": 0.0, "segunda": 0.0}]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
+
+    assert 'class="bloque-negativos"' not in cuerpo
+    assert "Faltan explicar" not in cuerpo
+
+
+def test_el_remanente_muestra_los_dos_pools_aparte_y_en_chico():
+    """Reingresos y segunda van APARTE del stock normal, y sobrevivieron a
+    Stock del Sistema. En chico: son contexto, no lo que se viene a mirar."""
+    filas = [{"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0,
+              "reproceso_primera": 0.0, "segunda": 7.0}]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[], reingresos=12).text.split("</style>")[-1]
+
+    assert "12 bultos reingresados por rechazo" in cuerpo
+    assert "7 bultos de segunda esperando el remito al Puesto" in cuerpo
+
+
 def test_el_REMANENTE_NO_se_ofrece_desde_el_deposito():
     """LA REGLA, y por eso tiene test propio: al operario no se le muestran
     los números del sistema de lo que después tiene que contar. Con la lista
@@ -13046,11 +13105,11 @@ def test_el_REMANENTE_NO_se_ofrece_desde_el_deposito():
     deposito = cliente.get("/deposito/stock").text
     assert "remanente" not in deposito.lower()
 
-    # Y donde sí vive: primero, que es la que se mira todos los días.
+    # Y donde sí vive: en Administración, primera de "Control de stock".
     administracion = cliente.get("/administracion").text
     assert '/administracion/stock/remanente' in administracion
     assert (administracion.index('/administracion/stock/remanente')
-            < administracion.index('/administracion/stock/sistema'))
+            < administracion.index('/administracion/stock/cotejo'))
 
 
 def test_un_articulo_que_no_se_reprocesa_es_un_solo_renglon_pelado():
@@ -15670,45 +15729,31 @@ def test_el_hub_de_stock_queda_solo_con_la_carga_del_operario():
     assert "(Próximamente)" not in respuesta.text
 
 
-def test_stock_sistema_muestra_el_stock_calculado_por_articulo():
+# Stock del Sistema (el listado) se BORRÓ el 06/09: lo miraron tres veces y
+# ninguna sirvió. Lo que aquellos tests protegían no se borró con la pantalla
+# —se mudó, y los tests con ello—: la línea de las seis patas está ahora en
+# Stock por Guía, y los negativos y los dos totales globales en el Remanente.
+# Ver los tests de abajo, que dicen dónde quedó cada cosa.
+
+
+def test_stock_por_guia_muestra_LAS_SEIS_PATAS_de_donde_sale_el_numero():
+    """Vivían en el listado borrado. Es lo único que dice QUÉ pata movió
+    cuando un total no cuadra, y ésta es la pantalla a la que se viene justo
+    a preguntarse eso."""
     with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
-        patch("app.main.total_reingresos_rechazo", return_value=2.0),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
     ):
-        respuesta = cliente.get("/administracion/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema/1")
 
     assert respuesta.status_code == 200
-    assert "Banana" in respuesta.text
-    assert "24 <span" in respuesta.text
-    assert "40 entraron · 15 salieron · 2 reingresados · -3 ajustados" in respuesta.text
-    assert 'href="/administracion/stock/sistema/1"' in respuesta.text
-
-
-def test_stock_sistema_negativo_muestra_la_tarjeta_de_salidas_sin_lote():
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    # El negativo NO es un error a esconder: tarjeta roja arriba con el
-    # total sin lote, y la fila del artículo marcada.
-    assert "Salidas sin lote: 5 bultos en 1 artículo." in respuesta.text
-    assert 'class="fila-stock negativa"' in respuesta.text
-
-
-def test_stock_sistema_muestra_los_reingresos_aparte_siempre():
-    # Plata perdida a la vista: el total de reingresos va aparte del stock
-    # normal, incluso en cero — el dueño tiene que ver que el número existe.
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    assert "0 bultos reingresados por rechazo" in respuesta.text
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "40</b> entraron" in cuerpo
+    assert "15</b> salieron" in cuerpo
+    assert "2</b> reingresados" in cuerpo
+    assert "-3</b> ajustados" in cuerpo
 
 
 def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
@@ -15723,6 +15768,7 @@ def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, _salidas_fifo(11.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -15739,6 +15785,7 @@ def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(5.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
 
@@ -17262,14 +17309,17 @@ def test_anular_guia_r_vuelve_al_rango():
 
 
 def test_el_control_de_stock_vive_en_administracion():
-    # Las cinco pantallas de control, en el hub que les corresponde.
+    # Las pantallas de control, en el hub que les corresponde.
     respuesta = cliente.get("/administracion")
 
     assert respuesta.status_code == 200
-    for destino in ("/administracion/stock/sistema", "/administracion/stock/cotejo",
+    for destino in ("/administracion/stock/remanente", "/administracion/stock/cotejo",
                     "/administracion/stock/ajustar", "/administracion/stock/movimientos",
                     "/administracion/stock/guias-r", "/administracion/pedidos/buscar"):
         assert f'href="{destino}"' in respuesta.text, destino
+    # Stock del Sistema se BORRÓ el 06/09: el Remanente ocupa su lugar. El
+    # botón no puede quedar apuntando a una ruta que ya no responde.
+    assert 'href="/administracion/stock/sistema"' not in respuesta.text
     # El reproceso NO se muda: es carga del depósito.
     assert "/deposito/stock/reproceso" not in respuesta.text
 
@@ -17277,81 +17327,17 @@ def test_el_control_de_stock_vive_en_administracion():
 # --- Reproceso (tanda 2): segunda, remito al Puesto, completar costo ---
 
 
-def test_stock_sistema_muestra_la_segunda_como_pool_aparte():
-    # La segunda desglosa la fila del artículo: renglón propio y total al
-    # final — ya no un chip escondido en la letra chica.
-    filas = [dict(FILAS_STOCK_DE_PRUEBA[0], segunda=3.0)]
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=filas),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    assert "3 bultos de segunda en el depósito" in respuesta.text
-    assert "Segunda (va al Puesto)" in respuesta.text
-    texto_plano = " ".join(respuesta.text.split())
-    assert "Sin procesar</span><span class=\"numero\">24" in texto_plano
-    # Total = stock (24) + segunda (3), aunque sume cosas distintas.
-    assert ">Total</span>" in respuesta.text and ">27 <span" in respuesta.text
-
-
-def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
-    # El ejemplo del dueño (26/08): 100 cajones de guía, 20 tomados, 40
-    # cajas de 6 kg armadas para Día → "120 bultos" no sirve. El listado
-    # muestra: Sin procesar 80, Armado 40 cajas de 6 kg para Día (por
-    # guía R), Segunda 3 y el Total 123.
-    fila = dict(
-        FILAS_STOCK_DE_PRUEBA[0],
-        entradas=100.0, salidas=0.0, reingresos=0.0, ajustes=0.0,
-        reproceso_primera=40.0, reproceso_tomados=20.0, segunda=3.0, stock=120.0,
-    )
-    entradas_fifo = [
-        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
-         "tipo_lote": "guia", "origen_id": 55, "fecha_lote": date(2026, 8, 20),
-         "detalle": "Norte 15", "motivo": None, "cantidad": 100.0, "cliente_lote_id": None},
-        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10), "orden": (date(2026, 8, 22), datetime(2026, 8, 22, 10)),
-         "tipo_lote": "reproceso", "origen_id": 7, "fecha_lote": date(2026, 8, 22),
-         "detalle": "Día", "motivo": None, "cantidad": 40.0, "cliente_lote_id": 1},
-    ]
-    fichas_dia = [{"id": 901, "cliente_id": 1, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-        patch("app.main.entradas_y_salidas_stock_articulos",
-              return_value={1: (entradas_fifo, _salidas_fifo(20.0))}) as mock_fifo,
-        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas_dia),
-        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    # UNA sola llamada con TODOS los artículos con guía R, no una por artículo.
-    mock_fifo.assert_called_once_with([1])
-    texto_plano = " ".join(respuesta.text.split())
-    # Los 20 tomados salieron FIFO de la guía: quedan 80 sin procesar.
-    assert "Sin procesar</span><span class=\"numero\">80" in texto_plano
-    assert "Armado: 40 cajas de 6 kg para Día" in respuesta.text
-    assert "R7 · 22/08" in respuesta.text
-    assert "Segunda (va al Puesto)" in respuesta.text
-    assert ">123 <span" in respuesta.text
-
-
-def test_stock_sistema_sin_reprocesos_ni_segunda_muestra_solo_el_numero():
-    # Pedido explícito del dueño: un artículo común no se llena de
-    # renglones vacíos — número a la derecha y listo, como siempre.
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-        patch("app.main.entradas_y_salidas_stock_articulo") as mock_fifo,
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    mock_fifo.assert_not_called()
-    assert "Sin procesar" not in respuesta.text
-    assert ">Total</span>" not in respuesta.text
-    assert "24 <span" in respuesta.text
+# Los tres tests del desglose de Stock del Sistema (sin procesar / armado por
+# guía R / segunda / total por artículo) murieron con la pantalla el 06/09, y
+# no se mudaron a ningún lado A PROPÓSITO: ese desglose es justamente lo que
+# confundía. El "sin procesar" era la cuenta 3 —el FIFO rejugado, que daba −95
+# sin que eso fuera una cantidad— y el total por artículo era la suma que el
+# dueño ya había pedido no mostrar ("80 cajones sin procesar + 40 cajas armadas
+# no son 120 bultos"). El Remanente muestra una porción por renglón, sin total,
+# y la trazabilidad por guía R vive en Stock por Guía.
+#
+# El total global de segunda SÍ sobrevive, en el Remanente: ver
+# test_el_remanente_muestra_los_dos_pools_aparte_y_en_chico.
 
 
 def test_remito_segunda_lista_solo_articulos_con_segunda_y_guarda():
@@ -18312,13 +18298,14 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         respuesta = cliente.get("/deposito/recepcion")
     assert ancla.format(destino="/deposito") in respuesta.text
 
-    # El detalle FIFO cuelga del Stock del Sistema.
+    # El detalle FIFO cuelga del Remanente, que es de donde se llega.
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
-    assert ancla.format(destino="/administracion/stock/sistema") in respuesta.text
+    assert ancla.format(destino="/administracion/stock/remanente") in respuesta.text
 
     # La casilla cuelga de Sistema.
     with (
@@ -18907,6 +18894,7 @@ def test_stock_por_guia_nombra_los_bultos_tomados_por_guias_R_en_las_salidas():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Redondo"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(648.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 

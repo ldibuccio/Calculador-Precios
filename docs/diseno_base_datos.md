@@ -2987,11 +2987,48 @@ tres cosas —qué información vive SOLO ahí, qué otra pantalla se alcanza
 leyendo la plantilla; las otras dos, grepeando la ruta. En este caso las tres
 tenían respuesta, y ninguna se veía desde la pantalla.
 
+### Lo que se hizo con esa regla: el Remanente reemplazó a Stock del Sistema (06/09)
+
+No fue un swap. Antes de borrar se miraron las tres preguntas del corolario, y
+las tres tenían respuesta:
+
+| Colgado de la pantalla | Dónde quedó |
+|---|---|
+| **La línea de las seis patas** (`N entraron · M salieron · reingresados · ajustados · reproceso −X +Y`) — lo único que dice QUÉ pata movió cuando un total no cuadra | **Stock por Guía**, que es adonde se viene justo a preguntarse eso |
+| **Stock por Guía** — su única puerta era la fila del listado | Los negativos del Remanente linkean ahí |
+| **La alerta `stock_deposito_negativo`** apuntaba a su URL | Al Remanente. **NO al Cotejo**: ahí solo aparece lo que se contó, así que un artículo en negativo que nadie contó no se ve — y mandar a mirar donde el problema no está ya nos costó una vez |
+| Los dos totales globales (reingresos, segunda) | Abajo del Remanente, en chico |
+
+**Se hizo en UN paso, no en dos.** El argumento contra la semana de
+convivencia: una semana solo sirve si alguien la usa y descubre que le falta
+algo, y el punto de partida era que **nadie la usa**. Habría producido la misma
+información que ya teníamos, con la pantalla que confunde siete días más.
+
+**Lo que NO se mudó, a propósito:** el desglose por artículo (sin procesar /
+armado por guía R / total). Es lo que confundía. El "sin procesar" era la
+cuenta 3 —el FIFO rejugado, que daba −95 sin que eso fuera una cantidad— y el
+total por artículo era la suma que el dueño ya había pedido no mostrar. Con la
+pantalla se fue también `_tamanos_de_caja_por_ficha` ("6 kg o 10 kg"): esa
+ambigüedad existía porque el listado desglosaba POR GUÍA R y una guía R no
+guarda la ficha. El Remanente lista POR FICHA, así que el caso dejó de existir.
+
+**Y el ítem 1 de la cola se borró en vez de hacerse.** "El `sin_procesar`
+negativo deja de ser un número" era lo próximo; el −95 vivía solo en esa
+pantalla y se fue con ella. Vale anotarlo: a veces la forma más barata de
+arreglar un número mal presentado es borrar la pantalla que nadie mira.
+
+**Cómo se mostraron los negativos, que es donde estaba el riesgo de recrear el
+problema abajo:** en su propia tarjeta, separada por aire, con fondo distinto y
+título propio —arriba está lo que HAY, abajo un problema a resolver— y **el
+número adentro de la frase, nunca en la columna de la derecha**: "Faltan
+explicar 45 bultos", no "−45". Un artículo en −45 no tiene menos cuarenta y
+cinco cajones. Hay un test para cada una de las dos cosas.
+
 ## LO PRÓXIMO, en orden (06/09)
 
-1. **El `sin_procesar` negativo deja de ser un número.** Está desarrollado más
-   arriba: un negativo ahí no es una cantidad, es "faltan guías R por cargar", y
-   mostrarlo como número invita a restarlo de algo.
+1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el
+   06/09**: vivía solo en Stock del Sistema, que se eliminó. No quedó nada que
+   arreglar.
 2. **La merma dirigida, con su migración.** Hoy `_lotes_con_resto` saltea el
    lote fantasma —no se puede tirar lo que no existe— y eso alcanza para que no
    ofrezca-y-rechace. Lo que falta es el CHECK de `movimientos_stock.lote_tipo`,
