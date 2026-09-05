@@ -68,9 +68,14 @@ sábado NO suman** (sus cajas están en el conteo). Solo cuenta el `inicial` del
 corte, y de ahí en adelante todo. Sin esa asimetría el lunes arrancaba con
 números equivocados en las dos direcciones.
 
-**Y lo único a mirar en pantalla antes del corte** es que el **selector de
-Reproceso** no haya perdido ningún artículo. Es lo único que el piso puede
-cambiar a la vista, y es la falla del 31/08 que no queremos repetir.
+**Y lo único a mirar en pantalla antes del corte** era que el **selector de
+Reproceso** no hubiera perdido ningún artículo — lo único que el piso puede
+cambiar a la vista, y la falla del 31/08 que no queremos repetir.
+
+> **LAS DOS VERIFICACIONES ESTÁN HECHAS (05/09).** La consulta dio los 22
+> artículos cambiados y el selector de Reproceso quedó completo. **Esta
+> sección no hay que repetirla mañana**: se arranca directo en "No empezar
+> hasta que esto esté".
 
 ## NO EMPEZAR HASTA QUE ESTO ESTÉ
 
