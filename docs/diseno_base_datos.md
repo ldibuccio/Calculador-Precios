@@ -2363,6 +2363,112 @@ fecha sino con el compensatorio, que es una **foto tomada esa misma tarde** y
 que ya incluye los movimientos del día. La cuenta por ficha usa un filtro de
 fecha, y un filtro no sabe a qué hora se contó.
 
+## El armado podía quedarse corto pero no largo, y el largo se perdía entero (05/09)
+
+Relevado y arreglado el 05/09. **No es un bug de cálculo: es una regla que
+prohibía registrar un hecho que ya había ocurrido.**
+
+### Qué había
+
+El depósito arma 80 bultos donde el pedido pedía 50 —pasa cuando el cliente
+llama después de hora y el camión todavía no salió—. El sistema no lo dejaba
+cargar, y de dos formas a la vez:
+
+- `templates/deposito_pedido_armar.html` ponía `max="{{ r.cantidad }}"` en el
+  input: el navegador no dejaba escribir 80.
+- Y si se salteaba por POST, `app/main.py` lo colapsaba:
+  `if pedida is not None and cantidad_armada_valor >= pedida:
+  cantidad_armada_valor = None`.
+
+O sea que el 80 **no se guardaba en ningún lado**. Quedaba como armado
+completo, y `COALESCE(cantidad_armada, cantidad)` daba 50 en todas las
+cuentas:
+
+- **Stock**: descontaba 50. Los 30 restantes salían del galpón sin descontarse
+  → el stock quedaba inflado en 30, y eso aparecía después como faltante en el
+  conteo siguiente, **sin causa visible**.
+- **Facturación**: `kilos_enviados = kilos_por_bulto × 50`. Se facturaban 50.
+- **Rentabilidad Real**: ingreso de 50 y costo de 50 — consistentes entre sí,
+  así que el margen no se veía raro. Lo que faltaba eran los 30 bultos.
+- **Pantallas**: ninguna mostraba nada. El 80 nunca existió como dato.
+
+Cuánto se perdió por esta vía **no se sabe y no se va a saber**: el dato no
+existe.
+
+### EL CERO QUE IMPORTA: no había workaround
+
+Antes de tocar nada se verificó la hipótesis de que alguien estuviera
+resolviendo esto **inflando el kilaje por bulto** —el único campo libre que
+queda— para que 50 × 25,6 diera los kilos realmente enviados. Si eso estaba
+pasando, había facturación ya emitida sobre el workaround y los renglones
+viejos habría que revisarlos.
+
+**La consulta (`db/kilaje_inflado.sql`) dio CERO.** Las únicas tres filas que
+salieron son Tomate Cherry con envase variable —7 kg reales contra 5 de la
+ficha—, que es exactamente lo que la propia consulta marca como normal.
+
+**Ese cero se anota acá porque dentro de tres meses nadie lo va a poder
+reconstruir**, y es lo que confirma dos cosas: que el problema era puro (nadie
+lo estaba tapando por otro lado) y que **no hay facturación vieja que
+revisar**.
+
+### La decisión, y el argumento que la cierra
+
+**El armado puede superar lo pedido.** El camión ya salió con 80; negar el
+registro no des-entrega la mercadería.
+
+Es **la inversa del freno del reproceso, y a propósito**: allá se traba porque
+se congela un costo que no se corrige nunca; acá no se congela nada y el hecho
+ya ocurrió. Y el resto del módulo es "avisa, no traba" — el piso es la verdad.
+Ésta era de las pocas pantallas donde el sistema le decía al depósito que lo
+que hizo no se puede cargar.
+
+### La definición que faltaba
+
+`cantidad_armada` tenía dos significados para NULL, y uno de ellos borraba
+mercadería. Ahora es una sola cosa:
+
+- **NULL** = armó EXACTAMENTE lo pedido.
+- **`< cantidad`** = incompleto.
+- **`> cantidad`** = armó de más.
+
+### El `!=` estaba en DOS plantillas, no en una
+
+El criterio "el renglón está incompleto" está escrito **seis veces**: cuatro en
+Python y SQL (`main.py` ×2, `db.py` ×2), que ya usaban `<` desde el arreglo de
+esta semana, y **dos en plantillas** (`deposito_pedido_armar.html` y
+`deposito_pedido.html`) que habían quedado con `!=`.
+
+Estaban **dormidas**: nunca se veían porque el server jamás guardaba una
+cantidad mayor a la pedida. **Este cambio es justamente lo que las despierta** —
+sin arreglarlas, un renglón donde SOBRÓ mercadería salía en ámbar pidiendo
+atención. Buscar la segunda copia después de encontrar la primera es la
+costumbre del corolario 2, funcionando.
+
+### Armar de más es un DATO, no una alerta
+
+El ámbar significa "queda algo por hacer" y acá no queda nada: el camión salió.
+Va con marca propia, en gris pizarra, que **se lee igual de bien que el ámbar y
+significa otra cosa**.
+
+El contraste se subió (`#e2e8f0`→`#cbd5e1`) después de mirar la captura a
+390px: con el `opacity: 0.55` que la sección "Ya armado" aplica a todo, el gris
+original se leía como *"menos importante"* en vez de *"otra cosa"*. **No es lo
+mismo**, y esa distinción vale para cualquier marca que se agregue después.
+
+No se tocaron el color de la tarjeta ni la alerta de pedidos incompletos: sus
+cuatro copias ya usaban `<`, así que armar de más no las dispara.
+
+### Lo que esto NO resuelve
+
+**El pedido sigue diciendo 50.** Lo que muestra que se entregaron 80 es la
+cantidad armada, no el pedido. Si el cliente discute la factura, la prueba de
+que pidió los 30 extra **no está en ningún lado**: el agregado por teléfono no
+deja registro del lado del pedido.
+
+Puede que algún día haga falta poder agregar al PEDIDO y no solo al armado.
+**No hoy**: lo urgente era dejar de perder la mercadería, y eso está.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
