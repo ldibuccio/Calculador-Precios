@@ -7149,6 +7149,13 @@ def _lotes_con_resto(articulo_id: int) -> list[dict]:
     for lote in reparto["lotes"]:
         if lote["restante"] <= 0:
             continue
+        # El lote del compensatorio del corte NO se ofrece: es mercadería que
+        # no existe —el FIFO lo crea porque las entradas son "movimientos con
+        # cantidad > 0" y no miran el tipo— y no se puede tirar lo que no
+        # está. Antes salía en la lista y el POST lo rechazaba después, que
+        # es lo peor de los dos mundos: ofrecido y prohibido.
+        if lote["tipo_lote"] == "cierre_modelo_viejo":
+            continue
         if lote["tipo_lote"] == "reproceso":
             etiqueta = f"Guía R{lote['origen_id']}"
             if lote.get("detalle"):

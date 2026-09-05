@@ -2611,7 +2611,7 @@ Dos cosas a resolver al hacerlo:
 un saldo.** Si el resultado no tiene un significado físico —"hay −95 peritas"
 no lo tiene—, lo que corresponde es una frase, no una cifra.
 
-## URGENTE: el compensatorio POSITIVO crea un lote fantasma, y el próximo reproceso de ese artículo REVIENTA
+## El compensatorio POSITIVO crea un lote fantasma, y el próximo reproceso de ese artículo REVENTABA (resuelto el 06/09)
 
 Encontrado el 06/09 por el dueño, leyendo el día a día de Tomate Perita.
 **Es más grave que "lotes sin costo": rompe la carga de guías R.**
@@ -2695,6 +2695,97 @@ ninguna todavía: que el FIFO ignore el tipo solo en las ENTRADAS y que el
 total lo acompañe; o que `reprocesos_consumos.origen` acepte el tipo y el lote
 quede como "sin costo posible" declarado; o que el corte no use un
 compensatorio positivo sino otra forma de llevar a cero un artículo negativo.
+
+### EL NOMBRE PROPIO: el compensatorio positivo crea un lote que el FIFO trata como mercadería real
+
+Va escrito así porque el mecanismo se olvida y el nombre no. **Es de la
+familia de "a una regla le crece otra encima"**, no de la regla escrita dos
+veces: la regla del FIFO —"entrada es todo movimiento con `cantidad > 0`"—
+está escrita UNA sola vez y sigue diciendo exactamente lo que decía el día
+que se escribió. Lo que cambió es que **`cierre_modelo_viejo` se agregó
+después, y el FIFO nunca supo que existía.**
+
+Nadie tocó el FIFO y el FIFO cambió. Como con `eliminar_compra` y
+`_auto_retirar_si_corresponde`: dos funciones que no se nombran entre sí, una
+escribe y la otra lee, y entre las dos no hay ninguna mención cruzada. La
+forma de encontrarla es la misma: **grepear el campo, no el criterio.** Quien
+agregue mañana un `tipo` nuevo a `movimientos_stock` tiene que grepear
+`cantidad > 0` antes de darlo por hecho.
+
+### El tamaño medido, con los dos cortes corridos (06/09)
+
+Números de producción, no de fixture:
+
+| Corte | Lotes fantasma | Bultos | Compensatorios negativos | Artículos |
+|---|---|---|---|---|
+| 31/08 | 9 | 726 | 13 | 22 |
+| 05/09 | 5 | 78 | 14 | 19 |
+| **Vivos hoy** | **14** | **804** | | |
+
+El del 31/08 pesa diez veces más: 726 bultos contra 78. Es el que va a tardar
+en drenar.
+
+### La salida elegida: que la base ACEPTE el tipo, no que el FIFO lo esconda
+
+`db/aceptar_cierre_modelo_viejo_como_origen.sql` agrega
+`'cierre_modelo_viejo'` al CHECK de `reprocesos_consumos.origen`. Es la
+dirección 2 de las tres de arriba, y se eligió por ser la única que **destraba
+la carga del lunes sin tocar el FIFO** — o sea sin romper la identidad
+`Σ restantes = total + sin_lote`.
+
+Hubo una cuarta tentación, más rápida todavía, y se descartó a propósito:
+mapear `cierre_modelo_viejo → 'ajuste'` en el código y no migrar nada.
+**`reprocesos_consumos` es un documento congelado**: lo que se escriba ahí no
+se recalcula nunca. Mapear a `'ajuste'` haría que el consumo de un lote
+fantasma sea indistinguible de un ajuste real **para siempre**, y es
+exactamente la regla que el dueño dejó escrita el 05/09: **primero el tipo
+propio, después la fila.**
+
+### Las tres consecuencias, después del arreglo
+
+**1. La guía R se guarda, y queda sin costo — a propósito.** El consumo entra
+con `costo = NULL` y la guía con `costo_total = NULL`, y **no se puede
+completar después**: `completar_costo_reproceso` llena desde
+`compras.importe WHERE rc.compra_id = c.id`, y el consumo fantasma tiene
+`compra_id = NULL`. La alerta *"guías R con costo incompleto"*
+(`anulado_el IS NULL AND costo_total IS NULL`) queda prendida y **no se apaga
+nunca** para esas guías.
+
+Eso es correcto y ya estaba decidido: el docstring de la alerta dice que este
+caso se cuenta a propósito, *"no hay precio posible y hay que saberlo"*. Lo
+que NO va es poner `costo_total = 0` como en la segunda: **la segunda vale
+cero de verdad en el modelo; estos bultos tienen costo DESCONOCIDO**, y un
+cero se propagaría a `costo_por_bulto_primera` e inflaría el margen de
+Rentabilidad Real. Un margen inventado es peor que una alerta prendida.
+
+El costo operativo del arreglo, dicho sin adornos: **804 bultos de lote
+fantasma significan muchas guías R sin costo hasta que drene, y eso ahoga la
+alerta.** Esas ventas caen en el balde "afuera con motivo" de Rentabilidad
+Real, así que nada suma cero en silencio — pero la alerta va a estar en rojo
+un buen rato y hay que saber por qué.
+
+**2. La merma dirigida ya no lo ofrece.** `_lotes_con_resto` saltea el lote de
+tipo `cierre_modelo_viejo`. Es otro CHECK (`movimientos_stock.lote_tipo`, no
+el de `reprocesos_consumos`), así que ampliarlo habría necesitado una segunda
+migración — y no tiene sentido: **no se puede tirar a la basura mercadería
+que no existe.** Antes salía en la lista y el POST lo rechazaba después, que
+es lo peor de los dos mundos.
+
+**3. La pantalla de la guía R lo nombra.** El documento congelado muestra
+*"Del cierre del modelo viejo (sin costo posible)"*. Sin ese renglón el
+consumo caía en el `{% else %}` y decía *"se tomó más de lo que había"*, que
+es falso: lote había, pero era mercadería que no existe.
+
+### Lo que esto NO resuelve
+
+El lote fantasma **sigue estando**. Se aceptó que exista y se le puso nombre;
+no se lo sacó del FIFO. Mientras drena, el artículo tiene en el FIFO 804
+bultos repartidos que no están en el depósito, y toda salida que los toque
+sale sin costo. **La única forma de que desaparezca antes es que un corte
+nuevo lo rebasee**, y el próximo corte va a crear los suyos si vuelve a
+compensar en positivo. Es la dirección 3 —cambiar cómo compensa el corte— y
+sigue abierta: no sirve para lo que ya está cargado, pero es lo que evita la
+próxima tanda.
 
 ## Decisiones confirmadas
 

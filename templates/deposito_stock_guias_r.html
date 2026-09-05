@@ -255,6 +255,10 @@
           {% elif c.origen == "ajuste" %}De un ajuste (ej. stock inicial)
           {% elif c.origen == "reingreso_rechazo" %}De un reingreso por rechazo
           {% elif c.origen == "reproceso" %}De la guía R{{ c.origen_id }}
+          {# Sin este renglón el consumo del compensatorio caería en la rama
+             de abajo y diría "se tomó más de lo que había", que es falso:
+             lote había, pero era mercadería que no existe. #}
+          {% elif c.origen == "cierre_modelo_viejo" %}Del cierre del modelo viejo (sin costo posible)
           {% else %}<span class="sin-costo">Sin lote (se tomó más de lo que había en el sistema)</span>{% endif %}
         </span>
         <span>{{ c.bultos|numero }} bultos{% if c.costo_por_bulto is not none %} · {{ c.costo_por_bulto|moneda }}/bulto{% elif c.origen != "sin_lote" %} · <span class="sin-costo">sin precio</span>{% endif %}</span>
