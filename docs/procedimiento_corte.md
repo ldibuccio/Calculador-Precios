@@ -251,6 +251,51 @@ las cajas que se contaron.
 
 ---
 
+## PASO 7B — La segunda que está en el piso (BLOQUE 6B)
+
+**Nuevo el 05/09**: en el corte anterior no hubo segunda inicial, así que no
+hay antecedente.
+
+Entra como guía R `inicial` con `bultos_primera = 0` y la segunda en
+`bultos_segunda`. Es **la única puerta al pool de segunda** que no es un
+rechazo de cliente: `movimientos_stock.bultos_segunda` solo se acepta con
+`destino_rechazo`, que exige `tipo = 'reingreso_rechazo'`, y `remitos_segunda`
+es la salida del pool, no la entrada.
+
+**Sin ficha y sin cliente**, a propósito: es descarte para el puesto, no
+mercadería de nadie.
+
+**Y sin costo: `costo_total = 0`, no NULL.** En el modelo la segunda vale
+cero — *"TODO el costo va a la primera: segunda y merma valen cero"*, y la
+Rentabilidad Real la informa en bultos, sin plata. Un NULL prendería la alerta
+"guías R con costo incompleto" (`WHERE costo_total IS NULL`, sin filtro de
+tipo) con casos que **no se pueden completar nunca**: no hay consumos de los
+que sacar un precio. `costo_por_bulto_primera` sí queda NULL, porque no hubo
+primera.
+
+**Antes de seguir:** que las cajas de segunda sean las contadas. Y ojo con el
+verificador del paso 8: la segunda **no toca el stock del artículo** (el stock
+usa `bultos_primera` y `bultos_tomados`), así que `dif` tiene que seguir dando
+0. Si diera distinto, la segunda entró por el campo equivocado.
+
+### Dos cosas que este camino NO guarda
+
+- **El kilaje.** `reprocesos` guarda bultos, no kilos, y `remitos_segunda`
+  también es en bultos. Los 6 kg del zapallito y los 16 del limón no viajan a
+  ningún lado: son para saber de qué mercadería se habla, no un dato que el
+  sistema conserve.
+- **`crear_reproceso_inicial` no lo soportaría.** La función de la app exige
+  `bultos_primera > 0`, un costo y una ficha; las tres fallan acá. **El SQL
+  puede escribir algo que la app rechazaría**, y eso vale saberlo: si alguna
+  vez la segunda inicial tiene que poder cargarse por pantalla, hay que
+  ampliar esa función, no solo la consulta.
+- **La ficha en NULL post-corte significa "sin asignar, hay que
+  completarlo"**, y la pantalla de Guías R las muestra para eso. Las dos guías
+  de segunda van a aparecer ahí como pendientes sin que haya nada que asignar.
+  Hoy es solo cosmético (no hay alerta que las cuente), pero **cuando se haga
+  E6 hay que excluir las guías sin primera** o van a inflar esa alerta para
+  siempre.
+
 ## PASO 8 — Verificador final (BLOQUE 7)
 
 Solo lectura. Por artículo: sueltos, cajas armadas, stock, y la diferencia.

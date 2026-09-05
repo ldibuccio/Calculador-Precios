@@ -284,6 +284,53 @@ where r.tipo='inicial' and r.fecha_operacion=(select fecha from corte_modelo whe
 order by 2;
 
 -- ===========================================================================
+-- BLOQUE 6B — LA SEGUNDA QUE ESTÁ EN EL PISO. Nuevo, no estaba en el corte
+-- anterior. Entra como guía R 'inicial' con bultos_primera = 0 y la segunda
+-- en bultos_segunda: es la única puerta al pool de segunda que no es un
+-- rechazo de cliente.
+-- SIN FICHA Y SIN CLIENTE a propósito: es descarte para el puesto.
+-- costo_total = 0 y NO NULL: en el modelo la segunda vale cero (todo el
+-- costo va a la primera), y un NULL prendería la alerta "guías R con costo
+-- incompleto" con casos que no se pueden completar nunca.
+-- costo_por_bulto_primera queda NULL porque no hubo primera.
+do $$
+declare corte date; esperados int := 0;  -- filas de la lista
+        n int;
+begin
+  select fecha into corte from corte_modelo where id = 1;
+  if exists (select 1 from reprocesos
+             where tipo='inicial' and fecha_operacion=corte and bultos_primera = 0) then
+    raise exception 'La segunda de este corte ya se cargo.'; end if;
+
+  insert into reprocesos (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+                          bultos_segunda, bultos_merma, costo_total,
+                          costo_por_bulto_primera, cliente_id, ficha_id, tipo)
+  select a.id, corte, 0, 0, v.cajas, 0, 0, null, null, null, 'inicial'
+  from (values
+    -- REEMPLAZAR POR LO CONTADO: (nombre del artículo, cajas de segunda).
+    ('Zapallito', 15::numeric),
+    ('Limon', 3)
+  ) as v(nom, cajas)
+  join articulos a on a.nombre = v.nom
+  where v.cajas > 0;
+
+  get diagnostics n = row_count;
+  if n <> esperados then
+    raise exception 'Entraron % de %: hay un nombre de articulo que no coincide.', n, esperados;
+  end if;
+end $$;
+
+-- El pool de segunda que queda: lo cargado ahora y el total del artículo.
+select a.nombre articulo, r.bultos_segunda cargada,
+       (select coalesce(sum(r2.bultos_segunda),0) from reprocesos r2
+        where r2.anulado_el is null and r2.articulo_id = r.articulo_id) pool_total
+from reprocesos r
+join articulos a on a.id = r.articulo_id
+where r.tipo='inicial' and r.bultos_primera = 0
+  and r.fecha_operacion=(select fecha from corte_modelo where id=1)
+order by 1;
+
+-- ===========================================================================
 -- BLOQUE 7 — VERIFICADOR FINAL. Solo lectura. El stock de cada artículo
 -- tiene que ser exactamente lo contado: sueltos + cajas armadas. La columna
 -- 'dif' tiene que dar 0 en TODAS las filas. Cualquier otra cosa se mira
