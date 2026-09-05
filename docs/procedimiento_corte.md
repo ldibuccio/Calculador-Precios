@@ -1,9 +1,11 @@
 # Procedimiento del corte del modelo
 
-Escrito el 04/09/2026, antes del corte del fin de semana. **La vez pasada se
-improvisó sobre la marcha y fueron tres horas.** Esto es para que no vuelva a
-pasar: qué se corre en cada paso, qué hay que ver antes de pasar al siguiente,
-y qué hacer si algo no da.
+Escrito el **viernes 04/09/2026**. El corte es el **sábado 05/09**, a la
+tarde, cuando el depósito termine la jornada y cuente el remanente físico.
+
+**La vez pasada se improvisó sobre la marcha y fueron tres horas.** Esto es
+para que no vuelva a pasar: qué se corre en cada paso, qué hay que ver antes
+de pasar al siguiente, y qué hacer si algo no da.
 
 El SQL está en `db/corte2_frutamax.sql`, partido en bloques. **Cada bloque se
 pega solo** en el editor de Supabase. Ninguno pasa los 2500 caracteres y
@@ -12,6 +14,32 @@ corte del 29/08.
 
 **Es de Frutamax y solo de Frutamax.** Palmala todavía no lleva stock y va a
 arrancar limpia cuando se implemente.
+
+## ANTES DE TODO: confirmar que el piso de fecha está andando
+
+Se desplegó el 04/09 (`d84ef5e`) y **se ve sin esperar al corte**, porque con
+la fecha todavía en 31/08 ya deja afuera todo lo anterior a esa fecha — que es
+el arrastre del corte pasado.
+
+Tres cosas para mirar, en orden de rapidez:
+
+1. **Stock del Depósito.** Los `sin procesar` negativos tienen que haberse
+   achicado, no desaparecido. Los que queden son déficit real post-corte.
+2. **El Cotejo por ficha.** Las fichas que hoy salen con un negativo grande y
+   sin explicación tienen que bajar a números chicos o desaparecer de la
+   lista. Una ficha que no tuvo movimiento desde el 31/08 **ya no aparece**:
+   eso es correcto, no es que se perdió.
+3. **El selector de Reproceso.** Ningún artículo tiene que desaparecer de la
+   lista. Si alguno desaparece, avisá antes del corte: el criterio mira
+   `sueltos` y `deficit`, y un déficit que se achica podría sacar un artículo
+   del selector — es la falla del 31/08 y no queremos repetirla.
+
+**Y la contra-prueba, que es la que confirma que no se rompió nada:** una
+ficha con guías R y salidas **posteriores** al 31/08 tiene que seguir dando
+el mismo número que antes. El piso no toca nada de este lado del corte.
+
+Si algo de esto no da, **el corte va igual** —el compensatorio no depende de
+esta cuenta— pero avisá, porque el lunes se mira.
 
 ## NO EMPEZAR HASTA QUE ESTO ESTÉ
 
