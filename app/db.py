@@ -6856,7 +6856,10 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 #
 # El total del ARTÍCULO no tiene este problema porque no se rebasea con una
 # fecha sino con el compensatorio, que es una FOTO tomada esa misma tarde y
-# ya incluye los movimientos del día.
+# ya incluye los movimientos del día. Esta cuenta usa un filtro de fecha, y
+# UN FILTRO NO SABE A QUÉ HORA SE CONTÓ: por eso el día del corte hay que
+# partirlo a mano, y por eso la asimetría de arriba no es un caso borde sino
+# la forma correcta de la regla.
 _SQL_STOCK_PARTIDO = """
     WITH corte AS (SELECT fecha FROM corte_modelo WHERE id = 1),
     vigentes AS (

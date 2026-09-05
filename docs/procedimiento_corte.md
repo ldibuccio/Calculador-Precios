@@ -127,100 +127,9 @@ no es indistinto:
   anterior al corte vigente**. Apenas se mueve la fecha, las guías R que
   faltaban del arrastre ya no se pueden cargar.
 
-De ahí sale el orden. El paso 0 —reconstruir guías R viejas— es lo único
-opcional de toda la lista, y va igual antes del paso 2 porque después el
-piso lo rechaza.
-
----
-
-## PASO 0 (OPCIONAL) — Reconstruir las guías R que faltan, con fecha vieja
-
-Después del cierre y **antes del PASO 2**, que es cuando se mueve la fecha.
-Las guías R pendientes —las del arrastre, las que se armaron y no se
-cargaron— se cargan por la pantalla de siempre (Depósito → Stock →
-Reproceso), **con su fecha real**.
-
-**Es opcional y no cambia ningún número del corte** (ver más abajo). Si hay
-dudas o es tarde, se salta.
-
-El campo de fecha está en la pantalla y acepta fechas hacia atrás. Desde el
-04/09 avisa cuántas guías R posteriores quedarían con el reparto
-desactualizado y pide un segundo toque; el aviso dice, y es cierto, que **el
-costo no cambia**.
-
-### La lista de qué cargar
-
-Sale de `db/guias_r_que_faltan.sql`, tres consultas de solo lectura. **Las dos
-primeras están acotadas**, y los dos recortes importan: desde la fecha de corte
-vigente inclusive (lo anterior lo trató el compensatorio del corte pasado y no
-se corrige), y solo artículos con al menos una guía R en el período (los que
-nunca se reprocesan no tienen nada que reconstruir; su déficit por ficha es
-otra cosa, E5).
-
-**Correr primero la consulta que cuenta.** Es el número que decide: si da tres
-o cuatro, el depósito las reconstruye a la mañana. Si sigue dando cientos, el
-paso 0 no es viable y **se salta entero** — el conteo físico manda y el
-compensatorio absorbe.
-
-Las tres:
-
-- **La primera** da, por artículo y ficha: el primer día en rojo, cuántas
-  cajas faltan, y **qué hacer**. Distingue dos casos que se arreglan
-  distinto:
-  - *FALTA CARGAR*: salieron más cajas de las que se produjeron. Hay que
-    reconstruir la guía R.
-  - *FECHA MAL*: la guía R existe pero está fechada después de la salida que
-    explica. **No se carga otra**: se anula y se vuelve a cargar con la fecha
-    correcta, o queda anotada. Cargar una segunda sería inventar mercadería.
-- **La segunda** es el día a día de un artículo, con todo lo que entró y
-  salió y el saldo corriendo. Sirve para ver el hueco a ojo, e incluye las
-  guías R sin ficha, que la primera no ve.
-
-**Estas consultas no dan el `sin_lote` del FIFO** (los 88 de Pepino, los 109
-de Zapallito). Ese número vive en `repartir_fifo` y reescribirlo en SQL sería
-tener la regla escrita dos veces. Lo que dan es la cuenta por ficha, que es la
-que contesta *qué guía reconstruir*. Los dos números no tienen por qué
-coincidir: son cuentas distintas.
-
-### CUÁNDO: después del cierre, nunca en medio de la jornada
-
-El depósito trabaja normal el día del corte y arma pedidos. **El paso 0 va
-después del cierre**, con el conteo ya hecho y sin movimiento posterior, junto
-con todo lo demás.
-
-Y no es solo que se pueda: **es mejor ahí.** La lista se calcula de los datos,
-así que una lista sacada a la mañana ya está vieja a la tarde — los armados
-del día entran después. Después del cierre es la lista final.
-
-### CUÁNTO CAMBIA: ningún número del corte. Ni uno.
-
-Esto hay que tenerlo claro antes de decidir si vale la pena, y es lo que
-vuelve la decisión fácil:
-
-**El compensatorio del PASO 4 lleva a cero lo que el sistema diga, sea lo que
-sea, y encima se carga el conteo físico.** O sea que una guía R reconstruida
-antes del corte **no mueve ni un bulto del resultado**. Se compensa igual.
-
-Lo único que compra reconstruir es **trazabilidad**: que dentro de seis meses
-se pueda ver que el 31/08 se armaron 40 cajas de Pepino para Día. El
-compensatorio borra el descuadre en un solo número y no guarda de dónde salió
-cada caja.
-
-Entonces:
-
-- **Si `a_reconstruir` da tres o cuatro y hay diez minutos, se hacen.** Es
-  historia que se conserva gratis.
-- **Si da más, o si el depósito no se acuerda, o si es tarde: se salta
-  entero, sin dudarlo.** No cuesta un peso ni un cajón. Anotarlo y seguir.
-- **El paso 0 NUNCA demora el corte.** Si hay que elegir entre reconstruir y
-  cortar a horario, se corta.
-
-Lo que **no** hay que hacer es inventar una guía para que cierre. Una guía R
-con números fabricados es peor que el descuadre: el descuadre se ve, la guía
-inventada se lee como un dato.
-
-Después del paso 2 esto ya no se puede hacer: el piso rechaza las fechas
-anteriores al corte.
+De ahí sale el orden, y **todos los pasos que quedan son obligatorios**. Lo
+único que se evaluó y se descartó —reconstruir las guías R viejas— está al
+final, en el apéndice, fuera del camino.
 
 ---
 
@@ -373,3 +282,37 @@ recepción, un armado—. Eso ya no se deshace con un script: se decide a mano.
   semana que viene.
 - **Los `conteos_stock.stock_sistema` viejos** conservan la foto inflada. El
   corte los deja atrás solo, porque el conteo es nuevo: no hay que hacer nada.
+
+---
+
+## Apéndice — Lo que decidimos NO hacer, y por qué
+
+*Esto no es un paso. Está acá para que la decisión quede escrita, no para que
+alguien la reconsidere a las siete de la tarde.*
+
+### Reconstruir las guías R viejas que faltan
+
+Se evaluó y **se descartó el 05/09, antes del corte.** Tres razones, en orden
+de peso:
+
+1. **No cambia ningún número.** El compensatorio lleva a cero lo que el sistema
+   diga y encima se carga el conteo físico. Una guía R reconstruida antes del
+   corte se compensa igual.
+2. **Tampoco mejora la cuenta por ficha.** Con el piso de fecha, todo lo
+   anterior al corte sale de las dos patas: el lunes cada ficha arranca en lo
+   contado, con o sin reconstrucción. El déficit no sobrevive al corte.
+3. **El depósito viene de una jornada completa.** A esa hora están cansados,
+   probablemente no se acuerden de qué guía era cuál, y el corte tiene que
+   salir rápido.
+
+Lo único que compraba era trazabilidad histórica de guías que además nadie
+recuerda con precisión. **No vale el rato.**
+
+Si alguna vez se retoma, la lista sale de `db/guias_r_que_faltan.sql`, acotada
+al período post-corte y a los artículos que de verdad se reprocesan. Distingue
+*FALTA CARGAR* (reconstruir) de *FECHA MAL* (la guía existe, se corrige su
+fecha — cargar otra sería inventar mercadería). Y solo se puede hacer **antes**
+de mover la fecha: después, el piso rechaza las fechas anteriores al corte.
+
+**Nunca inventar una guía para que cierre.** El descuadre se ve; la guía
+inventada se lee como un dato.
