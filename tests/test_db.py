@@ -3775,6 +3775,44 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     assert "SUM(bultos_segunda)" in consulta
 
 
+def test_el_pool_de_segunda_arranca_en_el_CORTE_y_por_las_TRES_patas():
+    """El piso del pool de segunda, con la asimetría del día del corte.
+
+    Hasta el 05/09 esta era la única cuenta del módulo que ningún corte
+    rebaseaba, y la cola vieja se sumaba a lo contado: medido esa noche,
+    ~40 bultos en cinco artículos, con Zapallito en 23 donde había 15.
+
+    Las TRES patas o ninguna: si se recorta la producción y no los remitos,
+    un remito viejo sigue restando contra segunda que ya no cuenta y el
+    pool queda por debajo de lo que hay. No falla ruidosamente — da un
+    número equivocado y nada más.
+
+    Y la fecha sale de corte_modelo, nunca de una constante.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
+                          ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
+                          ("segunda_producida",), ("segunda_de_rechazos",), ("segunda_remitida",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock_deposito_por_articulo()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)" in consulta
+    # La producción: los 'inicial' DEL corte más lo posterior. Un `>=` a
+    # secas metería las guías R normales del día, que el conteo de esa
+    # tarde ya vio.
+    assert "fecha_operacion > corte_seg.fecha" in consulta
+    assert "tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha" in consulta
+    # Las otras dos patas, solo lo posterior.
+    trozo_rechazos = consulta.split("segunda_rechazo AS")[1].split("remitida AS")[0]
+    assert "fecha_operacion > corte_seg.fecha" in trozo_rechazos
+    trozo_remitos = consulta.split("remitida AS")[1].split("SELECT a.id")[0]
+    assert "fecha_operacion > corte_seg.fecha" in trozo_remitos
+    assert "2026" not in trozo_remitos, "la fecha de corte no se escribe a mano"
+
+
 def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resultante():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(12.0,)])
 

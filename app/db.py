@@ -6261,6 +6261,15 @@ def stock_deposito_por_articulo() -> list[dict]:
     de los otros movimientos porque el dueño lo quiere ver como número
     propio: es mercadería ya costeada y ya vendida que volvió (plata
     perdida), no stock "normal".
+
+    La columna `segunda` (el pool) arranca en la FECHA DE CORTE desde el
+    05/09 — ver el comentario adentro de la consulta. Es el único número de
+    acá que se rebasea con una fecha; el resto lo rebasea el compensatorio.
+
+    LA LEEN DOS PANTALLAS y las dos salen de esta misma función: Stock del
+    Sistema y el selector de Remito de Segunda (que filtra por segunda > 0).
+    Que el cálculo esté acá y no repetido es lo que hace que no puedan
+    decir cosas distintas.
     """
     conexion = obtener_conexion()
     try:
@@ -6268,19 +6277,45 @@ def stock_deposito_por_articulo() -> list[dict]:
             cursor.execute(
                 _sql_sumas_stock(por_articulo=False)
                 + """
+                -- EL PISO DE FECHA DEL POOL DE SEGUNDA. Hasta el 05/09 esta
+                -- era la ÚNICA cuenta del módulo que ningún corte rebaseaba:
+                -- el total del artículo lo rebasea el compensatorio, la
+                -- cuenta por ficha su propio piso, el FIFO se recalcula
+                -- entero, y la segunda sumaba desde el primer día de la base.
+                -- El compensatorio no la alcanza: es una fila de
+                -- movimientos_stock y esto casi no lee movimientos.
+                --
+                -- Medido la noche del corte: ~40 bultos de cola vieja en
+                -- cinco artículos, y en Zapallito sumándose a lo contado (23
+                -- donde había 15). Ver "el pool de segunda es la única cuenta
+                -- que ningún corte rebasea" en docs/diseno_base_datos.md.
+                --
+                -- Asimétrico igual que la cuenta por ficha, y por lo mismo:
+                -- el conteo físico se toma A LA TARDE del día del corte, así
+                -- que todo lo del día ya está adentro de lo contado. Entran
+                -- los 'inicial' DEL corte (la foto) más lo POSTERIOR; los
+                -- remitos y los rechazos, solo lo posterior.
+                , corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)
                 , segunda AS (
                     SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM reprocesos WHERE anulado_el IS NULL GROUP BY articulo_id
+                    FROM reprocesos, corte_seg
+                    WHERE anulado_el IS NULL
+                      AND (fecha_operacion > corte_seg.fecha
+                           OR (tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha))
+                    GROUP BY articulo_id
                 ), segunda_rechazo AS (
                     -- Los rechazos que no volvieron al stock: entran al
                     -- mismo pool que la segunda de los reprocesos.
                     SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM movimientos_stock
+                    FROM movimientos_stock, corte_seg
                     WHERE anulado_el IS NULL AND destino_rechazo IN ('segunda', 'reproceso')
+                      AND fecha_operacion > corte_seg.fecha
                     GROUP BY articulo_id
                 ), remitida AS (
                     SELECT articulo_id, SUM(bultos) AS total
-                    FROM remitos_segunda WHERE anulado_el IS NULL GROUP BY articulo_id
+                    FROM remitos_segunda, corte_seg
+                    WHERE anulado_el IS NULL AND fecha_operacion > corte_seg.fecha
+                    GROUP BY articulo_id
                 )
                 SELECT a.id AS articulo_id, a.nombre,
                        COALESCE(e.total, 0) AS entradas,
