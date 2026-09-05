@@ -13,6 +13,48 @@ corte del 29/08.
 **Es de Frutamax y solo de Frutamax.** Palmala todavía no lleva stock y va a
 arrancar limpia cuando se implemente.
 
+## NO EMPEZAR HASTA QUE ESTO ESTÉ
+
+La razón de esta lista no es que el corte necesite estos datos: el
+compensatorio lleva a cero lo que haya y el conteo físico manda. **La razón es
+la de después.**
+
+**Todo lo que pasó hasta el momento del conteo y se cargue DESPUÉS del
+compensatorio, con fecha anterior o igual al corte, se cuenta dos veces.** El
+conteo físico ya lo vio en el piso, y el movimiento lo vuelve a sumar (o a
+restar) sobre el stock ya rebaseado. Eso no lo atrapa ninguna guarda: entra
+callado y aparece dentro de una semana como un descuadre sin causa.
+
+Antes de correr el BLOQUE 3, tiene que estar todo esto cargado:
+
+1. **Las recepciones de compras del día.** Una compra que llega esa tarde y se
+   recepciona el lunes con fecha del sábado **suma cajones que el conteo ya
+   contó**.
+2. **Los pedidos armados del día, TILDADOS.** Un renglón que se tilda el lunes
+   **resta bultos que el conteo ya descontó** — la mercadería ya no está en el
+   piso. Resta dos veces.
+3. **Las guías R del día**, con su fecha. Producen cajas y consumen bultos que
+   el conteo ya refleja.
+4. **Las mermas, ajustes y reingresos por rechazo del día.**
+5. **Las compras que carga Administración**, si alguna es del día y todavía no
+   está.
+
+Y dos reglas de tiempo:
+
+6. **El conteo va DESPUÉS del último movimiento del día.** Si se cuenta a las
+   16 y a las 17 sale un pedido, el conteo dejó de ser la foto y hay que
+   volver a contar esa parte.
+7. **Entre el conteo y el final del corte, el depósito no se mueve.** Ni una
+   recepción, ni un armado, ni una merma.
+
+Y la regla espejo, para el lunes: **nada se carga con fecha anterior o igual a
+la del corte.** Si aparece algo de esos días, se anota y se decide a mano — no
+se carga y ya.
+
+**Entre el BLOQUE 3 y el BLOQUE 7 no se carga nada por pantalla.** El bloque 4
+escribe `stock_sistema = 0` apoyado en que el bloque 3 lo dejó en cero; si
+alguien carga algo en el medio, esa foto queda mintiendo.
+
 ## Por qué el orden es el orden
 
 Tres cosas leen la fecha de corte en el momento de correr, y por eso el orden
@@ -26,15 +68,21 @@ no es indistinto:
   anterior al corte vigente**. Apenas se mueve la fecha, las guías R que
   faltaban del arrastre ya no se pueden cargar.
 
-De ahí sale el paso 0, que es el que se olvida.
+De ahí sale el orden. El paso 0 —reconstruir guías R viejas— es lo único
+opcional de toda la lista, y va igual antes del paso 2 porque después el
+piso lo rechaza.
 
 ---
 
-## PASO 0 — Cargar lo que falta, CON FECHA VIEJA. Antes de tocar nada.
+## PASO 0 (OPCIONAL) — Reconstruir las guías R que faltan, con fecha vieja
 
-**Esto va primero y no tiene vuelta atrás.** Todas las guías R pendientes —las
-del arrastre, las que se armaron y no se cargaron— se cargan ahora, por la
-pantalla de siempre (Depósito → Stock → Reproceso), **con su fecha real**.
+Después del cierre y **antes del PASO 2**, que es cuando se mueve la fecha.
+Las guías R pendientes —las del arrastre, las que se armaron y no se
+cargaron— se cargan por la pantalla de siempre (Depósito → Stock →
+Reproceso), **con su fecha real**.
+
+**Es opcional y no cambia ningún número del corte** (ver más abajo). Si hay
+dudas o es tarde, se salta.
 
 El campo de fecha está en la pantalla y acepta fechas hacia atrás. Desde el
 04/09 avisa cuántas guías R posteriores quedarían con el reparto
@@ -75,28 +123,45 @@ tener la regla escrita dos veces. Lo que dan es la cuenta por ficha, que es la
 que contesta *qué guía reconstruir*. Los dos números no tienen por qué
 coincidir: son cuentas distintas.
 
-### Si no se puede reconstruir todo, el corte va igual
+### CUÁNDO: después del cierre, nunca en medio de la jornada
 
-**Esto no bloquea el corte.** Si el depósito no puede reconstruir alguna guía
-—porque no se acuerda, o porque los números no cierran— se deja así y se
-sigue. **El conteo físico manda**: lo que no se pueda reconstruir queda
-absorbido por el compensatorio del PASO 4, que es exactamente para eso.
+El depósito trabaja normal el día del corte y arma pedidos. **El paso 0 va
+después del cierre**, con el conteo ya hecho y sin movimiento posterior, junto
+con todo lo demás.
 
-**Pero hay que intentarlo**, y por una razón concreta: cada guía que se cargue
-bien es trazabilidad que se conserva. El compensatorio borra el descuadre; no
-guarda de dónde salió cada caja. Lo que se reconstruya hoy se sabe para
-siempre; lo que no, se pierde en un solo número.
+Y no es solo que se pueda: **es mejor ahí.** La lista se calcula de los datos,
+así que una lista sacada a la mañana ya está vieja a la tarde — los armados
+del día entran después. Después del cierre es la lista final.
+
+### CUÁNTO CAMBIA: ningún número del corte. Ni uno.
+
+Esto hay que tenerlo claro antes de decidir si vale la pena, y es lo que
+vuelve la decisión fácil:
+
+**El compensatorio del PASO 4 lleva a cero lo que el sistema diga, sea lo que
+sea, y encima se carga el conteo físico.** O sea que una guía R reconstruida
+antes del corte **no mueve ni un bulto del resultado**. Se compensa igual.
+
+Lo único que compra reconstruir es **trazabilidad**: que dentro de seis meses
+se pueda ver que el 31/08 se armaron 40 cajas de Pepino para Día. El
+compensatorio borra el descuadre en un solo número y no guarda de dónde salió
+cada caja.
+
+Entonces:
+
+- **Si `a_reconstruir` da tres o cuatro y hay diez minutos, se hacen.** Es
+  historia que se conserva gratis.
+- **Si da más, o si el depósito no se acuerda, o si es tarde: se salta
+  entero, sin dudarlo.** No cuesta un peso ni un cajón. Anotarlo y seguir.
+- **El paso 0 NUNCA demora el corte.** Si hay que elegir entre reconstruir y
+  cortar a horario, se corta.
 
 Lo que **no** hay que hacer es inventar una guía para que cierre. Una guía R
 con números fabricados es peor que el descuadre: el descuadre se ve, la guía
 inventada se lee como un dato.
 
-**Antes de seguir:** Depósito → Stock, y que no quede ningún artículo con
-`sin procesar` negativo por guías R que falten **y se puedan cargar**. Las que
-se decidió no reconstruir se anotan y se siguen.
-
-Después del paso 1 esto ya no se puede hacer. **No hay apuro para empezar el
-paso 1 y sí lo hay para terminar el paso 0.**
+Después del paso 2 esto ya no se puede hacer: el piso rechaza las fechas
+anteriores al corte.
 
 ---
 
