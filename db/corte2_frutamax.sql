@@ -91,33 +91,32 @@ end $$;
 select fecha as corte_vigente from corte_modelo where id = 1;
 
 -- ===========================================================================
--- BLOQUE 2 — LAS FICHAS DE LAS GUÍAS R QUE QUEDARON DEL LADO VIEJO.
--- La cuenta por ficha NO tiene corte de fecha: si a una guía R anterior al
--- corte le queda la ficha, sigue inflando ESA ficha para siempre, aunque el
--- compensatorio lleve el total del artículo a cero. Por eso quedan en NULL =
--- "dato viejo que no se completa". No se anulan: ocurrieron, y sus cajas
--- siguen contando en el total, que el bloque 3 lleva a cero.
--- Se puede correr dos veces sin hacer daño: la segunda no encuentra nada.
-do $$
-declare corte date;
-begin
-  select fecha into corte from corte_modelo where id = 1;
-  insert into corte_respaldo_fichas_reprocesos (reproceso_id, ficha_id)
-  select id, ficha_id from reprocesos
-  where anulado_el is null and ficha_id is not null and fecha_operacion < corte
-  on conflict (reproceso_id) do nothing;
-
-  update reprocesos set ficha_id = null
-  where anulado_el is null and ficha_id is not null and fecha_operacion < corte;
-end $$;
-
--- TIENE QUE DAR 0 en 'con_ficha_todavia'. 'respaldadas' es lo que el rollback
--- puede devolver.
-select
-  (select count(*) from reprocesos
-    where anulado_el is null and ficha_id is not null
-      and fecha_operacion < (select fecha from corte_modelo where id=1)) con_ficha_todavia,
-  (select count(*) from corte_respaldo_fichas_reprocesos) respaldadas;
+-- BLOQUE 2 — SACADO EL 05/09/2026. NO SE CORRE. El número queda vacío a
+-- propósito, para que no se confunda con el bloque 2 del corte anterior.
+--
+-- Nuleaba `reprocesos.ficha_id` de las guías R anteriores al corte. Existía
+-- porque la cuenta por ficha (`_SQL_STOCK_PARTIDO`) no tenía fecha y las
+-- cajas viejas seguían contando como disponibles. Era un parche de DATOS
+-- para un agujero de CONSULTA, y encima medio parche: sacaba las entradas
+-- y dejaba las salidas, porque no tocaba `pedidos_renglones.ficha_id`. Ese
+-- es exactamente el negativo estructural que encontramos el 04/09, y el
+-- compensatorio no lo alcanza (es por ARTÍCULO; esta cuenta no lee
+-- movimientos).
+--
+-- Medido antes de sacarlo, simulando este corte: Pepino -145 -> -245,
+-- Zapallito +5 -> -30, Perita 0 -> -12. Las fichas sanas terminaban
+-- negativas, y cuanto más tarde el corte más semana de guías R buenas se
+-- llevaba puesta.
+--
+-- Lo reemplaza el PISO DE FECHA en `_SQL_STOCK_PARTIDO`: las dos patas
+-- desde el corte inclusive. Con eso el resultado es el mismo con el bloque
+-- corrido o sin correr (verificado en las dos direcciones), así que lo
+-- único que aportaba era destruir la ficha de guías R viejas — un dato que
+-- no se recupera y que es la única forma de saber para qué ficha se armó
+-- cada guía.
+--
+-- Y el respaldo `corte_respaldo_fichas_reprocesos` no se toca: sigue
+-- guardando lo que nuleó el corte del 31/08, y el D0 lo sigue usando.
 
 -- ===========================================================================
 -- BLOQUE 3 — EL COMPENSATORIO. Un movimiento por artículo con stock <> 0,

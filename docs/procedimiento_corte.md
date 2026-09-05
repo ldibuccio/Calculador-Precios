@@ -196,18 +196,19 @@ por eso.
 
 ---
 
-## PASO 3 — Las fichas de las guías R viejas (BLOQUE 2)
+## PASO 3 — SACADO. El bloque 2 no se corre.
 
-La cuenta por ficha no tiene corte de fecha: si a una guía R anterior al corte
-le queda la ficha, sigue inflando **esa ficha** para siempre, aunque el
-compensatorio lleve el total del artículo a cero. Este bloque las deja en
-NULL. No las anula: ocurrieron.
+Nuleaba la ficha de las guías R anteriores al corte. **Es el que produjo el
+arrastre por ficha que encontramos el 04/09**: sacaba las entradas y dejaba
+las salidas, porque no tocaba `pedidos_renglones.ficha_id`. Y el compensatorio
+no lo alcanza — es por artículo, y la cuenta por ficha no lee movimientos.
 
-Se puede correr dos veces sin hacer daño.
+Lo reemplaza el **piso de fecha en `_SQL_STOCK_PARTIDO`**: las dos patas desde
+el corte inclusive. Con eso la cuenta por ficha arranca de cero en cada corte,
+igual que el total del artículo, y las guías R viejas **conservan su ficha**.
 
-**Antes de seguir:** `con_ficha_todavia` tiene que dar **0**.
-
----
+El paso queda numerado y vacío a propósito, para que nadie lo confunda con el
+paso 3 del corte anterior.
 
 ## PASO 4 — El compensatorio (BLOQUE 3)
 

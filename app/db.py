@@ -6822,22 +6822,41 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # tapar: aparece como dos diferencias a la vez —Bolivia de menos, Ecuador
 # de más— y es la única forma que tiene el sistema de mostrar un cambio de
 # ficha, que hasta ahora no se veía en ningún lado.
+# EL PISO DE FECHA, y es la mitad del sentido de esta consulta.
+#
+# Las DOS patas arrancan en la fecha de corte. Sin eso, la cuenta por ficha
+# es la única del sistema que sigue sumando desde el principio de los
+# tiempos: el total del artículo se rebasea en cada corte con el
+# compensatorio, y acá no hay compensatorio posible — `cierre_modelo_viejo`
+# es un movimiento por ARTÍCULO y esta consulta no lee movimientos.
+#
+# Tienen que ser las DOS o es peor que ninguna. Recortar solo las entradas
+# deja las salidas viejas restando contra cajas que ya no están, y eso es
+# exactamente el negativo estructural que produjo el corte del 31/08 (ver
+# "Deuda que dejamos nosotros" en docs/diseno_base_datos.md).
+#
+# Sale de corte_modelo y NO de una constante: la fecha se mueve en cada
+# corte, y un piso viejo no falla — deja pasar.
 _SQL_STOCK_PARTIDO = """
-    WITH vigentes AS (
+    WITH corte AS (SELECT fecha FROM corte_modelo WHERE id = 1),
+    vigentes AS (
         SELECT DISTINCT ON (cliente_id, fecha_operacion) id
         FROM pedidos WHERE anulado_el IS NULL
         ORDER BY cliente_id, fecha_operacion, creado_en DESC
     ), armadas AS (
         SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
-        FROM reprocesos
+        FROM reprocesos, corte
         WHERE anulado_el IS NULL AND ficha_id IS NOT NULL
+          AND fecha_operacion >= corte.fecha
         GROUP BY articulo_id, ficha_id
     ), salidas_ficha AS (
         SELECT r.articulo_id, r.ficha_id,
                SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
-        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, corte
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+              >= corte.fecha
         GROUP BY r.articulo_id, r.ficha_id
     ), fichas_con_algo AS (
         SELECT articulo_id, ficha_id FROM armadas

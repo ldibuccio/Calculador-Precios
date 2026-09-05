@@ -5272,6 +5272,36 @@ def test_el_motivo_avisa_si_la_compra_ya_no_existe():
 # destructivo precargado para tapar esa diferencia inventada.
 
 from app.db import _cajas_por_ficha, _stock_de_ficha  # noqa: E402
+from app.db import _SQL_STOCK_PARTIDO  # noqa: E402
+
+
+def test_la_cuenta_por_ficha_arranca_en_el_CORTE_y_por_las_DOS_patas():
+    """El piso de fecha, y se comprueba sobre el texto del SQL a propósito.
+
+    La suite mockea el cursor, así que ninguna prueba de acá ejecuta esta
+    consulta de verdad (el comportamiento se verificó contra Postgres el
+    05/09). Lo que este test protege es la invariante que NO se puede
+    perder: **las dos patas o ninguna**.
+
+    Recortar solo las entradas deja las salidas viejas restando contra
+    cajas que ya no están, y eso es el negativo estructural que produjo el
+    corte del 31/08 y que se arregló sacando el bloque 2. Si alguien saca
+    uno de los dos filtros, volvemos ahí — y no se ve, porque no falla:
+    da un número más chico de lo que corresponde.
+
+    Y la fecha sale de corte_modelo, nunca de una constante: se mueve en
+    cada corte, y un piso viejo no falla, deja pasar.
+    """
+    assert "corte_modelo" in _SQL_STOCK_PARTIDO
+    assert "2026" not in _SQL_STOCK_PARTIDO, "la fecha de corte no se escribe a mano"
+
+    entradas, salidas = _SQL_STOCK_PARTIDO.split("salidas_ficha AS")
+    # La pata de las entradas: las guías R desde el corte.
+    assert "fecha_operacion >= corte.fecha" in entradas
+    # La pata de las salidas: los renglones armados desde el corte.
+    assert ">= corte.fecha" in salidas
+    assert "armado_el" in salidas.split(">= corte.fecha")[0]
+
 
 
 def _cursor_con_saldos(saldos, filas_extra=None):
