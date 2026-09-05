@@ -3024,6 +3024,69 @@ número adentro de la frase, nunca en la columna de la derecha**: "Faltan
 explicar 45 bultos", no "−45". Un artículo en −45 no tiene menos cuarenta y
 cinco cajones. Hay un test para cada una de las dos cosas.
 
+### El nombre de una caja depende de QUIÉN lee la pantalla (06/09)
+
+El Remanente mostraba `BERENJENA G` y `LIMA X 1KG` donde tenía que decir
+"Berenjena Caja Día" y "Lima Caja Día". Ese texto es `fichas_logistica.
+nombre_cliente`: **el código con el que el CLIENTE nombra su producto.**
+
+No es que el campo esté mal ni que `_nombre_de_ficha` esté mal. **El mismo dato
+sirve o estorba según quién mire:**
+
+- **Donde alguien elige una ficha PARA un cliente** —el armado, la guía R, los
+  precios de venta— el código del cliente es lo correcto: es lo que está
+  impreso en la caja que tiene en la mano, y es lo único que distingue "Banana
+  Bolivia" de "Banana Ecuador".
+- **Donde alguien mira SU PROPIO depósito** —el Remanente— el código no dice
+  nada. "BERENJENA G" no deja ver que es una berenjena.
+
+Por eso el Remanente tiene su propio `_nombre_de_caja` y no reusa
+`_nombre_de_ficha`. **No es duplicar una regla: son dos preguntas distintas con
+la misma materia prima.** La regla de "una regla no puede estar escrita dos
+veces" es sobre criterios que tienen que dar el mismo resultado; acá tienen que
+dar resultados distintos a propósito, y el docstring de cada uno dice para qué
+lado sirve.
+
+Y el nombre del artículo adelante arregla algo más: **las tres porciones caen
+juntas al ordenar** ("Lima", "Lima Caja Día", "Lima Segunda"), que era la idea
+del orden desde el principio y no se cumplía porque el renglón del medio se
+llamaba de otra forma.
+
+### El kilaje solo cuando desempata
+
+Un cliente puede tener VARIAS fichas del mismo artículo —fue el motivo de que
+la clave de venta pasara de artículo a ficha—, y ahí "Lima Caja Día" saldría
+dos veces sin poder distinguirse. La escalera, y se sube solo cuando hace
+falta:
+
+1. Una sola ficha de ese cliente para ese artículo → **"Lima Caja Día"**. Es el
+   caso normal y se lee limpio.
+2. Dos o más → se agrega el kilaje: **"Lima Caja Día 5kg"**.
+3. Dos con el MISMO kilaje (el modelo tampoco lo prohíbe) → se cae al código
+   del cliente: **"Lima Caja Día (LIMA CHICA)"**. Feo, pero solo en el caso
+   feo, y es lo único que seguro las distingue.
+
+Con el kilaje el orden alfabético pone "10kg" antes que "5kg". Se acepta: los
+dos renglones quedan pegados y con el kilaje a la vista. Ordenar por número
+obligaría a ordenar también las fichas de clientes distintos por kilaje, y ahí
+lo que se quiere es el orden por cliente.
+
+### LA FIXTURE TRAÍA PUESTO EL RESULTADO ESPERADO, y por eso los tests no lo vieron
+
+Es lo que hay que llevarse de esto. `REMANENTE_FICHAS` tenía
+`"nombre_cliente": "Berenjena Caja Día"` — **el nombre que queríamos ver, no el
+que hay en la base.** Con eso, el test que comparaba los renglones pasaba en
+verde mientras la pantalla mostraba "BERENJENA G", y no había forma de que lo
+agarrara: la fixture ya contenía la respuesta.
+
+Es la familia de *"un fixture construido a partir de la hipótesis no prueba la
+hipótesis: la repite"*, en su versión más barata de evitar: **los datos de una
+fixture se escriben como son en producción, sobre todo los que el código va a
+transformar.** Si el valor de prueba ya se parece a la salida esperada, el
+test no está probando la transformación. Las fichas de prueba ahora dicen
+`BERENJENA G`, `LIMA X 1KG`, `MANDA COM X 10`, en mayúscula y sin parecerse al
+nombre del artículo, que es como están cargadas.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

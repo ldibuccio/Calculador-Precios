@@ -12968,14 +12968,24 @@ REMANENTE_FILAS = [
     {"articulo_id": 5, "nombre": "Berenjena", "stock": 20.0, "segunda": 0.0},
 ]
 REMANENTE_CAJAS = {(1, 11): 15.0, (2, 12): 15.0, (5, 13): 20.0}
+# `nombre_cliente` es el CÓDIGO CON EL QUE EL CLIENTE nombra su producto, y acá
+# va como es en la base: en mayúscula y sin parecerse al nombre del artículo.
+# La fixture vieja tenía "Berenjena Caja Día" —el nombre que queríamos ver, no
+# el que hay— y por eso los tests pasaban en verde mientras la pantalla mostraba
+# "BERENJENA G". Una fixture escrita con el resultado esperado adentro no prueba
+# nada: repite la hipótesis.
 REMANENTE_FICHAS = [
-    {"id": 11, "articulo_id": 1, "articulo_nombre": "Mandarina", "nombre_cliente": "Mandarina Caja Día"},
-    {"id": 12, "articulo_id": 2, "articulo_nombre": "Pomelo", "nombre_cliente": "Pomelo Caja Día"},
-    {"id": 13, "articulo_id": 5, "articulo_nombre": "Berenjena", "nombre_cliente": "Berenjena Caja Día"},
+    {"id": 11, "articulo_id": 1, "cliente_id": 1, "articulo_nombre": "Mandarina",
+     "nombre_cliente": "MANDA COM X 10", "contenido_caja": 10.0, "unidad_venta": "kilo"},
+    {"id": 12, "articulo_id": 2, "cliente_id": 1, "articulo_nombre": "Pomelo",
+     "nombre_cliente": "POMELO ROSADO G", "contenido_caja": 15.0, "unidad_venta": "kilo"},
+    {"id": 13, "articulo_id": 5, "cliente_id": 1, "articulo_nombre": "Berenjena",
+     "nombre_cliente": "BERENJENA G", "contenido_caja": 8.0, "unidad_venta": "kilo"},
 ]
+REMANENTE_CLIENTES = [{"id": 1, "nombre": "Día"}, {"id": 2, "nombre": "Vea"}]
 
 
-def _remanente(filas=None, cajas=None, fichas=None, reingresos=0,
+def _remanente(filas=None, cajas=None, fichas=None, reingresos=0, clientes=None,
                url="/administracion/stock/remanente"):
     with (
         patch("app.main.stock_deposito_por_articulo",
@@ -12984,6 +12994,8 @@ def _remanente(filas=None, cajas=None, fichas=None, reingresos=0,
               return_value=REMANENTE_CAJAS if cajas is None else cajas),
         patch("app.main.listar_fichas_de_todos_los_clientes",
               return_value=REMANENTE_FICHAS if fichas is None else fichas),
+        patch("app.main.listar_clientes",
+              return_value=REMANENTE_CLIENTES if clientes is None else clientes),
         patch("app.main.total_reingresos_rechazo", return_value=reingresos),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
     ):
@@ -13033,6 +13045,77 @@ def test_el_remanente_manda_a_Stock_Fisico_para_contar():
 
     assert "Esto es para mirar y para exportar" in texto
     assert '/deposito/stock/fisico' in texto
+
+
+def test_una_caja_se_llama_ARTICULO_MAS_CAJA_CLIENTE_no_con_el_codigo_del_cliente():
+    """`nombre_cliente` es el código con el que EL CLIENTE nombra su producto
+    ("BERENJENA G", "LIMA X 1KG"). Sirve donde alguien elige una ficha PARA
+    ese cliente —el armado, la guía R—, porque es lo que está impreso en la
+    caja. Acá no: el que lee el remanente mira su propio depósito.
+
+    Y con el nombre del artículo adelante las tres porciones caen juntas al
+    ordenar, que era la idea del orden desde el principio.
+    """
+    nombres = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+
+    assert "Berenjena Caja Día" in nombres
+    # El código del cliente NO puede aparecer en el caso normal.
+    for codigo in ("BERENJENA G", "MANDA COM X 10", "POMELO ROSADO G"):
+        assert codigo not in nombres
+
+
+def test_dos_cajas_del_MISMO_cliente_se_distinguen_por_el_kilaje():
+    """Un cliente puede tener varias fichas del mismo artículo — fue el motivo
+    de que la clave de venta pasara de artículo a ficha. Sin desempate,
+    "Lima Caja Día" saldría dos veces y no se sabría cuál es cuál."""
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 12.0, "segunda": 0.0}]
+    fichas = [
+        {"id": 11, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA X 1KG",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+        {"id": 12, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA CHICA",
+         "contenido_caja": 10.0, "unidad_venta": "kilo"},
+    ]
+    nombres = [n for n, _ in _porciones_en_pantalla(
+        _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
+
+    # El orden es alfabético, así que "10kg" cae antes que "5kg". Se acepta:
+    # los dos renglones quedan pegados y con el kilaje a la vista, que es lo
+    # que hacía falta. Ordenar por kilaje obligaría a ordenar las fichas por
+    # número también cuando son de clientes distintos, y ahí lo que se quiere
+    # es el orden por cliente.
+    assert nombres == ["Lima Caja Día 10kg", "Lima Caja Día 5kg"]
+
+
+def test_dos_cajas_de_CLIENTES_distintos_no_necesitan_kilaje():
+    """El caso normal se lee limpio: el nombre del cliente ya las distingue."""
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 12.0, "segunda": 0.0}]
+    fichas = [
+        {"id": 11, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA X 1KG",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+        {"id": 12, "articulo_id": 1, "cliente_id": 2, "nombre_cliente": "LIMA G",
+         "contenido_caja": 10.0, "unidad_venta": "kilo"},
+    ]
+    nombres = [n for n, _ in _porciones_en_pantalla(
+        _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
+
+    assert nombres == ["Lima Caja Día", "Lima Caja Vea"]
+
+
+def test_dos_cajas_del_mismo_cliente_y_MISMO_kilaje_caen_al_codigo_del_cliente():
+    """El modelo tampoco prohíbe esto. El kilaje ya no desempata, así que se
+    usa lo único que seguro las distingue. Feo, pero solo en el caso feo: es
+    preferible a dos renglones idénticos con números distintos."""
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 12.0, "segunda": 0.0}]
+    fichas = [
+        {"id": 11, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA X 1KG",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+        {"id": 12, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA CHICA",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+    ]
+    nombres = [n for n, _ in _porciones_en_pantalla(
+        _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
+
+    assert nombres == ["Lima Caja Día 5kg", "Lima Caja Día 5kg"]
 
 
 def test_los_negativos_van_ABAJO_Y_APARTE_de_las_porciones():

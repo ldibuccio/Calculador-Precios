@@ -6,6 +6,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 
 import asyncio
 import base64
+from collections import Counter
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
@@ -6498,6 +6499,40 @@ def _clave_alfabetica(texto: str) -> str:
     return "".join(c for c in sin_tildes if not unicodedata.combining(c)).lower()
 
 
+def _nombre_de_caja(articulo: str, ficha: dict, clientes: dict, cuantas_del_cliente: int) -> str:
+    """Cómo se llama una pila de cajas armadas EN EL REMANENTE: "Lima Caja Día".
+
+    NO se usa `_nombre_de_ficha` acá, y es la diferencia que importa: ese
+    devuelve el `nombre_cliente`, que es el CÓDIGO CON EL QUE EL CLIENTE
+    nombra su producto ("LIMA X 1KG", "BERENJENA G"). Sirve donde alguien
+    elige una ficha PARA ese cliente —el armado, la guía R—, porque ahí el
+    código es lo que está impreso en la caja. Acá no: el que lee el
+    remanente está mirando su propio depósito, no el catálogo de Día, y
+    "BERENJENA G" no dice qué es ni deja ver que es una berenjena.
+
+    Con el nombre del artículo adelante, además, las tres porciones caen
+    juntas al ordenar —"Lima", "Lima Caja Día", "Lima Segunda"—, que era la
+    idea del orden desde el principio.
+
+    EL KILAJE SOLO CUANDO HACE FALTA. Un cliente puede tener VARIAS fichas
+    del mismo artículo (por eso la clave de venta pasó de artículo a ficha),
+    y ahí "Lima Caja Día" saldría dos veces sin poder distinguirse. Con una
+    sola ficha el renglón va limpio, que es el caso normal; con dos se
+    agrega el kilaje, y si las dos tienen el MISMO kilaje —que el modelo
+    tampoco prohíbe— se cae al nombre del cliente, que es lo único que
+    seguro las distingue. Feo, pero solo en el caso feo.
+    """
+    cliente = clientes.get(ficha.get("cliente_id")) or "cliente sin nombre"
+    base = f"{articulo} Caja {cliente}"
+    if cuantas_del_cliente <= 1:
+        return base
+    if ficha.get("contenido_caja"):
+        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+        return f"{base} {_formatear_numero(ficha['contenido_caja'])}{sufijo}".strip()
+    propio = (ficha.get("nombre_cliente") or "").strip()
+    return f"{base} ({propio})" if propio else f"{base} (ficha #{ficha['id']})"
+
+
 def _porciones_de_deposito(filas: list[dict] | None = None) -> list[dict]:
     """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
 
@@ -6530,6 +6565,7 @@ def _porciones_de_deposito(filas: list[dict] | None = None) -> list[dict]:
         filas = stock_deposito_por_articulo()
     cajas = cajas_armadas_por_ficha()
     fichas = {f["id"]: f for f in listar_fichas_de_todos_los_clientes()}
+    clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
 
     porciones = []
     for fila in filas:
@@ -6540,12 +6576,20 @@ def _porciones_de_deposito(filas: list[dict] | None = None) -> list[dict]:
         sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
         if sueltos > 0:
             porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo, "bultos": sueltos})
+        # Cuántas cajas de ESTE artículo tiene cada cliente acá: con una sola
+        # el nombre va limpio, con dos hay que poder distinguirlas.
+        cuantas = Counter(
+            fichas[fid]["cliente_id"] for (_a, fid) in de_este if fid in fichas
+        )
         for (_articulo_id, ficha_id), bultos in de_este.items():
             ficha = fichas.get(ficha_id)
             porciones.append({
                 "articulo": articulo,
                 "orden": 1,
-                "nombre": _nombre_de_ficha(ficha) if ficha else f"{articulo} (ficha #{ficha_id})",
+                "nombre": (
+                    _nombre_de_caja(articulo, ficha, clientes, cuantas[ficha["cliente_id"]])
+                    if ficha else f"{articulo} Caja (ficha #{ficha_id})"
+                ),
                 "bultos": round(float(bultos), 2),
             })
         if float(fila["segunda"]) > 0:
