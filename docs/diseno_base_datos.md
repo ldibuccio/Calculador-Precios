@@ -1738,6 +1738,36 @@ ya estaba escrito arriba, llevado al extremo: nulear las fichas de las guías R
 anteriores al corte **saca el lado positivo y deja el negativo**. Cuanto más
 tarde el corte, más semana de guías R buenas se le quita.
 
+### VERIFICADO EN PRODUCCIÓN el 05/09, con números reales
+
+Corrido `db/verificar_piso_por_ficha.sql` en Frutamax. **Los 22 artículos
+cambiaron.** No son números de un fixture: son los de la base.
+
+Pasan de negativo profundo a sano:
+
+| ficha | antes del piso | con el piso |
+|---|---|---|
+| Palta | −425 | **+35** |
+| Mandarina | −384 | **+1** |
+| Redondo | −257 | **+41** |
+| Berenjena | −214 | **+46** |
+| Morrón Verde | — | **0** |
+| Frutilla | — | **0** |
+| Lima | — | **+3** |
+
+Los que quedan negativos son **dos cosas distintas y conviene no mezclarlas**:
+
+- **Los que no se reprocesan** (Mzn Gob −190, Red −180, Arándano −155, Granny
+  −140, Pera −140). Van a seguir negativos por el problema de fondo —el modelo
+  asume que toda venta sale de caja armada— y el `MAX(0, …)` los deja en cero
+  en las pantallas. **No es déficit: es E5.**
+- **El déficit real post-corte de los que sí se reprocesan** (Perita −95,
+  Zapallito −54, Cherry −160). Eso es señal, y es lo que el paso 0 podría
+  reconstruir.
+
+**Y la verificación tuvo que ser una consulta, no una pantalla** — ver abajo,
+"la verificación apuntó a la pantalla equivocada".
+
 ### La salida es la 3, y además hace innecesaria la 1
 
 Con un **piso de fecha en `_SQL_STOCK_PARTIDO`** —las dos patas desde el corte
@@ -2301,6 +2331,37 @@ Queda anotado como pendiente sin dueño, no como algo que se olvidó.
 generando; los que ya están se corrigen cargando las guías que faltan con su
 fecha real. Y eso **no dependía de esta entrega**: la pantalla ya lo permitía
 desde el 25/08.
+
+## El día del corte es asimétrico en la cuenta por ficha (05/09)
+
+Encontrado el 05/09 contestando una pregunta del dueño antes del corte: *"al
+mover la fecha, ¿los −95 de Perita y los −54 de Zapallito desaparecen?"*.
+Desaparecen — **y en su lugar aparecía un número equivocado en las dos
+direcciones.**
+
+El piso original recortaba las dos patas con `>= corte`. Pero **el conteo
+físico se toma A LA TARDE del día del corte**, así que todo lo que pasó ese día
+antes del conteo ya está adentro de lo contado. Simulado contra Postgres:
+
+| caso | verdad física | con `>=` en las dos | con el piso asimétrico |
+|---|---|---|---|
+| 50 cajas de una guía R del 03/09, salen 30 el sábado, se cuentan 20 | 20 | **−10** | 20 |
+| guía R normal cargada el sábado, 15 cajas, no salieron | 15 | **30** | 15 |
+
+En el primero la salida del sábado resta y la guía R que la produjo queda
+afuera del piso. En el segundo la guía R del sábado se suma **además** del
+`inicial` que ya la contiene.
+
+**El piso correcto es asimétrico:**
+
+- **entradas**: los `inicial` DEL corte (son la línea de base, la foto de lo
+  contado) **más** cualquier guía R posterior.
+- **salidas**: solo las posteriores.
+
+**Por qué el total del ARTÍCULO no tiene este problema:** no se rebasea con una
+fecha sino con el compensatorio, que es una **foto tomada esa misma tarde** y
+que ya incluye los movimientos del día. La cuenta por ficha usa un filtro de
+fecha, y un filtro no sabe a qué hora se contó.
 
 ## Decisiones confirmadas
 

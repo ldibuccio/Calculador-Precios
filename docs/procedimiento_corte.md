@@ -51,6 +51,23 @@ O sea que el piso puede estar perfecto y **no mover nada de lo que se mira**:
 corte congelan `stock_sistema` ya con el piso puesto. El Cotejo del lunes es la
 primera pantalla que lo refleja.
 
+**Verificado en producción el 05/09**: los 22 artículos cambiaron. Palta −425 →
++35, Mandarina −384 → +1, Redondo −257 → +41, Berenjena −214 → +46. Los que
+quedan negativos son los que no se reprocesan (E5, no déficit) y el déficit
+real post-corte de los que sí.
+
+### Qué queda en la cuenta por ficha el lunes
+
+**Todo lo anterior al corte sale de las dos patas**, así que los déficits
+acumulados —Perita −95, Zapallito −54— **desaparecen**. El lunes cada ficha
+arranca en lo que se contó y nada más.
+
+Y el día del corte es asimétrico a propósito: **los armados del sábado NO
+restan** (el conteo de esa tarde ya los descontó) y **las guías R normales del
+sábado NO suman** (sus cajas están en el conteo). Solo cuenta el `inicial` del
+corte, y de ahí en adelante todo. Sin esa asimetría el lunes arrancaba con
+números equivocados en las dos direcciones.
+
 **Y lo único a mirar en pantalla antes del corte** es que el **selector de
 Reproceso** no haya perdido ningún artículo. Es lo único que el piso puede
 cambiar a la vista, y es la falla del 31/08 que no queremos repetir.

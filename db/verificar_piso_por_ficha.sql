@@ -3,6 +3,9 @@
 -- 04/09 y como queda con el piso— y las pone al lado. La columna 'cambio'
 -- es exactamente lo que el piso sacó de esa ficha. Si todas las filas dan
 -- cambio = 0, el piso no esta aplicando y hay que avisar.
+-- El recorte es el MISMO que el de _SQL_STOCK_PARTIDO en app/db.py, con la
+-- asimetria del dia del corte: entradas = los 'inicial' del corte mas lo
+-- posterior; salidas = solo lo posterior. Si aquella cambia, esta tambien.
 with corte as (select fecha d from corte_modelo where id = 1),
 vig as (
   select distinct on (cliente_id, fecha_operacion) id from pedidos
@@ -11,14 +14,16 @@ arm as (
   select articulo_id ai, ficha_id fi,
          sum(bultos_primera) t,
          sum(bultos_primera) filter (
-           where fecha_operacion >= (select d from corte)) tp
+           where fecha_operacion > (select d from corte)
+              or (tipo = 'inicial'
+                  and fecha_operacion >= (select d from corte))) tp
   from reprocesos where anulado_el is null and ficha_id is not null group by 1,2),
 sal as (
   select r.articulo_id ai, r.ficha_id fi,
          sum(coalesce(r.cantidad_armada, r.cantidad)) t,
          sum(coalesce(r.cantidad_armada, r.cantidad)) filter (
            where (r.armado_el at time zone 'America/Argentina/Buenos_Aires')::date
-                 >= (select d from corte)) tp
+                 > (select d from corte)) tp
   from pedidos_renglones r join vig v on v.id = r.pedido_id
   where r.armado_el is not null and r.anulado_el is null
     and r.articulo_id is not null and r.ficha_id is not null group by 1,2),

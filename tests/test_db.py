@@ -5275,32 +5275,40 @@ from app.db import _cajas_por_ficha, _stock_de_ficha  # noqa: E402
 from app.db import _SQL_STOCK_PARTIDO  # noqa: E402
 
 
-def test_la_cuenta_por_ficha_arranca_en_el_CORTE_y_por_las_DOS_patas():
+def test_la_cuenta_por_ficha_arranca_en_el_CORTE_por_las_DOS_patas_y_asimetrica():
     """El piso de fecha, y se comprueba sobre el texto del SQL a propósito.
 
     La suite mockea el cursor, así que ninguna prueba de acá ejecuta esta
     consulta de verdad (el comportamiento se verificó contra Postgres el
-    05/09). Lo que este test protege es la invariante que NO se puede
-    perder: **las dos patas o ninguna**.
+    05/09). Lo que este test protege son las dos invariantes que NO se
+    pueden perder:
 
-    Recortar solo las entradas deja las salidas viejas restando contra
-    cajas que ya no están, y eso es el negativo estructural que produjo el
-    corte del 31/08 y que se arregló sacando el bloque 2. Si alguien saca
-    uno de los dos filtros, volvemos ahí — y no se ve, porque no falla:
-    da un número más chico de lo que corresponde.
+    1. **Las dos patas o ninguna.** Recortar solo las entradas deja las
+       salidas viejas restando contra cajas que ya no están: es el negativo
+       estructural que produjo el corte del 31/08.
+    2. **El día del corte es asimétrico.** El conteo se toma a la tarde, así
+       que lo del día ya está adentro de lo contado. Entradas: los
+       'inicial' DEL corte más lo POSTERIOR. Salidas: solo lo posterior.
+       Con `>=` en las dos, el día del corte se cuenta dos veces y en las
+       dos direcciones (medido: -10 donde había 20, y 30 donde había 15).
 
-    Y la fecha sale de corte_modelo, nunca de una constante: se mueve en
-    cada corte, y un piso viejo no falla, deja pasar.
+    Ninguna de las dos falla ruidosamente si se rompe: dan un número
+    equivocado y nada más. Por eso están pinchadas acá.
     """
     assert "corte_modelo" in _SQL_STOCK_PARTIDO
     assert "2026" not in _SQL_STOCK_PARTIDO, "la fecha de corte no se escribe a mano"
 
     entradas, salidas = _SQL_STOCK_PARTIDO.split("salidas_ficha AS")
-    # La pata de las entradas: las guías R desde el corte.
-    assert "fecha_operacion >= corte.fecha" in entradas
-    # La pata de las salidas: los renglones armados desde el corte.
-    assert ">= corte.fecha" in salidas
-    assert "armado_el" in salidas.split(">= corte.fecha")[0]
+
+    # Entradas: lo posterior al corte, MÁS los 'inicial' del corte mismo.
+    assert "fecha_operacion > corte.fecha" in entradas
+    assert "tipo = 'inicial' AND fecha_operacion >= corte.fecha" in entradas
+
+    # Salidas: SOLO lo posterior. Un `>=` acá restaría los armados del día
+    # del corte, que el conteo de esa tarde ya descontó.
+    assert "> corte.fecha" in salidas
+    assert ">= corte.fecha" not in salidas
+    assert "armado_el" in salidas.split("> corte.fecha")[0]
 
 
 

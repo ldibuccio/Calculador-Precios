@@ -6837,6 +6837,26 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 #
 # Sale de corte_modelo y NO de una constante: la fecha se mueve en cada
 # corte, y un piso viejo no falla — deja pasar.
+#
+# EL DÍA DEL CORTE ES ASIMÉTRICO, y no es un detalle: el conteo físico se
+# toma A LA TARDE de ese día, así que todo lo que pasó ANTES del conteo ya
+# está adentro de lo que se contó. Por eso el piso es:
+#
+#   entradas: los 'inicial' DEL corte (son la línea de base, la foto de lo
+#             contado) + cualquier guía R POSTERIOR al corte.
+#   salidas:  solo las POSTERIORES al corte.
+#
+# Con `>=` en las dos, el día del corte se cuenta dos veces y en las dos
+# direcciones. Simulado el 05/09 contra Postgres: una ficha con 50 cajas de
+# una guía R del 03/09, 30 que salieron el sábado y 20 contadas daba **-10**
+# (la salida resta y su guía R queda afuera); y una guía R normal cargada
+# ese mismo sábado se sumaba ADEMÁS del inicial que ya la contenía, dando
+# **30** donde había 15. Con el piso asimétrico dan 20 y 15, que es lo que
+# hay en el piso.
+#
+# El total del ARTÍCULO no tiene este problema porque no se rebasea con una
+# fecha sino con el compensatorio, que es una FOTO tomada esa misma tarde y
+# ya incluye los movimientos del día.
 _SQL_STOCK_PARTIDO = """
     WITH corte AS (SELECT fecha FROM corte_modelo WHERE id = 1),
     vigentes AS (
@@ -6847,7 +6867,8 @@ _SQL_STOCK_PARTIDO = """
         SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
         FROM reprocesos, corte
         WHERE anulado_el IS NULL AND ficha_id IS NOT NULL
-          AND fecha_operacion >= corte.fecha
+          AND (fecha_operacion > corte.fecha
+               OR (tipo = 'inicial' AND fecha_operacion >= corte.fecha))
         GROUP BY articulo_id, ficha_id
     ), salidas_ficha AS (
         SELECT r.articulo_id, r.ficha_id,
@@ -6856,7 +6877,7 @@ _SQL_STOCK_PARTIDO = """
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
-              >= corte.fecha
+              > corte.fecha
         GROUP BY r.articulo_id, r.ficha_id
     ), fichas_con_algo AS (
         SELECT articulo_id, ficha_id FROM armadas
