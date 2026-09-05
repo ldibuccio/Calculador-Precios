@@ -2469,6 +2469,94 @@ deja registro del lado del pedido.
 Puede que algún día haga falta poder agregar al PEDIDO y no solo al armado.
 **No hoy**: lo urgente era dejar de perder la mercadería, y eso está.
 
+## AGUJERO DE DISEÑO: el pool de segunda es la única cuenta que ningún corte rebasea
+
+Encontrado el 05/09, la noche del corte, relevando la vista del depósito.
+**Medido antes de tocar nada.**
+
+### Qué es
+
+El pool de segunda se calcula así, y no ha cambiado nunca:
+
+```
+Σ reprocesos.bultos_segunda  +  Σ rechazos a segunda  −  Σ remitos_segunda
+```
+
+**Sin un solo filtro de fecha.** Y el compensatorio del corte no lo alcanza:
+`cierre_modelo_viejo` es una fila de `movimientos_stock`, y esta cuenta no lee
+movimientos salvo por `destino_rechazo`.
+
+O sea que **de las cuatro cuentas del módulo, es la única que sigue sumando
+desde el primer día de la base**:
+
+- El total del artículo lo rebasea el compensatorio en cada corte.
+- La cuenta por ficha la rebasea el piso de fecha (05/09).
+- El FIFO rejugado se recalcula entero cada vez.
+- **La segunda, nada.**
+
+### Lo que midió el corte del 05/09
+
+| artículo | antes del corte | desde el corte | remitida | pool |
+|---|---|---|---|---|
+| Zapallito | 12 | 15 | 4 | **23** |
+| Morrón Rojo | 11,99 | — | — | **11,99** |
+| Morrón Verde | 6,98 | 1 | — | **7,98** |
+| Tomate Redondo | 6 | — | 1 | **5** |
+| Berenjena | 4 | — | — | **4** |
+| Limón | — | 3 | — | 3 |
+
+**El depósito contó Zapallito 15 y Limón 3, y nada más.** Todo lo demás —unos
+40 bultos— no existe en el piso. En Zapallito la cola vieja se sumó a lo
+contado y dio 23 donde hay 15.
+
+El `1` de Morrón Verde "desde el corte" **es legítimo**: una guía R `normal`
+del día, cargada por el depósito antes del cierre. Se distingue de las del
+conteo por el `tipo` y por la hora de carga
+(`db/segunda_desde_el_corte.sql`).
+
+### El arreglo: el MISMO piso asimétrico que la cuenta por ficha
+
+No hace falta escribir nada falso, y esto es lo que decide la solución:
+**con el piso puesto, el pool queda exactamente en lo contado sin tocar una
+sola fila.**
+
+- **entradas**: los `inicial` DEL corte (la foto de lo contado) más lo
+  POSTERIOR al corte.
+- **remitos**: solo los POSTERIORES.
+
+Verificado contra Postgres con los números reales: Zapallito **15**, Limón
+**3**, Morrón Verde **0**, y cero en toda la cola vieja. Las guías R viejas
+**conservan su historial entero**: no se anula ni se borra nada.
+
+Y el `1` de Morrón Verde cae, que es lo correcto: **el conteo de la tarde es
+la verdad**, y ese conteo dice que de Morrón Verde no hay segunda. Es la misma
+asimetría del día del corte que ya rige en la cuenta por ficha — un filtro de
+fecha no sabe a qué hora se contó.
+
+### Por qué NO se limpia con un remito compensatorio
+
+Era la salida obvia y **es la trampa que este proyecto ya pagó una vez**.
+`remitos_segunda` es `(articulo_id, bultos, fecha_operacion)`: **no tiene
+motivo ni tipo**. Un remito compensatorio sería **indistinguible de un remito
+real** en el listado de Movimientos.
+
+Es exactamente lo de los saldos iniciales de Vacíos, escrito en Decisiones
+confirmadas punto 7: *"se cargaron por la pantalla de Ajustes y hoy son
+indistinguibles de una corrección de faltante"*. Repetirlo acá sería no haber
+aprendido nada.
+
+Si algún día hiciera falta un compensatorio de segunda de verdad, **primero va
+el tipo propio** —como `cierre_modelo_viejo` lo tiene en `movimientos_stock`—
+y recién después la fila. Pero con el piso no hace falta ninguna fila.
+
+### Lo que queda para el arreglo
+
+Es un cambio de consulta, sin migración, y toca **dos lugares** que hoy
+calculan el pool por separado: la columna `segunda` de
+`stock_deposito_por_articulo` y la pantalla de Remito de Segunda, que filtra
+por `segunda > 0`. **Los dos tienen que moverse juntos** o el remito va a
+ofrecer artículos que el stock ya no muestra.
+
 ## Decisiones confirmadas
 
 1. **Parámetros con historial**: cada cambio queda registrado con su fecha
