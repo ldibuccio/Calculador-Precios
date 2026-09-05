@@ -18,10 +18,14 @@ AZUL_ENCABEZADO_HEX = "1F4E79"  # el mismo de Disponibles
 
 _BORDE_FINO = Side(style="thin", color="000000")
 _BORDE_CELDA = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_FINO, bottom=_BORDE_FINO)
+# El total se despega de los datos con una raya gruesa arriba: impreso, es lo
+# que hace que se lea como cierre y no como un renglón más de la lista.
+_BORDE_GRUESO = Side(style="medium", color="000000")
+_BORDE_TOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_GRUESO, bottom=_BORDE_FINO)
 
 
 def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
-    """El remanente en una hoja: una fila por porción, en el orden en que viene.
+    """El remanente en una hoja: una fila por porción más el total al pie, en el orden en que viene.
 
     porciones: [{"nombre": str, "bultos": float}, ...] — ya ordenadas por
     app/main.py. Acá no se reordena nada: si el Excel saliera en otro orden
@@ -37,6 +41,20 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     contra el conteo físico. Si saliera precargada con lo del sistema, el
     que cuenta transcribe en vez de contar y se pierde el control cruzado
     — el mismo criterio de la pantalla de Stock Físico.
+
+    Al pie va UN total —cuántos renglones y cuántos bultos—, y no uno por
+    artículo: sirve para saber de un vistazo si el archivo impreso está
+    completo, o sea si no se cortó una hoja. Un total por artículo sería
+    otra cosa, y además es justo la suma que el dueño pidió no mostrar
+    ("80 cajones sin procesar + 40 cajas armadas no son 120 bultos").
+
+    El número va COMO VALOR, no como fórmula: lo que importa es lo que
+    quedó impreso en el papel, y una fórmula no se imprime distinto pero
+    sí puede cambiar si alguien toca una celda antes de imprimir.
+
+    La celda "Contado" del total también va vacía, por lo mismo que las de
+    arriba: si el que cuenta ve un total del sistema al pie, tiene contra
+    qué cuadrar sin haber contado.
     """
     libro = Workbook()
     hoja = libro.active
@@ -65,6 +83,16 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
         for columna in (1, 2, 3):
             hoja.cell(row=fila_actual, column=columna).border = _BORDE_CELDA
         fila_actual += 1
+
+    renglones = len(porciones)
+    total = round(sum(float(p["bultos"]) for p in porciones), 2)
+    etiqueta = f"TOTAL — {renglones} {'renglón' if renglones == 1 else 'renglones'}"
+    hoja.cell(row=fila_actual, column=1, value=etiqueta)
+    hoja.cell(row=fila_actual, column=2, value=total)
+    for columna in (1, 2, 3):
+        celda = hoja.cell(row=fila_actual, column=columna)
+        celda.font = Font(bold=True)
+        celda.border = _BORDE_TOTAL
 
     hoja.column_dimensions["A"].width = 34
     hoja.column_dimensions["B"].width = 12

@@ -13227,13 +13227,69 @@ def test_el_excel_del_remanente_sale_con_la_columna_CONTADO_vacia():
     hoja = load_workbook(BytesIO(respuesta.content)).active
     assert hoja.title == "Remanente"
     assert [c.value for c in hoja[4]] == ["Producto", "Sistema", "Contado"]
-    # El mismo orden que la pantalla, y la tercera columna SIEMPRE vacía.
     datos = [(f[0], f[1], f[2]) for f in hoja.iter_rows(min_row=5, max_col=3, values_only=True)]
-    assert datos[0] == ("Berenjena Caja Día", 20, None)
-    assert datos[1] == ("Mandarina", 20, None)
+    # La tercera columna SIEMPRE vacía, el total incluido: si el que cuenta ve
+    # un total del sistema al pie, tiene contra qué cuadrar sin haber contado.
     assert all(fila[2] is None for fila in datos)
     # SIN PLATA: ninguna celda con un número que parezca un costo.
     assert hoja.max_column == 3
+
+
+def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():
+    """Dos criterios de orden se van separando. Acá hay UNO: las porciones se
+    ordenan en app/main.py y el exportador no reordena nada.
+
+    Se compara contra lo que la PANTALLA muestra de verdad, no contra una
+    lista escrita a mano: una lista a mano es otra copia del criterio, y el
+    día que el orden cambie los dos tendrían que cambiar juntos.
+    """
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    pantalla = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+    hoja = load_workbook(BytesIO(
+        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
+    excel = [f[0] for f in hoja.iter_rows(min_row=5, max_col=1, values_only=True)]
+
+    # El último renglón del Excel es el total, que la pantalla no tiene.
+    assert excel[:-1] == pantalla
+    # Y las porciones de un artículo caen juntas: es para lo que sirve el orden.
+    assert pantalla[:3] == ["Berenjena Caja Día", "Mandarina", "Mandarina Caja Día"]
+
+
+def test_el_excel_del_remanente_cierra_con_UN_total_al_pie():
+    """Cuántos renglones y cuántos bultos, para ver de un vistazo si el archivo
+    impreso está completo. UNO solo al pie, no uno por artículo: el total por
+    artículo es justo la suma que el dueño pidió no mostrar."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    hoja = load_workbook(BytesIO(
+        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
+    filas = list(hoja.iter_rows(min_row=5, max_col=3, values_only=True))
+    porciones, total = filas[:-1], filas[-1]
+
+    assert total[0] == f"TOTAL — {len(porciones)} renglones"
+    assert total[1] == round(sum(p[1] for p in porciones), 2)
+    assert total[2] is None
+    # Ningún renglón intermedio dice TOTAL: no hay totales por artículo.
+    assert not any(str(p[0]).startswith("TOTAL") for p in porciones)
+
+
+def test_el_total_del_excel_dice_renglon_en_singular_con_uno_solo():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 4.0, "segunda": 0.0}]
+    respuesta = _remanente(filas=filas, cajas={}, fichas=[],
+                           url="/administracion/stock/remanente/exportar-excel")
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    ultima = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))[-1]
+
+    assert ultima == ("TOTAL — 1 renglón", 4)
 
 
 def test_desarmar_renglon_destilda():
