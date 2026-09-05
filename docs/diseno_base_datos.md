@@ -2962,6 +2962,31 @@ Una sola pregunta: **¿alguien va a tener que contar, declarar o estimar
 alguno de estos números?** Si la respuesta es sí, la pantalla no va en el
 módulo de esa persona. No hay versión con cartel.
 
+## Una pantalla que nadie mira no se conserva "por si acaso" (06/09)
+
+Del dueño, y es la contracara de la regla del conteo ciego. Al mudar el
+Remanente a Administración se propuso que Stock del Sistema **conviviera** con
+él "para auditar". Esa propuesta salió de acá, no de quien usa el sistema:
+
+> *"Hoy la miró tres veces y ninguna le sirvió: el desglose por guía R y el
+> 'sin procesar −95' lo confundieron en vez de ayudarlo. Una pantalla que nadie
+> usa y que además confunde no se conserva por si acaso."*
+
+**Si la información importa, tiene que estar donde alguien la vaya a buscar. Si
+no la busca nadie, sobra.**
+
+La trampa que hay que ver es que "queda por si hace falta" **suena
+conservador y no lo es**: una pantalla que confunde tiene un costo real cada
+vez que alguien la abre, y el "por si acaso" no lo compensa con nada. Conservar
+no es gratis.
+
+Y el corolario práctico, que es lo que la vuelve accionable: **una pantalla no
+se saca sin mirar qué se cuelga de ella.** Antes de borrar hay que preguntarse
+tres cosas —qué información vive SOLO ahí, qué otra pantalla se alcanza
+únicamente desde ahí, y qué alerta apunta a su URL—. La primera se contesta
+leyendo la plantilla; las otras dos, grepeando la ruta. En este caso las tres
+tenían respuesta, y ninguna se veía desde la pantalla.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. **El `sin_procesar` negativo deja de ser un número.** Está desarrollado más
