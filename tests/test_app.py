@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -12954,6 +12955,112 @@ def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
     assert '<span class="marca-incompleto">armó 80 de 50</span>' not in texto
     # Tampoco cuenta como incompleto en el progreso de la sucursal.
     assert "incompleto" not in texto.split("VL: ")[1].split("<")[0]
+
+
+# --- El Remanente: la vista del depósito, una porción por renglón (06/09) ---
+
+REMANENTE_FILAS = [
+    {"articulo_id": 1, "nombre": "Mandarina", "stock": 35.0, "segunda": 3.0},
+    {"articulo_id": 2, "nombre": "Pomelo", "stock": 31.0, "segunda": 0.0},
+    {"articulo_id": 3, "nombre": "Mzn Gob", "stock": 20.0, "segunda": 0.0},
+    {"articulo_id": 5, "nombre": "Berenjena", "stock": 20.0, "segunda": 0.0},
+]
+REMANENTE_CAJAS = {(1, 11): 15.0, (2, 12): 15.0, (5, 13): 20.0}
+REMANENTE_FICHAS = [
+    {"id": 11, "articulo_id": 1, "articulo_nombre": "Mandarina", "nombre_cliente": "Mandarina Caja Día"},
+    {"id": 12, "articulo_id": 2, "articulo_nombre": "Pomelo", "nombre_cliente": "Pomelo Caja Día"},
+    {"id": 13, "articulo_id": 5, "articulo_nombre": "Berenjena", "nombre_cliente": "Berenjena Caja Día"},
+]
+
+
+def _remanente(filas=None, cajas=None, fichas=None, url="/deposito/stock/remanente"):
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=REMANENTE_FILAS if filas is None else filas),
+        patch("app.main.cajas_armadas_por_ficha",
+              return_value=REMANENTE_CAJAS if cajas is None else cajas),
+        patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=REMANENTE_FICHAS if fichas is None else fichas),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
+    ):
+        return cliente.get(url)
+
+
+def _porciones_en_pantalla(texto):
+    return re.findall(r'<span class="que">([^<]+)</span>\s*<span class="cuanto">([^<]+)</span>', texto)
+
+
+def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
+    """En el piso no hay "un artículo con un total": hay pilas distintas.
+
+    Saber que hay 9 limones sumando 4 sueltos más 5 en caja no le sirve a
+    nadie; lo que hace falta es cuántas cajas hay de cada cosa. Y el orden
+    agrupa por ARTÍCULO, no por el texto que se muestra.
+    """
+    respuesta = _remanente()
+
+    assert respuesta.status_code == 200
+    assert _porciones_en_pantalla(respuesta.text) == [
+        ("Berenjena Caja Día", "20"),
+        ("Mandarina", "20"),
+        ("Mandarina Caja Día", "15"),
+        ("Mandarina Segunda", "3"),
+        ("Mzn Gob", "20"),
+        ("Pomelo", "16"),
+        ("Pomelo Caja Día", "15"),
+    ]
+
+
+def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
+    """El nombre pelado es la mercadería como viene del puesto, que es como el
+    depósito la llama. "Caja Día" y "Segunda" son las que necesitan
+    aclaración porque son otra cosa."""
+    texto = _remanente().text
+
+    assert "suelto" not in texto.lower()
+    # Mandarina son 20 + 15 + 3: el 38 no aparece en ningún lado.
+    assert "38" not in texto
+
+
+def test_un_articulo_que_no_se_reprocesa_es_un_solo_renglon_pelado():
+    """Manzana, pera, arándano: sin guías R con ficha, el nombre pelado se
+    lleva el total entero. Sale del modelo, sin ninguna excepción escrita."""
+    nombres = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+
+    assert nombres.count("Mzn Gob") == 1
+    assert not any(n.startswith("Mzn Gob ") for n in nombres)
+
+
+def test_una_porcion_en_CERO_no_es_un_renglon():
+    """Berenjena tiene 20 de stock y 20 en cajas: no hay sueltos. Un renglón
+    en cero sería mandar al que arma a buscar una pila vacía."""
+    nombres = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+
+    assert "Berenjena Caja Día" in nombres
+    assert "Berenjena" not in nombres
+
+
+def test_el_excel_del_remanente_sale_con_la_columna_CONTADO_vacia():
+    """Vacía a propósito: es para escribir a mano contra el conteo. Si saliera
+    precargada, el que cuenta transcribe en vez de contar."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    respuesta = _remanente(url="/deposito/stock/remanente/exportar-excel")
+
+    assert respuesta.status_code == 200
+    assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    assert hoja.title == "Remanente"
+    assert [c.value for c in hoja[4]] == ["Producto", "Sistema", "Contado"]
+    # El mismo orden que la pantalla, y la tercera columna SIEMPRE vacía.
+    datos = [(f[0], f[1], f[2]) for f in hoja.iter_rows(min_row=5, max_col=3, values_only=True)]
+    assert datos[0] == ("Berenjena Caja Día", 20, None)
+    assert datos[1] == ("Mandarina", 20, None)
+    assert all(fila[2] is None for fila in datos)
+    # SIN PLATA: ninguna celda con un número que parezca un costo.
+    assert hoja.max_column == 3
 
 
 def test_desarmar_renglon_destilda():

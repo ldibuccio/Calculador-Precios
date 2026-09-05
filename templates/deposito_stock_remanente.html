@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remanente</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+  .fecha { color: #666; font-size: 0.9rem; margin: 0 0 1rem; }
+  /* Una porción por renglón. El nombre a la izquierda y el número a la
+     derecha, grande: se lee de un vistazo con el celular en la mano y sin
+     acercárselo a la cara. */
+  .porcion {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.7rem 0;
+    border-top: 1px solid #eee;
+  }
+  .porcion:first-of-type { border-top: none; }
+  .porcion .que { font-size: 1.05rem; line-height: 1.3; }
+  .porcion .cuanto {
+    font-size: 1.25rem;
+    font-weight: 800;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .boton-exportar {
+    display: block;
+    text-align: center;
+    padding: 0.9rem 1rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 2px solid #1d4ed8;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .ayuda { color: #666; font-size: 0.85rem; line-height: 1.4; margin: 0.75rem 0 0; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "deposito" %}
+  {% set barra_titulo = "Remanente" %}
+  {% set barra_atras = "/deposito/stock" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <h2>Qué hay en el depósito</h2>
+    <p class="fecha">Al {{ hoy.strftime('%d/%m/%Y') }}</p>
+
+    {# Cada porción es un renglón: en el piso son pilas distintas, en lugares
+       distintos y para cosas distintas. Sin total por artículo — sumarlas no
+       le sirve a nadie que tenga que ir a buscarlas. #}
+    {% if porciones %}
+      {% for p in porciones %}
+      <div class="porcion">
+        <span class="que">{{ p.nombre }}</span>
+        <span class="cuanto">{{ p.bultos|numero }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+    <p class="vacio">No hay nada cargado.</p>
+    {% endif %}
+  </div>
+
+  {% if porciones %}
+  <div class="tarjeta">
+    <a class="boton-exportar" href="/deposito/stock/remanente/exportar-excel">Exportar Excel</a>
+    <p class="ayuda">Sale con una columna vacía para anotar lo contado al lado.</p>
+  </div>
+  {% endif %}
+</body>
+</html>

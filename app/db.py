@@ -7034,6 +7034,29 @@ def listar_articulos_para_reproceso() -> list[dict]:
         conexion.close()
 
 
+def cajas_armadas_por_ficha() -> dict:
+    """{(articulo_id, ficha_id): cajas disponibles} — las porciones con cajas, para el Remanente.
+
+    Es `_cajas_por_ficha` con conexión propia y sin el déficit: la pantalla
+    del depósito lista lo que HAY en el piso, y un déficit no se puede
+    contar. Los negativos siguen a la vista en Stock del Sistema, que es la
+    pantalla de control.
+
+    Devuelve solo las que tienen más de cero. Una ficha sin cajas no es un
+    renglón: sería decirle al que arma que vaya a buscar una pila vacía.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return {
+                clave: disponibles
+                for clave, (disponibles, _deficit) in _cajas_por_ficha(cursor).items()
+                if disponibles > 0
+            }
+    finally:
+        conexion.close()
+
+
 def fichas_con_cajas_armadas() -> set:
     """Los ficha_id que HOY tienen cajas armadas disponibles (más de cero).
 

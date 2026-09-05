@@ -196,6 +196,7 @@ from app.db import (
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_para_reproceso,
+    cajas_armadas_por_ficha,
     lotes_para_reproceso,
     dependencias_del_lote_de_compra,
     desglose_de_renglon_armado,
@@ -274,6 +275,7 @@ from app.db import (
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
+from core.exportar_remanente import generar_excel_remanente
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
 from core.exportar_ingresos import generar_excel_ingresos_deposito, generar_pdf_ingresos_deposito
 from core.exportar_retiros import generar_excel_listado_retiros, generar_pdf_listado_retiros
@@ -6487,6 +6489,96 @@ def deshacer_procesado_compra_ruta(request: Request, compra_id: int):
 # (fisico/merma/reingreso, tandas 2 y 3) separadas de las de control
 # (sistema/cotejo/ajustar/movimientos), para poder colgarles una clave
 # después sin mover nada — mismo esquema que Puesto → Envases.
+
+
+def _clave_alfabetica(texto: str) -> str:
+    """Para ordenar sin que las tildes manden al final: "Ají" va con la A."""
+    sin_tildes = unicodedata.normalize("NFKD", texto or "")
+    return "".join(c for c in sin_tildes if not unicodedata.combining(c)).lower()
+
+
+def _porciones_de_deposito() -> list[dict]:
+    """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
+
+    En el piso NO hay "un artículo con un total": hay pilas distintas, en
+    lugares distintos y para cosas distintas. Saber que hay 9 limones
+    sumando 4 sueltos más 5 en caja de Día no le sirve a nadie; lo que hace
+    falta saber es cuántas cajas hay de cada cosa. Por eso cada porción es
+    un renglón y NO hay total por artículo.
+
+    EL NOMBRE PELADO ES LA MERCADERÍA COMO VIENE DEL PUESTO, que es como el
+    depósito la llama. La palabra "suelto" no aparece: las que necesitan
+    aclaración son las otras dos.
+
+    Sale entera de la CUENTA 2 (cajas por ficha) y del pool de segunda, que
+    desde el 05/09 arrancan las dos en la fecha de corte. El desglose por
+    GUÍA R —la cuenta 3— es trazabilidad y vive en Stock por Guía: al que
+    arma no le importa de qué guía R salió una caja, y la guía R no está
+    escrita en la caja, así que tampoco podría verificarlo contando.
+
+    Solo lo que tiene MÁS DE CERO. Una porción en cero no es una pila, y un
+    negativo no se puede contar: los negativos siguen a la vista en Stock
+    del Sistema, que es la pantalla de control.
+
+    El orden agrupa por ARTÍCULO y después por tipo de porción, no por el
+    texto que se muestra: así "Pomelo" y "Pomelo caja Día" caen juntas
+    aunque la ficha se llame de otra forma.
+    """
+    filas = stock_deposito_por_articulo()
+    cajas = cajas_armadas_por_ficha()
+    fichas = {f["id"]: f for f in listar_fichas_de_todos_los_clientes()}
+
+    porciones = []
+    for fila in filas:
+        articulo = fila["nombre"]
+        de_este = {c: b for c, b in cajas.items() if c[0] == fila["articulo_id"]}
+        # Los sueltos por RESTA, como en todo el módulo: así las porciones
+        # suman el total del artículo sin que se pueda perder ni duplicar.
+        sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
+        if sueltos > 0:
+            porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo, "bultos": sueltos})
+        for (_articulo_id, ficha_id), bultos in de_este.items():
+            ficha = fichas.get(ficha_id)
+            porciones.append({
+                "articulo": articulo,
+                "orden": 1,
+                "nombre": _nombre_de_ficha(ficha) if ficha else f"{articulo} (ficha #{ficha_id})",
+                "bultos": round(float(bultos), 2),
+            })
+        if float(fila["segunda"]) > 0:
+            porciones.append({"articulo": articulo, "orden": 2,
+                              "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2)})
+
+    porciones.sort(key=lambda p: (_clave_alfabetica(p["articulo"]), p["orden"], _clave_alfabetica(p["nombre"])))
+    return porciones
+
+
+@app.get("/deposito/stock/remanente")
+def ver_remanente_deposito(request: Request):
+    """Qué hay en el depósito, una porción por renglón. Para mirar, no para cargar."""
+    try:
+        porciones = _porciones_de_deposito()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(
+        request, "deposito_stock_remanente.html", {"porciones": porciones, "hoy": _hoy_argentina()}
+    )
+
+
+@app.get("/deposito/stock/remanente/exportar-excel")
+def exportar_remanente_deposito_excel():
+    """El mismo remanente en Excel, con una columna vacía para anotar lo contado."""
+    try:
+        porciones = _porciones_de_deposito()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    hoy = _hoy_argentina()
+    return Response(
+        content=generar_excel_remanente(hoy, porciones),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Remanente_{hoy.strftime("%d_%m_%Y")}.xlsx"'},
+    )
 
 
 @app.get("/deposito/stock")
