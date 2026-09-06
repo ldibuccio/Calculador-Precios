@@ -3747,7 +3747,7 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        filas = stock_deposito_por_articulo()
+        filas = stock_deposito_por_articulo(date(2026, 9, 6))
 
     consulta = cursor.execute.call_args.args[0]
     # Entradas: SOLO compras recepcionadas, con la cantidad REAL de Depósito.
@@ -3796,7 +3796,7 @@ def test_el_pool_de_segunda_arranca_en_el_CORTE_y_por_las_TRES_patas():
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        stock_deposito_por_articulo()
+        stock_deposito_por_articulo(date(2026, 9, 6))
 
     consulta = cursor.execute.call_args.args[0]
     assert "corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)" in consulta
@@ -3904,7 +3904,8 @@ def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
 
     consulta = cursor.execute.call_args.args[0]
     assert "AND articulo_id = %s" in consulta
-    assert cursor.execute.call_args.args[1] == (2, 2, 2, 2, 2)
+    # La fecha tope va PRIMERA y siempre: acá None, que el SQL lee como hoy.
+    assert cursor.execute.call_args.args[1] == (None, 2, 2, 2, 2, 2)
     assert stock == -5.0
 
 

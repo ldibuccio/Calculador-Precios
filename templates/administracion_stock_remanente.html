@@ -61,6 +61,63 @@
     text-decoration: none;
   }
   .ayuda { color: #666; font-size: 0.85rem; line-height: 1.4; margin: 0.75rem 0 0; }
+  /* Mobile-first: la fecha y el botón ocupan el ancho y se tocan con el
+     pulgar, no son un control chiquito en una esquina. */
+  form.fecha-form label {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+    font-size: 0.95rem;
+  }
+  form.fecha-form input[type="date"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.75rem;
+    font-size: 1rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+  }
+  form.fecha-form button {
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.85rem 1rem;
+    background: #1d4ed8;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .volver-hoy {
+    display: block;
+    text-align: center;
+    margin-top: 0.7rem;
+    padding: 0.6rem;
+    color: #1d4ed8;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  /* Que NO se lea como el estado de ahora cuando no lo es. */
+  .marca-pasado {
+    background: #fef9c3;
+    border: 1px solid #facc15;
+    color: #713f12;
+    border-radius: 8px;
+    padding: 0.6rem 0.8rem;
+    margin: 0 0 1rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+  .aviso-fecha {
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    color: #7c2d12;
+    border-radius: 8px;
+    padding: 0.7rem 0.85rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
 
   /* LA SEPARACIÓN ES EL PUNTO. Arriba está lo que HAY; esto es un problema a
      resolver, y si se mezclan vuelve a ser la pantalla vieja. Por eso no es
@@ -112,9 +169,30 @@
   {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
+  {% if aviso %}
+  <div class="aviso-fecha">{{ aviso }}</div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <form class="fecha-form" method="get" action="/administracion/stock/remanente">
+      <label for="fecha">Cómo estaba el depósito al…</label>
+      <input type="date" id="fecha" name="fecha" value="{{ fecha }}" max="{{ fecha_maxima }}">
+      <button type="submit">Ver esa fecha</button>
+    </form>
+    {% if not es_hoy %}
+    <a class="volver-hoy" href="/administracion/stock/remanente">Volver a hoy</a>
+    {% endif %}
+  </div>
+
   <div class="tarjeta">
     <h2>Qué hay en el depósito</h2>
     <p class="fecha">Al {{ hoy.strftime('%d/%m/%Y') }}</p>
+    {# Cuando NO es hoy hay que decirlo fuerte: los mismos renglones con los
+       mismos números leídos como el estado actual serían una mentira, y la
+       fecha sola en gris chico no alcanza para frenar esa lectura. #}
+    {% if not es_hoy %}
+    <p class="marca-pasado">Así estaba el depósito al cierre del {{ hoy.strftime('%d/%m/%Y') }}. No es el stock de ahora.</p>
+    {% endif %}
 
     {# Cada porción es un renglón: en el piso son pilas distintas, en lugares
        distintos y para cosas distintas. Sin total por artículo — sumarlas no
@@ -148,7 +226,7 @@
 
   {% if porciones %}
   <div class="tarjeta">
-    <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel">Exportar Excel</a>
+    <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel?fecha={{ fecha }}">Exportar Excel</a>
     {# El Excel sale con las PORCIONES y nada más: es para ir a contar, y un
        artículo en negativo no se cuenta — no hay pila que mirar. #}
     <p class="ayuda">Sale con una columna vacía para anotar lo contado al lado. Van las porciones de arriba; los artículos con bultos sin explicar no entran, porque no hay nada que contar.</p>

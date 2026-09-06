@@ -6533,7 +6533,7 @@ def _nombre_de_caja(articulo: str, ficha: dict, clientes: dict, cuantas_del_clie
     return f"{base} ({propio})" if propio else f"{base} (ficha #{ficha['id']})"
 
 
-def _porciones_de_deposito(filas: list[dict] | None = None) -> list[dict]:
+def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[dict]:
     """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
 
     En el piso NO hay "un artículo con un total": hay pilas distintas, en
@@ -6562,8 +6562,10 @@ def _porciones_de_deposito(filas: list[dict] | None = None) -> list[dict]:
     aunque la ficha se llame de otra forma.
     """
     if filas is None:
-        filas = stock_deposito_por_articulo()
-    cajas = cajas_armadas_por_ficha()
+        filas = stock_deposito_por_articulo(hasta)
+    # La MISMA fecha que las filas: si las cajas por ficha se pidieran sin
+    # tope, los sueltos —que salen por resta— darían cualquier cosa.
+    cajas = cajas_armadas_por_ficha(hasta)
     fichas = {f["id"]: f for f in listar_fichas_de_todos_los_clientes()}
     clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
 
@@ -6616,8 +6618,60 @@ def _negativos_de_deposito(filas: list[dict]) -> list[dict]:
     ]
 
 
+def _fecha_del_remanente(fecha_texto: str | None) -> tuple:
+    """La fecha pedida, o hoy. Devuelve (fecha, aviso) — el aviso explica por qué se movió.
+
+    Mal escrita o FUTURA cae a hoy, igual que el Stock de Vacíos. Y hay un
+    piso propio: ANTES DEL CORTE esta pantalla no puede contestar. No es
+    que falten datos, es que las cuentas no son comparables — el total del
+    artículo lo rebasea el compensatorio (fechado la víspera del corte) y
+    las cajas por ficha y el pool de segunda tienen su piso EN el corte.
+    Pedir el 20/08 devolvería el total del modelo viejo junto a cero cajas
+    y cero segunda: tres cuentas de dos épocas distintas en la misma
+    tabla. Mejor decir que no que mostrar eso.
+    """
+    hoy = _hoy_argentina()
+    if not fecha_texto:
+        return hoy, None
+    try:
+        fecha = date.fromisoformat(fecha_texto)
+    except ValueError:
+        return hoy, "Esa fecha no se entendió. Se muestra el día de hoy."
+    if fecha > hoy:
+        return hoy, "Todavía no pasó ese día. Se muestra el día de hoy."
+    try:
+        corte = fecha_corte()
+    except Exception:
+        return fecha, None
+    if corte is not None and fecha < corte:
+        return hoy, (
+            f"El {fecha.strftime('%d/%m/%Y')} es anterior al corte del modelo "
+            f"({corte.strftime('%d/%m/%Y')}), y de antes del corte esta pantalla no puede "
+            "contestar: el total del artículo quedó rebaseado por el compensatorio y las "
+            "cajas por ficha arrancan en el corte, así que los tres números serían de "
+            "épocas distintas. Se muestra el día de hoy."
+        )
+    return fecha, None
+
+
+def _remanente_a_fecha(hasta) -> dict:
+    """Todo lo que la pantalla y el Excel necesitan, a una fecha. UNA sola vez.
+
+    Los dos salen de acá y no cada uno por su cuenta: si el Excel armara
+    su propia consulta, un día diría otra cosa que la pantalla y nadie se
+    enteraría hasta imprimirlo.
+    """
+    filas = stock_deposito_por_articulo(hasta)
+    return {
+        "porciones": _porciones_de_deposito(filas, hasta),
+        "negativos": _negativos_de_deposito(filas),
+        "reingresos_total": total_reingresos_rechazo(hasta),
+        "segunda_total": sum(float(f["segunda"]) for f in filas),
+    }
+
+
 @app.get("/administracion/stock/remanente")
-def ver_remanente_deposito(request: Request):
+def ver_remanente_deposito(request: Request, fecha: str | None = None):
     """Qué hay en el depósito, una porción por renglón. Para mirar y para exportar.
 
     VIVE EN ADMINISTRACIÓN, no en Depósito, y es a propósito: muestra los
@@ -6628,36 +6682,42 @@ def ver_remanente_deposito(request: Request):
     no muestra el stock de la ficha: "si lo ve, arma contra el sistema en
     vez de contra el piso".
     """
+    hasta, aviso = _fecha_del_remanente(fecha)
     try:
-        filas = stock_deposito_por_articulo()
-        porciones = _porciones_de_deposito(filas)
-        contexto = {
-            "porciones": porciones,
-            "hoy": _hoy_argentina(),
-            # ABAJO Y APARTE: la lista de arriba es lo que HAY, esto es un
-            # problema a resolver. Mezclados vuelve a ser la pantalla vieja.
-            "negativos": _negativos_de_deposito(filas),
-            "reingresos_total": total_reingresos_rechazo(),
-            "segunda_total": sum(float(f["segunda"]) for f in filas),
-        }
+        # ABAJO Y APARTE: la lista de arriba es lo que HAY, los negativos son
+        # un problema a resolver. Mezclados vuelve a ser la pantalla vieja.
+        contexto = _remanente_a_fecha(hasta)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    hoy = _hoy_argentina()
+    contexto.update({
+        "hoy": hasta,
+        "fecha": hasta.isoformat(),
+        "fecha_maxima": hoy.isoformat(),
+        "es_hoy": hasta == hoy,
+        "aviso": aviso,
+    })
     return templates.TemplateResponse(request, "administracion_stock_remanente.html", contexto)
 
 
 @app.get("/administracion/stock/remanente/exportar-excel")
-def exportar_remanente_deposito_excel():
-    """El mismo remanente en Excel, con una columna vacía para anotar lo contado."""
+def exportar_remanente_deposito_excel(fecha: str | None = None):
+    """El mismo remanente en Excel, con una columna vacía para anotar lo contado.
+
+    Misma fecha y mismo armador que la pantalla: el archivo que baja es el
+    de lo que se está mirando, y su nombre lleva ESA fecha, no la de hoy —
+    dos exports de días distintos no se pueden pisar en la carpeta.
+    """
+    hasta, _aviso = _fecha_del_remanente(fecha)
     try:
-        porciones = _porciones_de_deposito()
+        porciones = _remanente_a_fecha(hasta)["porciones"]
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-    hoy = _hoy_argentina()
     return Response(
-        content=generar_excel_remanente(hoy, porciones),
+        content=generar_excel_remanente(hasta, porciones),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition":
-                 f'attachment; filename="Remanente_{hoy.strftime("%d_%m_%Y")}.xlsx"'},
+                 f'attachment; filename="Remanente_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
     )
 
 
@@ -6693,7 +6753,8 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         # "solo para este artículo" sería una segunda versión de la cuenta,
         # y esas se separan.
         patas = next(
-            (f for f in stock_deposito_por_articulo() if f["articulo_id"] == articulo_id), None
+            (f for f in stock_deposito_por_articulo(_hoy_argentina())
+             if f["articulo_id"] == articulo_id), None
         )
     except HTTPException:
         raise
@@ -8303,7 +8364,7 @@ def _renderizar_pantalla_remito_segunda(request: Request, *, precarga=None, avis
         # mismo criterio que el reproceso — el pool no viaja a la pantalla.
         con_segunda = [
             {"id": f["articulo_id"], "nombre": f["nombre"]}
-            for f in stock_deposito_por_articulo()
+            for f in stock_deposito_por_articulo(_hoy_argentina())
             if f["segunda"] > 0
         ]
     except Exception as error_db:

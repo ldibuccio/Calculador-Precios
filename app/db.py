@@ -6206,20 +6206,60 @@ def fecha_corte():
 # Todo en BULTOS. Puede quedar negativo a propósito: el armado no se traba
 # por stock — el negativo es la señal de que falta un reproceso o un ajuste.
 
+# LA FECHA TOPE viaja como CTE y no como un %s por cada pata: son seis sumas y
+# tres más en el pool de segunda, y nueve parámetros posicionales en fila se
+# desordenan el día que alguien agrega una. Así entra UNA sola vez, primera, y
+# el resto de la consulta la lee por nombre — el mismo molde que `corte`.
+#
+# QUÉ FECHA MIRA CADA PATA, que no es la misma columna en todas:
+#
+# - Las COMPRAS entran al stock cuando el depósito las RECEPCIONA, no cuando
+#   se compraron: `procesada_el`. Es la misma expresión con la que el FIFO
+#   ordena sus lotes de compra, y tiene que serlo — si acá dijera
+#   `fecha_operacion`, el total del artículo y el reparto por lote no
+#   coincidirían en los días entre la compra y la recepción. Las viejas, de
+#   antes de que existiera Recepción, tienen `procesada_el` en NULL y caen a
+#   `fecha_operacion`: sin ese COALESCE desaparecerían de toda consulta con
+#   fecha, incluida la de hoy.
+# - Las SALIDAS de pedidos, por `armado_el` pasado a fecha argentina: el
+#   renglón sale del stock cuando se arma.
+# - El resto —movimientos, reprocesos, remitos— por su `fecha_operacion`, que
+#   es la fecha declarada de la operación y es la que el módulo usa en todos
+#   lados.
+#
+# LO QUE **NO** SE RETROCEDE, y es una decisión: `anulado_el IS NULL` y el
+# `DISTINCT ON` de los pedidos vigentes se evalúan HOY, no a la fecha pedida.
+# O sea que esto muestra "lo que hoy sabemos que había el día X", no "lo que el
+# sistema creía el día X". Una anulación es una corrección —dice que eso nunca
+# tendría que haber contado—, y una consulta histórica que resucitara pedidos
+# ya corregidos mostraría números que nadie quiere de vuelta.
+# NULL = hoy, para el que quiere el estado actual y no una fecha. Así hay UN
+# solo camino: la consulta de hoy es la misma que la del 3 de septiembre con
+# otra fecha, y no una segunda versión sin tope que se pueda ir separando.
+_SQL_TOPE = """SELECT COALESCE(%s::date,
+        (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS fecha"""
+
 _SQL_SUMAS_STOCK = """
-    WITH entradas AS (
-        SELECT articulo_id, SUM(cantidad_cajones_real) AS total
-        FROM compras WHERE estado = 'recepcionado' {filtro_articulo}
-        GROUP BY articulo_id
+    WITH tope AS (""" + _SQL_TOPE + """),
+    entradas AS (
+        SELECT c.articulo_id, SUM(c.cantidad_cajones_real) AS total
+        FROM compras c, tope
+        WHERE c.estado = 'recepcionado'
+          AND COALESCE((c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
+                       c.fecha_operacion) <= tope.fecha
+          {filtro_c_articulo}
+        GROUP BY c.articulo_id
     ), vigentes AS (
         SELECT DISTINCT ON (cliente_id, fecha_operacion) id
         FROM pedidos WHERE anulado_el IS NULL
         ORDER BY cliente_id, fecha_operacion, creado_en DESC
     ), salidas AS (
         SELECT r.articulo_id, SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
-        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
-          AND r.articulo_id IS NOT NULL {filtro_r_articulo}
+          AND r.articulo_id IS NOT NULL
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= tope.fecha
+          {filtro_r_articulo}
         GROUP BY r.articulo_id
     ), reingresos AS (
         -- Solo los que QUEDAN en stock: un rechazo mandado a segunda (o
@@ -6227,32 +6267,42 @@ _SQL_SUMAS_STOCK = """
         -- al pool de segunda. NULL = los reingresos viejos, que quedaban
         -- en stock por definición.
         SELECT articulo_id, SUM(cantidad) AS total
-        FROM movimientos_stock
+        FROM movimientos_stock, tope
         WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo'
+          AND fecha_operacion <= tope.fecha
           AND (destino_rechazo IS NULL OR destino_rechazo = 'stock') {filtro_articulo}
         GROUP BY articulo_id
     ), ajustes AS (
         SELECT articulo_id, SUM(cantidad) AS total
-        FROM movimientos_stock
-        WHERE anulado_el IS NULL AND tipo <> 'reingreso_rechazo' {filtro_articulo}
+        FROM movimientos_stock, tope
+        WHERE anulado_el IS NULL AND tipo <> 'reingreso_rechazo'
+          AND fecha_operacion <= tope.fecha {filtro_articulo}
         GROUP BY articulo_id
     ), reproc AS (
         SELECT articulo_id, SUM(bultos_primera) AS entradas, SUM(bultos_tomados) AS salidas
-        FROM reprocesos
-        WHERE anulado_el IS NULL {filtro_articulo}
+        FROM reprocesos, tope
+        WHERE anulado_el IS NULL AND fecha_operacion <= tope.fecha {filtro_articulo}
         GROUP BY articulo_id
     )
 """
 
 
 def _sql_sumas_stock(por_articulo: bool) -> str:
+    """La consulta de las seis patas. El primer parámetro es SIEMPRE la fecha tope."""
     filtro = "AND articulo_id = %s" if por_articulo else ""
-    filtro_r = "AND r.articulo_id = %s" if por_articulo else ""
-    return _SQL_SUMAS_STOCK.format(filtro_articulo=filtro, filtro_r_articulo=filtro_r)
+    return _SQL_SUMAS_STOCK.format(
+        filtro_articulo=filtro,
+        filtro_c_articulo="AND c.articulo_id = %s" if por_articulo else "",
+        filtro_r_articulo="AND r.articulo_id = %s" if por_articulo else "",
+    )
 
 
-def stock_deposito_por_articulo() -> list[dict]:
-    """El stock del sistema por artículo (bultos), calculado siempre — solo artículos con algún movimiento.
+def stock_deposito_por_articulo(hasta) -> list[dict]:
+    """El stock del sistema por artículo (bultos) AL CIERRE DE `hasta`, calculado siempre.
+
+    `hasta` es obligatorio y no tiene default: es la única forma de que
+    nadie escriba sin querer una consulta "de hoy" que en realidad suma
+    todo. El que quiere hoy pasa hoy, y la pantalla lo dice.
 
     entradas = compras recepcionadas (cantidad_cajones_real, la cuenta REAL
     de Depósito, ya neta del rechazo al proveedor). salidas = renglones
@@ -6296,11 +6346,15 @@ def stock_deposito_por_articulo() -> list[dict]:
                 -- que todo lo del día ya está adentro de lo contado. Entran
                 -- los 'inicial' DEL corte (la foto) más lo POSTERIOR; los
                 -- remitos y los rechazos, solo lo posterior.
+                --
+                -- El pool tiene PISO (el corte) y TECHO (la fecha pedida):
+                -- el piso lo rebasea y el techo lo corta. Los dos son sobre
+                -- `fecha_operacion`, así que se leen juntos.
                 , corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)
                 , segunda AS (
                     SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM reprocesos, corte_seg
-                    WHERE anulado_el IS NULL
+                    FROM reprocesos, corte_seg, tope
+                    WHERE anulado_el IS NULL AND fecha_operacion <= tope.fecha
                       AND (fecha_operacion > corte_seg.fecha
                            OR (tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha))
                     GROUP BY articulo_id
@@ -6308,14 +6362,16 @@ def stock_deposito_por_articulo() -> list[dict]:
                     -- Los rechazos que no volvieron al stock: entran al
                     -- mismo pool que la segunda de los reprocesos.
                     SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM movimientos_stock, corte_seg
+                    FROM movimientos_stock, corte_seg, tope
                     WHERE anulado_el IS NULL AND destino_rechazo IN ('segunda', 'reproceso')
                       AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
                     GROUP BY articulo_id
                 ), remitida AS (
                     SELECT articulo_id, SUM(bultos) AS total
-                    FROM remitos_segunda, corte_seg
+                    FROM remitos_segunda, corte_seg, tope
                     WHERE anulado_el IS NULL AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
                     GROUP BY articulo_id
                 )
                 SELECT a.id AS articulo_id, a.nombre,
@@ -6341,7 +6397,8 @@ def stock_deposito_por_articulo() -> list[dict]:
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
                    OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
                 ORDER BY a.nombre
-                """
+                """,
+                (hasta,),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
@@ -6363,7 +6420,11 @@ def stock_deposito_por_articulo() -> list[dict]:
 
 
 def _stock_deposito_actual(cursor, articulo_id: int) -> float:
-    """El stock actual de UN artículo, con el cursor abierto — para la foto (stock_sistema) de un movimiento nuevo."""
+    """El stock actual de UN artículo, con el cursor abierto — para la foto (stock_sistema) de un movimiento nuevo.
+
+    Sin fecha tope (None = hoy): la foto es del momento en que se carga el
+    movimiento, que es de lo que se trata.
+    """
     cursor.execute(
         _sql_sumas_stock(por_articulo=True)
         + """
@@ -6374,7 +6435,7 @@ def _stock_deposito_actual(cursor, articulo_id: int) -> float:
              - COALESCE((SELECT salidas FROM reproc), 0)
              - COALESCE((SELECT total FROM salidas), 0)
         """,
-        (articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
+        (None, articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
     )
     return float(cursor.fetchone()[0])
 
@@ -6782,16 +6843,24 @@ def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], flo
     return entradas_y_salidas_stock_articulos([articulo_id])[articulo_id]
 
 
-def total_reingresos_rechazo() -> float:
-    """Total histórico de bultos reingresados por rechazo del cliente (plata perdida): el dueño lo quiere a la vista."""
+def total_reingresos_rechazo(hasta=None) -> float:
+    """Bultos reingresados por rechazo del cliente (plata perdida) hasta la fecha: el dueño lo quiere a la vista.
+
+    `hasta=None` es hoy, igual que el resto del módulo. Va acumulado desde
+    el principio y no desde el corte a propósito: es plata perdida, no
+    stock, y el corte no la perdona.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COALESCE(SUM(cantidad), 0) FROM movimientos_stock
+                WITH tope AS (""" + _SQL_TOPE + """)
+                SELECT COALESCE(SUM(cantidad), 0) FROM movimientos_stock, tope
                 WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo'
-                """
+                  AND fecha_operacion <= tope.fecha
+                """,
+                (hasta,),
             )
             return float(cursor.fetchone()[0])
     finally:
@@ -6896,27 +6965,32 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # UN FILTRO NO SABE A QUÉ HORA SE CONTÓ: por eso el día del corte hay que
 # partirlo a mano, y por eso la asimetría de arriba no es un caso borde sino
 # la forma correcta de la regla.
+# Igual que las seis patas: PISO del corte y TECHO de la fecha pedida.
 _SQL_STOCK_PARTIDO = """
     WITH corte AS (SELECT fecha FROM corte_modelo WHERE id = 1),
+    tope AS (""" + _SQL_TOPE + """),
     vigentes AS (
         SELECT DISTINCT ON (cliente_id, fecha_operacion) id
         FROM pedidos WHERE anulado_el IS NULL
         ORDER BY cliente_id, fecha_operacion, creado_en DESC
     ), armadas AS (
         SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
-        FROM reprocesos, corte
+        FROM reprocesos, corte, tope
         WHERE anulado_el IS NULL AND ficha_id IS NOT NULL
+          AND fecha_operacion <= tope.fecha
           AND (fecha_operacion > corte.fecha
                OR (tipo = 'inicial' AND fecha_operacion >= corte.fecha))
         GROUP BY articulo_id, ficha_id
     ), salidas_ficha AS (
         SELECT r.articulo_id, r.ficha_id,
                SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
-        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, corte
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, corte, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
               > corte.fecha
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+              <= tope.fecha
         GROUP BY r.articulo_id, r.ficha_id
     ), fichas_con_algo AS (
         SELECT articulo_id, ficha_id FROM armadas
@@ -6931,7 +7005,7 @@ _SQL_STOCK_PARTIDO = """
 """
 
 
-def _cajas_por_ficha(cursor) -> dict:
+def _cajas_por_ficha(cursor, hasta=None) -> dict:
     """{(articulo_id, ficha_id): (disponibles, deficit)}, SOLO las fichas con algún movimiento.
 
     Una ficha sin nada reprocesado ni nada salido no aparece. Es a
@@ -6964,7 +7038,7 @@ def _cajas_por_ficha(cursor) -> dict:
     tapar esa diferencia inventada (04/09/2026: Manzana Gob, total 63,
     sueltos 233, botón de ajuste por 170).
     """
-    cursor.execute(_SQL_STOCK_PARTIDO)
+    cursor.execute(_SQL_STOCK_PARTIDO, (hasta,))
     saldos = {}
     for articulo_id, ficha_id, saldo in cursor.fetchall():
         valor = float(saldo)
@@ -7020,7 +7094,8 @@ def listar_articulos_para_reproceso() -> list[dict]:
                 LEFT JOIN ajustes aj ON aj.articulo_id = a.id
                 LEFT JOIN reproc rp ON rp.articulo_id = a.id
                 ORDER BY a.nombre
-                """
+                """,
+                (None,),
             )
             filas = cursor.fetchall()
         articulos = []
@@ -7035,13 +7110,13 @@ def listar_articulos_para_reproceso() -> list[dict]:
         conexion.close()
 
 
-def cajas_armadas_por_ficha() -> dict:
-    """{(articulo_id, ficha_id): cajas disponibles} — las porciones con cajas, para el Remanente.
+def cajas_armadas_por_ficha(hasta=None) -> dict:
+    """{(articulo_id, ficha_id): cajas disponibles} AL CIERRE DE `hasta` — las porciones con cajas del Remanente.
 
-    Es `_cajas_por_ficha` con conexión propia y sin el déficit: la pantalla
-    del depósito lista lo que HAY en el piso, y un déficit no se puede
-    contar. Los negativos siguen a la vista en Stock del Sistema, que es la
-    pantalla de control.
+    Es `_cajas_por_ficha` con conexión propia y sin el déficit: el
+    Remanente lista lo que HAY, y un déficit no se puede contar. Los que
+    salieron de más se ven abajo del Remanente, en "bultos que faltan
+    explicar", y el déficit POR FICHA en el Cotejo.
 
     Devuelve solo las que tienen más de cero. Una ficha sin cajas no es un
     renglón: sería decirle al que arma que vaya a buscar una pila vacía.
@@ -7051,7 +7126,7 @@ def cajas_armadas_por_ficha() -> dict:
         with conexion.cursor() as cursor:
             return {
                 clave: disponibles
-                for clave, (disponibles, _deficit) in _cajas_por_ficha(cursor).items()
+                for clave, (disponibles, _deficit) in _cajas_por_ficha(cursor, hasta).items()
                 if disponibles > 0
             }
     finally:
@@ -7238,7 +7313,8 @@ def contar_stock_deposito_negativo() -> int:
                 WHERE COALESCE(e.total, 0) + COALESCE(r.total, 0)
                     + COALESCE(aj.total, 0) + COALESCE(rp.entradas, 0)
                     - COALESCE(rp.salidas, 0) - COALESCE(s.total, 0) < 0
-                """
+                """,
+                (None,),
             )
             return int(cursor.fetchone()[0])
     finally:

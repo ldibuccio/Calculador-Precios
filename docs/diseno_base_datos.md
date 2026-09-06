@@ -3087,6 +3087,86 @@ test no está probando la transformación. Las fichas de prueba ahora dicen
 `BERENJENA G`, `LIMA X 1KG`, `MANDA COM X 10`, en mayúscula y sin parecerse al
 nombre del artículo, que es como están cargadas.
 
+## El Remanente a una fecha: qué columna mira cada pata (06/09)
+
+"Cómo estaba el depósito al 8 de septiembre". Suena a un `WHERE fecha <=`, y
+son **nueve** filtros sobre **cuatro columnas distintas**.
+
+### La fecha viaja como CTE, no como nueve parámetros
+
+Seis sumas en `_SQL_SUMAS_STOCK` más tres en el pool de segunda. Nueve `%s`
+posicionales en fila se desordenan el día que alguien agrega una pata, y el
+error no es un crash: es un número mal. Por eso entra UNA sola vez, primera, en
+un CTE `tope` que el resto lee por nombre — el mismo molde que ya usaba `corte`.
+
+`NULL` significa hoy, y eso importa: **la consulta de hoy es la misma que la del
+8 con otra fecha**, no una segunda versión sin tope que se pueda ir separando.
+
+### QUÉ COLUMNA MIRA CADA PATA, que no es la misma
+
+| Pata | Columna | Por qué |
+|---|---|---|
+| Compras | `procesada_el` | Entran al stock cuando el depósito las **recepciona**, no cuando se compraron. Es la misma expresión con la que el FIFO ordena sus lotes de compra, y **tiene que serlo**: si acá dijera `fecha_operacion`, el total del artículo y el reparto por lote no coincidirían en los días entre la compra y la recepción |
+| Salidas de pedidos | `armado_el` → fecha argentina | El renglón sale del stock cuando se arma |
+| Movimientos, reprocesos, remitos | `fecha_operacion` | La fecha declarada de la operación, que es la que el módulo usa en todos lados |
+
+**Las compras viejas tienen `procesada_el` en NULL** —son de antes de que
+existiera Recepción— y caen a `fecha_operacion` con un `COALESCE`. Sin eso
+desaparecerían de TODA consulta con fecha, **la de hoy incluida**: es el tipo de
+regresión que no rompe nada y solo devuelve menos.
+
+### Lo que NO se retrocede, y es una decisión
+
+`anulado_el IS NULL` y el `DISTINCT ON` de los pedidos vigentes **se evalúan
+hoy**, no a la fecha pedida. O sea que la pantalla muestra *"lo que hoy sabemos
+que había el día X"*, no *"lo que el sistema creía el día X"*. Una anulación es
+una corrección —dice que eso nunca tendría que haber contado—, y una consulta
+histórica que resucitara pedidos ya corregidos mostraría de vuelta números que
+alguien se tomó el trabajo de arreglar.
+
+### ANTES DEL CORTE la pantalla NO contesta
+
+No es que falten datos: **las tres cuentas serían de dos épocas distintas.** El
+total del artículo lo rebasea el compensatorio (fechado la víspera del corte),
+y las cajas por ficha y el pool de segunda tienen su piso EN el corte. Pedir el
+20/08 devolvería el total del modelo viejo al lado de cero cajas y cero
+segunda. Se cae a hoy con el motivo escrito completo, en vez de mostrar tres
+números que no se pueden comparar entre sí.
+
+Es el mismo criterio que el aviso del reproceso retroactivo: cuando el corte
+parte la historia, lo que está del otro lado no se muestra a medias.
+
+### Y hay que poder VER que no es hoy
+
+Los mismos renglones con los mismos números, leídos como el estado actual, son
+una mentira. La fecha en gris chico no frena esa lectura: va un cartel amarillo
+—*"Así estaba el depósito al cierre del 08/09/2026. No es el stock de ahora"*—
+y un "Volver a hoy". El Excel se baja **a esa misma fecha** y el archivo la
+lleva en el nombre, así que dos exports de días distintos no se pisan.
+
+### La verificación que valió la pena
+
+Contra un Postgres descartable, con una compra recepcionada un día después de
+su fecha de compra:
+
+| Al… | Stock | Segunda | Cajas de la ficha |
+|---|---|---|---|
+| 06/09 (fecha de compra) | 0 | 0 | — |
+| 07/09 (día de la recepción) | 100 | 0 | — |
+| 08/09 (reproceso: −30 +20, 5 de segunda) | 90 | 5 | 20 |
+| 09/09 (se arman 8) | 82 | 5 | 12 |
+
+**Números de un fixture, no de producción**: prueban el mecanismo, no una
+magnitud. Lo que confirman es que la entrada se mide por la RECEPCIÓN (el 06/09
+da cero aunque la compra esté fechada ese día) y que las tres cuentas se cortan
+juntas.
+
+Y salió algo que no se veía venir: `now() AT TIME ZONE
+'America/Argentina/Buenos_Aires'` daba **05/09** mientras `current_date` daba
+06/09 — en UTC ya era el 6, en Argentina eran las 21:15 del 5. Un `current_date`
+pelado habría corrido "hoy" un día entero en toda consulta de la tarde. La misma
+razón por la que el módulo convierte `armado_el` en vez de castearlo.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

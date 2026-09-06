@@ -12997,6 +12997,9 @@ def _remanente(filas=None, cajas=None, fichas=None, reingresos=0, clientes=None,
         patch("app.main.listar_clientes",
               return_value=REMANENTE_CLIENTES if clientes is None else clientes),
         patch("app.main.total_reingresos_rechazo", return_value=reingresos),
+        # El corte, que es el piso de la pantalla: antes de esa fecha no
+        # puede contestar y manda a hoy con un aviso.
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
     ):
         return cliente.get(url)
@@ -13116,6 +13119,92 @@ def test_dos_cajas_del_mismo_cliente_y_MISMO_kilaje_caen_al_codigo_del_cliente()
         _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
 
     assert nombres == ["Lima Caja Día 5kg", "Lima Caja Día 5kg"]
+
+
+# --- La fecha del Remanente ---
+
+
+def test_el_remanente_sin_fecha_muestra_HOY_y_no_se_marca_como_pasado():
+    cuerpo = _remanente().text.split("</style>")[-1]
+
+    assert 'value="2026-09-06"' in cuerpo
+    assert "No es el stock de ahora" not in cuerpo
+    assert "Volver a hoy" not in cuerpo
+
+
+def test_una_fecha_pedida_llega_a_LAS_TRES_cuentas_y_al_link_del_Excel():
+    """Las tres se cortan a la misma fecha o los renglones no cierran entre sí:
+    los sueltos salen de restarle a la primera las cajas de la segunda."""
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=[{"articulo_id": 1, "nombre": "Lima", "stock": 4.0, "segunda": 0.0}]) as filas,
+        patch("app.main.cajas_armadas_por_ficha", return_value={}) as cajas,
+        patch("app.main.total_reingresos_rechazo", return_value=0) as reingresos,
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 10)),
+    ):
+        respuesta = cliente.get("/administracion/stock/remanente?fecha=2026-09-08")
+
+    pedida = date(2026, 9, 8)
+    filas.assert_called_once_with(pedida)
+    cajas.assert_called_once_with(pedida)
+    reingresos.assert_called_once_with(pedida)
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Y hay que poder VER que no es hoy, no solo la fecha en gris chico.
+    assert "Así estaba el depósito al cierre del 08/09/2026" in cuerpo
+    assert "No es el stock de ahora" in cuerpo
+    assert "Volver a hoy" in cuerpo
+    # El Excel que baja tiene que ser el de lo que se está mirando.
+    assert "exportar-excel?fecha=2026-09-08" in cuerpo
+
+
+def test_el_excel_se_baja_a_la_fecha_pedida_y_el_archivo_la_lleva_en_el_nombre():
+    """Dos exports de días distintos no se pueden pisar en la carpeta."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=[{"articulo_id": 1, "nombre": "Lima", "stock": 4.0, "segunda": 0.0}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 10)),
+    ):
+        respuesta = cliente.get(
+            "/administracion/stock/remanente/exportar-excel?fecha=2026-09-08")
+
+    assert 'filename="Remanente_08_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    assert hoja["A2"].value == "Al 08/09/2026"
+
+
+def test_una_fecha_ANTERIOR_AL_CORTE_no_se_contesta_y_dice_por_que():
+    """No es que falten datos: las tres cuentas serían de dos épocas. El total
+    lo rebasea el compensatorio y las cajas por ficha arrancan EN el corte, así
+    que el 20/08 daría el total del modelo viejo junto a cero cajas."""
+    respuesta = _remanente(url="/administracion/stock/remanente?fecha=2026-08-20")
+    cuerpo = respuesta.text.split("</style>")[-1]
+
+    assert "anterior al corte del modelo" in cuerpo
+    assert "Se muestra el día de hoy" in cuerpo
+    # Y muestra HOY de verdad, no una tabla vacía ni un error.
+    assert 'value="2026-09-06"' in cuerpo
+    assert "No es el stock de ahora" not in cuerpo
+
+
+def test_una_fecha_FUTURA_o_ROTA_cae_a_hoy_con_aviso():
+    for pedida, esperado in (("2026-12-25", "Todavía no pasó ese día"),
+                             ("mañana", "no se entendió")):
+        cuerpo = _remanente(
+            url=f"/administracion/stock/remanente?fecha={pedida}").text.split("</style>")[-1]
+        assert esperado in cuerpo
+        assert 'value="2026-09-06"' in cuerpo
 
 
 def test_los_negativos_van_ABAJO_Y_APARTE_de_las_porciones():
