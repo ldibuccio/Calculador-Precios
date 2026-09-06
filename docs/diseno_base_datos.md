@@ -3189,19 +3189,86 @@ Tres cosas que se decidieron acá:
   que alguien agregue mañana.
 - **Un grupo que el sistema NO conoce cae en "Sin grupo" y no desaparece.** Si
   se carga `bolsa` en la base sin agregarlo a `ORDEN_GRUPOS`, ese artículo
-  igual hay que contarlo. Tiene test propio: el filtro por lista blanca que
-  descarta lo que no reconoce es la forma callada de perder mercadería.
+  igual hay que contarlo. Ver la regla de abajo.
 
 **Una sección sin nada no se escribe.** Una hoja impresa con "HOJA" y ningún
 renglón abajo hace dudar de si falta algo o si no hay nada.
 
-Y el total al pie cuenta **porciones, no filas escritas**: los títulos de
-sección no son renglones que alguien tenga que ir a contar.
+Y el total al pie cuenta **porciones, no filas escritas**: ni los títulos de
+sección ni los subtotales son renglones que alguien tenga que ir a contar.
+
+### Cada sección cierra con su subtotal, y son dos cuentas distintas
+
+Al pedir el total, el dueño había dicho "uno solo al pie" — **y lo corrigió
+cuando aparecieron las secciones**, que es la corrección correcta: *"cuando
+pedí eso todavía no había secciones. Con la hoja impresa, saber cuántos bultos
+hay en Hortaliza antes de pasar a Hoja sirve para acotar dónde buscar si algo
+no cierra."*
+
+Los dos números contestan preguntas distintas: **el del pie dice si el archivo
+impreso está completo** (si no se cortó una hoja); **el de la sección acota
+dónde buscar** cuando algo no cierra, sin rehacer la suma entera. Sigue sin
+haber total por ARTÍCULO — el subtotal es de una zona del depósito, no de un
+artículo.
+
+El subtotal cumple **las mismas tres reglas que el total**, y cada una tiene su
+test:
+
+1. **Valor, no fórmula.** Importa lo que quedó impreso en el papel; una fórmula
+   puede cambiar si alguien toca una celda antes de imprimir.
+2. **La celda "Contado" vacía**, igual que arriba: si el que cuenta ve un
+   subtotal del sistema, ya tiene contra qué cuadrar sin haber contado.
+3. **Que no se lea como un renglón de mercadería.** Es lo más fácil de errar:
+   "Subtotal Hortaliza · 132" es una fila con nombre y número, o sea
+   exactamente lo que parece un producto. Se resuelve pintándolo **igual que el
+   título de su sección** — impreso, la sección queda encerrada entre dos
+   franjas grises, encabezado arriba y cierre abajo, y lo blanco del medio es
+   lo que hay que contar.
+
+Y el total del pie tiene que dar **la suma de los subtotales**: si las dos
+cuentas no cierran entre sí, el que imprime no sabe a cuál creerle. Hay un test
+que lo verifica.
+
+Efecto lateral que vale: los tests separaban las porciones de los títulos por
+"tiene número en la columna Sistema", y eso **dejó de alcanzar** el día que
+apareció el subtotal, que tiene número. Se reemplazó por un lector único que
+clasifica como clasifica el ojo del que imprime: **lo que va con relleno es
+chrome, lo blanco es mercadería.** Cinco tests que repetían la misma heurística
+frágil pasaron a leer de un solo lugar.
 
 **"bolsa" no es un grupo hoy.** Los válidos son `fruta`, `hortaliza`, `hoja` y
 `pesada` (`GRUPOS_ARTICULO_VALIDOS`). Agregar uno es un cambio en los
 artículos, no en el exportador — que ya lo va a mostrar solo, en su lugar del
 orden, apenas exista.
+
+## UN FILTRO POR LISTA BLANCA QUE DESCARTA LO QUE NO RECONOCE ES LA FORMA CALLADA DE PERDER MERCADERÍA
+
+Del dueño, el 06/09, sobre el agrupado del Excel, y va con nombre propio porque
+**no es del exportador: es de todo el sistema.**
+
+El patrón: se recorre una lista conocida —`ORDEN_GRUPOS`, un diccionario de
+etiquetas, un `in (...)`— y lo que no está en ella **no cae en ningún lado**.
+No hay error, no hay renglón raro, no hay alerta: la fila simplemente no se
+escribe. Y el día que aparece un valor nuevo en la base —porque alguien cargó
+`bolsa`, porque una migración agregó un tipo— la salida sigue pareciendo
+correcta y tiene menos cosas adentro.
+
+Es de la misma familia que el push silencioso y el editor de Supabase que
+escribe a medias: **la ausencia de error no es confirmación.** Lo que hay que
+mirar es si la suma de las partes da el total, no si el comando se quejó.
+
+De acá en adelante, **cuando se reparta una lista en categorías conocidas, el
+resto va a una categoría de descarte VISIBLE, nunca a la basura.** En el Excel
+del Remanente eso es "Sin grupo", que además es donde se va a notar; y el total
+del pie, que cuenta las porciones y no las secciones, es lo que delataría el
+faltante si algún día la red se rompiera. Con test propio, porque es
+exactamente el caso que nadie va a probar a mano.
+
+**El corolario positivo, misma entrega:** los grupos y su orden salen de
+`core/rentabilidad.py` y no de una lista nueva en el exportador. *Una lista
+nueva mandaría al final, sin que nadie se entere, al grupo que se agregue
+mañana.* Es la regla de "una regla no puede estar escrita dos veces" aplicada a
+un vocabulario: **la lista de valores válidos también es una regla de negocio.**
 
 ## LO PRÓXIMO, en orden (06/09)
 

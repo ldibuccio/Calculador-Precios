@@ -13005,6 +13005,43 @@ def _remanente(filas=None, cajas=None, fichas=None, reingresos=0, clientes=None,
         return cliente.get(url)
 
 
+def _leer_excel_remanente(**kwargs):
+    """Lee el Excel del Remanente y CLASIFICA sus filas, en un solo lugar.
+
+    Antes cada test separaba porciones de títulos por "tiene número en la
+    columna Sistema", y eso dejó de alcanzar el día que el subtotal —que
+    tiene número— se sumó. La clasificación real es visual y es la misma que
+    ve el que imprime: lo que va con relleno gris es CHROME (título o
+    subtotal) y lo que va sin relleno es MERCADERÍA.
+
+    Devuelve {"titulos", "porciones", "subtotales", "total", "por_seccion"}.
+    """
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    kwargs.setdefault("url", "/administracion/stock/remanente/exportar-excel")
+    hoja = load_workbook(BytesIO(_remanente(**kwargs).content)).active
+
+    leido = {"titulos": [], "porciones": [], "subtotales": [], "total": None, "por_seccion": {}}
+    seccion = None
+    for fila in hoja.iter_rows(min_row=5, max_col=3):
+        nombre, bultos, contado = (c.value for c in fila)
+        relleno = fila[0].fill.start_color.rgb if fila[0].fill.start_color else None
+        es_chrome = relleno is not None and "D9E2F3" in str(relleno)
+        if str(nombre or "").startswith("TOTAL"):
+            leido["total"] = (nombre, bultos, contado)
+        elif es_chrome and bultos is None:
+            seccion = nombre
+            leido["titulos"].append(nombre)
+        elif es_chrome:
+            leido["subtotales"].append((nombre, bultos, contado))
+        else:
+            leido["porciones"].append((nombre, bultos, contado))
+            leido["por_seccion"].setdefault(seccion, []).append(nombre)
+    return leido
+
+
 def _porciones_en_pantalla(texto):
     return re.findall(r'<span class="que">([^<]+)</span>\s*<span class="cuanto">([^<]+)</span>', texto)
 
@@ -13337,19 +13374,14 @@ def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():
     from openpyxl import load_workbook
 
     pantalla = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
-    hoja = load_workbook(BytesIO(
-        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
-    # Las filas de sección y el total no son porciones: se sacan por la
-    # columna "Sistema", que en ellas va vacía (el total tiene número, así
-    # que va aparte).
-    filas = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))[:-1]
-    excel = [nombre for nombre, bultos in filas if bultos is not None]
+    excel = [nombre for nombre, _b, _c in _leer_excel_remanente()["porciones"]]
 
-    # Mismo conjunto y, dentro de cada sección, el mismo orden relativo.
+    # Mismas porciones, sin perder ni inventar ninguna.
     assert sorted(excel) == sorted(pantalla)
-    del_grupo = [n for n in pantalla if n in excel]
-    assert [n for n in del_grupo if n in excel] == [n for n in pantalla if n in excel]
-    # Y las porciones de un artículo caen juntas: es para lo que sirve el orden.
+    # Y dentro de cada sección, el mismo orden relativo que la pantalla.
+    for porciones in _leer_excel_remanente()["por_seccion"].values():
+        assert porciones == [n for n in pantalla if n in porciones]
+    # Las porciones de un artículo caen juntas: es para lo que sirve el orden.
     assert pantalla[:3] == ["Berenjena Caja Día", "Mandarina", "Mandarina Caja Día"]
 
 
@@ -13361,20 +13393,17 @@ def test_el_excel_del_remanente_cierra_con_UN_total_al_pie():
 
     from openpyxl import load_workbook
 
-    hoja = load_workbook(BytesIO(
-        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
-    filas = list(hoja.iter_rows(min_row=5, max_col=3, values_only=True))
-    cuerpo, total = filas[:-1], filas[-1]
-    # Las porciones son las que tienen número; el resto son los títulos.
-    porciones = [f for f in cuerpo if f[1] is not None]
+    leido = _leer_excel_remanente()
+    porciones, total = leido["porciones"], leido["total"]
 
-    # Cuenta PORCIONES, no filas escritas: un título de sección no es un
-    # renglón que alguien tenga que ir a contar.
+    # Cuenta PORCIONES, no filas escritas: ni los títulos ni los subtotales
+    # son renglones que alguien tenga que ir a contar.
     assert total[0] == f"TOTAL — {len(porciones)} renglones"
     assert total[1] == round(sum(p[1] for p in porciones), 2)
     assert total[2] is None
-    # Ningún renglón intermedio dice TOTAL: no hay subtotales por sección.
-    assert not any(str(f[0]).startswith("TOTAL") for f in cuerpo)
+    # Y el total del pie es la suma de los subtotales: las dos cuentas tienen
+    # que cerrar entre sí o el que imprime no sabe a cuál creerle.
+    assert total[1] == round(sum(s[1] for s in leido["subtotales"]), 2)
 
 
 def test_el_excel_agrupa_por_GRUPO_y_deja_las_CAJAS_PROCESADAS_al_final():
@@ -13385,29 +13414,66 @@ def test_el_excel_agrupa_por_GRUPO_y_deja_las_CAJAS_PROCESADAS_al_final():
 
     from openpyxl import load_workbook
 
-    hoja = load_workbook(BytesIO(
-        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
-    filas = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))[:-1]
-    # Los títulos son las filas SIN número en la columna Sistema.
-    titulos = [nombre for nombre, bultos in filas if bultos is None]
+    leido = _leer_excel_remanente()
 
     # Hortaliza NO sale, y está bien: la Berenjena de la fixture tiene 20 de
     # stock y 20 en caja, así que sus sueltos son cero y su única porción es
     # la caja, que va al final.
-    assert titulos == ["Fruta", "Sin grupo", "Cajas Procesadas"]
-
-    # Cada porción cae bajo su título, y las cajas van todas al final.
-    seccion, por_seccion = None, {}
-    for nombre, bultos in filas:
-        if bultos is None:
-            seccion = nombre
-        else:
-            por_seccion.setdefault(seccion, []).append(nombre)
-
-    assert por_seccion["Fruta"] == ["Mandarina", "Mandarina Segunda", "Pomelo"]
-    assert por_seccion["Sin grupo"] == ["Mzn Gob"]
-    assert por_seccion["Cajas Procesadas"] == [
+    assert leido["titulos"] == ["Fruta", "Sin grupo", "Cajas Procesadas"]
+    assert leido["por_seccion"]["Fruta"] == ["Mandarina", "Mandarina Segunda", "Pomelo"]
+    assert leido["por_seccion"]["Sin grupo"] == ["Mzn Gob"]
+    assert leido["por_seccion"]["Cajas Procesadas"] == [
         "Berenjena Caja Día", "Mandarina Caja Día", "Pomelo Caja Día"]
+
+
+def test_cada_seccion_CIERRA_con_su_subtotal():
+    """Con la hoja impresa, saber cuántos bultos hay en una sección antes de
+    pasar a la siguiente acota DÓNDE buscar si algo no cierra, sin rehacer la
+    suma entera."""
+    leido = _leer_excel_remanente()
+
+    etiquetas = [nombre for nombre, _b, _c in leido["subtotales"]]
+    assert etiquetas == [
+        "Subtotal Fruta — 3 renglones",
+        "Subtotal Sin grupo — 1 renglón",
+        "Subtotal Cajas Procesadas — 3 renglones",
+    ]
+    # Cada uno suma lo suyo, y solo lo suyo.
+    por_etiqueta = {n: b for n, b, _c in leido["subtotales"]}
+    por_nombre = {n: b for n, b, _c in leido["porciones"]}
+    for titulo, nombres in leido["por_seccion"].items():
+        esperado = round(sum(por_nombre[n] for n in nombres), 2)
+        assert por_etiqueta[f"Subtotal {titulo} — {len(nombres)} "
+                           f"{'renglón' if len(nombres) == 1 else 'renglones'}"] == esperado
+
+
+def test_el_subtotal_sigue_LAS_MISMAS_TRES_REGLAS_que_el_total():
+    """Valor y no fórmula, "Contado" vacía, y que no se pueda confundir con un
+    renglón de mercadería: impreso tiene que leerse como cierre de sección."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    hoja = load_workbook(BytesIO(
+        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
+
+    filas_subtotal = [f for f in hoja.iter_rows(min_row=5, max_col=3)
+                      if str(f[0].value or "").startswith("Subtotal ")]
+    assert filas_subtotal
+
+    for nombre, bultos, contado in filas_subtotal:
+        # 1. VALOR, no fórmula: importa lo que quedó impreso en el papel.
+        assert isinstance(bultos.value, (int, float))
+        assert not str(bultos.value).startswith("=")
+        # 2. "Contado" vacía: si el que cuenta ve un subtotal del sistema, ya
+        #    tiene contra qué cuadrar sin haber contado.
+        assert contado.value is None
+        # 3. Se lee como CHROME, no como mercadería: mismo relleno que el
+        #    título de su sección y en negrita. Impreso, la sección queda
+        #    encerrada entre dos franjas grises.
+        for celda in (nombre, bultos, contado):
+            assert celda.font.bold
+            assert "D9E2F3" in str(celda.fill.start_color.rgb)
 
 
 def test_la_SEGUNDA_no_es_una_caja_procesada():
@@ -13417,12 +13483,10 @@ def test_la_SEGUNDA_no_es_una_caja_procesada():
 
     from openpyxl import load_workbook
 
-    hoja = load_workbook(BytesIO(
-        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
-    filas = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))
-    nombres = [f[0] for f in filas]
+    por_seccion = _leer_excel_remanente()["por_seccion"]
 
-    assert nombres.index("Mandarina Segunda") < nombres.index("Cajas Procesadas")
+    assert "Mandarina Segunda" in por_seccion["Fruta"]
+    assert "Mandarina Segunda" not in por_seccion["Cajas Procesadas"]
 
 
 def test_una_seccion_sin_nada_NO_sale_en_el_excel():
@@ -13432,16 +13496,13 @@ def test_una_seccion_sin_nada_NO_sale_en_el_excel():
 
     from openpyxl import load_workbook
 
-    filas_fixture = [{"articulo_id": 1, "nombre": "Lima", "stock": 4.0,
-                      "segunda": 0.0, "grupo": "fruta"}]
-    respuesta = _remanente(filas=filas_fixture, cajas={}, fichas=[],
-                           url="/administracion/stock/remanente/exportar-excel")
-    hoja = load_workbook(BytesIO(respuesta.content)).active
-    nombres = [f[0] for f in hoja.iter_rows(min_row=5, max_col=1, values_only=True)]
+    leido = _leer_excel_remanente(
+        filas=[{"articulo_id": 1, "nombre": "Lima", "stock": 4.0,
+                "segunda": 0.0, "grupo": "fruta"}], cajas={}, fichas=[])
 
-    assert nombres == ["Fruta", "Lima", "TOTAL — 1 renglón"]
+    assert leido["titulos"] == ["Fruta"]
     for ausente in ("Hortaliza", "Hoja", "Pesada", "Sin grupo", "Cajas Procesadas"):
-        assert ausente not in nombres
+        assert ausente not in leido["titulos"]
 
 
 def test_un_grupo_que_el_sistema_no_conoce_cae_en_SIN_GRUPO_y_no_desaparece():
@@ -13451,14 +13512,13 @@ def test_un_grupo_que_el_sistema_no_conoce_cae_en_SIN_GRUPO_y_no_desaparece():
 
     from openpyxl import load_workbook
 
-    filas_fixture = [{"articulo_id": 1, "nombre": "Papa Bolsa", "stock": 4.0,
-                      "segunda": 0.0, "grupo": "bolsa"}]
-    respuesta = _remanente(filas=filas_fixture, cajas={}, fichas=[],
-                           url="/administracion/stock/remanente/exportar-excel")
-    hoja = load_workbook(BytesIO(respuesta.content)).active
-    nombres = [f[0] for f in hoja.iter_rows(min_row=5, max_col=1, values_only=True)]
+    leido = _leer_excel_remanente(
+        filas=[{"articulo_id": 1, "nombre": "Papa Bolsa", "stock": 4.0,
+                "segunda": 0.0, "grupo": "bolsa"}], cajas={}, fichas=[])
 
-    assert nombres == ["Sin grupo", "Papa Bolsa", "TOTAL — 1 renglón"]
+    assert leido["titulos"] == ["Sin grupo"]
+    assert leido["por_seccion"]["Sin grupo"] == ["Papa Bolsa"]
+    assert leido["total"][1] == 4
 
 
 def test_el_boton_de_exportar_esta_pegado_al_de_la_fecha():

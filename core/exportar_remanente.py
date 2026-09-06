@@ -36,6 +36,13 @@ _BORDE_TOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_GRUESO, bo
 
 GRIS_SECCION_HEX = "D9E2F3"
 
+# El subtotal se pinta IGUAL que el título de su sección, y es el punto: los dos
+# son chrome, no mercadería. Impreso, la sección queda encerrada entre dos
+# franjas grises —encabezado arriba, cierre abajo— y ningún renglón con número
+# adentro se confunde con ellas. Sin el relleno, "Subtotal Hortaliza · 132" es
+# una fila con nombre y número, o sea exactamente lo que parece un producto.
+_BORDE_SUBTOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_FINO, bottom=_BORDE_FINO)
+
 
 def _secciones(porciones: list[dict]) -> list[tuple]:
     """[(título, [porciones]), ...] en el orden en que se recorre el depósito.
@@ -90,11 +97,14 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     que cuenta transcribe en vez de contar y se pierde el control cruzado
     — el mismo criterio de la pantalla de Stock Físico.
 
-    Al pie va UN total —cuántos renglones y cuántos bultos—, y no uno por
-    artículo: sirve para saber de un vistazo si el archivo impreso está
-    completo, o sea si no se cortó una hoja. Un total por artículo sería
-    otra cosa, y además es justo la suma que el dueño pidió no mostrar
-    ("80 cajones sin procesar + 40 cajas armadas no son 120 bultos").
+    Cada sección CIERRA con su subtotal y al pie va el total general. No hay
+    total por ARTÍCULO, que es otra cosa y es justo la suma que el dueño pidió
+    no mostrar ("80 cajones sin procesar + 40 cajas armadas no son 120
+    bultos"): el subtotal es de la sección, o sea de una zona del depósito.
+
+    Para qué sirve cada uno, que no es lo mismo: el del pie dice si el archivo
+    impreso está completo (si no se cortó una hoja); el de la sección acota
+    DÓNDE BUSCAR cuando algo no cierra, sin tener que rehacer la suma entera.
 
     El número va COMO VALOR, no como fórmula: lo que importa es lo que
     quedó impreso en el papel, y una fórmula no se imprime distinto pero
@@ -141,6 +151,21 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
             for columna in (1, 2, 3):
                 hoja.cell(row=fila_actual, column=columna).border = _BORDE_CELDA
             fila_actual += 1
+
+        # El cierre de la sección. Mismas tres reglas que el total del pie:
+        # el número va como VALOR (lo que importa es lo que quedó impreso), la
+        # celda "Contado" va VACÍA (si el que cuenta ve un subtotal del sistema
+        # ya tiene contra qué cuadrar sin haber contado), y se pinta como
+        # chrome para que no se lea como un renglón de mercadería.
+        cuantas = len(del_grupo)
+        etiqueta = f"Subtotal {titulo} — {cuantas} {'renglón' if cuantas == 1 else 'renglones'}"
+        subtotal = round(sum(float(p["bultos"]) for p in del_grupo), 2)
+        for columna, valor in ((1, etiqueta), (2, subtotal), (3, None)):
+            celda = hoja.cell(row=fila_actual, column=columna, value=valor)
+            celda.font = Font(bold=True)
+            celda.fill = relleno_seccion
+            celda.border = _BORDE_SUBTOTAL
+        fila_actual += 1
 
     # El total cuenta las PORCIONES, no las filas escritas: los títulos de
     # sección no son renglones que alguien tenga que ir a contar.
