@@ -6374,7 +6374,7 @@ def stock_deposito_por_articulo(hasta) -> list[dict]:
                       AND fecha_operacion <= tope.fecha
                     GROUP BY articulo_id
                 )
-                SELECT a.id AS articulo_id, a.nombre,
+                SELECT a.id AS articulo_id, a.nombre, a.grupo,
                        COALESCE(e.total, 0) AS entradas,
                        COALESCE(s.total, 0) AS salidas,
                        COALESCE(r.total, 0) AS reingresos,

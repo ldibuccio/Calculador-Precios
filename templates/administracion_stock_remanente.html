@@ -50,6 +50,7 @@
   .para-contar a { color: #1d4ed8; font-weight: 700; }
   .boton-exportar {
     display: block;
+    margin-top: 0.6rem;
     text-align: center;
     padding: 0.9rem 1rem;
     background: #fff;
@@ -179,6 +180,13 @@
       <input type="date" id="fecha" name="fecha" value="{{ fecha }}" max="{{ fecha_maxima }}">
       <button type="submit">Ver esa fecha</button>
     </form>
+    {# El exportar va ACÁ, pegado a la fecha: lo que baja es el archivo de la
+       fecha que dice el campo de arriba, y tenerlos juntos lo hace evidente.
+       Antes vivía al pie, después de toda la lista. #}
+    {% if porciones %}
+    <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel?fecha={{ fecha }}">Exportar Excel</a>
+    <p class="ayuda">Agrupado por Fruta, Hortaliza, etc., con las cajas armadas aparte al final. La columna “Contado” va vacía para anotar al lado. Los artículos con bultos sin explicar no entran, porque no hay nada que contar.</p>
+    {% endif %}
     {% if not es_hoy %}
     <a class="volver-hoy" href="/administracion/stock/remanente">Volver a hoy</a>
     {% endif %}
@@ -223,15 +231,6 @@
       no muestra ninguno de estos números: es justamente eso lo que hace que el conteo
       sirva de control y no de copia.</p>
   </div>
-
-  {% if porciones %}
-  <div class="tarjeta">
-    <a class="boton-exportar" href="/administracion/stock/remanente/exportar-excel?fecha={{ fecha }}">Exportar Excel</a>
-    {# El Excel sale con las PORCIONES y nada más: es para ir a contar, y un
-       artículo en negativo no se cuenta — no hay pila que mirar. #}
-    <p class="ayuda">Sale con una columna vacía para anotar lo contado al lado. Van las porciones de arriba; los artículos con bultos sin explicar no entran, porque no hay nada que contar.</p>
-  </div>
-  {% endif %}
 
   {# ABAJO Y APARTE, y la distancia es a propósito. Arriba está lo que HAY;
      esto es un problema a resolver. Mezclarlos como un renglón más de la

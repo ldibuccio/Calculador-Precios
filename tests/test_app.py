@@ -12962,10 +12962,10 @@ def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
 # --- El Remanente: la vista del depósito, una porción por renglón (06/09) ---
 
 REMANENTE_FILAS = [
-    {"articulo_id": 1, "nombre": "Mandarina", "stock": 35.0, "segunda": 3.0},
-    {"articulo_id": 2, "nombre": "Pomelo", "stock": 31.0, "segunda": 0.0},
-    {"articulo_id": 3, "nombre": "Mzn Gob", "stock": 20.0, "segunda": 0.0},
-    {"articulo_id": 5, "nombre": "Berenjena", "stock": 20.0, "segunda": 0.0},
+    {"articulo_id": 1, "nombre": "Mandarina", "stock": 35.0, "segunda": 3.0, "grupo": "fruta"},
+    {"articulo_id": 2, "nombre": "Pomelo", "stock": 31.0, "segunda": 0.0, "grupo": "fruta"},
+    {"articulo_id": 3, "nombre": "Mzn Gob", "stock": 20.0, "segunda": 0.0, "grupo": None},
+    {"articulo_id": 5, "nombre": "Berenjena", "stock": 20.0, "segunda": 0.0, "grupo": "hortaliza"},
 ]
 REMANENTE_CAJAS = {(1, 11): 15.0, (2, 12): 15.0, (5, 13): 20.0}
 # `nombre_cliente` es el CÓDIGO CON EL QUE EL CLIENTE nombra su producto, y acá
@@ -13339,10 +13339,16 @@ def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():
     pantalla = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
     hoja = load_workbook(BytesIO(
         _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
-    excel = [f[0] for f in hoja.iter_rows(min_row=5, max_col=1, values_only=True)]
+    # Las filas de sección y el total no son porciones: se sacan por la
+    # columna "Sistema", que en ellas va vacía (el total tiene número, así
+    # que va aparte).
+    filas = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))[:-1]
+    excel = [nombre for nombre, bultos in filas if bultos is not None]
 
-    # El último renglón del Excel es el total, que la pantalla no tiene.
-    assert excel[:-1] == pantalla
+    # Mismo conjunto y, dentro de cada sección, el mismo orden relativo.
+    assert sorted(excel) == sorted(pantalla)
+    del_grupo = [n for n in pantalla if n in excel]
+    assert [n for n in del_grupo if n in excel] == [n for n in pantalla if n in excel]
     # Y las porciones de un artículo caen juntas: es para lo que sirve el orden.
     assert pantalla[:3] == ["Berenjena Caja Día", "Mandarina", "Mandarina Caja Día"]
 
@@ -13358,13 +13364,111 @@ def test_el_excel_del_remanente_cierra_con_UN_total_al_pie():
     hoja = load_workbook(BytesIO(
         _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
     filas = list(hoja.iter_rows(min_row=5, max_col=3, values_only=True))
-    porciones, total = filas[:-1], filas[-1]
+    cuerpo, total = filas[:-1], filas[-1]
+    # Las porciones son las que tienen número; el resto son los títulos.
+    porciones = [f for f in cuerpo if f[1] is not None]
 
+    # Cuenta PORCIONES, no filas escritas: un título de sección no es un
+    # renglón que alguien tenga que ir a contar.
     assert total[0] == f"TOTAL — {len(porciones)} renglones"
     assert total[1] == round(sum(p[1] for p in porciones), 2)
     assert total[2] is None
-    # Ningún renglón intermedio dice TOTAL: no hay totales por artículo.
-    assert not any(str(p[0]).startswith("TOTAL") for p in porciones)
+    # Ningún renglón intermedio dice TOTAL: no hay subtotales por sección.
+    assert not any(str(f[0]).startswith("TOTAL") for f in cuerpo)
+
+
+def test_el_excel_agrupa_por_GRUPO_y_deja_las_CAJAS_PROCESADAS_al_final():
+    """Es para caminar el depósito: primero cada grupo de artículo en el orden
+    fijo del sistema, y al final las cajas armadas, que son una pila aparte y
+    se cuentan en otro momento."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    hoja = load_workbook(BytesIO(
+        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
+    filas = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))[:-1]
+    # Los títulos son las filas SIN número en la columna Sistema.
+    titulos = [nombre for nombre, bultos in filas if bultos is None]
+
+    # Hortaliza NO sale, y está bien: la Berenjena de la fixture tiene 20 de
+    # stock y 20 en caja, así que sus sueltos son cero y su única porción es
+    # la caja, que va al final.
+    assert titulos == ["Fruta", "Sin grupo", "Cajas Procesadas"]
+
+    # Cada porción cae bajo su título, y las cajas van todas al final.
+    seccion, por_seccion = None, {}
+    for nombre, bultos in filas:
+        if bultos is None:
+            seccion = nombre
+        else:
+            por_seccion.setdefault(seccion, []).append(nombre)
+
+    assert por_seccion["Fruta"] == ["Mandarina", "Mandarina Segunda", "Pomelo"]
+    assert por_seccion["Sin grupo"] == ["Mzn Gob"]
+    assert por_seccion["Cajas Procesadas"] == [
+        "Berenjena Caja Día", "Mandarina Caja Día", "Pomelo Caja Día"]
+
+
+def test_la_SEGUNDA_no_es_una_caja_procesada():
+    """Son bultos sueltos de calidad menor esperando el remito al Puesto, no
+    cajas armadas para un cliente. Se queda con su artículo."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    hoja = load_workbook(BytesIO(
+        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
+    filas = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))
+    nombres = [f[0] for f in filas]
+
+    assert nombres.index("Mandarina Segunda") < nombres.index("Cajas Procesadas")
+
+
+def test_una_seccion_sin_nada_NO_sale_en_el_excel():
+    """Una hoja impresa con "HOJA" y ningún renglón abajo hace dudar de si
+    falta algo o no hay."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    filas_fixture = [{"articulo_id": 1, "nombre": "Lima", "stock": 4.0,
+                      "segunda": 0.0, "grupo": "fruta"}]
+    respuesta = _remanente(filas=filas_fixture, cajas={}, fichas=[],
+                           url="/administracion/stock/remanente/exportar-excel")
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    nombres = [f[0] for f in hoja.iter_rows(min_row=5, max_col=1, values_only=True)]
+
+    assert nombres == ["Fruta", "Lima", "TOTAL — 1 renglón"]
+    for ausente in ("Hortaliza", "Hoja", "Pesada", "Sin grupo", "Cajas Procesadas"):
+        assert ausente not in nombres
+
+
+def test_un_grupo_que_el_sistema_no_conoce_cae_en_SIN_GRUPO_y_no_desaparece():
+    """Si mañana alguien carga "bolsa" en la base sin agregarlo a ORDEN_GRUPOS,
+    el artículo tiene que seguir apareciendo: se cuenta igual."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    filas_fixture = [{"articulo_id": 1, "nombre": "Papa Bolsa", "stock": 4.0,
+                      "segunda": 0.0, "grupo": "bolsa"}]
+    respuesta = _remanente(filas=filas_fixture, cajas={}, fichas=[],
+                           url="/administracion/stock/remanente/exportar-excel")
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    nombres = [f[0] for f in hoja.iter_rows(min_row=5, max_col=1, values_only=True)]
+
+    assert nombres == ["Sin grupo", "Papa Bolsa", "TOTAL — 1 renglón"]
+
+
+def test_el_boton_de_exportar_esta_pegado_al_de_la_fecha():
+    """Lo que baja es el archivo de la fecha del campo de arriba: juntos, eso
+    se ve; al pie de la lista, no."""
+    cuerpo = _remanente().text.split("</style>")[-1]
+
+    assert (cuerpo.index("Ver esa fecha")
+            < cuerpo.index("Exportar Excel")
+            < cuerpo.index("Qué hay en el depósito"))
 
 
 def test_el_total_del_excel_dice_renglon_en_singular_con_uno_solo():

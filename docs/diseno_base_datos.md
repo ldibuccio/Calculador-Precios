@@ -3167,6 +3167,42 @@ Y salió algo que no se veía venir: `now() AT TIME ZONE
 pelado habría corrido "hoy" un día entero en toda consulta de la tarde. La misma
 razón por la que el módulo convierte `armado_el` en vez de castearlo.
 
+### El Excel se agrupa por dónde se camina, no por dónde vive el dato (06/09)
+
+El archivo del Remanente sale en secciones: los grupos del artículo en el orden
+fijo del sistema (**Fruta, Hortaliza, Hoja, Pesada, Sin grupo**) y al final una
+sección propia, **Cajas Procesadas**, con las cajas armadas a una ficha.
+
+**El criterio es el recorrido físico**, no la estructura de datos: las cajas
+armadas son una pila aparte del galpón y se cuentan en otro momento, así que
+mezclarlas entre la fruta suelta obliga a saltar de un lado al otro con la hoja
+en la mano.
+
+Tres cosas que se decidieron acá:
+
+- **La SEGUNDA no es una caja procesada.** Sale de un reproceso, sí, pero son
+  bultos sueltos de calidad menor esperando el remito al Puesto, no cajas
+  armadas para un cliente. Se queda con su artículo, en su grupo.
+- **Los grupos salen de `core/rentabilidad.py`** (`ETIQUETAS_GRUPO`,
+  `ORDEN_GRUPOS`), no de una lista nueva en el exportador. Una segunda lista de
+  "cuáles son los grupos" mandaría al final, sin que nadie se entere, al grupo
+  que alguien agregue mañana.
+- **Un grupo que el sistema NO conoce cae en "Sin grupo" y no desaparece.** Si
+  se carga `bolsa` en la base sin agregarlo a `ORDEN_GRUPOS`, ese artículo
+  igual hay que contarlo. Tiene test propio: el filtro por lista blanca que
+  descarta lo que no reconoce es la forma callada de perder mercadería.
+
+**Una sección sin nada no se escribe.** Una hoja impresa con "HOJA" y ningún
+renglón abajo hace dudar de si falta algo o si no hay nada.
+
+Y el total al pie cuenta **porciones, no filas escritas**: los títulos de
+sección no son renglones que alguien tenga que ir a contar.
+
+**"bolsa" no es un grupo hoy.** Los válidos son `fruta`, `hortaliza`, `hoja` y
+`pesada` (`GRUPOS_ARTICULO_VALIDOS`). Agregar uno es un cambio en los
+artículos, no en el exportador — que ya lo va a mostrar solo, en su lugar del
+orden, apenas exista.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

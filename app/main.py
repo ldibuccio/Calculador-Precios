@@ -6576,8 +6576,10 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
         # Los sueltos por RESTA, como en todo el módulo: así las porciones
         # suman el total del artículo sin que se pueda perder ni duplicar.
         sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
+        grupo = fila.get("grupo")
         if sueltos > 0:
-            porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo, "bultos": sueltos})
+            porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo,
+                              "bultos": sueltos, "grupo": grupo, "procesada": False})
         # Cuántas cajas de ESTE artículo tiene cada cliente acá: con una sola
         # el nombre va limpio, con dos hay que poder distinguirlas.
         cuantas = Counter(
@@ -6593,9 +6595,15 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
                     if ficha else f"{articulo} Caja (ficha #{ficha_id})"
                 ),
                 "bultos": round(float(bultos), 2),
+                "grupo": grupo,
+                # Las cajas armadas van a su propia sección del Excel: en el
+                # piso son una pila aparte, no están con la fruta suelta.
+                "procesada": True,
             })
         if float(fila["segunda"]) > 0:
-            porciones.append({"articulo": articulo, "orden": 2,
+            # La segunda NO es una caja procesada: son bultos sueltos de
+            # calidad menor esperando el remito al Puesto. Va con su artículo.
+            porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
                               "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2)})
 
     porciones.sort(key=lambda p: (_clave_alfabetica(p["articulo"]), p["orden"], _clave_alfabetica(p["nombre"])))

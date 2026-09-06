@@ -11,6 +11,17 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Border, Font, PatternFill, Side
 
+# Los grupos y su orden salen del MISMO lugar que los usa el resto del sistema.
+# Escribir acá otra lista sería una segunda versión de "cuáles son los grupos",
+# y el día que se agregue uno este archivo lo mandaría al final sin que nadie
+# se entere.
+from core.rentabilidad import ETIQUETA_SIN_GRUPO, ETIQUETAS_GRUPO, ORDEN_GRUPOS
+
+# Las cajas armadas van APARTE y al final: en el piso son una pila propia, no
+# están mezcladas con la fruta suelta, y el que cuenta las cuenta en otro
+# momento. No es un grupo de artículo — por eso no está en ORDEN_GRUPOS.
+SECCION_PROCESADAS = "Cajas Procesadas"
+
 FILA_ENCABEZADO = 4
 FILA_PRIMER_DATO = FILA_ENCABEZADO + 1
 
@@ -23,13 +34,50 @@ _BORDE_CELDA = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_FINO, bott
 _BORDE_GRUESO = Side(style="medium", color="000000")
 _BORDE_TOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_GRUESO, bottom=_BORDE_FINO)
 
+GRIS_SECCION_HEX = "D9E2F3"
+
+
+def _secciones(porciones: list[dict]) -> list[tuple]:
+    """[(título, [porciones]), ...] en el orden en que se recorre el depósito.
+
+    Primero los grupos de artículo, en el orden fijo del sistema, y al final
+    las cajas procesadas. Una sección sin nada no sale: una hoja impresa con
+    "HOJA" y ningún renglón abajo hace dudar de si falta algo o no hay.
+    """
+    procesadas = [p for p in porciones if p.get("procesada")]
+    sueltas = [p for p in porciones if not p.get("procesada")]
+
+    secciones = []
+    for grupo in ORDEN_GRUPOS:
+        del_grupo = [p for p in sueltas if p.get("grupo") == grupo]
+        if del_grupo:
+            secciones.append((ETIQUETAS_GRUPO.get(grupo, ETIQUETA_SIN_GRUPO), del_grupo))
+    # Un grupo que el sistema todavía no conoce no puede desaparecer del
+    # archivo: cae en "Sin grupo" con el resto, que es donde se va a notar.
+    conocidos = set(ORDEN_GRUPOS)
+    huerfanas = [p for p in sueltas if p.get("grupo") not in conocidos]
+    if huerfanas:
+        secciones.append((ETIQUETA_SIN_GRUPO, huerfanas))
+    if procesadas:
+        secciones.append((SECCION_PROCESADAS, procesadas))
+    return secciones
+
 
 def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     """El remanente en una hoja: una fila por porción más el total al pie, en el orden en que viene.
 
-    porciones: [{"nombre": str, "bultos": float}, ...] — ya ordenadas por
-    app/main.py. Acá no se reordena nada: si el Excel saliera en otro orden
-    que la pantalla, serían dos criterios y se irían separando.
+    porciones: [{"nombre", "bultos", "grupo", "procesada"}, ...] — ya
+    ordenadas por app/main.py. Acá no se REORDENA nada: solo se reparten en
+    secciones respetando el orden que traen, así que dentro de cada grupo
+    quedan igual que en la pantalla. Si el Excel las reordenara, serían dos
+    criterios y se irían separando.
+
+    LAS SECCIONES son los grupos del artículo (Fruta, Hortaliza, Hoja,
+    Pesada, Sin grupo) más una propia al final, "Cajas Procesadas", con las
+    cajas armadas a una ficha. Es para caminar el depósito: las cajas armadas
+    son una pila aparte y se cuentan en otro momento. La segunda NO va ahí
+    —son bultos sueltos de calidad menor, no cajas— y se queda con su
+    artículo.
 
     SIN PLATA, y no es un olvido: el costo por bulto vive en el LOTE, no en
     el artículo —los mismos 30 bultos pueden venir de tres compras a tres
@@ -75,15 +123,27 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
         celda.fill = relleno
         celda.border = _BORDE_CELDA
 
+    relleno_seccion = PatternFill(start_color=GRIS_SECCION_HEX, end_color=GRIS_SECCION_HEX,
+                                  fill_type="solid")
     fila_actual = FILA_PRIMER_DATO
-    for porcion in porciones:
-        hoja.cell(row=fila_actual, column=1, value=porcion["nombre"])
-        hoja.cell(row=fila_actual, column=2, value=float(porcion["bultos"]))
-        # La tercera queda vacía: se llena a mano.
+    for titulo, del_grupo in _secciones(porciones):
         for columna in (1, 2, 3):
-            hoja.cell(row=fila_actual, column=columna).border = _BORDE_CELDA
+            celda = hoja.cell(row=fila_actual, column=columna,
+                              value=titulo if columna == 1 else None)
+            celda.font = Font(bold=True)
+            celda.fill = relleno_seccion
+            celda.border = _BORDE_CELDA
         fila_actual += 1
+        for porcion in del_grupo:
+            hoja.cell(row=fila_actual, column=1, value=porcion["nombre"])
+            hoja.cell(row=fila_actual, column=2, value=float(porcion["bultos"]))
+            # La tercera queda vacía: se llena a mano.
+            for columna in (1, 2, 3):
+                hoja.cell(row=fila_actual, column=columna).border = _BORDE_CELDA
+            fila_actual += 1
 
+    # El total cuenta las PORCIONES, no las filas escritas: los títulos de
+    # sección no son renglones que alguien tenga que ir a contar.
     renglones = len(porciones)
     total = round(sum(float(p["bultos"]) for p in porciones), 2)
     etiqueta = f"TOTAL — {renglones} {'renglón' if renglones == 1 else 'renglones'}"
