@@ -141,6 +141,20 @@ from app.db import (
 )
 
 
+def _consulta_con(cursor, marca):
+    """La ÚNICA consulta ejecutada que contiene `marca`.
+
+    Se busca por contenido y no por índice: `call_args_list[0]` deja de ser
+    la consulta que uno cree apenas alguien agrega una lectura antes —pasó
+    con el piso del corte, que metió un SELECT a corte_modelo adelante— y un
+    assert que corre sobre otra consulta falla por el motivo equivocado o,
+    peor, pasa.
+    """
+    consultas = [c.args[0] for c in cursor.execute.call_args_list if marca in c.args[0]]
+    assert len(consultas) == 1, f"Se esperaba UNA consulta con {marca!r}, hay {len(consultas)}"
+    return consultas[0]
+
+
 def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
     """Arma una conexión y un cursor falsos: cada fetchone()/fetchall() devuelve el próximo valor de la lista dada."""
     cursor = MagicMock()
@@ -4080,7 +4094,9 @@ def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
 
 
 def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
-    conexion, cursor = _conexion_falsa()
+    # El primer fetchone es el corte: desde el piso, la consulta de entradas
+    # lo lee antes para no mirar nada anterior.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 8, 1),)])
     cursor.description = [
         ("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("fecha_lote",), ("detalle",), ("motivo",),
         ("cantidad",), ("articulo_id",),
@@ -4093,7 +4109,7 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     with patch("app.db.obtener_conexion", return_value=conexion):
         entradas, salidas = entradas_y_salidas_stock_articulo(2)
 
-    consulta_entradas = cursor.execute.call_args_list[0].args[0]
+    consulta_entradas = _consulta_con(cursor, "c.estado = 'recepcionado'")
     # El lote de una compra es su guía; el orden, el instante de recepción.
     assert "c.estado = 'recepcionado'" in consulta_entradas
     assert "procesada_el" in consulta_entradas
@@ -4108,8 +4124,9 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     # Desde E4 las salidas son las MISMAS que las del FIFO de costo: una por
     # una, fechadas, y las dirigidas adentro con su lote_tipo — ya no hay un
     # total sin fecha ni una tercera consulta aparte.
-    assert cursor.execute.call_count == 2
-    consulta_salidas = cursor.execute.call_args_list[1].args[0]
+    # TRES consultas: el corte, los lotes y las salidas.
+    assert cursor.execute.call_count == 3
+    consulta_salidas = _consulta_con(cursor, "'reproceso_toma'")
     assert "DISTINCT ON (cliente_id, fecha_operacion)" in consulta_salidas
     assert "m.cantidad < 0" in consulta_salidas
     assert "m.lote_tipo, m.lote_origen_id" in consulta_salidas
@@ -4120,10 +4137,105 @@ def test_entradas_y_salidas_para_fifo_ordena_por_fecha_real_del_hecho():
     assert entradas[0]["orden"] == (date(2026, 8, 20), "10:00")
 
 
+def test_el_FIFO_no_mira_nada_ANTERIOR_al_corte_en_ninguna_de_las_tres_patas():
+    """El piso va en las TRES patas de la consulta de lotes, no en una.
+
+    Medido el 07/09: 18 de las 32 guías R de dos días se habían costeado
+    contra lotes que el corte declaró inexistentes ($4.705.353). El
+    compensatorio del corte cancela el saldo viejo en el TOTAL, pero opera
+    sobre el neto y el FIFO razona por lote, así que los restantes
+    sobrevivían al cierre.
+
+    Cada assert lleva el alias de SU tabla: las tres columnas se llaman
+    parecido y un substring pelado matchearía la pata equivocada.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 5),)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [[], []]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        entradas_y_salidas_stock_articulo(1)
+
+    consulta = _consulta_con(cursor, "c.estado = 'recepcionado'")
+    # Compras: por el instante de recepción en hora argentina, que es el
+    # mismo que ordena el lote — no por fecha_operacion, que es la del hecho.
+    assert "(c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= %s" in consulta
+    assert "m.fecha_operacion >= %s" in consulta
+    assert "rp.fecha_operacion >= %s" in consulta
+
+    # Y la fecha SALE de corte_modelo: una constante clavada quedaría
+    # mintiendo el día que se haga un corte nuevo.
+    assert _consulta_con(cursor, "corte_modelo")
+    parametros = [c.args[1] for c in cursor.execute.call_args_list if len(c.args) > 1]
+    assert parametros[0] == ([1], date(2026, 9, 5), [1], date(2026, 9, 5), [1], date(2026, 9, 5))
+
+
+def test_el_compensatorio_del_corte_sale_POR_TIPO_y_no_por_fecha():
+    """Está fechado EN el corte: un piso por fecha lo dejaría adentro.
+
+    Y tiene que salir de las DOS listas. Como lote (el positivo) sería
+    mercadería que no existe; como salida (el negativo) le restaría a los
+    lotes NUEVOS bultos que nunca salieron de ellos, que es el mismo doble
+    conteo del otro lado.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 5),)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [[], []]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        entradas_y_salidas_stock_articulo(1)
+
+    assert "m.tipo <> 'cierre_modelo_viejo'" in _consulta_con(cursor, "c.estado = 'recepcionado'")
+    assert "m.tipo <> 'cierre_modelo_viejo'" in _consulta_con(cursor, "'reproceso_toma'")
+
+
+def test_las_SALIDAS_no_llevan_piso_y_eso_es_a_proposito():
+    """Recortarlas borraría entregas de la Rentabilidad Real.
+
+    Una salida anterior al corte no puede alcanzar un lote nuevo igual:
+    `lote_posterior_a_la_salida` ya se lo impide, así que cae sola a
+    `sin_lote` y se ve. Sacarla de la lista sería otra cosa —desaparecer
+    del listado—, y un costo incompleto es un dato, una entrega que no
+    aparece es un dato perdido.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 5),)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [[], []]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        entradas_y_salidas_stock_articulo(1)
+
+    salidas = _consulta_con(cursor, "'reproceso_toma'")
+    # Ninguna de las tres patas de salidas filtra por el corte.
+    assert "r.armado_el" in salidas and ">= %s" not in salidas
+    assert "rp.fecha_operacion >= " not in salidas
+
+
+def test_crear_reproceso_lee_el_corte_UNA_sola_vez():
+    """El piso de fecha y el piso de los lotes son la misma fecha.
+
+    Los dos salen de `_fecha_corte`, que es una sola definición; lo que se
+    evita acá es pagar dos viajes a la base por el mismo dato adentro de la
+    misma transacción.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (77,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 20), 20.0, 1000.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 20))
+
+    lecturas = [c for c in cursor.execute.call_args_list if "corte_modelo" in c.args[0]]
+    assert len(lecturas) == 1
+
+
 def test_entradas_de_varios_articulos_devuelve_una_entrada_por_cada_id_pedido():
     # Igual que las salidas: el artículo sin movimientos sale en cero y con
     # listas vacías, no ausente. Y en UNA sola conexión para todos.
-    conexion, cursor = _conexion_falsa()
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 8, 1),)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0, articulo_id=2)],
@@ -4139,10 +4251,10 @@ def test_entradas_de_varios_articulos_devuelve_una_entrada_por_cada_id_pedido():
     assert [s["cantidad"] for s in salidas_2] == [20.0]
     # El que no tuvo nada sale con las dos listas vacías, nunca ausente.
     assert movimientos[7] == ([], [])
-    # DOS consultas en total (lotes y salidas), no dos por artículo — y una
-    # sola conexión. Desde E4 la tercera (las dirigidas aparte) ya no existe:
-    # cada dirigida es una salida más.
-    assert cursor.execute.call_count == 2
+    # TRES consultas en total (el corte, los lotes y las salidas), no tres
+    # por artículo — y una sola conexión. La de las dirigidas aparte ya no
+    # existe desde E4: cada dirigida es una salida más.
+    assert cursor.execute.call_count == 3
     assert conexion.close.call_count == 1
 
 
