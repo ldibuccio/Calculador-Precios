@@ -3729,7 +3729,12 @@ def test_listar_renglones_pedidos_vigentes_suma_por_fecha_y_articulo():
     # Solo pedidos VIGENTES: uno por fecha (el más nuevo sin anular) — los
     # reemplazados no cuentan la demanda dos veces.
     assert "DISTINCT ON (fecha_operacion)" in consulta
-    assert "anulado_el IS NULL" in consulta
+    # LOS DOS anulado_el, cada uno CALIFICADO CON SU TABLA. Sin calificar,
+    # este assert era `"anulado_el IS NULL" in consulta` y pasaba con el de
+    # `pedidos`: parecía cubrir el renglón anulado y nunca lo miró. Es la
+    # familia del test que comparaba tres campos de cinco.
+    assert "WHERE cliente_id = %s AND anulado_el IS NULL" in consulta  # pedidos
+    assert "JOIN pedidos_renglones r ON r.pedido_id = v.id AND r.anulado_el IS NULL" in consulta
     assert "SUM(r.cantidad)" in consulta
     assert "LEFT JOIN articulos" in consulta
     assert parametros == (1, date(2026, 8, 15), date(2026, 8, 22))
@@ -3818,6 +3823,31 @@ def test_cerrar_y_reabrir_armado_pedido():
     assert "SET armado_cerrado_el = NULL" in cursor2.execute.call_args.args[0]
 
 
+def test_listar_renglones_pedidos_vigentes_no_cuenta_el_renglon_anulado():
+    """La CRUZ del armado no se vendió: no puede sumar a la rentabilidad teórica.
+
+    Se verifica sobre la consulta y no sobre filas mockeadas a propósito: el
+    filtro lo hace Postgres, así que un fixture que devuelva lo que yo quiera
+    probaría mi aritmética, no la regla. Lo que hay que afirmar es que el
+    JOIN lo pide.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [
+        ("fecha_operacion",), ("ficha_id",), ("articulo_id",), ("articulo_nombre",),
+        ("articulo_grupo",), ("bultos",),
+    ]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_renglones_pedidos_vigentes(1, date(2026, 8, 15), date(2026, 8, 22))
+
+    consulta = cursor.execute.call_args.args[0]
+    # El criterio de las OTRAS dieciséis lectoras de pedidos_renglones, y el
+    # de las tres que derivan las salidas de stock — que es contra las que
+    # esta cuenta se compara en /gerencia/rentabilidad-real.
+    assert "r.anulado_el IS NULL" in consulta
+
+
 def test_buscar_renglones_pedidos_trae_kilos_y_anulados_de_los_vigentes():
     conexion, cursor = _conexion_falsa()
     cursor.description = [
@@ -3832,9 +3862,14 @@ def test_buscar_renglones_pedidos_trae_kilos_y_anulados_de_los_vigentes():
     consulta, parametros = cursor.execute.call_args.args
     # Solo pedidos VIGENTES (uno por fecha) y los kilos REALES grabados.
     assert "DISTINCT ON (fecha_operacion)" in consulta
-    assert "anulado_el IS NULL" in consulta
+    assert "WHERE cliente_id = %s AND anulado_el IS NULL" in consulta  # pedidos
     assert "r.kilos_enviados" in consulta
+    # Acá el renglón anulado SÍ viene, y es a propósito: Buscar Pedidos los
+    # muestra marcados ("registrados, nunca desaparecen") y los descuenta al
+    # sumar, en Python. Queda escrito para que no se lea como el olvido que
+    # sí tenía listar_renglones_pedidos_vigentes.
     assert "r.anulado_el" in consulta
+    assert "r.anulado_el IS NULL" not in consulta
     assert parametros == (1, date(2026, 8, 15), date(2026, 8, 22))
 
 

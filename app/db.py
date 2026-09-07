@@ -6249,6 +6249,26 @@ def listar_renglones_pedidos_vigentes(cliente_id: int, fecha_desde, fecha_hasta)
     nombre y grupo NULL: se reportan aparte, nunca se descartan en
     silencio. Suma sobre TODAS las sucursales: la rentabilidad es del
     artículo, no de la sucursal.
+
+    SE FILTRAN LOS DOS anulado_el, Y HACEN FALTA LOS DOS. El de `pedidos`
+    saca el pedido reemplazado; el de `pedidos_renglones` saca la CRUZ del
+    armado (ver anular_renglon_pedido): ese renglón no se armó y no salió
+    del galpón. Hasta el 07/09 solo estaba el primero, y era el único
+    lector de pedidos_renglones que no filtraba el segundo — los otros
+    dieciséis sí, incluidas las tres consultas que derivan las salidas de
+    stock.
+
+    Lo que eso rompía no era el total: era la COMPARATIVA de
+    /gerencia/rentabilidad-real. La real sale de los movimientos de stock,
+    que sí excluyen el anulado; la teórica salía de acá, que no. El renglón
+    anulado aparecía de un lado y no del otro, y la diferencia —que esa
+    pantalla promete que es "exactamente la lista de cosas a explicar
+    (merma, reproceso, kilajes), nunca ruido de cuentas distintas"— se lo
+    comía como si fuera merma.
+
+    Ojo al leer histórico: anular un renglón viejo cambia la teórica de ese
+    día. Ya pasaba antes al revés (anularlo lo SUMABA, porque `cantidad` no
+    se limpia al anular; `kilos_enviados` y el tilde sí).
     """
     conexion = obtener_conexion()
     try:
@@ -6266,7 +6286,7 @@ def listar_renglones_pedidos_vigentes(cliente_id: int, fecha_desde, fecha_hasta)
                        a.nombre AS articulo_nombre, a.grupo AS articulo_grupo,
                        SUM(r.cantidad) AS bultos
                 FROM vigentes v
-                JOIN pedidos_renglones r ON r.pedido_id = v.id
+                JOIN pedidos_renglones r ON r.pedido_id = v.id AND r.anulado_el IS NULL
                 LEFT JOIN articulos a ON a.id = r.articulo_id
                 GROUP BY v.fecha_operacion, r.ficha_id, r.articulo_id, a.nombre, a.grupo
                 ORDER BY v.fecha_operacion, a.nombre

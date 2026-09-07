@@ -3927,6 +3927,31 @@ Y dos que esperan un dato, no una decisión:
   si el envase alcanza para distinguir "chica" de "grande" o si falta el dato
   en la ficha.
 
+Y dos que esperan que aparezca el CASO, no un dato ni una decisión — los dos
+del relevamiento del 07/09 de "Sin asignar" en las guías R, que cerró en **cero
+filas desde el corte**:
+
+- **La alerta de guía R sin ficha asignada.** La pantalla para completarla ya
+  existe (`/administracion/stock/guias-r`, botón "Guardar ficha"), así que la
+  promesa de "se completa después" es cierta — pero **es pasiva**: no hay
+  ninguna alerta que avise que quedó algo por completar, y la ficha sin asignar
+  está deliberadamente no pintada de rojo (*"no es un error, es un dato que
+  falta y que se completa acá mismo"*). Con cero casos **no se hace**: una
+  alerta que nunca se prende enseña a ignorar las otras, que es justo el
+  argumento por el que partimos la de Guías R el 06/09. El día que aparezcan
+  guías sin ficha y nadie las complete, la corrección es esa alerta, con el
+  molde de `guias_r_costo_incompleto` y la URL de Guías R. Se mide con
+  `db/guias_r_sin_ficha.sql`, que ya parte los casos por motivo.
+- **El NULL de `reprocesos.ficha_id` con dos significados.** Es el MISMO NULL
+  para "dato viejo de antes del corte que no se completa" y para "sin asignar,
+  hay que completarlo"; lo único que los separa es `fecha_operacion` contra
+  `corte_modelo.fecha`. La separación es sólida mientras todo el que lea la
+  columna filtre por el corte — y esa es la debilidad: el que se olvide mezcla,
+  sin error y sin síntoma, solo un número más grande. Es la familia de al lado
+  de "una regla escrita dos veces": no está duplicada, pero **depende de que
+  alguien se acuerde**. Con cero casos no vale una migración. Si algún día se
+  llena, la salida es separarlos en el DATO y no en la memoria.
+
 Después de esos tres sigue la cola de antes: baja lógica de fichas → el CHECK
 ampliado de `pedidos_renglones`; E4 (guías R atrasadas); los negativos de F; y
 la rama huérfana `origin/claude/retenido-stock-fisico`.

@@ -178,6 +178,34 @@ Los dos síntomas que lo escondieron, y valen como señal para la próxima:
   compara la estructura ENTERA: que falle el día que alguien agrega un campo es
   la función del test, no una molestia.
 
+Corolario 4, del 07/09: **un assert de substring sobre SQL tiene que calificar
+la tabla.** `listar_renglones_pedidos_vigentes` no filtraba
+`pedidos_renglones.anulado_el` —era la ÚNICA de diecisiete lectoras que no lo
+hacía— y su test decía:
+
+```python
+assert "anulado_el IS NULL" in consulta
+```
+
+Pasaba, y siempre pasó: matcheaba el `anulado_el IS NULL` de **`pedidos`**, que
+sí estaba. El test parecía cubrir el renglón anulado y nunca lo miró. Es la
+misma forma que el test de tres campos de cinco —afirmar un subconjunto y creer
+que se afirmó el todo—, pero adentro de una sola línea.
+
+Lo que lo esconde es que las dos tablas usan el mismo nombre de columna. Por
+eso: en una consulta con más de una tabla, el assert va con el alias
+(`r.anulado_el IS NULL`) o con suficiente contexto (`WHERE cliente_id = %s AND
+anulado_el IS NULL`) como para que solo pueda matchear lo que se quiso probar.
+
+Y el daño no estuvo en el total, que es lo que lo dejó vivir: estuvo en la
+COMPARATIVA de `/gerencia/rentabilidad-real`, donde la teórica salía de esa
+consulta y la real de los movimientos de stock, que sí excluyen el anulado. La
+diferencia entre las dos —que el docstring de esa pantalla promete que es
+*"exactamente la lista de cosas a explicar (merma, reproceso, kilajes), nunca
+ruido de cuentas distintas"*— se comía el renglón anulado como si fuera merma.
+**Un criterio que se separa no siempre mueve un total; a veces solo ensucia una
+resta, y ahí es más difícil de ver.**
+
 ## Un fixture construido a partir de la hipótesis no prueba la hipótesis: la repite
 
 Pasó el 04/09. Del cliente llegaron dos números reales de pantalla —"74 cajas
