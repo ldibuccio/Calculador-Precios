@@ -8720,7 +8720,12 @@ ALERTAS = [
         titulo_corto="Pedidos incompletos",
         url="/deposito/pedido",
         texto_link="Ver en Pedido",
-        modulos=("deposito",),
+        # A LOS DOS. El depósito la ve porque es el que armó de menos; el
+        # comprador porque puede ser la causa —si se entregó de menos puede
+        # ser que se haya comprado de menos— y es el único que lo puede
+        # corregir, comprando mañana. Es la MISMA alerta y la MISMA cuenta:
+        # `modulos` decide en qué cintas aparece, no cuántas veces se calcula.
+        modulos=("deposito", "compras"),
         # CON ventana, al revés que las compras sin precio: un pedido que ya
         # salió incompleto no se puede completar después. Sin ventana quedaría
         # en la lista para siempre, sin forma de resolverlo ni limpiarlo.

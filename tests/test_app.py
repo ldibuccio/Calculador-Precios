@@ -8153,6 +8153,26 @@ def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
     assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/compras/nueva/manual"')
 
 
+def test_los_pedidos_incompletos_se_ven_TAMBIEN_en_compras():
+    """El depósito la ve porque armó de menos; el comprador porque puede ser
+    la causa —se entregó de menos porque se compró de menos— y es el único
+    que lo puede corregir, comprando mañana.
+
+    Es la MISMA alerta y la MISMA cuenta: `modulos` decide en qué cintas
+    aparece, no cuántas veces se calcula.
+    """
+    foto = _foto_alertas({"pedidos_incompletos": (3, date(2026, 9, 2))})
+    with patch("app.main.listar_estado_alertas", return_value=foto) as mock_foto:
+        de_compras = cliente.get("/compras")
+        del_deposito = cliente.get("/deposito")
+
+    for respuesta in (de_compras, del_deposito):
+        assert "Pedidos incompletos (3)" in respuesta.text
+        assert 'href="/deposito/pedido"' in respuesta.text
+    # UNA consulta por pantalla, la de la foto: la cuenta no se repite.
+    assert mock_foto.call_count == 2
+
+
 def test_ver_compras_sin_alertas_no_muestra_banner():
     with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
         respuesta = cliente.get("/compras")
