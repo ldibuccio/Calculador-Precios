@@ -365,3 +365,61 @@ nunca se cargaron.
 
 **El corolario práctico**: un total que cierra no prueba que las unidades
 estén bien. La mezcla se esconde justamente en el número que más se mira.
+
+## El compensatorio NO descuenta dos veces (07/09)
+
+Hipótesis razonable y equivocada: que el compensatorio se hubiera calculado
+sobre un saldo que ya tenía restadas las entregas del día del corte, y que el
+stock inicial —foto de las 16:30— las restara de nuevo.
+
+No puede pasar, y se ve en el script (`db/corte2_frutamax.sql`, bloque 3):
+**el saldo `st` se calcula SIN NINGÚN TOPE DE FECHA.** Suma todas las
+compras, todas las salidas, todos los movimientos y todos los reprocesos de
+la historia entera. El compensatorio es `-st`.
+
+Por eso cancela la historia COMPLETA, esas 30 cajas incluidas, y el total
+después del corte queda igual a la foto y nada más:
+
+    total = st + (−st) + foto = foto
+
+Sea `st` correcto o no, se cancela exacto. **Un compensatorio calculado sobre
+el saldo entero es inmune a este error por construcción**, y es justamente
+por qué la cuenta 1 no necesita la asimetría que sí necesitan las otras: el
+comentario de `_SQL_STOCK_PARTIDO` ya lo decía — *"el total del ARTÍCULO no
+tiene este problema porque no se rebasea con una fecha sino con el
+compensatorio, que es una FOTO tomada esa misma tarde"*.
+
+La única condición es que el bloque 3 haya corrido **después** del conteo, y
+corrió: la foto se carga recién en el paso 5.
+
+### Dónde estaba el doble descuento de verdad
+
+En el piso del FIFO y en `corte_fifo_8`, los dos escritos por mí con `>=`.
+Mango lo prueba con los números del galpón: sus tres armados del 05/09
+(12:39, 12:42 y 12:44) suman **30 cajas**, y su `faltaban_al_corte` daba
+**30**. Con el día del corte afuera, da **cero**.
+
+La diferencia entre los dos mecanismos vale como regla: **un rebase por RESTA
+del saldo entero se cancela solo; un rebase por FILTRO DE FECHA no sabe a qué
+hora se contó.** El primero es inmune, el segundo hay que partirlo a mano.
+
+## Cómo se evita en el próximo corte
+
+Las dos salidas propuestas empeoran las cosas:
+
+- **Compensatorio con el saldo del día anterior**: rompería la inmunidad de
+  arriba. Los movimientos del día del corte dejarían de cancelarse y pasarían
+  a jugar contra la foto — que es el doble descuento que hoy no existe.
+- **Stock inicial fechado al día siguiente**: dejaría al día del corte sin
+  ninguna foto contra la cual medirse, y el FIFO con un día en blanco.
+
+La salida correcta es **contar antes de que arranque el trabajo**, a primera
+hora. Ahí el día del corte no tiene movimientos anteriores a la foto y **la
+asimetría desaparece en vez de compensarse**, que hoy hay que hacerlo en tres
+lugares distintos (pool de segunda, cuenta por ficha y FIFO) y ya nos costó
+una copia olvidada.
+
+Si contar a la mañana no se puede, lo segundo mejor es lo que hay ahora: la
+regla asimétrica en toda cuenta que lea la foto. Pero entonces **el
+procedimiento tiene que listar esas cuentas**, porque la próxima que se
+agregue va a nacer sin ella.
