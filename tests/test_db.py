@@ -3897,6 +3897,7 @@ from app.db import (  # noqa: E402
     crear_movimiento_stock,
     devoluciones_vinculadas_por_rango,
     facturacion_por_ficha,
+    listar_ultimos_conteos_stock,
     entradas_y_salidas_stock_articulo,
     entradas_y_salidas_stock_articulos,
     listar_pedidos_para_reingreso,
@@ -5704,3 +5705,43 @@ def test_facturacion_por_ficha_excluye_el_renglon_anulado():
         facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
 
     assert "r.anulado_el IS NULL" in cursor.execute.call_args.args[0]
+
+
+def test_listar_ultimos_conteos_stock_sin_tope_es_el_cotejo_de_siempre():
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("articulo_id",), ("ficha_id",), ("cantidad",),
+                          ("stock_sistema",), ("creado_en",), ("articulo_nombre",),
+                          ("ficha_nombre",), ("ficha_cliente",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ultimos_conteos_stock()
+
+    consulta, parametros = cursor.execute.call_args.args
+    # El último por PORCIÓN, en el orden del índice conteos_stock_cotejo_idx.
+    assert "DISTINCT ON (c.articulo_id, c.ficha_id)" in consulta
+    assert "ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC" in consulta
+    # None = sin tope: el Cotejo siempre mira el presente.
+    assert parametros == (None, None)
+
+
+def test_listar_ultimos_conteos_stock_con_tope_no_trae_conteos_posteriores():
+    """El Remanente a una fecha pasada no puede traer el conteo de HOY.
+
+    Sin este tope, el Remanente del 03/09 mostraría físico del futuro contra
+    sistema del pasado adentro del mismo archivo, y nada lo diría.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("articulo_id",), ("ficha_id",), ("cantidad",),
+                          ("stock_sistema",), ("creado_en",), ("articulo_nombre",),
+                          ("ficha_nombre",), ("ficha_cliente",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ultimos_conteos_stock(date(2026, 9, 3))
+
+    consulta, parametros = cursor.execute.call_args.args
+    # Por el DÍA en hora argentina, no por el timestamp crudo: un conteo de
+    # las 21:15 del 03/09 es del 03/09 acá y del 04/09 en UTC.
+    assert "(c.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= %s::date" in consulta
+    assert parametros == (date(2026, 9, 3), date(2026, 9, 3))

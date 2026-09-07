@@ -13202,9 +13202,21 @@ REMANENTE_FICHAS = [
 ]
 REMANENTE_CLIENTES = [{"id": 1, "nombre": "Día"}, {"id": 2, "nombre": "Vea"}]
 
+# Los conteos cubren los tres casos que el Excel tiene que distinguir:
+# COINCIDE (Mandarina sueltos: 20 contra 20), DIFIERE (caja de Pomelo: 13
+# contra 15, faltan 2) y SIN CONTEO (todo el resto). La foto (stock_sistema)
+# va DISTINTA del stock de hoy en el que difiere, que es justo el caso donde
+# se ve que la diferencia no sale de restar las columnas de al lado.
+REMANENTE_CONTEOS = [
+    {"articulo_id": 1, "ficha_id": None, "cantidad": 20.0, "stock_sistema": 20.0,
+     "creado_en": datetime(2026, 9, 6, 8, 30)},
+    {"articulo_id": 2, "ficha_id": 12, "cantidad": 13.0, "stock_sistema": 15.0,
+     "creado_en": datetime(2026, 9, 2, 7, 15)},
+]
+
 
 def _remanente(filas=None, cajas=None, fichas=None, reingresos=0, clientes=None,
-               url="/administracion/stock/remanente"):
+               conteos=None, url="/administracion/stock/remanente"):
     with (
         patch("app.main.stock_deposito_por_articulo",
               return_value=REMANENTE_FILAS if filas is None else filas),
@@ -13215,6 +13227,8 @@ def _remanente(filas=None, cajas=None, fichas=None, reingresos=0, clientes=None,
         patch("app.main.listar_clientes",
               return_value=REMANENTE_CLIENTES if clientes is None else clientes),
         patch("app.main.total_reingresos_rechazo", return_value=reingresos),
+        patch("app.main.listar_ultimos_conteos_stock",
+              return_value=REMANENTE_CONTEOS if conteos is None else conteos),
         # El corte, que es el piso de la pantalla: antes de esa fecha no
         # puede contestar y manda a hoy con un aviso.
         patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
@@ -13557,26 +13571,84 @@ def test_una_porcion_en_CERO_no_es_un_renglon():
     assert "Berenjena" not in nombres
 
 
-def test_el_excel_del_remanente_sale_con_la_columna_CONTADO_vacia():
-    """Vacía a propósito: es para escribir a mano contra el conteo. Si saliera
-    precargada, el que cuenta transcribe en vez de contar."""
+def _hoja_remanente(**kwargs):
     from io import BytesIO
 
     from openpyxl import load_workbook
 
-    respuesta = _remanente(url="/administracion/stock/remanente/exportar-excel")
-
+    respuesta = _remanente(url="/administracion/stock/remanente/exportar-excel", **kwargs)
     assert respuesta.status_code == 200
+    return respuesta, load_workbook(BytesIO(respuesta.content)).active
+
+
+def test_el_excel_del_remanente_trae_el_fisico_y_la_diferencia():
+    """La columna "Contado" vacía se sacó: el Remanente vive en Administración y
+    el que cuenta no entra ahí. En su lugar va el conteo que YA existe."""
+    respuesta, hoja = _hoja_remanente()
+
     assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
-    hoja = load_workbook(BytesIO(respuesta.content)).active
     assert hoja.title == "Remanente"
-    assert [c.value for c in hoja[4]] == ["Producto", "Sistema", "Contado"]
-    datos = [(f[0], f[1], f[2]) for f in hoja.iter_rows(min_row=5, max_col=3, values_only=True)]
-    # La tercera columna SIEMPRE vacía, el total incluido: si el que cuenta ve
-    # un total del sistema al pie, tiene contra qué cuadrar sin haber contado.
-    assert all(fila[2] is None for fila in datos)
-    # SIN PLATA: ninguna celda con un número que parezca un costo.
-    assert hoja.max_column == 3
+    assert [c.value for c in hoja[4]] == [
+        "Producto", "Sistema", "Físico", "Contado el", "Sistema al contar", "Diferencia",
+    ]
+    assert hoja.max_column == 6
+    # SIN PLATA sigue valiendo: las cuatro nuevas son bultos y una fecha.
+    filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=6, values_only=True)}
+
+    # COINCIDE: contó 20 contra una foto de 20.
+    assert filas["Mandarina"][1:] == (20.0, 20.0, "06/09/2026", 20.0, 0.0)
+    # DIFIERE, y la diferencia NO sale de restar las columnas de al lado:
+    # el sistema de hoy dice 15 y la foto del 02/09 también decía 15, pero
+    # contó 13. Por eso "Sistema al contar" viaja: es la base del número.
+    assert filas["Pomelo Caja Día"][1:] == (15.0, 13.0, "02/09/2026", 15.0, -2.0)
+    # SIN CONTEO: "—" y las otras tres vacías.
+    assert filas["Berenjena Caja Día"][1:] == (20.0, "—", None, None, None)
+
+
+def test_el_excel_del_remanente_distingue_sin_conteo_de_no_se_cuenta():
+    """Dos "—" con el mismo símbolo serían un solo dato con dos significados.
+
+    La segunda NO SE PUEDE contar: Stock Físico ofrece "los bultos sueltos" o
+    "las cajas de una ficha", y crear_conteo_stock solo acepta ficha_id o None.
+    Su fila diría "—" para siempre, y alguien saldría a buscar un conteo que no
+    puede existir.
+    """
+    _, hoja = _hoja_remanente()
+    filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=6, values_only=True)}
+
+    assert filas["Mandarina Segunda"][2] == "no se cuenta"
+    assert filas["Berenjena Caja Día"][2] == "—"
+
+
+def test_el_excel_del_remanente_pinta_solo_las_filas_con_diferencia():
+    """Se marca lo que NO coincide, no lo que falta contar.
+
+    El archivo se abre para ver dónde no cuadra. Marcar las porciones sin
+    conteo —que son la mayoría— pintaría media planilla y taparía justo eso.
+    """
+    _, hoja = _hoja_remanente()
+    pintadas = {
+        f[0].value
+        for f in hoja.iter_rows(min_row=5, max_col=6)
+        if f[0].value and f[5].fill.start_color.rgb
+        and f[5].fill.start_color.rgb.endswith("FFF2CC")
+    }
+    assert pintadas == {"Pomelo Caja Día"}
+
+
+def test_el_excel_del_remanente_no_totaliza_el_fisico_ni_la_diferencia():
+    """Un total de físicos mezclaría fechas, y una suma de diferencias se
+    compensa sola: faltan 10 de una porción, sobran 10 de otra, el total da
+    cero y parece que está todo bien."""
+    _, hoja = _hoja_remanente()
+    cierres = [
+        f for f in hoja.iter_rows(min_row=5, max_col=6, values_only=True)
+        if f[0] and (str(f[0]).startswith("Subtotal") or str(f[0]).startswith("TOTAL"))
+    ]
+    assert cierres  # que existan, si no el test no prueba nada
+    for fila in cierres:
+        assert fila[1] is not None  # el Sistema sí se suma
+        assert fila[2:] == (None, None, None, None)
 
 
 def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():

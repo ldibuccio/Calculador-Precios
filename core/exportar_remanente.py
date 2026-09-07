@@ -35,6 +35,11 @@ _BORDE_GRUESO = Side(style="medium", color="000000")
 _BORDE_TOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_GRUESO, bottom=_BORDE_FINO)
 
 GRIS_SECCION_HEX = "D9E2F3"
+# Las filas con diferencia se pintan. Es lo único que se marca del archivo, y
+# a propósito: el que lo abre viene a ver DÓNDE NO COINCIDE. Marcar en cambio
+# las que no tienen conteo —que van a ser la mayoría— pintaría media planilla
+# y taparía justo lo que se busca.
+AMARILLO_DIFERENCIA_HEX = "FFF2CC"
 
 # El subtotal se pinta IGUAL que el título de su sección, y es el punto: los dos
 # son chrome, no mercadería. Impreso, la sección queda encerrada entre dos
@@ -42,6 +47,44 @@ GRIS_SECCION_HEX = "D9E2F3"
 # adentro se confunde con ellas. Sin el relleno, "Subtotal Hortaliza · 132" es
 # una fila con nombre y número, o sea exactamente lo que parece un producto.
 _BORDE_SUBTOTAL = Border(left=_BORDE_FINO, right=_BORDE_FINO, top=_BORDE_FINO, bottom=_BORDE_FINO)
+
+
+def _escribir_conteo(hoja, fila, porcion) -> None:
+    """Las cuatro celdas del conteo físico de una porción, o los guiones si no hay.
+
+    "—" y "no se cuenta" NO son lo mismo, y por eso se escriben distinto: el
+    primero es una porción que espera al operario; el segundo es la SEGUNDA,
+    que no se puede contar nunca (Stock Físico ofrece "los bultos sueltos" o
+    "las cajas de una ficha", y no hay tercera opción). Con un solo símbolo
+    para los dos casos, alguien saldría a buscar un conteo que no puede
+    existir.
+
+    La fecha va en su propia columna y no pegada al número: una celda que
+    mezcla número y texto deja de poder ordenarse, filtrarse y sumarse, que es
+    justo para lo que se abre un Excel.
+
+    La diferencia se pinta SOLO si no es cero, y al lado va su base ("Sistema
+    al contar"): sin esa columna, el número no se puede verificar contra
+    ningún otro del archivo, porque NO sale de restar "Físico − Sistema" —
+    esas dos son de momentos distintos.
+    """
+    if porcion.get("fisico") is None:
+        hoja.cell(row=fila, column=3, value="no se cuenta" if not porcion.get("contable") else "—")
+        return
+    hoja.cell(row=fila, column=3, value=float(porcion["fisico"]))
+    hoja.cell(row=fila, column=4, value=porcion["contado_el"].strftime("%d/%m/%Y"))
+    hoja.cell(row=fila, column=5, value=float(porcion["stock_sistema"]))
+    celda = hoja.cell(row=fila, column=6, value=float(porcion["diferencia"]))
+    if porcion["diferencia"]:
+        relleno = PatternFill(start_color=AMARILLO_DIFERENCIA_HEX,
+                              end_color=AMARILLO_DIFERENCIA_HEX, fill_type="solid")
+        for columna in _COLUMNAS:
+            hoja.cell(row=fila, column=columna).fill = relleno
+        celda.font = Font(bold=True)
+
+
+_ENCABEZADOS = ("Producto", "Sistema", "Físico", "Contado el", "Sistema al contar", "Diferencia")
+_COLUMNAS = tuple(range(1, len(_ENCABEZADOS) + 1))
 
 
 def _secciones(porciones: list[dict]) -> list[tuple]:
@@ -92,10 +135,17 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     valuación que ninguna pantalla calcula hoy. Y para lo que sirve este
     archivo no hace falta: se cuentan cajones, no pesos.
 
-    La columna "Contado" va VACÍA a propósito: es para escribir a mano
-    contra el conteo físico. Si saliera precargada con lo del sistema, el
-    que cuenta transcribe en vez de contar y se pierde el control cruzado
-    — el mismo criterio de la pantalla de Stock Físico.
+    HUBO UNA COLUMNA "Contado" VACÍA, para imprimir e ir a contar. Se sacó
+    el 07/09: el Remanente vive en Administración y el que cuenta no entra
+    ahí — el conteo se carga desde Stock Físico, en Depósito. Con el físico
+    ya adentro del archivo, esa columna no tenía a quién servir.
+
+    Las cuatro columnas del conteo salen del ÚLTIMO conteo de cada porción
+    (listar_ultimos_conteos_stock, la misma que el Cotejo) y la diferencia
+    es `contado − stock_sistema`, o sea contra LA FOTO congelada al contar
+    — la fórmula exacta de ver_cotejo_stock. Contra el sistema de hoy daría
+    otra cosa que el Cotejo el mismo día, y además incluiría todo movimiento
+    legítimo posterior al conteo. Ver _pegar_conteos_a_porciones.
 
     Cada sección CIERRA con su subtotal y al pie va el total general. No hay
     total por ARTÍCULO, que es otra cosa y es justo la suma que el dueño pidió
@@ -110,24 +160,27 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     quedó impreso en el papel, y una fórmula no se imprime distinto pero
     sí puede cambiar si alguien toca una celda antes de imprimir.
 
-    La celda "Contado" del total también va vacía, por lo mismo que las de
-    arriba: si el que cuenta ve un total del sistema al pie, tiene contra
-    qué cuadrar sin haber contado.
+    El subtotal y el total suman SOLO la columna Sistema. Las del conteo van
+    vacías ahí, y no por el motivo viejo: un total de físicos mezclaría
+    conteos de fechas distintas, y una suma de diferencias se compensaría
+    sola —faltan 10 de una porción, sobran 10 de otra, el total da cero y
+    parece que está todo bien—. La diferencia se mira renglón por renglón,
+    que es para lo que están pintados.
     """
     libro = Workbook()
     hoja = libro.active
     hoja.title = "Remanente"
 
-    hoja.merge_cells("A1:C1")
+    hoja.merge_cells("A1:F1")
     hoja["A1"] = "Remanente del depósito"
     hoja["A1"].font = Font(bold=True, size=14)
 
-    hoja.merge_cells("A2:C2")
+    hoja.merge_cells("A2:F2")
     hoja["A2"] = f"Al {fecha.strftime('%d/%m/%Y')}"
     hoja["A2"].font = Font(bold=True)
 
     relleno = PatternFill(start_color=AZUL_ENCABEZADO_HEX, end_color=AZUL_ENCABEZADO_HEX, fill_type="solid")
-    for columna, encabezado in enumerate(("Producto", "Sistema", "Contado"), start=1):
+    for columna, encabezado in enumerate(_ENCABEZADOS, start=1):
         celda = hoja.cell(row=FILA_ENCABEZADO, column=columna, value=encabezado)
         celda.font = Font(bold=True, color="FFFFFF")
         celda.fill = relleno
@@ -137,7 +190,7 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
                                   fill_type="solid")
     fila_actual = FILA_PRIMER_DATO
     for titulo, del_grupo in _secciones(porciones):
-        for columna in (1, 2, 3):
+        for columna in _COLUMNAS:
             celda = hoja.cell(row=fila_actual, column=columna,
                               value=titulo if columna == 1 else None)
             celda.font = Font(bold=True)
@@ -147,8 +200,8 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
         for porcion in del_grupo:
             hoja.cell(row=fila_actual, column=1, value=porcion["nombre"])
             hoja.cell(row=fila_actual, column=2, value=float(porcion["bultos"]))
-            # La tercera queda vacía: se llena a mano.
-            for columna in (1, 2, 3):
+            _escribir_conteo(hoja, fila_actual, porcion)
+            for columna in _COLUMNAS:
                 hoja.cell(row=fila_actual, column=columna).border = _BORDE_CELDA
             fila_actual += 1
 
@@ -160,7 +213,7 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
         cuantas = len(del_grupo)
         etiqueta = f"Subtotal {titulo} — {cuantas} {'renglón' if cuantas == 1 else 'renglones'}"
         subtotal = round(sum(float(p["bultos"]) for p in del_grupo), 2)
-        for columna, valor in ((1, etiqueta), (2, subtotal), (3, None)):
+        for columna, valor in ((1, etiqueta), (2, subtotal), (3, None), (4, None), (5, None), (6, None)):
             celda = hoja.cell(row=fila_actual, column=columna, value=valor)
             celda.font = Font(bold=True)
             celda.fill = relleno_seccion
@@ -174,7 +227,7 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     etiqueta = f"TOTAL — {renglones} {'renglón' if renglones == 1 else 'renglones'}"
     hoja.cell(row=fila_actual, column=1, value=etiqueta)
     hoja.cell(row=fila_actual, column=2, value=total)
-    for columna in (1, 2, 3):
+    for columna in _COLUMNAS:
         celda = hoja.cell(row=fila_actual, column=columna)
         celda.font = Font(bold=True)
         celda.border = _BORDE_TOTAL
@@ -182,6 +235,9 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     hoja.column_dimensions["A"].width = 34
     hoja.column_dimensions["B"].width = 12
     hoja.column_dimensions["C"].width = 12
+    hoja.column_dimensions["D"].width = 12
+    hoja.column_dimensions["E"].width = 17
+    hoja.column_dimensions["F"].width = 12
 
     buffer = BytesIO()
     libro.save(buffer)

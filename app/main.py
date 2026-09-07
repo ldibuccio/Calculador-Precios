@@ -6608,7 +6608,14 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
         grupo = fila.get("grupo")
         if sueltos > 0:
             porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo,
-                              "bultos": sueltos, "grupo": grupo, "procesada": False})
+                              "bultos": sueltos, "grupo": grupo, "procesada": False,
+                              # La CLAVE DE LA PORCIÓN, igual que en conteos_stock:
+                              # (articulo_id, ficha_id) con ficha_id None = los
+                              # sueltos. Va el id y no el nombre porque el nombre lo
+                              # arma _nombre_de_caja y cambia con el cliente y el
+                              # envase — unir por ahí se rompe sola.
+                              "articulo_id": fila["articulo_id"], "ficha_id": None,
+                              "contable": True})
         # Cuántas cajas de ESTE artículo tiene cada cliente acá: con una sola
         # el nombre va limpio, con dos hay que poder distinguirlas.
         cuantas = Counter(
@@ -6628,12 +6635,23 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
                 # Las cajas armadas van a su propia sección del Excel: en el
                 # piso son una pila aparte, no están con la fruta suelta.
                 "procesada": True,
+                "articulo_id": fila["articulo_id"], "ficha_id": ficha_id,
+                "contable": True,
             })
         if float(fila["segunda"]) > 0:
             # La segunda NO es una caja procesada: son bultos sueltos de
             # calidad menor esperando el remito al Puesto. Va con su artículo.
+            # contable=False: la segunda NO SE PUEDE CONTAR. Stock Físico
+            # ofrece "los bultos sueltos" o "las cajas de una ficha", y
+            # crear_conteo_stock solo acepta ficha_id o None — no hay forma
+            # de cargar un conteo de segunda. Sin esta marca, su "—" del
+            # Excel se leería igual que el de una porción que todavía nadie
+            # contó, y son dos cosas distintas: una espera al operario, la
+            # otra no puede pasar nunca.
             porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
-                              "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2)})
+                              "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2),
+                              "articulo_id": fila["articulo_id"], "ficha_id": None,
+                              "contable": False})
 
     porciones.sort(key=lambda p: (_clave_alfabetica(p["articulo"]), p["orden"], _clave_alfabetica(p["nombre"])))
     return porciones
@@ -6691,16 +6709,67 @@ def _fecha_del_remanente(fecha_texto: str | None) -> tuple:
     return fecha, None
 
 
+def _pegar_conteos_a_porciones(porciones: list[dict], conteos: list[dict]) -> None:
+    """Le pega a cada porción su último conteo físico, con la MISMA cuenta que el Cotejo.
+
+    La diferencia es `contado − stock_sistema`, o sea contra LA FOTO que se
+    congeló al contar, no contra el sistema de hoy. Es la fórmula exacta de
+    ver_cotejo_stock, y tiene que serlo: si el Excel restara contra el stock
+    actual, la misma porción mostraría una diferencia en el archivo y otra en
+    el Cotejo el mismo día — dos cuentas del mismo cruce diciendo cosas
+    distintas.
+
+    Y además no significaría lo que parece: `físico(ayer) − sistema(hoy)` es
+    la discrepancia MÁS todo movimiento legítimo posterior al conteo. Una caja
+    contada ayer y despachada hoy saldría como diferencia sin que nada esté
+    mal.
+
+    Por eso la fila lleva también `stock_sistema` y `contado_el`: sin la foto
+    al lado, la diferencia no se puede verificar contra ningún otro número del
+    archivo, y sin la fecha no se sabe si es de hoy o de hace un mes.
+
+    Una porción no contable (la segunda) no busca conteo: no puede tener uno.
+    """
+    por_clave = {(c["articulo_id"], c["ficha_id"]): c for c in conteos}
+    for porcion in porciones:
+        conteo = (
+            por_clave.get((porcion["articulo_id"], porcion["ficha_id"]))
+            if porcion.get("contable") else None
+        )
+        if conteo is None:
+            porcion["fisico"] = None
+            porcion["contado_el"] = None
+            porcion["stock_sistema"] = None
+            porcion["diferencia"] = None
+            continue
+        porcion["fisico"] = float(conteo["cantidad"])
+        porcion["contado_el"] = conteo["creado_en"]
+        porcion["stock_sistema"] = float(conteo["stock_sistema"])
+        porcion["diferencia"] = round(float(conteo["cantidad"]) - float(conteo["stock_sistema"]), 2)
+
+
 def _remanente_a_fecha(hasta) -> dict:
     """Todo lo que la pantalla y el Excel necesitan, a una fecha. UNA sola vez.
 
     Los dos salen de acá y no cada uno por su cuenta: si el Excel armara
     su propia consulta, un día diría otra cosa que la pantalla y nadie se
     enteraría hasta imprimirlo.
+
+    Los conteos van topeados con LA MISMA fecha que el resto: sin eso, el
+    Remanente del 03/09 traería el último conteo de hoy, y el archivo
+    tendría físico del futuro contra sistema del pasado sin decirlo.
     """
     filas = stock_deposito_por_articulo(hasta)
+    porciones = _porciones_de_deposito(filas, hasta)
+    try:
+        _pegar_conteos_a_porciones(porciones, listar_ultimos_conteos_stock(hasta))
+    except Exception:
+        # El remanente sale igual sin la columna del físico: es un dato de
+        # control, no la razón por la que se abre la pantalla.
+        logger.exception("No se pudieron leer los conteos físicos para el Remanente")
+        _pegar_conteos_a_porciones(porciones, [])
     return {
-        "porciones": _porciones_de_deposito(filas, hasta),
+        "porciones": porciones,
         "negativos": _negativos_de_deposito(filas),
         "reingresos_total": total_reingresos_rechazo(hasta),
         "segunda_total": sum(float(f["segunda"]) for f in filas),

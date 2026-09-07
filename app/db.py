@@ -7464,7 +7464,7 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
         conexion.close()
 
 
-def listar_ultimos_conteos_stock() -> list[dict]:
+def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
     """El ÚLTIMO conteo por PORCIÓN (artículo + ficha), con su foto del sistema, para el Cotejo.
 
     Desde la etapa 3 un artículo tiene varias porciones: sus bultos
@@ -7476,6 +7476,17 @@ def listar_ultimos_conteos_stock() -> list[dict]:
     contó no genera renglón. Si el Cotejo listara todas las fichas de
     todos los clientes en cero, la pantalla se vuelve ilegible y se deja
     de mirar.
+
+    NO HAY VENTANA: "el último" es el último que exista, aunque sea de
+    hace un mes. Por eso quien lo muestre tiene que mostrar también
+    creado_en — una diferencia contra un conteo de hace cinco días no
+    significa lo mismo que contra el de hoy.
+
+    `hasta` (fecha, en hora argentina) topea los conteos al cierre de ese
+    día. Lo usa el Remanente a una fecha pasada: sin esto traería el
+    último conteo de HOY contra un stock del 03/09 — físico del futuro
+    contra sistema del pasado, adentro del mismo archivo. None = sin
+    tope, que es lo que quiere el Cotejo (siempre mira el presente).
 
     El orden del DISTINCT ON es el del índice conteos_stock_cotejo_idx.
     """
@@ -7494,8 +7505,11 @@ def listar_ultimos_conteos_stock() -> list[dict]:
                 LEFT JOIN fichas_logistica f ON f.id = c.ficha_id
                 LEFT JOIN articulos fa ON fa.id = f.articulo_id
                 LEFT JOIN clientes cl ON cl.id = f.cliente_id
+                WHERE %s::date IS NULL
+                   OR (c.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= %s::date
                 ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC
-                """
+                """,
+                (hasta, hasta),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
