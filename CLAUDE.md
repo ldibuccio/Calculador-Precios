@@ -116,6 +116,24 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    corrió: lo que hay que mirar es el estado final, no que el comando no se
    haya quejado.
 
+4. **Y la ausencia de FILAS tampoco es información.** Es la otra cara, y mordió
+   el 07/09 con el backfill de Palmala. Un `do $$` que sale bien **no devuelve
+   nada**, y en el editor eso se ve exactamente igual que una consulta que no
+   encontró resultados. Se corrió el backfill, se vio "No rows", se lo leyó
+   como el resultado del bloque de conteo, y se reportó el backfill como
+   pendiente cuando ya estaba hecho. Después el backfill abortó tocando 0 —la
+   guarda funcionando— y se buscó el bug en las consultas durante dos vueltas,
+   cuando lo único que pasaba era que ya no quedaba nada que tocar.
+
+   Corolario de diseño, y es el que evita que vuelva: **una consulta de
+   verificación devuelve CONTEOS, no una lista de ofensores.** Con conteos
+   siempre viene una fila y el cero se ve. Con una lista, "todo bien" y "no
+   corrió" son la misma pantalla vacía. Ver `db/palmala_4_verificacion.sql`.
+
+   Y al correr algo que no devuelve filas —un `do`, un `update`—, lo que
+   confirma que corrió **no es la pantalla del editor: es la consulta de
+   estado que se corre después**.
+
 ## Una regla de negocio no puede estar escrita dos veces
 
 Si la misma regla vive en el código y en la base, son **dos** reglas: se
@@ -337,6 +355,18 @@ El costo de no hacerlo no es que el backfill falle: es que **no corre y nadie
 se entera**, porque la exclusión parece justificada. Es la misma familia que
 el push silencioso — lo que hay que mirar es el estado final, no que nadie se
 haya quejado.
+
+**El desenlace, del 07/09:** eran **393 renglones** de pedido sin `ficha_id` en
+Palmala, todos recuperables por código exacto. Corrido el backfill, la
+verificación dio todo en cero —ningún cruce de artículo ni de cliente— y
+`codigo_no_coincide` en cero también, o sea que los 669 renglones con ficha
+matchean por código exacto y no hay ninguno asignado por otro criterio.
+
+Lo que estuvo perdido todo ese tiempo no fue el stock —que era la razón por la
+que se excluyó a Palmala— sino **la facturación**: sin ficha no hay precio, sin
+precio no hay plata, y la pantalla de Márgenes por Artículo mostraba menos días
+con entregas de los que hubo. La exclusión se decidió mirando una cuenta y el
+daño cayó sobre otra.
 
 ## La otra familia: a una regla le crece otra encima
 
