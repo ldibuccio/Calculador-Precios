@@ -324,3 +324,44 @@ Taparía exactamente el agujero que el piso viene a mostrar. Si al corte le
 faltó declarar mercadería, el costo de lo que se reprocese va a salir igual
 de lotes que no corresponden — que es el problema original. La gracia hace
 que el freno no suene; no hace que el costo sea cierto.
+
+## El mango: el mejor ejemplo de E5, y lo que el mango NO explica
+
+El mango entra en **cajones de 12 unidades** y se arma en **cajas de 10**. De
+25 cajones salen 300 unidades = 30 cajas. La guía R177 tomó 25 y produjo 30:
+**está bien cargada.** La conversión no es 1 a 1 en ninguna dirección, y por
+eso es el caso más claro de que **"bulto" no es una unidad**: el sistema suma
+30 cajas y resta 25 cajones como si fueran lo mismo.
+
+### Pero la mezcla NO puede dejar el contador en negativo
+
+Verificado corriendo `stock_deposito_por_articulo` (el código real) contra el
+esquema real, con dos artículos idénticos y el mismo ciclo completo —25
+cajones, 30 cajas, 30 entregadas— cambiando solo si la compra se cargó:
+
+| | stock del sistema |
+|---|---|
+| Mango **con** la compra de 25 cargada | **0.0** |
+| Mango **sin** la compra | **−25.0** |
+
+**Sobre el ciclo completo la mezcla se cancela exacta y el contador da
+cero.** Compra +25, reproceso −25 +30, armado −30 = 0. El error de unidades
+está adentro de la cuenta pero se anula al cerrar el ciclo.
+
+Así que el negativo **no** lo produce la mezcla: lo produce una entrada que
+falta. Y el −25 del ejemplo es, exactamente, los cajones que se consumieron y
+nunca se cargaron.
+
+### Dónde sí muerde la mezcla, y en qué dirección
+
+1. **En el estado intermedio.** Mientras las cajas están armadas y sin
+   entregar, el contador dice 30 donde físicamente hay el equivalente a 25
+   cajones: lee **20% de MÁS**, no de menos. Es transitorio —se cierra al
+   entregar— y no se acumula reproceso a reproceso.
+2. **En el FIFO, y ahí no se cancela nunca.** El total puede cerrar en cero y
+   aun así cada bulto haber salido del lote equivocado: un reproceso tomando
+   cajas ya armadas como materia prima. Eso es lo que medimos el 07/09 —19 de
+   32 guías, $3.572.620— y no lo arregla ningún ciclo completo.
+
+**El corolario práctico**: un total que cierra no prueba que las unidades
+estén bien. La mezcla se esconde justamente en el número que más se mira.
