@@ -296,6 +296,34 @@ pierde el día que se crea la base de la empresa siguiente no es una regla. Lo
 que se pueda escribir en SQL puro (`translate`, `lower`, `btrim`) viaja con el
 esquema y no se olvida.
 
+## Cuando se excluye algo, hay que mirar contra QUÉ se lo excluye
+
+Del 07/09. Palmala quedó afuera de un backfill, y la razón escrita era **de
+stock**. El bug que el backfill venía a reparar **no era de stock**: eran
+renglones de pedido sin `ficha_id`. La exclusión era correcta para el motivo
+que decía y equivocada para el problema que había, y nadie lo notó porque las
+dos cosas viajaban juntas bajo la palabra "Palmala".
+
+La forma del error es la de siempre —dos cosas distintas con el mismo nombre—
+pero se busca distinto que las otras dos familias:
+
+- La regla escrita dos veces se encuentra **grepeando el criterio**.
+- La regla a la que le creció otra encima se encuentra **grepeando el campo**.
+- Ésta se encuentra **releyendo el motivo de la exclusión contra el motivo del
+  arreglo**, que es lo único que las separa. No hay grep: los dos textos son
+  correctos por separado.
+
+De acá en adelante, al excluir una empresa, un cliente, un artículo o una
+fecha de cualquier corrección masiva: **escribir en la misma línea contra qué
+se lo está excluyendo**, y al retomar esa exclusión, comparar ese motivo con
+el del arreglo que se está por correr. Si no son el mismo, la exclusión no
+aplica y hay que decidirla de nuevo.
+
+El costo de no hacerlo no es que el backfill falle: es que **no corre y nadie
+se entera**, porque la exclusión parece justificada. Es la misma familia que
+el push silencioso — lo que hay que mirar es el estado final, no que nadie se
+haya quejado.
+
 ## La otra familia: a una regla le crece otra encima
 
 Distinta de la de arriba, y se busca distinto. Acá la regla está escrita **una
