@@ -3655,32 +3655,59 @@ Medido el 07/09: **34 fichas, todas con `fichas_de_ese_cliente = 1`.** O sea que
 la escalera de desempate del Remanente —envase, después kilaje, después el
 código— **acá no hace falta**: una ficha por cliente y artículo, sin ambigüedad.
 
-### Las 15 sin envase NO están fuera de alcance, y eso cambia el default
+### ENVASE EN NULL NO ES UN DATO QUE FALTA: es "envase perdido"
 
-`envase_id` es opcional, y **15 de 34 fichas no lo tienen cargado** (Manzana
-Gob, Red, Granny, Pera, Arándano, Frutilla, Uva, Melón, Sandía, Cereza,
-Ciruela, Durazno, Pelón, Ananá, Anco, Tomate PG).
+**Error de interpretación mío, y se filtró al código.** Leí las 17 fichas sin
+`envase_id` como un dato sin llenar y puse un **"⚠ falta cargar el envase"** que
+le pedía al operario cargar algo que no existe — en la mayoría de las fichas de
+fruta.
 
-La lectura razonable era que ésas nunca llegan al selector, porque son artículos
-que no se reprocesan. **Es falsa, y lo verifiqué:** `articulos` no tiene ninguna
-marca de "se reprocesa", y `listar_articulos_para_reproceso` incluye cualquier
-artículo con `stock > 0 OR sueltos > 0 OR deficit > 0`. **Cualquiera de esos 15
-aparece en el selector apenas tenga stock.**
+**Sin envase significa que la mercadería sale en el envase del proveedor y no
+vuelve.** Es un estado válido del negocio, y el más común en fruta.
 
-Por eso la falta **se nombra**:
+Lo que más duele: **el resto del sistema ya lo trataba bien, desde antes.**
+
+| Dónde | Qué decía ya |
+|---|---|
+| `templates/ficha_form.html` | la opción se llama literalmente **"Sin envase (perdido)"** |
+| `_validar_envase` | *"opcional: 'sin envase' es válido"* |
+| `app/costeo.py` | `SIN_ENVASE = 0` — no compramos ninguna caja para eso |
+| `templates/fichas.html` | "Sin envase" |
+
+**Mi selector fue el ÚNICO lugar que lo trató como una carencia**, y contradecía
+un rótulo que ya existía dos pantallas más allá. El barrido de `envase_id` lo
+confirmó: ningún otro lado lo valida, lo exige ni lo avisa.
+
+La regla que deja: **antes de llamar "falta" a un NULL, buscar si alguna
+pantalla ya le puso nombre.** Un campo opcional en la base suele serlo porque
+alguien decidió que su ausencia significa algo, y ese significado casi siempre
+está escrito en el formulario que lo carga.
+
+Rótulos, sin ninguna advertencia:
 
 | Ficha | Muestra |
 |---|---|
-| envase + kilaje | `Caja Grande Día — 16 kg` |
-| envase sin kilaje | `Caja Chica Día` |
-| **kilaje sin envase** | `20 kg — ⚠ falta cargar el envase` |
-| ni envase ni kilaje | `MANZANA GOB — ⚠ falta cargar el envase` |
+| con envase | `Caja Grande Día — 16 kg` |
+| **sin envase (perdido)** | `Envase perdido — 20 kg` |
+| sin envase ni kilaje | `Envase perdido` |
 
-**Quedar en blanco, o volver al código del cliente sin avisar, es el mismo error
-disfrazado**: la pantalla vuelve a decir algo que no sirve y encima nadie se
-entera de que falta un dato. El aviso convierte una carencia silenciosa en una
-tarea visible — y Administración ya la puede resolver: `ficha_form.html` tiene
-el select de Envase desde siempre.
+### ¿NULL distingue "perdido" de "todavía no lo cargaron"? No: es el mismo
+
+**Son el mismo NULL, y no hay tercer estado.** Lo que sí existe es el
+significado, escrito en dos lugares: el formulario ofrece "Sin envase
+(perdido)" —así que quien lo elige está declarando el estado— y el costeo le
+pone 0, que es la economía correcta: si sale en la caja del proveedor, no
+compramos ninguna.
+
+**Mi lectura de si conviene separarlos: hoy no.** Los dos estados tienen la
+MISMA consecuencia económica —cero costo de envase, ninguna caja nuestra que
+seguir— así que una tercera columna agregaría una distinción que nada leería. Lo
+único que se pierde es poder auditar "¿cuáles nunca se revisaron?", y para eso
+es más barato una pasada de revisión que un campo nuevo.
+
+**Cuándo cambiaría**: el día que un envase sin cargar signifique un costo que
+no se está imputando. Hoy no, porque el envase perdido efectivamente no cuesta
+aparte.
 
 ### Otro `_nombre_de_caja`, y no es duplicar
 
@@ -3737,9 +3764,12 @@ Ahí el prefijo del cliente las salvaba, pero **dos fichas del MISMO cliente
 habrían colapsado sin red**, y elegir mal manda las cajas a la ficha equivocada:
 un error que después nadie ve.
 
-Corregido: **sin envase se conserva el código del cliente**, que es lo único que
-distingue dos fichas del mismo artículo, con el kilaje al lado y el aviso
-puesto. El código sigue siendo el ÚLTIMO recurso — nunca un default silencioso.
+Corregido, y la corrección sobrevivió al cambio de "falta cargar" a "envase
+perdido": **el código del cliente se agrega SOLO donde dos etiquetas chocan**,
+comparándolas de verdad dentro del grupo en vez de suponer cuándo van a chocar.
+`Envase perdido — 18 kg` y `Envase perdido — 18 kg` se vuelven
+`Envase perdido — 18 kg (Banana Bolivia)` y `(Banana Ecuador)`; con kilajes
+distintos no se agrega nada.
 
 La lección es del fixture, no del código: **el caso de dos fichas con el mismo
 kilaje y sin envase ya estaba escrito en los tests desde antes**, esperando. Una

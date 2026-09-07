@@ -143,36 +143,59 @@ def test_la_caja_a_elegir_dice_EL_ENVASE_no_el_codigo_del_cliente():
     assert "TOM RED" not in _caja_para_elegir(ficha)
 
 
-def test_una_ficha_SIN_ENVASE_lo_dice_y_no_queda_en_blanco():
-    """15 de 34 fichas no tienen envase cargado, y ninguna está fuera de
-    alcance: nada marca a un artículo como "no se reprocesa", así que el
-    selector lista todo lo que tenga stock. La falta se NOMBRA — quedar en
-    blanco, o volver al código del cliente sin avisar, es el mismo error
-    disfrazado."""
+def test_SIN_ENVASE_es_ENVASE_PERDIDO_y_no_un_dato_que_falta():
+    """La mercadería sale en el envase del proveedor y no vuelve. Es el caso de
+    la MAYORÍA de la fruta, no una excepción, y el resto del sistema ya lo
+    trataba así: el formulario ofrece "Sin envase (perdido)", `_validar_envase`
+    dice que es válido y el costeo le pone SIN_ENVASE = 0.
+
+    Un "⚠ falta cargar el envase" acá le pedía al operario que cargara algo que
+    no existe, en 17 fichas.
+    """
     from app.main import _caja_para_elegir
 
-    sin_envase = {"nombre_cliente": "MANZANA GOB", "envase_nombre": None,
-                  "contenido_caja": 20, "unidad_venta": "kilo", "articulo_nombre": "Mzn Gob"}
-    assert _caja_para_elegir(sin_envase) == "MANZANA GOB — 20 kg — ⚠ falta cargar el envase"
+    perdido = {"nombre_cliente": "MANZANA GOB", "envase_nombre": None,
+               "contenido_caja": 20, "unidad_venta": "kilo", "articulo_nombre": "Mzn Gob"}
 
-    pelada = dict(sin_envase, contenido_caja=None)
-    assert _caja_para_elegir(pelada) == "MANZANA GOB — ⚠ falta cargar el envase"
+    assert _caja_para_elegir(perdido) == "Envase perdido — 20 kg"
+    assert "falta" not in _caja_para_elegir(perdido)
+    assert "⚠" not in _caja_para_elegir(perdido)
+    # Sin kilaje tampoco, sigue sin ser una advertencia.
+    assert _caja_para_elegir(dict(perdido, contenido_caja=None)) == "Envase perdido"
 
 
-def test_sin_envase_NO_se_tira_el_codigo_del_cliente_o_dos_fichas_colapsan():
-    """Sin envase, el código es lo ÚNICO que distingue dos fichas del mismo
-    artículo. Dejar solo el kilaje las volvía la misma etiqueta —"18 kg" y
-    "18 kg"— y elegir mal ahí manda las cajas a la ficha equivocada."""
-    from app.main import _caja_para_elegir
+def test_el_codigo_del_cliente_aparece_SOLO_donde_dos_etiquetas_chocan():
+    """Dos fichas del mismo artículo pueden caer en el mismo texto —las dos con
+    el envase perdido y el mismo kilaje— y ahí el código es lo único que las
+    distingue. Elegir mal manda las cajas a la ficha equivocada."""
+    from app.main import _cajas_para_elegir_por_articulo
 
-    base = {"envase_nombre": None, "contenido_caja": 18, "unidad_venta": "kilo",
-            "articulo_nombre": "Banana"}
-    bolivia = _caja_para_elegir(dict(base, nombre_cliente="Banana Bolivia"))
-    ecuador = _caja_para_elegir(dict(base, nombre_cliente="Banana Ecuador"))
+    chocan = [
+        {"id": 10, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Banana",
+         "nombre_cliente": "Banana Bolivia", "envase_nombre": None,
+         "contenido_caja": 18, "unidad_venta": "kilo"},
+        {"id": 11, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Banana",
+         "nombre_cliente": "Banana Ecuador", "envase_nombre": None,
+         "contenido_caja": 18, "unidad_venta": "kilo"},
+    ]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=chocan),
+    ):
+        nombres = sorted(c["nombre"] for c in _cajas_para_elegir_por_articulo()[7])
 
-    assert bolivia != ecuador
-    assert "Banana Bolivia" in bolivia and "Banana Ecuador" in ecuador
-    assert "⚠ falta cargar el envase" in bolivia
+    assert nombres == ["Envase perdido — 18 kg (Banana Bolivia)",
+                       "Envase perdido — 18 kg (Banana Ecuador)"]
+
+    # Y con kilajes distintos NO hace falta: el caso normal queda limpio.
+    distintos = [chocan[0], dict(chocan[1], contenido_caja=10)]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=distintos),
+    ):
+        nombres = sorted(c["nombre"] for c in _cajas_para_elegir_por_articulo()[7])
+
+    assert nombres == ["Envase perdido — 10 kg", "Envase perdido — 18 kg"]
 
 
 def test_un_envase_sin_kilaje_igual_se_nombra():

@@ -6947,23 +6947,36 @@ def _cajas_para_elegir_por_articulo() -> dict[int, list[dict]]:
     for ficha in fichas:
         clientes_por_articulo.setdefault(ficha["articulo_id"], set()).add(ficha["cliente_id"])
 
-    por_articulo: dict[int, list[dict]] = {}
+    # Primero la etiqueta base, después el cliente si hay más de uno, y recién
+    # al final el código para lo que siga chocando: cada escalón se sube solo
+    # cuando el anterior no alcanzó.
+    fichas_por_articulo: dict[int, list[dict]] = {}
     for ficha in fichas:
-        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-        kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-                  if ficha.get("contenido_caja") else "")
-        nombre = _caja_para_elegir(ficha)
-        if len(clientes_por_articulo[ficha["articulo_id"]]) > 1:
-            cliente = nombres.get(ficha["cliente_id"], "cliente sin nombre")
-            nombre = f"{cliente} — {nombre}"
-        por_articulo.setdefault(ficha["articulo_id"], []).append(
-            {
-                "id": ficha["id"],
-                "cliente_id": ficha["cliente_id"],
-                "nombre": nombre,
-                "kilaje": kilaje,
-            }
-        )
+        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+
+    por_articulo: dict[int, list[dict]] = {}
+    for articulo_id, del_articulo in fichas_por_articulo.items():
+        etiquetas = {}
+        for ficha in del_articulo:
+            nombre = _caja_para_elegir(ficha)
+            if len(clientes_por_articulo[articulo_id]) > 1:
+                cliente = nombres.get(ficha["cliente_id"], "cliente sin nombre")
+                nombre = f"{cliente} — {nombre}"
+            etiquetas[ficha["id"]] = nombre
+        etiquetas = _desambiguar_cajas(del_articulo, etiquetas)
+
+        for ficha in del_articulo:
+            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+            kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+                      if ficha.get("contenido_caja") else "")
+            por_articulo.setdefault(articulo_id, []).append(
+                {
+                    "id": ficha["id"],
+                    "cliente_id": ficha["cliente_id"],
+                    "nombre": etiquetas[ficha["id"]],
+                    "kilaje": kilaje,
+                }
+            )
     for cajas in por_articulo.values():
         cajas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
     return por_articulo
@@ -7799,30 +7812,41 @@ def _caja_para_elegir(ficha: dict) -> str:
     ésta" y va con el artículo adelante. Éste contesta "en qué caja estoy
     armando". Misma materia prima, dos preguntas.
 
-    EL ENVASE ES OPCIONAL EN LA BASE, y no es teórico: 15 de 34 fichas no
-    lo tienen cargado (medido el 07/09). Y ninguna de esas fichas está
-    fuera de alcance, porque NADA marca a un artículo como "no se
-    reprocesa": el selector de Reproceso lista todo lo que tenga stock. Así
-    que la falta se NOMBRA en vez de quedar en blanco o volver al código
-    del cliente sin avisar — que sería el mismo error, disfrazado.
+    SIN ENVASE ES "ENVASE PERDIDO", NO UN DATO QUE FALTA. La mercadería
+    sale en el envase del proveedor y no vuelve, así que no hay caja
+    nuestra que nombrar — y es el caso de la MAYORÍA de la fruta, no una
+    excepción. El resto del sistema ya lo trataba así desde antes: el
+    formulario de la ficha ofrece "Sin envase (perdido)", `_validar_envase`
+    dice "opcional: 'sin envase' es válido", y el costeo le pone
+    SIN_ENVASE = 0 porque no compramos ninguna caja para eso.
     """
     envase = (ficha.get("envase_nombre") or "").strip()
     sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
     kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
               if ficha.get("contenido_caja") else "")
-    if envase and kilaje:
-        return f"{envase} — {kilaje}"
-    if envase:
-        return envase
-    # SIN ENVASE, el código del cliente se conserva, y no es una recaída: es
-    # lo ÚNICO que distingue dos fichas del mismo artículo cuando ninguna
-    # tiene envase. Dejar solo el kilaje las colapsaba en la misma etiqueta
-    # —"18 kg" y "18 kg"— y elegir mal ahí manda las cajas a la ficha
-    # equivocada, que es un error que después nadie ve. El aviso va igual:
-    # el código es el ÚLTIMO recurso, nunca un default silencioso.
-    falta = "⚠ falta cargar el envase"
-    propio = _nombre_de_ficha(ficha)
-    return f"{propio} — {kilaje} — {falta}" if kilaje else f"{propio} — {falta}"
+    nombre = envase or "Envase perdido"
+    return f"{nombre} — {kilaje}" if kilaje else nombre
+
+
+def _desambiguar_cajas(fichas: list[dict], etiquetas: dict) -> dict:
+    """Le agrega el código del cliente SOLO a las etiquetas que se repiten.
+
+    Dos fichas del mismo artículo pueden caer en el mismo texto: mismo
+    envase y mismo kilaje, o las dos con el envase perdido y el mismo
+    kilaje ("Envase perdido — 18 kg" y "Envase perdido — 18 kg"). Ahí el
+    código del cliente es lo ÚNICO que las distingue, y elegir mal manda
+    las cajas a la ficha equivocada — un error que después nadie ve.
+
+    Se agrega solo donde choca: el caso normal queda limpio.
+    """
+    cuantas = Counter(etiquetas.values())
+    return {
+        ficha["id"]: (
+            etiquetas[ficha["id"]] if cuantas[etiquetas[ficha["id"]]] == 1
+            else f"{etiquetas[ficha['id']]} ({_nombre_de_ficha(ficha)})"
+        )
+        for ficha in fichas
+    }
 
 
 def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
@@ -7837,21 +7861,32 @@ def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
 
     Una consulta sola (todas las fichas), no una por cliente.
     """
-    por_clave: dict[str, list[dict]] = {}
+    fichas_por_clave: dict[str, list[dict]] = {}
     for ficha in listar_fichas_de_todos_los_clientes():
         clave = f"{ficha['cliente_id']}:{ficha['articulo_id']}"
-        # El kilaje viaja con la ficha para que, una vez elegida, la ayuda
-        # muestre EL DE ESA CAJA. Antes tenía que nombrarlas a todas y
-        # pedirle al operario que se fijara cuál estaba armando: no había
-        # forma de saberlo, porque la guía R no guardaba la ficha.
-        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-        kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-                  if ficha.get("contenido_caja") else "")
-        por_clave.setdefault(clave, []).append(
-            {"id": ficha["id"], "nombre": _caja_para_elegir(ficha), "kilaje": kilaje}
+        fichas_por_clave.setdefault(clave, []).append(ficha)
+
+    por_clave: dict[str, list[dict]] = {}
+    for clave, del_grupo in fichas_por_clave.items():
+        # Acá el cliente YA está elegido, así que no se antepone nunca: lo
+        # único que puede hacer falta es el código, y solo si dos etiquetas
+        # chocan dentro de este mismo grupo.
+        etiquetas = _desambiguar_cajas(
+            del_grupo, {f["id"]: _caja_para_elegir(f) for f in del_grupo}
         )
+        for ficha in del_grupo:
+            # El kilaje viaja con la ficha para que, una vez elegida, la ayuda
+            # muestre EL DE ESA CAJA. Antes tenía que nombrarlas a todas y
+            # pedirle al operario que se fijara cuál estaba armando: no había
+            # forma de saberlo, porque la guía R no guardaba la ficha.
+            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+            kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+                      if ficha.get("contenido_caja") else "")
+            por_clave.setdefault(clave, []).append(
+                {"id": ficha["id"], "nombre": etiquetas[ficha["id"]], "kilaje": kilaje}
+            )
     for fichas in por_clave.values():
-        fichas.sort(key=lambda f: f["nombre"])
+        fichas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
     return por_clave
 
 

@@ -18663,17 +18663,17 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
     assert '<optgroup label="Cajas de este artículo">' in cuerpo
     assert '<optgroup label="Si no sabés">' in cuerpo
     # La caja y la excepción NO comparten grupo.
-    assert cuerpo.index("Banana Bolivia") < cuerpo.index('label="Si no sabés"')
+    assert cuerpo.index("Envase perdido") < cuerpo.index('label="Si no sabés"')
     assert "Sin asignar" in cuerpo
-    # La opción dice de qué cliente es la ficha: dos fichas con el mismo
-    # nombre de dos clientes distintos serían indistinguibles.
     # El rótulo sale del MISMO armador que Stock Físico: se lee en qué caja,
-    # no el código del cliente. Esta ficha no tiene envase cargado, así que
-    # conserva el código Y lo dice — el código es el último recurso, nunca un
-    # default silencioso. Y sin el cliente adelante: hay uno solo con ficha de
-    # ese artículo, así que no hay nada que distinguir.
-    assert "Banana Bolivia — ⚠ falta cargar el envase" in cuerpo
-    assert "Día — Banana Bolivia" not in cuerpo
+    # no el código del cliente. Esta ficha no tiene envase, o sea envase
+    # PERDIDO, que es un estado válido y no un dato que falte.
+    assert "Envase perdido" in cuerpo
+    assert "falta cargar el envase" not in cuerpo
+    # Sin el cliente adelante ni el código: hay una sola ficha, nada que
+    # distinguir.
+    assert "Día — Envase perdido" not in cuerpo
+    assert "(Banana Bolivia)" not in cuerpo
 
 
 def test_una_guia_anulada_no_ofrece_asignar_ficha():
@@ -18917,10 +18917,12 @@ def test_stock_inicial_las_fichas_se_eligen_por_articulo_y_dicen_de_que_cliente_
     respuesta = _pantalla_stock_inicial("/administracion/stock/inicial?articulo_id=7")
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    # Sin el cliente adentro del nombre, las dos fichas de Banana de dos
-    # clientes distintos serían dos opciones idénticas.
-    assert "Día — Banana Bolivia" in cuerpo
-    assert "Vea — Banana Ecuador" in cuerpo
+    # Dos clientes con ficha de Banana: el nombre del cliente se antepone.
+    # Y las dos son "Envase perdido — 18 kg", así que además choca la
+    # etiqueta base — el cliente es justamente lo que las separa.
+    assert "Día — Envase perdido — 18 kg" in cuerpo
+    assert "Vea — Envase perdido — 18 kg" in cuerpo
+    assert "falta cargar el envase" not in cuerpo
     # Y NO hay un "sin asignar" como en la guía R: una caja que está en el
     # piso se puede ir a mirar.
     assert "Sin asignar" not in cuerpo
