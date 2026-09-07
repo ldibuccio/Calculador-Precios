@@ -18667,7 +18667,13 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
     assert "Sin asignar" in cuerpo
     # La opción dice de qué cliente es la ficha: dos fichas con el mismo
     # nombre de dos clientes distintos serían indistinguibles.
-    assert "Banana Bolivia (Día)" in cuerpo
+    # El rótulo sale del MISMO armador que Stock Físico: se lee en qué caja,
+    # no el código del cliente. Esta ficha no tiene envase cargado, así que
+    # conserva el código Y lo dice — el código es el último recurso, nunca un
+    # default silencioso. Y sin el cliente adelante: hay uno solo con ficha de
+    # ese artículo, así que no hay nada que distinguir.
+    assert "Banana Bolivia — ⚠ falta cargar el envase" in cuerpo
+    assert "Día — Banana Bolivia" not in cuerpo
 
 
 def test_una_guia_anulada_no_ofrece_asignar_ficha():
@@ -18918,6 +18924,37 @@ def test_stock_inicial_las_fichas_se_eligen_por_articulo_y_dicen_de_que_cliente_
     # Y NO hay un "sin asignar" como en la guía R: una caja que está en el
     # piso se puede ir a mirar.
     assert "Sin asignar" not in cuerpo
+
+
+def test_el_cliente_se_pone_SOLO_cuando_hay_mas_de_uno():
+    """Misma escalera del Remanente: el caso normal limpio, el nombre solo
+    cuando hace falta. Con un cliente el envase alcanza; anteponerlo siempre
+    daba "Día — Caja Grande Día", que repite lo mismo dos veces porque el
+    envase ya lleva el nombre del cliente adentro."""
+    from app.main import _cajas_para_elegir_por_articulo
+
+    una_sola = [{"id": 10, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Tomate Redondo",
+                 "nombre_cliente": "TOM RED 1° E", "envase_nombre": "Caja Grande Día",
+                 "contenido_caja": 16, "unidad_venta": "kilo"}]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=una_sola),
+    ):
+        solo = _cajas_para_elegir_por_articulo()
+    assert [c["nombre"] for c in solo[7]] == ["Caja Grande Día — 16 kg"]
+
+    dos_clientes = una_sola + [dict(una_sola[0], id=11, cliente_id=2,
+                                    nombre_cliente="TOM RED VEA",
+                                    envase_nombre="Caja Vea", contenido_caja=10)]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=dos_clientes),
+    ):
+        con_dos = _cajas_para_elegir_por_articulo()
+    nombres = [c["nombre"] for c in con_dos[7]]
+    assert all(" — " in n for n in nombres)
+    assert "Día — Caja Grande Día — 16 kg" in nombres
+    assert "Vea — Caja Vea — 10 kg" in nombres
 
 
 def test_stock_inicial_sin_fichas_del_articulo_lo_dice_en_vez_de_dejar_cargar():

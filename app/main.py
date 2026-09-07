@@ -6924,35 +6924,55 @@ def ajustar_stock_deposito_ruta(
 # porque lleva COSTO, y el operario no ve números del sistema.
 
 
-def _fichas_por_articulo() -> dict[str, list[dict]]:
-    """Las fichas elegibles al cargar cajas ya armadas, por articulo_id (como texto).
+def _cajas_para_elegir_por_articulo() -> dict[int, list[dict]]:
+    """{articulo_id: [cajas elegibles]}, con el rótulo que se lee para ELEGIR.
 
-    Acá la ficha se elige por ARTÍCULO y no por (cliente, artículo) como
-    en la guía R: el que carga está mirando una caja concreta en el piso y
-    ya sabe de quién es. Pedirle el cliente primero sería un campo más por
-    renglón, y son muchos renglones seguidos.
+    Lo usan las pantallas que eligen la ficha POR ARTÍCULO y no por cliente
+    —Stock Físico, Stock Inicial y el asignar ficha de Guías R—: el que
+    carga está mirando una caja concreta en el piso y ya sabe de quién es.
 
-    Por eso cada opción lleva el cliente adentro del nombre: sin él,
-    "Banana Bolivia" de dos clientes distintos serían dos opciones
-    idénticas.
+    EL NOMBRE DEL CLIENTE VA SOLO CUANDO HACE FALTA, que es la misma
+    escalera del Remanente: con un solo cliente con ficha de ese artículo
+    el envase alcanza y el renglón va limpio ("Caja Grande Día — 16 kg");
+    recién con dos se antepone, porque ahí sí hay algo que distinguir.
+
+    Sin eso quedaba "Día — Caja Grande Día": el envase ya lleva el nombre
+    del cliente adentro en este catálogo, así que anteponerlo siempre
+    repite lo mismo dos veces — el defecto que veníamos arreglando.
     """
     nombres = {cliente["id"]: cliente["nombre"] for cliente in listar_clientes()}
-    por_articulo: dict[str, list[dict]] = {}
-    for ficha in listar_fichas_de_todos_los_clientes():
+    fichas = listar_fichas_de_todos_los_clientes()
+
+    clientes_por_articulo: dict[int, set] = {}
+    for ficha in fichas:
+        clientes_por_articulo.setdefault(ficha["articulo_id"], set()).add(ficha["cliente_id"])
+
+    por_articulo: dict[int, list[dict]] = {}
+    for ficha in fichas:
         sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
         kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
                   if ficha.get("contenido_caja") else "")
-        por_articulo.setdefault(str(ficha["articulo_id"]), []).append(
+        nombre = _caja_para_elegir(ficha)
+        if len(clientes_por_articulo[ficha["articulo_id"]]) > 1:
+            cliente = nombres.get(ficha["cliente_id"], "cliente sin nombre")
+            nombre = f"{cliente} — {nombre}"
+        por_articulo.setdefault(ficha["articulo_id"], []).append(
             {
                 "id": ficha["id"],
                 "cliente_id": ficha["cliente_id"],
-                "nombre": f"{nombres.get(ficha['cliente_id'], 'Cliente sin nombre')} — {_nombre_de_ficha(ficha)}",
+                "nombre": nombre,
                 "kilaje": kilaje,
             }
         )
-    for fichas in por_articulo.values():
-        fichas.sort(key=lambda f: f["nombre"])
+    for cajas in por_articulo.values():
+        cajas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
     return por_articulo
+
+
+def _fichas_por_articulo() -> dict[str, list[dict]]:
+    """Lo mismo, con la clave como TEXTO: es como lo indexan las plantillas."""
+    return {str(articulo_id): cajas
+            for articulo_id, cajas in _cajas_para_elegir_por_articulo().items()}
 
 
 def _renderizar_stock_inicial(
@@ -7794,12 +7814,15 @@ def _caja_para_elegir(ficha: dict) -> str:
         return f"{envase} — {kilaje}"
     if envase:
         return envase
-    # Sin envase: se dice que falta. El kilaje solo ya distingue la chica de
-    # la grande; sin kilaje tampoco, queda el código del cliente y el aviso.
+    # SIN ENVASE, el código del cliente se conserva, y no es una recaída: es
+    # lo ÚNICO que distingue dos fichas del mismo artículo cuando ninguna
+    # tiene envase. Dejar solo el kilaje las colapsaba en la misma etiqueta
+    # —"18 kg" y "18 kg"— y elegir mal ahí manda las cajas a la ficha
+    # equivocada, que es un error que después nadie ve. El aviso va igual:
+    # el código es el ÚLTIMO recurso, nunca un default silencioso.
     falta = "⚠ falta cargar el envase"
-    if kilaje:
-        return f"{kilaje} — {falta}"
-    return f"{_nombre_de_ficha(ficha)} — {falta}"
+    propio = _nombre_de_ficha(ficha)
+    return f"{propio} — {kilaje} — {falta}" if kilaje else f"{propio} — {falta}"
 
 
 def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
@@ -8336,28 +8359,14 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
         )
 
     # Para completar la ficha de una guía sin asignar: las fichas de ESE
-    # artículo, cualquiera sea el cliente. Dos consultas: las fichas y los
-    # nombres de los clientes.
-    #
-    # El nombre del cliente NO viene con la ficha —
-    # listar_fichas_de_todos_los_clientes trae cliente_id y nada más— y
-    # leerlo de ahí tiraba la pantalla entera con un KeyError apenas
-    # hubiera una ficha cargada. Se resuelve con el mismo mapa que ya usan
-    # las otras pantallas que necesitan el nombre.
+    # artículo, cualquiera sea el cliente. Sale del MISMO armador que Stock
+    # Físico y Stock Inicial —`_cajas_para_elegir_por_articulo`— y no de una
+    # copia: las tres eligen por artículo y las tres necesitan leer en qué
+    # caja, no el código con el que el cliente nombra su producto.
     try:
-        nombres_clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
-        fichas = listar_fichas_de_todos_los_clientes()
+        fichas_por_articulo = _cajas_para_elegir_por_articulo()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    fichas_por_articulo: dict = {}
-    for ficha in fichas:
-        cliente = nombres_clientes.get(ficha["cliente_id"], "cliente sin nombre")
-        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(
-            {"id": ficha["id"], "nombre": f"{_nombre_de_ficha(ficha)} ({cliente})"}
-        )
-    for fichas in fichas_por_articulo.values():
-        fichas.sort(key=lambda f: f["nombre"])
 
     return templates.TemplateResponse(
         request,

@@ -3710,9 +3710,41 @@ Las que miran NUESTRO depósito y todavía muestran el código:
 | **Stock Físico + Stock Inicial** (`_fichas_por_articulo`) | `Día — TOM RED 1° E` | elige por ARTÍCULO, no por cliente: el cliente sí hace falta ahí, y con estos envases quedaría `Día — Caja Grande Día`, redundante. Necesita decidir si el cliente se pone solo cuando hay más de uno |
 | **Guías R** (Administración, asignar ficha) | `TOM RED 1° E (Día)` | mismo caso |
 
-Las dos quedan pendientes a propósito: el arreglo no es copiar la función, es
-decidir qué hacer con el nombre del cliente cuando el envase ya lo lleva
-adentro.
+### Las tres arregladas, y la escalera del cliente (07/09)
+
+Las tres salen ahora del MISMO armador, `_cajas_para_elegir_por_articulo`, y no
+de tres copias. **El nombre del cliente se antepone SOLO cuando hay más de un
+cliente con ficha de ese artículo** — la misma escalera del Remanente: el caso
+normal limpio, el nombre solo cuando hace falta.
+
+| | |
+|---|---|
+| un cliente | `Caja Grande Día — 16 kg` |
+| dos clientes | `Día — Caja Grande Día — 16 kg` |
+
+Sin eso quedaba `Día — Caja Grande Día`: **el envase ya lleva el nombre del
+cliente adentro en este catálogo**, así que anteponerlo siempre repite lo mismo
+dos veces, que es el defecto que se venía arreglando.
+
+### El fixture destapó un agujero en la escalera, y valió
+
+La primera versión, sin envase, caía al kilaje solo: `18 kg — falta cargar el
+envase`. El test de Stock Inicial —Banana Bolivia de Día y Banana Ecuador de
+Vea, **las dos de 18 kg y ninguna con envase**— lo rompió al instante: **las dos
+opciones quedaban con la misma etiqueta.**
+
+Ahí el prefijo del cliente las salvaba, pero **dos fichas del MISMO cliente
+habrían colapsado sin red**, y elegir mal manda las cajas a la ficha equivocada:
+un error que después nadie ve.
+
+Corregido: **sin envase se conserva el código del cliente**, que es lo único que
+distingue dos fichas del mismo artículo, con el kilaje al lado y el aviso
+puesto. El código sigue siendo el ÚLTIMO recurso — nunca un default silencioso.
+
+La lección es del fixture, no del código: **el caso de dos fichas con el mismo
+kilaje y sin envase ya estaba escrito en los tests desde antes**, esperando. Una
+escalera que descarta información en el escalón de abajo colapsa justo donde más
+caro sale.
 
 ## LO PRÓXIMO, en orden (06/09)
 

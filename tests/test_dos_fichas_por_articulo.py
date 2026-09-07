@@ -151,14 +151,28 @@ def test_una_ficha_SIN_ENVASE_lo_dice_y_no_queda_en_blanco():
     disfrazado."""
     from app.main import _caja_para_elegir
 
-    # Con kilaje: el kilaje ya distingue la chica de la grande.
     sin_envase = {"nombre_cliente": "MANZANA GOB", "envase_nombre": None,
                   "contenido_caja": 20, "unidad_venta": "kilo", "articulo_nombre": "Mzn Gob"}
-    assert _caja_para_elegir(sin_envase) == "20 kg — ⚠ falta cargar el envase"
+    assert _caja_para_elegir(sin_envase) == "MANZANA GOB — 20 kg — ⚠ falta cargar el envase"
 
-    # Sin kilaje tampoco: queda el código del cliente, pero CON el aviso.
     pelada = dict(sin_envase, contenido_caja=None)
     assert _caja_para_elegir(pelada) == "MANZANA GOB — ⚠ falta cargar el envase"
+
+
+def test_sin_envase_NO_se_tira_el_codigo_del_cliente_o_dos_fichas_colapsan():
+    """Sin envase, el código es lo ÚNICO que distingue dos fichas del mismo
+    artículo. Dejar solo el kilaje las volvía la misma etiqueta —"18 kg" y
+    "18 kg"— y elegir mal ahí manda las cajas a la ficha equivocada."""
+    from app.main import _caja_para_elegir
+
+    base = {"envase_nombre": None, "contenido_caja": 18, "unidad_venta": "kilo",
+            "articulo_nombre": "Banana"}
+    bolivia = _caja_para_elegir(dict(base, nombre_cliente="Banana Bolivia"))
+    ecuador = _caja_para_elegir(dict(base, nombre_cliente="Banana Ecuador"))
+
+    assert bolivia != ecuador
+    assert "Banana Bolivia" in bolivia and "Banana Ecuador" in ecuador
+    assert "⚠ falta cargar el envase" in bolivia
 
 
 def test_un_envase_sin_kilaje_igual_se_nombra():
