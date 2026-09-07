@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
+from core.costo_real import ETIQUETAS_MOTIVO_REAL, atribuir_costos_fifo, calcular_rentabilidad_real
 from core.stock import repartir_fifo
 
 
@@ -238,6 +238,22 @@ def test_atribucion_porcion_sin_precio_deja_la_salida_sin_costo_con_motivo():
     assert resultado[0]["costo"] is None
     assert resultado[0]["bultos_sin_costo"] == 5
     assert resultado[0]["motivos_sin_costo"] == {"ajuste_sin_costo": 5}
+
+
+def test_el_compensatorio_del_corte_tiene_motivo_PROPIO_no_el_de_los_ajustes():
+    """El lote fantasma no es un ajuste, y decir "ajuste" manda a buscar donde
+    no es: no hay ningún ajuste que corregir. Es mercadería que el modelo
+    viejo dejó debiendo, y el nombre lo tiene que decir.
+    """
+    entradas = [_lote(1, 5, None, tipo_lote="cierre_modelo_viejo"), _lote(2, 10, 1000.0)]
+    salidas = [{"orden": 3, "cantidad": 8}]
+
+    resultado = atribuir_costos_fifo(entradas, salidas)
+
+    assert resultado[0]["costo"] is None
+    assert resultado[0]["bultos_sin_costo"] == 5
+    assert resultado[0]["motivos_sin_costo"] == {"compensatorio_del_corte": 5}
+    assert "compensatorio_del_corte" in ETIQUETAS_MOTIVO_REAL
 
 
 def test_atribucion_exceso_sobre_los_lotes_es_sin_lote():

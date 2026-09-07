@@ -1,8 +1,9 @@
 import base64
 import io
+import re
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import openpyxl
 import pypdfium2 as pdfium
@@ -14,6 +15,7 @@ from app.db import (
     DATABASE_URL_ENV_VAR,
     obtener_conexion,
     RepartoDesactualizado,
+    ReprocesoAnteriorAlCorte,
     StockInsuficienteParaReproceso,
 )
 from app.main import (
@@ -8145,10 +8147,30 @@ def test_ver_compras_muestra_en_su_banner_solo_las_alertas_que_le_tocan():
     assert respuesta.status_code == 200
     assert "Compras sin precio de compra cargado (4)" in respuesta.text
     assert 'href="/compras/pendientes"' in respuesta.text
-    assert "Guías R con costo incompleto (1)" in respuesta.text
+    assert "Guías R esperando precio (1)" in respuesta.text
     assert "Mercadería sin recepcionar" not in respuesta.text
     # Arriba de los botones de carga, no mezclado ni después.
     assert respuesta.text.index("Compras sin precio") < respuesta.text.index('href="/compras/nueva/manual"')
+
+
+def test_los_pedidos_incompletos_se_ven_TAMBIEN_en_compras():
+    """El depósito la ve porque armó de menos; el comprador porque puede ser
+    la causa —se entregó de menos porque se compró de menos— y es el único
+    que lo puede corregir, comprando mañana.
+
+    Es la MISMA alerta y la MISMA cuenta: `modulos` decide en qué cintas
+    aparece, no cuántas veces se calcula.
+    """
+    foto = _foto_alertas({"pedidos_incompletos": (3, date(2026, 9, 2))})
+    with patch("app.main.listar_estado_alertas", return_value=foto) as mock_foto:
+        de_compras = cliente.get("/compras")
+        del_deposito = cliente.get("/deposito")
+
+    for respuesta in (de_compras, del_deposito):
+        assert "Pedidos incompletos (3)" in respuesta.text
+        assert 'href="/deposito/pedido"' in respuesta.text
+    # UNA consulta por pantalla, la de la foto: la cuenta no se repite.
+    assert mock_foto.call_count == 2
 
 
 def test_ver_compras_sin_alertas_no_muestra_banner():
@@ -9582,8 +9604,10 @@ def test_ver_auditoria_lista_las_alertas_con_casos_y_el_mas_viejo():
     assert "Mercadería sin recepcionar hace más de 48 horas" in respuesta.text
     assert "Stock de vacíos negativo" in respuesta.text
     assert "Stock de depósito en negativo (salidas sin explicar)" in respuesta.text
-    assert 'href="/administracion/stock/sistema"' in respuesta.text
-    assert "Guías R con costo incompleto" in respuesta.text
+    # Al Remanente, que es donde quedaron los negativos: Stock del Sistema se
+    # borró el 06/09 y la alerta habría llevado a un 404.
+    assert 'href="/administracion/stock/remanente"' in respuesta.text
+    assert "Guías R esperando el precio de una compra" in respuesta.text
     assert 'href="/administracion/stock/guias-r"' in respuesta.text
     assert "sin ficha logística o sin precio de venta" in respuesta.text
     assert "Señas de vacíos pendientes hace más de 7 días" in respuesta.text
@@ -10810,6 +10834,63 @@ def test_anular_vacio_recibido_redirige_a_recibir():
     mock_anular.assert_called_once_with(5)
 
 
+def test_LAS_DOS_PUERTAS_frenan_la_anulacion_con_la_sena_ya_cobrada():
+    """La regla es de la PLATA, no de quién la toca: la puerta del operario y
+    la de Movimientos (que pide clave de control) frenan igual. Tener la clave
+    no hace que el pago vuelva a la caja."""
+    from app.db import SenaYaCobrada
+
+    with (
+        patch("app.main.anular_vacio_recibido", side_effect=SenaYaCobrada("vale")),
+        # La pantalla del operario se vuelve a renderizar con el error, así
+        # que necesita sus datos.
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+    ):
+        del_operario = cliente.post("/puesto/envases/vacios/recibidos/74/anular",
+                                    follow_redirects=False)
+        de_movimientos = cliente.post(
+            "/puesto/envases/movimientos/recibidos/74/anular",
+            data={"fecha_desde": "2026-09-07", "fecha_hasta": "2026-09-07"},
+            follow_redirects=False)
+
+    # Ninguna de las dos redirige como si hubiera salido bien.
+    assert del_operario.status_code == 409
+    assert de_movimientos.status_code == 409
+    # Y las dos dicen lo mismo, con qué hacer.
+    for cuerpo in (del_operario.text, de_movimientos.text):
+        assert "YA TIENE UN VALE EMITIDO" in cuerpo
+        assert "Ajustar Stock" in cuerpo
+
+
+def test_recibido_hoy_NO_ofrece_anular_una_entrada_con_la_sena_cobrada():
+    """Ofrecido y prohibido es lo peor de los dos mundos."""
+    recibidos = [
+        {"id": 74, "cantidad": 13, "creado_en": datetime(2026, 9, 7, 8, 12),
+         "anulado_el": None, "sena_pagada_el": None,
+         "sena_vale_el": datetime(2026, 9, 7, 11, 30), "cliente_nombre": "Martin",
+         "proveedor_nombre": "FRUTAMAX", "tipo_nombre": "torito madera"},
+        {"id": 75, "cantidad": 20, "creado_en": datetime(2026, 9, 7, 9, 0),
+         "anulado_el": None, "sena_pagada_el": None, "sena_vale_el": None,
+         "cliente_nombre": "Martin", "proveedor_nombre": "FRUTAMAX",
+         "tipo_nombre": "torito madera"},
+    ]
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=recibidos),
+    ):
+        cuerpo = cliente.get("/puesto/envases/vacios/recibir").text
+
+    # El 74 no tiene botón y dice por qué; el 75 lo tiene.
+    assert "/puesto/envases/vacios/recibidos/74/anular" not in cuerpo
+    assert "/puesto/envases/vacios/recibidos/75/anular" in cuerpo
+    assert "Vale ya emitido" in cuerpo
+
+
 def test_devolver_vacios_con_stock_suficiente_avisa_sin_advertencia():
     with (
         patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
@@ -11689,6 +11770,69 @@ def test_ver_movimientos_permite_anular_de_cualquier_fecha_conservando_filtros()
     assert 'action="/puesto/envases/movimientos/recibidos/9/anular"' in respuesta.text
     # Los filtros viajan ocultos para volver al mismo rango tras anular.
     assert 'name="fecha_desde" value="2026-08-09"' in respuesta.text
+
+
+def test_el_vale_no_cobrado_pide_CLAVE_DE_CONTROL():
+    """Dar de baja una deuda de meses es una decisión de plata, no una
+    corrección del momento."""
+    with (
+        patch("app.main._acceso_control_valido", return_value=False),
+        patch("app.main.caducar_vale") as mock_caducar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/movimientos/recibidos/74/vale-no-cobrado",
+            data={"motivo": "no volvió"}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_caducar.assert_not_called()
+
+
+def test_el_vale_no_cobrado_registra_el_motivo_y_vuelve_al_rango():
+    with patch("app.main.caducar_vale") as mock_caducar:
+        respuesta = cliente.post(
+            "/puesto/envases/movimientos/recibidos/74/vale-no-cobrado",
+            data={"motivo": "el cliente no volvió desde septiembre",
+                  "fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-07"},
+            follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "fecha_desde=2026-09-01" in respuesta.headers["location"]
+    mock_caducar.assert_called_once_with(74, "el cliente no volvió desde septiembre")
+
+
+def test_LOS_DOS_BOTONES_dicen_que_pasa_con_los_cajones():
+    """Lo único que los distingue de verdad es si el stock se toca, así que
+    eso es lo que tiene que decir cada uno. Y el que no lo toca solo aparece
+    donde hay un vale vivo."""
+    recibidos = [
+        {"id": 74, "cantidad": 13, "creado_en": datetime(2026, 9, 1, 8, 12), "anulado_el": None,
+         "sena_pagada_el": None, "sena_vale_el": datetime(2026, 9, 1, 11, 30),
+         "sena_vale_caducado_el": None, "cliente_nombre": "Martin",
+         "proveedor_nombre": "FRUTAMAX", "tipo_nombre": "torito madera"},
+        {"id": 75, "cantidad": 20, "creado_en": datetime(2026, 9, 2, 9, 0), "anulado_el": None,
+         "sena_pagada_el": None, "sena_vale_el": None, "sena_vale_caducado_el": None,
+         "cliente_nombre": "Juan", "proveedor_nombre": "FRUTAMAX", "tipo_nombre": "torito madera"},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 7)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=recibidos),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=[]),
+    ):
+        cuerpo = cliente.get("/puesto/envases/movimientos").text.split("</style>")[-1]
+
+    # El 74 tiene vale: solo el botón que NO toca el stock, con su motivo.
+    assert "/puesto/envases/movimientos/recibidos/74/vale-no-cobrado" in cuerpo
+    assert 'action="/puesto/envases/movimientos/recibidos/74/anular"' not in cuerpo
+    assert "Los cajones están en el galpón" in cuerpo
+    assert 'name="motivo"' in cuerpo
+    # El 75 no tiene vale: solo el destructivo.
+    assert 'action="/puesto/envases/movimientos/recibidos/75/anular"' in cuerpo
+    assert "/puesto/envases/movimientos/recibidos/75/vale-no-cobrado" not in cuerpo
+    assert "Estos cajones nunca se recibieron" in cuerpo
+    # Y las confirmaciones dicen qué pasa con el stock, con el número.
+    assert "Los 13 cajones SIGUEN en el stock" in cuerpo
+    assert "Los 20 cajones SALEN del stock" in cuerpo
 
 
 def test_anular_desde_movimientos_redirige_al_mismo_rango():
@@ -12777,8 +12921,9 @@ def test_armar_pedido_en_una_sucursal_separa_pendientes_de_armados():
     assert "Ya armado (1)" in respuesta.text
     assert "armó 12 de 20" in respuesta.text
     assert 'action="/deposito/pedido/50/renglones/12/desarmar"' in respuesta.text
-    # El gesto secundario para el incompleto.
-    assert "Armé menos" in respuesta.text
+    # El gesto secundario para cargar una cantidad distinta a la pedida.
+    # Ya no dice "Armé menos": desde el 05/09 también sirve para más.
+    assert "Armé otra cantidad" in respuesta.text
 
 
 def test_armar_el_atras_de_la_barra_sube_en_la_jerarquia_no_en_el_historial():
@@ -12871,8 +13016,8 @@ def test_armar_renglon_parcial_guarda_la_cantidad_real():
 
 
 def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
-    # "Armé menos" con la cantidad completa (o más) no es un incompleto:
-    # se guarda como armado normal, sin número redundante.
+    # EXACTAMENTE lo pedido: se guarda como armado normal, sin el número
+    # redundante. NULL significa "armó justo lo que pedían".
     with patch("app.main.marcar_renglon_armado") as mock_marcar:
         cliente.post(
             "/deposito/pedido/50/renglones/11/armar",
@@ -12882,6 +13027,662 @@ def test_armar_renglon_con_todo_lo_pedido_cuenta_como_completo():
         )
 
     mock_marcar.assert_called_once_with(11, None, None)
+
+
+def test_armar_DE_MAS_guarda_los_bultos_de_verdad():
+    """El camión ya salió con 80. Negar el registro no des-entrega nada.
+
+    Hasta el 05/09 un 80 sobre 50 se guardaba como None —o sea 50— y los 30
+    de más salían del galpón sin quedar en ningún lado: ni en el stock, ni
+    en la factura, ni en una pantalla. Ahora se guarda el 80.
+    """
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_armada": "80", "cantidad_pedida": "50"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(11, 80.0, None)
+
+
+def test_los_kilos_de_un_armado_DE_MAS_salen_por_los_bultos_de_verdad():
+    """Lo que se factura son los kilos que se mandaron.
+
+    Antes el kilaje se multiplicaba por lo PEDIDO, así que 80 bultos a 16 kg
+    se facturaban como 50 × 16 = 800. Ahora son 80 × 16 = 1280.
+    """
+    with patch("app.main.marcar_renglon_armado") as mock_marcar:
+        cliente.post(
+            "/deposito/pedido/50/renglones/11/armar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL",
+                  "cantidad_armada": "80", "cantidad_pedida": "50",
+                  "kilos_por_bulto": "16"},
+            follow_redirects=False,
+        )
+
+    mock_marcar.assert_called_once_with(11, 80.0, 1280.0)
+
+
+def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
+    """El ámbar significa "queda algo por hacer" y acá no queda nada.
+
+    Es el `!=` que quedó vivo en DOS plantillas cuando el resto del código
+    pasó a `<`. Estaba dormido porque el server nunca guardaba una cantidad
+    mayor a la pedida — y este cambio es justamente lo que lo despierta: sin
+    esto, un renglón donde SOBRÓ mercadería salía en ámbar pidiendo
+    atención.
+    """
+    renglones = [
+        dict(RENGLONES_ARMADO_DE_PRUEBA[1], id=12, cantidad=50.0, cantidad_armada=80.0),
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 21)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_pedidos_vigentes_con_armado", return_value=[]),
+        patch("app.main.obtener_pedido_vigente", return_value=PEDIDO_VIGENTE_DE_PRUEBA),
+        patch("app.main.listar_sucursales_pedido", return_value=[dict(s) for s in SUCURSALES_PEDIDO_DE_PRUEBA]),
+        patch("app.main.listar_renglones_pedido", return_value=renglones),
+        patch("app.main.fichas_con_cajas_armadas", return_value=set()),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/pedido/armar?cliente_id=1&fecha=2026-08-21&sucursal=VL")
+
+    texto = respuesta.text
+    # Se VE, que es lo que hoy no pasa: el 80 no existía en ninguna pantalla.
+    assert '<span class="marca-de-mas">armó 80 de 50</span>' in texto
+    # Y NO con la clase del ámbar, que dice "queda algo por hacer".
+    assert '<span class="marca-incompleto">armó 80 de 50</span>' not in texto
+    # Tampoco cuenta como incompleto en el progreso de la sucursal.
+    assert "incompleto" not in texto.split("VL: ")[1].split("<")[0]
+
+
+# --- El Remanente: la vista del depósito, una porción por renglón (06/09) ---
+
+REMANENTE_FILAS = [
+    {"articulo_id": 1, "nombre": "Mandarina", "stock": 35.0, "segunda": 3.0, "grupo": "fruta"},
+    {"articulo_id": 2, "nombre": "Pomelo", "stock": 31.0, "segunda": 0.0, "grupo": "fruta"},
+    {"articulo_id": 3, "nombre": "Mzn Gob", "stock": 20.0, "segunda": 0.0, "grupo": None},
+    {"articulo_id": 5, "nombre": "Berenjena", "stock": 20.0, "segunda": 0.0, "grupo": "hortaliza"},
+]
+REMANENTE_CAJAS = {(1, 11): 15.0, (2, 12): 15.0, (5, 13): 20.0}
+# `nombre_cliente` es el CÓDIGO CON EL QUE EL CLIENTE nombra su producto, y acá
+# va como es en la base: en mayúscula y sin parecerse al nombre del artículo.
+# La fixture vieja tenía "Berenjena Caja Día" —el nombre que queríamos ver, no
+# el que hay— y por eso los tests pasaban en verde mientras la pantalla mostraba
+# "BERENJENA G". Una fixture escrita con el resultado esperado adentro no prueba
+# nada: repite la hipótesis.
+REMANENTE_FICHAS = [
+    {"id": 11, "articulo_id": 1, "cliente_id": 1, "articulo_nombre": "Mandarina",
+     "nombre_cliente": "MANDA COM X 10", "contenido_caja": 10.0, "unidad_venta": "kilo"},
+    {"id": 12, "articulo_id": 2, "cliente_id": 1, "articulo_nombre": "Pomelo",
+     "nombre_cliente": "POMELO ROSADO G", "contenido_caja": 15.0, "unidad_venta": "kilo"},
+    {"id": 13, "articulo_id": 5, "cliente_id": 1, "articulo_nombre": "Berenjena",
+     "nombre_cliente": "BERENJENA G", "contenido_caja": 8.0, "unidad_venta": "kilo"},
+]
+REMANENTE_CLIENTES = [{"id": 1, "nombre": "Día"}, {"id": 2, "nombre": "Vea"}]
+
+
+def _remanente(filas=None, cajas=None, fichas=None, reingresos=0, clientes=None,
+               url="/administracion/stock/remanente"):
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=REMANENTE_FILAS if filas is None else filas),
+        patch("app.main.cajas_armadas_por_ficha",
+              return_value=REMANENTE_CAJAS if cajas is None else cajas),
+        patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=REMANENTE_FICHAS if fichas is None else fichas),
+        patch("app.main.listar_clientes",
+              return_value=REMANENTE_CLIENTES if clientes is None else clientes),
+        patch("app.main.total_reingresos_rechazo", return_value=reingresos),
+        # El corte, que es el piso de la pantalla: antes de esa fecha no
+        # puede contestar y manda a hoy con un aviso.
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
+    ):
+        return cliente.get(url)
+
+
+def _leer_excel_remanente(**kwargs):
+    """Lee el Excel del Remanente y CLASIFICA sus filas, en un solo lugar.
+
+    Antes cada test separaba porciones de títulos por "tiene número en la
+    columna Sistema", y eso dejó de alcanzar el día que el subtotal —que
+    tiene número— se sumó. La clasificación real es visual y es la misma que
+    ve el que imprime: lo que va con relleno gris es CHROME (título o
+    subtotal) y lo que va sin relleno es MERCADERÍA.
+
+    Devuelve {"titulos", "porciones", "subtotales", "total", "por_seccion"}.
+    """
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    kwargs.setdefault("url", "/administracion/stock/remanente/exportar-excel")
+    hoja = load_workbook(BytesIO(_remanente(**kwargs).content)).active
+
+    leido = {"titulos": [], "porciones": [], "subtotales": [], "total": None, "por_seccion": {}}
+    seccion = None
+    for fila in hoja.iter_rows(min_row=5, max_col=3):
+        nombre, bultos, contado = (c.value for c in fila)
+        relleno = fila[0].fill.start_color.rgb if fila[0].fill.start_color else None
+        es_chrome = relleno is not None and "D9E2F3" in str(relleno)
+        if str(nombre or "").startswith("TOTAL"):
+            leido["total"] = (nombre, bultos, contado)
+        elif es_chrome and bultos is None:
+            seccion = nombre
+            leido["titulos"].append(nombre)
+        elif es_chrome:
+            leido["subtotales"].append((nombre, bultos, contado))
+        else:
+            leido["porciones"].append((nombre, bultos, contado))
+            leido["por_seccion"].setdefault(seccion, []).append(nombre)
+    return leido
+
+
+def _porciones_en_pantalla(texto):
+    return re.findall(r'<span class="que">([^<]+)</span>\s*<span class="cuanto">([^<]+)</span>', texto)
+
+
+def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
+    """En el piso no hay "un artículo con un total": hay pilas distintas.
+
+    Saber que hay 9 limones sumando 4 sueltos más 5 en caja no le sirve a
+    nadie; lo que hace falta es cuántas cajas hay de cada cosa. Y el orden
+    agrupa por ARTÍCULO, no por el texto que se muestra.
+    """
+    respuesta = _remanente()
+
+    assert respuesta.status_code == 200
+    assert _porciones_en_pantalla(respuesta.text) == [
+        ("Berenjena Caja Día", "20"),
+        ("Mandarina", "20"),
+        ("Mandarina Caja Día", "15"),
+        ("Mandarina Segunda", "3"),
+        ("Mzn Gob", "20"),
+        ("Pomelo", "16"),
+        ("Pomelo Caja Día", "15"),
+    ]
+
+
+def test_el_remanente_NO_dice_la_palabra_suelto_ni_totales_por_articulo():
+    """El nombre pelado es la mercadería como viene del puesto, que es como el
+    depósito la llama. "Caja Día" y "Segunda" son las que necesitan
+    aclaración porque son otra cosa."""
+    texto = _remanente().text
+
+    assert "suelto" not in texto.lower()
+    # Mandarina son 20 + 15 + 3: el 38 no aparece en ningún lado.
+    assert "38" not in texto
+
+
+def test_el_remanente_manda_a_Stock_Fisico_para_contar():
+    """Muestra números del sistema, que es lo contrario del criterio del
+    depósito. Dice dónde se cuenta de verdad, y por qué ahí no se ven."""
+    texto = _remanente().text
+
+    assert "Esto es para mirar y para exportar" in texto
+    assert '/deposito/stock/fisico' in texto
+
+
+def test_una_caja_se_llama_ARTICULO_MAS_CAJA_CLIENTE_no_con_el_codigo_del_cliente():
+    """`nombre_cliente` es el código con el que EL CLIENTE nombra su producto
+    ("BERENJENA G", "LIMA X 1KG"). Sirve donde alguien elige una ficha PARA
+    ese cliente —el armado, la guía R—, porque es lo que está impreso en la
+    caja. Acá no: el que lee el remanente mira su propio depósito.
+
+    Y con el nombre del artículo adelante las tres porciones caen juntas al
+    ordenar, que era la idea del orden desde el principio.
+    """
+    nombres = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+
+    assert "Berenjena Caja Día" in nombres
+    # El código del cliente NO puede aparecer en el caso normal.
+    for codigo in ("BERENJENA G", "MANDA COM X 10", "POMELO ROSADO G"):
+        assert codigo not in nombres
+
+
+def test_dos_cajas_del_MISMO_cliente_se_distinguen_por_el_kilaje():
+    """Un cliente puede tener varias fichas del mismo artículo — fue el motivo
+    de que la clave de venta pasara de artículo a ficha. Sin desempate,
+    "Lima Caja Día" saldría dos veces y no se sabría cuál es cuál."""
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 12.0, "segunda": 0.0}]
+    fichas = [
+        {"id": 11, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA X 1KG",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+        {"id": 12, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA CHICA",
+         "contenido_caja": 10.0, "unidad_venta": "kilo"},
+    ]
+    nombres = [n for n, _ in _porciones_en_pantalla(
+        _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
+
+    # El orden es alfabético, así que "10kg" cae antes que "5kg". Se acepta:
+    # los dos renglones quedan pegados y con el kilaje a la vista, que es lo
+    # que hacía falta. Ordenar por kilaje obligaría a ordenar las fichas por
+    # número también cuando son de clientes distintos, y ahí lo que se quiere
+    # es el orden por cliente.
+    assert nombres == ["Lima Caja Día 10kg", "Lima Caja Día 5kg"]
+
+
+def test_dos_cajas_de_CLIENTES_distintos_no_necesitan_kilaje():
+    """El caso normal se lee limpio: el nombre del cliente ya las distingue."""
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 12.0, "segunda": 0.0}]
+    fichas = [
+        {"id": 11, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA X 1KG",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+        {"id": 12, "articulo_id": 1, "cliente_id": 2, "nombre_cliente": "LIMA G",
+         "contenido_caja": 10.0, "unidad_venta": "kilo"},
+    ]
+    nombres = [n for n, _ in _porciones_en_pantalla(
+        _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
+
+    assert nombres == ["Lima Caja Día", "Lima Caja Vea"]
+
+
+def test_dos_cajas_del_mismo_cliente_y_MISMO_kilaje_caen_al_codigo_del_cliente():
+    """El modelo tampoco prohíbe esto. El kilaje ya no desempata, así que se
+    usa lo único que seguro las distingue. Feo, pero solo en el caso feo: es
+    preferible a dos renglones idénticos con números distintos."""
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 12.0, "segunda": 0.0}]
+    fichas = [
+        {"id": 11, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA X 1KG",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+        {"id": 12, "articulo_id": 1, "cliente_id": 1, "nombre_cliente": "LIMA CHICA",
+         "contenido_caja": 5.0, "unidad_venta": "kilo"},
+    ]
+    nombres = [n for n, _ in _porciones_en_pantalla(
+        _remanente(filas=filas, cajas={(1, 11): 4.0, (1, 12): 8.0}, fichas=fichas).text)]
+
+    assert nombres == ["Lima Caja Día 5kg", "Lima Caja Día 5kg"]
+
+
+# --- La fecha del Remanente ---
+
+
+def test_el_remanente_sin_fecha_muestra_HOY_y_no_se_marca_como_pasado():
+    cuerpo = _remanente().text.split("</style>")[-1]
+
+    assert 'value="2026-09-06"' in cuerpo
+    assert "No es el stock de ahora" not in cuerpo
+    assert "Volver a hoy" not in cuerpo
+
+
+def test_una_fecha_pedida_llega_a_LAS_TRES_cuentas_y_al_link_del_Excel():
+    """Las tres se cortan a la misma fecha o los renglones no cierran entre sí:
+    los sueltos salen de restarle a la primera las cajas de la segunda."""
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=[{"articulo_id": 1, "nombre": "Lima", "stock": 4.0, "segunda": 0.0}]) as filas,
+        patch("app.main.cajas_armadas_por_ficha", return_value={}) as cajas,
+        patch("app.main.total_reingresos_rechazo", return_value=0) as reingresos,
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 10)),
+    ):
+        respuesta = cliente.get("/administracion/stock/remanente?fecha=2026-09-08")
+
+    pedida = date(2026, 9, 8)
+    filas.assert_called_once_with(pedida)
+    cajas.assert_called_once_with(pedida)
+    reingresos.assert_called_once_with(pedida)
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # Y hay que poder VER que no es hoy, no solo la fecha en gris chico.
+    assert "Así estaba el depósito al cierre del 08/09/2026" in cuerpo
+    assert "No es el stock de ahora" in cuerpo
+    assert "Volver a hoy" in cuerpo
+    # El Excel que baja tiene que ser el de lo que se está mirando.
+    assert "exportar-excel?fecha=2026-09-08" in cuerpo
+
+
+def test_el_excel_se_baja_a_la_fecha_pedida_y_el_archivo_la_lleva_en_el_nombre():
+    """Dos exports de días distintos no se pueden pisar en la carpeta."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=[{"articulo_id": 1, "nombre": "Lima", "stock": 4.0, "segunda": 0.0}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 10)),
+    ):
+        respuesta = cliente.get(
+            "/administracion/stock/remanente/exportar-excel?fecha=2026-09-08")
+
+    assert 'filename="Remanente_08_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    assert hoja["A2"].value == "Al 08/09/2026"
+
+
+def test_una_fecha_ANTERIOR_AL_CORTE_no_se_contesta_y_dice_por_que():
+    """No es que falten datos: las tres cuentas serían de dos épocas. El total
+    lo rebasea el compensatorio y las cajas por ficha arrancan EN el corte, así
+    que el 20/08 daría el total del modelo viejo junto a cero cajas."""
+    respuesta = _remanente(url="/administracion/stock/remanente?fecha=2026-08-20")
+    cuerpo = respuesta.text.split("</style>")[-1]
+
+    assert "anterior al corte del modelo" in cuerpo
+    assert "Se muestra el día de hoy" in cuerpo
+    # Y muestra HOY de verdad, no una tabla vacía ni un error.
+    assert 'value="2026-09-06"' in cuerpo
+    assert "No es el stock de ahora" not in cuerpo
+
+
+def test_una_fecha_FUTURA_o_ROTA_cae_a_hoy_con_aviso():
+    for pedida, esperado in (("2026-12-25", "Todavía no pasó ese día"),
+                             ("mañana", "no se entendió")):
+        cuerpo = _remanente(
+            url=f"/administracion/stock/remanente?fecha={pedida}").text.split("</style>")[-1]
+        assert esperado in cuerpo
+        assert 'value="2026-09-06"' in cuerpo
+
+
+def test_los_negativos_van_ABAJO_Y_APARTE_de_las_porciones():
+    """La lista de arriba es lo que HAY; los negativos son un problema a
+    resolver. Si se mezclan como un renglón más, vuelve a ser la pantalla
+    que se borró."""
+    filas = [
+        {"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0, "reproceso_primera": 0.0, "segunda": 0.0},
+        {"articulo_id": 2, "nombre": "Palta", "stock": -45.0, "reproceso_primera": 0.0, "segunda": 0.0},
+    ]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
+
+    # Palta NO está entre las porciones: no hay pila que contar.
+    assert [n for n, _ in _porciones_en_pantalla(cuerpo)] == ["Berenjena"]
+    # Está en su propio bloque, y el bloque va DESPUÉS de la lista.
+    assert 'class="bloque-negativos"' in cuerpo
+    assert cuerpo.index('class="porcion"') < cuerpo.index('class="bloque-negativos"')
+    # Y linkea a Stock por Guía, que es la única puerta que le queda.
+    assert 'href="/administracion/stock/sistema/2"' in cuerpo
+
+
+def test_un_negativo_dice_QUE_PASO_no_cuanto_hay():
+    """Un artículo en −45 no tiene menos cuarenta y cinco cajones: tiene 45
+    bultos que salieron sin que ninguna guía los cubra. Mostrar "−45" en una
+    pantalla de cantidades invita a leerlo como stock y restarlo de algo — es
+    el mismo defecto del "sin procesar −95" que esta pantalla vino a
+    reemplazar."""
+    filas = [{"articulo_id": 2, "nombre": "Palta", "stock": -45.0,
+              "reproceso_primera": 0.0, "segunda": 0.0}]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
+
+    assert "Faltan explicar 45 bultos" in cuerpo
+    # El número NUNCA en la columna de la derecha, donde van los bultos que hay.
+    assert "-45" not in cuerpo and "−45" not in cuerpo
+    assert '<span class="cuanto">' not in cuerpo
+
+
+def test_sin_negativos_el_bloque_no_aparece():
+    filas = [{"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0,
+              "reproceso_primera": 0.0, "segunda": 0.0}]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[]).text.split("</style>")[-1]
+
+    assert 'class="bloque-negativos"' not in cuerpo
+    assert "Faltan explicar" not in cuerpo
+
+
+def test_el_remanente_muestra_los_dos_pools_aparte_y_en_chico():
+    """Reingresos y segunda van APARTE del stock normal, y sobrevivieron a
+    Stock del Sistema. En chico: son contexto, no lo que se viene a mirar."""
+    filas = [{"articulo_id": 1, "nombre": "Berenjena", "stock": 46.0,
+              "reproceso_primera": 0.0, "segunda": 7.0}]
+    cuerpo = _remanente(filas=filas, cajas={}, fichas=[], reingresos=12).text.split("</style>")[-1]
+
+    assert "12 bultos reingresados por rechazo" in cuerpo
+    assert "7 bultos de segunda esperando el remito al Puesto" in cuerpo
+
+
+def test_el_REMANENTE_NO_se_ofrece_desde_el_deposito():
+    """LA REGLA, y por eso tiene test propio: al operario no se le muestran
+    los números del sistema de lo que después tiene que contar. Con la lista
+    a mano, el conteo de Stock Físico se transcribe en vez de contarse, y un
+    conteo transcripto confirma al sistema en vez de controlarlo.
+
+    Estuvo un día en Depósito, en una tarjeta aparte y con un cartel que
+    pedía no usarlo para eso. Una tarjeta no es una frontera: los dos
+    botones estaban en la misma pantalla. Es la misma regla que la del
+    armado ("si lo ve, arma contra el sistema en vez de contra el piso"),
+    que ahí se cumple ESTRUCTURALMENTE — el número no llega al HTML.
+    """
+    deposito = cliente.get("/deposito/stock").text
+    assert "remanente" not in deposito.lower()
+
+    # Y donde sí vive: en Administración, primera de "Control de stock".
+    administracion = cliente.get("/administracion").text
+    assert '/administracion/stock/remanente' in administracion
+    assert (administracion.index('/administracion/stock/remanente')
+            < administracion.index('/administracion/stock/cotejo'))
+
+
+def test_un_articulo_que_no_se_reprocesa_es_un_solo_renglon_pelado():
+    """Manzana, pera, arándano: sin guías R con ficha, el nombre pelado se
+    lleva el total entero. Sale del modelo, sin ninguna excepción escrita."""
+    nombres = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+
+    assert nombres.count("Mzn Gob") == 1
+    assert not any(n.startswith("Mzn Gob ") for n in nombres)
+
+
+def test_una_porcion_en_CERO_no_es_un_renglon():
+    """Berenjena tiene 20 de stock y 20 en cajas: no hay sueltos. Un renglón
+    en cero sería mandar al que arma a buscar una pila vacía."""
+    nombres = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+
+    assert "Berenjena Caja Día" in nombres
+    assert "Berenjena" not in nombres
+
+
+def test_el_excel_del_remanente_sale_con_la_columna_CONTADO_vacia():
+    """Vacía a propósito: es para escribir a mano contra el conteo. Si saliera
+    precargada, el que cuenta transcribe en vez de contar."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    respuesta = _remanente(url="/administracion/stock/remanente/exportar-excel")
+
+    assert respuesta.status_code == 200
+    assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    assert hoja.title == "Remanente"
+    assert [c.value for c in hoja[4]] == ["Producto", "Sistema", "Contado"]
+    datos = [(f[0], f[1], f[2]) for f in hoja.iter_rows(min_row=5, max_col=3, values_only=True)]
+    # La tercera columna SIEMPRE vacía, el total incluido: si el que cuenta ve
+    # un total del sistema al pie, tiene contra qué cuadrar sin haber contado.
+    assert all(fila[2] is None for fila in datos)
+    # SIN PLATA: ninguna celda con un número que parezca un costo.
+    assert hoja.max_column == 3
+
+
+def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():
+    """Dos criterios de orden se van separando. Acá hay UNO: las porciones se
+    ordenan en app/main.py y el exportador no reordena nada.
+
+    Se compara contra lo que la PANTALLA muestra de verdad, no contra una
+    lista escrita a mano: una lista a mano es otra copia del criterio, y el
+    día que el orden cambie los dos tendrían que cambiar juntos.
+    """
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    pantalla = [n for n, _ in _porciones_en_pantalla(_remanente().text)]
+    excel = [nombre for nombre, _b, _c in _leer_excel_remanente()["porciones"]]
+
+    # Mismas porciones, sin perder ni inventar ninguna.
+    assert sorted(excel) == sorted(pantalla)
+    # Y dentro de cada sección, el mismo orden relativo que la pantalla.
+    for porciones in _leer_excel_remanente()["por_seccion"].values():
+        assert porciones == [n for n in pantalla if n in porciones]
+    # Las porciones de un artículo caen juntas: es para lo que sirve el orden.
+    assert pantalla[:3] == ["Berenjena Caja Día", "Mandarina", "Mandarina Caja Día"]
+
+
+def test_el_excel_del_remanente_cierra_con_UN_total_al_pie():
+    """Cuántos renglones y cuántos bultos, para ver de un vistazo si el archivo
+    impreso está completo. UNO solo al pie, no uno por artículo: el total por
+    artículo es justo la suma que el dueño pidió no mostrar."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    leido = _leer_excel_remanente()
+    porciones, total = leido["porciones"], leido["total"]
+
+    # Cuenta PORCIONES, no filas escritas: ni los títulos ni los subtotales
+    # son renglones que alguien tenga que ir a contar.
+    assert total[0] == f"TOTAL — {len(porciones)} renglones"
+    assert total[1] == round(sum(p[1] for p in porciones), 2)
+    assert total[2] is None
+    # Y el total del pie es la suma de los subtotales: las dos cuentas tienen
+    # que cerrar entre sí o el que imprime no sabe a cuál creerle.
+    assert total[1] == round(sum(s[1] for s in leido["subtotales"]), 2)
+
+
+def test_el_excel_agrupa_por_GRUPO_y_deja_las_CAJAS_PROCESADAS_al_final():
+    """Es para caminar el depósito: primero cada grupo de artículo en el orden
+    fijo del sistema, y al final las cajas armadas, que son una pila aparte y
+    se cuentan en otro momento."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    leido = _leer_excel_remanente()
+
+    # Hortaliza NO sale, y está bien: la Berenjena de la fixture tiene 20 de
+    # stock y 20 en caja, así que sus sueltos son cero y su única porción es
+    # la caja, que va al final.
+    assert leido["titulos"] == ["Fruta", "Sin grupo", "Cajas Procesadas"]
+    assert leido["por_seccion"]["Fruta"] == ["Mandarina", "Mandarina Segunda", "Pomelo"]
+    assert leido["por_seccion"]["Sin grupo"] == ["Mzn Gob"]
+    assert leido["por_seccion"]["Cajas Procesadas"] == [
+        "Berenjena Caja Día", "Mandarina Caja Día", "Pomelo Caja Día"]
+
+
+def test_cada_seccion_CIERRA_con_su_subtotal():
+    """Con la hoja impresa, saber cuántos bultos hay en una sección antes de
+    pasar a la siguiente acota DÓNDE buscar si algo no cierra, sin rehacer la
+    suma entera."""
+    leido = _leer_excel_remanente()
+
+    etiquetas = [nombre for nombre, _b, _c in leido["subtotales"]]
+    assert etiquetas == [
+        "Subtotal Fruta — 3 renglones",
+        "Subtotal Sin grupo — 1 renglón",
+        "Subtotal Cajas Procesadas — 3 renglones",
+    ]
+    # Cada uno suma lo suyo, y solo lo suyo.
+    por_etiqueta = {n: b for n, b, _c in leido["subtotales"]}
+    por_nombre = {n: b for n, b, _c in leido["porciones"]}
+    for titulo, nombres in leido["por_seccion"].items():
+        esperado = round(sum(por_nombre[n] for n in nombres), 2)
+        assert por_etiqueta[f"Subtotal {titulo} — {len(nombres)} "
+                           f"{'renglón' if len(nombres) == 1 else 'renglones'}"] == esperado
+
+
+def test_el_subtotal_sigue_LAS_MISMAS_TRES_REGLAS_que_el_total():
+    """Valor y no fórmula, "Contado" vacía, y que no se pueda confundir con un
+    renglón de mercadería: impreso tiene que leerse como cierre de sección."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    hoja = load_workbook(BytesIO(
+        _remanente(url="/administracion/stock/remanente/exportar-excel").content)).active
+
+    filas_subtotal = [f for f in hoja.iter_rows(min_row=5, max_col=3)
+                      if str(f[0].value or "").startswith("Subtotal ")]
+    assert filas_subtotal
+
+    for nombre, bultos, contado in filas_subtotal:
+        # 1. VALOR, no fórmula: importa lo que quedó impreso en el papel.
+        assert isinstance(bultos.value, (int, float))
+        assert not str(bultos.value).startswith("=")
+        # 2. "Contado" vacía: si el que cuenta ve un subtotal del sistema, ya
+        #    tiene contra qué cuadrar sin haber contado.
+        assert contado.value is None
+        # 3. Se lee como CHROME, no como mercadería: mismo relleno que el
+        #    título de su sección y en negrita. Impreso, la sección queda
+        #    encerrada entre dos franjas grises.
+        for celda in (nombre, bultos, contado):
+            assert celda.font.bold
+            assert "D9E2F3" in str(celda.fill.start_color.rgb)
+
+
+def test_la_SEGUNDA_no_es_una_caja_procesada():
+    """Son bultos sueltos de calidad menor esperando el remito al Puesto, no
+    cajas armadas para un cliente. Se queda con su artículo."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    por_seccion = _leer_excel_remanente()["por_seccion"]
+
+    assert "Mandarina Segunda" in por_seccion["Fruta"]
+    assert "Mandarina Segunda" not in por_seccion["Cajas Procesadas"]
+
+
+def test_una_seccion_sin_nada_NO_sale_en_el_excel():
+    """Una hoja impresa con "HOJA" y ningún renglón abajo hace dudar de si
+    falta algo o no hay."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    leido = _leer_excel_remanente(
+        filas=[{"articulo_id": 1, "nombre": "Lima", "stock": 4.0,
+                "segunda": 0.0, "grupo": "fruta"}], cajas={}, fichas=[])
+
+    assert leido["titulos"] == ["Fruta"]
+    for ausente in ("Hortaliza", "Hoja", "Pesada", "Sin grupo", "Cajas Procesadas"):
+        assert ausente not in leido["titulos"]
+
+
+def test_un_grupo_que_el_sistema_no_conoce_cae_en_SIN_GRUPO_y_no_desaparece():
+    """Si mañana alguien carga "bolsa" en la base sin agregarlo a ORDEN_GRUPOS,
+    el artículo tiene que seguir apareciendo: se cuenta igual."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    leido = _leer_excel_remanente(
+        filas=[{"articulo_id": 1, "nombre": "Papa Bolsa", "stock": 4.0,
+                "segunda": 0.0, "grupo": "bolsa"}], cajas={}, fichas=[])
+
+    assert leido["titulos"] == ["Sin grupo"]
+    assert leido["por_seccion"]["Sin grupo"] == ["Papa Bolsa"]
+    assert leido["total"][1] == 4
+
+
+def test_el_boton_de_exportar_esta_pegado_al_de_la_fecha():
+    """Lo que baja es el archivo de la fecha del campo de arriba: juntos, eso
+    se ve; al pie de la lista, no."""
+    cuerpo = _remanente().text.split("</style>")[-1]
+
+    assert (cuerpo.index("Ver esa fecha")
+            < cuerpo.index("Exportar Excel")
+            < cuerpo.index("Qué hay en el depósito"))
+
+
+def test_el_total_del_excel_dice_renglon_en_singular_con_uno_solo():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    filas = [{"articulo_id": 1, "nombre": "Lima", "stock": 4.0, "segunda": 0.0}]
+    respuesta = _remanente(filas=filas, cajas={}, fichas=[],
+                           url="/administracion/stock/remanente/exportar-excel")
+    hoja = load_workbook(BytesIO(respuesta.content)).active
+    ultima = list(hoja.iter_rows(min_row=5, max_col=2, values_only=True))[-1]
+
+    assert ultima == ("TOTAL — 1 renglón", 4)
 
 
 def test_desarmar_renglon_destilda():
@@ -15460,45 +16261,31 @@ def test_el_hub_de_stock_queda_solo_con_la_carga_del_operario():
     assert "(Próximamente)" not in respuesta.text
 
 
-def test_stock_sistema_muestra_el_stock_calculado_por_articulo():
+# Stock del Sistema (el listado) se BORRÓ el 06/09: lo miraron tres veces y
+# ninguna sirvió. Lo que aquellos tests protegían no se borró con la pantalla
+# —se mudó, y los tests con ello—: la línea de las seis patas está ahora en
+# Stock por Guía, y los negativos y los dos totales globales en el Remanente.
+# Ver los tests de abajo, que dicen dónde quedó cada cosa.
+
+
+def test_stock_por_guia_muestra_LAS_SEIS_PATAS_de_donde_sale_el_numero():
+    """Vivían en el listado borrado. Es lo único que dice QUÉ pata movió
+    cuando un total no cuadra, y ésta es la pantalla a la que se viene justo
+    a preguntarse eso."""
     with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
-        patch("app.main.total_reingresos_rechazo", return_value=2.0),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
+        patch("app.main.stock_deposito_por_articulo",
+              return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
     ):
-        respuesta = cliente.get("/administracion/stock/sistema")
+        respuesta = cliente.get("/administracion/stock/sistema/1")
 
     assert respuesta.status_code == 200
-    assert "Banana" in respuesta.text
-    assert "24 <span" in respuesta.text
-    assert "40 entraron · 15 salieron · 2 reingresados · -3 ajustados" in respuesta.text
-    assert 'href="/administracion/stock/sistema/1"' in respuesta.text
-
-
-def test_stock_sistema_negativo_muestra_la_tarjeta_de_salidas_sin_lote():
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    # El negativo NO es un error a esconder: tarjeta roja arriba con el
-    # total sin lote, y la fila del artículo marcada.
-    assert "Salidas sin lote: 5 bultos en 1 artículo." in respuesta.text
-    assert 'class="fila-stock negativa"' in respuesta.text
-
-
-def test_stock_sistema_muestra_los_reingresos_aparte_siempre():
-    # Plata perdida a la vista: el total de reingresos va aparte del stock
-    # normal, incluso en cero — el dueño tiene que ver que el número existe.
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    assert "0 bultos reingresados por rechazo" in respuesta.text
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "40</b> entraron" in cuerpo
+    assert "15</b> salieron" in cuerpo
+    assert "2</b> reingresados" in cuerpo
+    assert "-3</b> ajustados" in cuerpo
 
 
 def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
@@ -15513,6 +16300,7 @@ def test_stock_articulo_reparte_fifo_y_muestra_lo_que_queda_por_lote():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(entradas, _salidas_fifo(11.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -15529,6 +16317,7 @@ def test_stock_articulo_negativo_muestra_los_bultos_sin_lote():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(5.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
 
@@ -16329,6 +17118,10 @@ def _get_reproceso(articulos_stock=None, fichas=None, espia_total=None):
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=todas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        # El piso del selector sale de corte_modelo, no de una constante.
+        # Acá va una fecha distinta de la real a propósito: si alguien
+        # clava el 31/08 en el código, este test lo agarra.
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
     ):
         return cliente.get("/deposito/stock/reproceso")
 
@@ -16484,6 +17277,13 @@ def _pantalla_de_reproceso_con(datos, **parches):
         for destino, valor in contexto.items():
             pila.enter_context(patch(destino, return_value=valor))
         pila.enter_context(patch("app.main._hoy_argentina", return_value=date(2026, 9, 2)))
+        if "app.main.fecha_corte" not in parches:
+            pila.enter_context(patch("app.main.fecha_corte", return_value=date(2026, 8, 31)))
+        if "app.main.contar_guias_r_afectadas_por_fecha" not in parches:
+            # Sin guías R posteriores no hay aviso: el camino de siempre.
+            pila.enter_context(
+                patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0)
+            )
         for destino, parche in parches.items():
             pila.enter_context(patch(destino, **parche))
         return cliente.post("/deposito/stock/reproceso", data=datos, follow_redirects=False)
@@ -16686,6 +17486,7 @@ def test_reproceso_sin_cliente_da_400():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
@@ -16699,7 +17500,7 @@ def test_reproceso_sin_cliente_da_400():
 
 
 def test_reproceso_sin_nada_producido_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "",
@@ -16712,7 +17513,7 @@ def test_reproceso_sin_nada_producido_da_400():
 
 
 def test_reproceso_fecha_futura_da_400():
-    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)):
+    with patch("app.main.crear_reproceso") as mock_crear, patch("app.main.listar_articulos_para_reproceso", return_value=[]), patch("app.main.listar_clientes", return_value=[]), patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]), patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)), patch("app.main.fecha_corte", return_value=date(2026, 8, 20)):
         respuesta = cliente.post(
             "/deposito/stock/reproceso",
             data={"articulo_id": "1", "bultos_tomados": "5", "bultos_primera": "3",
@@ -16722,6 +17523,123 @@ def test_reproceso_fecha_futura_da_400():
     assert respuesta.status_code == 400
     assert "no puede ser futura" in respuesta.text
     mock_crear.assert_not_called()
+
+
+# --- El piso de la fecha y el aviso de la fecha hacia atrás (04/09) ---
+# Los tres caminos del corte: nada antes de la fecha de corte, aviso con
+# segundo toque cuando la fecha vieja mueve el reparto de guías R que ya
+# están, y el camino de siempre intacto cuando la fecha es la de hoy.
+
+
+def test_el_piso_de_la_fecha_sale_del_CORTE_y_no_de_una_constante():
+    """La fecha de corte se mueve cada vez que se hace un corte nuevo.
+
+    Por eso el rechazo dice la fecha que devuelve fecha_corte() y no un
+    31/08 escrito a mano: acá el corte es el 20/08 y el mensaje tiene que
+    decir 20/08. Si alguien clava la constante, este test lo agarra.
+    """
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-08-15", "ficha_id": "sin_asignar"},
+        **{"app.main.fecha_corte": {"return_value": date(2026, 8, 20)},
+           "app.main.crear_reproceso": {
+               "side_effect": ReprocesoAnteriorAlCorte(date(2026, 8, 15), date(2026, 8, 20))}},
+    )
+
+    assert respuesta.status_code == 400
+    assert "no puede ser anterior al 20/08/2026" in respuesta.text
+    # La fecha real de hoy no puede aparecer: sería la constante clavada.
+    assert "31/08/2026" not in respuesta.text
+
+
+def test_la_fecha_hacia_atras_AVISA_cuantas_guias_R_quedan_desactualizadas():
+    """El molde de las señas: contar antes de escribir, mostrar y pedir el segundo toque.
+
+    Y la frase del costo es OBLIGATORIA. Es la que evita el susto: lo
+    primero que se piensa al leer "puede dejar de coincidir" es que se
+    movió plata, y no se movió — el costo está congelado.
+    """
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-08-31", "ficha_id": "sin_asignar"},
+        **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 3},
+           "app.main.crear_reproceso": {}},
+    )
+
+    assert respuesta.status_code == 200
+    texto = respuesta.text
+    assert "Hay 3" in texto and "guías R" in texto
+    assert "Zapallito" in texto
+    assert "31/08/2026" in texto
+    # LA FRASE. Sin ella el aviso asusta por la razón equivocada.
+    assert "Su costo no cambia." in texto
+    assert "Guardar igual" in texto
+
+
+def test_el_aviso_de_la_fecha_NO_escribe_nada():
+    """Contar va ANTES de escribir: el primer toque no puede dejar media guía R."""
+    with patch("app.main.crear_reproceso") as mock_crear:
+        _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+             "fecha": "2026-08-31", "ficha_id": "sin_asignar"},
+            **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 3}},
+        )
+    mock_crear.assert_not_called()
+
+
+def test_el_segundo_toque_guarda_con_la_fecha_vieja():
+    """Confirmado, entra con la fecha que el operario dijo: la fecha real es un dato, no un permiso."""
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-08-31", "ficha_id": "sin_asignar", "confirmado": "1"},
+        **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 3},
+           "app.main.crear_reproceso": {"return_value": 77}},
+    )
+
+    assert respuesta.status_code == 303
+    assert "R77" in respuesta.headers["location"]
+
+
+def test_sin_guias_R_posteriores_NO_avisa_y_guarda_derecho():
+    """Un aviso que aparece cuando no hay nada que avisar es un aviso que se deja de leer."""
+    with patch("app.main.contar_guias_r_afectadas_por_fecha", return_value=0) as mock_contar:
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+             "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+             "fecha": "2026-08-31", "ficha_id": "sin_asignar"},
+            **{"app.main.contar_guias_r_afectadas_por_fecha": {"return_value": 0},
+               "app.main.crear_reproceso": {"return_value": 78}},
+        )
+
+    assert respuesta.status_code == 303
+
+
+def test_con_la_fecha_de_HOY_no_se_cuenta_nada():
+    """El camino normal no paga un toque de más: con la fecha de hoy no hay
+    ninguna guía R posterior que se pueda desactualizar, así que ni se
+    pregunta."""
+    espia = MagicMock(return_value=9)
+    respuesta = _pantalla_de_reproceso_con(
+        {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "10",
+         "bultos_primera": "8", "bultos_segunda": "0", "bultos_merma": "0",
+         "fecha": "2026-09-02", "ficha_id": "sin_asignar"},
+        **{"app.main.contar_guias_r_afectadas_por_fecha": {"new": espia},
+           "app.main.crear_reproceso": {"return_value": 79}},
+    )
+
+    assert respuesta.status_code == 303
+    espia.assert_not_called()
+
+
+def test_el_selector_de_fecha_tiene_el_piso_del_corte_puesto():
+    """Comodidad, no la regla: que no pueda elegir una fecha que va a rebotar."""
+    respuesta = _get_reproceso(articulos_stock=[{"id": 1, "nombre": "Banana"}])
+
+    assert 'min="2026-08-20"' in respuesta.text
 
 
 GUIAS_R_DE_PRUEBA = [
@@ -16748,10 +17666,27 @@ GUIAS_R_DE_PRUEBA = [
 ]
 
 
+# La que SÍ se puede completar: lo único que le falta es el precio de una
+# COMPRA, que es lo que alguien puede ir a cargar. La R13 de arriba es el otro
+# caso —consumió un ajuste— y ésa no se puede cerrar nunca.
+GUIA_R_ESPERANDO_PRECIO = {
+    "id": 30, "articulo_id": 1, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 10.0,
+    "bultos_primera": 8.0, "bultos_segunda": 2.0, "bultos_merma": 0.0,
+    "costo_total": None, "costo_por_bulto_primera": None,
+    "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
+    "articulo_nombre": "Tomate Perita",
+    "consumos": [
+        {"origen": "compra", "origen_id": 103, "bultos": 10.0, "costo_por_bulto": None,
+         "guia_fecha": date(2026, 8, 24), "proveedor_nombre": "Norte 15"},
+    ],
+}
+
+
 def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
@@ -16776,10 +17711,11 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
 
 
 def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
-    # El cartel tiene que seguir estando donde SÍ hay algo que hacer.
-    guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
+    # El cartel tiene que seguir estando donde SÍ hay algo que hacer: le falta
+    # el precio de una COMPRA, y ese precio puede llegar.
     with (
-        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(GUIA_R_ESPERANDO_PRECIO)]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -16788,9 +17724,75 @@ def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
 
     cuerpo = respuesta.text.split("</style>")[-1]
     assert "COSTO INCOMPLETO" in cuerpo
-    assert "De un ajuste (ej. stock inicial)" in cuerpo
+    assert "De la guía 24/08 · Norte 15" in cuerpo
     # Y el botón que lo resuelve.
     assert "Completar costo" in cuerpo
+
+
+def test_guias_r_una_guia_SIN_COSTO_POSIBLE_no_ofrece_el_boton_que_no_puede_hacer_nada():
+    """Un ajuste, un stock inicial sin costo o el compensatorio del corte no
+    tienen precio ni lo van a tener: "Completar costo" no tiene de dónde
+    sacarlo y siempre devolvía "sigue con costo incompleto". El cartel gritaba
+    sin ninguna acción detrás, que es lo que esta pantalla ya le había sacado
+    a las anuladas.
+    """
+    guia = dict(GUIAS_R_DE_PRUEBA[1], id=20, anulado_el=None)
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "SIN COSTO POSIBLE" in cuerpo
+    assert "De un ajuste (ej. stock inicial)" in cuerpo
+    # El detalle se sigue viendo. Lo que NO va es el botón ni el cartel que
+    # promete que se arregla cargando algo.
+    assert "Completar costo" not in cuerpo
+    assert "COSTO INCOMPLETO" not in cuerpo
+
+
+def test_guias_r_el_consumo_del_compensatorio_no_se_puede_completar():
+    """El lote fantasma del corte: la base PROHÍBE que tenga costo."""
+    guia = dict(GUIAS_R_DE_PRUEBA[1], id=22, anulado_el=None, consumos=[
+        {"origen": "cierre_modelo_viejo", "origen_id": 9, "bultos": 4.0, "costo_por_bulto": None,
+         "guia_fecha": None, "proveedor_nombre": None},
+    ])
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Del cierre del modelo viejo (sin costo posible)" in cuerpo
+    assert "SIN COSTO POSIBLE" in cuerpo
+    assert "Completar costo" not in cuerpo
+
+
+def test_guias_r_muestra_el_total_de_las_que_no_se_pueden_cerrar_nunca():
+    """El número que NO va al banner: se ve acá, y con el "no hay nada que
+    cargar" al lado para que nadie lo lea como un pendiente."""
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[]),
+        patch("app.main.contar_reprocesos_sin_costo_posible",
+              return_value={"casos": 7, "mas_viejo": date(2026, 8, 31)}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "7 guías sin costo posible" in cuerpo
+    assert "31/08" in cuerpo
+    assert "No hay nada que cargar para arreglarlas" in cuerpo
 
 
 def test_guias_r_una_guia_ANULADA_no_grita_nada():
@@ -16805,6 +17807,7 @@ def test_guias_r_una_guia_ANULADA_no_grita_nada():
     cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=cruces),
@@ -16838,14 +17841,17 @@ def test_anular_guia_r_vuelve_al_rango():
 
 
 def test_el_control_de_stock_vive_en_administracion():
-    # Las cinco pantallas de control, en el hub que les corresponde.
+    # Las pantallas de control, en el hub que les corresponde.
     respuesta = cliente.get("/administracion")
 
     assert respuesta.status_code == 200
-    for destino in ("/administracion/stock/sistema", "/administracion/stock/cotejo",
+    for destino in ("/administracion/stock/remanente", "/administracion/stock/cotejo",
                     "/administracion/stock/ajustar", "/administracion/stock/movimientos",
                     "/administracion/stock/guias-r", "/administracion/pedidos/buscar"):
         assert f'href="{destino}"' in respuesta.text, destino
+    # Stock del Sistema se BORRÓ el 06/09: el Remanente ocupa su lugar. El
+    # botón no puede quedar apuntando a una ruta que ya no responde.
+    assert 'href="/administracion/stock/sistema"' not in respuesta.text
     # El reproceso NO se muda: es carga del depósito.
     assert "/deposito/stock/reproceso" not in respuesta.text
 
@@ -16853,81 +17859,17 @@ def test_el_control_de_stock_vive_en_administracion():
 # --- Reproceso (tanda 2): segunda, remito al Puesto, completar costo ---
 
 
-def test_stock_sistema_muestra_la_segunda_como_pool_aparte():
-    # La segunda desglosa la fila del artículo: renglón propio y total al
-    # final — ya no un chip escondido en la letra chica.
-    filas = [dict(FILAS_STOCK_DE_PRUEBA[0], segunda=3.0)]
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=filas),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    assert "3 bultos de segunda en el depósito" in respuesta.text
-    assert "Segunda (va al Puesto)" in respuesta.text
-    texto_plano = " ".join(respuesta.text.split())
-    assert "Sin procesar</span><span class=\"numero\">24" in texto_plano
-    # Total = stock (24) + segunda (3), aunque sume cosas distintas.
-    assert ">Total</span>" in respuesta.text and ">27 <span" in respuesta.text
-
-
-def test_stock_sistema_desglosa_las_guias_r_con_cliente_y_tamano_de_ficha():
-    # El ejemplo del dueño (26/08): 100 cajones de guía, 20 tomados, 40
-    # cajas de 6 kg armadas para Día → "120 bultos" no sirve. El listado
-    # muestra: Sin procesar 80, Armado 40 cajas de 6 kg para Día (por
-    # guía R), Segunda 3 y el Total 123.
-    fila = dict(
-        FILAS_STOCK_DE_PRUEBA[0],
-        entradas=100.0, salidas=0.0, reingresos=0.0, ajustes=0.0,
-        reproceso_primera=40.0, reproceso_tomados=20.0, segunda=3.0, stock=120.0,
-    )
-    entradas_fifo = [
-        {"fecha_orden": date(2026, 8, 20), "momento_orden": datetime(2026, 8, 20, 10), "orden": (date(2026, 8, 20), datetime(2026, 8, 20, 10)),
-         "tipo_lote": "guia", "origen_id": 55, "fecha_lote": date(2026, 8, 20),
-         "detalle": "Norte 15", "motivo": None, "cantidad": 100.0, "cliente_lote_id": None},
-        {"fecha_orden": date(2026, 8, 22), "momento_orden": datetime(2026, 8, 22, 10), "orden": (date(2026, 8, 22), datetime(2026, 8, 22, 10)),
-         "tipo_lote": "reproceso", "origen_id": 7, "fecha_lote": date(2026, 8, 22),
-         "detalle": "Día", "motivo": None, "cantidad": 40.0, "cliente_lote_id": 1},
-    ]
-    fichas_dia = [{"id": 901, "cliente_id": 1, "articulo_id": 1, "contenido_caja": 6.0, "unidad_venta": "kilo"}]
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[fila]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-        patch("app.main.entradas_y_salidas_stock_articulos",
-              return_value={1: (entradas_fifo, _salidas_fifo(20.0))}) as mock_fifo,
-        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas_dia),
-        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    # UNA sola llamada con TODOS los artículos con guía R, no una por artículo.
-    mock_fifo.assert_called_once_with([1])
-    texto_plano = " ".join(respuesta.text.split())
-    # Los 20 tomados salieron FIFO de la guía: quedan 80 sin procesar.
-    assert "Sin procesar</span><span class=\"numero\">80" in texto_plano
-    assert "Armado: 40 cajas de 6 kg para Día" in respuesta.text
-    assert "R7 · 22/08" in respuesta.text
-    assert "Segunda (va al Puesto)" in respuesta.text
-    assert ">123 <span" in respuesta.text
-
-
-def test_stock_sistema_sin_reprocesos_ni_segunda_muestra_solo_el_numero():
-    # Pedido explícito del dueño: un artículo común no se llena de
-    # renglones vacíos — número a la derecha y listo, como siempre.
-    with (
-        patch("app.main.stock_deposito_por_articulo", return_value=[dict(f) for f in FILAS_STOCK_DE_PRUEBA]),
-        patch("app.main.total_reingresos_rechazo", return_value=0.0),
-        patch("app.main.entradas_y_salidas_stock_articulo") as mock_fifo,
-    ):
-        respuesta = cliente.get("/administracion/stock/sistema")
-
-    assert respuesta.status_code == 200
-    mock_fifo.assert_not_called()
-    assert "Sin procesar" not in respuesta.text
-    assert ">Total</span>" not in respuesta.text
-    assert "24 <span" in respuesta.text
+# Los tres tests del desglose de Stock del Sistema (sin procesar / armado por
+# guía R / segunda / total por artículo) murieron con la pantalla el 06/09, y
+# no se mudaron a ningún lado A PROPÓSITO: ese desglose es justamente lo que
+# confundía. El "sin procesar" era la cuenta 3 —el FIFO rejugado, que daba −95
+# sin que eso fuera una cantidad— y el total por artículo era la suma que el
+# dueño ya había pedido no mostrar ("80 cajones sin procesar + 40 cajas armadas
+# no son 120 bultos"). El Remanente muestra una porción por renglón, sin total,
+# y la trazabilidad por guía R vive en Stock por Guía.
+#
+# El total global de segunda SÍ sobrevive, en el Remanente: ver
+# test_el_remanente_muestra_los_dos_pools_aparte_y_en_chico.
 
 
 def test_remito_segunda_lista_solo_articulos_con_segunda_y_guarda():
@@ -17021,6 +17963,7 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
@@ -17030,16 +17973,21 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     # La R12 tiene costo completo y la R13 está ANULADA: ninguna lo lleva.
     assert "Completar costo" not in respuesta.text
 
-    con_incompleta = [dict(GUIAS_R_DE_PRUEBA[1], anulado_el=None)]
+    # La que sí lo lleva es la que espera el precio de una COMPRA. La R13
+    # consumió un ajuste: aunque esté vigente, no hay nada que completar.
+    con_incompleta = [dict(GUIA_R_ESPERANDO_PRECIO, id=13)]
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
-    assert respuesta.text.count("Completar costo") == 1
+    # Se cuenta el BOTÓN, no la frase: el cartel de arriba también nombra a
+    # "Completar costo" para decir que con eso se cierra.
+    assert respuesta.text.count('class="boton-completar"') == 1
     assert 'action="/administracion/stock/guias-r/13/completar-costo"' in respuesta.text
 
 
@@ -17644,6 +18592,7 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -17675,6 +18624,7 @@ def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
     ]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -17701,6 +18651,7 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
                "nombre_cliente": "Banana Bolivia", "articulo_nombre": "Banana"}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -17712,11 +18663,17 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
     assert '<optgroup label="Cajas de este artículo">' in cuerpo
     assert '<optgroup label="Si no sabés">' in cuerpo
     # La caja y la excepción NO comparten grupo.
-    assert cuerpo.index("Banana Bolivia") < cuerpo.index('label="Si no sabés"')
+    assert cuerpo.index("Envase perdido") < cuerpo.index('label="Si no sabés"')
     assert "Sin asignar" in cuerpo
-    # La opción dice de qué cliente es la ficha: dos fichas con el mismo
-    # nombre de dos clientes distintos serían indistinguibles.
-    assert "Banana Bolivia (Día)" in cuerpo
+    # El rótulo sale del MISMO armador que Stock Físico: se lee en qué caja,
+    # no el código del cliente. Esta ficha no tiene envase, o sea envase
+    # PERDIDO, que es un estado válido y no un dato que falte.
+    assert "Envase perdido" in cuerpo
+    assert "falta cargar el envase" not in cuerpo
+    # Sin el cliente adelante ni el código: hay una sola ficha, nada que
+    # distinguir.
+    assert "Día — Envase perdido" not in cuerpo
+    assert "(Banana Bolivia)" not in cuerpo
 
 
 def test_una_guia_anulada_no_ofrece_asignar_ficha():
@@ -17724,6 +18681,7 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
                   ficha_nombre=None, anulado_el=datetime(2026, 8, 26, 10, 0))]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
@@ -17789,6 +18747,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia, guia_vieja]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_articulos_con_primera_de_cliente",
@@ -17877,13 +18836,14 @@ def test_el_atras_jerarquico_esta_declarado_en_todo_el_sistema():
         respuesta = cliente.get("/deposito/recepcion")
     assert ancla.format(destino="/deposito") in respuesta.text
 
-    # El detalle FIFO cuelga del Stock del Sistema.
+    # El detalle FIFO cuelga del Remanente, que es de donde se llega.
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Anco"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/2")
-    assert ancla.format(destino="/administracion/stock/sistema") in respuesta.text
+    assert ancla.format(destino="/administracion/stock/remanente") in respuesta.text
 
     # La casilla cuelga de Sistema.
     with (
@@ -17957,13 +18917,46 @@ def test_stock_inicial_las_fichas_se_eligen_por_articulo_y_dicen_de_que_cliente_
     respuesta = _pantalla_stock_inicial("/administracion/stock/inicial?articulo_id=7")
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    # Sin el cliente adentro del nombre, las dos fichas de Banana de dos
-    # clientes distintos serían dos opciones idénticas.
-    assert "Día — Banana Bolivia" in cuerpo
-    assert "Vea — Banana Ecuador" in cuerpo
+    # Dos clientes con ficha de Banana: el nombre del cliente se antepone.
+    # Y las dos son "Envase perdido — 18 kg", así que además choca la
+    # etiqueta base — el cliente es justamente lo que las separa.
+    assert "Día — Envase perdido — 18 kg" in cuerpo
+    assert "Vea — Envase perdido — 18 kg" in cuerpo
+    assert "falta cargar el envase" not in cuerpo
     # Y NO hay un "sin asignar" como en la guía R: una caja que está en el
     # piso se puede ir a mirar.
     assert "Sin asignar" not in cuerpo
+
+
+def test_el_cliente_se_pone_SOLO_cuando_hay_mas_de_uno():
+    """Misma escalera del Remanente: el caso normal limpio, el nombre solo
+    cuando hace falta. Con un cliente el envase alcanza; anteponerlo siempre
+    daba "Día — Caja Grande Día", que repite lo mismo dos veces porque el
+    envase ya lleva el nombre del cliente adentro."""
+    from app.main import _cajas_para_elegir_por_articulo
+
+    una_sola = [{"id": 10, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Tomate Redondo",
+                 "nombre_cliente": "TOM RED 1° E", "envase_nombre": "Caja Grande Día",
+                 "contenido_caja": 16, "unidad_venta": "kilo"}]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=una_sola),
+    ):
+        solo = _cajas_para_elegir_por_articulo()
+    assert [c["nombre"] for c in solo[7]] == ["Caja Grande Día — 16 kg"]
+
+    dos_clientes = una_sola + [dict(una_sola[0], id=11, cliente_id=2,
+                                    nombre_cliente="TOM RED VEA",
+                                    envase_nombre="Caja Vea", contenido_caja=10)]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=dos_clientes),
+    ):
+        con_dos = _cajas_para_elegir_por_articulo()
+    nombres = [c["nombre"] for c in con_dos[7]]
+    assert all(" — " in n for n in nombres)
+    assert "Día — Caja Grande Día — 16 kg" in nombres
+    assert "Vea — Caja Vea — 10 kg" in nombres
 
 
 def test_stock_inicial_sin_fichas_del_articulo_lo_dice_en_vez_de_dejar_cargar():
@@ -18472,6 +19465,7 @@ def test_stock_por_guia_nombra_los_bultos_tomados_por_guias_R_en_las_salidas():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Tomate Redondo"}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(648.0))),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
     ):
         respuesta = cliente.get("/administracion/stock/sistema/1")
 
@@ -18957,6 +19951,7 @@ def test_reproceso_tiene_CANCELAR_que_solo_sale_al_hub_de_stock():
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main._ayudas_ficha_por_cliente_y_articulo", return_value={}),
         patch("app.main._fichas_por_cliente_y_articulo", return_value={}),
+        patch("app.main.fecha_corte", return_value=date(2026, 8, 20)),
     ):
         respuesta = cliente.get("/deposito/stock/reproceso")
 

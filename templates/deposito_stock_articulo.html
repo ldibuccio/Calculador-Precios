@@ -84,12 +84,28 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  /* LAS SEIS PATAS. Vivían en el listado de Stock del Sistema, que se borró
+     el 06/09; la línea no se fue con él porque es lo único que dice QUÉ pata
+     movió cuando un total no cuadra. Envuelve en varias filas en 390px en vez
+     de desbordarse a los costados. */
+  .patas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    margin: 0.6rem 0 0;
+    padding-top: 0.6rem;
+    border-top: 1px solid #bfdbfe;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    color: #475569;
+  }
+  .patas b { font-variant-numeric: tabular-nums; color: #1e293b; }
 </style>
 </head>
 <body>
   {% set barra_sector = "administracion" %}
   {% set barra_titulo = "Stock por Guía" %}
-  {% set barra_atras = "/administracion/stock/sistema" %}
+  {% set barra_atras = "/administracion/stock/remanente" %}
   {% include "_barra_navegacion.html" %}
 
   <div class="resumen {% if stock < 0 %}negativo{% endif %}">
@@ -101,6 +117,20 @@
        bultos para una guía R no los encontraba. #}
     <div class="detalle">Salieron {{ total_salidas|numero }} bultos en total: armado de pedidos,
       bultos tomados por guías R, mermas y ajustes negativos.</div>
+    {# De dónde sale el número de arriba, pata por pata: es lo que se mira
+       cuando un total no cuadra, y sin esto hay que adivinar cuál se movió. #}
+    {% if patas %}
+    <div class="patas">
+      <span><b>{{ patas.entradas|numero }}</b> entraron</span>
+      <span><b>{{ patas.salidas|numero }}</b> salieron</span>
+      {% if patas.reingresos %}<span><b>{{ patas.reingresos|numero }}</b> reingresados</span>{% endif %}
+      {% if patas.ajustes %}<span><b>{{ patas.ajustes|numero }}</b> ajustados</span>{% endif %}
+      {% if patas.reproceso_tomados or patas.reproceso_primera %}
+      <span>reproceso <b>−{{ patas.reproceso_tomados|numero }}</b> <b>+{{ patas.reproceso_primera|numero }}</b></span>
+      {% endif %}
+      {% if patas.segunda %}<span><b>{{ patas.segunda|numero }}</b> de segunda (pool aparte)</span>{% endif %}
+    </div>
+    {% endif %}
   </div>
 
   {% if sin_lote %}
@@ -154,6 +184,6 @@
   </details>
   {% endif %}
 
-  <a class="volver" href="/administracion/stock/sistema">Volver al Stock del Sistema</a>
+  <a class="volver" href="/administracion/stock/remanente">Volver al Remanente</a>
 </body>
 </html>

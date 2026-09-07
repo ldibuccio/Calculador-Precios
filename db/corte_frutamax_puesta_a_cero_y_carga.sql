@@ -1,4 +1,10 @@
 -- ############################################################################
+-- REEMPLAZADO EL 04/09/2026 POR db/corte2_frutamax.sql. NO USAR ESTE.
+-- Queda como registro de lo que se corrió el 29/08. El corte nuevo se hace
+-- con el otro, y el paso a paso está en docs/procedimiento_corte.md.
+-- ############################################################################
+
+-- ############################################################################
 -- ATENCIÓN — NO REUSAR ESTE SCRIPT COMO ESTÁ.
 --
 -- Se corrió en Frutamax el 29/08/2026 y TERMINÓ CON ERROR ESCRIBIENDO IGUAL

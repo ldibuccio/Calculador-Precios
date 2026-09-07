@@ -3981,6 +3981,10 @@ def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
             cursor.execute(
                 """
                 SELECT v.id, v.cantidad, v.creado_en, v.anulado_el,
+                       -- Para que la pantalla NO ofrezca el botón de anular
+                       -- donde el server lo va a rechazar: ofrecido y
+                       -- prohibido es lo peor de los dos mundos.
+                       v.sena_pagada_el, v.sena_vale_el, v.sena_vale_caducado_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
@@ -4035,15 +4039,64 @@ def listar_vacios_devueltos_de_fecha(fecha) -> list[dict]:
     return listar_vacios_devueltos_por_rango(fecha, fecha)
 
 
+class SenaYaCobrada(Exception):
+    """Se quiso anular una recepción de vacíos cuya seña ya se pagó o se cerró con vale.
+
+    `cierre` es 'pagada' o 'vale'. La plata ya salió de la caja: anular la
+    recepción devolvería los cajones al aire —salen del stock— y dejaría la
+    diferencia a favor de quien la anuló, sin que ninguna pantalla lo muestre.
+    """
+
+    def __init__(self, cierre: str):
+        self.cierre = cierre
+        super().__init__(f"La seña de esta entrada ya se cerró: {cierre}")
+
+
 def anular_vacio_recibido(movimiento_id: int) -> None:
-    """Anula una entrada (baja lógica): el registro queda visible como corrección, el stock lo excluye."""
+    """Anula una entrada (baja lógica): el registro queda visible como corrección, el stock lo excluye.
+
+    NO SE PUEDE si la seña ya se pagó o se cerró con vale. La guarda vivía en
+    un solo sentido —`cerrar_sena` no deja pagar una anulada, pero esto sí
+    dejaba anular una pagada— y el agujero es de plata: el pago ya salió, los
+    cajones vuelven a salir del stock, y la fila desaparece de las dos listas
+    de Señas (las dos filtran `anulado_el IS NULL`), así que ni siquiera queda
+    a la vista como cobrada. Reportado desde la operación el 07/09 con un caso
+    real de $26.000.
+
+    `sena_anulada_el` SÍ deja anular: ahí se decidió no pagar, no hay plata
+    que perseguir.
+
+    La condición va DENTRO del UPDATE, no en un SELECT previo: entre el
+    "¿está pagada?" y el UPDATE puede entrar el pago. Cuando no afecta
+    ninguna fila se lee la fila para saber por qué y traducir el error;
+    ese SELECT es solo para el mensaje, la decisión ya la tomó el UPDATE.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE vacios_recibidos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                """
+                UPDATE vacios_recibidos SET anulado_el = now()
+                WHERE id = %s AND anulado_el IS NULL
+                  AND sena_pagada_el IS NULL AND sena_vale_el IS NULL
+                """,
                 (movimiento_id,),
             )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    """
+                    SELECT sena_pagada_el IS NOT NULL, sena_vale_el IS NOT NULL
+                    FROM vacios_recibidos WHERE id = %s AND anulado_el IS NULL
+                    """,
+                    (movimiento_id,),
+                )
+                fila = cursor.fetchone()
+                if fila is not None:
+                    pagada, vale = fila
+                    # Ya anulada o inexistente NO es error: anular dos veces es
+                    # el mismo resultado. Solo se levanta si hay plata.
+                    if pagada or vale:
+                        raise SenaYaCobrada("pagada" if pagada else "vale")
         conexion.commit()
     finally:
         conexion.close()
@@ -4598,10 +4651,23 @@ def listar_senas_resueltas(limite: int = 50) -> list[dict]:
                 SELECT v.id, v.cantidad, v.creado_en,
                        CASE
                            WHEN v.sena_pagada_el IS NOT NULL THEN 'pagada'
+                           -- El caducado va ANTES que el vale: si no, un vale
+                           -- dado de baja se mostraría igual que uno vivo, y
+                           -- la diferencia es si todavía se le debe la plata.
+                           WHEN v.sena_vale_caducado_el IS NOT NULL THEN 'vale_caducado'
                            WHEN v.sena_vale_el IS NOT NULL THEN 'vale'
                            ELSE 'anulada'
                        END AS cierre,
-                       COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
+                       v.sena_vale_caducado_el, v.sena_vale_caducado_motivo,
+                       -- El caducado va PRIMERO en el coalesce, y por eso el
+                       -- historial ordena por el último hecho y no por el
+                       -- primero: un vale de marzo dado de baja hoy tiene que
+                       -- aparecer arriba, no perdido en marzo. La fecha del
+                       -- vale sigue disponible aparte, y la pantalla muestra
+                       -- las dos.
+                       COALESCE(v.sena_vale_caducado_el, v.sena_pagada_el,
+                                v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
+                       v.sena_vale_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre,
@@ -4614,7 +4680,8 @@ def listar_senas_resueltas(limite: int = 50) -> list[dict]:
                 + """
                 WHERE num_nonnulls(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) = 1
                   AND v.anulado_el IS NULL
-                ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC
+                ORDER BY COALESCE(v.sena_vale_caducado_el, v.sena_pagada_el,
+                                  v.sena_vale_el, v.sena_anulada_el) DESC
                 LIMIT %s
                 """,
                 (limite,),
@@ -4656,6 +4723,74 @@ def cerrar_sena(movimiento_id: int, cierre: str) -> None:
                 """,
                 (movimiento_id,),
             )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+class ValeNoCaducable(Exception):
+    """Se quiso dar por no cobrado un vale que no está en condiciones.
+
+    `motivo_tecnico` dice cuál de los tres: 'sin_vale' (esa entrada nunca
+    tuvo vale), 'ya_caducado' (alguien lo hizo antes) o 'anulada' (la
+    recepción está anulada, así que los cajones no están en el stock y
+    "cancelar sin tocar el stock" no significa nada ahí).
+    """
+
+    def __init__(self, motivo_tecnico: str):
+        self.motivo_tecnico = motivo_tecnico
+        super().__init__(f"No se puede dar por no cobrado: {motivo_tecnico}")
+
+
+def caducar_vale(movimiento_id: int, motivo: str) -> None:
+    """El vale no se va a cobrar nunca: se cancela lo que se debe SIN tocar el stock.
+
+    Es el caso del cliente que dejó los cajones y no volvió. Los cajones
+    ESTÁN en el galpón, así que anular la recepción —que es lo único que
+    había— dejaría el stock mal en menos.
+
+    NO borra `sena_vale_el`: las dos fechas conviven a propósito. El vale
+    existió y el papel puede aparecer; taparlo con "anulada" perdería
+    justo el dato que administración necesita ese día. Por eso tampoco se
+    reusó `sena_anulada_el`: haría `num_nonnulls = 2` y la fila
+    desaparecería del historial, que filtra `= 1`.
+
+    El motivo es obligatorio y lo garantiza el CHECK de la base, no solo
+    esta función: como no hay login, ese texto es el único rastro de POR
+    QUÉ se dio de baja una deuda.
+    """
+    limpio = (motivo or "").strip()
+    if not limpio:
+        raise ValueError("El motivo es obligatorio para dar un vale por no cobrado.")
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE vacios_recibidos
+                SET sena_vale_caducado_el = now(), sena_vale_caducado_motivo = %s
+                WHERE id = %s AND anulado_el IS NULL
+                  AND sena_vale_el IS NOT NULL AND sena_vale_caducado_el IS NULL
+                """,
+                (limpio, movimiento_id),
+            )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    """
+                    SELECT sena_vale_el IS NULL, sena_vale_caducado_el IS NOT NULL,
+                           anulado_el IS NOT NULL
+                    FROM vacios_recibidos WHERE id = %s
+                    """,
+                    (movimiento_id,),
+                )
+                fila = cursor.fetchone()
+                if fila is None:
+                    raise ValeNoCaducable("sin_vale")
+                sin_vale, ya_caducado, anulada = fila
+                raise ValeNoCaducable(
+                    "anulada" if anulada else "ya_caducado" if ya_caducado else "sin_vale"
+                )
         conexion.commit()
     finally:
         conexion.close()
@@ -6156,12 +6291,36 @@ def obtener_mail_de_pedido(pedido_id: int) -> dict | None:
 # --- La fecha de corte del modelo nuevo ---
 
 
+def _fecha_corte(cursor):
+    """La fecha de corte con un cursor YA abierto, para usarla dentro de una transacción.
+
+    La consulta está escrita acá y en ningún otro lado: `fecha_corte()`
+    es esta misma con conexión propia. El piso de fecha del reproceso la
+    necesita adentro de la transacción que ya tiene abierta, y abrir una
+    segunda conexión para leer una fila sería pagar dos veces por el
+    mismo dato — pero copiar el SELECT sería peor: serían dos reglas.
+    """
+    cursor.execute("SELECT fecha FROM corte_modelo WHERE id = 1")
+    fila = cursor.fetchone()
+    if fila is None:
+        raise RuntimeError(
+            "No hay fecha de corte cargada (corte_modelo está vacía): "
+            "la base quedó a medio configurar."
+        )
+    return fila[0]
+
+
 def fecha_corte():
     """La fecha desde la que rige el modelo nuevo (una sola fila en corte_modelo).
 
     Vive en la base y no en el código para que se lea de UN lugar: la
     usan el stock inicial, las guías R sin ficha (antes del corte un NULL
-    es dato viejo, después es "sin asignar") y todo lo que venga.
+    es dato viejo, después es "sin asignar"), el piso de fecha del
+    reproceso y todo lo que venga.
+
+    **Se lee, nunca se escribe a mano en el código.** El día que se haga
+    un corte nuevo se cambia esa fila y todo lo que la lee la sigue sola.
+    Una constante `31/08` suelta quedaría mintiendo el lunes siguiente.
 
     Si la fila no está, revienta a propósito: una base a medio configurar
     tiene que avisar, no elegir una fecha por su cuenta y costear contra
@@ -6170,14 +6329,7 @@ def fecha_corte():
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute("SELECT fecha FROM corte_modelo WHERE id = 1")
-            fila = cursor.fetchone()
-        if fila is None:
-            raise RuntimeError(
-                "No hay fecha de corte cargada (corte_modelo está vacía): "
-                "la base quedó a medio configurar."
-            )
-        return fila[0]
+            return _fecha_corte(cursor)
     finally:
         conexion.close()
 
@@ -6189,20 +6341,60 @@ def fecha_corte():
 # Todo en BULTOS. Puede quedar negativo a propósito: el armado no se traba
 # por stock — el negativo es la señal de que falta un reproceso o un ajuste.
 
+# LA FECHA TOPE viaja como CTE y no como un %s por cada pata: son seis sumas y
+# tres más en el pool de segunda, y nueve parámetros posicionales en fila se
+# desordenan el día que alguien agrega una. Así entra UNA sola vez, primera, y
+# el resto de la consulta la lee por nombre — el mismo molde que `corte`.
+#
+# QUÉ FECHA MIRA CADA PATA, que no es la misma columna en todas:
+#
+# - Las COMPRAS entran al stock cuando el depósito las RECEPCIONA, no cuando
+#   se compraron: `procesada_el`. Es la misma expresión con la que el FIFO
+#   ordena sus lotes de compra, y tiene que serlo — si acá dijera
+#   `fecha_operacion`, el total del artículo y el reparto por lote no
+#   coincidirían en los días entre la compra y la recepción. Las viejas, de
+#   antes de que existiera Recepción, tienen `procesada_el` en NULL y caen a
+#   `fecha_operacion`: sin ese COALESCE desaparecerían de toda consulta con
+#   fecha, incluida la de hoy.
+# - Las SALIDAS de pedidos, por `armado_el` pasado a fecha argentina: el
+#   renglón sale del stock cuando se arma.
+# - El resto —movimientos, reprocesos, remitos— por su `fecha_operacion`, que
+#   es la fecha declarada de la operación y es la que el módulo usa en todos
+#   lados.
+#
+# LO QUE **NO** SE RETROCEDE, y es una decisión: `anulado_el IS NULL` y el
+# `DISTINCT ON` de los pedidos vigentes se evalúan HOY, no a la fecha pedida.
+# O sea que esto muestra "lo que hoy sabemos que había el día X", no "lo que el
+# sistema creía el día X". Una anulación es una corrección —dice que eso nunca
+# tendría que haber contado—, y una consulta histórica que resucitara pedidos
+# ya corregidos mostraría números que nadie quiere de vuelta.
+# NULL = hoy, para el que quiere el estado actual y no una fecha. Así hay UN
+# solo camino: la consulta de hoy es la misma que la del 3 de septiembre con
+# otra fecha, y no una segunda versión sin tope que se pueda ir separando.
+_SQL_TOPE = """SELECT COALESCE(%s::date,
+        (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) AS fecha"""
+
 _SQL_SUMAS_STOCK = """
-    WITH entradas AS (
-        SELECT articulo_id, SUM(cantidad_cajones_real) AS total
-        FROM compras WHERE estado = 'recepcionado' {filtro_articulo}
-        GROUP BY articulo_id
+    WITH tope AS (""" + _SQL_TOPE + """),
+    entradas AS (
+        SELECT c.articulo_id, SUM(c.cantidad_cajones_real) AS total
+        FROM compras c, tope
+        WHERE c.estado = 'recepcionado'
+          AND COALESCE((c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
+                       c.fecha_operacion) <= tope.fecha
+          {filtro_c_articulo}
+        GROUP BY c.articulo_id
     ), vigentes AS (
         SELECT DISTINCT ON (cliente_id, fecha_operacion) id
         FROM pedidos WHERE anulado_el IS NULL
         ORDER BY cliente_id, fecha_operacion, creado_en DESC
     ), salidas AS (
         SELECT r.articulo_id, SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
-        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
-          AND r.articulo_id IS NOT NULL {filtro_r_articulo}
+          AND r.articulo_id IS NOT NULL
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= tope.fecha
+          {filtro_r_articulo}
         GROUP BY r.articulo_id
     ), reingresos AS (
         -- Solo los que QUEDAN en stock: un rechazo mandado a segunda (o
@@ -6210,32 +6402,42 @@ _SQL_SUMAS_STOCK = """
         -- al pool de segunda. NULL = los reingresos viejos, que quedaban
         -- en stock por definición.
         SELECT articulo_id, SUM(cantidad) AS total
-        FROM movimientos_stock
+        FROM movimientos_stock, tope
         WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo'
+          AND fecha_operacion <= tope.fecha
           AND (destino_rechazo IS NULL OR destino_rechazo = 'stock') {filtro_articulo}
         GROUP BY articulo_id
     ), ajustes AS (
         SELECT articulo_id, SUM(cantidad) AS total
-        FROM movimientos_stock
-        WHERE anulado_el IS NULL AND tipo <> 'reingreso_rechazo' {filtro_articulo}
+        FROM movimientos_stock, tope
+        WHERE anulado_el IS NULL AND tipo <> 'reingreso_rechazo'
+          AND fecha_operacion <= tope.fecha {filtro_articulo}
         GROUP BY articulo_id
     ), reproc AS (
         SELECT articulo_id, SUM(bultos_primera) AS entradas, SUM(bultos_tomados) AS salidas
-        FROM reprocesos
-        WHERE anulado_el IS NULL {filtro_articulo}
+        FROM reprocesos, tope
+        WHERE anulado_el IS NULL AND fecha_operacion <= tope.fecha {filtro_articulo}
         GROUP BY articulo_id
     )
 """
 
 
 def _sql_sumas_stock(por_articulo: bool) -> str:
+    """La consulta de las seis patas. El primer parámetro es SIEMPRE la fecha tope."""
     filtro = "AND articulo_id = %s" if por_articulo else ""
-    filtro_r = "AND r.articulo_id = %s" if por_articulo else ""
-    return _SQL_SUMAS_STOCK.format(filtro_articulo=filtro, filtro_r_articulo=filtro_r)
+    return _SQL_SUMAS_STOCK.format(
+        filtro_articulo=filtro,
+        filtro_c_articulo="AND c.articulo_id = %s" if por_articulo else "",
+        filtro_r_articulo="AND r.articulo_id = %s" if por_articulo else "",
+    )
 
 
-def stock_deposito_por_articulo() -> list[dict]:
-    """El stock del sistema por artículo (bultos), calculado siempre — solo artículos con algún movimiento.
+def stock_deposito_por_articulo(hasta) -> list[dict]:
+    """El stock del sistema por artículo (bultos) AL CIERRE DE `hasta`, calculado siempre.
+
+    `hasta` es obligatorio y no tiene default: es la única forma de que
+    nadie escriba sin querer una consulta "de hoy" que en realidad suma
+    todo. El que quiere hoy pasa hoy, y la pantalla lo dice.
 
     entradas = compras recepcionadas (cantidad_cajones_real, la cuenta REAL
     de Depósito, ya neta del rechazo al proveedor). salidas = renglones
@@ -6244,6 +6446,16 @@ def stock_deposito_por_articulo() -> list[dict]:
     de los otros movimientos porque el dueño lo quiere ver como número
     propio: es mercadería ya costeada y ya vendida que volvió (plata
     perdida), no stock "normal".
+
+    La columna `segunda` (el pool) arranca en la FECHA DE CORTE desde el
+    05/09 — ver el comentario adentro de la consulta. Es el único número de
+    acá que se rebasea con una fecha; el resto lo rebasea el compensatorio.
+
+    LA LEEN TRES PANTALLAS y las tres salen de esta misma función: el
+    Remanente (sus porciones, sus negativos y los dos totales), Stock por
+    Guía (la línea de las seis patas) y el selector de Remito de Segunda
+    (que filtra por segunda > 0). Que el cálculo esté acá y no repetido es
+    lo que hace que no puedan decir cosas distintas.
     """
     conexion = obtener_conexion()
     try:
@@ -6251,21 +6463,53 @@ def stock_deposito_por_articulo() -> list[dict]:
             cursor.execute(
                 _sql_sumas_stock(por_articulo=False)
                 + """
+                -- EL PISO DE FECHA DEL POOL DE SEGUNDA. Hasta el 05/09 esta
+                -- era la ÚNICA cuenta del módulo que ningún corte rebaseaba:
+                -- el total del artículo lo rebasea el compensatorio, la
+                -- cuenta por ficha su propio piso, el FIFO se recalcula
+                -- entero, y la segunda sumaba desde el primer día de la base.
+                -- El compensatorio no la alcanza: es una fila de
+                -- movimientos_stock y esto casi no lee movimientos.
+                --
+                -- Medido la noche del corte: ~40 bultos de cola vieja en
+                -- cinco artículos, y en Zapallito sumándose a lo contado (23
+                -- donde había 15). Ver "el pool de segunda es la única cuenta
+                -- que ningún corte rebasea" en docs/diseno_base_datos.md.
+                --
+                -- Asimétrico igual que la cuenta por ficha, y por lo mismo:
+                -- el conteo físico se toma A LA TARDE del día del corte, así
+                -- que todo lo del día ya está adentro de lo contado. Entran
+                -- los 'inicial' DEL corte (la foto) más lo POSTERIOR; los
+                -- remitos y los rechazos, solo lo posterior.
+                --
+                -- El pool tiene PISO (el corte) y TECHO (la fecha pedida):
+                -- el piso lo rebasea y el techo lo corta. Los dos son sobre
+                -- `fecha_operacion`, así que se leen juntos.
+                , corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)
                 , segunda AS (
                     SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM reprocesos WHERE anulado_el IS NULL GROUP BY articulo_id
+                    FROM reprocesos, corte_seg, tope
+                    WHERE anulado_el IS NULL AND fecha_operacion <= tope.fecha
+                      AND (fecha_operacion > corte_seg.fecha
+                           OR (tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha))
+                    GROUP BY articulo_id
                 ), segunda_rechazo AS (
                     -- Los rechazos que no volvieron al stock: entran al
                     -- mismo pool que la segunda de los reprocesos.
                     SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM movimientos_stock
+                    FROM movimientos_stock, corte_seg, tope
                     WHERE anulado_el IS NULL AND destino_rechazo IN ('segunda', 'reproceso')
+                      AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
                     GROUP BY articulo_id
                 ), remitida AS (
                     SELECT articulo_id, SUM(bultos) AS total
-                    FROM remitos_segunda WHERE anulado_el IS NULL GROUP BY articulo_id
+                    FROM remitos_segunda, corte_seg, tope
+                    WHERE anulado_el IS NULL AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
+                    GROUP BY articulo_id
                 )
-                SELECT a.id AS articulo_id, a.nombre,
+                SELECT a.id AS articulo_id, a.nombre, a.grupo,
                        COALESCE(e.total, 0) AS entradas,
                        COALESCE(s.total, 0) AS salidas,
                        COALESCE(r.total, 0) AS reingresos,
@@ -6288,7 +6532,8 @@ def stock_deposito_por_articulo() -> list[dict]:
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
                    OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
                 ORDER BY a.nombre
-                """
+                """,
+                (hasta,),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
@@ -6310,7 +6555,11 @@ def stock_deposito_por_articulo() -> list[dict]:
 
 
 def _stock_deposito_actual(cursor, articulo_id: int) -> float:
-    """El stock actual de UN artículo, con el cursor abierto — para la foto (stock_sistema) de un movimiento nuevo."""
+    """El stock actual de UN artículo, con el cursor abierto — para la foto (stock_sistema) de un movimiento nuevo.
+
+    Sin fecha tope (None = hoy): la foto es del momento en que se carga el
+    movimiento, que es de lo que se trata.
+    """
     cursor.execute(
         _sql_sumas_stock(por_articulo=True)
         + """
@@ -6321,7 +6570,7 @@ def _stock_deposito_actual(cursor, articulo_id: int) -> float:
              - COALESCE((SELECT salidas FROM reproc), 0)
              - COALESCE((SELECT total FROM salidas), 0)
         """,
-        (articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
+        (None, articulo_id, articulo_id, articulo_id, articulo_id, articulo_id),
     )
     return float(cursor.fetchone()[0])
 
@@ -6729,16 +6978,24 @@ def entradas_y_salidas_stock_articulo(articulo_id: int) -> tuple[list[dict], flo
     return entradas_y_salidas_stock_articulos([articulo_id])[articulo_id]
 
 
-def total_reingresos_rechazo() -> float:
-    """Total histórico de bultos reingresados por rechazo del cliente (plata perdida): el dueño lo quiere a la vista."""
+def total_reingresos_rechazo(hasta=None) -> float:
+    """Bultos reingresados por rechazo del cliente (plata perdida) hasta la fecha: el dueño lo quiere a la vista.
+
+    `hasta=None` es hoy, igual que el resto del módulo. Va acumulado desde
+    el principio y no desde el corte a propósito: es plata perdida, no
+    stock, y el corte no la perdona.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COALESCE(SUM(cantidad), 0) FROM movimientos_stock
+                WITH tope AS (""" + _SQL_TOPE + """)
+                SELECT COALESCE(SUM(cantidad), 0) FROM movimientos_stock, tope
                 WHERE anulado_el IS NULL AND tipo = 'reingreso_rechazo'
-                """
+                  AND fecha_operacion <= tope.fecha
+                """,
+                (hasta,),
             )
             return float(cursor.fetchone()[0])
     finally:
@@ -6805,22 +7062,70 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # tapar: aparece como dos diferencias a la vez —Bolivia de menos, Ecuador
 # de más— y es la única forma que tiene el sistema de mostrar un cambio de
 # ficha, que hasta ahora no se veía en ningún lado.
+# EL PISO DE FECHA, y es la mitad del sentido de esta consulta.
+#
+# Las DOS patas arrancan en la fecha de corte. Sin eso, la cuenta por ficha
+# es la única del sistema que sigue sumando desde el principio de los
+# tiempos: el total del artículo se rebasea en cada corte con el
+# compensatorio, y acá no hay compensatorio posible — `cierre_modelo_viejo`
+# es un movimiento por ARTÍCULO y esta consulta no lee movimientos.
+#
+# Tienen que ser las DOS o es peor que ninguna. Recortar solo las entradas
+# deja las salidas viejas restando contra cajas que ya no están, y eso es
+# exactamente el negativo estructural que produjo el corte del 31/08 (ver
+# "Deuda que dejamos nosotros" en docs/diseno_base_datos.md).
+#
+# Sale de corte_modelo y NO de una constante: la fecha se mueve en cada
+# corte, y un piso viejo no falla — deja pasar.
+#
+# EL DÍA DEL CORTE ES ASIMÉTRICO, y no es un detalle: el conteo físico se
+# toma A LA TARDE de ese día, así que todo lo que pasó ANTES del conteo ya
+# está adentro de lo que se contó. Por eso el piso es:
+#
+#   entradas: los 'inicial' DEL corte (son la línea de base, la foto de lo
+#             contado) + cualquier guía R POSTERIOR al corte.
+#   salidas:  solo las POSTERIORES al corte.
+#
+# Con `>=` en las dos, el día del corte se cuenta dos veces y en las dos
+# direcciones. Simulado el 05/09 contra Postgres: una ficha con 50 cajas de
+# una guía R del 03/09, 30 que salieron el sábado y 20 contadas daba **-10**
+# (la salida resta y su guía R queda afuera); y una guía R normal cargada
+# ese mismo sábado se sumaba ADEMÁS del inicial que ya la contenía, dando
+# **30** donde había 15. Con el piso asimétrico dan 20 y 15, que es lo que
+# hay en el piso.
+#
+# El total del ARTÍCULO no tiene este problema porque no se rebasea con una
+# fecha sino con el compensatorio, que es una FOTO tomada esa misma tarde y
+# ya incluye los movimientos del día. Esta cuenta usa un filtro de fecha, y
+# UN FILTRO NO SABE A QUÉ HORA SE CONTÓ: por eso el día del corte hay que
+# partirlo a mano, y por eso la asimetría de arriba no es un caso borde sino
+# la forma correcta de la regla.
+# Igual que las seis patas: PISO del corte y TECHO de la fecha pedida.
 _SQL_STOCK_PARTIDO = """
-    WITH vigentes AS (
+    WITH corte AS (SELECT fecha FROM corte_modelo WHERE id = 1),
+    tope AS (""" + _SQL_TOPE + """),
+    vigentes AS (
         SELECT DISTINCT ON (cliente_id, fecha_operacion) id
         FROM pedidos WHERE anulado_el IS NULL
         ORDER BY cliente_id, fecha_operacion, creado_en DESC
     ), armadas AS (
         SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
-        FROM reprocesos
+        FROM reprocesos, corte, tope
         WHERE anulado_el IS NULL AND ficha_id IS NOT NULL
+          AND fecha_operacion <= tope.fecha
+          AND (fecha_operacion > corte.fecha
+               OR (tipo = 'inicial' AND fecha_operacion >= corte.fecha))
         GROUP BY articulo_id, ficha_id
     ), salidas_ficha AS (
         SELECT r.articulo_id, r.ficha_id,
                SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS total
-        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id
+        FROM pedidos_renglones r JOIN vigentes v ON v.id = r.pedido_id, corte, tope
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
           AND r.articulo_id IS NOT NULL AND r.ficha_id IS NOT NULL
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+              > corte.fecha
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+              <= tope.fecha
         GROUP BY r.articulo_id, r.ficha_id
     ), fichas_con_algo AS (
         SELECT articulo_id, ficha_id FROM armadas
@@ -6835,7 +7140,7 @@ _SQL_STOCK_PARTIDO = """
 """
 
 
-def _cajas_por_ficha(cursor) -> dict:
+def _cajas_por_ficha(cursor, hasta=None) -> dict:
     """{(articulo_id, ficha_id): (disponibles, deficit)}, SOLO las fichas con algún movimiento.
 
     Una ficha sin nada reprocesado ni nada salido no aparece. Es a
@@ -6868,7 +7173,7 @@ def _cajas_por_ficha(cursor) -> dict:
     tapar esa diferencia inventada (04/09/2026: Manzana Gob, total 63,
     sueltos 233, botón de ajuste por 170).
     """
-    cursor.execute(_SQL_STOCK_PARTIDO)
+    cursor.execute(_SQL_STOCK_PARTIDO, (hasta,))
     saldos = {}
     for articulo_id, ficha_id, saldo in cursor.fetchall():
         valor = float(saldo)
@@ -6924,7 +7229,8 @@ def listar_articulos_para_reproceso() -> list[dict]:
                 LEFT JOIN ajustes aj ON aj.articulo_id = a.id
                 LEFT JOIN reproc rp ON rp.articulo_id = a.id
                 ORDER BY a.nombre
-                """
+                """,
+                (None,),
             )
             filas = cursor.fetchall()
         articulos = []
@@ -6935,6 +7241,29 @@ def listar_articulos_para_reproceso() -> list[dict]:
             if float(stock) > 0 or sueltos > 0 or deficit > 0:
                 articulos.append({"id": articulo_id, "nombre": nombre})
         return articulos
+    finally:
+        conexion.close()
+
+
+def cajas_armadas_por_ficha(hasta=None) -> dict:
+    """{(articulo_id, ficha_id): cajas disponibles} AL CIERRE DE `hasta` — las porciones con cajas del Remanente.
+
+    Es `_cajas_por_ficha` con conexión propia y sin el déficit: el
+    Remanente lista lo que HAY, y un déficit no se puede contar. Los que
+    salieron de más se ven abajo del Remanente, en "bultos que faltan
+    explicar", y el déficit POR FICHA en el Cotejo.
+
+    Devuelve solo las que tienen más de cero. Una ficha sin cajas no es un
+    renglón: sería decirle al que arma que vaya a buscar una pila vacía.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return {
+                clave: disponibles
+                for clave, (disponibles, _deficit) in _cajas_por_ficha(cursor, hasta).items()
+                if disponibles > 0
+            }
     finally:
         conexion.close()
 
@@ -7119,7 +7448,8 @@ def contar_stock_deposito_negativo() -> int:
                 WHERE COALESCE(e.total, 0) + COALESCE(r.total, 0)
                     + COALESCE(aj.total, 0) + COALESCE(rp.entradas, 0)
                     - COALESCE(rp.salidas, 0) - COALESCE(s.total, 0) < 0
-                """
+                """,
+                (None,),
             )
             return int(cursor.fetchone()[0])
     finally:
@@ -7198,6 +7528,57 @@ class RepartoDesactualizado(Exception):
     """El reparto que llegó de la pantalla ya no se puede cumplir contra los lotes de ahora."""
 
 
+class ReprocesoAnteriorAlCorte(Exception):
+    """La fecha del reproceso cae antes del corte del modelo nuevo, donde el FIFO nuevo no rige."""
+
+    def __init__(self, fecha, corte):
+        self.fecha = fecha
+        self.corte = corte
+        super().__init__(f"La fecha del reproceso ({fecha}) es anterior al corte ({corte}).")
+
+
+def contar_guias_r_afectadas_por_fecha(articulo_id: int, fecha) -> int:
+    """Cuántas guías R quedarían con el reparto desactualizado si se carga una con ESTA fecha.
+
+    Sirve para AVISAR antes de escribir, nunca para trabar: es el mismo
+    molde que `contar_senas_afectadas_por_valor`. La fecha vieja es
+    legítima —recién ahora se carga lo que pasó el lunes—, pero mete un
+    lote ANTES de salidas ya repartidas, y los consumos de las guías R
+    posteriores están congelados en `reprocesos_consumos` y no se
+    recalculan nunca. El que carga tiene que enterarse ANTES.
+
+    **La plata no se mueve** y por eso el aviso lo dice con todas las
+    letras: `costo_total` y `costo_por_bulto_primera` quedan congelados
+    al cargar, y el FIFO vivo usa ese mismo número como costo del lote de
+    primera. Lo que puede dejar de coincidir es la trazabilidad: de qué
+    lote dice cada guía R que salió cada bulto.
+
+    `>=` y no `>`: el recorte de `reparto_para_reproceso` toma las
+    entradas HASTA LA FECHA INCLUSIVE, así que una guía R del mismo día
+    también se repartiría contra el lote nuevo.
+
+    Solo las 'normal': la inicial produce sin consumir, no tiene ninguna
+    fila en `reprocesos_consumos` y no hay reparto que se le desactualice.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*)
+                FROM reprocesos
+                WHERE articulo_id = %s
+                  AND anulado_el IS NULL
+                  AND tipo = 'normal'
+                  AND fecha_operacion >= %s
+                """,
+                (articulo_id, fecha),
+            )
+            return cursor.fetchone()[0]
+    finally:
+        conexion.close()
+
+
 def lotes_para_reproceso(articulo_id: int, fecha) -> dict:
     """Los lotes contra los que se mide un reproceso de esa fecha, y qué quedaba en cada uno.
 
@@ -7233,9 +7614,14 @@ def crear_reproceso(
 ) -> int:
     """Carga una guía R: el SERVER frena, reparte y congela consumos y costo. Devuelve el número de guía.
 
-    EL FRENO VIVE ACÁ, y acá solo. Es el único camino que escribe una guía
-    R, así que ponerlo en la ruta sería escribir la regla dos veces y dejar
-    que se separen. Si a la fecha del reproceso los lotes no llegan a cubrir
+    LOS DOS FRENOS VIVEN ACÁ, y acá solo. Es el único camino que escribe
+    una guía R normal, así que ponerlos en la ruta sería escribir la regla
+    dos veces y dejar que se separen. Son el de STOCK (lo de abajo) y el
+    de FECHA: nada antes del corte, leído de corte_modelo — antes de esa
+    fecha el FIFO nuevo no rige, y una guía R fechada ahí levanta
+    ReprocesoAnteriorAlCorte sin escribir nada.
+
+    Si a la fecha del reproceso los lotes no llegan a cubrir
     lo declarado, levanta StockInsuficienteParaReproceso y NO escribe nada:
     el reproceso es 100% o nada, y ya no existe el consumo 'sin_lote' por
     esta vía —el que quedaba congelaba un costo incompleto para siempre.
@@ -7270,6 +7656,21 @@ def crear_reproceso(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            # EL PISO DE LA FECHA, y va antes que nada porque es lo más
+            # barato de descartar. Antes del corte los datos están
+            # declarados no confiables y fuera del alcance del FIFO nuevo
+            # (Decisiones confirmadas, punto 7): una guía R fechada ahí
+            # metería el FIFO nuevo adentro de lo que el corte cerró, que
+            # es exactamente lo que el corte vino a evitar.
+            #
+            # Sale de corte_modelo y NO de una constante escrita acá: la
+            # fecha de corte se mueve cada vez que se hace un corte nuevo,
+            # y un 31/08 clavado en el código quedaría mintiendo el lunes
+            # siguiente sin que nada avise.
+            corte = _fecha_corte(cursor)
+            if fecha_operacion < corte:
+                raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
+
             entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
             # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
             # de reparto_para_reproceso. El freno, el desglose que vio el
@@ -7702,21 +8103,86 @@ def completar_costo_reproceso(reproceso_id: int) -> dict:
         conexion.close()
 
 
-def contar_reprocesos_costo_incompleto() -> dict:
-    """Auditoría: guías R vigentes con el costo sin cerrar (algún lote sin precio), y la más vieja.
+# La partición del costo sin cerrar, en UN solo lugar. La misma regla la
+# aplica la pantalla de Guías R por guía (`costo_completable` en main.py) sobre
+# los consumos que ya trajo: si se escribiera distinto en los dos lados, un día
+# el banner diría una cosa y el botón haría otra.
+#
+# Un consumo sin precio se puede llenar DESPUÉS solo si vino de una compra:
+# "Completar costo" copia `compras.importe`, y para eso necesita `compra_id`.
+# Cualquier otro origen —ajuste, stock inicial sin costo, reingreso,
+# cierre_modelo_viejo, sin_lote— NO TIENE de dónde sacar un precio, ni hoy ni
+# nunca. Las dos consultas de abajo son la misma partición, y por eso la
+# condición vive UNA sola vez acá: la alerta cuenta un lado y la pantalla el
+# otro, y no se pueden separar.
+_SQL_FALTA_ALGUN_PRECIO = """
+    EXISTS (SELECT 1 FROM reprocesos_consumos rc
+            WHERE rc.reproceso_id = rp.id AND rc.costo_por_bulto IS NULL)
+"""
 
-    Mientras haya una, la rentabilidad real de ese reproceso no se puede
-    calcular: o falta cargar el precio de una compra (se arregla con
-    "Completar costo"), o consumió stock inicial/reingreso/sin lote (no
-    hay precio posible y hay que saberlo).
+_SQL_FALTA_UN_PRECIO_IMPOSIBLE = """
+    EXISTS (SELECT 1 FROM reprocesos_consumos rc
+            WHERE rc.reproceso_id = rp.id
+              AND rc.costo_por_bulto IS NULL AND rc.origen <> 'compra')
+"""
+
+
+def contar_reprocesos_costo_incompleto() -> dict:
+    """Auditoría: guías R vigentes que ESPERAN un precio que puede llegar, y la más vieja.
+
+    Cuenta SOLO las que "Completar costo" va a poder cerrar: las que
+    quedaron sin costo porque falta cargar el precio de alguna compra.
+
+    Las que consumieron un lote sin precio POSIBLE quedan afuera a
+    propósito, y no es que se escondan: van a
+    `contar_reprocesos_sin_costo_posible`, que la pantalla de Guías R
+    muestra como dato, y cada salida suya ya aparece nombrada en el
+    "afuera del cálculo" de Rentabilidad Real. Contarlas acá tenía un
+    costo peor que el problema: son guías que NADIE puede arreglar, así
+    que la alerta no bajaba nunca —y una alerta que no se puede apagar
+    enseña a ignorar todas las alertas—. Se separaron el 06/09, cuando el
+    lote fantasma del compensatorio (804 bultos sin costo posible) hizo
+    inevitable lo que el modelo ya permitía desde el stock inicial.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos
+                f"""
+                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos rp
                 WHERE anulado_el IS NULL AND costo_total IS NULL
+                  AND {_SQL_FALTA_ALGUN_PRECIO}
+                  AND NOT {_SQL_FALTA_UN_PRECIO_IMPOSIBLE}
+                """
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def contar_reprocesos_sin_costo_posible() -> dict:
+    """Las guías R vigentes cuyo costo NO se va a poder cerrar nunca, y la más vieja.
+
+    El otro lado de `contar_reprocesos_costo_incompleto`. Las dos juntas
+    cubren todas las vigentes con `costo_total IS NULL` MENOS un caso que
+    no debería existir: una guía sin costo y sin ningún consumo sin
+    precio. Esa no entra en ninguna a propósito — no hay nada que
+    completar ni nada que declarar imposible, es una anomalía, y meterla
+    en cualquiera de las dos la escondería.
+
+    NO es una alerta y no tiene que serlo: no hay nada que hacer con
+    ellas. Es un dato de la pantalla de Guías R, para que el número se
+    pueda mirar sin que grite todos los días.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT COUNT(*), MIN(fecha_operacion) FROM reprocesos rp
+                WHERE anulado_el IS NULL AND costo_total IS NULL
+                  AND {_SQL_FALTA_UN_PRECIO_IMPOSIBLE}
                 """
             )
             casos, mas_viejo = cursor.fetchone()

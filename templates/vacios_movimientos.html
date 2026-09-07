@@ -66,29 +66,84 @@
     cursor: pointer;
     margin-top: 0.6rem;
   }
+  /* APILADO, no en fila: en 390px el detalle y las acciones al lado dejaban
+     el input del motivo cortado a la mitad y el cartel de "vale emitido"
+     desbordando la tarjeta hacia la derecha. Lo que sobra en el celular es el
+     alto; lo que falta es el ancho. */
   .renglon {
     padding: 0.7rem 0;
     border-top: 1px solid #eee;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
   }
   .renglon:first-of-type { border-top: none; padding-top: 0; }
   .renglon .detalle { font-size: 0.92rem; }
   .renglon .detalle .extra { color: #666; font-size: 0.85rem; }
   .renglon.anulado .detalle { text-decoration: line-through; color: #999; }
   .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 600; }
-  .boton-anular {
-    padding: 0.6rem 0.9rem;
-    background: #fff;
-    color: #dc2626;
-    border: 1px solid #dc2626;
+  /* Las dos acciones se apilan y ocupan el ancho: en 390px, dos botones al
+     lado no entran y el que decide tiene que leer, no adivinar. */
+  .acciones { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+  .acciones form { display: flex; flex-direction: column; gap: 0.4rem; }
+  .acciones input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.55rem 0.6rem;
+    border: 1px solid #cbd5e1;
     border-radius: 8px;
     font-size: 0.9rem;
-    font-weight: 600;
+  }
+  /* NO DESTRUCTIVO: contorno, sin relleno rojo. El que no toca el stock y el
+     que sí tienen que verse de familias distintas, no de dos tonos del mismo. */
+  .boton-quedan {
+    width: 100%;
+    padding: 0.75rem 0.8rem;
+    background: #fff;
+    color: #1d4ed8;
+    border: 2px solid #1d4ed8;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .marca-caducado {
+    display: block;
+    color: #334155;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+  .marca-cobrada {
+    color: #7c2d12;
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  /* DESTRUCTIVO: relleno sólido. El seguro (.boton-quedan) es contorno. Que
+     se distingan por FAMILIA y no por el tono del borde: dos botones
+     contorneados que solo cambian de color se eligen mal con el apuro.
+     Y sin nowrap: los textos ahora son frases y en 390px tienen que envolver
+     en vez de desbordarse. */
+  .boton-anular {
+    width: 100%;
+    padding: 0.75rem 0.8rem;
+    background: #dc2626;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
     cursor: pointer;
-    white-space: nowrap;
   }
   .renglon form { margin: 0; }
   /* Los ajustes NO son movimientos reales, son correcciones: se muestran
@@ -194,13 +249,43 @@
           <div class="extra">Trajo {{ r.cliente_nombre }} — {{ r.creado_en|fecha_hora }}</div>
           {% if r.anulado_el %}<span class="marca-anulado">Anulado el {{ r.anulado_el|fecha_hora }}</span>{% endif %}
         </div>
+        {# DOS CASOS QUE NO SON EL MISMO, y por eso son dos botones y no uno
+           con opción: lo que los distingue es qué pasa con los cajones.
+
+           - El cliente dejó los cajones y no volvió: la pila ESTÁ. Se cancela
+             lo que se le debe y el stock NO se toca.
+           - Se cargó mal, esos cajones nunca entraron: el stock SÍ baja.
+
+           Los textos hablan de cajones y no del sistema —ni "anular" ni
+           "seña"— porque el que aprieta está pensando en si la pila está o
+           no está. Y el destructivo va solo, en rojo: pintarlos iguales es
+           pedir que se elija mal. #}
         {% if not r.anulado_el %}
-        <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/anular"
-              onsubmit="return confirm('¿Anular esta entrada de {{ r.cantidad }} cajones de {{ r.cliente_nombre }}?');">
-          <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
-          <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
-          <button type="submit" class="boton-anular">Anular</button>
-        </form>
+        <div class="acciones">
+          {% if r.sena_vale_el and not r.sena_vale_caducado_el %}
+          <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/vale-no-cobrado"
+                onsubmit="return confirm('Se cancela lo que se le debe a {{ r.cliente_nombre }}. Los {{ r.cantidad }} cajones SIGUEN en el stock.');">
+            <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+            <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+            <input type="text" name="motivo" required maxlength="200"
+                   placeholder="¿Por qué? (queda registrado)">
+            <button type="submit" class="boton-quedan">Los cajones están en el galpón</button>
+          </form>
+          {% endif %}
+          {% if r.sena_vale_caducado_el %}
+          <span class="marca-caducado">Vale dado por no cobrado el {{ r.sena_vale_caducado_el|fecha_hora }}{% if r.sena_vale_caducado_motivo %} — «{{ r.sena_vale_caducado_motivo }}»{% endif %}</span>
+          {% endif %}
+          {% if r.sena_pagada_el or r.sena_vale_el %}
+          <span class="marca-cobrada">{% if r.sena_pagada_el %}Seña pagada{% else %}Vale emitido{% endif %}: no se borra la entrada</span>
+          {% else %}
+          <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/anular"
+                onsubmit="return confirm('Se borra la entrada. Los {{ r.cantidad }} cajones SALEN del stock. ¿Es correcto que nunca se recibieron?');">
+            <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+            <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+            <button type="submit" class="boton-anular">Estos cajones nunca se recibieron</button>
+          </form>
+          {% endif %}
+        </div>
         {% endif %}
       </div>
       {% endfor %}

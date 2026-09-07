@@ -865,6 +865,26 @@ igual" y motivo escrito. **NO como campo libre en la pantalla del operario.**
 Mismo criterio que la excepción del freno: posible, visible y contable, pero
 nunca tan cómoda como el camino normal.
 
+> **CORRECCIÓN DEL 04/09 — este párrafo describía algo que ya era falso el día
+> que se escribió.** El campo de fecha existe en la pantalla del operario
+> **desde el 25/08** (`869448a`, la primera tanda del reproceso):
+> `<input type="date" name="fecha" max="{{ hoy }}">`, con techo y **sin piso**,
+> y la única validación del POST era "no puede ser futura". La ventana
+> retroactiva de Administración, en cambio, **nunca se escribió**: no hay un
+> solo camino en el código que edite la `fecha_operacion` de un reproceso ya
+> cargado.
+>
+> O sea que durante seis días el documento afirmó lo contrario de lo que hacía
+> el sistema: decía que la fecha hacia atrás **entraría** por una pantalla que
+> no existe, mientras el operario ya la tenía libre y sin límite. Y la pared
+> del freno lo **invitaba** expresamente — *"Fijate también la fecha: si el
+> reproceso fue otro día, cambiala acá abajo."*
+>
+> Es el mismo síntoma de las dos familias: un texto que no mintió cuando se
+> escribió, salvo que este sí — nadie fue a mirar la pantalla. **Lo que faltaba
+> no era la capacidad: era el piso y el aviso.** Los dos entraron el 04/09 (ver
+> "El piso de la fecha y el aviso de la fecha hacia atrás", abajo).
+
 ### Lo que la ventana NO resuelve: el documento congelado y el reparto vivo
 
 Una fecha hacia atrás mete un lote **antes** de salidas ya costeadas. Los
@@ -884,13 +904,25 @@ Lo que diverge es **la trazabilidad**: de qué lote dice la guía R que salió c
 bulto. Y es **silenciosa por construcción**, porque las dos versiones no se
 cruzan en ninguna pantalla:
 
-- El documento congelado se lee en **un solo lugar**:
-  `listar_reprocesos_con_consumos` → la pantalla de Guías R.
-- El reparto vivo lo usan Stock del Sistema, Stock por Guía, el selector de lote
-  de la merma dirigida y la alerta de cruce de cliente.
-- **Nadie los muestra juntos**, así que nadie ve la contradicción. Se puede
-  llegar a que Stock por Guía muestre una compra con resto que el documento de
-  la guía R dice haber consumido.
+- El documento congelado se lee en **tres lugares** (revisado el 04/09; el
+  relevamiento del 31/08 decía "uno solo" y nombraba una función que ya no
+  existe, `listar_reprocesos_con_consumos`): `listar_reprocesos_por_rango` → la
+  pantalla de Guías R; `dependencias_del_lote_de_compra` → la simulación de
+  impacto al corregir una recepción; y `completar_costo_reproceso`, que
+  **rellena precios NULL y jamás re-reparte** — la congelación de la
+  trazabilidad está intacta.
+- El reparto vivo lo usan **siete**: `_desglose_stock_articulo` (el desglose
+  "Armado: N cajas para X · R101" del Stock del Depósito, la cuenta 3, que el
+  31/08 no existía), `ver_stock_articulo_deposito`, `_lotes_con_resto` (el
+  selector de la merma dirigida), `desglose_de_renglon_armado`,
+  `lotes_para_reproceso`, el freno de `crear_reproceso` y `atribuir_costos_fifo`
+  (Rentabilidad Real + alerta de cruce).
+- **"Nadie los muestra juntos" también dejó de ser cierto.**
+  `dependencias_del_lote_de_compra` los pone en la misma pantalla y su propio
+  docstring lo dice. No compara las dos versiones de lo mismo, así que sigue sin
+  delatar la contradicción — pero la superficie donde podrían chocar creció.
+- Se puede llegar a que Stock por Guía muestre una compra con resto que el
+  documento de la guía R dice haber consumido.
 
 **Lo único que sí se mueve solo** es la **alerta de cruce de cliente**: se
 recalcula viva en cada carga de pantalla, así que puede empezar o dejar de
@@ -1066,13 +1098,14 @@ deja el documento congelado diciendo una cosa y el reparto vivo diciendo otra.
 
 **Es silencioso por construcción**, y eso es lo que lo hace un pendiente:
 
-- El congelado se lee en **un solo lugar**: `listar_reprocesos_con_consumos`,
-  la pantalla de Guías R.
-- El vivo lo usan Stock del Sistema, Stock por Guía, el selector de lote de la
-  merma dirigida y la alerta de cruce.
-- **Nadie los muestra juntos.** Se puede llegar a que Stock por Guía muestre
-  una compra con resto que el documento de la guía R dice haber consumido, y
-  que nadie lo vea nunca.
+- El congelado se lee en **tres lugares** y el vivo en **siete** — el detalle
+  actualizado está arriba, en la decisión de la fecha retroactiva. El
+  relevamiento original decía "uno y cuatro" y nombraba
+  `listar_reprocesos_con_consumos`, que ya no existe.
+- **Casi nadie los muestra juntos**, y donde sí (la simulación de impacto de
+  una recepción) no se comparan entre sí. Se puede llegar a que Stock por Guía
+  muestre una compra con resto que el documento de la guía R dice haber
+  consumido, y que nadie lo vea nunca.
 
 **La plata no diverge** (ver la decisión de la fecha retroactiva, más arriba):
 `costo_total` y `costo_por_bulto_primera` quedan congelados y el FIFO vivo usa
@@ -1685,6 +1718,82 @@ rotos por otra causa (el auto-confirmado). El orden razonable es: arreglar el
 auto-confirmado (hecho), hacer el backfill, y **recién ahí** mirar si el
 arrastre del corte sigue siendo visible o si quedó tapado por lo otro.
 
+### MEDIDO EL 04/09: el corte nuevo NO limpia esto. Lo AGRAVA.
+
+La pregunta la hizo el dueño antes del corte del fin de semana: *"si el corte
+vuelve a nulear las fichas de las guías R viejas pero no toca los renglones de
+pedido, ¿el lunes arrancamos con el mismo déficit estructural?"*. **No con el
+mismo: con uno peor.** Simulado contra Postgres descartable con el esquema
+completo, corriendo el bloque 2 del corte nuevo sobre un caso de prueba:
+
+| ficha | antes del corte | después |
+|---|---|---|
+| Pepino Bolsa | −145 | **−245** |
+| Zapallito Chico | **+5** | **−30** |
+| Perita Caja | **0** | **−12** |
+| Manzana Bolsa (sin guías R) | −18 | −18 |
+
+**Las fichas que hoy están sanas terminan negativas.** El mecanismo es el que
+ya estaba escrito arriba, llevado al extremo: nulear las fichas de las guías R
+anteriores al corte **saca el lado positivo y deja el negativo**. Cuanto más
+tarde el corte, más semana de guías R buenas se le quita.
+
+### VERIFICADO EN PRODUCCIÓN el 05/09, con números reales
+
+Corrido `db/verificar_piso_por_ficha.sql` en Frutamax. **Los 22 artículos
+cambiaron.** No son números de un fixture: son los de la base.
+
+Pasan de negativo profundo a sano:
+
+| ficha | antes del piso | con el piso |
+|---|---|---|
+| Palta | −425 | **+35** |
+| Mandarina | −384 | **+1** |
+| Redondo | −257 | **+41** |
+| Berenjena | −214 | **+46** |
+| Morrón Verde | — | **0** |
+| Frutilla | — | **0** |
+| Lima | — | **+3** |
+
+Los que quedan negativos son **dos cosas distintas y conviene no mezclarlas**:
+
+- **Los que no se reprocesan** (Mzn Gob −190, Red −180, Arándano −155, Granny
+  −140, Pera −140). Van a seguir negativos por el problema de fondo —el modelo
+  asume que toda venta sale de caja armada— y el `MAX(0, …)` los deja en cero
+  en las pantallas. **No es déficit: es E5.**
+- **El déficit real post-corte de los que sí se reprocesan** (Perita −95,
+  Zapallito −54, Cherry −160). Eso es señal, y es lo que el paso 0 podría
+  reconstruir.
+
+**Y la verificación tuvo que ser una consulta, no una pantalla** — ver abajo,
+"la verificación apuntó a la pantalla equivocada".
+
+### La salida es la 3, y además hace innecesaria la 1
+
+Con un **piso de fecha en `_SQL_STOCK_PARTIDO`** —las dos patas desde el corte
+inclusive— el mismo caso da:
+
+| ficha | con piso de fecha |
+|---|---|
+| Pepino Bolsa | **+5** (exactamente lo contado) |
+| las demás | no aparecen |
+
+Y **da lo mismo con el bloque 2 corrido o sin correr**: verificado. O sea que
+el piso vuelve **innecesario** nulear las fichas — que es una escritura
+irreversible, hecha solo para tapar que la consulta no tiene fecha. Con el
+piso, las guías R viejas **conservan su ficha** (trazabilidad que hoy se
+pierde) y simplemente no cuentan.
+
+**Y es lo que ya hace el resto del modelo.** El total del artículo se rebasea
+en el corte con el compensatorio; la cuenta por ficha es la única que sigue
+sumando desde el principio de los tiempos. El piso no le agrega una regla
+nueva: le pone la que las otras ya tienen.
+
+Alcanza a cuatro lectores, y a los cuatro les mejora: el selector de
+Reproceso, el aviso de "no hay cajas de esta ficha" (E5), el
+`stock_sistema` del conteo por ficha y el Cotejo. Los cuatro ven hoy el
+negativo estructural.
+
 ## Abierto: los negativos de F no tienen explicación todavía
 
 Anotado el 04/09 para que no se pierda. **Redondo −41, Berenjena −46, Palta
@@ -1948,6 +2057,1847 @@ síntoma**. La respuesta era la 3 y el piso fue a la 2.
 **No se ajusta stock de ningún artículo con desglose.** Con tres cuentas
 diciendo cosas distintas del mismo artículo, un ajuste tapa un número que
 todavía no se entiende — y el botón está a un toque en el Cotejo.
+
+## El freno del reproceso mide bien: su permisividad es exactamente `sin_lote`
+
+Revisado el 04/09, y **descarta una frase mía del día anterior**: dije que el
+freno "puede dejar pasar guías que no debería". Salió de la sospecha de que la
+cuenta 3 no reconciliaba. Reconcilia, así que la frase se cae.
+
+**Contra qué compara** (`core/stock.py`, `bultos_en_los_lotes`): la **suma de
+los restantes**, nunca el neto. Está decidido el 01/09 y escrito en su
+docstring, con el motivo: *"trabar a un operario por un agujero que ya estaba
+ahí antes de que tocara nada sería trabarlo por lo mismo que está
+arreglando"*.
+
+Los números de Pepino lo cierran sin margen de interpretación:
+
+| | |
+|---|---|
+| suma de restantes (lo que el freno deja pasar) | 114 |
+| total (el neto del artículo) | 26 |
+| `sin_lote` | 88 |
+
+**114 = 26 + 88, exacto.** La diferencia entre lo que el freno habilita y el
+stock neto **es** `sin_lote`, ni un bulto más. El freno no se equivoca en la
+cuenta: deja pasar exactamente lo que el 01/09 se decidió no mirar.
+
+### Las tres piezas miran la MISMA lista, y eso es lo que sostiene el "100% o nada"
+
+Verificado llamada por llamada:
+
+- `lotes_para_reproceso` (`app/db.py`) → `reparto_para_reproceso(...)`, que es
+  el desglose que ve el operario.
+- El freno adentro de `crear_reproceso` → **la misma** `reparto_para_reproceso`,
+  recalculada dentro de la transacción.
+- La escritura de los consumos → `propuesta_fifo` / `validar_reparto_declarado`
+  sobre **esos mismos lotes**.
+
+No hay forma de que la pantalla apruebe un reparto que la escritura no pueda
+cumplir. El freno vive en `crear_reproceso` y en ningún otro lado, y
+`crear_reproceso` es el único camino que escribe una guía R.
+
+### Lo que sí queda en pie, y NO es el freno
+
+El freno no puede distinguir un `sin_lote` que viene de guías R atrasadas (E4)
+de uno que viene de cajas armadas de más. Los 88 de Pepino los trata igual en
+los dos casos.
+
+**Eso no se arregla endureciendo el freno.** Endurecerlo trabaría justo al que
+está corrigiendo el atraso — que es la razón por la que el 01/09 se eligió la
+suma de los restantes. Se arregla achicando `sin_lote`, que es E4. **El freno
+es la pieza calibrada; el descalibrado es el dato de entrada.**
+
+## `_lotes_con_resto` (la merma dirigida) hereda el mismo inflado, acotado
+
+`_lotes_con_resto` (`app/main.py`) rejuega el FIFO con **todas** las salidas y
+ofrece todo lote con `restante > 0`. Si el artículo tiene `sin_lote` alto, esos
+restantes están inflados por lo mismo que arriba: la lista puede ofrecer
+*"Guía R101, quedan 30"* cuando físicamente no hay nada.
+
+Es una **observación, no una urgencia**, y por tres razones:
+
+1. **El operario elige mirando la pila, no la lista.** El selector existe para
+   el caso "sé exactamente cuál se pudrió". Si el lote no está, no lo elige.
+2. **Si igual eligiera mal, el daño está acotado por construcción**
+   (`repartir_fifo`): `consumo = min(lote["restante"], pedidos, cantidad)`. Lo
+   que el lote no cubre no se inventa: cae al FIFO, y lo que el FIFO no cubre
+   cae a `sin_lote` — o sea que **queda a la vista** en vez de desaparecer.
+3. **Acá no hay freno a propósito**, y está en el docstring de la ruta:
+   *"registra y delata, jamás traba"*. Una merma es un hecho consumado: el
+   cajón ya se tiró, y trabarla sería perder el registro del hecho.
+
+La diferencia con el reproceso es esa: allá el número inflado habilita a
+**crear** stock que no existe; acá solo elige de **dónde** se resta algo que ya
+pasó. El total baja igual.
+
+**Cuando `sin_lote` se achique (E4), esto se achica solo.** No lleva código
+propio.
+
+## El CHECK ampliado de `pedidos_renglones` ESPERA a la baja lógica de fichas
+
+Decidido el 04/09, y el orden es la decisión: **baja lógica de fichas primero,
+el CHECK después.** Queda escrito para que no se retome el CHECK suelto.
+
+### Qué sería el CHECK ampliado
+
+Hoy `pedidos_renglones_ficha_solo_identificados` es
+`articulo_id is not null or ficha_id is null`: **media regla**, la mitad que no
+atajó los nueve días de pedidos sin ficha. La ampliación es el par atómico:
+`check ((articulo_id is null) = (ficha_id is null))`.
+
+### El lado del código ya está limpio, y eso cambia la urgencia
+
+Grepeados **los que construyen el renglón**, no el campo (corolario 3 de
+`CLAUDE.md`). Hoy son tres y **los tres escriben el par junto**:
+
+- `crear_pedido` — el INSERT, ya con `ficha_id` desde el arreglo del 04/09.
+- `asignar_ficha_a_renglon` — `SET ficha_id = fl.id, articulo_id = fl.articulo_id`,
+  el artículo sale de la ficha en el mismo UPDATE.
+- El traslado del armado, que no toca ninguno de los dos.
+
+**Ningún camino escribe `articulo_id` solo.** El agujero que el CHECK vendría a
+cerrar ya está cerrado en el código.
+
+### Por qué NO va ahora: el costo cae sobre una operación que sí se usa
+
+`pedidos_renglones.ficha_id` es `on delete set null`. Con el CHECK ampliado
+puesto, borrar una ficha con renglones haría `SET NULL` sobre filas que
+conservan su `articulo_id` → **violación del CHECK → el DELETE explota**. Y no
+se salva pasando la FK a `NO ACTION`: ahí falla por la foreign key. **En las dos
+variantes el borrado de una ficha con renglones deja de existir**; lo único que
+cambia es si el error es legible o crudo.
+
+Rompe dos funciones que hoy andan: `eliminar_ficha` y
+`cambiar_articulo_de_ficha`.
+
+Y el alcance es enorme: los renglones son el tráfico diario, así que
+**cualquier ficha que se haya pedido una vez pasa a ser imborrable**, y hoy no
+hay baja lógica de fichas como escape.
+
+**Eso es cambiar una política de operación para cerrar un agujero que ya no
+está abierto.** El CHECK sería un cinturón sobre un camino que se acaba de
+cerrar, y el precio lo paga una función que alguien usa.
+
+### La pieza que va primero, y por qué es la que destraba
+
+**Baja lógica de fichas.** Hoy borrar una ficha nulea renglones en silencio —el
+peligro que ya estaba anotado en `cambiar_articulo_de_ficha`— y **no hay
+alternativa**: borrar es el único camino. Con baja lógica, borrar deja de ser el
+único camino, nada queda huérfano, y **ahí el CHECK entra sin costo
+operativo**.
+
+### El detalle que no hay que olvidar el día que se retome: Palmala
+
+El CHECK no es corrección de datos, es esquema, y el esquema tiene que ser el
+mismo en las dos bases. Palmala corrió el mismo código entre el 27/08 y el
+04/09, así que tiene renglones con artículo y sin ficha, y **el
+`ALTER TABLE ... ADD CONSTRAINT` ahí falla** (falla limpio, sin escribir, pero
+falla). Palmala quedó fuera del backfill a propósito porque no lleva stock —
+esa decisión no se toca, así que el CHECK va a necesitar `not valid` en Palmala,
+o una limpieza propia. **Medirlo antes con una consulta de solo lectura, no
+suponerlo.**
+
+## La rama retenida de Stock Físico: qué se rescata y qué se rehace
+
+`origin/claude/retenido-stock-fisico` (`597896e`, 28/08): *"Stock Físico de
+Depósito: buscar los conteos de un día"* — un selector de fecha, "Volver a hoy",
+y el ofrecimiento del día contado más cercano cuando el día pedido está vacío.
+Nueve días parada. Revisada el 04/09 contra `main`.
+
+Su base es `15f617c`; desde ahí `main` se movió 24 commits sobre esos archivos,
+y **E3 (`9e51146`) reescribió la pantalla**. El veredicto por archivo:
+
+- **`app/db.py` — se rescata TAL CUAL.** `fecha_conteo_stock_mas_cercana` es
+  función nueva, no toca nada existente, y su consulta pide solo
+  `DISTINCT creado_en::date`: los campos que E3 le agregó a `conteos_stock`
+  (`ficha_id`, `stock_sistema`) no la rozan. Es además la pieza que tiene el
+  pensamiento adentro: mira para los dos lados, con empate gana el posterior, y
+  solo corre si el día pedido está vacío.
+- **`app/main.py` — se rehace, no se mergea.** E3 le cambió la firma a
+  `_renderizar_pantalla_stock_fisico_deposito` (le agregó `articulo_id` y
+  `fichas_por_articulo`) y la reestructuró en un dict `contexto`. El conflicto
+  es real pero mecánico: unas diez líneas.
+- **`templates/deposito_stock_fisico.html` — aplica casi entera.** E3 tocó el
+  formulario de carga (el selector de ficha), no el `<style>` ni el listado
+  "Contado hoy": los dos hunks de la rama caen en contexto que sigue existiendo
+  textual.
+- **`tests/test_app.py` — hay que agregarles un patch.** Mockean
+  `listar_articulos` pero no `_fichas_por_articulo`, que E3 metió en el render:
+  tal cual están, revientan con "Error al conectar con la base de datos".
+
+**E3 no invalidó la idea: la fortaleció.** Desde la etapa 3 la lista "Contado
+hoy" tiene un renglón por PORCIÓN (los sueltos y cada ficha), así que un día de
+conteo es mucho más largo y es más probable —no menos— que el operario quiera
+mirar lo que contó el martes.
+
+**Aun así no entra hoy**, y el motivo no es técnico: es una pantalla nueva para
+el operario, y lo que está decidido esta semana es **parar y mirarlo correr con
+gente real antes de construir encima**. La rama **no se borra**: queda parada
+con este relevamiento hecho, para que el día que se retome no haya que volver a
+investigarla.
+
+## El piso de la fecha y el aviso de la fecha hacia atrás (04/09)
+
+La tercera de las tres cosas que tenían que estar cerradas antes del corte
+nuevo. Las otras dos ya estaban: la ficha perdiéndose en el auto-confirmado
+(arreglada el 04/09) y el reproceso tomando lo que no hay (el freno,
+desplegado el 02/09).
+
+### Lo que había
+
+El campo de fecha estaba desde el 25/08, con techo y **sin piso**, y el POST
+solo rechazaba las futuras. Una guía R fechada en 2024 entraba. No avisaba
+nada, y la pared del freno invitaba a moverla hacia atrás.
+
+### El piso SALE DEL CORTE, y esa es la decisión
+
+Antes de la fecha de corte los datos están declarados no confiables y fuera
+del alcance del FIFO nuevo (Decisiones confirmadas, punto 7). Una guía R
+fechada ahí metería el FIFO nuevo adentro de lo que el corte cerró.
+
+**Pero la fecha de corte se mueve.** Se va a mover este fin de semana
+(05 o 06/09): Lionel corta con el depósito cerrado, cuenta el remanente
+físico y vuelve a apoyar el stock en la realidad, porque hoy los números son
+inentendibles y **lo que nadie mira no delata ningún error nuevo**. Y se va a
+volver a mover después. Por eso el piso **no es una constante**:
+`crear_reproceso` lee `corte_modelo` con `_fecha_corte(cursor)`, dentro de la
+misma transacción.
+
+Es exactamente la lección de los dos sietes, aplicada antes de que duela: un
+`31/08` escrito a mano en el código habría quedado **mintiendo el lunes
+siguiente**, sin que nada avise — porque un piso que quedó viejo no falla,
+deja pasar.
+
+`_fecha_corte(cursor)` y `fecha_corte()` son la misma consulta escrita **una
+sola vez**: la segunda es la primera con conexión propia. Abrir una segunda
+conexión para leer una fila sería pagar dos veces por el mismo dato, pero
+copiar el SELECT sería peor — serían dos reglas.
+
+**El piso vive en `crear_reproceso`, con el freno de stock y por el mismo
+argumento**: es el único camino que escribe una guía R normal, así que
+ponerlo en la ruta sería escribirlo dos veces. El `min=` del selector es
+comodidad, no la regla: evita elegir una fecha que va a rebotar.
+
+### El aviso: segundo toque, y la frase del costo es obligatoria
+
+Molde de las señas (`contar_senas_afectadas_por_valor`): se cuenta **antes**
+de escribir, la pantalla muestra el número y pide el segundo toque.
+
+`contar_guias_r_afectadas_por_fecha` cuenta las guías R no anuladas del
+**mismo artículo** con `fecha_operacion >= la fecha nueva`. Es un `count(*)`,
+sin rejugar ningún FIFO. Tres decisiones adentro:
+
+- **`>=` y no `>`**: el recorte de `reparto_para_reproceso` toma las entradas
+  HASTA LA FECHA INCLUSIVE, así que una guía R del mismo día también se
+  repartiría contra el lote nuevo.
+- **Solo `tipo = 'normal'`**: la inicial produce sin consumir, no tiene una
+  sola fila en `reprocesos_consumos` y no hay reparto que se le desactualice.
+- **Solo con fecha anterior a hoy**: con la de hoy no hay ninguna guía R
+  posterior, así que el camino normal no paga un toque de más.
+
+El texto, con la frase obligatoria:
+
+> **Hay 3 guías R de Pepino con fecha igual o posterior al 31/08/2026.**
+> Su reparto por lote puede dejar de coincidir con el vivo. **Su costo no
+> cambia.**
+
+**La última oración no es cortesía: es la que evita el susto.** Lo primero
+que se piensa al leer "puede dejar de coincidir" es que se movió plata, y no
+se movió — `costo_total` y `costo_por_bulto_primera` quedan congelados al
+cargar, y el FIFO vivo usa ese mismo número como costo del lote de primera.
+Lo que puede divergir es la trazabilidad. Por eso la frase vive en la
+plantilla, escrita una sola vez, y hay un test que falla si desaparece.
+
+El segundo toque vale para **esa** fecha: si el operario la cambia después de
+leer el aviso, el JS vacía `confirmado` y el aviso se vuelve a pedir. Si no,
+leería "hay 3 guías del 31/08" y guardaría una del 25 sin que nadie contara
+nada.
+
+### Lo que NO entró, y por qué
+
+**El aviso blando a los 7 días.** Se propuso y se descartó el mismo día, por
+el argumento que lo desarmaba solo: **competiría con la corrección del
+arrastre justo cuando hace falta.** Las guías que faltaban eran del 31/08;
+una ventana de 7 días puesta la semana siguiente habría bloqueado
+exactamente la corrección que venía a habilitar. Y con el corte nuevo, todo
+lo anterior queda cortado por el piso igual.
+
+Queda anotado como pendiente sin dueño, no como algo que se olvidó.
+
+### Lo que esto NO arregla
+
+**No toca los 88 de Pepino ni los 109 de Zapallito.** Esto evita que se sigan
+generando; los que ya están se corrigen cargando las guías que faltan con su
+fecha real. Y eso **no dependía de esta entrega**: la pantalla ya lo permitía
+desde el 25/08.
+
+## El día del corte es asimétrico en la cuenta por ficha (05/09)
+
+Encontrado el 05/09 contestando una pregunta del dueño antes del corte: *"al
+mover la fecha, ¿los −95 de Perita y los −54 de Zapallito desaparecen?"*.
+Desaparecen — **y en su lugar aparecía un número equivocado en las dos
+direcciones.**
+
+El piso original recortaba las dos patas con `>= corte`. Pero **el conteo
+físico se toma A LA TARDE del día del corte**, así que todo lo que pasó ese día
+antes del conteo ya está adentro de lo contado. Simulado contra Postgres:
+
+| caso | verdad física | con `>=` en las dos | con el piso asimétrico |
+|---|---|---|---|
+| 50 cajas de una guía R del 03/09, salen 30 el sábado, se cuentan 20 | 20 | **−10** | 20 |
+| guía R normal cargada el sábado, 15 cajas, no salieron | 15 | **30** | 15 |
+
+En el primero la salida del sábado resta y la guía R que la produjo queda
+afuera del piso. En el segundo la guía R del sábado se suma **además** del
+`inicial` que ya la contiene.
+
+**El piso correcto es asimétrico:**
+
+- **entradas**: los `inicial` DEL corte (son la línea de base, la foto de lo
+  contado) **más** cualquier guía R posterior.
+- **salidas**: solo las posteriores.
+
+**Por qué el total del ARTÍCULO no tiene este problema:** no se rebasea con una
+fecha sino con el compensatorio, que es una **foto tomada esa misma tarde** y
+que ya incluye los movimientos del día. La cuenta por ficha usa un filtro de
+fecha, y un filtro no sabe a qué hora se contó.
+
+## El armado podía quedarse corto pero no largo, y el largo se perdía entero (05/09)
+
+Relevado y arreglado el 05/09. **No es un bug de cálculo: es una regla que
+prohibía registrar un hecho que ya había ocurrido.**
+
+### Qué había
+
+El depósito arma 80 bultos donde el pedido pedía 50 —pasa cuando el cliente
+llama después de hora y el camión todavía no salió—. El sistema no lo dejaba
+cargar, y de dos formas a la vez:
+
+- `templates/deposito_pedido_armar.html` ponía `max="{{ r.cantidad }}"` en el
+  input: el navegador no dejaba escribir 80.
+- Y si se salteaba por POST, `app/main.py` lo colapsaba:
+  `if pedida is not None and cantidad_armada_valor >= pedida:
+  cantidad_armada_valor = None`.
+
+O sea que el 80 **no se guardaba en ningún lado**. Quedaba como armado
+completo, y `COALESCE(cantidad_armada, cantidad)` daba 50 en todas las
+cuentas:
+
+- **Stock**: descontaba 50. Los 30 restantes salían del galpón sin descontarse
+  → el stock quedaba inflado en 30, y eso aparecía después como faltante en el
+  conteo siguiente, **sin causa visible**.
+- **Facturación**: `kilos_enviados = kilos_por_bulto × 50`. Se facturaban 50.
+- **Rentabilidad Real**: ingreso de 50 y costo de 50 — consistentes entre sí,
+  así que el margen no se veía raro. Lo que faltaba eran los 30 bultos.
+- **Pantallas**: ninguna mostraba nada. El 80 nunca existió como dato.
+
+Cuánto se perdió por esta vía **no se sabe y no se va a saber**: el dato no
+existe.
+
+### EL CERO QUE IMPORTA: no había workaround
+
+Antes de tocar nada se verificó la hipótesis de que alguien estuviera
+resolviendo esto **inflando el kilaje por bulto** —el único campo libre que
+queda— para que 50 × 25,6 diera los kilos realmente enviados. Si eso estaba
+pasando, había facturación ya emitida sobre el workaround y los renglones
+viejos habría que revisarlos.
+
+**La consulta (`db/kilaje_inflado.sql`) dio CERO.** Las únicas tres filas que
+salieron son Tomate Cherry con envase variable —7 kg reales contra 5 de la
+ficha—, que es exactamente lo que la propia consulta marca como normal.
+
+**Ese cero se anota acá porque dentro de tres meses nadie lo va a poder
+reconstruir**, y es lo que confirma dos cosas: que el problema era puro (nadie
+lo estaba tapando por otro lado) y que **no hay facturación vieja que
+revisar**.
+
+### La decisión, y el argumento que la cierra
+
+**El armado puede superar lo pedido.** El camión ya salió con 80; negar el
+registro no des-entrega la mercadería.
+
+Es **la inversa del freno del reproceso, y a propósito**: allá se traba porque
+se congela un costo que no se corrige nunca; acá no se congela nada y el hecho
+ya ocurrió. Y el resto del módulo es "avisa, no traba" — el piso es la verdad.
+Ésta era de las pocas pantallas donde el sistema le decía al depósito que lo
+que hizo no se puede cargar.
+
+### La definición que faltaba
+
+`cantidad_armada` tenía dos significados para NULL, y uno de ellos borraba
+mercadería. Ahora es una sola cosa:
+
+- **NULL** = armó EXACTAMENTE lo pedido.
+- **`< cantidad`** = incompleto.
+- **`> cantidad`** = armó de más.
+
+### El `!=` estaba en DOS plantillas, no en una
+
+El criterio "el renglón está incompleto" está escrito **seis veces**: cuatro en
+Python y SQL (`main.py` ×2, `db.py` ×2), que ya usaban `<` desde el arreglo de
+esta semana, y **dos en plantillas** (`deposito_pedido_armar.html` y
+`deposito_pedido.html`) que habían quedado con `!=`.
+
+Estaban **dormidas**: nunca se veían porque el server jamás guardaba una
+cantidad mayor a la pedida. **Este cambio es justamente lo que las despierta** —
+sin arreglarlas, un renglón donde SOBRÓ mercadería salía en ámbar pidiendo
+atención. Buscar la segunda copia después de encontrar la primera es la
+costumbre del corolario 2, funcionando.
+
+### Armar de más es un DATO, no una alerta
+
+El ámbar significa "queda algo por hacer" y acá no queda nada: el camión salió.
+Va con marca propia, en gris pizarra, que **se lee igual de bien que el ámbar y
+significa otra cosa**.
+
+El contraste se subió (`#e2e8f0`→`#cbd5e1`) después de mirar la captura a
+390px: con el `opacity: 0.55` que la sección "Ya armado" aplica a todo, el gris
+original se leía como *"menos importante"* en vez de *"otra cosa"*. **No es lo
+mismo**, y esa distinción vale para cualquier marca que se agregue después.
+
+No se tocaron el color de la tarjeta ni la alerta de pedidos incompletos: sus
+cuatro copias ya usaban `<`, así que armar de más no las dispara.
+
+### Lo que esto NO resuelve
+
+**El pedido sigue diciendo 50.** Lo que muestra que se entregaron 80 es la
+cantidad armada, no el pedido. Si el cliente discute la factura, la prueba de
+que pidió los 30 extra **no está en ningún lado**: el agregado por teléfono no
+deja registro del lado del pedido.
+
+Puede que algún día haga falta poder agregar al PEDIDO y no solo al armado.
+**No hoy**: lo urgente era dejar de perder la mercadería, y eso está.
+
+## AGUJERO DE DISEÑO: el pool de segunda es la única cuenta que ningún corte rebasea
+
+Encontrado el 05/09, la noche del corte, relevando la vista del depósito.
+**Medido antes de tocar nada.**
+
+### Qué es
+
+El pool de segunda se calcula así, y no ha cambiado nunca:
+
+```
+Σ reprocesos.bultos_segunda  +  Σ rechazos a segunda  −  Σ remitos_segunda
+```
+
+**Sin un solo filtro de fecha.** Y el compensatorio del corte no lo alcanza:
+`cierre_modelo_viejo` es una fila de `movimientos_stock`, y esta cuenta no lee
+movimientos salvo por `destino_rechazo`.
+
+O sea que **de las cuatro cuentas del módulo, es la única que sigue sumando
+desde el primer día de la base**:
+
+- El total del artículo lo rebasea el compensatorio en cada corte.
+- La cuenta por ficha la rebasea el piso de fecha (05/09).
+- El FIFO rejugado se recalcula entero cada vez.
+- **La segunda, nada.**
+
+### Lo que midió el corte del 05/09
+
+| artículo | antes del corte | desde el corte | remitida | pool |
+|---|---|---|---|---|
+| Zapallito | 12 | 15 | 4 | **23** |
+| Morrón Rojo | 11,99 | — | — | **11,99** |
+| Morrón Verde | 6,98 | 1 | — | **7,98** |
+| Tomate Redondo | 6 | — | 1 | **5** |
+| Berenjena | 4 | — | — | **4** |
+| Limón | — | 3 | — | 3 |
+
+**El depósito contó Zapallito 15 y Limón 3, y nada más.** Todo lo demás —unos
+40 bultos— no existe en el piso. En Zapallito la cola vieja se sumó a lo
+contado y dio 23 donde hay 15.
+
+El `1` de Morrón Verde "desde el corte" **es legítimo**: una guía R `normal`
+del día, cargada por el depósito antes del cierre. Se distingue de las del
+conteo por el `tipo` y por la hora de carga
+(`db/segunda_desde_el_corte.sql`).
+
+### El arreglo: el MISMO piso asimétrico que la cuenta por ficha
+
+No hace falta escribir nada falso, y esto es lo que decide la solución:
+**con el piso puesto, el pool queda exactamente en lo contado sin tocar una
+sola fila.**
+
+- **entradas**: los `inicial` DEL corte (la foto de lo contado) más lo
+  POSTERIOR al corte.
+- **remitos**: solo los POSTERIORES.
+
+Verificado contra Postgres con los números reales: Zapallito **15**, Limón
+**3**, Morrón Verde **0**, y cero en toda la cola vieja. Las guías R viejas
+**conservan su historial entero**: no se anula ni se borra nada.
+
+Y el `1` de Morrón Verde cae, que es lo correcto: **el conteo de la tarde es
+la verdad**, y ese conteo dice que de Morrón Verde no hay segunda. Es la misma
+asimetría del día del corte que ya rige en la cuenta por ficha — un filtro de
+fecha no sabe a qué hora se contó.
+
+### Por qué NO se limpia con un remito compensatorio
+
+Era la salida obvia y **es la trampa que este proyecto ya pagó una vez**.
+`remitos_segunda` es `(articulo_id, bultos, fecha_operacion)`: **no tiene
+motivo ni tipo**. Un remito compensatorio sería **indistinguible de un remito
+real** en el listado de Movimientos.
+
+Es exactamente lo de los saldos iniciales de Vacíos, escrito en Decisiones
+confirmadas punto 7: *"se cargaron por la pantalla de Ajustes y hoy son
+indistinguibles de una corrección de faltante"*. Repetirlo acá sería no haber
+aprendido nada.
+
+Si algún día hiciera falta un compensatorio de segunda de verdad, **primero va
+el tipo propio** —como `cierre_modelo_viejo` lo tiene en `movimientos_stock`—
+y recién después la fila. Pero con el piso no hace falta ninguna fila.
+
+### Lo que queda para el arreglo
+
+Es un cambio de consulta, sin migración, y toca **dos lugares** que hoy
+calculan el pool por separado: la columna `segunda` de
+`stock_deposito_por_articulo` y la pantalla de Remito de Segunda, que filtra
+por `segunda > 0`. **Los dos tienen que moverse juntos** o el remito va a
+ofrecer artículos que el stock ya no muestra.
+
+## LO PRÓXIMO: el `sin_procesar` negativo no puede seguir siendo un número
+
+Decidido el 06/09, y es **lo que sigue después del Remanente**. No es un
+descubrimiento: es un pendiente que ya estaba anotado y que **mordió tres
+veces**, cada vez con una causa distinta y siempre por el mismo motivo.
+
+### Por qué vuelve
+
+`sin_procesar = stock − Σ armados` es **una resta entre dos cuentas
+distintas**: el total del artículo (cuenta 1) menos el desglose del FIFO
+rejugado (cuenta 3). Cuando esas dos no están apoyadas en lo mismo, la resta
+da negativo — y se muestra en la misma columna, con el mismo formato, que un
+número de stock.
+
+**Un stock negativo significa algo. Este número no.** El que lo mira concluye
+que faltan bultos, y lo que falta son guías R.
+
+Las tres veces:
+
+1. **04/09** — Pepino −48 y Zapallito −54. Se creyó faltante de mercadería.
+   Eran guías R atrasadas: `sin_lote` 88 y 109, que cierran exacto.
+2. **05/09** — se verificó el piso de la cuenta por ficha mirando este
+   número, que sale de otra cuenta. No se movió, y con razón.
+3. **06/09** — después del corte: Perita −95, Zapallito −29, con los totales
+   perfectos. Otra vez la cuenta 3, que es la única que no se rebasea.
+
+### El arreglo, y por qué es del tamaño de un cartel
+
+**No es cambiar el cálculo.** Con la opción (c) decidida —la cuenta 3 se
+limpia sola con la rotación, y ponerle un piso separaría el listado del freno—
+el número va a seguir dando negativo cada tanto. Lo que hay que cambiar es
+**qué se muestra cuando da negativo**.
+
+En vez de `−95`, un cartel que diga lo que pasa: **"faltan guías R por
+cargar"**, con el número de cajas que el desglose no puede explicar. Eso es lo
+que el depósito puede accionar; el −95 no.
+
+Dos cosas a resolver al hacerlo:
+
+- **Dónde.** Es la pantalla de Stock del Sistema, en Administración. El
+  Remanente del depósito no lo tiene: sale de la cuenta 2 y solo muestra
+  porciones con más de cero.
+- **Con qué número.** El candidato natural es `sin_lote` del reparto, que ya
+  se calcula y es exactamente "salidas que ningún lote cubre". Habría que
+  confirmar que `−sin_procesar` y `sin_lote` coinciden en los casos reales
+  antes de mostrarlo — el 04/09 coincidían (88 y 109), pero eso es UNA
+  medición, no una regla probada.
+
+### La regla que deja
+
+**Un número derivado de dos cuentas distintas no se muestra con el formato de
+un saldo.** Si el resultado no tiene un significado físico —"hay −95 peritas"
+no lo tiene—, lo que corresponde es una frase, no una cifra.
+
+## El compensatorio POSITIVO crea un lote fantasma, y el próximo reproceso de ese artículo REVENTABA (resuelto el 06/09)
+
+Encontrado el 06/09 por el dueño, leyendo el día a día de Tomate Perita.
+**Es más grave que "lotes sin costo": rompe la carga de guías R.**
+
+### El mecanismo
+
+Un artículo que estaba en NEGATIVO recibe un compensatorio **positivo** —
+Perita venía en −45, así que el corte sumó +45 para llevarlo a cero. Y las
+entradas del FIFO son, textual:
+
+```sql
+FROM movimientos_stock m
+WHERE m.anulado_el IS NULL AND m.cantidad > 0 ...
+```
+
+**`cantidad > 0`, sin mirar el tipo.** Así que ese compensatorio entra como un
+LOTE, con `tipo_lote = 'cierre_modelo_viejo'`. Mercadería que no existe.
+
+Los compensatorios NEGATIVOS no tienen el problema: entran como salida, que es
+lo correcto, y consumen los lotes viejos. **Por eso el desglose de Perita
+mostraba R101 y R116 con restante y el de otros artículos no.**
+
+### Las tres consecuencias, verificadas
+
+**1. El lote no tiene costo, y NO PUEDE tenerlo.** El CHECK
+`movimientos_stock_vinculo_solo_reingreso` dice
+`(tipo in ('reingreso_rechazo','stock_inicial') or costo_por_bulto is null)`:
+`cierre_modelo_viejo` tiene el costo **prohibido por la base**. Toda salida que
+el FIFO le atribuya queda sin costo posible.
+
+**2. EL PRÓXIMO REPROCESO DE ESE ARTÍCULO FALLA.** Reproducido contra
+Postgres, no deducido:
+
+```
+LOTES que el FIFO ofrece, del más viejo primero:
+   2026-09-04  cierre_modelo_viejo   restante 45.0  costo None
+   2026-09-05  stock_inicial         restante 10.0  costo 55000
+
+Una guía R de 5 bultos:
+   CheckViolation: new row for relation "reprocesos_consumos" violates
+   check constraint "reprocesos_consumos_origen_check"
+```
+
+`crear_reproceso` mapea `origen = tipo_lote` y `reprocesos_consumos.origen`
+solo acepta `('compra','ajuste','reingreso_rechazo','reproceso',
+'stock_inicial','sin_lote')`. **El compensatorio es el lote MÁS VIEJO** —está
+fechado el día anterior al corte— así que el FIFO lo ofrece primero y toda
+guía R de ese artículo lo toca. El operario pasa el freno y se come un error
+crudo de Postgres.
+
+**3. La merma dirigida lo ofrece y después lo rechaza.** `_lotes_con_resto` lo
+lista (tiene restante), con la etiqueta cruda porque no está en
+`ETIQUETAS_MOVIMIENTO_STOCK`; y el POST lo rechaza porque no está en
+`TIPOS_LOTE_STOCK`. Un lote que se ve en la lista y que el server dice que no
+es de la lista.
+
+### El tamaño se mide con `db/lotes_fantasma_del_compensatorio.sql`
+
+Dos consultas: cuántos lotes fantasma y de cuántos bultos por corte, y el
+detalle artículo por artículo. **Hay que correrlo para los dos cortes** — el
+del 31/08 dejó los suyos también.
+
+### Sobre excluirlo de las entradas del FIFO: no es gratis
+
+La idea correcta —un movimiento que existe para cancelar un saldo no es
+mercadería que llegó— **rompe la reconciliación de la cuenta 3** si se hace a
+secas, y conviene tenerlo claro antes de tocarlo:
+
+- El total del artículo (seis patas) suma el compensatorio adentro de
+  `ajustes` (`SUM(cantidad)` de todos los movimientos menos reingresos).
+- El FIFO calcula su propio `stock` = Σ entradas − Σ salidas.
+- Si se saca la entrada y se deja el total, los dos dejan de coincidir por
+  exactamente el compensatorio, y la identidad
+  `Σ restantes = total + sin_lote` —verificada el 04/09— deja de cerrar.
+
+Sacarlo de las dos puntas tampoco alcanza: el compensatorio negativo SÍ tiene
+que consumir, que es lo que hace bien hoy.
+
+**No hay un arreglo de una línea.** Las direcciones posibles, sin elegir
+ninguna todavía: que el FIFO ignore el tipo solo en las ENTRADAS y que el
+total lo acompañe; o que `reprocesos_consumos.origen` acepte el tipo y el lote
+quede como "sin costo posible" declarado; o que el corte no use un
+compensatorio positivo sino otra forma de llevar a cero un artículo negativo.
+
+### EL NOMBRE PROPIO: el compensatorio positivo crea un lote que el FIFO trata como mercadería real
+
+Va escrito así porque el mecanismo se olvida y el nombre no. **Es de la
+familia de "a una regla le crece otra encima"**, no de la regla escrita dos
+veces: la regla del FIFO —"entrada es todo movimiento con `cantidad > 0`"—
+está escrita UNA sola vez y sigue diciendo exactamente lo que decía el día
+que se escribió. Lo que cambió es que **`cierre_modelo_viejo` se agregó
+después, y el FIFO nunca supo que existía.**
+
+Nadie tocó el FIFO y el FIFO cambió. Como con `eliminar_compra` y
+`_auto_retirar_si_corresponde`: dos funciones que no se nombran entre sí, una
+escribe y la otra lee, y entre las dos no hay ninguna mención cruzada. La
+forma de encontrarla es la misma: **grepear el campo, no el criterio.** Quien
+agregue mañana un `tipo` nuevo a `movimientos_stock` tiene que grepear
+`cantidad > 0` antes de darlo por hecho.
+
+### El tamaño medido, con los dos cortes corridos (06/09)
+
+Números de producción, no de fixture:
+
+| Corte | Lotes fantasma | Bultos | Compensatorios negativos | Artículos |
+|---|---|---|---|---|
+| 31/08 | 9 | 726 | 13 | 22 |
+| 05/09 | 5 | 78 | 14 | 19 |
+| **Vivos hoy** | **14** | **804** | | |
+
+El del 31/08 pesa diez veces más: 726 bultos contra 78. Es el que va a tardar
+en drenar.
+
+### La salida elegida: que la base ACEPTE el tipo, no que el FIFO lo esconda
+
+`db/aceptar_cierre_modelo_viejo_como_origen.sql` agrega
+`'cierre_modelo_viejo'` al CHECK de `reprocesos_consumos.origen`. Es la
+dirección 2 de las tres de arriba, y se eligió por ser la única que **destraba
+la carga del lunes sin tocar el FIFO** — o sea sin romper la identidad
+`Σ restantes = total + sin_lote`.
+
+Hubo una cuarta tentación, más rápida todavía, y se descartó a propósito:
+mapear `cierre_modelo_viejo → 'ajuste'` en el código y no migrar nada.
+**`reprocesos_consumos` es un documento congelado**: lo que se escriba ahí no
+se recalcula nunca. Mapear a `'ajuste'` haría que el consumo de un lote
+fantasma sea indistinguible de un ajuste real **para siempre**, y es
+exactamente la regla que el dueño dejó escrita el 05/09: **primero el tipo
+propio, después la fila.**
+
+### Las tres consecuencias, después del arreglo
+
+**1. La guía R se guarda, y queda sin costo — a propósito.** El consumo entra
+con `costo = NULL` y la guía con `costo_total = NULL`, y **no se puede
+completar después**: `completar_costo_reproceso` llena desde
+`compras.importe WHERE rc.compra_id = c.id`, y el consumo fantasma tiene
+`compra_id = NULL`. La alerta *"guías R con costo incompleto"*
+(`anulado_el IS NULL AND costo_total IS NULL`) queda prendida y **no se apaga
+nunca** para esas guías.
+
+Eso es correcto y ya estaba decidido: el docstring de la alerta dice que este
+caso se cuenta a propósito, *"no hay precio posible y hay que saberlo"*. Lo
+que NO va es poner `costo_total = 0` como en la segunda: **la segunda vale
+cero de verdad en el modelo; estos bultos tienen costo DESCONOCIDO**, y un
+cero se propagaría a `costo_por_bulto_primera` e inflaría el margen de
+Rentabilidad Real. Un margen inventado es peor que una alerta prendida.
+
+El costo operativo del arreglo, dicho sin adornos: **804 bultos de lote
+fantasma significan muchas guías R sin costo hasta que drene, y eso ahoga la
+alerta.** Esas ventas caen en el balde "afuera con motivo" de Rentabilidad
+Real, así que nada suma cero en silencio — pero la alerta va a estar en rojo
+un buen rato y hay que saber por qué.
+
+**2. La merma dirigida ya no lo ofrece.** `_lotes_con_resto` saltea el lote de
+tipo `cierre_modelo_viejo`. Es otro CHECK (`movimientos_stock.lote_tipo`, no
+el de `reprocesos_consumos`), así que ampliarlo habría necesitado una segunda
+migración — y no tiene sentido: **no se puede tirar a la basura mercadería
+que no existe.** Antes salía en la lista y el POST lo rechazaba después, que
+es lo peor de los dos mundos.
+
+**3. La pantalla de la guía R lo nombra.** El documento congelado muestra
+*"Del cierre del modelo viejo (sin costo posible)"*. Sin ese renglón el
+consumo caía en el `{% else %}` y decía *"se tomó más de lo que había"*, que
+es falso: lote había, pero era mercadería que no existe.
+
+### Lo que esto NO resuelve
+
+El lote fantasma **sigue estando**. Se aceptó que exista y se le puso nombre;
+no se lo sacó del FIFO. Mientras drena, el artículo tiene en el FIFO 804
+bultos repartidos que no están en el depósito, y toda salida que los toque
+sale sin costo. **La única forma de que desaparezca antes es que un corte
+nuevo lo rebasee**, y el próximo corte va a crear los suyos si vuelve a
+compensar en positivo. Es la dirección 3 —cambiar cómo compensa el corte— y
+sigue abierta: no sirve para lo que ya está cargado, pero es lo que evita la
+próxima tanda.
+
+## La alerta del costo mezclaba dos poblaciones, y el botón que no podía nada (06/09)
+
+Salió de una pregunta del dueño sobre el lote fantasma —"¿esas guías se pueden
+completar alguna vez?"— y terminó destapando algo bastante más viejo.
+
+### La respuesta corta: no, no se pueden completar
+
+`completar_costo_reproceso` llena `SET costo_por_bulto = c.importe FROM compras
+c WHERE c.id = rc.compra_id`. El consumo del lote fantasma tiene
+`compra_id = NULL`: no hay fila de dónde copiar. El botón siempre devolvía
+*"sigue con costo incompleto"*.
+
+### El `costo_por_bulto = 0` se propuso y se descartó, y el argumento importa
+
+La idea era: la mercadería no existe, su costo es cero, no "desconocido".
+**Suena bien y es el caso equivocado.** El lote fantasma NO es mercadería
+inventada: es el **espejo contable de salidas viejas que quedaron registradas
+como `sin_lote`**. El artículo llegó a −45 porque faltaron ENTRADAS, no porque
+se hubiera evaporado stock. Cuando el depósito saque esos 45 cajones, van a ser
+cajones reales que alguien compró a algún precio. **Ese precio es desconocido,
+no cero.**
+
+Y un cero no se queda quieto: entra en `costo_por_bulto_primera` e infla el
+margen de Rentabilidad Real. La segunda es distinta —ahí el cero es una
+decisión del modelo ("todo el costo va a la primera"), no un tapón—.
+
+Lo decisivo es que la regla ya estaba escrita, en el docstring de
+`core/costo_real.py`, y ahí se llama a sí misma protagonista: *"lo que no se
+puede calcular no suma como cero — va al reporte 'afuera del cálculo' con
+motivo… mejor un número chico y cierto que uno grande y mentiroso."*
+
+### El problema real: la alerta mezclaba dos poblaciones
+
+"Guías R con costo incompleto" contaba juntas:
+
+- las que **esperan el precio de una compra** — alguien lo puede ir a cargar, y
+  "Completar costo" las cierra;
+- las que **consumieron un lote sin precio POSIBLE** (stock inicial sin costo,
+  reingreso, ajuste, el compensatorio del corte) — **nadie las puede cerrar
+  nunca**.
+
+Con las dos adentro, el número no bajaba. Y **una alerta que nadie puede apagar
+enseña a ignorar todas las alertas.**
+
+Lo llamativo es que **esa misma regla ya estaba escrita en este documento**,
+del 28/08, sobre la alerta de reprocesos sin ficha: *"si contara todos, nacería
+con 36 casos que nadie puede resolver, y una alerta que arranca en rojo
+permanente es una alerta que se deja de mirar."* Se aplicó a una alerta y no a
+la de al lado. Es la costumbre del corolario 2: **cuando se arregla una copia,
+hay que ir a buscar la otra.**
+
+La alerta ahora cuenta SOLO las completables. Las otras van a la pantalla de
+Guías R como dato, con el "no hay nada que cargar" al lado, y cada salida suya
+ya sale nombrada en el "afuera del cálculo" de Rentabilidad Real. La condición
+vive UNA sola vez (`_SQL_FALTA_ALGUN_PRECIO` y
+`_SQL_FALTA_UN_PRECIO_IMPOSIBLE`) porque la pantalla aplica la misma regla por
+guía: escrita dos veces, un día el banner diría una cosa y el botón haría otra.
+
+### EL HALLAZGO LATERAL, y vale igual o más
+
+**El botón "Completar costo" se mostraba en toda guía sin costo**, incluidas
+las de stock inicial, **desde antes del lote fantasma**. Es la misma falla que
+esa plantilla ya había corregido tres bloques más arriba, con el comentario
+todavía puesto — **vivía en la rama de al lado**:
+
+```jinja
+{# ... el botón "Completar costo" ya estaba escondido acá, con
+   lo cual el cartel gritaba sin ninguna acción detrás. #}
+{% if not g.anulado_el %}
+```
+
+El comentario describe exactamente el defecto que la rama de al lado seguía
+teniendo. Es el mismo síntoma del docstring de la alerta de Auditoría que
+explicaba el bug que la pantalla mostraba todos los días: **un comentario que
+dice la verdad sobre el caso que sí se arregló, y que por eso mismo tapa el que
+no.** Al arreglar una guarda, grepear la condición y mirar TODAS sus ramas, no
+solo la que se vino a tocar.
+
+### El motivo en Rentabilidad Real venía mal desde el 31/08
+
+`_MOTIVO_POR_TIPO_LOTE` no tenía `cierre_modelo_viejo`, así que caía en el
+default `ajuste_sin_costo` y la pantalla decía *"consumió un ajuste (sin costo
+posible)"*. **Manda a buscar un ajuste que no existe.** Ahora tiene motivo
+propio. Vale la pena ver por dónde entró: esas salidas NO fueron guías R —una
+guía R habría reventado con el `CheckViolation`— sino **pedidos armados y
+mermas**, que pasan por el mismo FIFO y no escriben en `reprocesos_consumos`.
+Por eso el problema estuvo cinco días saliendo por Rentabilidad Real sin que la
+alerta de guías R se enterara.
+
+### LO QUE ESTO NO RESUELVE, y queda escrito
+
+**Los 416 bultos de Perita, Mango y Zapallito que ya salieron sin costo siguen
+sin costo, y no hay forma de recuperarlo.** Lo único que cambia es que ahora se
+llaman por su nombre en Rentabilidad Real en vez de "un ajuste".
+
+Cómo se sabe que ya salieron, que es deducción y no medición: los tres
+recibieron un **segundo compensatorio positivo el 05/09**, y un compensatorio
+positivo existe justo porque el artículo estaba en NEGATIVO. Con el FIFO
+cronológico, un saldo negativo implica que **ningún** lote quedó con resto —si
+el más viejo tuviera, las salidas posteriores lo habrían tomado primero—. Son
+416 de los 726 del corte del 31/08.
+
+### Y una corrección de rotulado, de la misma familia
+
+`lotes_fantasma_del_compensatorio.sql` mide el **TAMAÑO** del compensatorio
+(`movimientos_stock.cantidad`), no lo que queda vivo. Se presentó como "cuántos
+lotes fantasma hay hoy" y contesta otra cosa. Lo que queda vivo lo mide
+`db/cuanto_queda_del_lote_fantasma.sql`, que es el número que decide cuántas
+guías R salen sin costo. **Un número no se presenta con la etiqueta de otro**,
+aunque los dos sean de producción.
+
+## LA REGLA DEL CONTEO CIEGO: al operario no se le muestra el número que después tiene que contar (06/09)
+
+Escrita acá con nombre propio porque ya existía en tres pantallas, se cumplía
+sin problema, y **la rompió la primera pantalla nueva que se hizo** — la del
+Remanente, el 05/09. Va junto a la del armado, que es donde estaba mejor dicha:
+
+> *"SIN NÚMERO a propósito: esta pantalla es de operario y el stock del sistema
+> no puede viajar acá ni escondido — **si lo ve, arma contra el sistema en vez
+> de contra el piso**."*
+
+Y su corolario, que es el que le da el sentido: **un conteo que se transcribe
+no controla nada, confirma lo que el sistema ya decía.** El valor del conteo
+físico está enteramente en que quien cuenta NO sepa qué esperaba el sistema.
+Mostrarle el número no lo hace más fácil: lo hace inútil.
+
+### Dónde vale, y cómo se cumple
+
+Lo importante no es que se cumpla: es que se cumple **estructuralmente**, no con
+un cartel. El número no llega al HTML, ni escondido.
+
+| Pantalla | Cómo lo cumple |
+|---|---|
+| **Stock Físico** | `listar_conteos_stock_de_fecha` **no trae `stock_sistema` en el SELECT**. La regla está en el SQL, no en la plantilla. |
+| **Armado de pedidos** | El renglón lleva un booleano (`sin_cajas_de_la_ficha`), nunca la cantidad. |
+| **Lotes de un renglón** | `desglose_de_renglon_armado` devuelve `None` antes del tilde: los números aparecen recién **después** de que el operario declaró. |
+| **Reproceso** | El selector lista artículos con stock **por nombre, sin cantidades**. Los números salen recién en LA PARED, como motivo del rechazo — o sea después de la declaración. |
+| **Remitir Segunda** | Ídem: artículos con segunda por nombre, el pool no viaja. |
+| **Reingreso por rechazo** | *"Nada de costos ni de stock del sistema."* |
+
+### Cómo se rompió, que es la parte que sirve
+
+El Remanente nació en Depósito con **un cartel** que pedía no usarlo para
+contar, y en una tarjeta aparte titulada "Para mirar". Las dos cosas fallan por
+lo mismo: **una tarjeta no es una frontera y un cartel no es una guarda.** El
+operario tenía "Stock Físico" y "Remanente" a dos dedos de distancia en la
+misma pantalla. El comentario que se escribió ese día ya describía el peligro
+—*"con ésta abierta, el conteo de Stock Físico deja de ser ciego si nadie
+avisa"*— y aun así la respuesta fue pedirlo por favor en vez de mover la
+pantalla. **Cuando una regla se cumple estructuralmente en todos lados y en un
+lugar pasa a ser un texto, eso solo es la señal de que la pantalla está en el
+módulo equivocado.**
+
+Se mudó a Administración el 06/09 (`/administracion/stock/remanente`), primera
+en "Control de stock" porque es la que se mira todos los días. **Stock del
+Sistema no se reemplaza**: es la única que muestra las tres cuentas y el
+desglose por guía R, y es a donde apunta la alerta de stock negativo — queda
+como pantalla de auditoría, para cuando algo no cierre.
+
+### El único borde que quedó, y se decide cuando moleste
+
+**Merma muestra `quedan N` por lote.** Es un número del sistema en una pantalla
+de operario. No se sacó porque ahí no se está contando —se declara lo que se
+tiró— y el resto del lote es lo que permite elegir cuál. Pero el riesgo existe:
+un lote con 8 invita a escribir 8. Queda anotado como el borde de la regla, no
+como un descuido: **la regla es sobre el número que se va a DECLARAR, no sobre
+todo número del sistema.** Si algún día aparece una merma sospechosamente igual
+al resto de un lote, éste es el lugar donde mirar.
+
+### Al hacer una pantalla nueva
+
+Una sola pregunta: **¿alguien va a tener que contar, declarar o estimar
+alguno de estos números?** Si la respuesta es sí, la pantalla no va en el
+módulo de esa persona. No hay versión con cartel.
+
+## Una pantalla que nadie mira no se conserva "por si acaso" (06/09)
+
+Del dueño, y es la contracara de la regla del conteo ciego. Al mudar el
+Remanente a Administración se propuso que Stock del Sistema **conviviera** con
+él "para auditar". Esa propuesta salió de acá, no de quien usa el sistema:
+
+> *"Hoy la miró tres veces y ninguna le sirvió: el desglose por guía R y el
+> 'sin procesar −95' lo confundieron en vez de ayudarlo. Una pantalla que nadie
+> usa y que además confunde no se conserva por si acaso."*
+
+**Si la información importa, tiene que estar donde alguien la vaya a buscar. Si
+no la busca nadie, sobra.**
+
+La trampa que hay que ver es que "queda por si hace falta" **suena
+conservador y no lo es**: una pantalla que confunde tiene un costo real cada
+vez que alguien la abre, y el "por si acaso" no lo compensa con nada. Conservar
+no es gratis.
+
+Y el corolario práctico, que es lo que la vuelve accionable: **una pantalla no
+se saca sin mirar qué se cuelga de ella.** Antes de borrar hay que preguntarse
+tres cosas —qué información vive SOLO ahí, qué otra pantalla se alcanza
+únicamente desde ahí, y qué alerta apunta a su URL—. La primera se contesta
+leyendo la plantilla; las otras dos, grepeando la ruta. En este caso las tres
+tenían respuesta, y ninguna se veía desde la pantalla.
+
+### Lo que se hizo con esa regla: el Remanente reemplazó a Stock del Sistema (06/09)
+
+No fue un swap. Antes de borrar se miraron las tres preguntas del corolario, y
+las tres tenían respuesta:
+
+| Colgado de la pantalla | Dónde quedó |
+|---|---|
+| **La línea de las seis patas** (`N entraron · M salieron · reingresados · ajustados · reproceso −X +Y`) — lo único que dice QUÉ pata movió cuando un total no cuadra | **Stock por Guía**, que es adonde se viene justo a preguntarse eso |
+| **Stock por Guía** — su única puerta era la fila del listado | Los negativos del Remanente linkean ahí |
+| **La alerta `stock_deposito_negativo`** apuntaba a su URL | Al Remanente. **NO al Cotejo**: ahí solo aparece lo que se contó, así que un artículo en negativo que nadie contó no se ve — y mandar a mirar donde el problema no está ya nos costó una vez |
+| Los dos totales globales (reingresos, segunda) | Abajo del Remanente, en chico |
+
+**Se hizo en UN paso, no en dos.** El argumento contra la semana de
+convivencia: una semana solo sirve si alguien la usa y descubre que le falta
+algo, y el punto de partida era que **nadie la usa**. Habría producido la misma
+información que ya teníamos, con la pantalla que confunde siete días más.
+
+**Lo que NO se mudó, a propósito:** el desglose por artículo (sin procesar /
+armado por guía R / total). Es lo que confundía. El "sin procesar" era la
+cuenta 3 —el FIFO rejugado, que daba −95 sin que eso fuera una cantidad— y el
+total por artículo era la suma que el dueño ya había pedido no mostrar. Con la
+pantalla se fue también `_tamanos_de_caja_por_ficha` ("6 kg o 10 kg"): esa
+ambigüedad existía porque el listado desglosaba POR GUÍA R y una guía R no
+guarda la ficha. El Remanente lista POR FICHA, así que el caso dejó de existir.
+
+**Y el ítem 1 de la cola se borró en vez de hacerse.** "El `sin_procesar`
+negativo deja de ser un número" era lo próximo; el −95 vivía solo en esa
+pantalla y se fue con ella. Vale anotarlo: a veces la forma más barata de
+arreglar un número mal presentado es borrar la pantalla que nadie mira.
+
+**Cómo se mostraron los negativos, que es donde estaba el riesgo de recrear el
+problema abajo:** en su propia tarjeta, separada por aire, con fondo distinto y
+título propio —arriba está lo que HAY, abajo un problema a resolver— y **el
+número adentro de la frase, nunca en la columna de la derecha**: "Faltan
+explicar 45 bultos", no "−45". Un artículo en −45 no tiene menos cuarenta y
+cinco cajones. Hay un test para cada una de las dos cosas.
+
+### El nombre de una caja depende de QUIÉN lee la pantalla (06/09)
+
+El Remanente mostraba `BERENJENA G` y `LIMA X 1KG` donde tenía que decir
+"Berenjena Caja Día" y "Lima Caja Día". Ese texto es `fichas_logistica.
+nombre_cliente`: **el código con el que el CLIENTE nombra su producto.**
+
+No es que el campo esté mal ni que `_nombre_de_ficha` esté mal. **El mismo dato
+sirve o estorba según quién mire:**
+
+- **Donde alguien elige una ficha PARA un cliente** —el armado, la guía R, los
+  precios de venta— el código del cliente es lo correcto: es lo que está
+  impreso en la caja que tiene en la mano, y es lo único que distingue "Banana
+  Bolivia" de "Banana Ecuador".
+- **Donde alguien mira SU PROPIO depósito** —el Remanente— el código no dice
+  nada. "BERENJENA G" no deja ver que es una berenjena.
+
+Por eso el Remanente tiene su propio `_nombre_de_caja` y no reusa
+`_nombre_de_ficha`. **No es duplicar una regla: son dos preguntas distintas con
+la misma materia prima.** La regla de "una regla no puede estar escrita dos
+veces" es sobre criterios que tienen que dar el mismo resultado; acá tienen que
+dar resultados distintos a propósito, y el docstring de cada uno dice para qué
+lado sirve.
+
+Y el nombre del artículo adelante arregla algo más: **las tres porciones caen
+juntas al ordenar** ("Lima", "Lima Caja Día", "Lima Segunda"), que era la idea
+del orden desde el principio y no se cumplía porque el renglón del medio se
+llamaba de otra forma.
+
+### El kilaje solo cuando desempata
+
+Un cliente puede tener VARIAS fichas del mismo artículo —fue el motivo de que
+la clave de venta pasara de artículo a ficha—, y ahí "Lima Caja Día" saldría
+dos veces sin poder distinguirse. La escalera, y se sube solo cuando hace
+falta:
+
+1. Una sola ficha de ese cliente para ese artículo → **"Lima Caja Día"**. Es el
+   caso normal y se lee limpio.
+2. Dos o más → se agrega el kilaje: **"Lima Caja Día 5kg"**.
+3. Dos con el MISMO kilaje (el modelo tampoco lo prohíbe) → se cae al código
+   del cliente: **"Lima Caja Día (LIMA CHICA)"**. Feo, pero solo en el caso
+   feo, y es lo único que seguro las distingue.
+
+Con el kilaje el orden alfabético pone "10kg" antes que "5kg". Se acepta: los
+dos renglones quedan pegados y con el kilaje a la vista. Ordenar por número
+obligaría a ordenar también las fichas de clientes distintos por kilaje, y ahí
+lo que se quiere es el orden por cliente.
+
+### LA FIXTURE TRAÍA PUESTO EL RESULTADO ESPERADO, y por eso los tests no lo vieron
+
+Es lo que hay que llevarse de esto. `REMANENTE_FICHAS` tenía
+`"nombre_cliente": "Berenjena Caja Día"` — **el nombre que queríamos ver, no el
+que hay en la base.** Con eso, el test que comparaba los renglones pasaba en
+verde mientras la pantalla mostraba "BERENJENA G", y no había forma de que lo
+agarrara: la fixture ya contenía la respuesta.
+
+Es la familia de *"un fixture construido a partir de la hipótesis no prueba la
+hipótesis: la repite"*, en su versión más barata de evitar: **los datos de una
+fixture se escriben como son en producción, sobre todo los que el código va a
+transformar.** Si el valor de prueba ya se parece a la salida esperada, el
+test no está probando la transformación. Las fichas de prueba ahora dicen
+`BERENJENA G`, `LIMA X 1KG`, `MANDA COM X 10`, en mayúscula y sin parecerse al
+nombre del artículo, que es como están cargadas.
+
+## El Remanente a una fecha: qué columna mira cada pata (06/09)
+
+"Cómo estaba el depósito al 8 de septiembre". Suena a un `WHERE fecha <=`, y
+son **nueve** filtros sobre **cuatro columnas distintas**.
+
+### La fecha viaja como CTE, no como nueve parámetros
+
+Seis sumas en `_SQL_SUMAS_STOCK` más tres en el pool de segunda. Nueve `%s`
+posicionales en fila se desordenan el día que alguien agrega una pata, y el
+error no es un crash: es un número mal. Por eso entra UNA sola vez, primera, en
+un CTE `tope` que el resto lee por nombre — el mismo molde que ya usaba `corte`.
+
+`NULL` significa hoy, y eso importa: **la consulta de hoy es la misma que la del
+8 con otra fecha**, no una segunda versión sin tope que se pueda ir separando.
+
+### QUÉ COLUMNA MIRA CADA PATA, que no es la misma
+
+| Pata | Columna | Por qué |
+|---|---|---|
+| Compras | `procesada_el` | Entran al stock cuando el depósito las **recepciona**, no cuando se compraron. Es la misma expresión con la que el FIFO ordena sus lotes de compra, y **tiene que serlo**: si acá dijera `fecha_operacion`, el total del artículo y el reparto por lote no coincidirían en los días entre la compra y la recepción |
+| Salidas de pedidos | `armado_el` → fecha argentina | El renglón sale del stock cuando se arma |
+| Movimientos, reprocesos, remitos | `fecha_operacion` | La fecha declarada de la operación, que es la que el módulo usa en todos lados |
+
+**Las compras viejas tienen `procesada_el` en NULL** —son de antes de que
+existiera Recepción— y caen a `fecha_operacion` con un `COALESCE`. Sin eso
+desaparecerían de TODA consulta con fecha, **la de hoy incluida**: es el tipo de
+regresión que no rompe nada y solo devuelve menos.
+
+### Lo que NO se retrocede, y es una decisión
+
+`anulado_el IS NULL` y el `DISTINCT ON` de los pedidos vigentes **se evalúan
+hoy**, no a la fecha pedida. O sea que la pantalla muestra *"lo que hoy sabemos
+que había el día X"*, no *"lo que el sistema creía el día X"*. Una anulación es
+una corrección —dice que eso nunca tendría que haber contado—, y una consulta
+histórica que resucitara pedidos ya corregidos mostraría de vuelta números que
+alguien se tomó el trabajo de arreglar.
+
+### ANTES DEL CORTE la pantalla NO contesta
+
+No es que falten datos: **las tres cuentas serían de dos épocas distintas.** El
+total del artículo lo rebasea el compensatorio (fechado la víspera del corte),
+y las cajas por ficha y el pool de segunda tienen su piso EN el corte. Pedir el
+20/08 devolvería el total del modelo viejo al lado de cero cajas y cero
+segunda. Se cae a hoy con el motivo escrito completo, en vez de mostrar tres
+números que no se pueden comparar entre sí.
+
+Es el mismo criterio que el aviso del reproceso retroactivo: cuando el corte
+parte la historia, lo que está del otro lado no se muestra a medias.
+
+### Y hay que poder VER que no es hoy
+
+Los mismos renglones con los mismos números, leídos como el estado actual, son
+una mentira. La fecha en gris chico no frena esa lectura: va un cartel amarillo
+—*"Así estaba el depósito al cierre del 08/09/2026. No es el stock de ahora"*—
+y un "Volver a hoy". El Excel se baja **a esa misma fecha** y el archivo la
+lleva en el nombre, así que dos exports de días distintos no se pisan.
+
+### La verificación que valió la pena
+
+Contra un Postgres descartable, con una compra recepcionada un día después de
+su fecha de compra:
+
+| Al… | Stock | Segunda | Cajas de la ficha |
+|---|---|---|---|
+| 06/09 (fecha de compra) | 0 | 0 | — |
+| 07/09 (día de la recepción) | 100 | 0 | — |
+| 08/09 (reproceso: −30 +20, 5 de segunda) | 90 | 5 | 20 |
+| 09/09 (se arman 8) | 82 | 5 | 12 |
+
+**Números de un fixture, no de producción**: prueban el mecanismo, no una
+magnitud. Lo que confirman es que la entrada se mide por la RECEPCIÓN (el 06/09
+da cero aunque la compra esté fechada ese día) y que las tres cuentas se cortan
+juntas.
+
+Y salió algo que no se veía venir: `now() AT TIME ZONE
+'America/Argentina/Buenos_Aires'` daba **05/09** mientras `current_date` daba
+06/09 — en UTC ya era el 6, en Argentina eran las 21:15 del 5. Un `current_date`
+pelado habría corrido "hoy" un día entero en toda consulta de la tarde. La misma
+razón por la que el módulo convierte `armado_el` en vez de castearlo.
+
+### El Excel se agrupa por dónde se camina, no por dónde vive el dato (06/09)
+
+El archivo del Remanente sale en secciones: los grupos del artículo en el orden
+fijo del sistema (**Fruta, Hortaliza, Hoja, Pesada, Sin grupo**) y al final una
+sección propia, **Cajas Procesadas**, con las cajas armadas a una ficha.
+
+**El criterio es el recorrido físico**, no la estructura de datos: las cajas
+armadas son una pila aparte del galpón y se cuentan en otro momento, así que
+mezclarlas entre la fruta suelta obliga a saltar de un lado al otro con la hoja
+en la mano.
+
+Tres cosas que se decidieron acá:
+
+- **La SEGUNDA no es una caja procesada.** Sale de un reproceso, sí, pero son
+  bultos sueltos de calidad menor esperando el remito al Puesto, no cajas
+  armadas para un cliente. Se queda con su artículo, en su grupo.
+- **Los grupos salen de `core/rentabilidad.py`** (`ETIQUETAS_GRUPO`,
+  `ORDEN_GRUPOS`), no de una lista nueva en el exportador. Una segunda lista de
+  "cuáles son los grupos" mandaría al final, sin que nadie se entere, al grupo
+  que alguien agregue mañana.
+- **Un grupo que el sistema NO conoce cae en "Sin grupo" y no desaparece.** Si
+  se carga `bolsa` en la base sin agregarlo a `ORDEN_GRUPOS`, ese artículo
+  igual hay que contarlo. Ver la regla de abajo.
+
+**Una sección sin nada no se escribe.** Una hoja impresa con "HOJA" y ningún
+renglón abajo hace dudar de si falta algo o si no hay nada.
+
+Y el total al pie cuenta **porciones, no filas escritas**: ni los títulos de
+sección ni los subtotales son renglones que alguien tenga que ir a contar.
+
+### Cada sección cierra con su subtotal, y son dos cuentas distintas
+
+Al pedir el total, el dueño había dicho "uno solo al pie" — **y lo corrigió
+cuando aparecieron las secciones**, que es la corrección correcta: *"cuando
+pedí eso todavía no había secciones. Con la hoja impresa, saber cuántos bultos
+hay en Hortaliza antes de pasar a Hoja sirve para acotar dónde buscar si algo
+no cierra."*
+
+Los dos números contestan preguntas distintas: **el del pie dice si el archivo
+impreso está completo** (si no se cortó una hoja); **el de la sección acota
+dónde buscar** cuando algo no cierra, sin rehacer la suma entera. Sigue sin
+haber total por ARTÍCULO — el subtotal es de una zona del depósito, no de un
+artículo.
+
+El subtotal cumple **las mismas tres reglas que el total**, y cada una tiene su
+test:
+
+1. **Valor, no fórmula.** Importa lo que quedó impreso en el papel; una fórmula
+   puede cambiar si alguien toca una celda antes de imprimir.
+2. **La celda "Contado" vacía**, igual que arriba: si el que cuenta ve un
+   subtotal del sistema, ya tiene contra qué cuadrar sin haber contado.
+3. **Que no se lea como un renglón de mercadería.** Es lo más fácil de errar:
+   "Subtotal Hortaliza · 132" es una fila con nombre y número, o sea
+   exactamente lo que parece un producto. Se resuelve pintándolo **igual que el
+   título de su sección** — impreso, la sección queda encerrada entre dos
+   franjas grises, encabezado arriba y cierre abajo, y lo blanco del medio es
+   lo que hay que contar.
+
+Y el total del pie tiene que dar **la suma de los subtotales**: si las dos
+cuentas no cierran entre sí, el que imprime no sabe a cuál creerle. Hay un test
+que lo verifica.
+
+Efecto lateral que vale: los tests separaban las porciones de los títulos por
+"tiene número en la columna Sistema", y eso **dejó de alcanzar** el día que
+apareció el subtotal, que tiene número. Se reemplazó por un lector único que
+clasifica como clasifica el ojo del que imprime: **lo que va con relleno es
+chrome, lo blanco es mercadería.** Cinco tests que repetían la misma heurística
+frágil pasaron a leer de un solo lugar.
+
+**"bolsa" no es un grupo hoy.** Los válidos son `fruta`, `hortaliza`, `hoja` y
+`pesada` (`GRUPOS_ARTICULO_VALIDOS`). Agregar uno es un cambio en los
+artículos, no en el exportador — que ya lo va a mostrar solo, en su lugar del
+orden, apenas exista.
+
+## UN FILTRO POR LISTA BLANCA QUE DESCARTA LO QUE NO RECONOCE ES LA FORMA CALLADA DE PERDER MERCADERÍA
+
+Del dueño, el 06/09, sobre el agrupado del Excel, y va con nombre propio porque
+**no es del exportador: es de todo el sistema.**
+
+El patrón: se recorre una lista conocida —`ORDEN_GRUPOS`, un diccionario de
+etiquetas, un `in (...)`— y lo que no está en ella **no cae en ningún lado**.
+No hay error, no hay renglón raro, no hay alerta: la fila simplemente no se
+escribe. Y el día que aparece un valor nuevo en la base —porque alguien cargó
+`bolsa`, porque una migración agregó un tipo— la salida sigue pareciendo
+correcta y tiene menos cosas adentro.
+
+Es de la misma familia que el push silencioso y el editor de Supabase que
+escribe a medias: **la ausencia de error no es confirmación.** Lo que hay que
+mirar es si la suma de las partes da el total, no si el comando se quejó.
+
+De acá en adelante, **cuando se reparta una lista en categorías conocidas, el
+resto va a una categoría de descarte VISIBLE, nunca a la basura.** En el Excel
+del Remanente eso es "Sin grupo", que además es donde se va a notar; y el total
+del pie, que cuenta las porciones y no las secciones, es lo que delataría el
+faltante si algún día la red se rompiera. Con test propio, porque es
+exactamente el caso que nadie va a probar a mano.
+
+**El corolario positivo, misma entrega:** los grupos y su orden salen de
+`core/rentabilidad.py` y no de una lista nueva en el exportador. *Una lista
+nueva mandaría al final, sin que nadie se entere, al grupo que se agregue
+mañana.* Es la regla de "una regla no puede estar escrita dos veces" aplicada a
+un vocabulario: **la lista de valores válidos también es una regla de negocio.**
+
+## AGUJERO DE PLATA: se podía anular una recepción de vacíos ya cobrada (07/09)
+
+Reportado desde la operación. El circuito: el operario recibe vacíos, se emite
+el vale o se paga la seña, y **después el operario anula la recepción**. La
+plata ya salió; los cajones salen del stock; la diferencia queda a favor de
+quien anuló.
+
+**Pasó.** Recepción 74, del 07/09: 13 toritos de madera, vale emitido y
+recepción anulada el mismo día, **$26.000**.
+
+### La guarda existía, pero en un solo sentido
+
+Es la forma exacta del error, y es la que hay que aprender a ver:
+
+- `cerrar_sena` valida `AND anulado_el IS NULL` → **no se puede pagar una
+  recepción anulada.** Ese lado estaba bien.
+- `anular_vacio_recibido` era una línea —`SET anulado_el = now() WHERE id = %s
+  AND anulado_el IS NULL`— y **no miraba la seña.**
+
+Dos operaciones que se afectan mutuamente, y solo una preguntaba por la otra.
+El CHECK de la tabla tampoco ayudaba: `vacios_recibidos_un_solo_cierre_de_sena`
+solo garantiza que de los TRES cierres de seña haya como máximo uno, y **no
+dice nada de `anulado_el`**.
+
+**Es la familia de "a una regla le crece otra encima", en su versión más
+peligrosa: la simétrica a medias.** Cuando dos operaciones se bloquean entre
+sí, la guarda hay que escribirla en LAS DOS o no está escrita. Una sola da la
+sensación de estar cubierto —el código se lee y la validación está ahí— y el
+agujero es justamente el sentido que nadie leyó.
+
+### Lo peor no era que quedara mal: es que DESAPARECÍA
+
+Verificado contra un Postgres descartable, corriendo las consultas reales:
+
+| Pantalla | Filtro | Después de anular |
+|---|---|---|
+| Pendientes de Pago | `sin cerrar AND anulado_el IS NULL` | **0 filas** |
+| Historial de señas cerradas | `cerrada AND anulado_el IS NULL` | **0 filas** |
+| Alerta de señas viejas | ídem | **0 casos** |
+| Movimientos | trae anuladas, marcadas | "Anulado el …", **sin decir nada de la seña** |
+
+Las dos listas de Señas filtran `anulado_el IS NULL`, así que la fila **se cae
+de las dos**: no vuelve a Pendientes (parecería deuda viva) ni queda en el
+historial (donde se revisan los pagos). Un pago que salió de la caja deja de
+figurar en la única pantalla que lista pagos, y lo único que queda es un
+"Anulado" en Movimientos que no menciona la plata.
+
+**Anotar el patrón: un filtro `anulado_el IS NULL` puesto para "no mostrar
+basura" también esconde lo que se anuló MAL.** Es el mismo `WHERE` en las dos
+listas complementarias, y entre las dos dejan un agujero por el que la fila se
+va sin aparecer en ninguna.
+
+### El arreglo, y por qué va en la función y no en las rutas
+
+Hay DOS puertas para anular —la lista "Recibido hoy" del operario (sin clave) y
+Movimientos (con clave de control)— y la guarda va en
+`anular_vacio_recibido`, que es donde vive la regla. **La regla es de la PLATA,
+no de quién la toca**: tener la clave de control no hace que el pago vuelva a
+la caja.
+
+La condición va DENTRO del `UPDATE`, no en un `SELECT` previo: entre el "¿está
+pagada?" y el `UPDATE` puede entrar el pago. Cuando no afecta ninguna fila se
+lee la fila **solo para traducir el error**; la decisión ya la tomó el UPDATE.
+
+Y el listado ahora trae `sena_pagada_el`/`sena_vale_el` para que **el botón no
+se ofrezca donde el server lo va a rechazar** — ofrecido y prohibido es lo peor
+de los dos mundos, como en la merma dirigida. Pero el bloqueo real está en la
+función: esconder el botón es cortesía, no defensa.
+
+`sena_anulada_el` SÍ deja anular: ahí se decidió no pagar, no hay plata.
+
+### El mapa de la clave de control, verificado (07/09)
+
+`CLAVE_CONTROL_PUESTO` **está cargada en producción**: `/puesto/envases/movimientos`
+pide contraseña. Confirmado por el dueño contra la app, no deducido. Esa puerta
+estaba cerrada, así que **el agujero explotable era solo el de la pantalla del
+operario**, que nunca pidió clave.
+
+Pero al mapear las rutas apareció algo que conviene tener escrito. De las 38
+rutas de Envases Puesto, **23 piden clave y 15 no**, y las que NO piden son:
+
+| Sin clave | Qué deja hacer |
+|---|---|
+| `/vacios/recibir` (+ anular) | recibir vacíos y anular la entrada |
+| `/vacios/devolver` (+ anular) | devolver y anular la devolución |
+| `/vacios/stock-fisico` | cargar el conteo (a propósito: es el conteo ciego) |
+| **`/pendientes` + `pagar` / `vale` / `anular-sena`** | **cerrar la seña: pagarla, hacer el vale o anularla** |
+
+**Las dos mitades de la maniobra estaban del lado sin clave.** El mismo que
+recibe puede emitir el vale o marcar la seña como pagada *y* —hasta el arreglo
+del 07/09— anular la recepción, sin que nadie le pida nada en el medio.
+
+Eso NO se cambió acá: si Pendientes de Pago pide clave o no es una decisión de
+operación —probablemente el operario le paga al cliente en el momento y por eso
+está abierta—, y ponerle una puerta sin entender el circuito rompería el
+trabajo del día. Queda escrito para decidirlo a conciencia, no para asumirlo.
+
+Lo que sí vale como criterio: **la clave protege contra el que no debería
+estar, no contra el error del que sí debe.** Por eso la guarda de
+`anular_vacio_recibido` va también en la puerta con clave: ahí no evita un
+abuso, evita que la cajera —autorizada— borre sin querer una entrada ya
+cobrada.
+
+### Lo que el sistema NO guarda, y hay que saberlo antes de investigar
+
+**No hay login, `vacios_recibidos` no tiene columna de usuario, y la única
+bitácora del proyecto es la de fichas.** Así que de una anulación no se puede
+saber QUIÉN la hizo — solo cuándo. Para el 74 el "quién" hay que preguntarlo en
+el puesto.
+
+**Y el vale no existe como objeto**: `sena_vale_el` es una fecha y nada más,
+sin numeración, cobro ni vencimiento (lo dice su propio comentario en el
+esquema). El papel está afuera del sistema.
+
+## Separar "el vale no se cobra" de "esta recepción no existió" (07/09)
+
+Dos casos reales de la cajera que compartían un solo botón, y lo que los
+distingue **es qué pasa con los cajones**:
+
+| Caso | Los cajones | El stock |
+|---|---|---|
+| El cliente dejó los cajones y no volvió a cobrar | **están en el galpón** | **no se toca** |
+| Se cargó mal: esos cajones nunca entraron | no están | **baja** |
+
+Anular hacía siempre lo segundo, así que el primero no tenía salida: cancelar
+la deuda costaba dejar el stock mal en menos.
+
+### Por qué NO se reusó `sena_anulada_el`, que era lo primero que uno quiere hacer
+
+Semánticamente encajaba —ya significa "no se paga y los cajones quedan"— pero
+habría hecho falta que conviva con `sena_vale_el`, o sea `num_nonnulls = 2`.
+**Y `listar_senas_resueltas` filtra `num_nonnulls(...) = 1`: esas filas
+desaparecerían del historial de señas cerradas.**
+
+Es el filtro que descarta lo que no reconoce, otra vez — la misma regla del
+06/09, esta vez agarrada ANTES de escribirla. Una columna nueva
+(`sena_vale_caducado_el`) no toca ese conteo y la fila sigue visible donde ya
+estaba.
+
+Y hay una razón de negocio que apunta igual: **el vale existió.** Taparlo con
+"anulada" pierde que hubo un papel, que es justo lo que administración necesita
+el día que el cliente aparezca con él. Por eso las dos fechas conviven: no es
+una transición de estado, son dos hechos.
+
+### Qué queda registrado, que era el requisito
+
+| Caso | Se escribe | Se lee en |
+|---|---|---|
+| Pendiente que se decide no pagar | `sena_anulada_el` | Historial: **Anulada** |
+| Vale dado por no cobrado | `sena_vale_el` **intacto** + `sena_vale_caducado_el` + motivo | Historial: **Vale no cobrado** — "Vale del 12/08, dado por no cobrado el 05/09 — «...»" |
+| Nunca se recibieron | `anulado_el` | Movimientos: **Anulado el …**, y el stock lo excluye |
+
+Los tres se distinguen **por columnas distintas**, no interpretando una fecha.
+
+**El motivo es obligatorio y lo garantiza el CHECK, no solo la pantalla**: como
+no hay login, ese texto es el único rastro de POR QUÉ se dio de baja una deuda.
+
+Un detalle que salió al escribirlo: el historial ordenaba por
+`COALESCE(pagada, vale, anulada)`, así que un vale de marzo dado de baja hoy
+habría aparecido **perdido en marzo**. El caducado va primero en el coalesce:
+se ordena por el ÚLTIMO hecho, no por el primero.
+
+### Los dos botones: la diferencia tiene que verse, no leerse
+
+- Los textos hablan de **cajones, no del sistema** — ni "anular", ni "seña", ni
+  "recepción". El que aprieta está pensando en si la pila está o no está.
+- **Familias distintas, no dos tonos del mismo**: el que no toca el stock es
+  contorno azul, el destructivo es **relleno sólido rojo**. Dos botones
+  contorneados que solo cambian de color se eligen mal con el apuro.
+- **Cada confirmación dice qué pasa con el stock, con el número**: "Los 13
+  cajones SIGUEN en el stock" / "Los 20 cajones SALEN del stock". Es lo único
+  que los distingue de verdad.
+- Cada uno aparece **solo donde aplica**: el primero únicamente si hay un vale
+  vivo; el segundo únicamente si la seña no está cobrada (la guarda del 07/09).
+
+Y una de mobile-first que costó una captura: el renglón de Movimientos era
+`flex` en fila, y a 390px el input del motivo salía cortado a la mitad y el
+cartel desbordaba la tarjeta. **Apilado**: lo que sobra en el celular es el
+alto.
+
+### Lo que esto NO resuelve
+
+**Pendientes de Pago sigue sin clave de control.** El botón "anular seña" que
+ya existía ahí lo puede apretar cualquiera, y cerrar una seña (pagar o hacer
+vale) también. Queda abierto a propósito: depende de quién paga en la práctica,
+que es la pregunta de operación todavía sin responder.
+
+## EL MODELO ASUME QUE TODA CAJA CON FICHA NACIÓ DE UN REPROCESO (07/09)
+
+Del dueño, sobre el Tomate Cherry, y va con nombre propio porque **es de
+fondo**: no es un bug, es algo que el modelo no puede expresar.
+
+El cherry entra de **dos formas**:
+
+- en **cajones de 10kg**, que el depósito reprocesa y arma en cajas de Día;
+- en **cajas de 5kg del proveedor**, que ya vienen listas y salen tal cual.
+
+Las dos terminan siendo mercadería para Día. Pero la cuenta 2 (cajas por ficha)
+se alimenta de **una sola fuente**:
+
+```sql
+armadas AS (
+    SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
+    FROM reprocesos ...
+```
+
+**`reprocesos.bultos_primera`, y nada más.** Una caja que entró como COMPRA
+—ya armada— es una entrada de la cuenta 1 y no existe para la cuenta 2. O sea
+que **el modelo define "caja de una ficha" como "primera de un reproceso"**, y
+el cherry es el caso donde eso deja de alcanzar.
+
+### El total nunca se rompe. Lo que se desalinea es qué es cada cosa
+
+El armado no elige de qué pila saca — **no hay dos pilas**. Hace una resta y
+una sola, y "sueltos" no es un depósito sino un sobrante calculado:
+
+| El renglón armado… | Total | Cajas de la ficha | Sueltos |
+|---|---|---|---|
+| tiene ficha | baja | bajan | **quedan igual** |
+| no tiene ficha | baja | igual | **bajan** |
+
+Y lo que decide cuál de los dos NO lo elige el que arma mirando el piso:
+**sale de lo que el cliente PIDIÓ**, matcheado contra sus fichas cuando entró
+el pedido. El sistema ya decidió de qué porción sale antes de que nadie toque
+un cajón.
+
+### El caso ya estaba previsto — pero para el artículo ENTERO, no para el híbrido
+
+El docstring de `_cajas_por_ficha` lo dice desde antes:
+
+> *"Un artículo que NO SE REPROCESA (manzana, pera, arándano: salen en el
+> envase que vienen) tiene cero producidas y todas sus salidas del otro lado.
+> Su saldo es negativo puro y crece todos los días."*
+
+Está bien resuelto para un artículo que es **enteramente** de pasada: el piso
+`disponibles = max(saldo, 0)` evita que los sueltos den más que el total (la
+falla del 04/09). **Lo que no está previsto es que el MISMO artículo haga las
+dos cosas**, y ahí un déficit legítimo —"esto vino armado"— convive con cajas
+reales de otra ficha, sin forma de distinguirlo del déficit que sí importa:
+"falta cargar una guía R".
+
+**El déficit es una señal usada para dos cosas que no son la misma.**
+
+### La consecuencia que más pesa: un aviso que no se puede apagar
+
+Si Día tiene ficha propia para el 5kg, la pantalla de armado le dice al
+operario, en CADA renglón de 5kg y para siempre:
+
+> *"No hay cajas armadas de esta ficha. Fijate si hay que reprocesar antes de
+> mandarlo."*
+
+Le pide reprocesar algo que **ya vino listo**. Es exactamente la familia de la
+alerta de guías R sin costo del 06/09: **una alerta que no se puede apagar
+enseña a ignorar todas.** Y acá es peor que ahí, porque no es un banner de
+auditoría: es un cartel en la pantalla que el depósito usa todos los días.
+
+El mínimo, cuando se decida: **que ese cartel no aparezca en fichas que nunca
+se reprocesan.** Hoy `sin_cajas_de_la_ficha` solo mira "esta ficha no tiene
+cajas", que es cierto y es inútil.
+
+Arrastre menor, misma raíz: `listar_articulos_para_reproceso` incluye el
+artículo si `stock > 0 OR sueltos > 0 OR deficit > 0`, así que el déficit
+permanente lo deja siempre en el selector de Reproceso.
+
+### Cuál de los dos escenarios es se mide, no se deduce
+
+`db/fichas_del_cherry.sql` lista TODAS las fichas del artículo con sus
+producidas, sus salidas y su saldo. **No filtra por cliente a propósito**:
+filtrar por nombre es justo cómo se pierde la fila que importa.
+
+- **Dos fichas**, una con `producidas = 0` y salidas creciendo → hay ficha
+  propia de 5kg, y el cartel está apareciendo todos los días.
+- **Una sola ficha** con un saldo levemente negativo → las dos presentaciones
+  piden contra la misma, y entonces **una venta de cajas del proveedor
+  descuenta de las cajas armadas de 10kg**. El total sigue bien y las dos
+  porciones quedan cruzadas, sin ningún cartel que lo diga.
+
+El segundo escenario es más silencioso y por eso peor: no hay aviso falso
+porque no hay aviso.
+
+### MEDIDO: es el escenario B (07/09)
+
+```
+Tomate Cherry · Día % · ficha 3 · "TOMATE CHERR" · 5 kilo
+producidas 0 · salidas 0 · saldo 0 · sin movimiento
+```
+
+**Una sola ficha, y es de 5 kg.** Los ceros son porque el corte fue el 05/09 y
+todavía no hubo movimiento de cherry, no porque no pase nada.
+
+> **CORREGIDO el 08/09.** Acá se había concluido que *"la ficha única está bien
+> desde el negocio porque las dos presentaciones son una caja de 5 kg"*. **Era
+> incompleto**: son la misma presentación **pero con costos de envase
+> distintos** — la que armamos lleva un cartón que compramos, la descartable lo
+> trae adentro de la compra. Ver "Los dos caminos del cherry y el costo del
+> envase" más abajo.
+
+Para Día las dos presentaciones son la misma cosa, una caja de 5 kg, así que la
+ficha única no está mal como definición de producto. Lo que la ficha SÍ decide
+además —y ahí estaba el hueco de esta conclusión— es **el costo del envase**,
+que no es el mismo por los dos caminos.
+
+### Qué molesta de verdad, y qué no
+
+Esto es lo que hay que llevarse, porque el susto inicial era más grande que el
+problema.
+
+**NO molesta el costo.** Aunque la cuenta 2 no las distinga, **la cuenta 3 sí,
+y por lote**: una caja del proveedor es un lote `guia` con el importe de la
+compra; una armada es un lote `reproceso` con su `costo_por_bulto_primera`. Dos
+lotes, dos costos, y el FIFO los consume por separado.
+
+**NO molesta el total.** El piso `disponibles = max(saldo, 0)` hace que la
+ficha en déficit aporte 0 a la resta y los sueltos absorban. Nada se pierde ni
+se duplica.
+
+**NO molesta el selector de Reproceso**, que era donde yo miraba. Su condición
+es `stock > 0 OR sueltos > 0 OR deficit > 0`, un OR de tres, y para el cherry
+`stock > 0` es verdad siempre que haya cherry. **El déficit ya era redundante
+ahí**: su función está cubierta por otra condición.
+
+**NO aparece el cartel de "no hay cajas armadas"**, que era la preocupación
+principal. Eso es del escenario A. Con ficha única, la ficha va a tener cajas
+apenas se cargue el primer reproceso.
+
+**SÍ molesta en el COTEJO**, y es diario. `_stock_de_ficha` congela la foto con
+el valor ya pisado en cero, y Stock Físico le ofrece al operario TODAS las
+fichas del artículo sin filtrar por stock. Con 15 cajas de proveedor en el piso
+y ninguna armada:
+
+| El operario cuenta | El sistema tenía | Cotejo |
+|---|---|---|
+| "Cherry Caja Día" → **15** | 0 | **+15** |
+| "Cherry" (sueltos) → **0** | 15 | **−15** |
+
+**Dos diferencias falsas que se cancelan en el total.** El artículo cierra
+perfecto y las dos porciones están cruzadas — y el que contó tiene razón las
+dos veces, porque en el piso son cajas de Día. El Cotejo existe para que una
+diferencia signifique algo, y estas dos no significan nada.
+
+**Y un tercero, menor**: el Remanente solo lista la porción de una ficha si
+`disponibles > 0`, así que va a decir "Tomate Cherry 15" como sueltos. El
+número es correcto y la descripción es falsa: son 15 cajas armadas, no 15
+cajones sueltos.
+
+### Lo que queda perdido de fondo, y es más chico de lo que sonaba
+
+**No se puede saber qué proporción de lo que hay armamos nosotros.** Hoy nadie
+hace esa pregunta. El día que se haga —para medir cuánto trabajo de mesa se le
+puso al cherry— no hay con qué contestarla.
+
+### Lo que falta confirmar, y cómo se mide
+
+**Si las cajas armadas son de verdad de 5 kg.** El sistema no lo puede
+contestar: `reprocesos` guarda solo bultos, **ningún kilaje**, así que con una
+ficha de 5 kg toda caja armada es de 5 kg por construcción. No es que tenga
+razón: es que no tiene con qué opinar.
+
+El único lugar por donde entra la verdad física es
+`pedidos_renglones.kilos_enviados` —los kilos reales que el depósito carga al
+tildar, *"el número que se factura"*—. `db/kilaje_real_de_lo_armado.sql` divide
+esos kilos por los bultos armados y los compara con la ficha, con la misma
+tolerancia por bulto que usa `_desvio_de_kilos` (3 kg). **Se corre cuando haya
+movimiento**; hoy no hay nada que mirar.
+
+**Si el kilaje real no fuera 5**, entonces son dos productos distintos con una
+sola ficha, y ahí sí hay un problema de fondo — no contable.
+
+## El selector de Reproceso dice EN QUÉ CAJA se arma, no el código del cliente (07/09)
+
+Mismo problema que el Remanente del 06/09, otra pantalla: mostrar el nombre que
+le puso el cliente donde hacía falta el nuestro. Ahí decía `BERENJENA G`; acá
+decía `TOM RED 1° E`.
+
+**Y acá es peor**, porque el operario **ya eligió cliente y artículo dos campos
+arriba**. Repetirle el artículo con el código del cliente no le agrega nada, y
+lo que sí necesita saber —**en qué envase está armando**, chica o grande— no
+estaba en ninguna parte de la pantalla.
+
+### El dato ya estaba, y mejor de lo esperado
+
+`envases.nombre` dice literalmente **"Caja Chica Día"** y **"Caja Grande Día"**.
+No hay que derivar nada del kilaje. Y `listar_fichas_de_todos_los_clientes` ya
+traía `envase_nombre` (hace el `LEFT JOIN envases`): **las dos funciones que
+arman selectores lo tenían a mano y ninguna lo usaba.** No hizo falta tocar
+ninguna consulta.
+
+Medido el 07/09: **34 fichas, todas con `fichas_de_ese_cliente = 1`.** O sea que
+la escalera de desempate del Remanente —envase, después kilaje, después el
+código— **acá no hace falta**: una ficha por cliente y artículo, sin ambigüedad.
+
+### ENVASE EN NULL NO ES UN DATO QUE FALTA: es "envase perdido"
+
+**Error de interpretación mío, y se filtró al código.** Leí las 17 fichas sin
+`envase_id` como un dato sin llenar y puse un **"⚠ falta cargar el envase"** que
+le pedía al operario cargar algo que no existe — en la mayoría de las fichas de
+fruta.
+
+**Sin envase significa que la mercadería sale en el envase del proveedor y no
+vuelve.** Es un estado válido del negocio, y el más común en fruta.
+
+Lo que más duele: **el resto del sistema ya lo trataba bien, desde antes.**
+
+| Dónde | Qué decía ya |
+|---|---|
+| `templates/ficha_form.html` | la opción se llama literalmente **"Sin envase (perdido)"** |
+| `_validar_envase` | *"opcional: 'sin envase' es válido"* |
+| `app/costeo.py` | `SIN_ENVASE = 0` — no compramos ninguna caja para eso |
+| `templates/fichas.html` | "Sin envase" |
+
+**Mi selector fue el ÚNICO lugar que lo trató como una carencia**, y contradecía
+un rótulo que ya existía dos pantallas más allá. El barrido de `envase_id` lo
+confirmó: ningún otro lado lo valida, lo exige ni lo avisa.
+
+La regla que deja: **antes de llamar "falta" a un NULL, buscar si alguna
+pantalla ya le puso nombre.** Un campo opcional en la base suele serlo porque
+alguien decidió que su ausencia significa algo, y ese significado casi siempre
+está escrito en el formulario que lo carga.
+
+Rótulos, sin ninguna advertencia:
+
+| Ficha | Muestra |
+|---|---|
+| con envase | `Caja Grande Día — 16 kg` |
+| **sin envase (perdido)** | `Envase perdido — 20 kg` |
+| sin envase ni kilaje | `Envase perdido` |
+
+### ¿NULL distingue "perdido" de "todavía no lo cargaron"? No: es el mismo
+
+**Son el mismo NULL, y no hay tercer estado.** Lo que sí existe es el
+significado, escrito en dos lugares: el formulario ofrece "Sin envase
+(perdido)" —así que quien lo elige está declarando el estado— y el costeo le
+pone 0, que es la economía correcta: si sale en la caja del proveedor, no
+compramos ninguna.
+
+**Mi lectura de si conviene separarlos: hoy no.** Los dos estados tienen la
+MISMA consecuencia económica —cero costo de envase, ninguna caja nuestra que
+seguir— así que una tercera columna agregaría una distinción que nada leería. Lo
+único que se pierde es poder auditar "¿cuáles nunca se revisaron?", y para eso
+es más barato una pasada de revisión que un campo nuevo.
+
+**Cuándo cambiaría**: el día que un envase sin cargar signifique un costo que
+no se está imputando. Hoy no, porque el envase perdido efectivamente no cuesta
+aparte.
+
+### Otro `_nombre_de_caja`, y no es duplicar
+
+Ahora hay dos funciones que nombran una caja, y contestan preguntas distintas:
+
+- **`_nombre_de_caja`** (Remanente): *"¿qué pila es ésta?"* → `Lima Caja Día 5kg`,
+  con el artículo adelante para que las porciones caigan juntas al ordenar.
+- **`_caja_para_elegir`** (Reproceso): *"¿en qué caja estoy armando?"* →
+  `Caja Grande Día — 16 kg`, sin el artículo porque ya se eligió.
+
+Misma materia prima, dos preguntas, dos respuestas. Es el mismo argumento por el
+que ninguna de las dos reusa `_nombre_de_ficha`, que contesta una tercera:
+*"¿cómo llama el cliente a esto?"* — y que sigue siendo la correcta en precios,
+comandas y carga de pedidos.
+
+### El barrido: quedan dos pantallas con lo mismo
+
+De los 15 usos de `_nombre_de_ficha`, la mayoría está bien: precios de venta,
+matcheo de comandas, carga y revisión de pedidos. Ahí se mira el catálogo del
+cliente y su código **es** lo correcto.
+
+Las que miran NUESTRO depósito y todavía muestran el código:
+
+| Pantalla | Hoy | Nota |
+|---|---|---|
+| ~~Reproceso~~ | arreglada el 07/09 | |
+| **Stock Físico + Stock Inicial** (`_fichas_por_articulo`) | `Día — TOM RED 1° E` | elige por ARTÍCULO, no por cliente: el cliente sí hace falta ahí, y con estos envases quedaría `Día — Caja Grande Día`, redundante. Necesita decidir si el cliente se pone solo cuando hay más de uno |
+| **Guías R** (Administración, asignar ficha) | `TOM RED 1° E (Día)` | mismo caso |
+
+### Las tres arregladas, y la escalera del cliente (07/09)
+
+Las tres salen ahora del MISMO armador, `_cajas_para_elegir_por_articulo`, y no
+de tres copias. **El nombre del cliente se antepone SOLO cuando hay más de un
+cliente con ficha de ese artículo** — la misma escalera del Remanente: el caso
+normal limpio, el nombre solo cuando hace falta.
+
+| | |
+|---|---|
+| un cliente | `Caja Grande Día — 16 kg` |
+| dos clientes | `Día — Caja Grande Día — 16 kg` |
+
+Sin eso quedaba `Día — Caja Grande Día`: **el envase ya lleva el nombre del
+cliente adentro en este catálogo**, así que anteponerlo siempre repite lo mismo
+dos veces, que es el defecto que se venía arreglando.
+
+### El fixture destapó un agujero en la escalera, y valió
+
+La primera versión, sin envase, caía al kilaje solo: `18 kg — falta cargar el
+envase`. El test de Stock Inicial —Banana Bolivia de Día y Banana Ecuador de
+Vea, **las dos de 18 kg y ninguna con envase**— lo rompió al instante: **las dos
+opciones quedaban con la misma etiqueta.**
+
+Ahí el prefijo del cliente las salvaba, pero **dos fichas del MISMO cliente
+habrían colapsado sin red**, y elegir mal manda las cajas a la ficha equivocada:
+un error que después nadie ve.
+
+Corregido, y la corrección sobrevivió al cambio de "falta cargar" a "envase
+perdido": **el código del cliente se agrega SOLO donde dos etiquetas chocan**,
+comparándolas de verdad dentro del grupo en vez de suponer cuándo van a chocar.
+`Envase perdido — 18 kg` y `Envase perdido — 18 kg` se vuelven
+`Envase perdido — 18 kg (Banana Bolivia)` y `(Banana Ecuador)`; con kilajes
+distintos no se agrega nada.
+
+La lección es del fixture, no del código: **el caso de dos fichas con el mismo
+kilaje y sin envase ya estaba escrito en los tests desde antes**, esperando. Una
+escalera que descarta información en el escalón de abajo colapsa justo donde más
+caro sale.
+
+## Los dos caminos del cherry y el costo del envase (08/09)
+
+El cherry entra por dos caminos y sale igual, **pero el envase cuesta distinto
+en cada uno**:
+
+| | Compra | Envase que sale | ¿Se compra el cartón? |
+|---|---|---|---|
+| **Camino 1** | cajón de 10 kg | caja chica de Día, **armada por nosotros** | **sí**, y va al costo |
+| **Camino 2** | caja descartable de 5 kg | la misma que vino | **no**, vino adentro de la compra |
+
+Ninguno vuelve. Los dos terminan siendo una caja de 5 kg para Día, con **una
+sola ficha** (id 3, "TOMATE CHERR", caja chica Día, 5 kg).
+
+### 1. El armado: para el stock son lo mismo, para el COSTO no
+
+**Para las cuentas de stock son indistinguibles.** Con una sola ficha, toda
+venta de cherry resta de esa ficha (cuenta 2) y del total (cuenta 1), venga de
+donde venga. Ahí no hay nada que elegir: el armado hace una resta, no toma de
+una pila u otra.
+
+**Pero el FIFO SÍ los distingue, y por lote.** Una caja descartable entró como
+COMPRA y es un lote `guia` con el importe de esa compra; una caja armada es un
+lote `reproceso` con su `costo_por_bulto_primera`. Dos lotes, dos costos de
+MERCADERÍA, y el reparto los consume por separado.
+
+O sea: **la mercadería está bien costeada por camino. El envase es otra
+cuenta**, y va por otro lado.
+
+### 2. EL MODELO YA TIENE EL CASO, y se llama `envase_variable`
+
+Esto es lo que da vuelta la pregunta. `_envases_por_unidad_ponderado` en
+`app/costeo.py` **nombra al cherry en su docstring**:
+
+> *"Envase VARIABLE (mango/cherry): por cada compra se decide solo, sin
+> preguntar nada nuevo: si el contenido de ESE cajón (lo que trajo esa compra
+> puntual) es menor o igual al contenido de la ficha, es **descartable (0
+> cajas)**; si es mayor, es caja chica, a razón de 1 caja cada 'contenido_ficha'
+> unidades."*
+
+```python
+if envase_variable and contenido_compra <= contenido_ficha:
+    envases_por_unidad = 0.0
+else:
+    envases_por_unidad = 1.0 / contenido_ficha
+```
+
+**Con `envase_variable = true`, el costeo ya separa los dos caminos compra por
+compra**, y sin preguntar nada: un cajón de 10 kg contra una ficha de 5 kg
+cuenta cartón; una caja de 5 kg contra una ficha de 5 kg cuenta cero. El número
+de corte sale de la ficha, no está hardcodeado.
+
+**Con `envase_variable = false`, todas las ventas de cherry se costean con el
+cartón**, incluidas las que no lo llevan.
+
+Así que la respuesta a "¿le suma el cartón a las descartables?" **no está en el
+código: está en un booleano de la ficha.** Se mide con
+`db/cherry_los_dos_caminos.sql`.
+
+### Dónde llega ese número, si está mal
+
+`costo_envase_unidad_venta` sale de la misma función y alimenta **dos cosas**:
+
+- **La cotización**: `calcular_precio_sugerido(costo_envase=...)` y la
+  `utilidad_aproximada`. Con el flag en false, el precio sugerido del cherry
+  sale más caro de lo que corresponde.
+- **La Rentabilidad Real**: `fila["costo_envase"] += unidades * envase_unidad`.
+  Con el flag en false, el margen del cherry sale **peor** de lo que es.
+
+Los dos errores van en la misma dirección: **cargarle un cartón que no existe a
+la mitad de las cajas.**
+
+### El límite que queda incluso con el flag bien puesto
+
+`_envases_por_unidad_ponderado` devuelve **un promedio ponderado por las compras
+de la ventana**, no el envase de cada caja vendida. Es lo correcto para
+cotizar —se mira hacia adelante— pero en Rentabilidad Real ese promedio se
+multiplica por las unidades de cada salida, así que **una venta puntual no queda
+atribuida exacta**; el total cierra bien mientras la mezcla sea parecida a la de
+la ventana.
+
+Eso no es un bug: es la precisión que el modelo eligió, y conviene saberla antes
+de leer un margen de cherry al peso.
+
+### 3. Qué se puede medir y qué no
+
+**Las ventas por camino NO se pueden partir en SQL**: el FIFO reparte en Python.
+Lo que sí se mide —y es exactamente lo que el costeo pondera— es **la mezcla de
+entradas**: cuántos cajones entraron por cada camino y cuántas cajas armamos.
+`db/cherry_los_dos_caminos.sql` devuelve las dos entradas, las cajas armadas,
+las ventas totales desde el corte y, arriba de todo, el `envase_variable` de la
+ficha.
+
+## LO PRÓXIMO, en orden (06/09)
+
+1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el
+   06/09**: vivía solo en Stock del Sistema, que se eliminó. No quedó nada que
+   arreglar.
+2. **La merma dirigida, con su migración.** Hoy `_lotes_con_resto` saltea el
+   lote fantasma —no se puede tirar lo que no existe— y eso alcanza para que no
+   ofrezca-y-rechace. Lo que falta es el CHECK de `movimientos_stock.lote_tipo`,
+   que es OTRO check, no el que se amplió el 06/09.
+3. **E5: el contador de artículos que mezcla cajones y cajas.**
+
+Y dos que esperan un dato, no una decisión:
+
+- **El kilaje real del cherry** (`db/kilaje_real_de_lo_armado.sql`): correr
+  cuando haya movimiento. Decide si el problema del cherry es solo contable o
+  si son dos productos con una ficha.
+- **El selector de ficha del Reproceso**, que muestra el código del cliente
+  donde hace falta el envase: espera `db/fichas_con_su_envase.sql` para saber
+  si el envase alcanza para distinguir "chica" de "grande" o si falta el dato
+  en la ficha.
+
+Después de esos tres sigue la cola de antes: baja lógica de fichas → el CHECK
+ampliado de `pedidos_renglones`; E4 (guías R atrasadas); los negativos de F; y
+la rama huérfana `origin/claude/retenido-stock-fisico`.
 
 ## Decisiones confirmadas
 

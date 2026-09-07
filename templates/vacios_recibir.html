@@ -78,6 +78,18 @@
   .renglon-hoy .detalle .cliente { color: #666; font-size: 0.85rem; }
   .renglon-hoy.anulado .detalle { text-decoration: line-through; color: #999; }
   .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 600; }
+  .marca-cobrada {
+    display: block;
+    margin-top: 0.35rem;
+    color: #7c2d12;
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 6px;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1.35;
+  }
   .boton-anular {
     padding: 0.6rem 0.9rem;
     background: #fff;
@@ -161,8 +173,16 @@
           — {{ r.creado_en|hora }}
           <div class="cliente">Trajo: {{ r.cliente_nombre }}</div>
           {% if r.anulado_el %}<span class="marca-anulado">Anulado</span>{% endif %}
+          {# La seña ya cobrada BLOQUEA el anular, y hay que decir por qué acá:
+             un botón que desaparece sin explicación se lee como un error de la
+             pantalla y el que está con el cajón en la mano vuelve a intentarlo. #}
+          {% if not r.anulado_el and (r.sena_pagada_el or r.sena_vale_el) %}
+          <div class="marca-cobrada">{% if r.sena_pagada_el %}Seña ya pagada{% else %}Vale ya emitido{% endif %} — no se puede anular. Si está mal, avisá a la cajera.</div>
+          {% endif %}
         </div>
-        {% if not r.anulado_el %}
+        {# Ofrecido y prohibido es lo peor de los dos mundos: el botón no va
+           donde el server lo va a rechazar. #}
+        {% if not r.anulado_el and not r.sena_pagada_el and not r.sena_vale_el %}
         <form method="post" action="/puesto/envases/vacios/recibidos/{{ r.id }}/anular"
               onsubmit="return confirm('¿Anular esta entrada de {{ r.cantidad }} cajones?');">
           <button type="submit" class="boton-anular">Anular</button>

@@ -158,6 +158,18 @@
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
   }
+  /* Armó de MÁS: es un DATO, no una alerta. El ámbar significa "queda algo
+     por hacer" y acá no queda nada — el camión salió. Gris pizarra: se ve,
+     se lee, y no pide atención. */
+  .marca-de-mas {
+    display: inline-block;
+    background: #cbd5e1;
+    color: #1e293b;
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
   .boton-destildar {
     padding: 0.6rem 0.8rem;
     background: #fff;
@@ -600,9 +612,11 @@
           {% else %}
           <p class="ayuda-kilos" id="total-{{ r.id }}" data-inicial="La ficha no tiene contenido por caja: cargá cuánto va por cajón a mano si lo sabés.">La ficha no tiene contenido por caja: cargá cuánto va por cajón a mano si lo sabés.</p>
           {% endif %}
-          <button type="button" class="link-parcial" onclick="document.getElementById('parcial-{{ r.id }}').classList.toggle('abierto')">Armé menos</button>
+          <button type="button" class="link-parcial" onclick="document.getElementById('parcial-{{ r.id }}').classList.toggle('abierto')">Armé otra cantidad</button>
           <div class="form-parcial" id="parcial-{{ r.id }}">
-            <input type="number" name="cantidad_armada" min="0.01" step="0.01" max="{{ r.cantidad }}"
+            {# SIN max: se puede armar de más. El camión sale con lo que sale
+               y el sistema tiene que poder registrarlo. #}
+            <input type="number" name="cantidad_armada" min="0.01" step="0.01"
                    placeholder="¿Cuántos?" oninput="actualizarTotal('{{ r.id }}')">
             <button type="submit">Listo</button>
           </div>
@@ -635,8 +649,13 @@
       <div class="datos">
         <div class="nombre">{{ r.nombre_venta }}</div>
         <div class="cantidad">
-          {% if r.cantidad_armada is not none and r.cantidad_armada|float != r.cantidad|float %}
+          {# El "<" y no "!=": armar de más NO es incompleto. Es la misma
+             regla que cuentan renglones_cortos y contar_pedidos_incompletos;
+             acá vivía la copia vieja. #}
+          {% if r.cantidad_armada is not none and r.cantidad_armada|float < r.cantidad|float %}
           <span class="marca-incompleto">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
+          {% elif r.cantidad_armada is not none and r.cantidad_armada|float > r.cantidad|float %}
+          <span class="marca-de-mas">armó {{ r.cantidad_armada|numero }} de {{ r.cantidad|numero }}</span>
           {% else %}{{ r.cantidad|numero }} bultos{% endif %}
         </div>
         <div class="kilos-enviados">

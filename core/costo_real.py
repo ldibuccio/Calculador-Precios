@@ -72,6 +72,7 @@ ETIQUETAS_MOTIVO_REAL = {
     "stock_inicial_sin_costo": "Consumió stock inicial cargado sin costo",
     "reingreso_sin_costo": "Consumió un reingreso por rechazo sin costo (sin vínculo a pedido)",
     "guia_r_incompleta": "Consumió la primera de una guía R con costo incompleto",
+    "compensatorio_del_corte": "Consumió el compensatorio del corte (mercadería que el modelo viejo dejó debiendo, sin costo posible)",
     "sin_lote": "Salida sin lote (salió más de lo que había en el sistema)",
     "devolucion_sin_valor": "Devolución vinculada que no se pudo valuar (renglón sin kilaje o sin precio a la fecha del pedido)",
     "rechazo_sin_costo": "Rechazo mandado a segunda sin costo congelado (no se puede valuar la pérdida)",
@@ -104,6 +105,12 @@ _MOTIVO_POR_TIPO_LOTE = {
     "stock_inicial": "stock_inicial_sin_costo",
     "reingreso_rechazo": "reingreso_sin_costo",
     "reproceso": "guia_r_incompleta",
+    # El lote que el compensatorio POSITIVO del corte le crea a un artículo que
+    # estaba en negativo. Sin este renglón caía en el default y se leía
+    # "consumió un ajuste", que manda a buscar donde no es: no hay ningún
+    # ajuste que corregir, y el motivo real —el modelo viejo dejó salidas sin
+    # entrada— no se deduce de ahí.
+    "cierre_modelo_viejo": "compensatorio_del_corte",
 }
 
 

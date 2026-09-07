@@ -6,6 +6,7 @@ El motor de costeo y las fichas en core/ no se tocan. El lector de comandas
 
 import asyncio
 import base64
+from collections import Counter
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
@@ -66,6 +67,7 @@ from app.db import (
     marcar_renglon_armado,
     contar_retiros_buscados,
     cerrar_disponible_generado,
+    caducar_vale,
     cerrar_sena,
     comanda_ya_guardada,
     compra_tiene_cantidad_bloqueada,
@@ -93,6 +95,7 @@ from app.db import (
     anular_renglon_stock_inicial,
     completar_costo_reproceso,
     contar_reprocesos_costo_incompleto,
+    contar_reprocesos_sin_costo_posible,
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
@@ -196,12 +199,16 @@ from app.db import (
     listar_aprendizaje_articulos_por_proveedor,
     listar_articulos,
     listar_articulos_para_reproceso,
+    cajas_armadas_por_ficha,
     lotes_para_reproceso,
     dependencias_del_lote_de_compra,
     desglose_de_renglon_armado,
     guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
+    ReprocesoAnteriorAlCorte,
+    SenaYaCobrada,
+    ValeNoCaducable,
     contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
@@ -235,6 +242,7 @@ from app.db import (
     listar_valores_sena,
     listar_historiales_valores_sena,
     contar_senas_afectadas_por_valor,
+    contar_guias_r_afectadas_por_fecha,
     cargar_valor_sena,
     listar_tipos_envase_puesto,
     listar_todos_los_proveedores,
@@ -272,6 +280,7 @@ from app.db import (
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
+from core.exportar_remanente import generar_excel_remanente
 from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
 from core.exportar_ingresos import generar_excel_ingresos_deposito, generar_pdf_ingresos_deposito
 from core.exportar_retiros import generar_excel_listado_retiros, generar_pdf_listado_retiros
@@ -6487,113 +6496,246 @@ def deshacer_procesado_compra_ruta(request: Request, compra_id: int):
 # después sin mover nada — mismo esquema que Puesto → Envases.
 
 
+def _clave_alfabetica(texto: str) -> str:
+    """Para ordenar sin que las tildes manden al final: "Ají" va con la A."""
+    sin_tildes = unicodedata.normalize("NFKD", texto or "")
+    return "".join(c for c in sin_tildes if not unicodedata.combining(c)).lower()
+
+
+def _nombre_de_caja(articulo: str, ficha: dict, clientes: dict, cuantas_del_cliente: int) -> str:
+    """Cómo se llama una pila de cajas armadas EN EL REMANENTE: "Lima Caja Día".
+
+    NO se usa `_nombre_de_ficha` acá, y es la diferencia que importa: ese
+    devuelve el `nombre_cliente`, que es el CÓDIGO CON EL QUE EL CLIENTE
+    nombra su producto ("LIMA X 1KG", "BERENJENA G"). Sirve donde alguien
+    elige una ficha PARA ese cliente —el armado, la guía R—, porque ahí el
+    código es lo que está impreso en la caja. Acá no: el que lee el
+    remanente está mirando su propio depósito, no el catálogo de Día, y
+    "BERENJENA G" no dice qué es ni deja ver que es una berenjena.
+
+    Con el nombre del artículo adelante, además, las tres porciones caen
+    juntas al ordenar —"Lima", "Lima Caja Día", "Lima Segunda"—, que era la
+    idea del orden desde el principio.
+
+    EL KILAJE SOLO CUANDO HACE FALTA. Un cliente puede tener VARIAS fichas
+    del mismo artículo (por eso la clave de venta pasó de artículo a ficha),
+    y ahí "Lima Caja Día" saldría dos veces sin poder distinguirse. Con una
+    sola ficha el renglón va limpio, que es el caso normal; con dos se
+    agrega el kilaje, y si las dos tienen el MISMO kilaje —que el modelo
+    tampoco prohíbe— se cae al nombre del cliente, que es lo único que
+    seguro las distingue. Feo, pero solo en el caso feo.
+    """
+    cliente = clientes.get(ficha.get("cliente_id")) or "cliente sin nombre"
+    base = f"{articulo} Caja {cliente}"
+    if cuantas_del_cliente <= 1:
+        return base
+    if ficha.get("contenido_caja"):
+        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+        return f"{base} {_formatear_numero(ficha['contenido_caja'])}{sufijo}".strip()
+    propio = (ficha.get("nombre_cliente") or "").strip()
+    return f"{base} ({propio})" if propio else f"{base} (ficha #{ficha['id']})"
+
+
+def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[dict]:
+    """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
+
+    En el piso NO hay "un artículo con un total": hay pilas distintas, en
+    lugares distintos y para cosas distintas. Saber que hay 9 limones
+    sumando 4 sueltos más 5 en caja de Día no le sirve a nadie; lo que hace
+    falta saber es cuántas cajas hay de cada cosa. Por eso cada porción es
+    un renglón y NO hay total por artículo.
+
+    EL NOMBRE PELADO ES LA MERCADERÍA COMO VIENE DEL PUESTO, que es como el
+    depósito la llama. La palabra "suelto" no aparece: las que necesitan
+    aclaración son las otras dos.
+
+    Sale entera de la CUENTA 2 (cajas por ficha) y del pool de segunda, que
+    desde el 05/09 arrancan las dos en la fecha de corte. El desglose por
+    GUÍA R —la cuenta 3— es trazabilidad y vive en Stock por Guía: al que
+    arma no le importa de qué guía R salió una caja, y la guía R no está
+    escrita en la caja, así que tampoco podría verificarlo contando.
+
+    Solo lo que tiene MÁS DE CERO. Una porción en cero no es una pila, y un
+    negativo no se puede contar. Los negativos NO se pierden: van en su
+    propia sección abajo, separados y contados como "bultos que faltan
+    explicar" — ver `_negativos_de_deposito`.
+
+    El orden agrupa por ARTÍCULO y después por tipo de porción, no por el
+    texto que se muestra: así "Pomelo" y "Pomelo caja Día" caen juntas
+    aunque la ficha se llame de otra forma.
+    """
+    if filas is None:
+        filas = stock_deposito_por_articulo(hasta)
+    # La MISMA fecha que las filas: si las cajas por ficha se pidieran sin
+    # tope, los sueltos —que salen por resta— darían cualquier cosa.
+    cajas = cajas_armadas_por_ficha(hasta)
+    fichas = {f["id"]: f for f in listar_fichas_de_todos_los_clientes()}
+    clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+
+    porciones = []
+    for fila in filas:
+        articulo = fila["nombre"]
+        de_este = {c: b for c, b in cajas.items() if c[0] == fila["articulo_id"]}
+        # Los sueltos por RESTA, como en todo el módulo: así las porciones
+        # suman el total del artículo sin que se pueda perder ni duplicar.
+        sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
+        grupo = fila.get("grupo")
+        if sueltos > 0:
+            porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo,
+                              "bultos": sueltos, "grupo": grupo, "procesada": False})
+        # Cuántas cajas de ESTE artículo tiene cada cliente acá: con una sola
+        # el nombre va limpio, con dos hay que poder distinguirlas.
+        cuantas = Counter(
+            fichas[fid]["cliente_id"] for (_a, fid) in de_este if fid in fichas
+        )
+        for (_articulo_id, ficha_id), bultos in de_este.items():
+            ficha = fichas.get(ficha_id)
+            porciones.append({
+                "articulo": articulo,
+                "orden": 1,
+                "nombre": (
+                    _nombre_de_caja(articulo, ficha, clientes, cuantas[ficha["cliente_id"]])
+                    if ficha else f"{articulo} Caja (ficha #{ficha_id})"
+                ),
+                "bultos": round(float(bultos), 2),
+                "grupo": grupo,
+                # Las cajas armadas van a su propia sección del Excel: en el
+                # piso son una pila aparte, no están con la fruta suelta.
+                "procesada": True,
+            })
+        if float(fila["segunda"]) > 0:
+            # La segunda NO es una caja procesada: son bultos sueltos de
+            # calidad menor esperando el remito al Puesto. Va con su artículo.
+            porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
+                              "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2)})
+
+    porciones.sort(key=lambda p: (_clave_alfabetica(p["articulo"]), p["orden"], _clave_alfabetica(p["nombre"])))
+    return porciones
+
+
+def _negativos_de_deposito(filas: list[dict]) -> list[dict]:
+    """Los artículos con stock por debajo de cero: cuántos bultos FALTAN EXPLICAR.
+
+    Se devuelve `faltan` en POSITIVO a propósito, y no el stock en
+    negativo. Un artículo en −45 no tiene menos cuarenta y cinco cajones:
+    tiene 45 bultos que salieron y ninguna guía cubre. Mostrar "−45" en
+    una lista de cantidades invita a leerlo como stock y a restarlo de
+    algo — es el mismo defecto del "sin procesar −95" que esta pantalla
+    viene a reemplazar, y recrearlo abajo sería no haber entendido nada.
+    """
+    return [
+        {"articulo_id": f["articulo_id"], "nombre": f["nombre"], "faltan": round(-float(f["stock"]), 2)}
+        for f in filas if float(f["stock"]) < 0
+    ]
+
+
+def _fecha_del_remanente(fecha_texto: str | None) -> tuple:
+    """La fecha pedida, o hoy. Devuelve (fecha, aviso) — el aviso explica por qué se movió.
+
+    Mal escrita o FUTURA cae a hoy, igual que el Stock de Vacíos. Y hay un
+    piso propio: ANTES DEL CORTE esta pantalla no puede contestar. No es
+    que falten datos, es que las cuentas no son comparables — el total del
+    artículo lo rebasea el compensatorio (fechado la víspera del corte) y
+    las cajas por ficha y el pool de segunda tienen su piso EN el corte.
+    Pedir el 20/08 devolvería el total del modelo viejo junto a cero cajas
+    y cero segunda: tres cuentas de dos épocas distintas en la misma
+    tabla. Mejor decir que no que mostrar eso.
+    """
+    hoy = _hoy_argentina()
+    if not fecha_texto:
+        return hoy, None
+    try:
+        fecha = date.fromisoformat(fecha_texto)
+    except ValueError:
+        return hoy, "Esa fecha no se entendió. Se muestra el día de hoy."
+    if fecha > hoy:
+        return hoy, "Todavía no pasó ese día. Se muestra el día de hoy."
+    try:
+        corte = fecha_corte()
+    except Exception:
+        return fecha, None
+    if corte is not None and fecha < corte:
+        return hoy, (
+            f"El {fecha.strftime('%d/%m/%Y')} es anterior al corte del modelo "
+            f"({corte.strftime('%d/%m/%Y')}), y de antes del corte esta pantalla no puede "
+            "contestar: el total del artículo quedó rebaseado por el compensatorio y las "
+            "cajas por ficha arrancan en el corte, así que los tres números serían de "
+            "épocas distintas. Se muestra el día de hoy."
+        )
+    return fecha, None
+
+
+def _remanente_a_fecha(hasta) -> dict:
+    """Todo lo que la pantalla y el Excel necesitan, a una fecha. UNA sola vez.
+
+    Los dos salen de acá y no cada uno por su cuenta: si el Excel armara
+    su propia consulta, un día diría otra cosa que la pantalla y nadie se
+    enteraría hasta imprimirlo.
+    """
+    filas = stock_deposito_por_articulo(hasta)
+    return {
+        "porciones": _porciones_de_deposito(filas, hasta),
+        "negativos": _negativos_de_deposito(filas),
+        "reingresos_total": total_reingresos_rechazo(hasta),
+        "segunda_total": sum(float(f["segunda"]) for f in filas),
+    }
+
+
+@app.get("/administracion/stock/remanente")
+def ver_remanente_deposito(request: Request, fecha: str | None = None):
+    """Qué hay en el depósito, una porción por renglón. Para mirar y para exportar.
+
+    VIVE EN ADMINISTRACIÓN, no en Depósito, y es a propósito: muestra los
+    números del sistema de lo que el operario después tiene que contar en
+    Stock Físico. Con la lista a mano, el conteo se transcribe en vez de
+    contarse — y un conteo transcripto no controla nada, confirma lo que
+    el sistema ya decía. Es la misma regla que la pantalla de armado, que
+    no muestra el stock de la ficha: "si lo ve, arma contra el sistema en
+    vez de contra el piso".
+    """
+    hasta, aviso = _fecha_del_remanente(fecha)
+    try:
+        # ABAJO Y APARTE: la lista de arriba es lo que HAY, los negativos son
+        # un problema a resolver. Mezclados vuelve a ser la pantalla vieja.
+        contexto = _remanente_a_fecha(hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    hoy = _hoy_argentina()
+    contexto.update({
+        "hoy": hasta,
+        "fecha": hasta.isoformat(),
+        "fecha_maxima": hoy.isoformat(),
+        "es_hoy": hasta == hoy,
+        "aviso": aviso,
+    })
+    return templates.TemplateResponse(request, "administracion_stock_remanente.html", contexto)
+
+
+@app.get("/administracion/stock/remanente/exportar-excel")
+def exportar_remanente_deposito_excel(fecha: str | None = None):
+    """El mismo remanente en Excel, con una columna vacía para anotar lo contado.
+
+    Misma fecha y mismo armador que la pantalla: el archivo que baja es el
+    de lo que se está mirando, y su nombre lleva ESA fecha, no la de hoy —
+    dos exports de días distintos no se pueden pisar en la carpeta.
+    """
+    hasta, _aviso = _fecha_del_remanente(fecha)
+    try:
+        porciones = _remanente_a_fecha(hasta)["porciones"]
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return Response(
+        content=generar_excel_remanente(hasta, porciones),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Remanente_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
+    )
+
+
 @app.get("/deposito/stock")
 def ver_stock_deposito(request: Request, aviso: str | None = None):
     """El hub del stock: carga del operario arriba, control abajo. Lo que falta construir se ve atenuado."""
     return templates.TemplateResponse(request, "deposito_stock.html", {"aviso": aviso})
-
-
-def _tamanos_de_caja_por_ficha() -> dict[str, str]:
-    """El tamaño de la caja armada según la ficha, por "cliente_id:articulo_id" ("6 kg") — para el desglose del stock.
-
-    Con VARIAS fichas del mismo artículo para ese cliente y tamaños
-    distintos, se muestran los dos ("6 o 10 kg"): la guía R no guarda con
-    qué ficha se armó, así que elegir uno sería inventar. Si las dos fichas
-    tienen el mismo kilaje, no hay ambigüedad y se muestra uno solo.
-    """
-    tamanos: dict[str, str] = {}
-    por_clave: dict[str, list[str]] = {}
-    # TODAS las fichas en una consulta: antes se pedían cliente por cliente,
-    # que es el mismo N+1 que el del FIFO, escondido en otra pantalla.
-    for ficha in listar_fichas_de_todos_los_clientes():
-        if not ficha.get("contenido_caja"):
-            continue
-        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-        texto = f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-        clave = f"{ficha['cliente_id']}:{ficha['articulo_id']}"
-        if texto not in por_clave.setdefault(clave, []):
-            por_clave[clave].append(texto)
-
-    for clave, textos in por_clave.items():
-        tamanos[clave] = " o ".join(textos)
-    return tamanos
-
-
-def _desglose_stock_articulo(fila: dict, tamanos_ficha: dict[str, str], movimientos: tuple) -> list[dict]:
-    """Las guías R con primera restante de un artículo, rejugando el FIFO: qué cajas armadas hay hoy, para quién y de qué tamaño.
-
-    Cada línea es una guía R con resto (si hay varias de tamaños
-    distintos, salen separadas). Es el mismo reparto del detalle por
-    artículo, subido al listado: nada se guarda, se calcula cada vez.
-
-    Recibe los movimientos ya traídos (entradas y salidas fechadas) en vez
-    de ir a buscarlos: el listado los pide TODOS de una, para no abrir una
-    conexión por artículo.
-    """
-    entradas, salidas = movimientos
-    reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
-
-    armados = []
-    for lote in reparto["lotes"]:
-        if lote.get("tipo_lote") != "reproceso" or lote["restante"] <= 0:
-            continue
-        clave_ficha = f"{lote['cliente_lote_id']}:{fila['articulo_id']}" if lote.get("cliente_lote_id") else None
-        armados.append({
-            "bultos": lote["restante"],
-            "cliente": lote.get("detalle"),
-            "tamano": tamanos_ficha.get(clave_ficha) if clave_ficha else None,
-            "guia": lote["origen_id"],
-            "fecha": lote["fecha_lote"],
-        })
-    return armados
-
-
-@app.get("/administracion/stock/sistema")
-def ver_stock_sistema_deposito(request: Request):
-    """Stock del Sistema por artículo (bultos), calculado siempre. Los negativos arriba, en rojo: son salidas sin explicar.
-
-    Un artículo con guías R vivas o segunda se muestra DESGLOSADO en el
-    listado (pedido del dueño 26/08: 80 cajones sin procesar + 40 cajas
-    armadas no son "120 bultos"): sin procesar, cada guía R con resto
-    (cliente y tamaño de caja según la ficha) y la segunda, con el total
-    al final. Un artículo sin nada de eso muestra solo su número.
-    """
-    try:
-        filas = stock_deposito_por_articulo()
-        reingresos_total = total_reingresos_rechazo()
-        # Las fichas se cargan una sola vez, y solo si algún artículo tiene
-        # primera de reproceso para desglosar.
-        tamanos_ficha = (
-            _tamanos_de_caja_por_ficha() if any(f["reproceso_primera"] for f in filas) else {}
-        )
-        # Los movimientos de TODOS los artículos con guía R, en una consulta.
-        con_primera = [f["articulo_id"] for f in filas if f["reproceso_primera"]]
-        movimientos = entradas_y_salidas_stock_articulos(con_primera)
-        for fila in filas:
-            fila["armados"] = (
-                _desglose_stock_articulo(fila, tamanos_ficha, movimientos[fila["articulo_id"]])
-                if fila["reproceso_primera"] else []
-            )
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    for fila in filas:
-        fila["sin_procesar"] = fila["stock"] - sum(a["bultos"] for a in fila["armados"])
-        fila["total_con_segunda"] = fila["stock"] + fila["segunda"]
-        fila["desglosada"] = bool(fila["armados"]) or bool(fila["segunda"])
-
-    negativos = [f for f in filas if f["stock"] < 0]
-    return templates.TemplateResponse(
-        request,
-        "deposito_stock_sistema.html",
-        {
-            "filas": filas,
-            "articulos_negativos": len(negativos),
-            "bultos_sin_lote": -sum(f["stock"] for f in negativos),
-            "reingresos_total": reingresos_total,
-            "segunda_total": sum(f.get("segunda", 0) for f in filas),
-        },
-    )
 
 
 @app.get("/administracion/stock/sistema/{articulo_id}")
@@ -6611,6 +6753,20 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         if articulo is None:
             raise HTTPException(status_code=404, detail="Artículo no encontrado")
         entradas, salidas = entradas_y_salidas_stock_articulo(articulo_id)
+        # LAS SEIS PATAS por separado. Vivían en el listado de Stock del
+        # Sistema, que se borró el 06/09 por confundir más de lo que
+        # ayudaba; la línea NO se fue con él porque es lo único que dice
+        # QUÉ pata movió cuando un total no cuadra, y este es el lugar
+        # donde se viene a mirar justamente eso.
+        #
+        # Sale de la MISMA función que todo el resto del módulo, aunque
+        # traiga todos los artículos para usar uno: una segunda consulta
+        # "solo para este artículo" sería una segunda versión de la cuenta,
+        # y esas se separan.
+        patas = next(
+            (f for f in stock_deposito_por_articulo(_hoy_argentina())
+             if f["articulo_id"] == articulo_id), None
+        )
     except HTTPException:
         raise
     except Exception as error_db:
@@ -6624,6 +6780,7 @@ def ver_stock_articulo_deposito(request: Request, articulo_id: int):
         "deposito_stock_articulo.html",
         {
             "articulo": articulo,
+            "patas": patas,
             "lotes": con_resto,
             "agotados": agotados,
             "sin_lote": reparto["sin_lote"],
@@ -6767,35 +6924,68 @@ def ajustar_stock_deposito_ruta(
 # porque lleva COSTO, y el operario no ve números del sistema.
 
 
-def _fichas_por_articulo() -> dict[str, list[dict]]:
-    """Las fichas elegibles al cargar cajas ya armadas, por articulo_id (como texto).
+def _cajas_para_elegir_por_articulo() -> dict[int, list[dict]]:
+    """{articulo_id: [cajas elegibles]}, con el rótulo que se lee para ELEGIR.
 
-    Acá la ficha se elige por ARTÍCULO y no por (cliente, artículo) como
-    en la guía R: el que carga está mirando una caja concreta en el piso y
-    ya sabe de quién es. Pedirle el cliente primero sería un campo más por
-    renglón, y son muchos renglones seguidos.
+    Lo usan las pantallas que eligen la ficha POR ARTÍCULO y no por cliente
+    —Stock Físico, Stock Inicial y el asignar ficha de Guías R—: el que
+    carga está mirando una caja concreta en el piso y ya sabe de quién es.
 
-    Por eso cada opción lleva el cliente adentro del nombre: sin él,
-    "Banana Bolivia" de dos clientes distintos serían dos opciones
-    idénticas.
+    EL NOMBRE DEL CLIENTE VA SOLO CUANDO HACE FALTA, que es la misma
+    escalera del Remanente: con un solo cliente con ficha de ese artículo
+    el envase alcanza y el renglón va limpio ("Caja Grande Día — 16 kg");
+    recién con dos se antepone, porque ahí sí hay algo que distinguir.
+
+    Sin eso quedaba "Día — Caja Grande Día": el envase ya lleva el nombre
+    del cliente adentro en este catálogo, así que anteponerlo siempre
+    repite lo mismo dos veces — el defecto que veníamos arreglando.
     """
     nombres = {cliente["id"]: cliente["nombre"] for cliente in listar_clientes()}
-    por_articulo: dict[str, list[dict]] = {}
-    for ficha in listar_fichas_de_todos_los_clientes():
-        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-        kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-                  if ficha.get("contenido_caja") else "")
-        por_articulo.setdefault(str(ficha["articulo_id"]), []).append(
-            {
-                "id": ficha["id"],
-                "cliente_id": ficha["cliente_id"],
-                "nombre": f"{nombres.get(ficha['cliente_id'], 'Cliente sin nombre')} — {_nombre_de_ficha(ficha)}",
-                "kilaje": kilaje,
-            }
-        )
-    for fichas in por_articulo.values():
-        fichas.sort(key=lambda f: f["nombre"])
+    fichas = listar_fichas_de_todos_los_clientes()
+
+    clientes_por_articulo: dict[int, set] = {}
+    for ficha in fichas:
+        clientes_por_articulo.setdefault(ficha["articulo_id"], set()).add(ficha["cliente_id"])
+
+    # Primero la etiqueta base, después el cliente si hay más de uno, y recién
+    # al final el código para lo que siga chocando: cada escalón se sube solo
+    # cuando el anterior no alcanzó.
+    fichas_por_articulo: dict[int, list[dict]] = {}
+    for ficha in fichas:
+        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(ficha)
+
+    por_articulo: dict[int, list[dict]] = {}
+    for articulo_id, del_articulo in fichas_por_articulo.items():
+        etiquetas = {}
+        for ficha in del_articulo:
+            nombre = _caja_para_elegir(ficha)
+            if len(clientes_por_articulo[articulo_id]) > 1:
+                cliente = nombres.get(ficha["cliente_id"], "cliente sin nombre")
+                nombre = f"{cliente} — {nombre}"
+            etiquetas[ficha["id"]] = nombre
+        etiquetas = _desambiguar_cajas(del_articulo, etiquetas)
+
+        for ficha in del_articulo:
+            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+            kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+                      if ficha.get("contenido_caja") else "")
+            por_articulo.setdefault(articulo_id, []).append(
+                {
+                    "id": ficha["id"],
+                    "cliente_id": ficha["cliente_id"],
+                    "nombre": etiquetas[ficha["id"]],
+                    "kilaje": kilaje,
+                }
+            )
+    for cajas in por_articulo.values():
+        cajas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
     return por_articulo
+
+
+def _fichas_por_articulo() -> dict[str, list[dict]]:
+    """Lo mismo, con la clave como TEXTO: es como lo indexan las plantillas."""
+    return {str(articulo_id): cajas
+            for articulo_id, cajas in _cajas_para_elegir_por_articulo().items()}
 
 
 def _renderizar_stock_inicial(
@@ -7054,6 +7244,13 @@ def _lotes_con_resto(articulo_id: int) -> list[dict]:
     lotes = []
     for lote in reparto["lotes"]:
         if lote["restante"] <= 0:
+            continue
+        # El lote del compensatorio del corte NO se ofrece: es mercadería que
+        # no existe —el FIFO lo crea porque las entradas son "movimientos con
+        # cantidad > 0" y no miran el tipo— y no se puede tirar lo que no
+        # está. Antes salía en la lista y el POST lo rechazaba después, que
+        # es lo peor de los dos mundos: ofrecido y prohibido.
+        if lote["tipo_lote"] == "cierre_modelo_viejo":
             continue
         if lote["tipo_lote"] == "reproceso":
             etiqueta = f"Guía R{lote['origen_id']}"
@@ -7602,6 +7799,56 @@ def ver_cotejo_stock(request: Request):
 SUFIJOS_FICHA_REPROCESO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
 
 
+def _caja_para_elegir(ficha: dict) -> str:
+    """Cómo se nombra una caja cuando alguien tiene que ELEGIR en cuál está armando.
+
+    El operario ya eligió cliente y artículo dos campos arriba. Lo que le
+    falta saber es EN QUÉ ENVASE está armando —chica o grande—, y eso lo
+    dice `envases.nombre` ("Caja Chica Día", "Caja Grande Día"), no el
+    código con el que el cliente nombra su producto ("TOM RED 1° E"), que
+    solo le repite el artículo que ya eligió.
+
+    NO es `_nombre_de_caja` (el del Remanente): ese contesta "qué pila es
+    ésta" y va con el artículo adelante. Éste contesta "en qué caja estoy
+    armando". Misma materia prima, dos preguntas.
+
+    SIN ENVASE ES "ENVASE PERDIDO", NO UN DATO QUE FALTA. La mercadería
+    sale en el envase del proveedor y no vuelve, así que no hay caja
+    nuestra que nombrar — y es el caso de la MAYORÍA de la fruta, no una
+    excepción. El resto del sistema ya lo trataba así desde antes: el
+    formulario de la ficha ofrece "Sin envase (perdido)", `_validar_envase`
+    dice "opcional: 'sin envase' es válido", y el costeo le pone
+    SIN_ENVASE = 0 porque no compramos ninguna caja para eso.
+    """
+    envase = (ficha.get("envase_nombre") or "").strip()
+    sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+    kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+              if ficha.get("contenido_caja") else "")
+    nombre = envase or "Envase perdido"
+    return f"{nombre} — {kilaje}" if kilaje else nombre
+
+
+def _desambiguar_cajas(fichas: list[dict], etiquetas: dict) -> dict:
+    """Le agrega el código del cliente SOLO a las etiquetas que se repiten.
+
+    Dos fichas del mismo artículo pueden caer en el mismo texto: mismo
+    envase y mismo kilaje, o las dos con el envase perdido y el mismo
+    kilaje ("Envase perdido — 18 kg" y "Envase perdido — 18 kg"). Ahí el
+    código del cliente es lo ÚNICO que las distingue, y elegir mal manda
+    las cajas a la ficha equivocada — un error que después nadie ve.
+
+    Se agrega solo donde choca: el caso normal queda limpio.
+    """
+    cuantas = Counter(etiquetas.values())
+    return {
+        ficha["id"]: (
+            etiquetas[ficha["id"]] if cuantas[etiquetas[ficha["id"]]] == 1
+            else f"{etiquetas[ficha['id']]} ({_nombre_de_ficha(ficha)})"
+        )
+        for ficha in fichas
+    }
+
+
 def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
     """Las fichas elegibles al cargar una guía R, por "cliente_id:articulo_id".
 
@@ -7614,21 +7861,32 @@ def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
 
     Una consulta sola (todas las fichas), no una por cliente.
     """
-    por_clave: dict[str, list[dict]] = {}
+    fichas_por_clave: dict[str, list[dict]] = {}
     for ficha in listar_fichas_de_todos_los_clientes():
         clave = f"{ficha['cliente_id']}:{ficha['articulo_id']}"
-        # El kilaje viaja con la ficha para que, una vez elegida, la ayuda
-        # muestre EL DE ESA CAJA. Antes tenía que nombrarlas a todas y
-        # pedirle al operario que se fijara cuál estaba armando: no había
-        # forma de saberlo, porque la guía R no guardaba la ficha.
-        sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
-        kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
-                  if ficha.get("contenido_caja") else "")
-        por_clave.setdefault(clave, []).append(
-            {"id": ficha["id"], "nombre": _nombre_de_ficha(ficha), "kilaje": kilaje}
+        fichas_por_clave.setdefault(clave, []).append(ficha)
+
+    por_clave: dict[str, list[dict]] = {}
+    for clave, del_grupo in fichas_por_clave.items():
+        # Acá el cliente YA está elegido, así que no se antepone nunca: lo
+        # único que puede hacer falta es el código, y solo si dos etiquetas
+        # chocan dentro de este mismo grupo.
+        etiquetas = _desambiguar_cajas(
+            del_grupo, {f["id"]: _caja_para_elegir(f) for f in del_grupo}
         )
+        for ficha in del_grupo:
+            # El kilaje viaja con la ficha para que, una vez elegida, la ayuda
+            # muestre EL DE ESA CAJA. Antes tenía que nombrarlas a todas y
+            # pedirle al operario que se fijara cuál estaba armando: no había
+            # forma de saberlo, porque la guía R no guardaba la ficha.
+            sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+            kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+                      if ficha.get("contenido_caja") else "")
+            por_clave.setdefault(clave, []).append(
+                {"id": ficha["id"], "nombre": etiquetas[ficha["id"]], "kilaje": kilaje}
+            )
     for fichas in por_clave.values():
-        fichas.sort(key=lambda f: f["nombre"])
+        fichas.sort(key=lambda f: _clave_alfabetica(f["nombre"]))
     return por_clave
 
 
@@ -7703,7 +7961,7 @@ def _desglose_para_pantalla(lotes: list[dict]) -> list[dict]:
 
 
 def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=None, error=None,
-                                   freno=None, status_code: int = 200):
+                                   freno=None, advertencia=None, status_code: int = 200):
     try:
         # El selector lista los artículos que se pueden reprocesar, POR
         # NOMBRE y SIN cantidades: saber que "hay tomate" no es un número
@@ -7716,6 +7974,10 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         clientes = listar_clientes()
         ayudas = _ayudas_ficha_por_cliente_y_articulo()
         fichas_elegibles = _fichas_por_cliente_y_articulo()
+        # El piso del selector de fecha. Es COMODIDAD, no la regla: la
+        # regla vive en crear_reproceso y es la que rechaza. Acá solo
+        # evita que el operario elija una fecha que después va a rebotar.
+        corte = fecha_corte()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -7726,9 +7988,11 @@ def _renderizar_pantalla_reproceso(request: Request, *, precarga=None, aviso=Non
         "fichas_elegibles": fichas_elegibles,
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
+        "corte": corte.isoformat(),
         "aviso": aviso,
         "error": error,
         "freno": freno,
+        "advertencia": advertencia,
     }
     return templates.TemplateResponse(request, "deposito_stock_reproceso.html", contexto, status_code=status_code)
 
@@ -7833,6 +8097,7 @@ def cargar_reproceso_ruta(
     fecha: str = Form(""),
     ficha_id: str = Form(""),
     reparto: str = Form(""),
+    confirmado: str = Form(""),
 ):
     """El operario declara la transformación; el server frena, reparte y congela consumos y costo.
 
@@ -7926,6 +8191,42 @@ def cargar_reproceso_ruta(
     if ficha_id.strip().isdigit():
         ficha_valor = int(ficha_id)
 
+    # EL AVISO DE LA FECHA HACIA ATRÁS, con el molde de las señas: se cuenta
+    # ANTES de escribir, la pantalla muestra el número y pide el segundo
+    # toque. Va antes del freno a propósito — si la fecha está mal, que la
+    # corrija antes de pelearse con el stock de un día que no es el suyo.
+    #
+    # Solo con fecha anterior a hoy: con la de hoy no hay ninguna guía R
+    # posterior, así que no hay nada que avisar y el camino normal no se
+    # paga un toque de más.
+    #
+    # Acá NO se pregunta si la fecha cae antes del corte, aunque en ese caso
+    # el aviso salga primero y el piso recién en el segundo toque. Repetir
+    # `fecha < fecha_corte()` en la ruta sería escribir la regla dos veces, y
+    # esa es la que ya nos costó cuatro veces. El `min=` del selector hace
+    # que ese caso no exista por la pantalla, y por POST a mano son dos
+    # carteles ciertos y nada escrito. Si algún día molesta, la salida es
+    # mover el aviso adentro de crear_reproceso, no copiar el piso acá.
+    if fecha_valor < _hoy_argentina() and confirmado != "1":
+        try:
+            afectadas = contar_guias_r_afectadas_por_fecha(articulo["id"], fecha_valor)
+        except Exception as error_db:
+            return _renderizar_pantalla_reproceso(
+                request, precarga=precarga,
+                error=f"No se pudo revisar la fecha: {error_db}", status_code=500,
+            )
+        if afectadas:
+            return _renderizar_pantalla_reproceso(
+                request,
+                precarga=precarga,
+                advertencia={
+                    "cantidad": afectadas,
+                    "articulo": articulo["nombre"],
+                    "fecha": fecha_valor.strftime("%d/%m/%Y"),
+                },
+                status_code=200,
+            )
+
     try:
         numero_guia = crear_reproceso(
             articulo["id"], tomados_valor, primera_valor, segunda_valor, merma_valor, fecha_valor,
@@ -7945,6 +8246,21 @@ def cargar_reproceso_ruta(
                 "disponible": _formatear_numero(freno.disponible),
                 "lotes": _desglose_para_pantalla(freno.lotes),
             },
+            status_code=400,
+        )
+    except ReprocesoAnteriorAlCorte as anterior:
+        # EL PISO. No hay "guardar igual": antes del corte el FIFO nuevo no
+        # rige, así que la guía no tendría contra qué medirse. Se dice la
+        # fecha con todas las letras para que no haya que adivinarla.
+        return _renderizar_pantalla_reproceso(
+            request,
+            precarga=precarga,
+            error=(
+                f"La fecha no puede ser anterior al {anterior.corte.strftime('%d/%m/%Y')}: "
+                "es el corte desde el que rige el stock nuevo, y antes de esa fecha no hay "
+                "lotes contra los que medir el reproceso. Si de verdad fue antes, avisale a "
+                "Administración."
+            ),
             status_code=400,
         )
     except RepartoDesactualizado as desactualizado:
@@ -8044,8 +8360,30 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
     try:
         guias = listar_reprocesos_por_rango(desde, hasta)
+        # Las que no se van a poder cerrar NUNCA. Van acá y no en el banner:
+        # no hay nada que hacer con ellas, y una alerta que no baja enseña a
+        # ignorar las que sí bajan. El número igual se mira, y es del total
+        # vigente, no del rango: si estuviera acotado al rango, correr las
+        # fechas lo haría subir y bajar como si algo se hubiera arreglado.
+        sin_costo_posible = contar_reprocesos_sin_costo_posible()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # Por guía: ¿"Completar costo" tiene algo que hacer acá? Sí solo si TODO lo
+    # que falta viene de compras, que son las únicas que pueden traer precio
+    # después. Es la misma partición que separa las dos consultas de arriba,
+    # y se calcula acá sobre los consumos que la pantalla ya trajo — no vale
+    # una tercera consulta, ni una tercera versión de la regla.
+    for guia in guias:
+        faltantes = [c for c in guia["consumos"] if c["costo_por_bulto"] is None]
+        guia["costo_completable"] = (
+            guia["costo_total"] is None
+            and bool(faltantes)
+            and all(c["origen"] == "compra" for c in faltantes)
+        )
+        guia["origenes_sin_costo_posible"] = sorted(
+            {c["origen"] for c in faltantes if c["origen"] != "compra"}
+        )
 
     # El detalle del cruce por guía: "N bultos salieron en pedidos de X".
     cruces_por_guia: dict = {}
@@ -8056,34 +8394,21 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
         )
 
     # Para completar la ficha de una guía sin asignar: las fichas de ESE
-    # artículo, cualquiera sea el cliente. Dos consultas: las fichas y los
-    # nombres de los clientes.
-    #
-    # El nombre del cliente NO viene con la ficha —
-    # listar_fichas_de_todos_los_clientes trae cliente_id y nada más— y
-    # leerlo de ahí tiraba la pantalla entera con un KeyError apenas
-    # hubiera una ficha cargada. Se resuelve con el mismo mapa que ya usan
-    # las otras pantallas que necesitan el nombre.
+    # artículo, cualquiera sea el cliente. Sale del MISMO armador que Stock
+    # Físico y Stock Inicial —`_cajas_para_elegir_por_articulo`— y no de una
+    # copia: las tres eligen por artículo y las tres necesitan leer en qué
+    # caja, no el código con el que el cliente nombra su producto.
     try:
-        nombres_clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
-        fichas = listar_fichas_de_todos_los_clientes()
+        fichas_por_articulo = _cajas_para_elegir_por_articulo()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    fichas_por_articulo: dict = {}
-    for ficha in fichas:
-        cliente = nombres_clientes.get(ficha["cliente_id"], "cliente sin nombre")
-        fichas_por_articulo.setdefault(ficha["articulo_id"], []).append(
-            {"id": ficha["id"], "nombre": f"{_nombre_de_ficha(ficha)} ({cliente})"}
-        )
-    for fichas in fichas_por_articulo.values():
-        fichas.sort(key=lambda f: f["nombre"])
 
     return templates.TemplateResponse(
         request,
         "deposito_stock_guias_r.html",
         {
             "guias": guias,
+            "sin_costo_posible": sin_costo_posible,
             "cruces_por_guia": cruces_por_guia,
             "fichas_por_articulo": fichas_por_articulo,
             "fecha_desde": desde.isoformat(),
@@ -8130,7 +8455,7 @@ def _renderizar_pantalla_remito_segunda(request: Request, *, precarga=None, avis
         # mismo criterio que el reproceso — el pool no viaja a la pantalla.
         con_segunda = [
             {"id": f["articulo_id"], "nombre": f["nombre"]}
-            for f in stock_deposito_por_articulo()
+            for f in stock_deposito_por_articulo(_hoy_argentina())
             if f["segunda"] > 0
         ]
     except Exception as error_db:
@@ -8162,7 +8487,7 @@ def cargar_remito_segunda_ruta(
 
     Pantalla de OPERARIO: el aviso repite solo lo cargado. No traba si
     remite más de lo que el pool dice — el piso es su verdad; el pool en
-    negativo se ve en Stock del Sistema.
+    negativo se ve en el Remanente (Administración).
     """
     error, cantidad_valor = _validar_bultos_positivos(cantidad, "remitidos")
 
@@ -8225,7 +8550,7 @@ def completar_costo_reproceso_ruta(
         aviso = (
             f"La guía R{reproceso_id} sigue con costo incompleto: {resultado['sin_precio']} "
             f"{'consumo' if resultado['sin_precio'] == 1 else 'consumos'} sin precio posible "
-            f"(compra sin precio aún, stock inicial, reingreso o sin lote)."
+            f"(compra sin precio aún, stock inicial, reingreso, el compensatorio del corte, o sin lote)."
         )
     return RedirectResponse(
         url=f"/administracion/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta, 'aviso': aviso})}",
@@ -8392,20 +8717,30 @@ ALERTAS = [
         # Salió más de lo que entró: salidas sin lote que un reproceso o un
         # ajuste tienen que explicar — o alguien sacó de más.
         titulo="Stock de depósito en negativo (salidas sin explicar)",
-        url="/administracion/stock/sistema",
-        texto_link="Ver en Stock del Sistema del Depósito",
-        # El banner va donde está la pantalla: Stock del Sistema se mudó
-        # a Administración, así que avisar en Depósito mandaría al
-        # operario a un módulo que ya no es suyo.
+        url="/administracion/stock/remanente",
+        texto_link="Ver en el Remanente",
+        # Apuntaba a Stock del Sistema, que se borró el 06/09. Va al
+        # Remanente, que es donde quedaron los negativos, en su sección
+        # aparte. NO va al Cotejo: ahí solo aparece lo que se contó, así que
+        # un artículo en negativo que nadie contó no se ve — y mandar a
+        # mirar donde el problema no está ya nos costó una vez.
+        #
+        # El banner sigue solo en Administración: avisar en Depósito
+        # mandaría al operario a un módulo que ya no es suyo.
         modulos=("administracion",),
         contar=lambda: contar_stock_deposito_negativo(),
     ),
     DefinicionAlerta(
         codigo="guias_r_costo_incompleto",
-        # Sin costo cerrado no hay rentabilidad real de ese reproceso: o falta
-        # el precio de una compra ("Completar costo" lo arregla), o consumió
-        # stock inicial/reingreso/sin lote.
-        titulo="Guías R con costo incompleto",
+        # Sin costo cerrado no hay rentabilidad real de ese reproceso. Cuenta
+        # SOLO las que esperan el precio de una compra, que es lo que alguien
+        # puede ir a cargar. Las que consumieron un lote sin precio POSIBLE
+        # (stock inicial, reingreso, el compensatorio del corte) no son una
+        # alerta: nadie las puede cerrar, así que el número no bajaría nunca y
+        # el resto de las alertas se aprendería a ignorar con él. Se ven en la
+        # pantalla de Guías R, y cada salida suya en el "afuera del cálculo".
+        titulo="Guías R esperando el precio de una compra",
+        titulo_corto="Guías R esperando precio",
         url="/administracion/stock/guias-r",
         # A los dos: se arregla cargando el precio de una compra que falta
         # (eso es Compras), pero el que cargó el reproceso es el que puede
@@ -8465,7 +8800,12 @@ ALERTAS = [
         titulo_corto="Pedidos incompletos",
         url="/deposito/pedido",
         texto_link="Ver en Pedido",
-        modulos=("deposito",),
+        # A LOS DOS. El depósito la ve porque es el que armó de menos; el
+        # comprador porque puede ser la causa —si se entregó de menos puede
+        # ser que se haya comprado de menos— y es el único que lo puede
+        # corregir, comprando mañana. Es la MISMA alerta y la MISMA cuenta:
+        # `modulos` decide en qué cintas aparece, no cuántas veces se calcula.
+        modulos=("deposito", "compras"),
         # CON ventana, al revés que las compras sin precio: un pedido que ya
         # salió incompleto no se puede completar después. Sin ventana quedaría
         # en la lista para siempre, sin forma de resolverlo ni limpiarlo.
@@ -9662,6 +10002,21 @@ def _tipos_envase_y_proveedores():
     return tipos, proveedores
 
 
+# El mismo texto en las dos puertas: si dijeran cosas distintas, el día que
+# cambie el circuito una quedaría vieja. Dice QUÉ pasó y QUÉ hacer, porque el
+# que lo lee tiene el cajón adelante y necesita salir de ahí.
+_TEXTO_SENA_YA_COBRADA = {
+    "pagada": ("No se puede anular: la seña de esta entrada YA SE PAGÓ. La plata salió de "
+               "la caja, así que borrar la entrada dejaría los cajones fuera del stock y el "
+               "pago sin respaldo. Si la entrada está mal, avisá a la cajera: se corrige "
+               "desde Ajustar Stock, con motivo."),
+    "vale": ("No se puede anular: esta entrada YA TIENE UN VALE EMITIDO. El vale es plata "
+             "comprometida, así que borrar la entrada dejaría los cajones fuera del stock y "
+             "el vale sin respaldo. Si la entrada está mal, avisá a la cajera: se corrige "
+             "desde Ajustar Stock, con motivo."),
+}
+
+
 def _renderizar_pantalla_recibir_vacios(request: Request, *, error=None, aviso=None, status_code: int = 200):
     try:
         tipos, proveedores = _tipos_envase_y_proveedores()
@@ -9756,6 +10111,10 @@ def anular_vacio_recibido_ruta(request: Request, movimiento_id: int):
     """Anula una entrada desde la lista "Recibido hoy" (error del momento). Baja lógica, nunca DELETE."""
     try:
         anular_vacio_recibido(movimiento_id)
+    except SenaYaCobrada as cobrada:
+        return _renderizar_pantalla_recibir_vacios(
+            request, error=_TEXTO_SENA_YA_COBRADA[cobrada.cierre], status_code=409
+        )
     except Exception as error_db:
         return _renderizar_pantalla_recibir_vacios(
             request, error=f"No se pudo anular el movimiento: {error_db}", status_code=500
@@ -10478,8 +10837,54 @@ def anular_recibido_desde_movimientos_ruta(
         return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
     try:
         anular_vacio_recibido(movimiento_id)
+    except SenaYaCobrada as cobrada:
+        # También acá, y no solo en la pantalla del operario: la regla es de
+        # la PLATA, no de quién la toca. Tener la clave de control no hace que
+        # el pago vuelva a la caja.
+        raise HTTPException(status_code=409, detail=_TEXTO_SENA_YA_COBRADA[cobrada.cierre]) from cobrada
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
+    return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
+
+
+_TEXTO_VALE_NO_CADUCABLE = {
+    "sin_vale": "Esa entrada no tiene un vale emitido, así que no hay vale que dar por no cobrado.",
+    "ya_caducado": "Ese vale ya estaba dado por no cobrado.",
+    "anulada": ("Esa entrada está anulada, así que sus cajones ya no están en el stock. "
+                "Dar el vale por no cobrado sirve justamente para lo contrario: cuando los "
+                "cajones SÍ están."),
+}
+
+
+@app.post("/puesto/envases/movimientos/recibidos/{movimiento_id}/vale-no-cobrado")
+def dar_vale_por_no_cobrado_ruta(
+    request: Request, movimiento_id: int, motivo: str = Form(""),
+    fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
+):
+    """El cliente dejó los cajones y no volvió a cobrar: se cancela lo que se le debe.
+
+    NO toca el stock, y esa es toda la diferencia con anular la entrada: los
+    cajones están en el galpón. Son dos hechos distintos que hasta hoy
+    compartían un solo botón.
+
+    Solo de la cajera y detrás de la clave de control: dar de baja una deuda
+    de meses es una decisión de plata, no una corrección del momento.
+    """
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
+    try:
+        caducar_vale(movimiento_id, motivo)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Hace falta escribir por qué se da por no cobrado: es el único rastro que queda.",
+        ) from None
+    except ValeNoCaducable as no_caducable:
+        raise HTTPException(
+            status_code=409, detail=_TEXTO_VALE_NO_CADUCABLE[no_caducable.motivo_tecnico]
+        ) from no_caducable
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo registrar: {error_db}") from error_db
     return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
 
 
@@ -12219,9 +12624,19 @@ def armar_renglon_pedido_ruta(
         if cantidad_armada_valor <= 0:
             raise HTTPException(status_code=400, detail="La cantidad armada tiene que ser mayor a cero.")
         pedida = _numero_pedido_o_none(cantidad_pedida)
-        # Armó todo (o más): es un armado completo — el número redundante
-        # no se guarda, para que "incompleto" signifique siempre "menos".
-        if pedida is not None and cantidad_armada_valor >= pedida:
+        # NULL significa "armó EXACTAMENTE lo pedido", y por eso el número
+        # redundante no se guarda. Todo lo demás sí, y eso incluye armar de
+        # MÁS: hasta el 05/09 un 80 sobre 50 se guardaba como NULL —o sea
+        # 50— y los 30 de más salían del galpón sin quedar en ningún lado:
+        # ni en el stock, ni en la factura, ni en una pantalla.
+        #
+        # El camión ya salió con 80. Negar el registro no des-entrega la
+        # mercadería. Es la inversa del freno del reproceso, y a propósito:
+        # allá se traba porque se congela un costo que no se corrige nunca;
+        # acá no se congela nada y el hecho ya ocurrió.
+        #
+        # Queda entonces: NULL = exacto, < = incompleto, > = armó de más.
+        if pedida is not None and cantidad_armada_valor == pedida:
             cantidad_armada_valor = None
 
     kilos_valor = None

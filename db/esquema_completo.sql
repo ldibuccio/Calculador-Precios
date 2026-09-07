@@ -442,14 +442,24 @@ create table vacios_recibidos (
     anulado_el         timestamptz,
     sena_vale_el       timestamptz,
     sena_anulada_el    timestamptz,
+    sena_vale_caducado_el     timestamptz,
+    sena_vale_caducado_motivo text,
     constraint vacios_recibidos_un_solo_cierre_de_sena
-        check (num_nonnulls(sena_pagada_el, sena_vale_el, sena_anulada_el) <= 1)
+        check (num_nonnulls(sena_pagada_el, sena_vale_el, sena_anulada_el) <= 1),
+    -- El vale dado por no cobrado NO entra en el conteo de arriba a propósito:
+    -- convive con sena_vale_el porque el vale existió, y meterlo ahí dejaría
+    -- num_nonnulls = 2, que es justo lo que listar_senas_resueltas descarta.
+    constraint vacios_recibidos_caducado_solo_con_vale
+        check (sena_vale_caducado_el is null
+               or (sena_vale_el is not null and btrim(sena_vale_caducado_motivo) <> ''))
 );
 
 comment on table vacios_recibidos is 'Entrada: un cliente trae cajones vacíos al puesto. La seña se le devuelve después (ver sena_pagada_el/sena_vale_el/sena_anulada_el).';
 comment on column vacios_recibidos.sena_pagada_el is 'La seña se le pagó al cliente (fecha). Uno de los tres cierres posibles del pendiente de pago; los otros dos son sena_vale_el y sena_anulada_el. NULL en los tres = seña pendiente.';
 comment on column vacios_recibidos.sena_vale_el is 'El pendiente se cerró con un vale (fecha). Por ahora es solo el dato "se hizo vale" — sin numeración, cobro ni vencimiento.';
 comment on column vacios_recibidos.sena_anulada_el is 'La seña se anuló: no se paga, decidido (fecha). NO anula el movimiento — los cajones entraron y siguen en el stock; para una entrada errónea está el Anular de Movimientos.';
+comment on column vacios_recibidos.sena_vale_caducado_el is 'El vale se dio por NO COBRADO (fecha). NO borra sena_vale_el: los dos conviven a propósito, porque el vale existió y el papel puede aparecer. Decisión de administración, desde Movimientos y detrás de la clave de control. NO toca el stock: los cajones están en el galpón. Un vale sin esta fecha sigue vivo, aunque tenga meses.';
+comment on column vacios_recibidos.sena_vale_caducado_motivo is 'Por qué se dio por no cobrado. Obligatorio (lo garantiza el check vacios_recibidos_caducado_solo_con_vale): el sistema no guarda QUIÉN lo hizo —no hay login— así que este texto es el único rastro del porqué. Se escribe pensando en el que lo lea en seis meses.';
 comment on column vacios_recibidos.anulado_el is 'NULL = movimiento vigente. Los movimientos nunca se borran físicamente: anular deja el registro visible como corrección y el stock lo excluye.';
 
 create table vacios_devueltos (
@@ -933,7 +943,7 @@ create table reprocesos_consumos (
     id bigint generated always as identity primary key,
     reproceso_id bigint not null references reprocesos (id),
     origen text not null check (origen in ('compra', 'ajuste', 'reingreso_rechazo', 'reproceso',
-                                          'stock_inicial', 'sin_lote')),
+                                          'stock_inicial', 'sin_lote', 'cierre_modelo_viejo')),
     compra_id bigint references compras (id),
     origen_id bigint,
     bultos numeric not null check (bultos > 0),
@@ -945,7 +955,7 @@ create table reprocesos_consumos (
 comment on table reprocesos_consumos is
     'De qué lote salió cada bulto tomado, escrito por el server al cargar: propone el FIFO y el operario puede corregirlo dentro de lo que hay de cada lote (reprocesos.consumos_editados dice si lo corrigió). Documento congelado: si después se corrige una recepción, el stock vivo se reacomoda pero esta trazabilidad y su costo no se mueven.';
 comment on column reprocesos_consumos.origen is
-    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), o sin_lote. sin_lote YA NO SE ESCRIBE: desde el 02/09 el freno no deja cargar una guía R que los lotes no cubran, porque ese consumo congelaba un costo incompleto para siempre. El valor queda en el check por las guías viejas que lo tienen.';
+    'compra (lote de guía de compra), ajuste (ej. stock inicial), reingreso_rechazo, reproceso (primera de otra guía R), cierre_modelo_viejo (el lote que el compensatorio positivo del corte le crea a un artículo que estaba en negativo: mercadería que no existe y sin costo posible), o sin_lote. sin_lote YA NO SE ESCRIBE: desde el 02/09 el freno no deja cargar una guía R que los lotes no cubran, porque ese consumo congelaba un costo incompleto para siempre. El valor queda en el check por las guías viejas que lo tienen.';
 
 -- El respaldo de las fichas que el corte del modelo pone en NULL.
 -- Al cortar, las guías R pre-corte con ficha asignada dejan de contar POR

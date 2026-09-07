@@ -25,7 +25,6 @@ from app.main import (
     _armar_renglones_pedido_desde_bloque,
     _ayudas_ficha_por_cliente_y_articulo,
     _nombre_de_ficha,
-    _tamanos_de_caja_por_ficha,
     app,
 )
 
@@ -132,22 +131,89 @@ def test_con_una_sola_ficha_la_ayuda_queda_como_siempre():
     assert ayudas["1:1"] == "6 kg por caja, según la ficha de Día."
 
 
-def test_el_tamano_de_caja_del_stock_muestra_los_dos_posibles():
-    # Las fichas se piden TODAS de una (antes iba cliente por cliente):
-    # el cliente de cada una sale de la propia ficha.
-    with patch("app.main.listar_fichas_de_todos_los_clientes", return_value=DOS_FICHAS):
-        tamanos = _tamanos_de_caja_por_ficha()
+def test_la_caja_a_elegir_dice_EL_ENVASE_no_el_codigo_del_cliente():
+    """El operario ya eligió cliente y artículo dos campos arriba. "TOM RED 1° E"
+    le repite el artículo; lo que le falta saber es en qué envase arma."""
+    from app.main import _caja_para_elegir
 
-    assert tamanos["1:1"] == "6 kg o 10 kg"
+    ficha = {"nombre_cliente": "TOM RED 1° E", "envase_nombre": "Caja Grande Día",
+             "contenido_caja": 16, "unidad_venta": "kilo", "articulo_nombre": "Tomate Redondo"}
+
+    assert _caja_para_elegir(ficha) == "Caja Grande Día — 16 kg"
+    assert "TOM RED" not in _caja_para_elegir(ficha)
 
 
-def test_dos_fichas_del_mismo_kilaje_no_repiten_el_tamano():
-    mismo_kilaje = [BANANA_BOLIVIA, {**BANANA_ECUADOR, "contenido_caja": 6}]
-    with patch("app.main.listar_fichas_de_todos_los_clientes", return_value=mismo_kilaje):
-        tamanos = _tamanos_de_caja_por_ficha()
+def test_SIN_ENVASE_es_ENVASE_PERDIDO_y_no_un_dato_que_falta():
+    """La mercadería sale en el envase del proveedor y no vuelve. Es el caso de
+    la MAYORÍA de la fruta, no una excepción, y el resto del sistema ya lo
+    trataba así: el formulario ofrece "Sin envase (perdido)", `_validar_envase`
+    dice que es válido y el costeo le pone SIN_ENVASE = 0.
 
-    # No hay ambigüedad que mostrar: las dos cajas son de 6 kg.
-    assert tamanos["1:1"] == "6 kg"
+    Un "⚠ falta cargar el envase" acá le pedía al operario que cargara algo que
+    no existe, en 17 fichas.
+    """
+    from app.main import _caja_para_elegir
+
+    perdido = {"nombre_cliente": "MANZANA GOB", "envase_nombre": None,
+               "contenido_caja": 20, "unidad_venta": "kilo", "articulo_nombre": "Mzn Gob"}
+
+    assert _caja_para_elegir(perdido) == "Envase perdido — 20 kg"
+    assert "falta" not in _caja_para_elegir(perdido)
+    assert "⚠" not in _caja_para_elegir(perdido)
+    # Sin kilaje tampoco, sigue sin ser una advertencia.
+    assert _caja_para_elegir(dict(perdido, contenido_caja=None)) == "Envase perdido"
+
+
+def test_el_codigo_del_cliente_aparece_SOLO_donde_dos_etiquetas_chocan():
+    """Dos fichas del mismo artículo pueden caer en el mismo texto —las dos con
+    el envase perdido y el mismo kilaje— y ahí el código es lo único que las
+    distingue. Elegir mal manda las cajas a la ficha equivocada."""
+    from app.main import _cajas_para_elegir_por_articulo
+
+    chocan = [
+        {"id": 10, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Banana",
+         "nombre_cliente": "Banana Bolivia", "envase_nombre": None,
+         "contenido_caja": 18, "unidad_venta": "kilo"},
+        {"id": 11, "cliente_id": 1, "articulo_id": 7, "articulo_nombre": "Banana",
+         "nombre_cliente": "Banana Ecuador", "envase_nombre": None,
+         "contenido_caja": 18, "unidad_venta": "kilo"},
+    ]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=chocan),
+    ):
+        nombres = sorted(c["nombre"] for c in _cajas_para_elegir_por_articulo()[7])
+
+    assert nombres == ["Envase perdido — 18 kg (Banana Bolivia)",
+                       "Envase perdido — 18 kg (Banana Ecuador)"]
+
+    # Y con kilajes distintos NO hace falta: el caso normal queda limpio.
+    distintos = [chocan[0], dict(chocan[1], contenido_caja=10)]
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTE_DIA),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=distintos),
+    ):
+        nombres = sorted(c["nombre"] for c in _cajas_para_elegir_por_articulo()[7])
+
+    assert nombres == ["Envase perdido — 10 kg", "Envase perdido — 18 kg"]
+
+
+def test_un_envase_sin_kilaje_igual_se_nombra():
+    from app.main import _caja_para_elegir
+
+    ficha = {"nombre_cliente": "X", "envase_nombre": "Caja Chica Día",
+             "contenido_caja": None, "unidad_venta": "kilo", "articulo_nombre": "Perita"}
+
+    assert _caja_para_elegir(ficha) == "Caja Chica Día"
+
+
+# Acá vivían los dos tests de `_tamanos_de_caja_por_ficha` ("6 kg o 10 kg"
+# cuando la guía R no decía con qué ficha se armó). La función se borró el
+# 06/09 junto con Stock del Sistema, que era su único lector: la ambigüedad
+# existía porque esa pantalla desglosaba POR GUÍA R, y una guía R no guarda la
+# ficha. El Remanente lista POR FICHA —cada una es su propio renglón, con su
+# nombre— así que no hay dos tamaños posibles que mostrar. No es una prueba
+# que se perdió: es un caso que dejó de existir.
 
 
 # --- las pantallas ---

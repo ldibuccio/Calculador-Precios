@@ -2155,6 +2155,7 @@ def test_crear_vacio_devuelto_graba_el_stock_del_sistema_en_la_fila():
 
 def test_anular_vacio_recibido_es_baja_logica_no_delete():
     conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         anular_vacio_recibido(5)
@@ -2165,6 +2166,63 @@ def test_anular_vacio_recibido_es_baja_logica_no_delete():
     # Solo si estaba vigente: anular dos veces no pisa la fecha original.
     assert "anulado_el IS NULL" in consulta
     assert parametros == (5,)
+
+
+def test_anular_vacio_recibido_NO_deja_si_la_sena_ya_se_pago_o_hay_vale():
+    """El agujero del 07/09: la plata ya salió de la caja y los cajones
+    volvían a salir del stock, sin que ninguna pantalla lo mostrara — la fila
+    desaparece de las dos listas de Señas, que filtran anulado_el IS NULL.
+
+    La condición va DENTRO del UPDATE: entre un "¿está pagada?" y el UPDATE
+    puede entrar el pago.
+    """
+    from app.db import SenaYaCobrada
+
+    for pagada, vale, esperado in ((True, False, "pagada"), (False, True, "vale")):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(pagada, vale)])
+        cursor.rowcount = 0
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(SenaYaCobrada) as levantada:
+                anular_vacio_recibido(74)
+
+        assert levantada.value.cierre == esperado
+        consulta = cursor.execute.call_args_list[0].args[0]
+        assert "sena_pagada_el IS NULL AND sena_vale_el IS NULL" in consulta
+        # `sena_anulada_el` NO entra: ahí se decidió no pagar, no hay plata.
+        assert "sena_anulada_el" not in consulta
+        # Y no se escribió nada.
+        conexion.commit.assert_not_called()
+
+
+def test_anular_una_YA_ANULADA_no_es_error():
+    """Anular dos veces da el mismo resultado. Solo se levanta si hay plata."""
+    from app.db import SenaYaCobrada
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None])
+    cursor.rowcount = 0
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            anular_vacio_recibido(5)
+        except SenaYaCobrada:
+            pytest.fail("una entrada ya anulada no puede levantar SenaYaCobrada")
+    conexion.commit.assert_called_once()
+
+
+def test_el_listado_de_recibidos_TRAE_el_estado_de_la_sena():
+    """Para que la pantalla no ofrezca un botón que el server va a rechazar:
+    ofrecido y prohibido es lo peor de los dos mundos."""
+    from app.db import listar_vacios_recibidos_por_rango
+
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_vacios_recibidos_por_rango(date(2026, 9, 7), date(2026, 9, 7))
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "v.sena_pagada_el" in consulta and "v.sena_vale_el" in consulta
 
 
 def test_stock_vacios_excluye_anulados_y_calcula_la_diferencia():
@@ -2832,8 +2890,83 @@ def test_listar_senas_resueltas_trae_el_tipo_de_cierre_y_su_fecha():
     assert "'anulada'" in consulta
     assert "AS cierre" in consulta
     assert "AS cerrada_el" in consulta
-    # Ordenado por la fecha del cierre, el más reciente primero.
-    assert "ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC" in consulta
+    # Ordenado por el ÚLTIMO hecho, el más reciente primero. El caducado va
+    # primero en el coalesce: un vale de marzo dado de baja hoy tiene que
+    # aparecer arriba, no perdido en marzo.
+    assert ("ORDER BY COALESCE(v.sena_vale_caducado_el, v.sena_pagada_el,\n"
+            "                                  v.sena_vale_el, v.sena_anulada_el) DESC") in consulta
+
+
+def test_el_historial_distingue_el_vale_VIVO_del_dado_por_NO_COBRADO():
+    """La diferencia es si todavía se le debe la plata, así que no pueden
+    mostrarse igual. Y el caducado se evalúa ANTES que el vale en el CASE:
+    los dos timestamps conviven, y el que manda es el último."""
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_senas_resueltas()
+
+    consulta = " ".join(cursor.execute.call_args[0][0].split())
+    assert "'vale_caducado'" in consulta
+    assert consulta.index("'vale_caducado'") < consulta.index("THEN 'vale'")
+    # Y trae las dos fechas y el motivo, que es lo que se lee a los seis meses.
+    assert "v.sena_vale_el," in consulta
+    assert "v.sena_vale_caducado_el, v.sena_vale_caducado_motivo" in consulta
+
+
+def test_caducar_vale_NO_borra_el_vale_y_exige_motivo():
+    """Las dos fechas conviven a propósito: el vale existió y el papel puede
+    aparecer. Taparlo con "anulada" perdería justo el dato que administración
+    necesita ese día."""
+    from app.db import caducar_vale
+
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        caducar_vale(74, "  el cliente no volvió desde septiembre  ")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET sena_vale_caducado_el = now()" in consulta
+    # NO toca sena_vale_el ni el stock.
+    assert "sena_vale_el = NULL" not in consulta
+    assert "anulado_el = now()" not in consulta
+    # Solo sobre un vale vivo y una entrada vigente.
+    assert "sena_vale_el IS NOT NULL AND sena_vale_caducado_el IS NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    # El motivo va limpio de espacios.
+    assert parametros == ("el cliente no volvió desde septiembre", 74)
+
+
+def test_caducar_vale_sin_motivo_no_escribe_nada():
+    """Como no hay login, ese texto es el único rastro del porqué."""
+    from app.db import caducar_vale
+
+    conexion, _cursor = _conexion_falsa()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        for vacio in ("", "   ", None):
+            with pytest.raises(ValueError):
+                caducar_vale(74, vacio)
+    conexion.commit.assert_not_called()
+
+
+def test_caducar_vale_dice_POR_QUE_no_se_pudo():
+    from app.db import ValeNoCaducable, caducar_vale
+
+    casos = (
+        ((True, False, False), "sin_vale"),
+        ((False, True, False), "ya_caducado"),
+        ((False, False, True), "anulada"),
+        (None, "sin_vale"),
+    )
+    for fila, esperado in casos:
+        conexion, cursor = _conexion_falsa(filas_fetchone=[fila])
+        cursor.rowcount = 0
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(ValeNoCaducable) as levantada:
+                caducar_vale(74, "un motivo")
+        assert levantada.value.motivo_tecnico == esperado
+        conexion.commit.assert_not_called()
 
 
 def test_listar_tipos_envase_puesto_joinea_proveedores_del_puesto():
@@ -3747,7 +3880,7 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     cursor.fetchall.return_value = [(1, "Banana", 40, 15, 2, -3, 6, 10, 5, 4, 2)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        filas = stock_deposito_por_articulo()
+        filas = stock_deposito_por_articulo(date(2026, 9, 6))
 
     consulta = cursor.execute.call_args.args[0]
     # Entradas: SOLO compras recepcionadas, con la cantidad REAL de Depósito.
@@ -3773,6 +3906,44 @@ def test_stock_deposito_se_calcula_de_las_tablas_reales_y_nunca_se_guarda():
     assert "destino_rechazo IS NULL OR destino_rechazo = 'stock'" in consulta
     assert "destino_rechazo IN ('segunda', 'reproceso')" in consulta
     assert "SUM(bultos_segunda)" in consulta
+
+
+def test_el_pool_de_segunda_arranca_en_el_CORTE_y_por_las_TRES_patas():
+    """El piso del pool de segunda, con la asimetría del día del corte.
+
+    Hasta el 05/09 esta era la única cuenta del módulo que ningún corte
+    rebaseaba, y la cola vieja se sumaba a lo contado: medido esa noche,
+    ~40 bultos en cinco artículos, con Zapallito en 23 donde había 15.
+
+    Las TRES patas o ninguna: si se recorta la producción y no los remitos,
+    un remito viejo sigue restando contra segunda que ya no cuenta y el
+    pool queda por debajo de lo que hay. No falla ruidosamente — da un
+    número equivocado y nada más.
+
+    Y la fecha sale de corte_modelo, nunca de una constante.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("articulo_id",), ("nombre",), ("entradas",), ("salidas",), ("reingresos",),
+                          ("ajustes",), ("reproceso_primera",), ("reproceso_tomados",),
+                          ("segunda_producida",), ("segunda_de_rechazos",), ("segunda_remitida",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        stock_deposito_por_articulo(date(2026, 9, 6))
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)" in consulta
+    # La producción: los 'inicial' DEL corte más lo posterior. Un `>=` a
+    # secas metería las guías R normales del día, que el conteo de esa
+    # tarde ya vio.
+    assert "fecha_operacion > corte_seg.fecha" in consulta
+    assert "tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha" in consulta
+    # Las otras dos patas, solo lo posterior.
+    trozo_rechazos = consulta.split("segunda_rechazo AS")[1].split("remitida AS")[0]
+    assert "fecha_operacion > corte_seg.fecha" in trozo_rechazos
+    trozo_remitos = consulta.split("remitida AS")[1].split("SELECT a.id")[0]
+    assert "fecha_operacion > corte_seg.fecha" in trozo_remitos
+    assert "2026" not in trozo_remitos, "la fecha de corte no se escribe a mano"
 
 
 def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resultante():
@@ -3866,7 +4037,8 @@ def test_stock_deposito_de_articulo_hace_la_misma_cuenta_por_articulo():
 
     consulta = cursor.execute.call_args.args[0]
     assert "AND articulo_id = %s" in consulta
-    assert cursor.execute.call_args.args[1] == (2, 2, 2, 2, 2)
+    # La fecha tope va PRIMERA y siempre: acá None, que el SQL lee como hoy.
+    assert cursor.execute.call_args.args[1] == (None, 2, 2, 2, 2, 2)
     assert stock == -5.0
 
 
@@ -4126,9 +4298,11 @@ def test_contar_stock_deposito_negativo_hace_la_misma_cuenta_que_el_stock():
 
 from app.db import (  # noqa: E402
     anular_reproceso,
+    contar_guias_r_afectadas_por_fecha,
     crear_reproceso,
     listar_reprocesos_por_rango,
     RepartoDesactualizado,
+    ReprocesoAnteriorAlCorte,
     StockInsuficienteParaReproceso,
 )
 
@@ -4138,6 +4312,13 @@ from app.db import (  # noqa: E402
 COLUMNAS_LOTES = [("fecha_orden",), ("momento_orden",), ("tipo_lote",), ("origen_id",),
                   ("fecha_lote",), ("detalle",), ("motivo",), ("cantidad",), ("costo_bulto",),
                   ("cliente_lote_id",), ("articulo_id",), ("renglon_id",)]
+
+
+# La fecha de corte que devuelve corte_modelo. Es la PRIMERA consulta de
+# crear_reproceso —el piso de fecha— así que encabeza la cola de fetchone.
+# Va antes que todas las fechas de estos tests a propósito: acá se prueba
+# el FIFO, no el piso (el piso tiene los suyos).
+_CORTE = (date(2026, 8, 15),)
 
 
 def _lote_compra(origen_id, fecha, cantidad, costo, articulo_id=1):
@@ -4157,10 +4338,79 @@ def _salida_fifo(fecha, cantidad, articulo_id=1):
             cantidad, None, None, articulo_id, None)
 
 
+def test_el_piso_de_fecha_NO_deja_cargar_una_guia_R_ANTES_del_corte():
+    """Antes del corte el FIFO nuevo no rige: no hay lotes contra los que medir.
+
+    Y no escribe NADA: revienta antes de la consulta de lotes, que es lo
+    más barato de descartar.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 14))
+
+    assert levantada.value.corte == date(2026, 8, 15)
+    assert levantada.value.fecha == date(2026, 8, 14)
+    conexion.commit.assert_not_called()
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
+
+
+def test_el_piso_SALE_de_corte_modelo_y_no_de_una_constante():
+    """El día del corte nuevo se cambia una fila y el piso la sigue solo.
+
+    Acá el corte es el 01/09, así que el 25/08 —que en todos los otros
+    tests entra— tiene que rebotar. Una constante clavada lo dejaría pasar.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 1),)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ReprocesoAnteriorAlCorte) as levantada:
+            crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 25))
+
+    assert levantada.value.corte == date(2026, 9, 1)
+
+
+def test_el_dia_DEL_corte_si_se_puede_cargar():
+    """El corte es el primer día del modelo nuevo, no el último del viejo.
+
+    El stock inicial se carga con esa misma fecha, así que un reproceso de
+    ese día tiene lotes contra los que medirse.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (30,)])
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(101, date(2026, 8, 15), 20.0, 1000.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero = crear_reproceso(1, 10, 8, 0, 2, date(2026, 8, 15))
+
+    assert numero == 30
+
+
+def test_contar_guias_r_afectadas_mira_de_la_fecha_INCLUSIVE_hacia_adelante():
+    """`>=` y no `>`: el recorte del reproceso toma las entradas HASTA LA
+    FECHA INCLUSIVE, así que una guía R del mismo día también se repartiría
+    contra el lote nuevo. Y solo las 'normal': la inicial produce sin
+    consumir y no tiene reparto que se le desactualice."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(3,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        assert contar_guias_r_afectadas_por_fecha(7, date(2026, 8, 31)) == 3
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "fecha_operacion >= %s" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "tipo = 'normal'" in consulta
+    assert parametros == (7, date(2026, 8, 31))
+
+
 def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # Lotes: compra 101 (8 bultos a $1000, viejo) y 102 (10 a $1200). Ya
     # salieron 5 → restos 3 y 10. Tomo 6: 3 del 101 y 3 del 102 (FIFO).
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(12,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (12,)])
     cursor.description = COLUMNAS_LOTES
     # Las dos tandas de fetchall: lotes y salidas fechadas.
     cursor.fetchall.side_effect = [
@@ -4196,7 +4446,7 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
 def test_crear_reproceso_con_lote_sin_precio_deja_el_costo_incompleto():
     # Un lote sin importe (compra de la mañana sin precio, o stock
     # inicial): NO se promedia con números inventados — costo NULL.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(13,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (13,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4222,7 +4472,7 @@ def test_el_freno_traba_lo_que_los_lotes_no_cubren_y_NO_escribe_nada():
     hay compra a la que irle a buscar el importe, porque esos bultos no
     existieron. Por eso acá —y solo acá— el depósito sí se traba.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(14,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (14,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 3.0, 1000.0)],
@@ -4250,7 +4500,7 @@ def test_el_freno_compara_contra_los_RESTANTES_no_contra_el_neto():
     compara el freno NUNCA es negativo — si mirara el neto, pedir 4 sería
     "faltan 19" y el mensaje hablaría de un agujero que no es de esta guía.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(15,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (15,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 10.0, 1000.0)],
@@ -4272,7 +4522,7 @@ def test_el_freno_NO_cuenta_las_salidas_DEL_MISMO_DIA():
     justo cuando está cargando lo que explica esa salida. Dentro de un día
     el sistema no tiene orden: guarda fechas, no horas.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(16,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (16,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 30), 44.0, 1000.0)],
@@ -4293,7 +4543,7 @@ def test_un_lote_POSTERIOR_a_la_fecha_del_reproceso_no_cuenta():
     Tomó 8 el 20/08. El lote de 10 llegó el 22/08, dos días después: no
     puede cubrir un reproceso que ya había pasado.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(17,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (17,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(102, date(2026, 8, 22), 10.0, 1200.0)],
@@ -4316,7 +4566,7 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
     consumos_editados, que es lo que después deja saber que ese reparto no
     lo eligió el sistema.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(18,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (18,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4343,7 +4593,7 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
 
 def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
     """La edición es opcional: mandar la misma propuesta no es haberla cambiado."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(19,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (19,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4366,7 +4616,7 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
 
 def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
     """Se revalida SIEMPRE en el server: entre el desglose y el Guardar el stock se mueve."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(20,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (20,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [
@@ -4391,7 +4641,7 @@ def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
 def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
     """Si lo repartido no da los bultos que declaró, no hay guía: la diferencia
     no puede caer en ningún lado —no existe el sin_lote— así que se frena."""
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(21,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE, (21,)])
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [
         [_lote_compra(101, date(2026, 8, 20), 8.0, 1000.0)],
@@ -4407,7 +4657,7 @@ def test_un_reparto_que_no_suma_lo_declarado_no_se_guarda():
 
 
 def test_anular_reproceso_es_baja_logica():
-    conexion, cursor = _conexion_falsa()
+    conexion, cursor = _conexion_falsa(filas_fetchone=[_CORTE])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         anular_reproceso(12)
@@ -4486,6 +4736,86 @@ def test_contar_reprocesos_costo_incompleto_solo_vigentes():
     consulta = cursor.execute.call_args.args[0]
     assert "anulado_el IS NULL AND costo_total IS NULL" in consulta
     assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 25)}
+
+
+def test_la_alerta_cuenta_SOLO_las_que_esperan_el_precio_de_una_compra():
+    """Una guía que consumió un lote sin precio POSIBLE no es una alerta.
+
+    Nadie la puede cerrar: el número no bajaría nunca y eso enseña a
+    ignorar el resto de las alertas.
+    """
+    from app.db import contar_reprocesos_costo_incompleto
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, date(2026, 8, 25))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_reprocesos_costo_incompleto()
+
+    consulta = " ".join(cursor.execute.call_args.args[0].split())
+    assert "NOT EXISTS" in consulta
+    assert "rc.costo_por_bulto IS NULL AND rc.origen <> 'compra'" in consulta
+
+
+def test_las_dos_consultas_del_costo_parten_por_LA_MISMA_condicion():
+    """Una sola regla ("¿puede llegar el precio?"), escrita una sola vez.
+
+    Si se escribiera dos veces, un día una diría "ajuste" y la otra no, y
+    una guía quedaría contada en las dos —o en ninguna— sin que nadie lo
+    note. Es la regla de la casa: el criterio va en una constante.
+    """
+    from app.db import (
+        _SQL_FALTA_UN_PRECIO_IMPOSIBLE,
+        contar_reprocesos_costo_incompleto,
+        contar_reprocesos_sin_costo_posible,
+    )
+
+    consultas = []
+    for funcion in (contar_reprocesos_costo_incompleto, contar_reprocesos_sin_costo_posible):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(0, None)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion()
+        consultas.append(" ".join(cursor.execute.call_args.args[0].split()))
+
+    condicion = " ".join(_SQL_FALTA_UN_PRECIO_IMPOSIBLE.split())
+    alerta, imposibles = consultas
+    # La misma condición en las dos, negada en una sola: eso es la partición.
+    assert condicion in alerta and condicion in imposibles
+    assert f"NOT {condicion}" in alerta
+    assert f"NOT {condicion}" not in imposibles
+    # Y las dos miran el mismo universo.
+    for consulta in consultas:
+        assert "anulado_el IS NULL AND costo_total IS NULL" in consulta
+
+
+def test_la_alerta_exige_que_HAYA_algo_que_completar():
+    """El `NOT EXISTS` solo era demasiado generoso: una guía sin costo y SIN
+    NINGÚN consumo sin precio lo cumple por vacío, y entraba a la alerta sin
+    tener nada que cargar. La condición tiene que ser la misma que la de la
+    pantalla, que exige `bool(faltantes)`.
+    """
+    from app.db import _SQL_FALTA_ALGUN_PRECIO, contar_reprocesos_costo_incompleto
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0, None)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_reprocesos_costo_incompleto()
+
+    consulta = " ".join(cursor.execute.call_args.args[0].split())
+    condicion = " ".join(_SQL_FALTA_ALGUN_PRECIO.split())
+    assert condicion in consulta
+    assert f"NOT {condicion}" not in consulta
+
+
+def test_contar_reprocesos_sin_costo_posible_solo_vigentes():
+    from app.db import contar_reprocesos_sin_costo_posible
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, date(2026, 8, 31))])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_reprocesos_sin_costo_posible()
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "anulado_el IS NULL AND costo_total IS NULL" in consulta
+    assert resultado == {"casos": 7, "mas_viejo": date(2026, 8, 31)}
 
 
 def test_anular_remito_segunda_es_baja_logica():
@@ -5194,6 +5524,44 @@ def test_el_motivo_avisa_si_la_compra_ya_no_existe():
 # destructivo precargado para tapar esa diferencia inventada.
 
 from app.db import _cajas_por_ficha, _stock_de_ficha  # noqa: E402
+from app.db import _SQL_STOCK_PARTIDO  # noqa: E402
+
+
+def test_la_cuenta_por_ficha_arranca_en_el_CORTE_por_las_DOS_patas_y_asimetrica():
+    """El piso de fecha, y se comprueba sobre el texto del SQL a propósito.
+
+    La suite mockea el cursor, así que ninguna prueba de acá ejecuta esta
+    consulta de verdad (el comportamiento se verificó contra Postgres el
+    05/09). Lo que este test protege son las dos invariantes que NO se
+    pueden perder:
+
+    1. **Las dos patas o ninguna.** Recortar solo las entradas deja las
+       salidas viejas restando contra cajas que ya no están: es el negativo
+       estructural que produjo el corte del 31/08.
+    2. **El día del corte es asimétrico.** El conteo se toma a la tarde, así
+       que lo del día ya está adentro de lo contado. Entradas: los
+       'inicial' DEL corte más lo POSTERIOR. Salidas: solo lo posterior.
+       Con `>=` en las dos, el día del corte se cuenta dos veces y en las
+       dos direcciones (medido: -10 donde había 20, y 30 donde había 15).
+
+    Ninguna de las dos falla ruidosamente si se rompe: dan un número
+    equivocado y nada más. Por eso están pinchadas acá.
+    """
+    assert "corte_modelo" in _SQL_STOCK_PARTIDO
+    assert "2026" not in _SQL_STOCK_PARTIDO, "la fecha de corte no se escribe a mano"
+
+    entradas, salidas = _SQL_STOCK_PARTIDO.split("salidas_ficha AS")
+
+    # Entradas: lo posterior al corte, MÁS los 'inicial' del corte mismo.
+    assert "fecha_operacion > corte.fecha" in entradas
+    assert "tipo = 'inicial' AND fecha_operacion >= corte.fecha" in entradas
+
+    # Salidas: SOLO lo posterior. Un `>=` acá restaría los armados del día
+    # del corte, que el conteo de esa tarde ya descontó.
+    assert "> corte.fecha" in salidas
+    assert ">= corte.fecha" not in salidas
+    assert "armado_el" in salidas.split("> corte.fecha")[0]
+
 
 
 def _cursor_con_saldos(saldos, filas_extra=None):
