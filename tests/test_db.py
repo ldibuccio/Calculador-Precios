@@ -2890,8 +2890,83 @@ def test_listar_senas_resueltas_trae_el_tipo_de_cierre_y_su_fecha():
     assert "'anulada'" in consulta
     assert "AS cierre" in consulta
     assert "AS cerrada_el" in consulta
-    # Ordenado por la fecha del cierre, el más reciente primero.
-    assert "ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC" in consulta
+    # Ordenado por el ÚLTIMO hecho, el más reciente primero. El caducado va
+    # primero en el coalesce: un vale de marzo dado de baja hoy tiene que
+    # aparecer arriba, no perdido en marzo.
+    assert ("ORDER BY COALESCE(v.sena_vale_caducado_el, v.sena_pagada_el,\n"
+            "                                  v.sena_vale_el, v.sena_anulada_el) DESC") in consulta
+
+
+def test_el_historial_distingue_el_vale_VIVO_del_dado_por_NO_COBRADO():
+    """La diferencia es si todavía se le debe la plata, así que no pueden
+    mostrarse igual. Y el caducado se evalúa ANTES que el vale en el CASE:
+    los dos timestamps conviven, y el que manda es el último."""
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_senas_resueltas()
+
+    consulta = " ".join(cursor.execute.call_args[0][0].split())
+    assert "'vale_caducado'" in consulta
+    assert consulta.index("'vale_caducado'") < consulta.index("THEN 'vale'")
+    # Y trae las dos fechas y el motivo, que es lo que se lee a los seis meses.
+    assert "v.sena_vale_el," in consulta
+    assert "v.sena_vale_caducado_el, v.sena_vale_caducado_motivo" in consulta
+
+
+def test_caducar_vale_NO_borra_el_vale_y_exige_motivo():
+    """Las dos fechas conviven a propósito: el vale existió y el papel puede
+    aparecer. Taparlo con "anulada" perdería justo el dato que administración
+    necesita ese día."""
+    from app.db import caducar_vale
+
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        caducar_vale(74, "  el cliente no volvió desde septiembre  ")
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "SET sena_vale_caducado_el = now()" in consulta
+    # NO toca sena_vale_el ni el stock.
+    assert "sena_vale_el = NULL" not in consulta
+    assert "anulado_el = now()" not in consulta
+    # Solo sobre un vale vivo y una entrada vigente.
+    assert "sena_vale_el IS NOT NULL AND sena_vale_caducado_el IS NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    # El motivo va limpio de espacios.
+    assert parametros == ("el cliente no volvió desde septiembre", 74)
+
+
+def test_caducar_vale_sin_motivo_no_escribe_nada():
+    """Como no hay login, ese texto es el único rastro del porqué."""
+    from app.db import caducar_vale
+
+    conexion, _cursor = _conexion_falsa()
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        for vacio in ("", "   ", None):
+            with pytest.raises(ValueError):
+                caducar_vale(74, vacio)
+    conexion.commit.assert_not_called()
+
+
+def test_caducar_vale_dice_POR_QUE_no_se_pudo():
+    from app.db import ValeNoCaducable, caducar_vale
+
+    casos = (
+        ((True, False, False), "sin_vale"),
+        ((False, True, False), "ya_caducado"),
+        ((False, False, True), "anulada"),
+        (None, "sin_vale"),
+    )
+    for fila, esperado in casos:
+        conexion, cursor = _conexion_falsa(filas_fetchone=[fila])
+        cursor.rowcount = 0
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(ValeNoCaducable) as levantada:
+                caducar_vale(74, "un motivo")
+        assert levantada.value.motivo_tecnico == esperado
+        conexion.commit.assert_not_called()
 
 
 def test_listar_tipos_envase_puesto_joinea_proveedores_del_puesto():

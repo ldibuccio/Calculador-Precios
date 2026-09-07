@@ -67,6 +67,7 @@ from app.db import (
     marcar_renglon_armado,
     contar_retiros_buscados,
     cerrar_disponible_generado,
+    caducar_vale,
     cerrar_sena,
     comanda_ya_guardada,
     compra_tiene_cantidad_bloqueada,
@@ -207,6 +208,7 @@ from app.db import (
     RepartoDesactualizado,
     ReprocesoAnteriorAlCorte,
     SenaYaCobrada,
+    ValeNoCaducable,
     contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
@@ -10757,6 +10759,47 @@ def anular_recibido_desde_movimientos_ruta(
         raise HTTPException(status_code=409, detail=_TEXTO_SENA_YA_COBRADA[cobrada.cierre]) from cobrada
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
+    return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
+
+
+_TEXTO_VALE_NO_CADUCABLE = {
+    "sin_vale": "Esa entrada no tiene un vale emitido, así que no hay vale que dar por no cobrado.",
+    "ya_caducado": "Ese vale ya estaba dado por no cobrado.",
+    "anulada": ("Esa entrada está anulada, así que sus cajones ya no están en el stock. "
+                "Dar el vale por no cobrado sirve justamente para lo contrario: cuando los "
+                "cajones SÍ están."),
+}
+
+
+@app.post("/puesto/envases/movimientos/recibidos/{movimiento_id}/vale-no-cobrado")
+def dar_vale_por_no_cobrado_ruta(
+    request: Request, movimiento_id: int, motivo: str = Form(""),
+    fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
+):
+    """El cliente dejó los cajones y no volvió a cobrar: se cancela lo que se le debe.
+
+    NO toca el stock, y esa es toda la diferencia con anular la entrada: los
+    cajones están en el galpón. Son dos hechos distintos que hasta hoy
+    compartían un solo botón.
+
+    Solo de la cajera y detrás de la clave de control: dar de baja una deuda
+    de meses es una decisión de plata, no una corrección del momento.
+    """
+    if not _acceso_control_valido(request):
+        return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
+    try:
+        caducar_vale(movimiento_id, motivo)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Hace falta escribir por qué se da por no cobrado: es el único rastro que queda.",
+        ) from None
+    except ValeNoCaducable as no_caducable:
+        raise HTTPException(
+            status_code=409, detail=_TEXTO_VALE_NO_CADUCABLE[no_caducable.motivo_tecnico]
+        ) from no_caducable
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo registrar: {error_db}") from error_db
     return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)
 
 

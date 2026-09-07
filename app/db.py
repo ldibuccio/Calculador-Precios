@@ -3984,7 +3984,7 @@ def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        -- Para que la pantalla NO ofrezca el botón de anular
                        -- donde el server lo va a rechazar: ofrecido y
                        -- prohibido es lo peor de los dos mundos.
-                       v.sena_pagada_el, v.sena_vale_el,
+                       v.sena_pagada_el, v.sena_vale_el, v.sena_vale_caducado_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
@@ -4651,10 +4651,23 @@ def listar_senas_resueltas(limite: int = 50) -> list[dict]:
                 SELECT v.id, v.cantidad, v.creado_en,
                        CASE
                            WHEN v.sena_pagada_el IS NOT NULL THEN 'pagada'
+                           -- El caducado va ANTES que el vale: si no, un vale
+                           -- dado de baja se mostraría igual que uno vivo, y
+                           -- la diferencia es si todavía se le debe la plata.
+                           WHEN v.sena_vale_caducado_el IS NOT NULL THEN 'vale_caducado'
                            WHEN v.sena_vale_el IS NOT NULL THEN 'vale'
                            ELSE 'anulada'
                        END AS cierre,
-                       COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
+                       v.sena_vale_caducado_el, v.sena_vale_caducado_motivo,
+                       -- El caducado va PRIMERO en el coalesce, y por eso el
+                       -- historial ordena por el último hecho y no por el
+                       -- primero: un vale de marzo dado de baja hoy tiene que
+                       -- aparecer arriba, no perdido en marzo. La fecha del
+                       -- vale sigue disponible aparte, y la pantalla muestra
+                       -- las dos.
+                       COALESCE(v.sena_vale_caducado_el, v.sena_pagada_el,
+                                v.sena_vale_el, v.sena_anulada_el) AS cerrada_el,
+                       v.sena_vale_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre,
@@ -4667,7 +4680,8 @@ def listar_senas_resueltas(limite: int = 50) -> list[dict]:
                 + """
                 WHERE num_nonnulls(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) = 1
                   AND v.anulado_el IS NULL
-                ORDER BY COALESCE(v.sena_pagada_el, v.sena_vale_el, v.sena_anulada_el) DESC
+                ORDER BY COALESCE(v.sena_vale_caducado_el, v.sena_pagada_el,
+                                  v.sena_vale_el, v.sena_anulada_el) DESC
                 LIMIT %s
                 """,
                 (limite,),
@@ -4709,6 +4723,74 @@ def cerrar_sena(movimiento_id: int, cierre: str) -> None:
                 """,
                 (movimiento_id,),
             )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+class ValeNoCaducable(Exception):
+    """Se quiso dar por no cobrado un vale que no está en condiciones.
+
+    `motivo_tecnico` dice cuál de los tres: 'sin_vale' (esa entrada nunca
+    tuvo vale), 'ya_caducado' (alguien lo hizo antes) o 'anulada' (la
+    recepción está anulada, así que los cajones no están en el stock y
+    "cancelar sin tocar el stock" no significa nada ahí).
+    """
+
+    def __init__(self, motivo_tecnico: str):
+        self.motivo_tecnico = motivo_tecnico
+        super().__init__(f"No se puede dar por no cobrado: {motivo_tecnico}")
+
+
+def caducar_vale(movimiento_id: int, motivo: str) -> None:
+    """El vale no se va a cobrar nunca: se cancela lo que se debe SIN tocar el stock.
+
+    Es el caso del cliente que dejó los cajones y no volvió. Los cajones
+    ESTÁN en el galpón, así que anular la recepción —que es lo único que
+    había— dejaría el stock mal en menos.
+
+    NO borra `sena_vale_el`: las dos fechas conviven a propósito. El vale
+    existió y el papel puede aparecer; taparlo con "anulada" perdería
+    justo el dato que administración necesita ese día. Por eso tampoco se
+    reusó `sena_anulada_el`: haría `num_nonnulls = 2` y la fila
+    desaparecería del historial, que filtra `= 1`.
+
+    El motivo es obligatorio y lo garantiza el CHECK de la base, no solo
+    esta función: como no hay login, ese texto es el único rastro de POR
+    QUÉ se dio de baja una deuda.
+    """
+    limpio = (motivo or "").strip()
+    if not limpio:
+        raise ValueError("El motivo es obligatorio para dar un vale por no cobrado.")
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE vacios_recibidos
+                SET sena_vale_caducado_el = now(), sena_vale_caducado_motivo = %s
+                WHERE id = %s AND anulado_el IS NULL
+                  AND sena_vale_el IS NOT NULL AND sena_vale_caducado_el IS NULL
+                """,
+                (limpio, movimiento_id),
+            )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    """
+                    SELECT sena_vale_el IS NULL, sena_vale_caducado_el IS NOT NULL,
+                           anulado_el IS NOT NULL
+                    FROM vacios_recibidos WHERE id = %s
+                    """,
+                    (movimiento_id,),
+                )
+                fila = cursor.fetchone()
+                if fila is None:
+                    raise ValeNoCaducable("sin_vale")
+                sin_vale, ya_caducado, anulada = fila
+                raise ValeNoCaducable(
+                    "anulada" if anulada else "ya_caducado" if ya_caducado else "sin_vale"
+                )
         conexion.commit()
     finally:
         conexion.close()

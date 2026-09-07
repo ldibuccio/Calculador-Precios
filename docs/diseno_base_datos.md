@@ -3384,6 +3384,79 @@ el puesto.
 sin numeración, cobro ni vencimiento (lo dice su propio comentario en el
 esquema). El papel está afuera del sistema.
 
+## Separar "el vale no se cobra" de "esta recepción no existió" (07/09)
+
+Dos casos reales de la cajera que compartían un solo botón, y lo que los
+distingue **es qué pasa con los cajones**:
+
+| Caso | Los cajones | El stock |
+|---|---|---|
+| El cliente dejó los cajones y no volvió a cobrar | **están en el galpón** | **no se toca** |
+| Se cargó mal: esos cajones nunca entraron | no están | **baja** |
+
+Anular hacía siempre lo segundo, así que el primero no tenía salida: cancelar
+la deuda costaba dejar el stock mal en menos.
+
+### Por qué NO se reusó `sena_anulada_el`, que era lo primero que uno quiere hacer
+
+Semánticamente encajaba —ya significa "no se paga y los cajones quedan"— pero
+habría hecho falta que conviva con `sena_vale_el`, o sea `num_nonnulls = 2`.
+**Y `listar_senas_resueltas` filtra `num_nonnulls(...) = 1`: esas filas
+desaparecerían del historial de señas cerradas.**
+
+Es el filtro que descarta lo que no reconoce, otra vez — la misma regla del
+06/09, esta vez agarrada ANTES de escribirla. Una columna nueva
+(`sena_vale_caducado_el`) no toca ese conteo y la fila sigue visible donde ya
+estaba.
+
+Y hay una razón de negocio que apunta igual: **el vale existió.** Taparlo con
+"anulada" pierde que hubo un papel, que es justo lo que administración necesita
+el día que el cliente aparezca con él. Por eso las dos fechas conviven: no es
+una transición de estado, son dos hechos.
+
+### Qué queda registrado, que era el requisito
+
+| Caso | Se escribe | Se lee en |
+|---|---|---|
+| Pendiente que se decide no pagar | `sena_anulada_el` | Historial: **Anulada** |
+| Vale dado por no cobrado | `sena_vale_el` **intacto** + `sena_vale_caducado_el` + motivo | Historial: **Vale no cobrado** — "Vale del 12/08, dado por no cobrado el 05/09 — «...»" |
+| Nunca se recibieron | `anulado_el` | Movimientos: **Anulado el …**, y el stock lo excluye |
+
+Los tres se distinguen **por columnas distintas**, no interpretando una fecha.
+
+**El motivo es obligatorio y lo garantiza el CHECK, no solo la pantalla**: como
+no hay login, ese texto es el único rastro de POR QUÉ se dio de baja una deuda.
+
+Un detalle que salió al escribirlo: el historial ordenaba por
+`COALESCE(pagada, vale, anulada)`, así que un vale de marzo dado de baja hoy
+habría aparecido **perdido en marzo**. El caducado va primero en el coalesce:
+se ordena por el ÚLTIMO hecho, no por el primero.
+
+### Los dos botones: la diferencia tiene que verse, no leerse
+
+- Los textos hablan de **cajones, no del sistema** — ni "anular", ni "seña", ni
+  "recepción". El que aprieta está pensando en si la pila está o no está.
+- **Familias distintas, no dos tonos del mismo**: el que no toca el stock es
+  contorno azul, el destructivo es **relleno sólido rojo**. Dos botones
+  contorneados que solo cambian de color se eligen mal con el apuro.
+- **Cada confirmación dice qué pasa con el stock, con el número**: "Los 13
+  cajones SIGUEN en el stock" / "Los 20 cajones SALEN del stock". Es lo único
+  que los distingue de verdad.
+- Cada uno aparece **solo donde aplica**: el primero únicamente si hay un vale
+  vivo; el segundo únicamente si la seña no está cobrada (la guarda del 07/09).
+
+Y una de mobile-first que costó una captura: el renglón de Movimientos era
+`flex` en fila, y a 390px el input del motivo salía cortado a la mitad y el
+cartel desbordaba la tarjeta. **Apilado**: lo que sobra en el celular es el
+alto.
+
+### Lo que esto NO resuelve
+
+**Pendientes de Pago sigue sin clave de control.** El botón "anular seña" que
+ya existía ahí lo puede apretar cualquiera, y cerrar una seña (pagar o hacer
+vale) también. Queda abierto a propósito: depende de quién paga en la práctica,
+que es la pregunta de operación todavía sin responder.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

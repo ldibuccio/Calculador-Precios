@@ -11752,6 +11752,69 @@ def test_ver_movimientos_permite_anular_de_cualquier_fecha_conservando_filtros()
     assert 'name="fecha_desde" value="2026-08-09"' in respuesta.text
 
 
+def test_el_vale_no_cobrado_pide_CLAVE_DE_CONTROL():
+    """Dar de baja una deuda de meses es una decisión de plata, no una
+    corrección del momento."""
+    with (
+        patch("app.main._acceso_control_valido", return_value=False),
+        patch("app.main.caducar_vale") as mock_caducar,
+    ):
+        respuesta = cliente.post(
+            "/puesto/envases/movimientos/recibidos/74/vale-no-cobrado",
+            data={"motivo": "no volvió"}, follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    mock_caducar.assert_not_called()
+
+
+def test_el_vale_no_cobrado_registra_el_motivo_y_vuelve_al_rango():
+    with patch("app.main.caducar_vale") as mock_caducar:
+        respuesta = cliente.post(
+            "/puesto/envases/movimientos/recibidos/74/vale-no-cobrado",
+            data={"motivo": "el cliente no volvió desde septiembre",
+                  "fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-07"},
+            follow_redirects=False)
+
+    assert respuesta.status_code == 303
+    assert "fecha_desde=2026-09-01" in respuesta.headers["location"]
+    mock_caducar.assert_called_once_with(74, "el cliente no volvió desde septiembre")
+
+
+def test_LOS_DOS_BOTONES_dicen_que_pasa_con_los_cajones():
+    """Lo único que los distingue de verdad es si el stock se toca, así que
+    eso es lo que tiene que decir cada uno. Y el que no lo toca solo aparece
+    donde hay un vale vivo."""
+    recibidos = [
+        {"id": 74, "cantidad": 13, "creado_en": datetime(2026, 9, 1, 8, 12), "anulado_el": None,
+         "sena_pagada_el": None, "sena_vale_el": datetime(2026, 9, 1, 11, 30),
+         "sena_vale_caducado_el": None, "cliente_nombre": "Martin",
+         "proveedor_nombre": "FRUTAMAX", "tipo_nombre": "torito madera"},
+        {"id": 75, "cantidad": 20, "creado_en": datetime(2026, 9, 2, 9, 0), "anulado_el": None,
+         "sena_pagada_el": None, "sena_vale_el": None, "sena_vale_caducado_el": None,
+         "cliente_nombre": "Juan", "proveedor_nombre": "FRUTAMAX", "tipo_nombre": "torito madera"},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 7)),
+        patch("app.main.listar_vacios_recibidos_por_rango", return_value=recibidos),
+        patch("app.main.listar_vacios_devueltos_por_rango", return_value=[]),
+        patch("app.main.listar_ajustes_vacios_por_rango", return_value=[]),
+    ):
+        cuerpo = cliente.get("/puesto/envases/movimientos").text.split("</style>")[-1]
+
+    # El 74 tiene vale: solo el botón que NO toca el stock, con su motivo.
+    assert "/puesto/envases/movimientos/recibidos/74/vale-no-cobrado" in cuerpo
+    assert 'action="/puesto/envases/movimientos/recibidos/74/anular"' not in cuerpo
+    assert "Los cajones están en el galpón" in cuerpo
+    assert 'name="motivo"' in cuerpo
+    # El 75 no tiene vale: solo el destructivo.
+    assert 'action="/puesto/envases/movimientos/recibidos/75/anular"' in cuerpo
+    assert "/puesto/envases/movimientos/recibidos/75/vale-no-cobrado" not in cuerpo
+    assert "Estos cajones nunca se recibieron" in cuerpo
+    # Y las confirmaciones dicen qué pasa con el stock, con el número.
+    assert "Los 13 cajones SIGUEN en el stock" in cuerpo
+    assert "Los 20 cajones SALEN del stock" in cuerpo
+
+
 def test_anular_desde_movimientos_redirige_al_mismo_rango():
     with patch("app.main.anular_vacio_recibido") as mock_anular:
         respuesta = cliente.post(
