@@ -186,6 +186,33 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 7, del 07/09: **una diferencia entre dos cuentas no está en
+ninguna de las dos.**
+
+Los bultos SUELTOS de un artículo no se calculan: se derivan por resta
+(`_stock_de_ficha` con `ficha_id` None) — el total del artículo menos las
+cajas en fichas. Y las dos cuentas tienen pisos distintos: la del total no
+tiene ninguno (la rebasea el compensatorio) y la de las cajas tiene el piso
+asimétrico del día del corte. **Lo que una ve y la otra no cae ENTERO en la
+resta**, con su signo.
+
+Esa es la quinta aparición de la asimetría del día del corte, y la primera
+que no está adentro de una cuenta sino ENTRE dos. Por eso no se encuentra
+leyendo ninguna de las dos: las dos están bien por separado.
+
+Y hay un corolario del corolario que sirve para descartar: **un término que
+está en las dos cuentas con el mismo signo se cancela en la resta.** Eso fue
+lo que descartó a E5 como causa del suelto negativo de Mango:
+`bultos_primera` suma en el total y suma en las cajas, así que la mezcla de
+unidades ensucia las dos por igual y la resta la borra. Verificado cambiando
+una sola cosa por vez: sacar la mezcla no movió el número; sacar los armados
+del día del corte lo movió exactamente en esos bultos.
+
+**Cómo se busca**, que es distinto de todo lo anterior: cuando un número sale
+de restar dos cuentas, se listan los términos de cada una y se marca cuáles
+aparecen en las dos. Los que aparecen en una sola son los únicos candidatos.
+Los compartidos no pueden ser la causa, por más sospechosos que parezcan.
+
 Corolario 6, del 07/09, y es el mismo día que el 5: **cuando se corrige una
 asimetría, hay que revisar también las MEDICIONES, no solo el código de
 producción.**
