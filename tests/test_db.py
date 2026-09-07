@@ -5699,6 +5699,40 @@ def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
     assert facturado["dias"] == 4
 
 
+def test_facturacion_por_ficha_no_puede_leer_renglones_de_otro_cliente():
+    """El denominador de la incidencia es de UN cliente, y esto lo fija estructural.
+
+    Es la parte de la incidencia que más caro sale si se rompe: con el
+    denominador de todos los clientes, cada porcentaje queda mal sin que nada
+    falle ni se vea raro en pantalla.
+
+    NO alcanza con verificar que el WHERE del cliente esté: eso pasaría igual
+    si alguien agregara una SEGUNDA lectura de pedidos_renglones sin filtrar.
+    Por eso se afirma la ESTRUCTURA — que la tabla se lee una sola vez y
+    colgada de `vigentes`, que es el único lugar donde vive el filtro de
+    cliente. Un renglón que no venga de un pedido de ese cliente no tiene por
+    dónde entrar.
+
+    Verificado además contra Postgres real el 07/09, corriendo esta misma
+    función con dos clientes: uno con 100 unidades y otro con 900, a $1.000.
+    Dio 100.000 y 900.000 — no 1.000.000 en ninguno de los dos.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        facturacion_por_ficha(7, date(2026, 8, 8), date(2026, 9, 7))
+
+    consulta, parametros = cursor.execute.call_args.args
+    # El filtro de cliente vive en vigentes, y se le pasa el cliente pedido.
+    assert "WHERE cliente_id = %s AND anulado_el IS NULL" in consulta
+    assert parametros[0] == 7
+    # Y pedidos_renglones se lee UNA sola vez, colgada de vigentes: sin otra
+    # puerta de entrada, no hay forma de que se cuele un renglón ajeno.
+    assert consulta.count("pedidos_renglones") == 1
+    assert "JOIN pedidos_renglones r ON r.pedido_id = v.id" in consulta
+
+
 def test_facturacion_por_ficha_cuenta_el_dia_aunque_no_haya_precio():
     """El caso del 05/09: se armó y salió mercadería de una ficha sin precio
     vigente. No suma plata —no se puede valuar— pero ES un día con entregas, y
