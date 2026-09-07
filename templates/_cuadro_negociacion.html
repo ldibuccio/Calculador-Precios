@@ -2,19 +2,22 @@
   Cliente: <strong>{{ cliente_nombre }}</strong>.
   Fecha de referencia: <strong>{{ fecha_referencia }}</strong>.
 </p>
-{# El período de la incidencia se dice UNA vez acá y no en cada renglón: es
-   otro que el del costo (48 hs / 15 días) y verlo repetido 30 veces en el
-   celular es ruido. "—" es "no facturó nada", que no es lo mismo que 0,0%. #}
+{# El período se dice UNA vez acá y no en cada renglón: es otro que el del
+   costo (48 hs / 15 días) y verlo repetido 30 veces en el celular es ruido.
+   La ayuda arranca con el MISMO texto que el encabezado de la columna, para
+   que se puedan atar sin adivinar. "—" es "no facturó nada", que no es lo
+   mismo que 0,0%. #}
 {% if incidencia_sin_datos %}
 <div class="aviso aviso-advertencia">
-  ⚠️ No se pudo leer la facturación: los <em>—</em> de la columna de incidencia
-  son un error de lectura, <strong>no</strong> quieren decir que no se facturó.
+  ⚠️ No se pudo leer la facturación: los <em>—</em> de la columna
+  <strong>% de la venta</strong> son un error de lectura, <strong>no</strong>
+  quieren decir que no se facturó.
   El resto del cuadro (costos, sugeridos y márgenes) no depende de esto y está bien.
 </div>
 {% else %}
 <p class="ayuda">
-  <strong>Incidencia</strong>: cuánto pesa cada ficha sobre lo que se le facturó
-  a este cliente en los últimos <strong>{{ incidencia_dias }} días</strong>
+  <strong>% de la venta</strong>: cuánto pesa cada ficha sobre lo que se le
+  facturó a este cliente en los últimos <strong>{{ incidencia_dias }} días</strong>
   ({{ total_facturado|moneda }}). Es sobre facturación, no sobre bultos.
   <em>—</em> = no facturó nada en esos días.
 </p>
@@ -50,6 +53,7 @@
     <thead>
       <tr>
         <th>Producto</th>
+        <th class="col-venta">% de&nbsp;la venta</th>
         <th>Costo anterior</th>
         <th>Costo nuevo</th>
         <th>Sugerido</th>
@@ -59,10 +63,8 @@
     <tbody>
       {% for a in bajas %}
       <tr>
-        <td>
-          <span class="nombre-articulo">{{ a.articulo_nombre }}</span>
-          <span class="incidencia">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</span>
-        </td>
+        <td><span class="nombre-articulo">{{ a.articulo_nombre }}</span></td>
+        <td class="col-venta">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</td>
         <td>{{ a.costo_anterior|moneda if a.costo_anterior is not none else "—" }}</td>
         <td>{{ a.costo_actual|moneda if a.costo_actual is not none else "—" }}</td>
         <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
@@ -89,6 +91,7 @@
     <thead>
       <tr>
         <th>Producto</th>
+        <th class="col-venta">% de&nbsp;la venta</th>
         <th>Costo anterior</th>
         <th>Costo nuevo</th>
         <th>Sugerido</th>
@@ -98,10 +101,8 @@
     <tbody>
       {% for a in subas %}
       <tr>
-        <td>
-          <span class="nombre-articulo">{{ a.articulo_nombre }}</span>
-          <span class="incidencia">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</span>
-        </td>
+        <td><span class="nombre-articulo">{{ a.articulo_nombre }}</span></td>
+        <td class="col-venta">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</td>
         <td>{{ a.costo_anterior|moneda if a.costo_anterior is not none else "—" }}</td>
         <td>{{ a.costo_actual|moneda if a.costo_actual is not none else "—" }}</td>
         <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
@@ -131,6 +132,7 @@
     <thead>
       <tr>
         <th>Producto</th>
+        <th class="col-venta">% de&nbsp;la venta</th>
         <th>Precio vigente</th>
         <th>Precio sugerido</th>
         <th>Utilidad</th>
@@ -139,10 +141,8 @@
     <tbody>
       {% for a in bajo_objetivo %}
       <tr>
-        <td>
-          <span class="nombre-articulo">{{ a.articulo_nombre }}</span>
-          <span class="incidencia">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</span>
-        </td>
+        <td><span class="nombre-articulo">{{ a.articulo_nombre }}</span></td>
+        <td class="col-venta">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</td>
         <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
         <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
         <td>
@@ -171,6 +171,7 @@
     <thead>
       <tr>
         <th>Producto</th>
+        <th class="col-venta">% de&nbsp;la venta</th>
         <th>Precio vigente</th>
         <th>Precio sugerido</th>
         <th>Utilidad</th>
@@ -179,10 +180,8 @@
     <tbody id="tbody-todos-articulos">
       {% for a in todos %}
       <tr>
-        <td>
-          <span class="nombre-articulo">{{ a.articulo_nombre }}</span>
-          <span class="incidencia">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</span>
-        </td>
+        <td><span class="nombre-articulo">{{ a.articulo_nombre }}</span></td>
+        <td class="col-venta">{% if a.incidencia is not none %}{{ a.incidencia|porcentaje }}{% else %}—{% endif %}</td>
         <td>{{ a.precio_vigente|moneda if a.precio_vigente is not none else "—" }}</td>
         <td>{{ a.precio_sugerido|moneda if a.precio_sugerido is not none else "—" }}</td>
         <td>

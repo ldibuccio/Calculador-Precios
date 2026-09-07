@@ -6394,6 +6394,12 @@ def test_ver_negociar_muestra_la_incidencia_en_los_cuatro_cuadros():
     assert respuesta.text.count("40,0%") >= 3  # Mango: Subas, bajo objetivo y Todos
     # El período va escrito, y una sola vez.
     assert respuesta.text.count("<strong>30 días</strong>") == 1
+    # COLUMNA CON ENCABEZADO, uno por cuadro: abajo del nombre se leía como
+    # un porcentaje suelto que no decía de qué era. El encabezado y la ayuda
+    # dicen lo MISMO ("% de la venta") para que se puedan atar sin adivinar.
+    assert respuesta.text.count('<th class="col-venta">% de&nbsp;la venta</th>') == 4
+    assert "<strong>% de la venta</strong>" in respuesta.text
+    assert "Incidencia</strong>" not in respuesta.text
 
 
 def test_ver_negociar_sin_fichas_muestra_aviso_y_link_para_cargarlas():

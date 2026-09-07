@@ -142,6 +142,10 @@
   th {
     background: #eee;
     font-weight: 600;
+    /* Los DATOS van en una línea (un precio partido al medio no se lee),
+       pero los ENCABEZADOS pueden envolver: es lo que los hacía imponer el
+       ancho de toda la columna. Gasta vertical, que es lo que sobra. */
+    white-space: normal;
   }
   .ok { color: #16a34a; }
   .falta { color: #dc2626; font-weight: 600; }
@@ -257,18 +261,13 @@
     font-size: 1.3rem;
     font-weight: 700;
   }
-  /* La incidencia va DEBAJO del nombre y no como sexta columna: a 390 px una
-     columna más obliga a scrollear la tabla de costado. Ocupa vertical, que
-     es lo que sobra en el celular. */
-  .nombre-articulo { display: block; }
-  .incidencia {
-    display: block;
-    margin-top: 0.15rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #555;
-    font-variant-numeric: tabular-nums;
-  }
+  /* La incidencia es una columna con encabezado propio: abajo del nombre se
+     leía como un porcentaje suelto que no decía de qué era. */
+  .col-venta { font-variant-numeric: tabular-nums; }
+  /* Solo la CELDA en una línea: en el th, un nowrap más específico que la
+     regla de th le ganaba y hacía que este encabezado fuera el único que no
+     envolvía — 129 px de columna para un dato de 45. */
+  td.col-venta { white-space: nowrap; }
 </style>
 </head>
 <body>
