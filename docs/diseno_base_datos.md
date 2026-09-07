@@ -3341,6 +3341,38 @@ función: esconder el botón es cortesía, no defensa.
 
 `sena_anulada_el` SÍ deja anular: ahí se decidió no pagar, no hay plata.
 
+### El mapa de la clave de control, verificado (07/09)
+
+`CLAVE_CONTROL_PUESTO` **está cargada en producción**: `/puesto/envases/movimientos`
+pide contraseña. Confirmado por el dueño contra la app, no deducido. Esa puerta
+estaba cerrada, así que **el agujero explotable era solo el de la pantalla del
+operario**, que nunca pidió clave.
+
+Pero al mapear las rutas apareció algo que conviene tener escrito. De las 38
+rutas de Envases Puesto, **23 piden clave y 15 no**, y las que NO piden son:
+
+| Sin clave | Qué deja hacer |
+|---|---|
+| `/vacios/recibir` (+ anular) | recibir vacíos y anular la entrada |
+| `/vacios/devolver` (+ anular) | devolver y anular la devolución |
+| `/vacios/stock-fisico` | cargar el conteo (a propósito: es el conteo ciego) |
+| **`/pendientes` + `pagar` / `vale` / `anular-sena`** | **cerrar la seña: pagarla, hacer el vale o anularla** |
+
+**Las dos mitades de la maniobra estaban del lado sin clave.** El mismo que
+recibe puede emitir el vale o marcar la seña como pagada *y* —hasta el arreglo
+del 07/09— anular la recepción, sin que nadie le pida nada en el medio.
+
+Eso NO se cambió acá: si Pendientes de Pago pide clave o no es una decisión de
+operación —probablemente el operario le paga al cliente en el momento y por eso
+está abierta—, y ponerle una puerta sin entender el circuito rompería el
+trabajo del día. Queda escrito para decidirlo a conciencia, no para asumirlo.
+
+Lo que sí vale como criterio: **la clave protege contra el que no debería
+estar, no contra el error del que sí debe.** Por eso la guarda de
+`anular_vacio_recibido` va también en la puerta con clave: ahí no evita un
+abuso, evita que la cajera —autorizada— borre sin querer una entrada ya
+cobrada.
+
 ### Lo que el sistema NO guarda, y hay que saberlo antes de investigar
 
 **No hay login, `vacios_recibidos` no tiene columna de usuario, y la única
