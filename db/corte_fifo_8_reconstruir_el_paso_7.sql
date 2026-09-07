@@ -1,7 +1,9 @@
 -- Cuantas cajas habia en el piso al corte, POR FICHA (crear_reproceso_inicial
 -- exige ficha). No se estima: se deduce.
---   faltaban_al_corte = entregadas desde el corte - armadas desde el corte
+--   faltaban_al_corte = entregadas DESPUES del corte - armadas DESPUES
 -- Una caja entregada que nadie armo despues del corte, ya estaba al corte.
+-- EL DIA DEL CORTE NO CUENTA en ninguno de los dos: la foto se toma a la
+-- tarde y ya viene neta del trabajo de ese dia. Contarlo lo duplica.
 -- Es un PISO exacto: faltan las que siguen en el piso hoy sin entregar, y
 -- esas hay que contarlas (cajas_al_corte = este numero + lo contado hoy).
 -- costo_ref es el promedio ponderado por caja de las guias R de esa ficha
@@ -15,7 +17,7 @@ ent as (
  from pedidos_renglones r join vig v on v.id = r.pedido_id
  where r.armado_el is not null and r.anulado_el is null
    and (r.armado_el at time zone
-   'America/Argentina/Buenos_Aires')::date >= (select fecha from c0)
+   'America/Argentina/Buenos_Aires')::date > (select fecha from c0)
  group by 1, 2
 ),
 arm as (
@@ -25,6 +27,7 @@ arm as (
   sum(costo_total) filter (where tipo = 'normal' and costo_total is not null) as pl,
   sum(bultos_primera) filter (where tipo = 'normal' and costo_total is not null) as bl
  from reprocesos where anulado_el is null
+   and (tipo = 'inicial' or fecha_operacion > (select fecha from c0))
    and fecha_operacion >= (select fecha from c0)
  group by 1, 2
 )

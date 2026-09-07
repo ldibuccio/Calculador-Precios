@@ -7028,7 +7028,9 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             JOIN proveedores p ON p.id = c.proveedor_id
             LEFT JOIN guias_compra g ON g.id = c.guia_id
             WHERE c.estado = 'recepcionado' AND c.articulo_id = ANY(%s)
-              AND (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= %s
+              -- ESTRICTO: una compra recepcionada el día del corte ya está
+              -- adentro de la foto que se contó esa tarde.
+              AND (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
             UNION ALL
             -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
             -- congelado del listado anclado al pedido de origen); ajustes y
@@ -7043,7 +7045,14 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             LEFT JOIN clientes cl ON cl.id = m.cliente_id
             WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = ANY(%s)
               AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
-              AND m.fecha_operacion >= %s
+              -- EL DÍA DEL CORTE ES ASIMÉTRICO. El 'stock_inicial' DEL
+              -- corte es la foto —la línea de base— y entra; todo lo demás
+              -- de ese día ya está adentro de esa foto y NO entra. Con `>=`
+              -- el día del corte se cuenta dos veces.
+              AND (
+                  (m.tipo = 'stock_inicial' AND m.fecha_operacion = %s)
+                  OR m.fecha_operacion > %s
+              )
               -- El compensatorio sale POR TIPO y no por fecha: está fechado
               -- EN el corte, así que un piso por fecha lo dejaría adentro y
               -- el FIFO seguiría teniendo un lote de mercadería que no
@@ -7059,11 +7068,17 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
             FROM reprocesos rp
             LEFT JOIN clientes cl ON cl.id = rp.cliente_id
             WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = ANY(%s)
-              AND rp.fecha_operacion >= %s
+              -- Misma asimetría: las guías R 'inicial' DEL corte son la foto
+              -- de las cajas que estaban armadas en el piso. Una guía R
+              -- NORMAL de ese mismo día armó cajas que la foto ya contó.
+              AND (
+                  (rp.tipo = 'inicial' AND rp.fecha_operacion = %s)
+                  OR rp.fecha_operacion > %s
+              )
         ) lotes
         ORDER BY articulo_id, fecha_orden, momento_orden
         """,
-        (ids, corte, ids, corte, ids, corte),
+        (ids, corte, ids, corte, corte, ids, corte, corte),
     )
     columnas = [descripcion[0] for descripcion in cursor.description]
     for fila in cursor.fetchall():
@@ -7078,7 +7093,7 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
     # tipadas: desde E4 hay UNA sola definición de "qué salió y cuándo".
     # Antes acá se armaba un total sin fecha, y ese total era justamente lo
     # que dejaba al reparto de stock consumir lotes del futuro.
-    salidas_por_articulo = _salidas_stock_varios(cursor, ids)
+    salidas_por_articulo = _salidas_stock_varios(cursor, ids, corte)
 
     resultado = {}
     for articulo_id in ids:
@@ -8544,12 +8559,14 @@ _SQL_SALIDAS_STOCK = """
         FROM pedidos_renglones r
         JOIN vigentes v ON v.id = r.pedido_id
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
         UNION ALL
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                -m.cantidad, NULL, NULL, m.motivo, NULL,
                m.lote_tipo, m.lote_origen_id, NULL, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
+          AND m.fecha_operacion > %s
           -- El compensatorio NEGATIVO del corte tampoco es una salida del
           -- FIFO, por la misma razón que el positivo no es un lote: cancela
           -- el saldo viejo en el TOTAL. Con el piso puesto ya no queda nada
@@ -8562,18 +8579,34 @@ _SQL_SALIDAS_STOCK = """
                NULL, NULL, NULL, NULL::bigint, rp.articulo_id
         FROM reprocesos rp
         WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
+          AND rp.fecha_operacion > %s
     ) salidas
     ORDER BY articulo_id, fecha_orden, momento_orden
 """
 
 
-def _salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
-    """{articulo_id: [salidas fechadas]}, con el cursor abierto. Una lista por id pedido, vacía si no tuvo ninguna."""
+def _salidas_stock_varios(cursor, articulo_ids: list[int], corte=None) -> dict:
+    """{articulo_id: [salidas fechadas]}, con el cursor abierto. Una lista por id pedido, vacía si no tuvo ninguna.
+
+    SOLO LAS POSTERIORES AL CORTE, estricto. El día del corte es asimétrico
+    —el conteo se toma a la tarde, así que todo lo del día ya está adentro de
+    la foto— y una salida de ese día que consumiera la foto la estaría
+    restando dos veces. Es la misma regla que ya usan la cuenta por ficha y
+    el pool de segunda; el comentario de `_SQL_STOCK_PARTIDO` la mide.
+
+    Lo que se pierde, y hay que decirlo: las entregas del día del corte y
+    anteriores dejan de tener atribución de costo, y como los dos llamadores
+    de `atribuir_costos_fifo` arman sus filas iterando su salida, esas
+    entregas desaparecen de ahí. Su costo venía de lotes anteriores al corte,
+    que están declarados no confiables, así que era cero de todas formas.
+    """
     ids = list(articulo_ids)
     por_articulo = {articulo_id: [] for articulo_id in ids}
     if not ids:
         return por_articulo
-    cursor.execute(_SQL_SALIDAS_STOCK, (ids, ids, ids))
+    if corte is None:
+        corte = _fecha_corte(cursor)
+    cursor.execute(_SQL_SALIDAS_STOCK, (ids, corte, ids, corte, ids, corte))
     columnas = [descripcion[0] for descripcion in cursor.description]
     salidas = []
     for fila in cursor.fetchall():

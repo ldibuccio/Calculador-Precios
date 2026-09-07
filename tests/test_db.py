@@ -4157,17 +4157,26 @@ def test_el_FIFO_no_mira_nada_ANTERIOR_al_corte_en_ninguna_de_las_tres_patas():
         entradas_y_salidas_stock_articulo(1)
 
     consulta = _consulta_con(cursor, "c.estado = 'recepcionado'")
-    # Compras: por el instante de recepción en hora argentina, que es el
-    # mismo que ordena el lote — no por fecha_operacion, que es la del hecho.
-    assert "(c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= %s" in consulta
-    assert "m.fecha_operacion >= %s" in consulta
-    assert "rp.fecha_operacion >= %s" in consulta
+    # Compras: ESTRICTO y por el instante de recepción en hora argentina, que
+    # es el mismo que ordena el lote. Una compra del día del corte ya está
+    # adentro de la foto que se contó esa tarde.
+    assert "(c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s" in consulta
+
+    # EL DÍA DEL CORTE ES ASIMÉTRICO: entra la FOTO (el 'stock_inicial' y las
+    # guías R 'inicial' de ese día) y nada más de ese día. Con `>=` en las dos
+    # puntas el día del corte se cuenta dos veces, que es lo que el comentario
+    # de _SQL_STOCK_PARTIDO ya midió para la cuenta por ficha.
+    assert "(m.tipo = 'stock_inicial' AND m.fecha_operacion = %s)" in consulta
+    assert "OR m.fecha_operacion > %s" in consulta
+    assert "(rp.tipo = 'inicial' AND rp.fecha_operacion = %s)" in consulta
+    assert "OR rp.fecha_operacion > %s" in consulta
 
     # Y la fecha SALE de corte_modelo: una constante clavada quedaría
     # mintiendo el día que se haga un corte nuevo.
     assert _consulta_con(cursor, "corte_modelo")
+    corte = date(2026, 9, 5)
     parametros = [c.args[1] for c in cursor.execute.call_args_list if len(c.args) > 1]
-    assert parametros[0] == ([1], date(2026, 9, 5), [1], date(2026, 9, 5), [1], date(2026, 9, 5))
+    assert parametros[0] == ([1], corte, [1], corte, corte, [1], corte, corte)
 
 
 def test_el_compensatorio_del_corte_sale_POR_TIPO_y_no_por_fecha():
@@ -4189,14 +4198,19 @@ def test_el_compensatorio_del_corte_sale_POR_TIPO_y_no_por_fecha():
     assert "m.tipo <> 'cierre_modelo_viejo'" in _consulta_con(cursor, "'reproceso_toma'")
 
 
-def test_las_SALIDAS_no_llevan_piso_y_eso_es_a_proposito():
-    """Recortarlas borraría entregas de la Rentabilidad Real.
+def test_las_SALIDAS_llevan_piso_ESTRICTO_en_las_tres_patas():
+    """Una salida del día del corte restaría la foto dos veces.
 
-    Una salida anterior al corte no puede alcanzar un lote nuevo igual:
-    `lote_posterior_a_la_salida` ya se lo impide, así que cae sola a
-    `sin_lote` y se ve. Sacarla de la lista sería otra cosa —desaparecer
-    del listado—, y un costo incompleto es un dato, una entrega que no
-    aparece es un dato perdido.
+    El conteo se toma a la tarde, así que la foto ya viene neta del trabajo
+    de ese día. Si además la salida consume la foto, se resta dos veces: es
+    el caso que el comentario de `_SQL_STOCK_PARTIDO` midió en −10 donde
+    había 20.
+
+    El costo es real y está asumido: las entregas del día del corte y
+    anteriores pierden su atribución, y como los dos llamadores de
+    `atribuir_costos_fifo` iteran su salida para armar las filas, esas
+    entregas desaparecen de ahí. Su costo salía de lotes anteriores al corte
+    —declarados no confiables—, así que era cero igual.
     """
     conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 5),)])
     cursor.description = COLUMNAS_LOTES
@@ -4206,9 +4220,13 @@ def test_las_SALIDAS_no_llevan_piso_y_eso_es_a_proposito():
         entradas_y_salidas_stock_articulo(1)
 
     salidas = _consulta_con(cursor, "'reproceso_toma'")
-    # Ninguna de las tres patas de salidas filtra por el corte.
-    assert "r.armado_el" in salidas and ">= %s" not in salidas
-    assert "rp.fecha_operacion >= " not in salidas
+    # Las tres patas, cada una con el alias de SU tabla: las tres columnas se
+    # llaman parecido y un substring pelado matchearía la equivocada.
+    assert "(r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s" in salidas
+    assert "m.fecha_operacion > %s" in salidas
+    assert "rp.fecha_operacion > %s" in salidas
+    # Estricto, no `>=`: nada del día del corte.
+    assert ">= %s" not in salidas
 
 
 def test_crear_reproceso_lee_el_corte_UNA_sola_vez():
@@ -5030,7 +5048,9 @@ def test_salidas_de_varios_articulos_devuelve_una_lista_por_cada_id_pedido():
     # un artículo que falta del diccionario rompe a quien lo lee.
     from app.db import salidas_stock_articulos
 
-    conexion, cursor = _conexion_falsa()
+    # El primer fetchone es el corte: desde el piso asimétrico, las salidas lo
+    # leen para dejar afuera el día del corte y todo lo anterior.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(date(2026, 9, 5),)])
     # Las columnas son las que devuelve la consulta de verdad: momento_orden
     # va porque desde E4 la salida viaja con su "orden" armado acá, en un solo
     # lugar, y no en cada pantalla que la consume.
@@ -5054,13 +5074,18 @@ def test_salidas_de_varios_articulos_devuelve_una_lista_por_cada_id_pedido():
     # Sin corrección no hay clave: el default del FIFO no se guarda nunca.
     assert "lotes_elegidos" not in salidas[2][0]
     assert salidas[7] == []
-    # DOS consultas para los dos artículos y todos sus renglones —las salidas
-    # y los lotes elegidos—, sin abrir una conexión por artículo ni pedir las
-    # correcciones renglón por renglón.
-    assert cursor.execute.call_count == 2
-    assert cursor.execute.call_args_list[0].args[1] == ([2, 7], [2, 7], [2, 7])
+    # TRES consultas para los dos artículos y todos sus renglones —el corte,
+    # las salidas y los lotes elegidos—, sin abrir una conexión por artículo
+    # ni pedir las correcciones renglón por renglón.
+    assert cursor.execute.call_count == 3
+    # Los ids van tres veces (una por pata) y el corte otras tres: el piso de
+    # las salidas es ESTRICTO en las tres.
+    corte = date(2026, 9, 5)
+    assert _consulta_con(cursor, "'reproceso_toma'")
+    parametros = [c.args[1] for c in cursor.execute.call_args_list if len(c.args) > 1]
+    assert parametros[0] == ([2, 7], corte, [2, 7], corte, [2, 7], corte)
     # Y la de los lotes elegidos pide TODOS los renglones de una.
-    assert cursor.execute.call_args_list[1].args[1] == ([55],)
+    assert parametros[1] == ([55],)
 
 
 def test_la_funcion_de_a_uno_es_la_de_varios_con_un_solo_id():
