@@ -103,3 +103,47 @@ Queda escrito, entonces, como sabido:
 > como materia prima—. El costo total del período es el que es; lo que está
 > mal es de qué lote salió cada peso, y por lo tanto el margen por artículo
 > de esos dos días.
+
+## Antes de mergear el piso: la ola de frenos
+
+Con menos lotes visibles, `bultos_en_los_lotes` baja y reprocesos que hoy
+pasan van a levantar `StockInsuficienteParaReproceso`. Eso es el freno
+diciendo la verdad, pero le cambia el día al depósito, así que se mide
+antes.
+
+La medición exacta la hace `scripts/lotes_vivos_del_fifo.py`, que llama al
+`repartir_fifo` de verdad. **Cuando no hay terminal**,
+`db/corte_fifo_2_ola_de_frenos.sql` da lo mismo aproximado desde el editor
+de Supabase.
+
+### Qué pierde la aproximación
+
+La consulta usa el **neto desde el corte** (entradas − salidas) en vez del
+reparto lote por lote. Se puede escribir en SQL y el reparto no, pero pierde
+tres cosas:
+
+1. **No respeta el orden de las fechas adentro de la ventana.** Si una
+   salida del 05/09 se pasó de lo que había ese día, el exceso es `sin_lote`
+   y no descuenta de un lote posterior; el neto sí se lo descuenta.
+2. **Por eso subestima**, y siempre en la misma dirección:
+   `sum(restantes) = neto + sin_lote`, y `sin_lote >= 0`. Verificado contra
+   el `repartir_fifo` real con 4000 casos al azar: la aproximación nunca dio
+   más que el disponible verdadero, y la brecha fue exactamente `sin_lote`.
+   **Puede marcar un freno de más; nunca puede perderse uno.** Para decidir
+   si mergear, ése es el lado correcto del error.
+3. **No sabe de mermas dirigidas.** Cambian de qué lote sale cada bulto, no
+   cuántos salen, así que el total no se mueve.
+
+### Las dos columnas, y por qué son dos
+
+- `frenan_con_el_piso` es lo que pasa **si se mergea el piso solo**. Cuenta
+  las cajas armadas como disponibles, porque el FIFO hoy las cuenta: es la
+  mezcla de unidades, que sigue viva.
+- `frenan_solo_cajones` es lo que pasaría **si además se arreglara la
+  mezcla**. Siempre va a ser mayor o igual.
+
+La diferencia entre las dos es la medida de cuánto está tapando la mezcla de
+unidades. Si `frenan_con_el_piso` da chico y `frenan_solo_cajones` da grande,
+la lectura no es "el piso es inofensivo": es que **las cajas armadas están
+sosteniendo la disponibilidad**, y la ola no desapareció, está esperando al
+otro arreglo.
