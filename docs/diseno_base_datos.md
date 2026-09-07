@@ -3560,11 +3560,17 @@ producidas 0 · salidas 0 · saldo 0 · sin movimiento
 **Una sola ficha, y es de 5 kg.** Los ceros son porque el corte fue el 05/09 y
 todavía no hubo movimiento de cherry, no porque no pase nada.
 
-Si el depósito efectivamente arma cajas de 5 kg —que es lo que hay que
-confirmar—, **la ficha única es correcta desde el negocio**: para Día las dos
-presentaciones son la misma cosa, una caja de 5 kg. El problema no es de
-modelado del producto, es contable: **no se puede saber cuál armamos nosotros
-y cuál vino lista.**
+> **CORREGIDO el 08/09.** Acá se había concluido que *"la ficha única está bien
+> desde el negocio porque las dos presentaciones son una caja de 5 kg"*. **Era
+> incompleto**: son la misma presentación **pero con costos de envase
+> distintos** — la que armamos lleva un cartón que compramos, la descartable lo
+> trae adentro de la compra. Ver "Los dos caminos del cherry y el costo del
+> envase" más abajo.
+
+Para Día las dos presentaciones son la misma cosa, una caja de 5 kg, así que la
+ficha única no está mal como definición de producto. Lo que la ficha SÍ decide
+además —y ahí estaba el hueco de esta conclusión— es **el costo del envase**,
+que no es el mismo por los dos caminos.
 
 ### Qué molesta de verdad, y qué no
 
@@ -3775,6 +3781,98 @@ La lección es del fixture, no del código: **el caso de dos fichas con el mismo
 kilaje y sin envase ya estaba escrito en los tests desde antes**, esperando. Una
 escalera que descarta información en el escalón de abajo colapsa justo donde más
 caro sale.
+
+## Los dos caminos del cherry y el costo del envase (08/09)
+
+El cherry entra por dos caminos y sale igual, **pero el envase cuesta distinto
+en cada uno**:
+
+| | Compra | Envase que sale | ¿Se compra el cartón? |
+|---|---|---|---|
+| **Camino 1** | cajón de 10 kg | caja chica de Día, **armada por nosotros** | **sí**, y va al costo |
+| **Camino 2** | caja descartable de 5 kg | la misma que vino | **no**, vino adentro de la compra |
+
+Ninguno vuelve. Los dos terminan siendo una caja de 5 kg para Día, con **una
+sola ficha** (id 3, "TOMATE CHERR", caja chica Día, 5 kg).
+
+### 1. El armado: para el stock son lo mismo, para el COSTO no
+
+**Para las cuentas de stock son indistinguibles.** Con una sola ficha, toda
+venta de cherry resta de esa ficha (cuenta 2) y del total (cuenta 1), venga de
+donde venga. Ahí no hay nada que elegir: el armado hace una resta, no toma de
+una pila u otra.
+
+**Pero el FIFO SÍ los distingue, y por lote.** Una caja descartable entró como
+COMPRA y es un lote `guia` con el importe de esa compra; una caja armada es un
+lote `reproceso` con su `costo_por_bulto_primera`. Dos lotes, dos costos de
+MERCADERÍA, y el reparto los consume por separado.
+
+O sea: **la mercadería está bien costeada por camino. El envase es otra
+cuenta**, y va por otro lado.
+
+### 2. EL MODELO YA TIENE EL CASO, y se llama `envase_variable`
+
+Esto es lo que da vuelta la pregunta. `_envases_por_unidad_ponderado` en
+`app/costeo.py` **nombra al cherry en su docstring**:
+
+> *"Envase VARIABLE (mango/cherry): por cada compra se decide solo, sin
+> preguntar nada nuevo: si el contenido de ESE cajón (lo que trajo esa compra
+> puntual) es menor o igual al contenido de la ficha, es **descartable (0
+> cajas)**; si es mayor, es caja chica, a razón de 1 caja cada 'contenido_ficha'
+> unidades."*
+
+```python
+if envase_variable and contenido_compra <= contenido_ficha:
+    envases_por_unidad = 0.0
+else:
+    envases_por_unidad = 1.0 / contenido_ficha
+```
+
+**Con `envase_variable = true`, el costeo ya separa los dos caminos compra por
+compra**, y sin preguntar nada: un cajón de 10 kg contra una ficha de 5 kg
+cuenta cartón; una caja de 5 kg contra una ficha de 5 kg cuenta cero. El número
+de corte sale de la ficha, no está hardcodeado.
+
+**Con `envase_variable = false`, todas las ventas de cherry se costean con el
+cartón**, incluidas las que no lo llevan.
+
+Así que la respuesta a "¿le suma el cartón a las descartables?" **no está en el
+código: está en un booleano de la ficha.** Se mide con
+`db/cherry_los_dos_caminos.sql`.
+
+### Dónde llega ese número, si está mal
+
+`costo_envase_unidad_venta` sale de la misma función y alimenta **dos cosas**:
+
+- **La cotización**: `calcular_precio_sugerido(costo_envase=...)` y la
+  `utilidad_aproximada`. Con el flag en false, el precio sugerido del cherry
+  sale más caro de lo que corresponde.
+- **La Rentabilidad Real**: `fila["costo_envase"] += unidades * envase_unidad`.
+  Con el flag en false, el margen del cherry sale **peor** de lo que es.
+
+Los dos errores van en la misma dirección: **cargarle un cartón que no existe a
+la mitad de las cajas.**
+
+### El límite que queda incluso con el flag bien puesto
+
+`_envases_por_unidad_ponderado` devuelve **un promedio ponderado por las compras
+de la ventana**, no el envase de cada caja vendida. Es lo correcto para
+cotizar —se mira hacia adelante— pero en Rentabilidad Real ese promedio se
+multiplica por las unidades de cada salida, así que **una venta puntual no queda
+atribuida exacta**; el total cierra bien mientras la mezcla sea parecida a la de
+la ventana.
+
+Eso no es un bug: es la precisión que el modelo eligió, y conviene saberla antes
+de leer un margen de cherry al peso.
+
+### 3. Qué se puede medir y qué no
+
+**Las ventas por camino NO se pueden partir en SQL**: el FIFO reparte en Python.
+Lo que sí se mide —y es exactamente lo que el costeo pondera— es **la mezcla de
+entradas**: cuántos cajones entraron por cada camino y cuántas cajas armamos.
+`db/cherry_los_dos_caminos.sql` devuelve las dos entradas, las cajas armadas,
+las ventas totales desde el corte y, arriba de todo, el `envase_variable` de la
+ficha.
 
 ## LO PRÓXIMO, en orden (06/09)
 
