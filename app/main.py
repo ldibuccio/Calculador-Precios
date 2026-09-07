@@ -8580,6 +8580,31 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    # QUÉ FICHAS SE CONTARON DESPUÉS DE SU GUÍA. Cambiarle la ficha a una guía
+    # mueve sus cajas de una pila a otra, y si esa pila ya se contó, la foto
+    # congelada del conteo (conteos_stock.stock_sistema) deja de coincidir:
+    # el Cotejo muestra una diferencia que NO es un error de conteo, y al lado
+    # tiene el botón "Ajustar", que es destructivo. Es la misma forma que el
+    # bug del piso del 04/09 — un número mal al lado del botón que lo
+    # "arregla" moviendo mercadería real. Acá no se traba nada: se avisa.
+    #
+    # Se compara contra el último conteo de ESA porción, que es el que el
+    # Cotejo mira. Si falla, la pantalla sale igual sin el aviso: es un dato
+    # de contexto, no la razón por la que se abre Guías R.
+    contado_despues: dict = {}
+    try:
+        for conteo in listar_ultimos_conteos_stock():
+            if conteo["ficha_id"] is None:
+                continue
+            contado_despues[(conteo["articulo_id"], conteo["ficha_id"])] = conteo["creado_en"].date()
+    except Exception:
+        logger.exception("No se pudieron leer los conteos para avisar del cambio de ficha")
+    for guia in guias:
+        fecha_conteo = contado_despues.get((guia["articulo_id"], guia["ficha_id"]))
+        guia["contada_despues_el"] = (
+            fecha_conteo if fecha_conteo is not None and fecha_conteo >= guia["fecha_operacion"] else None
+        )
+
     return templates.TemplateResponse(
         request,
         "deposito_stock_guias_r.html",
