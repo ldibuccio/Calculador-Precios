@@ -3991,6 +3991,43 @@ Hay una gradación, y conviene tenerla separada el día que se retome:
 Se retoma **con las capturas de las dos versiones al lado**, no discutiéndolo
 en abstracto: es una decisión de lectura, y se decide mirando.
 
+## PENDIENTE con nombre propio: no hay forma de registrar una merma de cajas armadas (07/09)
+
+Salió del relevamiento del extracto por porción, y **es una consecuencia del
+diseño, no un bug** — pero hay que poder contestarla cuando alguien pregunte,
+porque la pantalla nueva la va a hacer visible.
+
+**Una pila de cajas de una ficha la mueven SOLO dos cosas**: la primera de un
+reproceso asignado a esa ficha, y los armados de esa ficha. Es literalmente de
+lo único que se compone la cuenta 2 (`_SQL_STOCK_PARTIDO`: los CTE `armadas` y
+`salidas_ficha`, nada más).
+
+**Ni la merma ni el ajuste pueden tocarla**, y es a propósito. El Cotejo lo
+tiene escrito: *"un ajuste de stock es por ARTÍCULO: mueve el total, no reparte
+entre fichas. Si sobran cajas de Bolivia y faltan de Ecuador, el total del
+artículo está bien y ajustarlo lo rompería"*.
+
+**La consecuencia**: si el operario tira 5 cajas de Día porque se pudrieron, hoy
+no hay dónde anotarlo contra esa ficha. Se carga una merma del artículo, baja el
+total, y como los sueltos salen por resta (`total − Σ cajas`), **la baja se la
+come el nombre pelado**: los cajones bajan 5 y las cajas quedan igual, cuando lo
+que se tiró fueron cajas.
+
+Hasta ahora eso era invisible. Con el extracto por porción se va a ver como un
+renglón **"Sin explicar"** en los cajones, y la pregunta va a llegar.
+
+**Lo que NO hay que hacer** es lo obvio: permitir mermas por ficha sin pensar el
+resto. El ajuste es por artículo porque mueve el TOTAL, y la cuenta por ficha
+se deriva de reprocesos y armados — un movimiento que reste de una ficha sin
+restar del total dejaría las porciones sin sumar el total, que es el invariante
+del que cuelga todo el módulo (los sueltos salen por resta justamente para que
+no se pueda perder ni duplicar nada).
+
+Cuando se retome, la pregunta a contestar primero es **de qué cuenta sale una
+merma de cajas**: si baja el total y la ficha a la vez (dos patas nuevas, una
+en cada cuenta) o si es una salida de la ficha que el total ya tenía contada.
+No se decide sin ese mapa.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

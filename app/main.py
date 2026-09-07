@@ -124,6 +124,7 @@ from app.db import (
     deshacer_retiro_compra,
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
+    eventos_de_stock_del_dia,
     fecha_corte,
     facturacion_por_ficha,
     entradas_y_salidas_stock_articulos,
@@ -303,6 +304,7 @@ from core.casilla_pedidos import (
     texto_del_mail_guardado,
 )
 from core.pedido_estructura import parsear_pedido_estructurado
+from core.extracto_porcion import ETIQUETAS_MOVIMIENTO, armar_extracto
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
 from core.costos_fijos import calcular_costos_fijos
@@ -6776,6 +6778,78 @@ def _remanente_a_fecha(hasta) -> dict:
     }
 
 
+def _porcion_buscada(porciones: list[dict], articulo_id: int, ficha_id, es_segunda: bool):
+    """La porción del Remanente que se pidió, buscada por su CLAVE y no por el nombre.
+
+    El nombre lo arma _nombre_de_caja y cambia con el cliente y el envase; la
+    clave (articulo_id, ficha_id, si es la segunda) es la misma que usa
+    conteos_stock y no se mueve.
+    """
+    for porcion in porciones:
+        if porcion["articulo_id"] != articulo_id:
+            continue
+        de_segunda = not porcion.get("contable")
+        if de_segunda != es_segunda:
+            continue
+        if porcion["ficha_id"] == ficha_id:
+            return porcion
+    return None
+
+
+@app.get("/administracion/stock/remanente/porcion")
+def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | None = None,
+                            ficha_id: int | None = None, segunda: int = 0):
+    """El extracto de UNA porción en UN día: de qué venía, qué le pasó y en qué quedó.
+
+    Se entra tocando el renglón del Remanente, y no desde Movimientos: esa
+    pantalla lista movimientos_stock, que es UNA de las seis patas de la
+    cuenta —la compra y el armado, que son la mayoría del movimiento real,
+    no están en esa tabla—, así que entrar por ahí enseñaría que ese listado
+    es el universo de movimientos.
+
+    LAS DOS PUNTAS SALEN DE _remanente_a_fecha, la misma función que dibuja
+    el Remanente: la del día anterior y la del día. Por eso el saldo final
+    ES el número del Remanente para esa porción, no uno que se le tiene que
+    parecer — cierra por construcción y no por coincidencia. Los eventos del
+    medio solo EXPLICAN; lo que no alcanzan a explicar va en su renglón
+    "Sin explicar" (ver core/extracto_porcion.py).
+    """
+    hasta, aviso = _fecha_del_remanente(fecha)
+    es_segunda = bool(segunda)
+    try:
+        hoy = _remanente_a_fecha(hasta)
+        ayer = _remanente_a_fecha(hasta - timedelta(days=1))
+        eventos = eventos_de_stock_del_dia(articulo_id, hasta)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    porcion = _porcion_buscada(hoy["porciones"], articulo_id, ficha_id, es_segunda)
+    anterior = _porcion_buscada(ayer["porciones"], articulo_id, ficha_id, es_segunda)
+    if porcion is None and anterior is None:
+        raise HTTPException(status_code=404, detail="Esa porción no existe ni el día pedido ni el anterior.")
+
+    # Una porción en cero no aparece en el Remanente (no es una pila), pero
+    # su extracto tiene que poder mostrarse igual: justamente el día que se
+    # vació es el que hay que poder mirar.
+    quedo = float(porcion["bultos"]) if porcion else 0.0
+    venia = float(anterior["bultos"]) if anterior else 0.0
+    nombre = (porcion or anterior)["nombre"]
+
+    extracto = armar_extracto(eventos, venia, quedo, ficha_id=ficha_id, es_segunda=es_segunda)
+    return templates.TemplateResponse(
+        request,
+        "administracion_extracto_porcion.html",
+        {
+            "nombre": nombre,
+            "fecha": hasta,
+            "fecha_texto": hasta.strftime("%d/%m/%Y"),
+            "extracto": extracto,
+            "aviso": aviso,
+            "volver": f"/administracion/stock/remanente?fecha={hasta.isoformat()}",
+        },
+    )
+
+
 @app.get("/administracion/stock/remanente")
 def ver_remanente_deposito(request: Request, fecha: str | None = None):
     """Qué hay en el depósito, una porción por renglón. Para mirar y para exportar.
@@ -7664,12 +7738,12 @@ def cargar_reingreso_stock_ruta(
     return RedirectResponse(url=f"/deposito/stock/reingreso?{urlencode({'aviso': aviso})}", status_code=303)
 
 
-ETIQUETAS_MOVIMIENTO_STOCK = {
-    "ajuste": "Ajuste",
-    "merma": "Merma",
-    "reingreso_rechazo": "Reingreso",
-    "stock_inicial": "Stock inicial",
-}
+# Una sola copia, en core/extracto_porcion.py: la de acá y la del extracto
+# son la misma tabla de nombres, y dos listas de etiquetas se separan igual
+# que dos reglas. Le faltaba "cierre_modelo_viejo" —está en el CHECK de
+# movimientos_stock desde el corte— y sin él la pantalla mostraba el valor
+# crudo de la columna.
+ETIQUETAS_MOVIMIENTO_STOCK = ETIQUETAS_MOVIMIENTO
 
 
 @app.get("/administracion/stock/movimientos")

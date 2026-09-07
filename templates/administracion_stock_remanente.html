@@ -28,6 +28,17 @@
     border-top: 1px solid #eee;
   }
   .porcion:first-of-type { border-top: none; }
+  /* El renglón es un link, pero NO se pinta como link: si los nombres
+     salieran en azul y subrayados, la lista deja de leerse como una lista de
+     pilas y pasa a leerse como un menú. La flecha alcanza para decir que se
+     toca. */
+  a.porcion { color: inherit; text-decoration: none; }
+  a.porcion:active { background: #f1f5f9; }
+  /* La flecha va por CSS y no como markup: metida adentro de .cuanto
+     partía el número en dos nodos y cualquiera que lea esa celda —un test,
+     un scrape— deja de encontrarlo entero. El indicador es decoración, así
+     que vive en el CSS. */
+  a.porcion .cuanto::after { content: " ›"; color: #94a3b8; font-weight: 400; }
   .porcion .que { font-size: 1.05rem; line-height: 1.3; }
   .porcion .cuanto {
     font-size: 1.25rem;
@@ -206,11 +217,15 @@
        distintos y para cosas distintas. Sin total por artículo — sumarlas no
        le sirve a nadie que tenga que ir a buscarlas. #}
     {% if porciones %}
+      {# El renglón ENTERO es el link al movimiento de esa porción, no un
+         link chiquito al lado: a 390 px el área tocable tiene que ser la
+         fila. Va acá y no desde Movimientos porque la pregunta que contesta
+         es "de este número, ¿cómo llegué?", y el número está justo acá. #}
       {% for p in porciones %}
-      <div class="porcion">
+      <a class="porcion" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if not p.contable %}&segunda=1{% endif %}">
         <span class="que">{{ p.nombre }}</span>
         <span class="cuanto">{{ p.bultos|numero }}</span>
-      </div>
+      </a>
       {% endfor %}
     {% else %}
     <p class="vacio">No hay nada cargado.</p>

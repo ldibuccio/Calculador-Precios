@@ -7523,6 +7523,118 @@ def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
         conexion.close()
 
 
+def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
+    """Todo lo que le pasó a UN artículo en UN día, crudo y por origen, para el extracto por porción.
+
+    NO CALCULA NINGÚN SALDO, y es la decisión de fondo del extracto: los
+    saldos de las puntas salen de _remanente_a_fecha (la misma función que
+    dibuja el Remanente), así que la pantalla cierra por construcción. Esto
+    solo EXPLICA el medio. Sumar estos eventos para obtener el saldo sería
+    una quinta versión de la cuenta de stock, y las cuatro que hay ya se
+    separaron entre sí una vez cada una.
+
+    Cada origen trae su fecha con el MISMO criterio que las seis patas de
+    _SQL_SUMAS_STOCK, que es lo que hace que los eventos caigan en el día en
+    que la cuenta los mueve:
+
+    - compras por COALESCE(procesada_el en hora argentina, fecha_operacion):
+      una compra cargada el lunes y recepcionada el miércoles entra el
+      miércoles, que es cuando la mercadería llegó.
+    - armados por armado_el en hora argentina: el renglón sale del stock
+      cuando se arma, no cuando se pidió.
+    - reprocesos, movimientos y remitos por su fecha_operacion declarada.
+
+    Los filtros de vigencia son los mismos de siempre: pedido vigente por
+    (cliente, fecha), renglón no anulado, compra recepcionada, movimiento no
+    anulado. Un evento que la cuenta no mira tampoco puede aparecer acá
+    explicándola.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.nombre, c.cantidad_cajones_real
+                FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.articulo_id = %s AND c.estado = 'recepcionado'
+                  AND COALESCE((c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
+                               c.fecha_operacion) = %s
+                ORDER BY p.nombre
+                """,
+                (articulo_id, fecha),
+            )
+            compras = [{"proveedor": f[0], "bultos": float(f[1] or 0)} for f in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT id, bultos_tomados, bultos_primera, bultos_segunda, ficha_id, tipo
+                FROM reprocesos
+                WHERE articulo_id = %s AND anulado_el IS NULL AND fecha_operacion = %s
+                ORDER BY id
+                """,
+                (articulo_id, fecha),
+            )
+            reprocesos = [
+                {"id": f[0], "tomados": float(f[1]), "primera": float(f[2]),
+                 "segunda": float(f[3]), "ficha_id": f[4], "tipo": f[5]}
+                for f in cursor.fetchall()
+            ]
+
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (cliente_id, fecha_operacion) id, cliente_id
+                    FROM pedidos WHERE anulado_el IS NULL
+                    ORDER BY cliente_id, fecha_operacion, creado_en DESC
+                )
+                SELECT cl.nombre, r.sucursal, r.ficha_id,
+                       SUM(COALESCE(r.cantidad_armada, r.cantidad)) AS bultos
+                FROM pedidos_renglones r
+                JOIN vigentes v ON v.id = r.pedido_id
+                JOIN clientes cl ON cl.id = v.cliente_id
+                WHERE r.articulo_id = %s AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                  AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = %s
+                GROUP BY cl.nombre, r.sucursal, r.ficha_id
+                ORDER BY cl.nombre, r.sucursal
+                """,
+                (articulo_id, fecha),
+            )
+            armados = [
+                {"cliente": f[0], "sucursal": f[1], "ficha_id": f[2], "bultos": float(f[3])}
+                for f in cursor.fetchall()
+            ]
+
+            cursor.execute(
+                """
+                SELECT tipo, cantidad, motivo, destino_rechazo, bultos_segunda
+                FROM movimientos_stock
+                WHERE articulo_id = %s AND anulado_el IS NULL AND fecha_operacion = %s
+                ORDER BY id
+                """,
+                (articulo_id, fecha),
+            )
+            movimientos = [
+                {"tipo": f[0], "cantidad": float(f[1]), "motivo": f[2],
+                 "destino_rechazo": f[3], "bultos_segunda": float(f[4]) if f[4] is not None else None}
+                for f in cursor.fetchall()
+            ]
+
+            cursor.execute(
+                """
+                SELECT id, bultos FROM remitos_segunda
+                WHERE articulo_id = %s AND anulado_el IS NULL AND fecha_operacion = %s
+                ORDER BY id
+                """,
+                (articulo_id, fecha),
+            )
+            remitos = [{"id": f[0], "bultos": float(f[1])} for f in cursor.fetchall()]
+
+        return {"compras": compras, "reprocesos": reprocesos, "armados": armados,
+                "movimientos": movimientos, "remitos": remitos}
+    finally:
+        conexion.close()
+
+
 def contar_stock_deposito_negativo() -> int:
     """Auditoría: cuántos artículos del depósito tienen stock por debajo de cero.
 

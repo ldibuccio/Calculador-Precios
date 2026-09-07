@@ -13278,6 +13278,73 @@ def _porciones_en_pantalla(texto):
     return re.findall(r'<span class="que">([^<]+)</span>\s*<span class="cuanto">([^<]+)</span>', texto)
 
 
+EXTRACTO_EVENTOS = {
+    "compras": [{"proveedor": "La Misión", "bultos": 10.0}],
+    "reprocesos": [], "armados": [], "movimientos": [], "remitos": [],
+}
+
+
+def _extracto(url, eventos=None):
+    with (
+        patch("app.main.stock_deposito_por_articulo",
+              side_effect=lambda hasta: REMANENTE_FILAS if hasta == date(2026, 9, 6) else [
+                  dict(f, stock=float(f["stock"]) - 10) for f in REMANENTE_FILAS]),
+        patch("app.main.cajas_armadas_por_ficha", return_value=REMANENTE_CAJAS),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=REMANENTE_FICHAS),
+        patch("app.main.listar_clientes", return_value=REMANENTE_CLIENTES),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main.eventos_de_stock_del_dia",
+              return_value=EXTRACTO_EVENTOS if eventos is None else eventos),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 6)),
+    ):
+        return cliente.get(url)
+
+
+def test_el_remanente_linkea_cada_porcion_a_su_movimiento_con_la_CLAVE():
+    """Por (articulo_id, ficha_id), no por el nombre: el nombre lo arma
+    _nombre_de_caja y cambia con el cliente y el envase."""
+    respuesta = _remanente()
+
+    assert "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06" in respuesta.text
+    assert "articulo_id=2&fecha=2026-09-06&ficha_id=12" in respuesta.text
+    # La segunda se pide con su marca: no tiene ficha y no es los sueltos.
+    assert "articulo_id=1&fecha=2026-09-06&segunda=1" in respuesta.text
+
+
+def test_el_extracto_cierra_contra_el_numero_del_REMANENTE():
+    """La garantía de la pantalla: "Quedó" sale de _remanente_a_fecha, la misma
+    función que dibuja el Remanente — no de sumar los eventos."""
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06")
+
+    assert respuesta.status_code == 200
+    # Mandarina sueltos: 20 al cierre del 06 (35 de stock − 15 en cajas).
+    assert "Venía de ayer" in respuesta.text
+    assert "Quedó" in respuesta.text
+    assert "Compra recibida — La Misión" in respuesta.text
+
+
+def test_el_extracto_muestra_lo_que_los_eventos_no_explican():
+    """Sin repartirlo ni esconderlo: un faltante adentro de otro renglón es
+    peor que uno a la vista."""
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=1&fecha=2026-09-06",
+        eventos={"compras": [], "reprocesos": [], "armados": [], "movimientos": [], "remitos": []},
+    )
+
+    assert respuesta.status_code == 200
+    assert "Sin explicar" in respuesta.text
+
+
+def test_el_extracto_de_una_porcion_que_no_existe_da_404():
+    respuesta = _extracto(
+        "/administracion/stock/remanente/porcion?articulo_id=999&fecha=2026-09-06")
+
+    assert respuesta.status_code == 404
+
+
 def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
     """En el piso no hay "un artículo con un total": hay pilas distintas.
 
