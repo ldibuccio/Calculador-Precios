@@ -35,6 +35,8 @@ from app.alertas import (
     recalcular,
 )
 from app.costeo import (
+    VENTANA_INCIDENCIA_DIAS,
+    agregar_incidencia,
     agrupar_para_negociar,
     calcular_listado_para_negociar_precios,
     calcular_listados_para_negociar_precios,
@@ -123,6 +125,7 @@ from app.db import (
     eliminar_compra,
     entradas_y_salidas_stock_articulo,
     fecha_corte,
+    facturacion_por_ficha,
     entradas_y_salidas_stock_articulos,
     listar_articulos_con_primera_de_cliente,
     crear_grupo_costos_fijos,
@@ -4388,6 +4391,26 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
     utilidad_objetivo_cliente = (
         cliente["utilidad_objetivo"] / 100 if cliente["utilidad_objetivo"] is not None else None
     )
+
+    # La incidencia se pega ANTES de agrupar, y por eso alcanza una sola
+    # llamada: agrupar_para_negociar filtra y ordena estos mismos dicts, así
+    # que los cuatro cuadros quedan con el mismo número por construcción.
+    # Si la facturación no se puede leer, la pantalla sale igual SIN la
+    # columna — negociar precios no puede quedar bloqueado porque falló un
+    # dato de contexto.
+    hasta = momento_referencia.date()
+    desde = hasta - timedelta(days=VENTANA_INCIDENCIA_DIAS)
+    incidencia_sin_datos = False
+    try:
+        facturacion = facturacion_por_ficha(cliente_id, desde, hasta)
+    except Exception:
+        # Y SE DICE. Sin esto, la falla se ve igual que "este cliente no
+        # facturó nada": todas las filas en "—" y un total en cero. Un
+        # número que no se pudo leer no puede parecer un número leído.
+        facturacion = {}
+        incidencia_sin_datos = True
+    total_facturado = agregar_incidencia(articulos, facturacion)
+
     grupos = agrupar_para_negociar(articulos, utilidad_objetivo_cliente)
 
     # Artículos frescos (compra dentro de las últimas 48 hs, la ventana que
@@ -4408,6 +4431,9 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         "todos": grupos["todos"],
         "utilidad_objetivo_cliente": utilidad_objetivo_cliente,
         "articulos_con_precio_sin_cerrar": articulos_con_precio_sin_cerrar,
+        "incidencia_dias": VENTANA_INCIDENCIA_DIAS,
+        "total_facturado": total_facturado,
+        "incidencia_sin_datos": incidencia_sin_datos,
         # Para explicar por qué no hay nada, en vez de mostrar la
         # pantalla vacía sin avisar (ver templates/_cuadro_negociacion.html):
         # sin ninguna ficha, calcular_listado_para_negociar_precios

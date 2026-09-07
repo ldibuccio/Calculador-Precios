@@ -6076,8 +6076,11 @@ def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
 
 # --- /negociar: cuadro para negociar precios (Bajas / Subas / Resumen bajo objetivo), por cliente elegido ---
 
+FACTURACION_DE_PRUEBA = {1: 600000.0, 2: 400000.0}
+
 ARTICULOS_NEGOCIAR_DE_PRUEBA = [
     {
+        "ficha_id": 1,
         "articulo_nombre": "Tomate Cherry",
         "fresco": True,
         "variacion": "bajo",
@@ -6089,6 +6092,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "compras_sin_precio_excluidas": 0,
     },
     {
+        "ficha_id": 2,
         "articulo_nombre": "Mango",
         "fresco": True,
         "variacion": "subio",
@@ -6100,6 +6104,7 @@ ARTICULOS_NEGOCIAR_DE_PRUEBA = [
         "compras_sin_precio_excluidas": 0,
     },
     {
+        "ficha_id": 3,
         "articulo_nombre": "Palta",
         "fresco": False,  # no fresco: no entra en Bajas ni Subas
         "variacion": None,
@@ -6121,6 +6126,7 @@ def test_ver_negociar_sin_cliente_muestra_selector():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA) as mock_listar,
         patch("app.main.calcular_listado_para_negociar_precios") as mock_calcular,
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar")
 
@@ -6140,6 +6146,7 @@ def test_ver_negociar_con_cliente_muestra_titulo_y_nombre_del_cliente():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6154,6 +6161,7 @@ def test_ver_negociar_bajas_incluye_fresco_que_bajo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA) as mock_calcular,
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6171,6 +6179,7 @@ def test_ver_negociar_subas_incluye_fresco_que_subio():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6184,6 +6193,7 @@ def test_ver_negociar_no_fresco_no_aparece_en_bajas_ni_subas():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6200,6 +6210,7 @@ def test_ver_negociar_resumen_ordena_de_peor_a_mejor_y_filtra_bajo_objetivo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6225,6 +6236,7 @@ def test_ver_negociar_todos_los_articulos_lista_todos_ordenados_por_utilidad_des
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6245,13 +6257,16 @@ def test_ver_negociar_todos_los_articulos_utilidad_ok_sin_color_de_alerta():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
     import re
 
     bloque_todos = re.search(r"<h2>Todos los artículos.*", respuesta.text, re.S).group(0)
-    fila_tomate = re.search(r"<tr>\s*<td>Tomate Cherry</td>.*?</tr>", bloque_todos, re.S).group(0)
+    fila_tomate = re.search(
+        r'<tr>\s*<td>\s*<span class="nombre-articulo">Tomate Cherry</span>.*?</tr>', bloque_todos, re.S
+    ).group(0)
     # Tomate Cherry (30%, por encima del objetivo de 20%) no lleva ninguna
     # de las clases de alerta — solo Mango y Palta, que sí están mal.
     assert "utilidad-negativa" not in fila_tomate
@@ -6267,6 +6282,7 @@ def test_ver_negociar_todos_los_articulos_incluye_el_buscador():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6284,6 +6300,7 @@ def test_ver_negociar_sin_articulos_no_muestra_el_buscador():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6302,6 +6319,7 @@ def test_ver_negociar_con_precio_de_compra_sin_cerrar_en_fresco_muestra_adverten
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6321,6 +6339,7 @@ def test_ver_negociar_precio_de_compra_sin_cerrar_en_no_fresco_no_muestra_advert
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=articulos),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6333,6 +6352,7 @@ def test_ver_negociar_sin_precios_de_compra_sin_cerrar_no_muestra_advertencia():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6340,11 +6360,48 @@ def test_ver_negociar_sin_precios_de_compra_sin_cerrar_no_muestra_advertencia():
     assert 'class="aviso aviso-advertencia"' not in respuesta.text
 
 
+def test_ver_negociar_si_falla_la_facturacion_lo_dice_en_vez_de_mostrar_rayas():
+    # Un "—" por error de lectura se ve idéntico a un "—" por no haber
+    # facturado. La pantalla tiene que separar las dos cosas, o el número
+    # que no se pudo leer pasa por número leído.
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", side_effect=Exception("base caída")),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    # El resto del cuadro no depende de la facturación: sale igual.
+    assert respuesta.status_code == 200
+    assert "No se pudo leer la facturación" in respuesta.text
+    assert "Bajas (frescos que bajaron de costo)" in respuesta.text
+    assert "Tomate Cherry" in respuesta.text
+
+
+def test_ver_negociar_muestra_la_incidencia_en_los_cuatro_cuadros():
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIAR_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/negociar?cliente_id=1")
+
+    assert respuesta.status_code == 200
+    # 600.000 de 1.000.000 y 400.000 de 1.000.000.
+    assert respuesta.text.count("60,0%") >= 2  # Cherry: Bajas y Todos
+    assert respuesta.text.count("40,0%") >= 3  # Mango: Subas, bajo objetivo y Todos
+    # El período va escrito, y una sola vez.
+    assert respuesta.text.count("<strong>30 días</strong>") == 1
+
+
 def test_ver_negociar_sin_fichas_muestra_aviso_y_link_para_cargarlas():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6360,6 +6417,7 @@ def test_ver_negociar_con_fichas_pero_sin_articulos_recientes_muestra_aviso_dist
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6374,6 +6432,7 @@ def test_ver_negociar_sin_utilidad_objetivo_muestra_aviso():
         patch("app.main.listar_clientes", return_value=clientes_sin_utilidad),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6401,6 +6460,7 @@ def test_ver_negociar_error_de_base_da_500():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", side_effect=Exception("no se pudo conectar")),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=1")
 
@@ -6414,6 +6474,7 @@ def test_ver_negociar_otro_cliente_no_muestra_datos_de_dia():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_NEGOCIAR_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]) as mock_calcular,
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/negociar?cliente_id=2")
 
@@ -7202,6 +7263,7 @@ def test_ver_cargar_precios_embebe_el_catalogo_con_precio_vigente():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7220,6 +7282,7 @@ def test_ver_cargar_precios_articulo_sin_precio_previo_embebe_null():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7237,6 +7300,7 @@ def test_ver_cargar_precios_embebe_costo_y_denominador_para_simulacion():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIACION_DE_PRUEBA),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7257,6 +7321,7 @@ def test_ver_cargar_precios_incluye_boton_guardar_y_generar_listado():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7276,6 +7341,7 @@ def test_ver_cargar_precios_boton_cargar_otro_precio_va_en_azul_y_hay_cancelar()
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7296,6 +7362,7 @@ def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7307,6 +7374,7 @@ def test_ver_cargar_precios_cliente_sin_fichas_muestra_mensaje():
 
 ARTICULOS_NEGOCIACION_DE_PRUEBA = [
     {
+        "ficha_id": 1,
         "articulo_id": 1,
         "articulo_nombre": "Tomate Cherry",
         "fresco": True,
@@ -7329,6 +7397,7 @@ def test_ver_cargar_precios_incluye_boton_y_panel_de_negociacion():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=ARTICULOS_NEGOCIACION_DE_PRUEBA) as mock_negociar,
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7357,6 +7426,7 @@ def test_ver_cargar_precios_incluye_el_recuadro_de_simulacion():
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7376,6 +7446,7 @@ def test_ver_cargar_precios_panel_de_negociacion_no_usa_pendientes_sin_guardar()
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]) as mock_negociar,
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         cliente.get("/precios/cargar?cliente_id=1")
 
@@ -7391,6 +7462,7 @@ def test_ver_cargar_precios_sin_fichas_igual_muestra_boton_de_negociacion():
         patch("app.main.listar_fichas_por_cliente", return_value=[]),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
     ):
         respuesta = cliente.get("/precios/cargar?cliente_id=1")
 
@@ -16718,6 +16790,7 @@ def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
     with (
         patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=listado) as mock_listado,
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
         patch("app.main.crear_movimiento_stock", return_value=9.0) as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -16772,6 +16845,7 @@ def test_reingreso_sin_fecha_usa_hoy_y_sin_costo_posible_guarda_sin_costo():
     with (
         patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
         patch("app.main.calcular_listado_para_negociar_precios", return_value=[]),
+        patch("app.main.facturacion_por_ficha", return_value=FACTURACION_DE_PRUEBA),
         patch("app.main.crear_movimiento_stock", return_value=9.0) as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):

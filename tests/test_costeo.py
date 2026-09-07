@@ -11,6 +11,7 @@ import pytest
 from app.costeo import (
     ARGENTINA,
     _envases_por_unidad_ponderado,
+    agregar_incidencia,
     agrupar_para_negociar,
     calcular_costo_por_unidad_venta_reciente,
     calcular_listado_para_negociar_precios,
@@ -1176,3 +1177,83 @@ def test_objetivos_de_compra_cliente_sin_utilidad_objetivo_no_calcula_nada():
 
     assert resultado["articulos"] == []
     assert resultado["utilidad_objetivo"] is None
+
+
+# --- Incidencia: cuánto pesa cada ficha sobre lo facturado al cliente ---
+
+
+def _filas_incidencia():
+    """Tres fichas, y DOS SON DEL MISMO ARTÍCULO — que es el caso que rompe si se reparte por artículo."""
+    return [
+        {"ficha_id": 1, "articulo_id": 10, "articulo_nombre": "Banana", "fresco": True,
+         "variacion": "bajo", "utilidad_aproximada": 0.30},
+        {"ficha_id": 2, "articulo_id": 10, "articulo_nombre": "Banana", "fresco": True,
+         "variacion": "subio", "utilidad_aproximada": 0.10},
+        {"ficha_id": 3, "articulo_id": 11, "articulo_nombre": "Pera", "fresco": False,
+         "variacion": None, "utilidad_aproximada": -0.05},
+    ]
+
+
+def test_incidencia_reparte_por_ficha_y_suma_cien():
+    filas = _filas_incidencia()
+    total = agregar_incidencia(filas, {1: 250.0, 2: 250.0, 3: 500.0})
+
+    assert total == 1000.0
+    assert [f["incidencia"] for f in filas] == [0.25, 0.25, 0.5]
+    # El invariante del dueño: si todo lo facturado tiene fila, suman 100%.
+    assert sum(f["incidencia"] for f in filas) == 1.0
+
+
+def test_incidencia_dos_fichas_del_mismo_articulo_no_comparten_el_numero():
+    # Repartiendo por artículo, las dos Banana mostrarían 0.5 cada una y la
+    # columna sumaría 150%. Es el motivo por el que la clave es la ficha.
+    filas = _filas_incidencia()
+    agregar_incidencia(filas, {1: 100.0, 2: 400.0, 3: 500.0})
+
+    assert filas[0]["incidencia"] == 0.10
+    assert filas[1]["incidencia"] == 0.40
+
+
+def test_incidencia_sin_facturacion_es_none_y_no_cero():
+    # "No facturó nada" y "facturó tan poco que redondea a cero" son dos
+    # lecturas distintas: la pantalla muestra "—" solo para la primera.
+    filas = _filas_incidencia()
+    agregar_incidencia(filas, {1: 1000.0})
+
+    assert filas[0]["incidencia"] == 1.0
+    assert filas[1]["incidencia"] is None
+    assert filas[2]["incidencia"] is None
+
+
+def test_incidencia_no_renormaliza_cuando_hay_facturacion_sin_fila():
+    # La ficha 99 facturó pero no tiene fila en el cuadro (su artículo no
+    # tuvo compra reciente). El denominador la INCLUYE igual, así que los
+    # porcentajes visibles suman menos de 100 y el faltante se ve. Con el
+    # denominador de solo lo visible, cada fila se inflaría sola.
+    filas = _filas_incidencia()
+    total = agregar_incidencia(filas, {1: 250.0, 2: 250.0, 3: 250.0, 99: 250.0})
+
+    assert total == 1000.0
+    assert sum(f["incidencia"] for f in filas) == 0.75
+
+
+def test_incidencia_sin_ninguna_facturacion_no_divide_por_cero():
+    filas = _filas_incidencia()
+    total = agregar_incidencia(filas, {})
+
+    assert total == 0
+    assert all(f["incidencia"] is None for f in filas)
+
+
+def test_incidencia_queda_en_los_cuatro_cuadros_con_el_mismo_numero():
+    # agrupar_para_negociar filtra y ordena LOS MISMOS dicts: por eso alcanza
+    # con pegarla una vez antes de agrupar. Si alguna vez copiara las filas,
+    # este test lo agarra.
+    filas = _filas_incidencia()
+    agregar_incidencia(filas, {1: 250.0, 2: 250.0, 3: 500.0})
+    grupos = agrupar_para_negociar(filas, 0.20)
+
+    assert grupos["bajas"][0]["incidencia"] == 0.25
+    assert grupos["subas"][0]["incidencia"] == 0.25
+    assert {f["ficha_id"]: f["incidencia"] for f in grupos["bajo_objetivo"]} == {2: 0.25, 3: 0.5}
+    assert {f["ficha_id"]: f["incidencia"] for f in grupos["todos"]} == {1: 0.25, 2: 0.25, 3: 0.5}

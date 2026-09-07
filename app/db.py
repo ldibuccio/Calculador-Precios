@@ -5536,6 +5536,71 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
         conexion.close()
 
 
+def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
+    """{ficha_id: facturación} de un cliente en un rango — para la incidencia de Márgenes por Artículo.
+
+    LA FACTURACIÓN ES kilos_enviados × PRECIO VIGENTE A LA FECHA DEL
+    PEDIDO. Los dos lados de esa multiplicación son deliberados:
+
+    - kilos_enviados es "el número que se factura" (así lo dice el comment
+      de la columna): lo que el depósito grabó al armar, congelado. NO se
+      usa cantidad × contenido_caja de la ficha, que es lo que mira
+      Rentabilidad de Pedidos — esa cuenta es de LO PEDIDO y su propio
+      docstring aclara que es "una estimación de rentabilidad, no
+      facturación". A pesar del nombre, la columna guarda UNIDADES DE
+      VENTA (kilos, unidades o cubetas según la ficha), que es la misma
+      unidad en la que está el precio.
+    - El precio sale del mismo LATERAL de siempre (ver
+      listar_precios_vigentes_por_cliente_en_fechas), anclado a la fecha
+      de cada pedido: un cambio de precio no se aplica para atrás.
+
+    Un renglón sin kilaje (nunca se armó), sin ficha (sin identificar, o
+    ficha borrada) o sin precio vigente a esa fecha NO SUMA COMO CERO: no
+    aparece, y por eso el total de esto puede ser menor que lo realmente
+    facturado. Cuánto menor lo mide db/incidencia_facturacion_no_atribuida.sql,
+    que parte los renglones en los baldes que compiten con "atribuible".
+
+    El DISTINCT ON de pedidos vigentes es el mismo de buscar_renglones_pedidos
+    y listar_renglones_pedidos_vigentes: un pedido corregido es una fila
+    nueva y la vieja queda anulada — sin esto, un día con corrección
+    facturaría dos veces.
+
+    A diferencia de listar_renglones_pedidos_vigentes, acá SÍ se filtra
+    r.anulado_el: un renglón dado de baja no se facturó. Es el criterio de
+    Buscar Pedidos (ver _grupos_buscar_pedidos), que es la pantalla con la
+    que este número tiene que cerrar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (fecha_operacion) id, fecha_operacion
+                    FROM pedidos
+                    WHERE cliente_id = %s AND anulado_el IS NULL
+                      AND fecha_operacion >= %s AND fecha_operacion <= %s
+                    ORDER BY fecha_operacion, creado_en DESC
+                )
+                SELECT r.ficha_id, SUM(r.kilos_enviados * p.precio) AS facturado
+                FROM vigentes v
+                JOIN pedidos_renglones r ON r.pedido_id = v.id
+                CROSS JOIN LATERAL (
+                    SELECT precio FROM precios_venta_historial
+                    WHERE ficha_id = r.ficha_id AND vigente_desde <= v.fecha_operacion
+                    ORDER BY vigente_desde DESC LIMIT 1
+                ) p
+                WHERE r.ficha_id IS NOT NULL AND r.anulado_el IS NULL
+                  AND r.kilos_enviados IS NOT NULL
+                GROUP BY r.ficha_id
+                """,
+                (cliente_id, fecha_desde, fecha_hasta),
+            )
+            return {fila[0]: float(fila[1]) for fila in cursor.fetchall() if fila[1] is not None}
+    finally:
+        conexion.close()
+
+
 def contar_pedidos_incompletos(fecha_desde) -> dict:
     """Pedidos vigentes desde una fecha que salieron con mercadería incompleta, y el más viejo.
 

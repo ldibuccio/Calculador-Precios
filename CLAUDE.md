@@ -98,6 +98,19 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    push: si dice "ahead", el commit no está donde se cree.
 2. **Antes de commitear se mira en qué rama se está.** El commit va donde
    estás parado, no donde creés.
+
+   **Y la verificación se REPORTA sobre lo que se miró, no sobre lo que se
+   quería.** Pasó el 07/09, tres días después de escribir el párrafo de
+   arriba, que describe exactamente esto. Se commiteó en `main`, se pusheó, y
+   se reportó *"pusheado a la rama, rev-list 0 0"*. Las dos mitades eran
+   ciertas por separado —el push salió, y el `rev-list` de la rama daba
+   limpio— y juntas decían algo falso: el commit estaba en `main`. **La regla
+   no falló por no correr el comando: falló al contar el resultado.** Un
+   `rev-list` en verde sobre la rama equivocada es una verificación cumplida
+   y una afirmación falsa, y lo segundo es lo que llega al otro lado.
+
+   Antes de escribir "pusheado a X": `git branch --show-current`, y que X sea
+   eso. Si no coinciden, eso es lo que hay que decir.
 3. **La ausencia de error no es confirmación.** Es la misma familia que el
    editor de Supabase que escribe a medias y el verificador que nunca se
    corrió: lo que hay que mirar es el estado final, no que el comando no se

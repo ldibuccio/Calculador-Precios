@@ -34,6 +34,12 @@ VENTANA_COSTEO_HORAS = 48
 LIMITE_APARICION_DIAS = 15
 LIMITE_COSTO_ANTERIOR_DIAS = 20
 RANGO_HISTORIAL_DIAS = 40
+# La ventana de la incidencia, y es OTRA que las de arriba a propósito: las de
+# arriba miden "qué tan fresco es el costo" (48 hs) y "esto todavía se
+# comercializa" (15 días); la incidencia mide cuánto PESA un artículo en lo
+# facturado, que es un hecho estructural y lento. Igualarlas sería medir media
+# estación. Por eso la pantalla escribe el período al lado del número.
+VENTANA_INCIDENCIA_DIAS = 30
 
 
 def _costear_compras(compras: list[dict]) -> tuple[float | None, float, int]:
@@ -497,6 +503,42 @@ def _listado_para_negociar_precios(
     # desempate por nombre de ficha evita que se turnen entre pantallas.
     resultado.sort(key=lambda fila: (not fila["fresco"], fila["articulo_nombre"], fila["ficha_nombre"]))
     return resultado
+
+
+def agregar_incidencia(articulos: list[dict], facturacion: dict) -> float:
+    """Le pone a cada fila su incidencia: qué fracción de lo facturado al cliente pesa ESA FICHA.
+
+    Muta los dicts que recibe y devuelve el total facturado. Mutar es a
+    propósito y es lo que garantiza que los cuatro cuadros digan lo mismo:
+    agrupar_para_negociar no copia nada, filtra y ordena LOS MISMOS dicts,
+    así que una fila que aparece en "Bajas" y en "Todos" es un solo objeto
+    con un solo número. Un cálculo por cuadro serían cuatro reglas.
+
+    LA CLAVE ES LA FICHA, NO EL ARTÍCULO. El precio, el kilaje y el envase
+    cuelgan de la ficha, y un cliente puede tener dos del mismo artículo
+    (Banana Bolivia y Banana Ecuador). Repartiendo por artículo, esas dos
+    filas mostrarían cada una el total de las dos y la columna sumaría más
+    de 100.
+
+    EL DENOMINADOR ES TODO LO FACTURADO, no la suma de las filas que se
+    muestran. La diferencia importa el día que haya facturación de una
+    ficha sin fila en el cuadro (vendió, pero su artículo no tuvo compra
+    en LIMITE_APARICION_DIAS, así que no aparece): con este denominador
+    los porcentajes suman menos de 100 y eso se ve; con el otro se
+    renormalizarían solos y "6,2%" pasaría a significar en silencio "6,2%
+    de lo que pude atribuir".
+
+    incidencia = None (no 0.0) para la ficha que no facturó nada en la
+    ventana: la pantalla lo muestra "—". No es lo mismo que facturar tan
+    poco que redondea a cero, y son dos lecturas distintas para el que
+    negocia.
+    """
+    total = sum(facturacion.values())
+    for articulo in articulos:
+        facturado = facturacion.get(articulo["ficha_id"])
+        articulo["facturado"] = facturado
+        articulo["incidencia"] = facturado / total if facturado and total else None
+    return total
 
 
 def agrupar_para_negociar(articulos: list[dict], utilidad_objetivo: float | None) -> dict:

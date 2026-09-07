@@ -3861,6 +3861,7 @@ def test_listar_pedidos_vigentes_con_armado_no_cuenta_los_anulados():
 from app.db import (  # noqa: E402
     crear_movimiento_stock,
     devoluciones_vinculadas_por_rango,
+    facturacion_por_ficha,
     entradas_y_salidas_stock_articulo,
     entradas_y_salidas_stock_articulos,
     listar_pedidos_para_reingreso,
@@ -5633,3 +5634,38 @@ def test_el_selector_de_reproceso_no_esconde_el_articulo_con_deficit():
 
         assert listar_articulos_para_reproceso() == [{"id": 1, "nombre": "Banana"}]
 
+
+
+def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = [(1, 1500.50), (2, 300)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        facturado = facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
+
+    consulta = cursor.execute.call_args.args[0]
+    # Lo que se factura son los kilos que grabó el depósito, por el precio
+    # vigente A LA FECHA DEL PEDIDO — nunca el precio de hoy hacia atrás.
+    assert "SUM(r.kilos_enviados * p.precio)" in consulta
+    assert "vigente_desde <= v.fecha_operacion" in consulta
+    assert "ORDER BY vigente_desde DESC LIMIT 1" in consulta
+    # Un pedido corregido no factura dos veces.
+    assert "DISTINCT ON (fecha_operacion)" in consulta
+    # Lo que no se puede atribuir NO suma como cero: no entra.
+    assert "r.ficha_id IS NOT NULL AND r.anulado_el IS NULL" in consulta
+    assert "r.kilos_enviados IS NOT NULL" in consulta
+    assert cursor.execute.call_args.args[1] == (1, date(2026, 8, 8), date(2026, 9, 7))
+    assert facturado == {1: 1500.50, 2: 300.0}
+
+
+def test_facturacion_por_ficha_excluye_el_renglon_anulado():
+    # Es el criterio de Buscar Pedidos (_grupos_buscar_pedidos), NO el de
+    # listar_renglones_pedidos_vigentes, que hoy no filtra el renglón
+    # anulado. La facturación tiene que cerrar con la pantalla que factura.
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
+
+    assert "r.anulado_el IS NULL" in cursor.execute.call_args.args[0]
