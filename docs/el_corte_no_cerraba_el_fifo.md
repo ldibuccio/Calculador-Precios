@@ -482,8 +482,16 @@ esa jornada, así que la foto del sistema queda atrasada respecto del piso
 por el neto de ese día, y el Cotejo muestra esa diferencia **como si fuera
 un faltante**.
 
-Con Mango el 07/09: conteo a las 16:37, guía R cargada a las 16:51, compra
-recepcionada a las 17:02.
+**El caso testigo es Tomate Cherry**, medido el 07/09: `dif_cruda` 15,
+`trabajo_sin_cargar` 15, `dif_real` **0**. Quince bultos de diferencia falsa
+en un solo artículo, que desaparecen enteros al acreditar el trabajo del día.
+Es el mejor ejemplo porque no tiene ningún déficit tapado de por medio: la
+diferencia es el mecanismo y nada más.
+
+Sobre los 21 artículos contados ese día, **17 dieron `dif_real` = 0**.
+
+Mango sirve para ver la mecánica con los horarios: conteo a las 16:37, guía R
+cargada a las 16:51, compra recepcionada a las 17:02.
 
 | | |
 |---|---|

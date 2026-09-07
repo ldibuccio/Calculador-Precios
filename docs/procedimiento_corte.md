@@ -204,8 +204,10 @@ pasó. Si se cuenta antes de cargar las guías R de la jornada, la foto del
 sistema queda atrasada por el neto de ese día y el Cotejo muestra esa
 diferencia como si fuera un faltante.
 
-Medido el 07/09 con Mango: diferencia cruda 14 sobre un piso de 2, y
-diferencia real −1 una vez acreditado el trabajo sin cargar. Factor de seis.
+Medido el 07/09: de 21 artículos contados, **17 dieron diferencia real
+CERO** al acreditar el trabajo sin cargar. El caso más claro es Tomate
+Cherry, con 15 bultos de diferencia cruda que se explican enteros por el
+mecanismo.
 
 Vale para el conteo del corte y para el conteo de todos los días. Ver
 `docs/el_corte_no_cerraba_el_fifo.md` y
