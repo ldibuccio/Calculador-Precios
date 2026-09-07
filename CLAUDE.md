@@ -186,6 +186,32 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 5, del 07/09: **una asimetría de diseño también es una copia, y
+se busca por las CUENTAS que la necesitan, no por el código que la
+implementa.**
+
+El conteo físico del corte se toma A LA TARDE, así que la foto del stock
+inicial ya viene neta del trabajo de ese día. Eso obliga a una asimetría, y
+está contemplada en DOS cuentas: el pool de segunda —con su comentario
+explicándolo— y la cuenta por ficha, que lo dice "y por lo mismo". **El
+FIFO es la única de las tres que no la tiene**, y por eso su freno mide los
+reprocesos del día del corte contra una entrada posterior a ellos: no puede
+cubrirlos por construcción. Cuatro guías R de 32 frenaron por eso en el
+backtest, sin que hubiera faltado un solo bulto.
+
+Es la misma familia que la copia olvidada, pero **no hay grep que la
+encuentre**: las dos cuentas que sí la tienen no comparten una línea de
+código con la que no la tiene. Se escribe distinto en cada una. Lo único que
+las une es el hecho del mundo —la foto se toma a la tarde—, y eso vive en un
+comentario.
+
+De acá en adelante, cuando aparezca una asimetría que nace de CÓMO se toma un
+dato en la realidad —a qué hora, en qué orden, con qué recorte—: **enumerar
+todas las cuentas que leen ese dato y decidir una por una si la necesitan**,
+en el mismo momento en que se descubre. La lista va escrita al lado de la
+primera que se arregla; si no, la segunda se arregla meses después y la
+tercera nunca.
+
 Corolario 3, del 04/09 y es la CUARTA vez: **cuando una estructura gana un
 campo, hay que grepear quién la CONSTRUYE, no el campo nuevo.** Grepear el
 campo solo encuentra a los que ya lo usan — los que faltan, por definición, no
