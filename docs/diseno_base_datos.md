@@ -3457,6 +3457,99 @@ ya existía ahí lo puede apretar cualquiera, y cerrar una seña (pagar o hacer
 vale) también. Queda abierto a propósito: depende de quién paga en la práctica,
 que es la pregunta de operación todavía sin responder.
 
+## EL MODELO ASUME QUE TODA CAJA CON FICHA NACIÓ DE UN REPROCESO (07/09)
+
+Del dueño, sobre el Tomate Cherry, y va con nombre propio porque **es de
+fondo**: no es un bug, es algo que el modelo no puede expresar.
+
+El cherry entra de **dos formas**:
+
+- en **cajones de 10kg**, que el depósito reprocesa y arma en cajas de Día;
+- en **cajas de 5kg del proveedor**, que ya vienen listas y salen tal cual.
+
+Las dos terminan siendo mercadería para Día. Pero la cuenta 2 (cajas por ficha)
+se alimenta de **una sola fuente**:
+
+```sql
+armadas AS (
+    SELECT articulo_id, ficha_id, SUM(bultos_primera) AS total
+    FROM reprocesos ...
+```
+
+**`reprocesos.bultos_primera`, y nada más.** Una caja que entró como COMPRA
+—ya armada— es una entrada de la cuenta 1 y no existe para la cuenta 2. O sea
+que **el modelo define "caja de una ficha" como "primera de un reproceso"**, y
+el cherry es el caso donde eso deja de alcanzar.
+
+### El total nunca se rompe. Lo que se desalinea es qué es cada cosa
+
+El armado no elige de qué pila saca — **no hay dos pilas**. Hace una resta y
+una sola, y "sueltos" no es un depósito sino un sobrante calculado:
+
+| El renglón armado… | Total | Cajas de la ficha | Sueltos |
+|---|---|---|---|
+| tiene ficha | baja | bajan | **quedan igual** |
+| no tiene ficha | baja | igual | **bajan** |
+
+Y lo que decide cuál de los dos NO lo elige el que arma mirando el piso:
+**sale de lo que el cliente PIDIÓ**, matcheado contra sus fichas cuando entró
+el pedido. El sistema ya decidió de qué porción sale antes de que nadie toque
+un cajón.
+
+### El caso ya estaba previsto — pero para el artículo ENTERO, no para el híbrido
+
+El docstring de `_cajas_por_ficha` lo dice desde antes:
+
+> *"Un artículo que NO SE REPROCESA (manzana, pera, arándano: salen en el
+> envase que vienen) tiene cero producidas y todas sus salidas del otro lado.
+> Su saldo es negativo puro y crece todos los días."*
+
+Está bien resuelto para un artículo que es **enteramente** de pasada: el piso
+`disponibles = max(saldo, 0)` evita que los sueltos den más que el total (la
+falla del 04/09). **Lo que no está previsto es que el MISMO artículo haga las
+dos cosas**, y ahí un déficit legítimo —"esto vino armado"— convive con cajas
+reales de otra ficha, sin forma de distinguirlo del déficit que sí importa:
+"falta cargar una guía R".
+
+**El déficit es una señal usada para dos cosas que no son la misma.**
+
+### La consecuencia que más pesa: un aviso que no se puede apagar
+
+Si Día tiene ficha propia para el 5kg, la pantalla de armado le dice al
+operario, en CADA renglón de 5kg y para siempre:
+
+> *"No hay cajas armadas de esta ficha. Fijate si hay que reprocesar antes de
+> mandarlo."*
+
+Le pide reprocesar algo que **ya vino listo**. Es exactamente la familia de la
+alerta de guías R sin costo del 06/09: **una alerta que no se puede apagar
+enseña a ignorar todas.** Y acá es peor que ahí, porque no es un banner de
+auditoría: es un cartel en la pantalla que el depósito usa todos los días.
+
+El mínimo, cuando se decida: **que ese cartel no aparezca en fichas que nunca
+se reprocesan.** Hoy `sin_cajas_de_la_ficha` solo mira "esta ficha no tiene
+cajas", que es cierto y es inútil.
+
+Arrastre menor, misma raíz: `listar_articulos_para_reproceso` incluye el
+artículo si `stock > 0 OR sueltos > 0 OR deficit > 0`, así que el déficit
+permanente lo deja siempre en el selector de Reproceso.
+
+### Cuál de los dos escenarios es se mide, no se deduce
+
+`db/fichas_del_cherry.sql` lista TODAS las fichas del artículo con sus
+producidas, sus salidas y su saldo. **No filtra por cliente a propósito**:
+filtrar por nombre es justo cómo se pierde la fila que importa.
+
+- **Dos fichas**, una con `producidas = 0` y salidas creciendo → hay ficha
+  propia de 5kg, y el cartel está apareciendo todos los días.
+- **Una sola ficha** con un saldo levemente negativo → las dos presentaciones
+  piden contra la misma, y entonces **una venta de cajas del proveedor
+  descuenta de las cajas armadas de 10kg**. El total sigue bien y las dos
+  porciones quedan cruzadas, sin ningún cartel que lo diga.
+
+El segundo escenario es más silencioso y por eso peor: no hay aviso falso
+porque no hay aviso.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el
