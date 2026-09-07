@@ -4028,6 +4028,68 @@ merma de cajas**: si baja el total y la ficha a la vez (dos patas nuevas, una
 en cada cuenta) o si es una salida de la ficha que el total ya tenía contada.
 No se decide sin ese mapa.
 
+## El backfill de Palmala: 393 renglones y la plata que faltaba (07/09)
+
+Cierre del hilo que empezó con un renglón del 05/09 que facturaba NULL.
+
+### Qué se recuperó
+
+**393 renglones** de pedido de Palmala tenían `ficha_id` en NULL. Todos
+recuperables por código exacto. Corrido el backfill, la verificación
+(`db/palmala_4_verificacion.sql`) dio **todo en cero**: ningún cruce de
+artículo, ningún cruce de cliente, ninguna ficha sin artículo. Quedaron **669
+renglones con ficha**, y `codigo_no_coincide` también en cero — o sea que
+TODOS matchean por código exacto y ninguno quedó asignado por otro criterio.
+
+La facturación de 30 días pasó de **$27.595.500 a $28.515.500**. Los **$920.000**
+de diferencia son un solo renglón: el del **05/09, Anco Elegido**, 400 unidades
+— el mismo que apareció con plata NULL y que costó tres vueltas identificar.
+
+Y el contador de días quedó en **4**, que es correcto. Los cuatro son 05/09,
+26/08, 25/08 y 24/08.
+
+### El mecanismo, verificado contra el código y NO como se contó primero
+
+Al cerrar se propuso esta explicación: *"el 05/09 ya estaba contando antes del
+backfill, porque el arreglo del `CROSS`→`LEFT` lo hizo contar sin necesitar la
+ficha"*. **No es lo que hace el código, y conviene que quede escrito bien.**
+
+El CTE `entregas` de `facturacion_por_ficha` sigue teniendo
+`WHERE r.ficha_id IS NOT NULL`. El cambio de `CROSS` a `LEFT` fue sobre el
+LATERAL del **precio**, no sobre la ficha: hizo que un día con ficha pero sin
+precio vigente siguiera contando. Un renglón SIN FICHA nunca contó ni cuenta.
+
+Lo que efectivamente pasó: antes del backfill el 05/09 no contaba ni facturaba;
+después cuenta **y** factura. Los días subieron a 4 y la plata subió $920.000,
+las dos cosas por el mismo renglón y al mismo tiempo.
+
+El "4" anterior con el que se comparó **era otra medición** (los días con
+pedido vigente, que es lo que lista `db/movimiento_real_30_dias.sql`), no los
+días con entregas armadas. Por eso "4 → 4" parecía una contradicción y no lo
+era: los dos cuatros nunca fueron el mismo número.
+
+### La señal de que el contador está bien calibrado
+
+El **22/08 tiene 1 armado y 0 con kilos**, y no cuenta. Correcto: alguien tildó
+y no cargó los kilos, y ese día no facturó nada. El contador mira
+`kilos_enviados`, no `armado_el`, y ahí se ve la diferencia.
+
+### La lección del tramo
+
+**Se compararon dos números tomados en momentos distintos, y sobre esa
+comparación se construyó una expectativa ("de 4 tiene que pasar a 5").** Los
+dos números eran correctos. Lo que estaba mal era la hipótesis de qué tenía que
+cambiar — y encima los dos "4" ni siquiera medían lo mismo.
+
+Es pariente del fixture que repite la hipótesis: en los dos casos se razonó
+sobre una construcción propia en vez de sobre el dato. Acá la construcción era
+la comparación.
+
+**Antes de esperar que un número se mueva: verificar que las dos lecturas midan
+lo mismo y estén tomadas contra la misma ventana.** Una ventana móvil
+(`now() - 30`) y dos lecturas separadas por días no son comparables, aunque los
+dos números salgan de la misma pantalla.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el
