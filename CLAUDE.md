@@ -210,6 +210,36 @@ Los dos síntomas que lo escondieron, y valen como señal para la próxima:
   compara la estructura ENTERA: que falle el día que alguien agrega un campo es
   la función del test, no una molestia.
 
+Corolario 5, del 07/09, y es la SEGUNDA vez con el MISMO `{% else %}`: **una
+rama por defecto que AFIRMA algo no es un default, es una aserción sin
+verificar.**
+
+En Guías R el detalle de consumos pinta cada origen con un `if/elif`, y el
+`{% else %}` dice *"Sin lote (se tomó más de lo que había en el sistema)"*. El
+CHECK de `reprocesos_consumos.origen` permite SIETE valores y la plantilla
+nombraba CINCO. El que faltaba —`stock_inicial`— caía al else, así que un lote
+real, con costo real, se mostraba como si no existiera: la guía R176 decía que
+se había tomado más de lo que había cuando el freno había corrido bien y había
+lotes de sobra.
+
+**Lo agravante es que ya había pasado.** Tres líneas más arriba hay un
+comentario que dice, textual: *"Sin este renglón el consumo del compensatorio
+caería en la rama de abajo y diría 'se tomó más de lo que había', que es
+falso"*. Se arregló ESE valor y no se miró la lista completa del CHECK — el
+corolario 2 (cuando se arregla una copia hay que ir a buscar la otra) aplicado
+a una lista de valores en vez de a dos funciones.
+
+De acá en adelante: **cuando una rama por defecto afirma algo, se enumeran los
+casos que puede recibir contra la fuente que los define** —el CHECK, el enum,
+la constante— y el default se queda solo con los que de verdad significan eso.
+Y si la fuente puede crecer, el test la lee de ahí en vez de copiarla: ver
+`test_los_SIETE_origenes_de_consumo_estan_nombrados_en_la_pantalla`, que parsea
+el CHECK de `db/esquema_completo.sql` y falla el día que aparezca un valor
+nuevo sin nombrar.
+
+Y la señal para reconocerlo: **un default que dice "esto no existe" es más
+peligroso que uno que dice "no sé"**, porque el que lo lee actúa.
+
 Corolario 4, del 07/09: **un assert de substring sobre SQL tiene que calificar
 la tabla.** `listar_renglones_pedidos_vigentes` no filtraba
 `pedidos_renglones.anulado_el` —era la ÚNICA de diecisiete lectoras que no lo

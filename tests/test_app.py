@@ -13349,6 +13349,37 @@ def test_el_extracto_de_una_porcion_que_no_existe_da_404():
     assert respuesta.status_code == 404
 
 
+def test_los_SIETE_origenes_de_consumo_estan_nombrados_en_la_pantalla():
+    """El {% else %} de Guías R es un cajón de sastre: el origen que no esté
+    nombrado se muestra como "se tomó más de lo que había en el sistema", que
+    es lo CONTRARIO de lo que pasó.
+
+    Ya mordió dos veces: primero con cierre_modelo_viejo (arreglado, con su
+    comentario) y el 07/09 con stock_inicial, en la guía R176 — un lote real,
+    con costo real, mostrado como si no existiera.
+
+    Este test lee la lista del CHECK de la base y exige que la plantilla los
+    nombre a todos menos 'sin_lote', que es el único que va al else. Así, el
+    día que el CHECK gane un valor nuevo, falla acá y no en la pantalla.
+    """
+    import re
+
+    esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
+    bloque = re.search(r"create table reprocesos_consumos.*?\);", esquema, re.S).group(0)
+    check = re.search(r"origen text not null check \(origen in \((.*?)\)\)", bloque, re.S).group(1)
+    del_check = set(re.findall(r"'([a-z_]+)'", check))
+    assert "stock_inicial" in del_check and len(del_check) == 7, del_check
+
+    plantilla = open("templates/deposito_stock_guias_r.html", encoding="utf-8").read()
+    nombrados = set(re.findall(r'c\.origen == "([a-z_]+)"', plantilla))
+
+    # sin_lote es el ÚNICO que corresponde al else: ya no se escribe, y para
+    # las guías viejas que lo tienen el cartel dice la verdad.
+    assert del_check - nombrados == {"sin_lote"}, (
+        f"origenes sin nombrar en la pantalla: {del_check - nombrados - {'sin_lote'}}"
+    )
+
+
 def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
     """En el piso no hay "un artículo con un total": hay pilas distintas.
 
