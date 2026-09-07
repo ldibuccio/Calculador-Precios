@@ -1,3 +1,4 @@
+-- El `>=` de aca SI va: un extracto MUESTRA el dia del corte, no lo descuenta.
 -- El extracto de UN articulo desde el corte: cada movimiento con su saldo
 -- corrido, para ver en QUE MOMENTO se fue abajo de cero. Cambiar 'mango'
 -- por el articulo que se quiera mirar.

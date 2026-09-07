@@ -1,3 +1,8 @@
+-- OJO (07/09): esta consulta mide con `>= corte` en las dos puntas, o sea
+-- que CUENTA DOS VECES EL DIA DEL CORTE. La foto se toma a la tarde y ya
+-- viene neta del trabajo de ese dia. Sus numeros estan inflados por el neto
+-- de ese dia; se dejan porque la pregunta que contestaron ya esta cerrada.
+-- La version correcta de la regla esta en corte_fifo_5a y en corte_fifo_8.
 -- ¿El armado se esta comiendo los CAJONES? Con el piso, un armado solo
 -- puede consumir cajas declaradas al corte (guias R 'inicial') o armadas
 -- despues. Si el armado supera a las dos, el FIFO —que tiene UNA sola

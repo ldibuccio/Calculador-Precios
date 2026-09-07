@@ -1,3 +1,8 @@
+-- OJO (07/09): esta consulta mide con `>= corte` en las dos puntas, o sea
+-- que CUENTA DOS VECES EL DIA DEL CORTE. La foto se toma a la tarde y ya
+-- viene neta del trabajo de ese dia. Sus numeros estan inflados por el neto
+-- de ese dia; se dejan porque la pregunta que contestaron ya esta cerrada.
+-- La version correcta de la regla esta en corte_fifo_5a y en corte_fifo_8.
 -- Los tres numeros al lado, por articulo, para los SUELTOS (los cajones):
 -- lo contado en el piso, lo que el sistema creia en ese mismo instante, y
 -- de que lado del corte estan los lotes que respaldan eso.

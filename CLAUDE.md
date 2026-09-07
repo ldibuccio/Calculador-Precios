@@ -186,6 +186,33 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 6, del 07/09, y es el mismo día que el 5: **cuando se corrige una
+asimetría, hay que revisar también las MEDICIONES, no solo el código de
+producción.**
+
+La asimetría del día del corte apareció CUATRO veces, todas con el mismo
+síntoma —contar dos veces ese día— y todas descubiertas por separado: en la
+cuenta por ficha, en el pool de segunda, en el piso del FIFO, y en las
+consultas de diagnóstico que se escribieron para medir el piso.
+
+La cuarta es la que enseña algo nuevo. Al arreglar el piso quedaron siete
+consultas de `db/` midiendo con la regla vieja, y una de ellas —el faltante
+de cajas del paso 7— **inventó 212 cajas que no existían y mandó a preparar
+un conteo del galpón para reconstruirlas.** Tres horas persiguiendo un
+número que era el artefacto de la medición, no un hecho.
+
+Una consulta de diagnóstico se siente inofensiva porque no escribe nada. No
+lo es: **es la que decide qué se arregla después.** Un dato falso ahí cuesta
+más que un bug en producción, porque el bug tiene síntomas y el diagnóstico
+falso viene con la autoridad de un número.
+
+De acá en adelante, al cambiar una regla de recorte, de piso o de ventana:
+`grep` del criterio viejo **en `db/` y en `scripts/`, no solo en `app/` y
+`core/`**. Y las consultas cuya respuesta ya se usó y quedó vieja: o se
+corrigen, o se borran. Una consulta corrible con números que sabemos falsos
+es peor que no tenerla — la próxima vez que alguien la corra no va a
+acordarse de que estaba mal.
+
 Corolario 5, del 07/09: **una asimetría de diseño también es una copia, y
 se busca por las CUENTAS que la necesitan, no por el código que la
 implementa.**
