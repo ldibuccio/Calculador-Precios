@@ -423,3 +423,50 @@ Si contar a la mañana no se puede, lo segundo mejor es lo que hay ahora: la
 regla asimétrica en toda cuenta que lea la foto. Pero entonces **el
 procedimiento tiene que listar esas cuentas**, porque la próxima que se
 agregue va a nacer sin ella.
+
+## De dónde sale el número de SUELTOS, y por qué no es la mezcla de unidades
+
+Los sueltos de un artículo no se calculan: **se derivan por resta**
+(`_stock_de_ficha` con `ficha_id` None):
+
+    sueltos = cuenta 1 (total del artículo) − cuenta 2 (cajas en fichas)
+
+Y las dos tratan el día del corte **distinto**:
+
+| | piso | el día del corte |
+|---|---|---|
+| cuenta 1 (total) | ninguno — la rebasea el compensatorio | cuenta TODO |
+| cuenta 2 (cajas) | asimétrico | solo la foto |
+
+**Lo que una cuenta y la otra no, cae ENTERO en los sueltos.** Un armado del
+día del corte resta en la cuenta 1 y no resta en la 2, así que aparece
+completo, con signo negativo, en el número de bultos sueltos.
+
+### Lo que quedó aislado corriendo el código real
+
+Dos comparaciones, cada una cambiando UNA sola cosa:
+
+- **Sacar los armados del día del corte**: los sueltos pasan de −12 a +18,
+  o sea exactamente los 30 de esos armados. Es el término que los produce.
+- **Sacar la mezcla de unidades** (que la guía R tome 25 y arme 25 en vez de
+  30): los sueltos **no se mueven**. Cambian el total y las cajas, pero la
+  diferencia entre los dos es idéntica.
+
+**La mezcla de unidades NO afecta a los sueltos**, y la razón es que el
+término `bultos_primera` está en las DOS cuentas con el mismo signo, así que
+se cancela en la resta. Lo que no se cancela es lo que una cuenta ve y la
+otra no.
+
+Es la quinta aparición de la asimetría del día del corte, y la primera como
+desacuerdo **entre dos cuentas** en vez de adentro de una.
+
+### Lo que NO está probado
+
+Si el compensatorio de ese artículo está bien, la cuenta 1 debería tener esos
+armados ya cancelados —el bloque 3 corre después del trabajo del día y resta
+el saldo entero—, y entonces el −12 no debería existir. **Cuál de las dos
+cosas pasa en producción no lo sabemos**, y no se puede fabricar: es el valor
+real del compensatorio de ese artículo.
+
+`corte_fifo_11a` y `11b` lo abren término por término. Las dos son de lectura
+y el número que buscamos es `TOTAL_del_articulo − CAJAS_en_fichas`.
