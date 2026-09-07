@@ -18,7 +18,10 @@
 <p class="ayuda">
   <strong>% de la venta</strong>: cuánto pesa cada ficha sobre lo que se le
   facturó a este cliente en los últimos <strong>{{ incidencia_dias }} días</strong>
-  ({{ total_facturado|moneda }}). Es sobre facturación, no sobre bultos.
+  {# La frase de los días va ENTERA en una línea: partida, el HTML queda con
+     un salto en el medio ("4\n días") y deja de encontrarse como frase. #}
+  ({{ total_facturado|moneda }}{% if dias_con_entregas %} — {{ dias_con_entregas }} {{ "día" if dias_con_entregas == 1 else "días" }} con entregas armadas{% endif %}).
+  Es sobre facturación, no sobre bultos.
   <em>—</em> = no facturó nada en esos días.
 </p>
 {% endif %}

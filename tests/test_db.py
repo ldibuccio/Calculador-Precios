@@ -5674,7 +5674,7 @@ def test_el_selector_de_reproceso_no_esconde_el_articulo_con_deficit():
 
 def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
     conexion, cursor = _conexion_falsa()
-    cursor.fetchall.return_value = [(1, 1500.50), (2, 300)]
+    cursor.fetchall.return_value = [(1, 1500.50, 4), (2, 300, 4)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         facturado = facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
@@ -5682,8 +5682,8 @@ def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
     consulta = cursor.execute.call_args.args[0]
     # Lo que se factura son los kilos que grabó el depósito, por el precio
     # vigente A LA FECHA DEL PEDIDO — nunca el precio de hoy hacia atrás.
-    assert "SUM(r.kilos_enviados * p.precio)" in consulta
-    assert "vigente_desde <= v.fecha_operacion" in consulta
+    assert "SUM(e.kilos_enviados * p.precio)" in consulta
+    assert "vigente_desde <= e.fecha_operacion" in consulta
     assert "ORDER BY vigente_desde DESC LIMIT 1" in consulta
     # Un pedido corregido no factura dos veces.
     assert "DISTINCT ON (fecha_operacion)" in consulta
@@ -5691,7 +5691,28 @@ def test_facturacion_por_ficha_usa_kilos_enviados_y_precio_de_la_fecha():
     assert "r.ficha_id IS NOT NULL AND r.anulado_el IS NULL" in consulta
     assert "r.kilos_enviados IS NOT NULL" in consulta
     assert cursor.execute.call_args.args[1] == (1, date(2026, 8, 8), date(2026, 9, 7))
-    assert facturado == {1: 1500.50, 2: 300.0}
+    assert facturado["por_ficha"] == {1: 1500.50, 2: 300.0}
+    # LEFT y no CROSS: la ficha sin precio a esa fecha no suma plata pero su
+    # DÍA se cuenta igual — la mercadería salió del galpón.
+    assert "LEFT JOIN LATERAL" in consulta
+    assert "COUNT(DISTINCT fecha_operacion)" in consulta
+    assert facturado["dias"] == 4
+
+
+def test_facturacion_por_ficha_cuenta_el_dia_aunque_no_haya_precio():
+    """El caso del 05/09: se armó y salió mercadería de una ficha sin precio
+    vigente. No suma plata —no se puede valuar— pero ES un día con entregas, y
+    contarlo con el precio de por medio haría desaparecer justo el día que hay
+    que ir a mirar."""
+    conexion, cursor = _conexion_falsa()
+    # Una sola ficha, sin precio: facturado NULL y dias = 1.
+    cursor.fetchall.return_value = [(7, None, 1)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        facturado = facturacion_por_ficha(1, date(2026, 8, 8), date(2026, 9, 7))
+
+    assert facturado["por_ficha"] == {}   # no suma como cero: no aparece
+    assert facturado["dias"] == 1         # pero el día se cuenta
 
 
 def test_facturacion_por_ficha_excluye_el_renglon_anulado():

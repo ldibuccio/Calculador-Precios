@@ -4404,12 +4404,14 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
     desde = hasta - timedelta(days=VENTANA_INCIDENCIA_DIAS)
     incidencia_sin_datos = False
     try:
-        facturacion = facturacion_por_ficha(cliente_id, desde, hasta)
+        facturado = facturacion_por_ficha(cliente_id, desde, hasta)
+        facturacion, dias_con_entregas = facturado["por_ficha"], facturado["dias"]
     except Exception:
         # Y SE DICE. Sin esto, la falla se ve igual que "este cliente no
         # facturó nada": todas las filas en "—" y un total en cero. Un
         # número que no se pudo leer no puede parecer un número leído.
         facturacion = {}
+        dias_con_entregas = 0
         incidencia_sin_datos = True
     total_facturado = agregar_incidencia(articulos, facturacion)
 
@@ -4435,6 +4437,12 @@ def _calcular_cuadro_negociacion(cliente: dict, cliente_id: int, fichas_cliente:
         "articulos_con_precio_sin_cerrar": articulos_con_precio_sin_cerrar,
         "incidencia_dias": VENTANA_INCIDENCIA_DIAS,
         "total_facturado": total_facturado,
+        # Cuántos días del período tuvieron entregas armadas. Va al lado del
+        # total y no como aviso: con pocos días el porcentaje no está mal,
+        # está calculado sobre poco — y eso lo tiene que poder ver el que
+        # mira, no adivinar. Una base recién arrancada muestra 4 y una en
+        # régimen 25, con el mismo renglón y sin ningún cartel.
+        "dias_con_entregas": dias_con_entregas,
         "incidencia_sin_datos": incidencia_sin_datos,
         # Para explicar por qué no hay nada, en vez de mostrar la
         # pantalla vacía sin avisar (ver templates/_cuadro_negociacion.html):

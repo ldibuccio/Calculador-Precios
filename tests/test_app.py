@@ -6076,7 +6076,7 @@ def test_confirmar_compra_foto_sin_foto_ruta_ya_subida_sigue_igual_que_antes():
 
 # --- /negociar: cuadro para negociar precios (Bajas / Subas / Resumen bajo objetivo), por cliente elegido ---
 
-FACTURACION_DE_PRUEBA = {1: 600000.0, 2: 400000.0}
+FACTURACION_DE_PRUEBA = {"por_ficha": {1: 600000.0, 2: 400000.0}, "dias": 4}
 
 ARTICULOS_NEGOCIAR_DE_PRUEBA = [
     {
@@ -6394,6 +6394,10 @@ def test_ver_negociar_muestra_la_incidencia_en_los_cuatro_cuadros():
     assert respuesta.text.count("40,0%") >= 3  # Mango: Subas, bajo objetivo y Todos
     # El período va escrito, y una sola vez.
     assert respuesta.text.count("<strong>30 días</strong>") == 1
+    # Y AL LADO DEL TOTAL, cuántos días tuvieron entregas: un 6,2% sobre 4
+    # días y uno sobre 25 se leen igual y no valen lo mismo. Sin cartel ni
+    # color — es un dato al lado del otro.
+    assert "4 días con entregas armadas" in respuesta.text
     # COLUMNA CON ENCABEZADO, uno por cuadro: abajo del nombre se leía como
     # un porcentaje suelto que no decía de qué era. El encabezado y la ayuda
     # dicen lo MISMO ("% de la venta") para que se puedan atar sin adivinar.

@@ -5537,7 +5537,14 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
 
 
 def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
-    """{ficha_id: facturación} de un cliente en un rango — para la incidencia de Márgenes por Artículo.
+    """{"por_ficha": {ficha_id: facturación}, "dias": N} de un cliente en un rango — para Márgenes por Artículo.
+
+    LOS DÍAS SE CUENTAN DISTINTO QUE LA PLATA, y la diferencia es a
+    propósito: "días con entregas armadas" es sobre el ARMADO, no sobre el
+    precio. Un día en el que se armó y entregó algo cuya ficha no tenía
+    precio vigente **es un día con entregas** —la mercadería salió— aunque
+    no sume un peso a la facturación. Contarlo con el precio de por medio
+    haría desaparecer justo el día que hay que ir a mirar.
 
     LA FACTURACIÓN ES kilos_enviados × PRECIO VIGENTE A LA FECHA DEL
     PEDIDO. Los dos lados de esa multiplicación son deliberados:
@@ -5581,22 +5588,39 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
                     WHERE cliente_id = %s AND anulado_el IS NULL
                       AND fecha_operacion >= %s AND fecha_operacion <= %s
                     ORDER BY fecha_operacion, creado_en DESC
+                ), entregas AS (
+                    -- Lo ENTREGADO, sin mirar el precio todavía: de acá salen
+                    -- los días. Una sola definición de "esto salió del
+                    -- galpón", que después se valúa o no.
+                    SELECT v.fecha_operacion, r.ficha_id, r.kilos_enviados
+                    FROM vigentes v
+                    JOIN pedidos_renglones r ON r.pedido_id = v.id
+                    WHERE r.ficha_id IS NOT NULL AND r.anulado_el IS NULL
+                      AND r.kilos_enviados IS NOT NULL
                 )
-                SELECT r.ficha_id, SUM(r.kilos_enviados * p.precio) AS facturado
-                FROM vigentes v
-                JOIN pedidos_renglones r ON r.pedido_id = v.id
-                CROSS JOIN LATERAL (
+                SELECT e.ficha_id, SUM(e.kilos_enviados * p.precio) AS facturado,
+                       (SELECT COUNT(DISTINCT fecha_operacion) FROM entregas) AS dias
+                FROM entregas e
+                -- LEFT y no CROSS: la ficha sin precio vigente a esa fecha
+                -- tiene que seguir contando su DÍA aunque no sume plata. Con
+                -- CROSS, el renglón desaparecía entero y el día con él.
+                LEFT JOIN LATERAL (
                     SELECT precio FROM precios_venta_historial
-                    WHERE ficha_id = r.ficha_id AND vigente_desde <= v.fecha_operacion
+                    WHERE ficha_id = e.ficha_id AND vigente_desde <= e.fecha_operacion
                     ORDER BY vigente_desde DESC LIMIT 1
-                ) p
-                WHERE r.ficha_id IS NOT NULL AND r.anulado_el IS NULL
-                  AND r.kilos_enviados IS NOT NULL
-                GROUP BY r.ficha_id
+                ) p ON TRUE
+                GROUP BY e.ficha_id
                 """,
                 (cliente_id, fecha_desde, fecha_hasta),
             )
-            return {fila[0]: float(fila[1]) for fila in cursor.fetchall() if fila[1] is not None}
+            filas = cursor.fetchall()
+        # Los días se leen ANTES de filtrar por plata: si ninguna ficha tuvo
+        # precio, igual hubo entregas y el número tiene que decirlo.
+        dias = int(filas[0][2]) if filas else 0
+        return {
+            "por_ficha": {f[0]: float(f[1]) for f in filas if f[1] is not None},
+            "dias": dias,
+        }
     finally:
         conexion.close()
 
