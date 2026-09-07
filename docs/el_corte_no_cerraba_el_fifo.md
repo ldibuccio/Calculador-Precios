@@ -181,3 +181,40 @@ en la herramienta que vino a medirlo.
 **La regla que queda**: en una resta, los dos lados tienen que estar en la
 misma unidad, y cuando el esquema no la guarda (acá `bultos` es cajón o caja
 según de dónde salga la fila) eso hay que verificarlo a mano antes de restar.
+
+## El conteo del piso contra lo que respalda al FIFO
+
+`db/corte_fifo_4_piso_vs_sistema_vs_fifo.sql` pone, por artículo y para los
+**sueltos** (los cajones, `conteos_stock.ficha_id IS NULL`): lo contado en el
+piso, lo que el sistema creía **en ese mismo instante**, y de qué lado del
+corte están las entradas que respaldan eso.
+
+Lo contado y lo del sistema salen de la **misma fila** de `conteos_stock`
+—ahí se congela `stock_sistema` al cargar el conteo, y para una porción sin
+ficha eso es el total del artículo menos las cajas en fichas, o sea los
+sueltos—. No hay dos definiciones que se puedan separar.
+
+La tercera columna **no** es "lo que el FIFO tiene como restante": eso lo
+calcula el reparto en Python y no se puede escribir en SQL sin hacer un
+segundo FIFO. Son las **entradas**, partidas por el corte, que es lo que
+decide el diagnóstico.
+
+Las tres lecturas posibles, y cada una lleva a un lugar distinto:
+
+| contado | sistema | desde el corte | qué es |
+|---|---|---|---|
+| 66 | 66 | 100 | Todo bien. El piso se puede mergear para ese artículo. |
+| 50 | 50 | 0 (y 90 antes) | **El caso malo.** Hay mercadería real y el piso dejaría al FIFO sin lotes. No es un bug: es que esos cajones entraron antes del corte y el corte los declaró inexistentes. |
+| 3 | 40 | 0 (y 40 sin fecha) | Fuga: compras recepcionadas con `procesada_el` en NULL. No entran al FIFO de ningún lado, ni antes ni después, y tampoco las habría contado el corte. |
+
+### Dos hipótesis que se pueden cerrar sin datos
+
+- **El `stock_inicial` del corte SÍ entra.** Se escribe con
+  `fecha_operacion = corte` (ver `db/corte2_frutamax.sql`), así que el
+  `>= corte` lo agarra; el filtro por tipo saca solo `cierre_modelo_viejo`; y
+  el CHECK `movimientos_stock_destino_solo_reingreso` obliga a que
+  `destino_rechazo` sea NULL en todo lo que no sea un reingreso, así que la
+  guarda de rechazos tampoco lo puede excluir. No hay por dónde se pierda.
+- **`procesada_el` en NULL sí lo saca**, y en silencio: la comparación de
+  fecha da NULL y la compra no cae ni en "desde el corte" ni en "antes". Por
+  eso la consulta la cuenta aparte en vez de dejarla desaparecer.
