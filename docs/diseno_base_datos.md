@@ -3270,6 +3270,88 @@ nueva mandaría al final, sin que nadie se entere, al grupo que se agregue
 mañana.* Es la regla de "una regla no puede estar escrita dos veces" aplicada a
 un vocabulario: **la lista de valores válidos también es una regla de negocio.**
 
+## AGUJERO DE PLATA: se podía anular una recepción de vacíos ya cobrada (07/09)
+
+Reportado desde la operación. El circuito: el operario recibe vacíos, se emite
+el vale o se paga la seña, y **después el operario anula la recepción**. La
+plata ya salió; los cajones salen del stock; la diferencia queda a favor de
+quien anuló.
+
+**Pasó.** Recepción 74, del 07/09: 13 toritos de madera, vale emitido y
+recepción anulada el mismo día, **$26.000**.
+
+### La guarda existía, pero en un solo sentido
+
+Es la forma exacta del error, y es la que hay que aprender a ver:
+
+- `cerrar_sena` valida `AND anulado_el IS NULL` → **no se puede pagar una
+  recepción anulada.** Ese lado estaba bien.
+- `anular_vacio_recibido` era una línea —`SET anulado_el = now() WHERE id = %s
+  AND anulado_el IS NULL`— y **no miraba la seña.**
+
+Dos operaciones que se afectan mutuamente, y solo una preguntaba por la otra.
+El CHECK de la tabla tampoco ayudaba: `vacios_recibidos_un_solo_cierre_de_sena`
+solo garantiza que de los TRES cierres de seña haya como máximo uno, y **no
+dice nada de `anulado_el`**.
+
+**Es la familia de "a una regla le crece otra encima", en su versión más
+peligrosa: la simétrica a medias.** Cuando dos operaciones se bloquean entre
+sí, la guarda hay que escribirla en LAS DOS o no está escrita. Una sola da la
+sensación de estar cubierto —el código se lee y la validación está ahí— y el
+agujero es justamente el sentido que nadie leyó.
+
+### Lo peor no era que quedara mal: es que DESAPARECÍA
+
+Verificado contra un Postgres descartable, corriendo las consultas reales:
+
+| Pantalla | Filtro | Después de anular |
+|---|---|---|
+| Pendientes de Pago | `sin cerrar AND anulado_el IS NULL` | **0 filas** |
+| Historial de señas cerradas | `cerrada AND anulado_el IS NULL` | **0 filas** |
+| Alerta de señas viejas | ídem | **0 casos** |
+| Movimientos | trae anuladas, marcadas | "Anulado el …", **sin decir nada de la seña** |
+
+Las dos listas de Señas filtran `anulado_el IS NULL`, así que la fila **se cae
+de las dos**: no vuelve a Pendientes (parecería deuda viva) ni queda en el
+historial (donde se revisan los pagos). Un pago que salió de la caja deja de
+figurar en la única pantalla que lista pagos, y lo único que queda es un
+"Anulado" en Movimientos que no menciona la plata.
+
+**Anotar el patrón: un filtro `anulado_el IS NULL` puesto para "no mostrar
+basura" también esconde lo que se anuló MAL.** Es el mismo `WHERE` en las dos
+listas complementarias, y entre las dos dejan un agujero por el que la fila se
+va sin aparecer en ninguna.
+
+### El arreglo, y por qué va en la función y no en las rutas
+
+Hay DOS puertas para anular —la lista "Recibido hoy" del operario (sin clave) y
+Movimientos (con clave de control)— y la guarda va en
+`anular_vacio_recibido`, que es donde vive la regla. **La regla es de la PLATA,
+no de quién la toca**: tener la clave de control no hace que el pago vuelva a
+la caja.
+
+La condición va DENTRO del `UPDATE`, no en un `SELECT` previo: entre el "¿está
+pagada?" y el `UPDATE` puede entrar el pago. Cuando no afecta ninguna fila se
+lee la fila **solo para traducir el error**; la decisión ya la tomó el UPDATE.
+
+Y el listado ahora trae `sena_pagada_el`/`sena_vale_el` para que **el botón no
+se ofrezca donde el server lo va a rechazar** — ofrecido y prohibido es lo peor
+de los dos mundos, como en la merma dirigida. Pero el bloqueo real está en la
+función: esconder el botón es cortesía, no defensa.
+
+`sena_anulada_el` SÍ deja anular: ahí se decidió no pagar, no hay plata.
+
+### Lo que el sistema NO guarda, y hay que saberlo antes de investigar
+
+**No hay login, `vacios_recibidos` no tiene columna de usuario, y la única
+bitácora del proyecto es la de fichas.** Así que de una anulación no se puede
+saber QUIÉN la hizo — solo cuándo. Para el 74 el "quién" hay que preguntarlo en
+el puesto.
+
+**Y el vale no existe como objeto**: `sena_vale_el` es una fecha y nada más,
+sin numeración, cobro ni vencimiento (lo dice su propio comentario en el
+esquema). El papel está afuera del sistema.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

@@ -10814,6 +10814,63 @@ def test_anular_vacio_recibido_redirige_a_recibir():
     mock_anular.assert_called_once_with(5)
 
 
+def test_LAS_DOS_PUERTAS_frenan_la_anulacion_con_la_sena_ya_cobrada():
+    """La regla es de la PLATA, no de quién la toca: la puerta del operario y
+    la de Movimientos (que pide clave de control) frenan igual. Tener la clave
+    no hace que el pago vuelva a la caja."""
+    from app.db import SenaYaCobrada
+
+    with (
+        patch("app.main.anular_vacio_recibido", side_effect=SenaYaCobrada("vale")),
+        # La pantalla del operario se vuelve a renderizar con el error, así
+        # que necesita sus datos.
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=[]),
+    ):
+        del_operario = cliente.post("/puesto/envases/vacios/recibidos/74/anular",
+                                    follow_redirects=False)
+        de_movimientos = cliente.post(
+            "/puesto/envases/movimientos/recibidos/74/anular",
+            data={"fecha_desde": "2026-09-07", "fecha_hasta": "2026-09-07"},
+            follow_redirects=False)
+
+    # Ninguna de las dos redirige como si hubiera salido bien.
+    assert del_operario.status_code == 409
+    assert de_movimientos.status_code == 409
+    # Y las dos dicen lo mismo, con qué hacer.
+    for cuerpo in (del_operario.text, de_movimientos.text):
+        assert "YA TIENE UN VALE EMITIDO" in cuerpo
+        assert "Ajustar Stock" in cuerpo
+
+
+def test_recibido_hoy_NO_ofrece_anular_una_entrada_con_la_sena_cobrada():
+    """Ofrecido y prohibido es lo peor de los dos mundos."""
+    recibidos = [
+        {"id": 74, "cantidad": 13, "creado_en": datetime(2026, 9, 7, 8, 12),
+         "anulado_el": None, "sena_pagada_el": None,
+         "sena_vale_el": datetime(2026, 9, 7, 11, 30), "cliente_nombre": "Martin",
+         "proveedor_nombre": "FRUTAMAX", "tipo_nombre": "torito madera"},
+        {"id": 75, "cantidad": 20, "creado_en": datetime(2026, 9, 7, 9, 0),
+         "anulado_el": None, "sena_pagada_el": None, "sena_vale_el": None,
+         "cliente_nombre": "Martin", "proveedor_nombre": "FRUTAMAX",
+         "tipo_nombre": "torito madera"},
+    ]
+    with (
+        patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),
+        patch("app.main.listar_proveedores_puesto", return_value=[]),
+        patch("app.main.listar_clientes_puesto", return_value=[]),
+        patch("app.main.listar_vacios_recibidos_de_fecha", return_value=recibidos),
+    ):
+        cuerpo = cliente.get("/puesto/envases/vacios/recibir").text
+
+    # El 74 no tiene botón y dice por qué; el 75 lo tiene.
+    assert "/puesto/envases/vacios/recibidos/74/anular" not in cuerpo
+    assert "/puesto/envases/vacios/recibidos/75/anular" in cuerpo
+    assert "Vale ya emitido" in cuerpo
+
+
 def test_devolver_vacios_con_stock_suficiente_avisa_sin_advertencia():
     with (
         patch("app.main.listar_tipos_envase_puesto", return_value=TIPOS_ENVASE_PUESTO_DE_PRUEBA),

@@ -3981,6 +3981,10 @@ def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
             cursor.execute(
                 """
                 SELECT v.id, v.cantidad, v.creado_en, v.anulado_el,
+                       -- Para que la pantalla NO ofrezca el botón de anular
+                       -- donde el server lo va a rechazar: ofrecido y
+                       -- prohibido es lo peor de los dos mundos.
+                       v.sena_pagada_el, v.sena_vale_el,
                        c.nombre AS cliente_nombre,
                        p.nombre AS proveedor_nombre,
                        t.nombre AS tipo_nombre
@@ -4035,15 +4039,64 @@ def listar_vacios_devueltos_de_fecha(fecha) -> list[dict]:
     return listar_vacios_devueltos_por_rango(fecha, fecha)
 
 
+class SenaYaCobrada(Exception):
+    """Se quiso anular una recepción de vacíos cuya seña ya se pagó o se cerró con vale.
+
+    `cierre` es 'pagada' o 'vale'. La plata ya salió de la caja: anular la
+    recepción devolvería los cajones al aire —salen del stock— y dejaría la
+    diferencia a favor de quien la anuló, sin que ninguna pantalla lo muestre.
+    """
+
+    def __init__(self, cierre: str):
+        self.cierre = cierre
+        super().__init__(f"La seña de esta entrada ya se cerró: {cierre}")
+
+
 def anular_vacio_recibido(movimiento_id: int) -> None:
-    """Anula una entrada (baja lógica): el registro queda visible como corrección, el stock lo excluye."""
+    """Anula una entrada (baja lógica): el registro queda visible como corrección, el stock lo excluye.
+
+    NO SE PUEDE si la seña ya se pagó o se cerró con vale. La guarda vivía en
+    un solo sentido —`cerrar_sena` no deja pagar una anulada, pero esto sí
+    dejaba anular una pagada— y el agujero es de plata: el pago ya salió, los
+    cajones vuelven a salir del stock, y la fila desaparece de las dos listas
+    de Señas (las dos filtran `anulado_el IS NULL`), así que ni siquiera queda
+    a la vista como cobrada. Reportado desde la operación el 07/09 con un caso
+    real de $26.000.
+
+    `sena_anulada_el` SÍ deja anular: ahí se decidió no pagar, no hay plata
+    que perseguir.
+
+    La condición va DENTRO del UPDATE, no en un SELECT previo: entre el
+    "¿está pagada?" y el UPDATE puede entrar el pago. Cuando no afecta
+    ninguna fila se lee la fila para saber por qué y traducir el error;
+    ese SELECT es solo para el mensaje, la decisión ya la tomó el UPDATE.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE vacios_recibidos SET anulado_el = now() WHERE id = %s AND anulado_el IS NULL",
+                """
+                UPDATE vacios_recibidos SET anulado_el = now()
+                WHERE id = %s AND anulado_el IS NULL
+                  AND sena_pagada_el IS NULL AND sena_vale_el IS NULL
+                """,
                 (movimiento_id,),
             )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    """
+                    SELECT sena_pagada_el IS NOT NULL, sena_vale_el IS NOT NULL
+                    FROM vacios_recibidos WHERE id = %s AND anulado_el IS NULL
+                    """,
+                    (movimiento_id,),
+                )
+                fila = cursor.fetchone()
+                if fila is not None:
+                    pagada, vale = fila
+                    # Ya anulada o inexistente NO es error: anular dos veces es
+                    # el mismo resultado. Solo se levanta si hay plata.
+                    if pagada or vale:
+                        raise SenaYaCobrada("pagada" if pagada else "vale")
         conexion.commit()
     finally:
         conexion.close()

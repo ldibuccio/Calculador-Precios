@@ -2155,6 +2155,7 @@ def test_crear_vacio_devuelto_graba_el_stock_del_sistema_en_la_fila():
 
 def test_anular_vacio_recibido_es_baja_logica_no_delete():
     conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         anular_vacio_recibido(5)
@@ -2165,6 +2166,63 @@ def test_anular_vacio_recibido_es_baja_logica_no_delete():
     # Solo si estaba vigente: anular dos veces no pisa la fecha original.
     assert "anulado_el IS NULL" in consulta
     assert parametros == (5,)
+
+
+def test_anular_vacio_recibido_NO_deja_si_la_sena_ya_se_pago_o_hay_vale():
+    """El agujero del 07/09: la plata ya salió de la caja y los cajones
+    volvían a salir del stock, sin que ninguna pantalla lo mostrara — la fila
+    desaparece de las dos listas de Señas, que filtran anulado_el IS NULL.
+
+    La condición va DENTRO del UPDATE: entre un "¿está pagada?" y el UPDATE
+    puede entrar el pago.
+    """
+    from app.db import SenaYaCobrada
+
+    for pagada, vale, esperado in ((True, False, "pagada"), (False, True, "vale")):
+        conexion, cursor = _conexion_falsa(filas_fetchone=[(pagada, vale)])
+        cursor.rowcount = 0
+
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(SenaYaCobrada) as levantada:
+                anular_vacio_recibido(74)
+
+        assert levantada.value.cierre == esperado
+        consulta = cursor.execute.call_args_list[0].args[0]
+        assert "sena_pagada_el IS NULL AND sena_vale_el IS NULL" in consulta
+        # `sena_anulada_el` NO entra: ahí se decidió no pagar, no hay plata.
+        assert "sena_anulada_el" not in consulta
+        # Y no se escribió nada.
+        conexion.commit.assert_not_called()
+
+
+def test_anular_una_YA_ANULADA_no_es_error():
+    """Anular dos veces da el mismo resultado. Solo se levanta si hay plata."""
+    from app.db import SenaYaCobrada
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[None])
+    cursor.rowcount = 0
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            anular_vacio_recibido(5)
+        except SenaYaCobrada:
+            pytest.fail("una entrada ya anulada no puede levantar SenaYaCobrada")
+    conexion.commit.assert_called_once()
+
+
+def test_el_listado_de_recibidos_TRAE_el_estado_de_la_sena():
+    """Para que la pantalla no ofrezca un botón que el server va a rechazar:
+    ofrecido y prohibido es lo peor de los dos mundos."""
+    from app.db import listar_vacios_recibidos_por_rango
+
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_vacios_recibidos_por_rango(date(2026, 9, 7), date(2026, 9, 7))
+
+    consulta = cursor.execute.call_args.args[0]
+    assert "v.sena_pagada_el" in consulta and "v.sena_vale_el" in consulta
 
 
 def test_stock_vacios_excluye_anulados_y_calcula_la_diferencia():

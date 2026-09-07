@@ -206,6 +206,7 @@ from app.db import (
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
     ReprocesoAnteriorAlCorte,
+    SenaYaCobrada,
     contar_fichas_por_articulo,
     listar_clientes,
     listar_clientes_puesto,
@@ -9914,6 +9915,21 @@ def _tipos_envase_y_proveedores():
     return tipos, proveedores
 
 
+# El mismo texto en las dos puertas: si dijeran cosas distintas, el día que
+# cambie el circuito una quedaría vieja. Dice QUÉ pasó y QUÉ hacer, porque el
+# que lo lee tiene el cajón adelante y necesita salir de ahí.
+_TEXTO_SENA_YA_COBRADA = {
+    "pagada": ("No se puede anular: la seña de esta entrada YA SE PAGÓ. La plata salió de "
+               "la caja, así que borrar la entrada dejaría los cajones fuera del stock y el "
+               "pago sin respaldo. Si la entrada está mal, avisá a la cajera: se corrige "
+               "desde Ajustar Stock, con motivo."),
+    "vale": ("No se puede anular: esta entrada YA TIENE UN VALE EMITIDO. El vale es plata "
+             "comprometida, así que borrar la entrada dejaría los cajones fuera del stock y "
+             "el vale sin respaldo. Si la entrada está mal, avisá a la cajera: se corrige "
+             "desde Ajustar Stock, con motivo."),
+}
+
+
 def _renderizar_pantalla_recibir_vacios(request: Request, *, error=None, aviso=None, status_code: int = 200):
     try:
         tipos, proveedores = _tipos_envase_y_proveedores()
@@ -10008,6 +10024,10 @@ def anular_vacio_recibido_ruta(request: Request, movimiento_id: int):
     """Anula una entrada desde la lista "Recibido hoy" (error del momento). Baja lógica, nunca DELETE."""
     try:
         anular_vacio_recibido(movimiento_id)
+    except SenaYaCobrada as cobrada:
+        return _renderizar_pantalla_recibir_vacios(
+            request, error=_TEXTO_SENA_YA_COBRADA[cobrada.cierre], status_code=409
+        )
     except Exception as error_db:
         return _renderizar_pantalla_recibir_vacios(
             request, error=f"No se pudo anular el movimiento: {error_db}", status_code=500
@@ -10730,6 +10750,11 @@ def anular_recibido_desde_movimientos_ruta(
         return RedirectResponse(url="/puesto/envases/movimientos", status_code=303)
     try:
         anular_vacio_recibido(movimiento_id)
+    except SenaYaCobrada as cobrada:
+        # También acá, y no solo en la pantalla del operario: la regla es de
+        # la PLATA, no de quién la toca. Tener la clave de control no hace que
+        # el pago vuelva a la caja.
+        raise HTTPException(status_code=409, detail=_TEXTO_SENA_YA_COBRADA[cobrada.cierre]) from cobrada
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo anular el movimiento: {error_db}") from error_db
     return RedirectResponse(url=_url_movimientos(fecha_desde, fecha_hasta), status_code=303)

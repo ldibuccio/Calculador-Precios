@@ -79,6 +79,16 @@
   .renglon .detalle .extra { color: #666; font-size: 0.85rem; }
   .renglon.anulado .detalle { text-decoration: line-through; color: #999; }
   .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 600; }
+  .marca-cobrada {
+    color: #7c2d12;
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
   .boton-anular {
     padding: 0.6rem 0.9rem;
     background: #fff;
@@ -194,13 +204,20 @@
           <div class="extra">Trajo {{ r.cliente_nombre }} — {{ r.creado_en|fecha_hora }}</div>
           {% if r.anulado_el %}<span class="marca-anulado">Anulado el {{ r.anulado_el|fecha_hora }}</span>{% endif %}
         </div>
+        {# La regla es de la PLATA, no de quién la toca: tener la clave de
+           control tampoco devuelve el pago a la caja. Acá el botón no va
+           igual que en la pantalla del operario. #}
         {% if not r.anulado_el %}
+          {% if r.sena_pagada_el or r.sena_vale_el %}
+        <span class="marca-cobrada">{% if r.sena_pagada_el %}Seña pagada{% else %}Vale emitido{% endif %}: no se anula</span>
+          {% else %}
         <form method="post" action="/puesto/envases/movimientos/recibidos/{{ r.id }}/anular"
               onsubmit="return confirm('¿Anular esta entrada de {{ r.cantidad }} cajones de {{ r.cliente_nombre }}?');">
           <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
           <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
           <button type="submit" class="boton-anular">Anular</button>
         </form>
+          {% endif %}
         {% endif %}
       </div>
       {% endfor %}
