@@ -7766,6 +7766,42 @@ def ver_cotejo_stock(request: Request):
 SUFIJOS_FICHA_REPROCESO = {"kilo": "kg", "unidad": "u", "cubeta": "cub."}
 
 
+def _caja_para_elegir(ficha: dict) -> str:
+    """Cómo se nombra una caja cuando alguien tiene que ELEGIR en cuál está armando.
+
+    El operario ya eligió cliente y artículo dos campos arriba. Lo que le
+    falta saber es EN QUÉ ENVASE está armando —chica o grande—, y eso lo
+    dice `envases.nombre` ("Caja Chica Día", "Caja Grande Día"), no el
+    código con el que el cliente nombra su producto ("TOM RED 1° E"), que
+    solo le repite el artículo que ya eligió.
+
+    NO es `_nombre_de_caja` (el del Remanente): ese contesta "qué pila es
+    ésta" y va con el artículo adelante. Éste contesta "en qué caja estoy
+    armando". Misma materia prima, dos preguntas.
+
+    EL ENVASE ES OPCIONAL EN LA BASE, y no es teórico: 15 de 34 fichas no
+    lo tienen cargado (medido el 07/09). Y ninguna de esas fichas está
+    fuera de alcance, porque NADA marca a un artículo como "no se
+    reprocesa": el selector de Reproceso lista todo lo que tenga stock. Así
+    que la falta se NOMBRA en vez de quedar en blanco o volver al código
+    del cliente sin avisar — que sería el mismo error, disfrazado.
+    """
+    envase = (ficha.get("envase_nombre") or "").strip()
+    sufijo = SUFIJOS_FICHA_REPROCESO.get(ficha.get("unidad_venta"), "")
+    kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
+              if ficha.get("contenido_caja") else "")
+    if envase and kilaje:
+        return f"{envase} — {kilaje}"
+    if envase:
+        return envase
+    # Sin envase: se dice que falta. El kilaje solo ya distingue la chica de
+    # la grande; sin kilaje tampoco, queda el código del cliente y el aviso.
+    falta = "⚠ falta cargar el envase"
+    if kilaje:
+        return f"{kilaje} — {falta}"
+    return f"{_nombre_de_ficha(ficha)} — {falta}"
+
+
 def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
     """Las fichas elegibles al cargar una guía R, por "cliente_id:articulo_id".
 
@@ -7789,7 +7825,7 @@ def _fichas_por_cliente_y_articulo() -> dict[str, list[dict]]:
         kilaje = (f"{_formatear_numero(ficha['contenido_caja'])} {sufijo}".strip()
                   if ficha.get("contenido_caja") else "")
         por_clave.setdefault(clave, []).append(
-            {"id": ficha["id"], "nombre": _nombre_de_ficha(ficha), "kilaje": kilaje}
+            {"id": ficha["id"], "nombre": _caja_para_elegir(ficha), "kilaje": kilaje}
         )
     for fichas in por_clave.values():
         fichas.sort(key=lambda f: f["nombre"])

@@ -3632,6 +3632,88 @@ movimiento**; hoy no hay nada que mirar.
 **Si el kilaje real no fuera 5**, entonces son dos productos distintos con una
 sola ficha, y ahí sí hay un problema de fondo — no contable.
 
+## El selector de Reproceso dice EN QUÉ CAJA se arma, no el código del cliente (07/09)
+
+Mismo problema que el Remanente del 06/09, otra pantalla: mostrar el nombre que
+le puso el cliente donde hacía falta el nuestro. Ahí decía `BERENJENA G`; acá
+decía `TOM RED 1° E`.
+
+**Y acá es peor**, porque el operario **ya eligió cliente y artículo dos campos
+arriba**. Repetirle el artículo con el código del cliente no le agrega nada, y
+lo que sí necesita saber —**en qué envase está armando**, chica o grande— no
+estaba en ninguna parte de la pantalla.
+
+### El dato ya estaba, y mejor de lo esperado
+
+`envases.nombre` dice literalmente **"Caja Chica Día"** y **"Caja Grande Día"**.
+No hay que derivar nada del kilaje. Y `listar_fichas_de_todos_los_clientes` ya
+traía `envase_nombre` (hace el `LEFT JOIN envases`): **las dos funciones que
+arman selectores lo tenían a mano y ninguna lo usaba.** No hizo falta tocar
+ninguna consulta.
+
+Medido el 07/09: **34 fichas, todas con `fichas_de_ese_cliente = 1`.** O sea que
+la escalera de desempate del Remanente —envase, después kilaje, después el
+código— **acá no hace falta**: una ficha por cliente y artículo, sin ambigüedad.
+
+### Las 15 sin envase NO están fuera de alcance, y eso cambia el default
+
+`envase_id` es opcional, y **15 de 34 fichas no lo tienen cargado** (Manzana
+Gob, Red, Granny, Pera, Arándano, Frutilla, Uva, Melón, Sandía, Cereza,
+Ciruela, Durazno, Pelón, Ananá, Anco, Tomate PG).
+
+La lectura razonable era que ésas nunca llegan al selector, porque son artículos
+que no se reprocesan. **Es falsa, y lo verifiqué:** `articulos` no tiene ninguna
+marca de "se reprocesa", y `listar_articulos_para_reproceso` incluye cualquier
+artículo con `stock > 0 OR sueltos > 0 OR deficit > 0`. **Cualquiera de esos 15
+aparece en el selector apenas tenga stock.**
+
+Por eso la falta **se nombra**:
+
+| Ficha | Muestra |
+|---|---|
+| envase + kilaje | `Caja Grande Día — 16 kg` |
+| envase sin kilaje | `Caja Chica Día` |
+| **kilaje sin envase** | `20 kg — ⚠ falta cargar el envase` |
+| ni envase ni kilaje | `MANZANA GOB — ⚠ falta cargar el envase` |
+
+**Quedar en blanco, o volver al código del cliente sin avisar, es el mismo error
+disfrazado**: la pantalla vuelve a decir algo que no sirve y encima nadie se
+entera de que falta un dato. El aviso convierte una carencia silenciosa en una
+tarea visible — y Administración ya la puede resolver: `ficha_form.html` tiene
+el select de Envase desde siempre.
+
+### Otro `_nombre_de_caja`, y no es duplicar
+
+Ahora hay dos funciones que nombran una caja, y contestan preguntas distintas:
+
+- **`_nombre_de_caja`** (Remanente): *"¿qué pila es ésta?"* → `Lima Caja Día 5kg`,
+  con el artículo adelante para que las porciones caigan juntas al ordenar.
+- **`_caja_para_elegir`** (Reproceso): *"¿en qué caja estoy armando?"* →
+  `Caja Grande Día — 16 kg`, sin el artículo porque ya se eligió.
+
+Misma materia prima, dos preguntas, dos respuestas. Es el mismo argumento por el
+que ninguna de las dos reusa `_nombre_de_ficha`, que contesta una tercera:
+*"¿cómo llama el cliente a esto?"* — y que sigue siendo la correcta en precios,
+comandas y carga de pedidos.
+
+### El barrido: quedan dos pantallas con lo mismo
+
+De los 15 usos de `_nombre_de_ficha`, la mayoría está bien: precios de venta,
+matcheo de comandas, carga y revisión de pedidos. Ahí se mira el catálogo del
+cliente y su código **es** lo correcto.
+
+Las que miran NUESTRO depósito y todavía muestran el código:
+
+| Pantalla | Hoy | Nota |
+|---|---|---|
+| ~~Reproceso~~ | arreglada el 07/09 | |
+| **Stock Físico + Stock Inicial** (`_fichas_por_articulo`) | `Día — TOM RED 1° E` | elige por ARTÍCULO, no por cliente: el cliente sí hace falta ahí, y con estos envases quedaría `Día — Caja Grande Día`, redundante. Necesita decidir si el cliente se pone solo cuando hay más de uno |
+| **Guías R** (Administración, asignar ficha) | `TOM RED 1° E (Día)` | mismo caso |
+
+Las dos quedan pendientes a propósito: el arreglo no es copiar la función, es
+decidir qué hacer con el nombre del cliente cuando el envase ya lo lleva
+adentro.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

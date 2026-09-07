@@ -131,6 +131,45 @@ def test_con_una_sola_ficha_la_ayuda_queda_como_siempre():
     assert ayudas["1:1"] == "6 kg por caja, según la ficha de Día."
 
 
+def test_la_caja_a_elegir_dice_EL_ENVASE_no_el_codigo_del_cliente():
+    """El operario ya eligió cliente y artículo dos campos arriba. "TOM RED 1° E"
+    le repite el artículo; lo que le falta saber es en qué envase arma."""
+    from app.main import _caja_para_elegir
+
+    ficha = {"nombre_cliente": "TOM RED 1° E", "envase_nombre": "Caja Grande Día",
+             "contenido_caja": 16, "unidad_venta": "kilo", "articulo_nombre": "Tomate Redondo"}
+
+    assert _caja_para_elegir(ficha) == "Caja Grande Día — 16 kg"
+    assert "TOM RED" not in _caja_para_elegir(ficha)
+
+
+def test_una_ficha_SIN_ENVASE_lo_dice_y_no_queda_en_blanco():
+    """15 de 34 fichas no tienen envase cargado, y ninguna está fuera de
+    alcance: nada marca a un artículo como "no se reprocesa", así que el
+    selector lista todo lo que tenga stock. La falta se NOMBRA — quedar en
+    blanco, o volver al código del cliente sin avisar, es el mismo error
+    disfrazado."""
+    from app.main import _caja_para_elegir
+
+    # Con kilaje: el kilaje ya distingue la chica de la grande.
+    sin_envase = {"nombre_cliente": "MANZANA GOB", "envase_nombre": None,
+                  "contenido_caja": 20, "unidad_venta": "kilo", "articulo_nombre": "Mzn Gob"}
+    assert _caja_para_elegir(sin_envase) == "20 kg — ⚠ falta cargar el envase"
+
+    # Sin kilaje tampoco: queda el código del cliente, pero CON el aviso.
+    pelada = dict(sin_envase, contenido_caja=None)
+    assert _caja_para_elegir(pelada) == "MANZANA GOB — ⚠ falta cargar el envase"
+
+
+def test_un_envase_sin_kilaje_igual_se_nombra():
+    from app.main import _caja_para_elegir
+
+    ficha = {"nombre_cliente": "X", "envase_nombre": "Caja Chica Día",
+             "contenido_caja": None, "unidad_venta": "kilo", "articulo_nombre": "Perita"}
+
+    assert _caja_para_elegir(ficha) == "Caja Chica Día"
+
+
 # Acá vivían los dos tests de `_tamanos_de_caja_por_ficha` ("6 kg o 10 kg"
 # cuando la guía R no decía con qué ficha se armó). La función se borró el
 # 06/09 junto con Stock del Sistema, que era su único lector: la ambigüedad
