@@ -3550,6 +3550,88 @@ filtrar por nombre es justo cómo se pierde la fila que importa.
 El segundo escenario es más silencioso y por eso peor: no hay aviso falso
 porque no hay aviso.
 
+### MEDIDO: es el escenario B (07/09)
+
+```
+Tomate Cherry · Día % · ficha 3 · "TOMATE CHERR" · 5 kilo
+producidas 0 · salidas 0 · saldo 0 · sin movimiento
+```
+
+**Una sola ficha, y es de 5 kg.** Los ceros son porque el corte fue el 05/09 y
+todavía no hubo movimiento de cherry, no porque no pase nada.
+
+Si el depósito efectivamente arma cajas de 5 kg —que es lo que hay que
+confirmar—, **la ficha única es correcta desde el negocio**: para Día las dos
+presentaciones son la misma cosa, una caja de 5 kg. El problema no es de
+modelado del producto, es contable: **no se puede saber cuál armamos nosotros
+y cuál vino lista.**
+
+### Qué molesta de verdad, y qué no
+
+Esto es lo que hay que llevarse, porque el susto inicial era más grande que el
+problema.
+
+**NO molesta el costo.** Aunque la cuenta 2 no las distinga, **la cuenta 3 sí,
+y por lote**: una caja del proveedor es un lote `guia` con el importe de la
+compra; una armada es un lote `reproceso` con su `costo_por_bulto_primera`. Dos
+lotes, dos costos, y el FIFO los consume por separado.
+
+**NO molesta el total.** El piso `disponibles = max(saldo, 0)` hace que la
+ficha en déficit aporte 0 a la resta y los sueltos absorban. Nada se pierde ni
+se duplica.
+
+**NO molesta el selector de Reproceso**, que era donde yo miraba. Su condición
+es `stock > 0 OR sueltos > 0 OR deficit > 0`, un OR de tres, y para el cherry
+`stock > 0` es verdad siempre que haya cherry. **El déficit ya era redundante
+ahí**: su función está cubierta por otra condición.
+
+**NO aparece el cartel de "no hay cajas armadas"**, que era la preocupación
+principal. Eso es del escenario A. Con ficha única, la ficha va a tener cajas
+apenas se cargue el primer reproceso.
+
+**SÍ molesta en el COTEJO**, y es diario. `_stock_de_ficha` congela la foto con
+el valor ya pisado en cero, y Stock Físico le ofrece al operario TODAS las
+fichas del artículo sin filtrar por stock. Con 15 cajas de proveedor en el piso
+y ninguna armada:
+
+| El operario cuenta | El sistema tenía | Cotejo |
+|---|---|---|
+| "Cherry Caja Día" → **15** | 0 | **+15** |
+| "Cherry" (sueltos) → **0** | 15 | **−15** |
+
+**Dos diferencias falsas que se cancelan en el total.** El artículo cierra
+perfecto y las dos porciones están cruzadas — y el que contó tiene razón las
+dos veces, porque en el piso son cajas de Día. El Cotejo existe para que una
+diferencia signifique algo, y estas dos no significan nada.
+
+**Y un tercero, menor**: el Remanente solo lista la porción de una ficha si
+`disponibles > 0`, así que va a decir "Tomate Cherry 15" como sueltos. El
+número es correcto y la descripción es falsa: son 15 cajas armadas, no 15
+cajones sueltos.
+
+### Lo que queda perdido de fondo, y es más chico de lo que sonaba
+
+**No se puede saber qué proporción de lo que hay armamos nosotros.** Hoy nadie
+hace esa pregunta. El día que se haga —para medir cuánto trabajo de mesa se le
+puso al cherry— no hay con qué contestarla.
+
+### Lo que falta confirmar, y cómo se mide
+
+**Si las cajas armadas son de verdad de 5 kg.** El sistema no lo puede
+contestar: `reprocesos` guarda solo bultos, **ningún kilaje**, así que con una
+ficha de 5 kg toda caja armada es de 5 kg por construcción. No es que tenga
+razón: es que no tiene con qué opinar.
+
+El único lugar por donde entra la verdad física es
+`pedidos_renglones.kilos_enviados` —los kilos reales que el depósito carga al
+tildar, *"el número que se factura"*—. `db/kilaje_real_de_lo_armado.sql` divide
+esos kilos por los bultos armados y los compara con la ficha, con la misma
+tolerancia por bulto que usa `_desvio_de_kilos` (3 kg). **Se corre cuando haya
+movimiento**; hoy no hay nada que mirar.
+
+**Si el kilaje real no fuera 5**, entonces son dos productos distintos con una
+sola ficha, y ahí sí hay un problema de fondo — no contable.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el
@@ -3560,6 +3642,16 @@ porque no hay aviso.
    ofrezca-y-rechace. Lo que falta es el CHECK de `movimientos_stock.lote_tipo`,
    que es OTRO check, no el que se amplió el 06/09.
 3. **E5: el contador de artículos que mezcla cajones y cajas.**
+
+Y dos que esperan un dato, no una decisión:
+
+- **El kilaje real del cherry** (`db/kilaje_real_de_lo_armado.sql`): correr
+  cuando haya movimiento. Decide si el problema del cherry es solo contable o
+  si son dos productos con una ficha.
+- **El selector de ficha del Reproceso**, que muestra el código del cliente
+  donde hace falta el envase: espera `db/fichas_con_su_envase.sql` para saber
+  si el envase alcanza para distinguir "chica" de "grande" o si falta el dato
+  en la ficha.
 
 Después de esos tres sigue la cola de antes: baja lógica de fichas → el CHECK
 ampliado de `pedidos_renglones`; E4 (guías R atrasadas); los negativos de F; y
