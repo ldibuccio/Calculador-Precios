@@ -470,3 +470,50 @@ real del compensatorio de ese artículo.
 
 `corte_fifo_11a` y `11b` lo abren término por término. Las dos son de lectura
 y el número que buscamos es `TOTAL_del_articulo − CAJAS_en_fichas`.
+
+## El orden del conteo: cargar las guías R ANTES de contar
+
+Del 07/09, y es la sexta aparición de la misma forma — la primera que no
+tiene nada que ver con el corte.
+
+**El conteo físico se toma antes de cargar las guías R del día.** El
+`stock_sistema` que se congela en `conteos_stock` no incluye el trabajo de
+esa jornada, así que la foto del sistema queda atrasada respecto del piso
+por el neto de ese día, y el Cotejo muestra esa diferencia **como si fuera
+un faltante**.
+
+Con Mango el 07/09: conteo a las 16:37, guía R cargada a las 16:51, compra
+recepcionada a las 17:02.
+
+| | |
+|---|---|
+| contado (1 suelto + 1 caja) | 2 |
+| sistema en ese instante | −12 |
+| **diferencia cruda** | **14** |
+| trabajo del día sin cargar (R177 +5, compra +10) | 15 |
+| **diferencia real** | **−1** |
+
+**Factor de seis sobre un piso de 2.** No es un caso de borde.
+
+### La regla
+
+**Cargar las guías R del día antes de contar, o contar después de
+cargarlas.** Cualquiera de los dos órdenes sirve; el que no sirve es contar
+en el medio.
+
+Y la razón, que es la que se olvida: un conteo compara dos cosas del mismo
+instante **de reloj** y no del mismo instante **de datos**. `stock_sistema`
+se congela con lo que estaba escrito, no con lo que había pasado.
+
+### Y no se reconcilia por porción, solo por artículo
+
+Una guía R se parte entre las dos porciones: su `bultos_primera` va a las
+cajas de la ficha y su `bultos_tomados` sale de los sueltos. Acreditar el
+trabajo pendiente contra una sola porción da cualquier cosa —en Mango, −27
+contra 1—; contra el artículo entero da −1.
+
+`db/corte_fifo_13_conteo_vs_trabajo_sin_cargar.sql` hace esa cuenta para
+todos los conteos: `dif_cruda`, `trabajo_sin_cargar` y `dif_real`. Si
+`dif_real` da cerca de cero en toda la lista, no hay faltante en ningún
+artículo y las diferencias históricas grandes son este mecanismo, no datos
+rotos.

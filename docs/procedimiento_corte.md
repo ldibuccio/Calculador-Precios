@@ -197,6 +197,22 @@ dar **0 en todas las filas**. Si alguna no da, parar y mirar — no seguir.
 
 ---
 
+## ANTES DE CONTAR: cargar las guías R del día
+
+El conteo congela el `stock_sistema` de lo que está ESCRITO, no de lo que
+pasó. Si se cuenta antes de cargar las guías R de la jornada, la foto del
+sistema queda atrasada por el neto de ese día y el Cotejo muestra esa
+diferencia como si fuera un faltante.
+
+Medido el 07/09 con Mango: diferencia cruda 14 sobre un piso de 2, y
+diferencia real −1 una vez acreditado el trabajo sin cargar. Factor de seis.
+
+Vale para el conteo del corte y para el conteo de todos los días. Ver
+`docs/el_corte_no_cerraba_el_fifo.md` y
+`db/corte_fifo_13_conteo_vs_trabajo_sin_cargar.sql`.
+
+---
+
 ## PASO 5 — El stock inicial: los bultos sueltos (BLOQUE 4)
 
 Se reemplaza la lista por lo contado: `(articulo_id, nombre, bultos, costo)`.
