@@ -6940,7 +6940,7 @@ def devoluciones_vinculadas_por_rango(cliente_id: int, fecha_desde, fecha_hasta)
         conexion.close()
 
 
-def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
+def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None) -> dict:
     """La cuenta de lotes y salidas de VARIOS artículos, con el cursor abierto.
 
     Devuelve {articulo_id: (entradas, salidas)}, con una entrada por cada id
@@ -6964,12 +6964,51 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
     El reparto en sí NO cambia: cada artículo recibe exactamente las mismas
     listas que recibía antes, y el motor (core/stock.py, core/costo_real.py)
     ni se entera.
+
+    EL PISO DEL CORTE VIVE ACÁ Y EN NINGÚN OTRO LADO, y es asimétrico a
+    propósito:
+
+    - Las ENTRADAS se recortan: un lote anterior al corte no existe para el
+      FIFO. Más el compensatorio, que se va POR TIPO y no por fecha.
+    - Las SALIDAS no se recortan, y no es un olvido. `repartir_fifo` ya
+      impide que una salida consuma un lote posterior a ella
+      (`lote_posterior_a_la_salida`), así que una salida vieja no puede
+      alcanzar un lote nuevo por más que esté en la lista: se queda sin lote
+      y cae a `sin_lote`, que es exactamente lo que se quiere ver. Sacarlas
+      sería peor: desaparecerían de la Rentabilidad Real las entregas
+      anteriores al corte, y una entrega sin costo es un dato incompleto,
+      pero una entrega que no aparece es un dato perdido.
+
+    Lo que el piso NO arregla, y hay que decirlo acá porque es el mismo
+    lugar donde se decide qué es un lote: `reprocesos.bultos_primera` entra
+    como lote del MISMO artículo que los cajones de las compras, así que un
+    reproceso puede tomar cajas ya armadas como si fueran materia prima.
+    Medido el 07/09: 19 de 32 guías R en dos días, $3.572.620. Es otro
+    problema —la mezcla de unidades, E5— y necesita otro arreglo.
     """
     ids = list(articulo_ids)
     entradas_por_articulo = {articulo_id: [] for articulo_id in ids}
     dirigidas_por_articulo = {articulo_id: [] for articulo_id in ids}
     if not ids:
         return {}
+
+    # EL PISO DEL CORTE, y va acá porque acá se define qué es un lote. Antes
+    # el FIFO veía toda la historia: el 07/09 medimos que 18 de las 32 guías
+    # R de dos días se habían costeado contra lotes que el corte declaró
+    # inexistentes ($4.705.353). El corte cancela el saldo viejo en el TOTAL
+    # —ese es el compensatorio— pero el compensatorio opera sobre el neto y
+    # el FIFO razona por lote, así que los restantes sobrevivían al cierre.
+    #
+    # `crear_reproceso` ya tenía la mitad de esta regla: prohíbe FECHAR una
+    # guía R antes del corte (ReprocesoAnteriorAlCorte) y permitía COSTEARLA
+    # con mercadería anterior al corte. Ésta es la otra mitad.
+    #
+    # `corte` se recibe hecho cuando el llamador ya lo leyó en su misma
+    # transacción (crear_reproceso, que lo necesita antes para el freno de
+    # fecha): así es UNA lectura por transacción y no dos, y sigue siendo
+    # la misma función la que define de dónde sale la fecha.
+    if corte is None:
+        corte = _fecha_corte(cursor)
 
     cursor.execute(
         """
@@ -6989,6 +7028,9 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
             JOIN proveedores p ON p.id = c.proveedor_id
             LEFT JOIN guias_compra g ON g.id = c.guia_id
             WHERE c.estado = 'recepcionado' AND c.articulo_id = ANY(%s)
+              -- ESTRICTO: una compra recepcionada el día del corte ya está
+              -- adentro de la foto que se contó esa tarde.
+              AND (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
             UNION ALL
             -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
             -- congelado del listado anclado al pedido de origen); ajustes y
@@ -7003,6 +7045,19 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
             LEFT JOIN clientes cl ON cl.id = m.cliente_id
             WHERE m.anulado_el IS NULL AND m.cantidad > 0 AND m.articulo_id = ANY(%s)
               AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
+              -- EL DÍA DEL CORTE ES ASIMÉTRICO. El 'stock_inicial' DEL
+              -- corte es la foto —la línea de base— y entra; todo lo demás
+              -- de ese día ya está adentro de esa foto y NO entra. Con `>=`
+              -- el día del corte se cuenta dos veces.
+              AND (
+                  (m.tipo = 'stock_inicial' AND m.fecha_operacion = %s)
+                  OR m.fecha_operacion > %s
+              )
+              -- El compensatorio sale POR TIPO y no por fecha: está fechado
+              -- EN el corte, así que un piso por fecha lo dejaría adentro y
+              -- el FIFO seguiría teniendo un lote de mercadería que no
+              -- existe. Su trabajo es el TOTAL (la cuenta 1), no el reparto.
+              AND m.tipo <> 'cierre_modelo_viejo'
             UNION ALL
             -- La primera lleva PARA QUIÉN se armó (dato de trazabilidad: el
             -- stock sigue sin dueño); cliente_lote_id alimenta la alerta de
@@ -7013,10 +7068,17 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
             FROM reprocesos rp
             LEFT JOIN clientes cl ON cl.id = rp.cliente_id
             WHERE rp.anulado_el IS NULL AND rp.bultos_primera > 0 AND rp.articulo_id = ANY(%s)
+              -- Misma asimetría: las guías R 'inicial' DEL corte son la foto
+              -- de las cajas que estaban armadas en el piso. Una guía R
+              -- NORMAL de ese mismo día armó cajas que la foto ya contó.
+              AND (
+                  (rp.tipo = 'inicial' AND rp.fecha_operacion = %s)
+                  OR rp.fecha_operacion > %s
+              )
         ) lotes
         ORDER BY articulo_id, fecha_orden, momento_orden
         """,
-        (ids, ids, ids),
+        (ids, corte, ids, corte, corte, ids, corte, corte),
     )
     columnas = [descripcion[0] for descripcion in cursor.description]
     for fila in cursor.fetchall():
@@ -7031,7 +7093,7 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
     # tipadas: desde E4 hay UNA sola definición de "qué salió y cuándo".
     # Antes acá se armaba un total sin fecha, y ese total era justamente lo
     # que dejaba al reparto de stock consumir lotes del futuro.
-    salidas_por_articulo = _salidas_stock_varios(cursor, ids)
+    salidas_por_articulo = _salidas_stock_varios(cursor, ids, corte)
 
     resultado = {}
     for articulo_id in ids:
@@ -7039,14 +7101,14 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
     return resultado
 
 
-def _entradas_y_salidas_stock(cursor, articulo_id: int) -> tuple[list[dict], list[dict]]:
+def _entradas_y_salidas_stock(cursor, articulo_id: int, corte=None) -> tuple[list[dict], list[dict]]:
     """La cuenta interna de lotes y salidas de UN artículo, con el cursor abierto.
 
     La usa crear_reproceso, que necesita rejugar el FIFO adentro de su propia
     transacción antes de insertar. Es la de varios con un solo id: una sola
     consulta de cada cosa, para que no puedan desincronizarse nunca.
     """
-    return _entradas_y_salidas_stock_varios(cursor, [articulo_id])[articulo_id]
+    return _entradas_y_salidas_stock_varios(cursor, [articulo_id], corte)[articulo_id]
 
 
 def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
@@ -7906,7 +7968,7 @@ def crear_reproceso(
             if fecha_operacion < corte:
                 raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
 
-            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id)
+            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
             # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
             # de reparto_para_reproceso. El freno, el desglose que vio el
             # operario y esta escritura miran la MISMA lista: si midieran
@@ -8497,30 +8559,54 @@ _SQL_SALIDAS_STOCK = """
         FROM pedidos_renglones r
         JOIN vigentes v ON v.id = r.pedido_id
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
+          AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
         UNION ALL
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                -m.cantidad, NULL, NULL, m.motivo, NULL,
                m.lote_tipo, m.lote_origen_id, NULL, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
+          AND m.fecha_operacion > %s
+          -- El compensatorio NEGATIVO del corte tampoco es una salida del
+          -- FIFO, por la misma razón que el positivo no es un lote: cancela
+          -- el saldo viejo en el TOTAL. Con el piso puesto ya no queda nada
+          -- viejo que cancelar, así que dejarlo acá sería restarle a los
+          -- lotes NUEVOS mercadería que nunca salió de ellos.
+          AND m.tipo <> 'cierre_modelo_viejo'
         UNION ALL
         SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
                rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
                NULL, NULL, NULL, NULL::bigint, rp.articulo_id
         FROM reprocesos rp
         WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
+          AND rp.fecha_operacion > %s
     ) salidas
     ORDER BY articulo_id, fecha_orden, momento_orden
 """
 
 
-def _salidas_stock_varios(cursor, articulo_ids: list[int]) -> dict:
-    """{articulo_id: [salidas fechadas]}, con el cursor abierto. Una lista por id pedido, vacía si no tuvo ninguna."""
+def _salidas_stock_varios(cursor, articulo_ids: list[int], corte=None) -> dict:
+    """{articulo_id: [salidas fechadas]}, con el cursor abierto. Una lista por id pedido, vacía si no tuvo ninguna.
+
+    SOLO LAS POSTERIORES AL CORTE, estricto. El día del corte es asimétrico
+    —el conteo se toma a la tarde, así que todo lo del día ya está adentro de
+    la foto— y una salida de ese día que consumiera la foto la estaría
+    restando dos veces. Es la misma regla que ya usan la cuenta por ficha y
+    el pool de segunda; el comentario de `_SQL_STOCK_PARTIDO` la mide.
+
+    Lo que se pierde, y hay que decirlo: las entregas del día del corte y
+    anteriores dejan de tener atribución de costo, y como los dos llamadores
+    de `atribuir_costos_fifo` arman sus filas iterando su salida, esas
+    entregas desaparecen de ahí. Su costo venía de lotes anteriores al corte,
+    que están declarados no confiables, así que era cero de todas formas.
+    """
     ids = list(articulo_ids)
     por_articulo = {articulo_id: [] for articulo_id in ids}
     if not ids:
         return por_articulo
-    cursor.execute(_SQL_SALIDAS_STOCK, (ids, ids, ids))
+    if corte is None:
+        corte = _fecha_corte(cursor)
+    cursor.execute(_SQL_SALIDAS_STOCK, (ids, corte, ids, corte, ids, corte))
     columnas = [descripcion[0] for descripcion in cursor.description]
     salidas = []
     for fila in cursor.fetchall():

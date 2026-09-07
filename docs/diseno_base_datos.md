@@ -4090,6 +4090,82 @@ lo mismo y estén tomadas contra la misma ventana.** Una ventana móvil
 (`now() - 30`) y dos lecturas separadas por días no son comparables, aunque los
 dos números salgan de la misma pantalla.
 
+## EL CORTE NO CIERRA LOS LOTES: el compensatorio lleva el NETO a cero, no los restantes (07/09)
+
+**Grave, y es el hallazgo del día.** Reproducido de punta a punta contra
+Postgres real con el esquema real.
+
+### El mecanismo, y NO es "el compensatorio no consume lotes"
+
+Un `movimientos_stock` negativo **sí es una salida** y **sí consume lotes** por
+FIFO: `_salidas_stock_varios` lo trae con `-m.cantidad`. Así que el
+compensatorio consume. El problema es **cuánto**.
+
+El compensatorio se calcula como **−1 × las seis patas**, o sea menos el
+**NETO** del artículo. Y el neto y la suma de los restantes **no son el mismo
+número**:
+
+```
+neto            = entradas − TODAS las salidas
+suma restantes  = entradas − las salidas QUE ENCONTRARON LOTE
+```
+
+La diferencia es exactamente **`sin_lote`**: las salidas viejas que nunca
+encontraron un lote del cual salir (una venta anterior a la compra que la
+cubría, típicamente). Un compensatorio de −neto consume `neto` de los lotes
+más viejos y **deja `sin_lote` de restante vivo**.
+
+### La reproducción
+
+Berenjena, compra de Saturno del 04/09 de 30 bultos, y una salida de 10 del
+03/09 —anterior al lote, así que cae en `sin_lote`—:
+
+```
+ANTES del corte:  neto 20 · sin_lote 10 · suma de restantes 30
+compensatorio:    −20, fechado 05/09
+DESPUÉS:          neto 0  ·                suma de restantes 10   ← VIVO
+                  VIVO: guia #1 del 2026-09-04 restante 10 costo 20000
+```
+
+Y después, un reproceso del 07/09 pidiendo 7:
+
+```
+guía creada  →  consumo origen 'compra', fecha del lote 2026-09-04, costo 20.000
+```
+
+**Un reproceso posterior al corte costeado con un lote anterior al corte.** Es
+exactamente la R172 de Berenjena y la R171 de Perita.
+
+### Por qué el freno no lo ve
+
+Porque **el freno no mira el neto**, y está escrito así a propósito
+(`bultos_en_los_lotes`): mira **la suma de los restantes**. La decisión del
+01/09 fue *"trabar a un operario por un agujero que ya estaba ahí antes de que
+tocara nada sería trabarlo por lo mismo que está arreglando"*. Correcta para
+el problema que resolvía, y es la que deja pasar éste: el freno ve 10
+disponibles cuando el artículo tiene 0.
+
+### Es el lote fantasma, del otro lado
+
+El 05/09 encontramos que **el compensatorio POSITIVO crea un lote que el FIFO
+trata como mercadería real**. Éste es el espejo: **el compensatorio NEGATIVO
+deja lotes vivos que el FIFO sigue tratando como mercadería real.** Los dos
+salen de lo mismo — el compensatorio opera sobre el TOTAL y el FIFO razona por
+LOTE, y esas dos cuentas no se tocan.
+
+### Lo que NO se arregla solo
+
+El costo de lo ya reprocesado desde el sábado **está congelado**: los consumos
+son un documento y no se recalculan. Cada guía R posterior al corte que tomó
+de un lote viejo tiene un costo que sale de mercadería que el corte declaró
+inexistente.
+
+**Qué falta decidir, y no se decide sin los números:** si el corte tiene que
+llevar a cero los RESTANTES en vez del neto (un compensatorio por lote y no
+por artículo), o si alcanza con cerrar los lotes anteriores al corte por
+fecha. Las dos son migraciones y las dos tocan el FIFO. Se mide primero con
+`db/lotes_que_sobrevivieron_al_corte.sql`.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el

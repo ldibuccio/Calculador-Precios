@@ -13349,6 +13349,37 @@ def test_el_extracto_de_una_porcion_que_no_existe_da_404():
     assert respuesta.status_code == 404
 
 
+def test_los_SIETE_origenes_de_consumo_estan_nombrados_en_la_pantalla():
+    """El {% else %} de Guías R es un cajón de sastre: el origen que no esté
+    nombrado se muestra como "se tomó más de lo que había en el sistema", que
+    es lo CONTRARIO de lo que pasó.
+
+    Ya mordió dos veces: primero con cierre_modelo_viejo (arreglado, con su
+    comentario) y el 07/09 con stock_inicial, en la guía R176 — un lote real,
+    con costo real, mostrado como si no existiera.
+
+    Este test lee la lista del CHECK de la base y exige que la plantilla los
+    nombre a todos menos 'sin_lote', que es el único que va al else. Así, el
+    día que el CHECK gane un valor nuevo, falla acá y no en la pantalla.
+    """
+    import re
+
+    esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
+    bloque = re.search(r"create table reprocesos_consumos.*?\);", esquema, re.S).group(0)
+    check = re.search(r"origen text not null check \(origen in \((.*?)\)\)", bloque, re.S).group(1)
+    del_check = set(re.findall(r"'([a-z_]+)'", check))
+    assert "stock_inicial" in del_check and len(del_check) == 7, del_check
+
+    plantilla = open("templates/deposito_stock_guias_r.html", encoding="utf-8").read()
+    nombrados = set(re.findall(r'c\.origen == "([a-z_]+)"', plantilla))
+
+    # sin_lote es el ÚNICO que corresponde al else: ya no se escribe, y para
+    # las guías viejas que lo tienen el cartel dice la verdad.
+    assert del_check - nombrados == {"sin_lote"}, (
+        f"origenes sin nombrar en la pantalla: {del_check - nombrados - {'sin_lote'}}"
+    )
+
+
 def test_el_remanente_es_una_porcion_por_renglon_y_alfabetico():
     """En el piso no hay "un artículo con un total": hay pilas distintas.
 
@@ -17866,7 +17897,7 @@ def test_el_selector_de_fecha_tiene_el_piso_del_corte_puesto():
 
 
 GUIAS_R_DE_PRUEBA = [
-    {"id": 12, "articulo_id": 1, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 30.0,
+    {"id": 12, "articulo_id": 1, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 30.0,
      "bultos_primera": 20.0, "bultos_segunda": 5.0, "bultos_merma": 5.0,
      "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
      "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
@@ -17877,7 +17908,7 @@ GUIAS_R_DE_PRUEBA = [
          {"origen": "compra", "origen_id": 102, "bultos": 10.0, "costo_por_bulto": 1300.0,
           "guia_fecha": date(2026, 8, 25), "proveedor_nombre": "Sur 3"},
      ]},
-    {"id": 13, "articulo_id": 2, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 4.0,
+    {"id": 13, "articulo_id": 2, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 4.0,
      "bultos_primera": 6.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
      "costo_total": None, "costo_por_bulto_primera": None,
      "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
@@ -17893,7 +17924,7 @@ GUIAS_R_DE_PRUEBA = [
 # COMPRA, que es lo que alguien puede ir a cargar. La R13 de arriba es el otro
 # caso —consumió un ajuste— y ésa no se puede cerrar nunca.
 GUIA_R_ESPERANDO_PRECIO = {
-    "id": 30, "articulo_id": 1, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 10.0,
+    "id": 30, "articulo_id": 1, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 10.0,
     "bultos_primera": 8.0, "bultos_segunda": 2.0, "bultos_merma": 0.0,
     "costo_total": None, "costo_por_bulto_primera": None,
     "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
@@ -18957,14 +18988,89 @@ def test_borrar_una_ficha_con_guias_R_lo_dice_en_la_pantalla_y_NO_da_500():
     assert "cliente_id=1" in destino
 
 
+def _guias_r(guias, conteos=None):
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value=0),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value={1: [{"id": 5, "nombre": "Caja Chica"}]}),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=conteos or []),
+    ):
+        return cliente.get("/administracion/stock/guias-r")
+
+
+GUIA_CON_FICHA = {
+    "id": 176, "articulo_id": 1, "ficha_id": 5, "fecha_operacion": date(2026, 9, 7),
+    "bultos_tomados": 10.0, "bultos_primera": 10.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
+    "costo_total": 450000.0, "costo_por_bulto_primera": 45000.0,
+    "creado_en": datetime(2026, 9, 7, 10, 0), "anulado_el": None,
+    "articulo_nombre": "Morron Rojo", "cliente_id": 1, "cliente_nombre": "Día",
+    "ficha_nombre": "M.ROJO GRA", "consumos": [],
+}
+
+
+def test_guias_r_con_ficha_puesta_el_selector_NO_arranca_abierto():
+    """El botón se queda —corregir una ficha mal asignada es el único camino—
+    pero deja de ser un default: en una guía que ya está bien, lo único que
+    puede hacer es empeorarla."""
+    respuesta = _guias_r([GUIA_CON_FICHA])
+
+    assert respuesta.status_code == 200
+    assert "Corregir la ficha" in respuesta.text
+    # El <details> existe y NO tiene open.
+    assert '<details class="corregir-ficha" >' in respuesta.text
+    assert '<details class="corregir-ficha" open>' not in respuesta.text
+
+
+def test_guias_r_sin_ficha_el_selector_SI_arranca_abierto():
+    """Ahí completar es lo que hay que hacer, no una excepción."""
+    respuesta = _guias_r([dict(GUIA_CON_FICHA, ficha_id=None, ficha_nombre=None)])
+
+    assert "Asignar la ficha" in respuesta.text
+    assert '<details class="corregir-ficha" open>' in respuesta.text
+
+
+def test_guias_r_el_selector_dice_QUE_IMPLICA_cambiar_la_ficha():
+    """Lo que sobraba no era el botón: era que fuera mudo."""
+    respuesta = _guias_r([GUIA_CON_FICHA])
+
+    assert "pasan de una pila a la otra" in respuesta.text
+    assert "El costo no cambia" in respuesta.text
+
+
+def test_guias_r_avisa_si_esa_ficha_SE_CONTO_despues_de_la_guia():
+    """El caso que puede hacer daño: el conteo incluyó estas cajas, así que
+    moverlas deja el Cotejo con una diferencia que no es de conteo — y al lado
+    tiene el botón "Ajustar", que sí mueve mercadería."""
+    conteo = {"articulo_id": 1, "ficha_id": 5, "cantidad": 10, "stock_sistema": 10,
+              "creado_en": datetime(2026, 9, 8, 8, 0)}
+    respuesta = _guias_r([GUIA_CON_FICHA], conteos=[conteo])
+
+    assert "Esta ficha se contó el" in respuesta.text
+    assert "08/09" in respuesta.text
+    assert "es un error de conteo" in respuesta.text
+    # Y nombra el botón que sí mueve mercadería, que es el riesgo real.
+    assert "sí mueve mercadería" in respuesta.text
+
+
+def test_guias_r_no_avisa_si_el_conteo_es_ANTERIOR_a_la_guia():
+    """Un conteo previo a la guía no incluyó estas cajas: moverlas no lo
+    invalida, y avisar ahí sería un aviso que se aprende a ignorar."""
+    conteo = {"articulo_id": 1, "ficha_id": 5, "cantidad": 10, "stock_sistema": 10,
+              "creado_en": datetime(2026, 9, 6, 8, 0)}
+    respuesta = _guias_r([GUIA_CON_FICHA], conteos=[conteo])
+
+    assert "Esta ficha se contó el" not in respuesta.text
+
+
 def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
     guia = {
-        "id": 12, "articulo_id": 1, "fecha_operacion": date(2026, 8, 24),
+        "id": 12, "articulo_id": 1, "ficha_id": None, "fecha_operacion": date(2026, 8, 24),
         "bultos_tomados": 12.0, "bultos_primera": 10.0, "bultos_segunda": 1.0,
         "bultos_merma": 1.0, "costo_total": 12000.0, "costo_por_bulto_primera": 1200.0,
         "creado_en": datetime(2026, 8, 24, 10, 0), "anulado_el": None,
         "articulo_nombre": "Tomate Perita", "cliente_id": 1, "cliente_nombre": "Día",
-        "consumos": [],
+        "ficha_id": None, "consumos": [],
     }
     guia_vieja = dict(guia, id=9, cliente_id=None, cliente_nombre=None)
     with (

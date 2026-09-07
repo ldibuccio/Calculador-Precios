@@ -7422,13 +7422,12 @@ def _lotes_con_resto(articulo_id: int) -> list[dict]:
     for lote in reparto["lotes"]:
         if lote["restante"] <= 0:
             continue
-        # El lote del compensatorio del corte NO se ofrece: es mercadería que
-        # no existe —el FIFO lo crea porque las entradas son "movimientos con
-        # cantidad > 0" y no miran el tipo— y no se puede tirar lo que no
-        # está. Antes salía en la lista y el POST lo rechazaba después, que
-        # es lo peor de los dos mundos: ofrecido y prohibido.
-        if lote["tipo_lote"] == "cierre_modelo_viejo":
-            continue
+        # El compensatorio del corte ya no llega hasta acá: desde el piso de
+        # fecha, la consulta de entradas lo saca por tipo
+        # (_entradas_y_salidas_stock_varios en app/db.py). El filtro estaba
+        # también acá, y con la regla escrita en los dos lados iban a
+        # separarse: el día que la consulta cambie, esta copia seguiría
+        # diciendo lo de antes. Vive en un solo lugar.
         if lote["tipo_lote"] == "reproceso":
             etiqueta = f"Guía R{lote['origen_id']}"
             if lote.get("detalle"):
@@ -8579,6 +8578,31 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
         fichas_por_articulo = _cajas_para_elegir_por_articulo()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # QUÉ FICHAS SE CONTARON DESPUÉS DE SU GUÍA. Cambiarle la ficha a una guía
+    # mueve sus cajas de una pila a otra, y si esa pila ya se contó, la foto
+    # congelada del conteo (conteos_stock.stock_sistema) deja de coincidir:
+    # el Cotejo muestra una diferencia que NO es un error de conteo, y al lado
+    # tiene el botón "Ajustar", que es destructivo. Es la misma forma que el
+    # bug del piso del 04/09 — un número mal al lado del botón que lo
+    # "arregla" moviendo mercadería real. Acá no se traba nada: se avisa.
+    #
+    # Se compara contra el último conteo de ESA porción, que es el que el
+    # Cotejo mira. Si falla, la pantalla sale igual sin el aviso: es un dato
+    # de contexto, no la razón por la que se abre Guías R.
+    contado_despues: dict = {}
+    try:
+        for conteo in listar_ultimos_conteos_stock():
+            if conteo["ficha_id"] is None:
+                continue
+            contado_despues[(conteo["articulo_id"], conteo["ficha_id"])] = conteo["creado_en"].date()
+    except Exception:
+        logger.exception("No se pudieron leer los conteos para avisar del cambio de ficha")
+    for guia in guias:
+        fecha_conteo = contado_despues.get((guia["articulo_id"], guia["ficha_id"]))
+        guia["contada_despues_el"] = (
+            fecha_conteo if fecha_conteo is not None and fecha_conteo >= guia["fecha_operacion"] else None
+        )
 
     return templates.TemplateResponse(
         request,

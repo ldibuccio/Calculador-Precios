@@ -296,6 +296,8 @@ nombres esperados, el script se corta sin escribir nada.
 | `corte_frutamax_verificador.sql` (las seis patas contra la foto aprobada; 12 verificaciones) | ❌ **NUNCA SE CORRIÓ** — también usa vistas y tablas temporales, así que habría fallado igual | — no corresponde |
 | `corte_frutamax_rollback.sql` (deshace la carga y devuelve las fichas desde el respaldo; se corta si ya hubo operación después del corte) | — no hizo falta | — no corresponde |
 | `agregar_activo_a_proveedores.sql` | ✅ | ✅ |
+| `frutamax_backfill_ficha_en_renglones.sql` (616 renglones sin ficha, recuperados por código exacto) | ✅ — **se trajo al repo el 07/09, DESPUÉS de correrse**: había quedado solo en el chat | — no corresponde: Palmala tiene el suyo |
+| `palmala_1_conteo_previo.sql` + `palmala_2_backfill_ficha.sql` + `palmala_3_antes_y_despues.sql` (393 renglones sin ficha) | — no corresponde: Frutamax tiene el suyo | ✅ 2026-09-07 — verificado con `palmala_4_verificacion.sql`: 669 con ficha, cero cruzados de artículo y de cliente, cero `codigo_no_coincide` |
 
 ### Lo que pasó al correr el corte (29/08/2026) — leer antes de reusar estos scripts
 

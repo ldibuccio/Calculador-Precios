@@ -130,6 +130,27 @@
      no es un error, es un dato que falta y que se completa acá mismo. */
   .ficha { margin: 0.35rem 0 0; font-size: 0.9rem; }
   .ficha .sin-asignar { color: #b45309; font-style: italic; }
+  /* El desplegable de corregir: el summary es un área tocable de ancho
+     completo, no un link chico — se abre con el pulgar. */
+  .corregir-ficha { margin-top: 0.5rem; }
+  .corregir-ficha > summary {
+    cursor: pointer;
+    padding: 0.7rem 0.2rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1d4ed8;
+  }
+  .corregir-ficha .implica { margin: 0.2rem 0 0.5rem; font-size: 0.85rem; color: #555; line-height: 1.45; }
+  .corregir-ficha .ojo-conteo {
+    margin: 0 0 0.6rem;
+    padding: 0.6rem 0.7rem;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: #92400e;
+  }
   .asignar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
   .asignar select {
     flex: 1 1 60%;
@@ -235,6 +256,30 @@
       {% else %}<span class="sin-asignar">Sin asignar a una ficha</span>{% endif %}
     </p>
     {% if not g.anulado_el %}
+    {# CON FICHA YA PUESTA, el selector NO arranca abierto. El botón se queda
+       —corregir una ficha mal asignada es el único camino que hay— pero deja
+       de ser un default: en una guía que ya está bien, lo único que puede
+       hacer es empeorarla. Sin ficha sí arranca abierto: ahí completar es lo
+       que hay que hacer. #}
+    <details class="corregir-ficha" {% if not g.ficha_nombre %}open{% endif %}>
+      <summary>{% if g.ficha_nombre %}Corregir la ficha{% else %}Asignar la ficha{% endif %}</summary>
+      {# Qué implica, dicho antes de tocar nada: el costo NO se mueve (los
+         consumos se congelaron al cargar la guía) pero las cajas cambian de
+         pila, y eso sí se ve en el Remanente y en el Cotejo. #}
+      <p class="implica">Las cajas de esta guía pasan de una pila a la otra en el
+        Remanente y en el Cotejo. <strong>El costo no cambia</strong>: los consumos
+        y el precio quedaron congelados al cargar la guía.</p>
+      {% if g.contada_despues_el %}
+      {# El caso que puede hacer daño: esa pila YA se contó después de esta
+         guía, así que el conteo incluyó estas cajas. Moviéndolas, el Cotejo
+         va a mostrar una diferencia que no es de conteo — y al lado tiene el
+         botón "Ajustar", que sí mueve mercadería. Avisa, no traba. #}
+      <p class="ojo-conteo">⚠ Esta ficha se contó el
+        <strong>{{ g.contada_despues_el|fecha_corta }}</strong>, después de esta guía.
+        Si movés las cajas, el Cotejo va a marcar una diferencia en las dos fichas
+        que <strong>no</strong> es un error de conteo — y el botón “Ajustar” de esa
+        pantalla sí mueve mercadería. Conviene volver a contar después de cambiarla.</p>
+      {% endif %}
     <form class="asignar" method="post" action="/administracion/stock/guias-r/{{ g.id }}/asignar-ficha">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
@@ -255,6 +300,7 @@
       </select>
       <button type="submit">Guardar ficha</button>
     </form>
+    </details>
     {% endif %}
     {# En una guía ANULADA no va NADA de esto: ni el cruce, ni el costo, ni
        el detalle de lotes. Lo tomado ya volvió a sus lotes y la primera
@@ -301,6 +347,14 @@
              de abajo y diría "se tomó más de lo que había", que es falso:
              lote había, pero era mercadería que no existe. #}
           {% elif c.origen == "cierre_modelo_viejo" %}Del cierre del modelo viejo (sin costo posible)
+          {# stock_inicial FALTABA, y por eso la R176 decía "Sin lote" de un lote
+             que existía. Es el MISMO agujero que el renglón de arriba arregló
+             para el compensatorio: el {% else %} es un cajón de sastre y el
+             CHECK de reprocesos_consumos.origen permite SIETE valores. Los
+             siete tienen que estar nombrados acá, o el que falte se muestra
+             como "se tomó más de lo que había", que es lo contrario de lo que
+             pasó. El único que de verdad va al else es 'sin_lote'. #}
+          {% elif c.origen == "stock_inicial" %}Del stock inicial del corte
           {% else %}<span class="sin-costo">Sin lote (se tomó más de lo que había en el sistema)</span>{% endif %}
         </span>
         <span>{{ c.bultos|numero }} bultos{% if c.costo_por_bulto is not none %} · {{ c.costo_por_bulto|moneda }}/bulto{% elif c.origen != "sin_lote" %} · <span class="sin-costo">sin precio</span>{% endif %}</span>

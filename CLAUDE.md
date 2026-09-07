@@ -186,6 +186,59 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 6, del 07/09, y es el mismo día que el 5: **cuando se corrige una
+asimetría, hay que revisar también las MEDICIONES, no solo el código de
+producción.**
+
+La asimetría del día del corte apareció CUATRO veces, todas con el mismo
+síntoma —contar dos veces ese día— y todas descubiertas por separado: en la
+cuenta por ficha, en el pool de segunda, en el piso del FIFO, y en las
+consultas de diagnóstico que se escribieron para medir el piso.
+
+La cuarta es la que enseña algo nuevo. Al arreglar el piso quedaron siete
+consultas de `db/` midiendo con la regla vieja, y una de ellas —el faltante
+de cajas del paso 7— **inventó 212 cajas que no existían y mandó a preparar
+un conteo del galpón para reconstruirlas.** Tres horas persiguiendo un
+número que era el artefacto de la medición, no un hecho.
+
+Una consulta de diagnóstico se siente inofensiva porque no escribe nada. No
+lo es: **es la que decide qué se arregla después.** Un dato falso ahí cuesta
+más que un bug en producción, porque el bug tiene síntomas y el diagnóstico
+falso viene con la autoridad de un número.
+
+De acá en adelante, al cambiar una regla de recorte, de piso o de ventana:
+`grep` del criterio viejo **en `db/` y en `scripts/`, no solo en `app/` y
+`core/`**. Y las consultas cuya respuesta ya se usó y quedó vieja: o se
+corrigen, o se borran. Una consulta corrible con números que sabemos falsos
+es peor que no tenerla — la próxima vez que alguien la corra no va a
+acordarse de que estaba mal.
+
+Corolario 5, del 07/09: **una asimetría de diseño también es una copia, y
+se busca por las CUENTAS que la necesitan, no por el código que la
+implementa.**
+
+El conteo físico del corte se toma A LA TARDE, así que la foto del stock
+inicial ya viene neta del trabajo de ese día. Eso obliga a una asimetría, y
+está contemplada en DOS cuentas: el pool de segunda —con su comentario
+explicándolo— y la cuenta por ficha, que lo dice "y por lo mismo". **El
+FIFO es la única de las tres que no la tiene**, y por eso su freno mide los
+reprocesos del día del corte contra una entrada posterior a ellos: no puede
+cubrirlos por construcción. Cuatro guías R de 32 frenaron por eso en el
+backtest, sin que hubiera faltado un solo bulto.
+
+Es la misma familia que la copia olvidada, pero **no hay grep que la
+encuentre**: las dos cuentas que sí la tienen no comparten una línea de
+código con la que no la tiene. Se escribe distinto en cada una. Lo único que
+las une es el hecho del mundo —la foto se toma a la tarde—, y eso vive en un
+comentario.
+
+De acá en adelante, cuando aparezca una asimetría que nace de CÓMO se toma un
+dato en la realidad —a qué hora, en qué orden, con qué recorte—: **enumerar
+todas las cuentas que leen ese dato y decidir una por una si la necesitan**,
+en el mismo momento en que se descubre. La lista va escrita al lado de la
+primera que se arregla; si no, la segunda se arregla meses después y la
+tercera nunca.
+
 Corolario 3, del 04/09 y es la CUARTA vez: **cuando una estructura gana un
 campo, hay que grepear quién la CONSTRUYE, no el campo nuevo.** Grepear el
 campo solo encuentra a los que ya lo usan — los que faltan, por definición, no
@@ -209,6 +262,36 @@ Los dos síntomas que lo escondieron, y valen como señal para la próxima:
   protege los que no mira.** Cuando lo que se guarda es una estructura, se
   compara la estructura ENTERA: que falle el día que alguien agrega un campo es
   la función del test, no una molestia.
+
+Corolario 5, del 07/09, y es la SEGUNDA vez con el MISMO `{% else %}`: **una
+rama por defecto que AFIRMA algo no es un default, es una aserción sin
+verificar.**
+
+En Guías R el detalle de consumos pinta cada origen con un `if/elif`, y el
+`{% else %}` dice *"Sin lote (se tomó más de lo que había en el sistema)"*. El
+CHECK de `reprocesos_consumos.origen` permite SIETE valores y la plantilla
+nombraba CINCO. El que faltaba —`stock_inicial`— caía al else, así que un lote
+real, con costo real, se mostraba como si no existiera: la guía R176 decía que
+se había tomado más de lo que había cuando el freno había corrido bien y había
+lotes de sobra.
+
+**Lo agravante es que ya había pasado.** Tres líneas más arriba hay un
+comentario que dice, textual: *"Sin este renglón el consumo del compensatorio
+caería en la rama de abajo y diría 'se tomó más de lo que había', que es
+falso"*. Se arregló ESE valor y no se miró la lista completa del CHECK — el
+corolario 2 (cuando se arregla una copia hay que ir a buscar la otra) aplicado
+a una lista de valores en vez de a dos funciones.
+
+De acá en adelante: **cuando una rama por defecto afirma algo, se enumeran los
+casos que puede recibir contra la fuente que los define** —el CHECK, el enum,
+la constante— y el default se queda solo con los que de verdad significan eso.
+Y si la fuente puede crecer, el test la lee de ahí en vez de copiarla: ver
+`test_los_SIETE_origenes_de_consumo_estan_nombrados_en_la_pantalla`, que parsea
+el CHECK de `db/esquema_completo.sql` y falla el día que aparezca un valor
+nuevo sin nombrar.
+
+Y la señal para reconocerlo: **un default que dice "esto no existe" es más
+peligroso que uno que dice "no sé"**, porque el que lo lee actúa.
 
 Corolario 4, del 07/09: **un assert de substring sobre SQL tiene que calificar
 la tabla.** `listar_renglones_pedidos_vigentes` no filtraba
