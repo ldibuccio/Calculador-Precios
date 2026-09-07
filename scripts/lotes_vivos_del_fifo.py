@@ -1,4 +1,4 @@
-"""Qué ve el FIFO hoy, qué vería con el piso del corte, y de qué tamaño es la ola de frenos.
+"""Qué lotes ve el FIFO hoy, por artículo, y cuántos son cajas armadas.
 
 SOLO LEE. No escribe una línea en la base y no toca ninguna tabla.
 
@@ -9,9 +9,12 @@ SQL sería escribir una segunda versión del FIFO, y una regla escrita dos
 veces son dos reglas que se separan sin que nadie lo note.
 
 Por eso acá se llama al MISMO código que usa el sistema (`repartir_fifo` de
-core/stock.py sobre `entradas_y_salidas_stock_articulos` de app/db.py), y la
-simulación del piso es ese mismo `repartir_fifo` con las entradas filtradas
-— no una cuenta paralela.
+core/stock.py sobre `entradas_y_salidas_stock_articulos` de app/db.py).
+
+El piso del corte NO se simula acá: desde el 07/09 vive en la consulta de
+entradas, así que las listas que llegan ya vienen recortadas. Simularlo
+encima sería aplicarlo dos veces, y escribir la regla por segunda vez es
+exactamente cómo se separan.
 
 Se corre con la misma DATABASE_URL que el servicio:
 
@@ -35,27 +38,6 @@ from core.stock import repartir_fifo, salidas_para_reparto
 # entradas de _entradas_y_salidas_stock_varios (app/db.py). O sea: los lotes
 # que son CAJAS ARMADAS y no cajones.
 LOTES_DE_CAJA_ARMADA = {"reproceso"}
-
-# El compensatorio del corte no es mercadería: es el ajuste que cancela el
-# saldo del modelo viejo. El piso lo saca POR TIPO y no por fecha, porque
-# está fechado EN el corte y un piso por fecha lo dejaría adentro.
-LOTE_DEL_COMPENSATORIO = "cierre_modelo_viejo"
-
-
-def con_piso(entradas: list[dict], corte) -> list[dict]:
-    """Las entradas que el FIFO vería con el piso del corte puesto.
-
-    Es la misma regla que se va a escribir en la consulta de entradas: se
-    van los lotes anteriores al corte y el compensatorio, sea cual sea su
-    fecha. Las SALIDAS no se recortan: `lote_posterior_a_la_salida` ya
-    impide que una salida vieja alcance un lote nuevo, así que la que se
-    queda sin lote cae sola a `sin_lote`, que es lo que se quiere ver.
-    """
-    return [
-        lote
-        for lote in entradas
-        if lote["fecha_orden"] >= corte and lote["tipo_lote"] != LOTE_DEL_COMPENSATORIO
-    ]
 
 
 def datos_del_corte() -> tuple:
@@ -95,40 +77,36 @@ def main() -> None:
 
     filas = []
     for articulo_id, (entradas, salidas) in repartos.items():
-        listas = salidas_para_reparto(salidas)
-        hoy = repartir_fifo(entradas, listas)
-        piso = repartir_fifo(con_piso(entradas, corte), listas)
-
-        bultos_hoy = round(sum(l["restante"] for l in hoy["lotes"]), 2)
-        bultos_piso = round(sum(l["restante"] for l in piso["lotes"]), 2)
-        cajas_piso = round(
-            sum(l["restante"] for l in piso["lotes"] if l["tipo_lote"] in LOTES_DE_CAJA_ARMADA), 2
+        reparto = repartir_fifo(entradas, salidas_para_reparto(salidas))
+        vivos = [l for l in reparto["lotes"] if l["restante"] > 0]
+        bultos = round(sum(l["restante"] for l in vivos), 2)
+        cajas = round(
+            sum(l["restante"] for l in vivos if l["tipo_lote"] in LOTES_DE_CAJA_ARMADA), 2
         )
         por_dia = round(ritmo.get(articulo_id, 0.0), 2)
-        if bultos_hoy == 0 and por_dia == 0:
+        if bultos == 0 and por_dia == 0:
             continue
         filas.append(
             {
                 "nombre": por_id[articulo_id],
-                "hoy": bultos_hoy,
-                "piso": bultos_piso,
-                "pierde": round(bultos_hoy - bultos_piso, 2),
-                "cajas": cajas_piso,
+                "lotes": len(vivos),
+                "bultos": bultos,
+                "cajas": cajas,
                 "por_dia": por_dia,
-                # La ola: con el piso puesto, ¿alcanza para un día como los
-                # de esta semana? Un artículo que se reprocesa y queda sin
-                # bultos es un freno que suena mañana a la mañana.
-                "frena": por_dia > 0 and bultos_piso < por_dia,
+                # El síntoma que se va a ver en el galpón: un artículo que se
+                # reprocesa y no tiene bultos para un día es un freno que
+                # suena mañana a la mañana.
+                "frena": por_dia > 0 and bultos < por_dia,
             }
         )
 
-    filas.sort(key=lambda f: (not f["frena"], -f["pierde"], f["nombre"]))
-    enc = f"{'Articulo':26} {'hoy':>9} {'con piso':>9} {'pierde':>9} {'de eso caja':>11} {'x dia':>8}  freno"
+    filas.sort(key=lambda f: (not f["frena"], -f["por_dia"], f["nombre"]))
+    enc = f"{'Articulo':26} {'lotes':>6} {'bultos':>9} {'de eso caja':>11} {'x dia':>8}  freno"
     print(enc)
     print("-" * len(enc))
     for f in filas:
         print(
-            f"{f['nombre'][:26]:26} {f['hoy']:9} {f['piso']:9} {f['pierde']:9} "
+            f"{f['nombre'][:26]:26} {f['lotes']:6} {f['bultos']:9} "
             f"{f['cajas']:11} {f['por_dia']:8}  {'SI' if f['frena'] else ''}"
         )
     print("-" * len(enc))
@@ -137,17 +115,14 @@ def main() -> None:
         f"\nArticulos con movimiento: {len(filas)}"
         f"\nArticulos que se reprocesan (tomaron algo desde el corte): "
         f"{len([f for f in filas if f['por_dia'] > 0])}"
-        f"\nARTICULOS QUE QUEDAN SIN LOTE SUFICIENTE PARA UN DIA: {len(frenan)}"
-        f"\nBultos que el FIFO deja de ver en total: "
-        f"{round(sum(f['pierde'] for f in filas), 2)}"
+        f"\nARTICULOS SIN LOTE SUFICIENTE PARA UN DIA: {len(frenan)}"
     )
     print(
-        "\nhoy         = bultos con restante > 0 que el FIFO ve hoy."
-        "\ncon piso    = los que veria si no mirara nada anterior al corte."
-        "\nde eso caja = cuantos de los que quedan son CAJAS ARMADAS (otra guia R):"
-        "\n              la mezcla de unidades, que el piso NO arregla."
+        "\nbultos      = restante > 0 que el FIFO ve HOY, ya con el piso del corte."
+        "\nde eso caja = cuantos son CAJAS ARMADAS (otra guia R): la mezcla de"
+        "\n              unidades, que el piso NO arregla."
         "\nx dia       = promedio de bultos tomados por dia desde el corte."
-        "\nfreno       = con el piso no le alcanza para un dia como los de esta semana."
+        "\nfreno       = no le alcanza para un dia como los de esta semana."
     )
 
 
