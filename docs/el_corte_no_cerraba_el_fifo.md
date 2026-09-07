@@ -218,3 +218,54 @@ Las tres lecturas posibles, y cada una lleva a un lugar distinto:
 - **`procesada_el` en NULL sí lo saca**, y en silencio: la comparación de
   fecha da NULL y la compra no cae ni en "desde el corte" ni en "antes". Por
   eso la consulta la cuenta aparte en vez de dejarla desaparecer.
+
+## Dos mediciones que parecían pelearse, y no
+
+El 07/09 quedaron enfrentados dos números: uno decía que 12 de 15 artículos
+se quedaban sin lote para un día, y el otro que había cajones entrados desde
+el corte en todos. **Los dos eran ciertos: miden cosas distintas.**
+
+| | qué mide | forma |
+|---|---|---|
+| `caj_desde_corte` (consulta 3 y 4) | cuánto **entró** desde el corte | BRUTO |
+| `disp_aprox` (consulta 2) | cuánto **quedó** después de dos días de trabajo | NETO |
+
+El bruto es siempre mayor o igual que el neto. "Entró en todos" y "a 12 no
+les alcanza" conviven sin problema si el trabajo de esos dos días se comió
+lo que entró — que es exactamente lo que hace un depósito.
+
+### Pero ninguna de las dos es la que usa el freno
+
+`reparto_para_reproceso` tiene un recorte ASIMÉTRICO: **entradas hasta la
+fecha del reproceso INCLUSIVE, salidas hasta EL DÍA ANTERIOR.** Contra eso
+mide `bultos_en_los_lotes`.
+
+`disp_aprox` se equivoca en las dos puntas, y las dos hacia el mismo lado:
+
+1. **Le falta la compra de la mañana.** Es una foto del sobrante al cerrar el
+   día; el reproceso de mañana se mide contra los cajones que entren mañana,
+   porque la compra diaria y la toma diaria son el mismo flujo. Medir el
+   sobrante de la noche es medir el momento del día en que menos hay.
+2. **Resta las salidas del mismo día**, que el freno explícitamente no resta.
+
+Las dos cosas empujan el número para abajo, así que **el 12 está inflado por
+construcción**, y no un poco: le falta un día entero de compras y le sobra un
+día entero de salidas.
+
+### La medición que sí corresponde es un backtest, no un pronóstico
+
+`db/corte_fifo_5_backtest_del_freno.sql` reproduce la ventana del freno guía
+por guía y pregunta: **¿las guías R que YA se cargaron habrían pasado con el
+piso puesto?** Contra historia real, no contra un promedio.
+
+Dos detalles que la hacen fiel, y el segundo no es obvio:
+
+- Solo mira entradas y salidas **desde el corte**, que es lo que el piso deja
+  ver.
+- Excluye las guías **posteriores** a la que se está midiendo (`rid < g.id`).
+  Sin eso, cada guía contaría **sus propias cajas** como material disponible
+  para sí misma —unas tres veces lo que tomó— y el backtest diría que pasa
+  todo. Es la trampa de medir el pasado con los datos de después.
+
+Sigue siendo aproximada en el reparto por lote, y hacia el mismo lado seguro:
+bloquea de más, nunca de menos. Si da CERO, el piso entra sin ola.
