@@ -141,6 +141,20 @@ De acá en adelante:
    dice.** Es la señal de que las dos reglas se volvieron a separar, y tragarla
    es cómo se pierde meses después.
 
+Y hay una VIVA, encontrada el 07/09 al escribir el backfill de Palmala: el
+índice `fichas_logistica_codigo_cliente_unico` pliega `lower(trim(...))` y
+**no pliega tildes**; `normalizar_texto` (core/matcheo_comanda.py), que es
+quien matchea el código del pedido contra la ficha, **sí las pliega**. Así que
+`CÓD-2` puede entrar al lado de `COD-2` —el índice los ve distintos— y para el
+matcheo son el mismo código: el sistema elegiría una en silencio, que es
+exactamente lo que el comentario de ese índice dice que viene a impedir.
+
+Es el caso de "ruben" al lado de "Rubén", con los mismos dos plegados y la
+misma tilde faltando de un lado. No se arregló todavía porque el arreglo es
+una migración y hay que ver primero si hay códigos con tilde cargados; **la
+guarda de ambigüedad del backfill cubre justo esa grieta** y por eso no es
+código muerto.
+
 Corolario 2, y es de la COSTUMBRE, no de la regla: **cuando se arregla una
 copia, hay que ir a buscar la otra.** Pasó TRES veces en la misma semana. El
 `btrim` que plegaba espacios en Python y no en el índice. El emparejamiento
