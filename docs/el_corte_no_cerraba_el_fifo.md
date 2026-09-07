@@ -517,3 +517,28 @@ todos los conteos: `dif_cruda`, `trabajo_sin_cargar` y `dif_real`. Si
 `dif_real` da cerca de cero en toda la lista, no hay faltante en ningún
 artículo y las diferencias históricas grandes son este mecanismo, no datos
 rotos.
+
+### Por qué el "1 bulto" de Mango no se puede descomponer
+
+`disponibles = max(saldo, 0)` **por ficha** (`_cajas_por_ficha`). O sea que la
+resta `sueltos = total − cajas` **no es lineal**: una ficha con saldo negativo
+aporta 0 a `cajas` mientras su negativo sigue adentro de `total`, y ese
+déficit cae entero en los sueltos.
+
+A las 16:37 la ficha de Mango tenía las entregas del día tildadas y su guía R
+todavía sin cargar, así que su saldo crudo era muy negativo y `cajas` leyó
+**0** por el piso. El `−12` de los sueltos no es "cajones que el sistema cree
+que hay": es el total menos un cero que tapó un déficit.
+
+Por eso las dos porciones, acreditadas por separado, dan **+28 y −29**, y solo
+por artículo dan −1. **Dos errores grandes que se cancelan no son un error
+chico**, y el −1 que queda no se puede atribuir a nada: la información que
+haría falta —el saldo crudo de la ficha en ese instante— nunca se guardó.
+
+**No es redondeo**: la aritmética da −1,00 exacto y los decimales del mango
+(`135,01` y `149,99`) se cancelan entre sí.
+
+Así que Mango no cierra en cero con los datos guardados, y ninguna consulta
+lo va a lograr. La única salida es **un conteo nuevo tomado DESPUÉS de cargar
+las guías R del día** — la regla nueva —, que da una foto sin déficits
+tapados y una diferencia atribuible.
