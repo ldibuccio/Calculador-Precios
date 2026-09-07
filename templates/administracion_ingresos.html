@@ -84,7 +84,17 @@
     font-size: 0.83rem;
     white-space: nowrap;
   }
-  th { background: #eee; font-weight: 600; }
+  th {
+    background: #eee;
+    font-weight: 600;
+    /* Los DATOS van en una línea (un precio partido al medio no se lee),
+       pero los ENCABEZADOS pueden envolver: el nowrap de th, td los hacía
+       imponer el ancho de toda la columna. Gasta vertical, que es lo que
+       sobra en el celular, y ahorra horizontal, que es lo que falta.
+       ACÁ NO ALCANZA: esta tabla la ensancha el DATO, no el título — ver
+       "Las tablas anchas de Retiros e Ingresos" en docs/diseno_base_datos.md. */
+    white-space: normal;
+  }
   td.numero { text-align: right; font-weight: 600; }
   tr.sin-precio td { background: #fef9c3; }
   .marca-sin-precio { color: #991b1b; font-weight: 700; font-size: 0.78rem; }

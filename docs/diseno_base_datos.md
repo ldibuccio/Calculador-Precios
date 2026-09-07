@@ -3906,6 +3906,91 @@ el `envase_variable` de la ficha. Las ventas quedaron afuera para que el bloque
 entre en el tope de 2500 caracteres del editor: lo que se pidió es la mezcla de
 entradas, que es lo que el costeo pondera.
 
+## Las tablas anchas de Retiros e Ingresos (07/09)
+
+Relevamiento a raíz del `white-space: nowrap` que encontramos en Márgenes por
+Artículo. **De 9 templates con tabla, solo 4 tenían el patrón**, y dos eran
+`negociar.html` / `precios_cargar.html`, ya arreglados. Quedaban
+`logistica_consultar.html` (Consultar Retiros) y `administracion_ingresos.html`
+(Ingresos a Depósito).
+
+### Lo aplicado: consistencia, no arreglo
+
+Se les puso el mismo `th { white-space: normal }`. **No las arregla**, y eso hay
+que tenerlo escrito para no creer que el tema está cerrado:
+
+| | Desborde antes | Después | Gana |
+|---|---|---|---|
+| Consultar Retiros | 510 px | 480 px | 30 px |
+| Ingresos, tabla 1 | 650 px | 623 px | 27 px |
+| Ingresos, tabla 2 | 505 px | 438 px | 67 px |
+
+(Medido a 390 px renderizando las pantallas de verdad con datos de prueba. Las
+magnitudes salen de ese fixture, no de producción — con otros datos el desborde
+cambia, aunque el mecanismo es el mismo.)
+
+**Se aplicó igual, y el motivo es el CSS, no los píxeles**: si queda con
+`nowrap` en dos pantallas y sin él en dos, la próxima copia se lleva la versión
+equivocada. Que es exactamente cómo se propagó hasta acá.
+
+### Por qué gana tan poco: acá el ancho lo pone el DATO
+
+En Márgenes el arreglo fue grande porque los encabezados eran largos. Acá **ya
+estaban abreviados** ("Recep.", "Cant. real", "Hora ret."): alguien peleó esta
+batalla antes. Medido columna por columna en Retiros:
+
+```
+Proveedor [171px]  titulo:79   dato:"Coop. San Vicente"
+Artículo  [179px]  titulo:60   dato:"Tomate Cherry Redondo"
+Estado    [177px]  titulo:52   dato:"Retirado"
+```
+
+El título pide 60 px y la columna mide 179. **Dejarlo envolver no cambia nada
+cuando el que no entra es el dato.** La única columna donde el título manda es
+"Total a depositar" (título 126 px, dato `$540.000` = 84 px), y esos 42 px son
+casi todo el gain de la tabla 2.
+
+### El `Estado` de 177 px: la pastilla escondida
+
+Una celda que muestra "Retirado" no puede medir 177 px, y no los medía por eso.
+Los medía por **una pastilla que aparece solo en algunas filas** y que hereda el
+`nowrap`:
+
+- Retiros: `<span class="pill-no-ingreso">No ingresó al depósito</span>`
+- Ingresos: `<span class="marca-estado">Rechazo parcial (2 rech.)</span>`
+
+**Un solo `<span>` vale más que todo el arreglo de encabezados:**
+
+| | Solo encabezados | Solo la pastilla | Las dos |
+|---|---|---|---|
+| Retiros (510 px) | 480 px | **427 px** | 398 px |
+| Ingresos t1 (650 px) | 623 px | **533 px** | 506 px |
+| Ingresos t2 (505 px) | 438 px | 505 px | 438 px |
+
+La pastilla sola gana 83 y 117 px; los encabezados, 30 y 27. **NO SE APLICÓ
+TODAVÍA** — ver abajo por qué es una decisión y no un arreglo obvio.
+
+### PENDIENTE: dejar envolver el texto largo, y por qué no se hizo
+
+Lo que arreglaría estas dos pantallas de verdad es dejar envolver las celdas de
+texto largo (`Proveedor`, `Artículo`, y las pastillas de `Estado`). **No se
+hizo, y la razón no es técnica:** son pantallas donde se compara **renglón
+contra renglón para facturar**, y filas de alto disparejo pueden ser peor que
+el scroll lateral. La que sube de una línea a dos rompe el barrido vertical
+justo donde se está cruzando plata.
+
+Hay una gradación, y conviene tenerla separada el día que se retome:
+
+1. **Las pastillas de `Estado`** (83-117 px) son el caso más benigno: última
+   columna, etiqueta de estado, y en Retiros la pastilla **ya está en su propia
+   línea** por un `<br>`. Solo se alargan las filas que tienen esa pastilla.
+2. **`Proveedor` y `Artículo`** (171-179 px cada una) son el caso caro: son
+   las columnas por las que se recorre la tabla, y envolver afecta TODAS las
+   filas.
+
+Se retoma **con las capturas de las dos versiones al lado**, no discutiéndolo
+en abstracto: es una decisión de lectura, y se decide mirando.
+
 ## LO PRÓXIMO, en orden (06/09)
 
 1. ~~El `sin_procesar` negativo deja de ser un número.~~ **HECHO por borrado el
