@@ -3784,6 +3784,23 @@ caro sale.
 
 ## Los dos caminos del cherry y el costo del envase (08/09)
 
+> **CERRADO el 07/09: el problema del cartón NO EXISTE.** La consulta de fichas
+> del sábado ya tenía la respuesta y no la habíamos leído:
+>
+> ```
+> Tomate Cherry · Día % · ficha 3 · Caja Chica Día · 5.0 kilo · envase_variable = TRUE
+> ```
+>
+> Con el flag en `true`, todo lo que sigue describe lo que el sistema **ya hace
+> bien**: la compra de 5 kg (cajón ≤ ficha) no suma cartón, la de 10 kg sí.
+> Queda una sola cosa abierta, sin urgencia: el límite del promedio ponderado
+> (más abajo). Lo que sigue vale como mapa de por qué funciona, no como
+> pendiente.
+>
+> **Y la respuesta estaba a mano desde el sábado.** Es la regla de la casa otra
+> vez: cuando hay una consulta ya corrida que contesta la pregunta, se la lee
+> antes de escribir la próxima.
+
 El cherry entra por dos caminos y sale igual, **pero el envase cuesta distinto
 en cada uno**:
 
@@ -3811,6 +3828,12 @@ O sea: **la mercadería está bien costeada por camino. El envase es otra
 cuenta**, y va por otro lado.
 
 ### 2. EL MODELO YA TIENE EL CASO, y se llama `envase_variable`
+
+**Alguien lo pensó antes.** Vale anotarlo aparte del resultado: no es que el
+caso del cherry se resolviera de casualidad, es que está escrito —con el nombre
+del cherry adentro del docstring— por alguien que vio los dos caminos antes de
+que nosotros los preguntáramos. Cuando un caso raro "ya anda", conviene buscar
+la función que lo nombra antes de suponer que anda de rebote.
 
 Esto es lo que da vuelta la pregunta. `_envases_por_unidad_ponderado` en
 `app/costeo.py` **nombra al cherry en su docstring**:
@@ -3865,14 +3888,23 @@ la ventana.
 Eso no es un bug: es la precisión que el modelo eligió, y conviene saberla antes
 de leer un margen de cherry al peso.
 
+**PENDIENTE SIN URGENCIA (07/09).** Cerrado el cartón, esto es lo único que
+queda del cherry: en Rentabilidad Real cada caja vendida carga **el promedio de
+la ventana de compras, no el envase real de esa caja**. Para cotizar está bien.
+Para el margen real es una aproximación, y se nota cuanto más desparejo sea el
+mes entre los dos caminos. No hay nada roto que arreglar: el día que moleste,
+lo que hay que cambiar es de dónde sale el envase de una salida, y eso depende
+de rejugar el FIFO por lote, que hoy solo se hace en Python.
+
 ### 3. Qué se puede medir y qué no
 
 **Las ventas por camino NO se pueden partir en SQL**: el FIFO reparte en Python.
 Lo que sí se mide —y es exactamente lo que el costeo pondera— es **la mezcla de
 entradas**: cuántos cajones entraron por cada camino y cuántas cajas armamos.
-`db/cherry_los_dos_caminos.sql` devuelve las dos entradas, las cajas armadas,
-las ventas totales desde el corte y, arriba de todo, el `envase_variable` de la
-ficha.
+`db/cherry_los_dos_caminos.sql` devuelve las dos entradas, las cajas armadas y
+el `envase_variable` de la ficha. Las ventas quedaron afuera para que el bloque
+entre en el tope de 2500 caracteres del editor: lo que se pidió es la mezcla de
+entradas, que es lo que el costeo pondera.
 
 ## LO PRÓXIMO, en orden (06/09)
 

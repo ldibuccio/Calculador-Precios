@@ -205,6 +205,34 @@ artículo real al lado se leyeron —con razón— como una predicción sobre la
 base. **Un fixture demuestra el MECANISMO, nunca la MAGNITUD**, y si el número
 sale de un fixture eso va escrito en la misma línea que el número.
 
+Corolario del 07/09, y es la TERCERA vez con la misma familia: **un fixture que
+yo mismo defino no puede validar los NOMBRES de la base.** Se mandó una consulta
+del cherry escrita contra `parametros`, `fichas`, `compras_renglones`,
+`reprocesos.fecha` y `reprocesos.cajas_armadas` — **cinco nombres que no
+existen**: son `corte_modelo`, `fichas_logistica`, `compras` (que no tiene tabla
+de renglones), `reprocesos.fecha_operacion` y `reprocesos.bultos_primera`. Y se
+la dio por "probada contra un fixture local".
+
+Lo era, y no servía de nada: **el fixture lo escribí yo, con los mismos nombres
+inventados.** Un `create table` propio confirma que la consulta es consistente
+CONSIGO MISMA. Es la misma trampa que el fixture del 74/26 —fabricar el caso en
+vez de mirarlo— pero corrida de lugar: allá se inventó el DATO, acá se inventó
+el ESQUEMA.
+
+De acá en adelante, para cualquier SQL que se mande al editor:
+
+1. **Los nombres se verifican contra `db/esquema_completo.sql`**, que es el
+   esquema real, antes de escribir la consulta. Un `grep '^create table'`
+   alcanza.
+2. **La base de prueba se carga CON `db/esquema_completo.sql`**, nunca con un
+   `create table` escrito a mano para la ocasión. Carga entero en Postgres 16 y
+   tarda un segundo. La primera vez que se hizo así, el esquema real rebotó dos
+   veces el fixture (`proveedores.codigo_puesto` NOT NULL y
+   `compras_cantidad_cargada_check`) — dos errores que el esquema inventado no
+   habría encontrado nunca.
+3. **"Probada" solo se escribe si corrió contra el esquema real.** Si corrió
+   contra uno propio, lo que se probó es la aritmética, y eso se dice así.
+
 Corolario 2 del mismo día, y es peor que el anterior: **un arreglo se verifica
 en la pantalla que lee LA CUENTA QUE SE TOCÓ, no en la que tiene el nombre
 parecido.** El arreglo movía la cuenta 2 (`_SQL_STOCK_PARTIDO`, cajas por
