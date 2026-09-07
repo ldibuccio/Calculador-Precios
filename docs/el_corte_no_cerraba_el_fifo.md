@@ -147,3 +147,37 @@ unidades. Si `frenan_con_el_piso` da chico y `frenan_solo_cajones` da grande,
 la lectura no es "el piso es inofensivo": es que **las cajas armadas están
 sosteniendo la disponibilidad**, y la ola no desapareció, está esperando al
 otro arreglo.
+
+### La columna `solo_cajones` estaba MAL y se sacó (07/09)
+
+La primera versión de `db/corte_fifo_2_ola_de_frenos.sql` traía una columna
+`solo_cajones` que pretendía ser "cuántos cajones quedan si no se cuentan
+las cajas armadas". Estaba rota, y de la peor manera: **daba cero siempre.**
+
+La cuenta era `sum(bultos) filter (where not caja)`, que suma los cajones
+comprados y resta **todas** las salidas — incluido el `armado`, que está en
+CAJAS. O sea: restaba cajas de un balde de cajones. Como cada cajón da unas
+tres cajas y se entrega casi todo lo que se arma, el número es negativo para
+cualquier artículo con volumen normal, y el `greatest(..., 0)` lo apoyaba en
+cero.
+
+Reproducido contra el esquema real con 400 cajones comprados, 100 de stock
+inicial, 240 tomados, 720 cajas armadas y 700 entregadas:
+`400 + 100 − 240 − 700 = −440` → **0**, con **260 cajones reales sin tocar**
+en el piso.
+
+**La señal estaba en la forma del resultado, no en los datos.** Un cero
+idéntico en los quince artículos —con volúmenes, proveedores y ritmos
+distintos— no es un hallazgo: es un piso. Cuando una columna da el mismo
+valor extremo en toda la población, lo primero que hay que revisar es la
+columna.
+
+Es pariente del error del fixture del 74/26 y del esquema inventado, pero
+corrido otra vez de lugar: allá se inventó el dato y el esquema, acá se
+mezclaron las UNIDADES adentro de una resta. Y es el mismo problema de fondo
+que el sistema tiene vivo —cajones y cajas contados como "bultos"— aparecido
+en la herramienta que vino a medirlo.
+
+**La regla que queda**: en una resta, los dos lados tienen que estar en la
+misma unidad, y cuando el esquema no la guarda (acá `bultos` es cajón o caja
+según de dónde salga la fila) eso hay que verificarlo a mano antes de restar.
