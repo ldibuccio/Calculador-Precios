@@ -269,3 +269,58 @@ Dos detalles que la hacen fiel, y el segundo no es obvio:
 
 Sigue siendo aproximada en el reparto por lote, y hacia el mismo lado seguro:
 bloquea de más, nunca de menos. Si da CERO, el piso entra sin ola.
+
+## El backtest dio 8 de 32, y son dos causas distintas
+
+### Las cuatro del día del corte: artefacto, y NO por la hora de carga
+
+La sospecha razonable era que el reproceso se hubiera cargado antes que el
+stock inicial. **No es eso**: `lote_posterior_a_la_salida` compara FECHAS, no
+horas — "un lote cargado a la tarde cubre una salida de esa misma mañana"
+está escrito así a propósito. El orden de carga no puede explicarlo.
+
+La razón está en un comentario de `stock_deposito_por_articulo`, textual:
+
+> *el conteo físico se toma A LA TARDE del día del corte, así que todo lo del
+> día ya está adentro de lo contado*
+
+O sea que **el stock inicial es una foto tomada DESPUÉS del trabajo de ese
+día.** Los reprocesos del día del corte consumieron mercadería que la foto ya
+no vio: si Mandarina tomó 28 y la foto declaró 20, a la mañana había 48. El
+FIFO los mide contra una entrada que es posterior a ellos, y por
+construcción no puede cubrirlos.
+
+**Y es la tercera vez que aparece esta misma asimetría.** El pool de segunda
+la tiene contemplada; la cuenta por ficha también, "y por lo mismo". El FIFO
+es el único que no. No cambia nada para este merge —esas cuatro guías son
+historia y están congeladas— pero **va a volver a pasar en el próximo corte**,
+así que va al procedimiento.
+
+### Las cuatro del 07/09: al corte le faltó declarar las cajas armadas
+
+Con el piso puesto, un `armado` solo puede consumir cajas declaradas al corte
+(guías R `tipo='inicial'`, el PASO 7) o armadas después. Si el armado supera a
+las dos, el FIFO —que tiene UNA sola pila— sigue de largo y **se come los
+cajones**, dejando sin materia prima al reproceso del día siguiente.
+
+Es la mezcla de unidades mordiendo al piso: no son dos problemas separados,
+el segundo es lo que hace que el primero duela.
+
+Verificado con dos artículos idénticos en todo salvo el PASO 7 (40 de stock
+inicial, 60 de compra, 30 de toma por día, 250 entregadas cada uno):
+
+| | cajas al corte | come_cajones | el reproceso del 07 |
+|---|---|---|---|
+| sin PASO 7 | 0 | **+70** | **FRENA** con 0 |
+| con PASO 7 | 200 | −130 | pasa con 110 |
+
+`db/corte_fifo_6_las_cajas_se_comen_los_cajones.sql` mide ese `come_cajones`
+por artículo: cuántas cajas se entregaron de más sobre las declaradas. Es,
+como mínimo, lo que al corte le faltó cargar.
+
+### Por qué la ventana de gracia no es el arreglo
+
+Taparía exactamente el agujero que el piso viene a mostrar. Si al corte le
+faltó declarar mercadería, el costo de lo que se reprocese va a salir igual
+de lotes que no corresponden — que es el problema original. La gracia hace
+que el freno no suene; no hace que el costo sea cierto.
