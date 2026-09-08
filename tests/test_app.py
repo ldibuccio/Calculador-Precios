@@ -4254,6 +4254,17 @@ def test_ver_recepcion_muestra_el_proveedor_grande_y_la_guia_chica():
     assert '<p class="guia-numero">Guía 105</p>' in respuesta.text
 
 
+def _pegado(html: str) -> str:
+    """El HTML sin los espacios entre una etiqueta y su texto.
+
+    Para poder seguir escribiendo ">Recibir<" en un assert cuando el texto
+    del botón pasó a estar en su propia línea por un {% if %}. Sin esto,
+    un test que mira el CONTENIDO de un botón se rompe cada vez que
+    alguien reacomoda el markup, que no es lo que quiere vigilar.
+    """
+    return re.sub(r">\s+", ">", re.sub(r"\s+<", "<", html))
+
+
 def test_ver_recepcion_muestra_los_tres_botones_con_sus_nombres():
     with (
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
@@ -4262,10 +4273,88 @@ def test_ver_recepcion_muestra_los_tres_botones_con_sus_nombres():
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
-    assert ">Recibir<" in respuesta.text
+    # La compra 1 tiene foto, así que su botón dice "Recibir" pelado.
+    assert ">Recibir<" in _pegado(respuesta.text)
     assert ">Rechazo total<" in respuesta.text
     assert ">No ingresó<" in respuesta.text
     assert 'action="/deposito/recepcion/1/no-ingreso"' in respuesta.text
+
+
+def test_el_boton_de_recibir_CAMBIA_DE_TEXTO_cuando_falta_la_foto():
+    """Avisa y no traba, y el aviso va en el botón: se lee ANTES de apretar.
+
+    Los dos casos en la misma pantalla: la compra 1 tiene foto y dice
+    "Recibir"; la 2 no y dice "Recibir sin foto de balanza". Con un
+    fixture donde todas fueran iguales, un botón que nunca cambia pasaría.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    pegado = _pegado(respuesta.text)
+    assert ">Recibir<" in pegado
+    assert ">Recibir sin foto de balanza<" in pegado
+    # Y lo repite donde se decide de verdad, en la confirmación.
+    assert "Sin foto de la balanza. Se recibe igual." in respuesta.text
+
+
+def test_NO_hay_un_cartel_de_guia_avisando_por_las_fotos_que_faltan():
+    """Estaría puesto toda la recepción por construcción, y un cartel siempre puesto no informa.
+
+    Es lo que pasó con "no hay cajas de esta ficha": 135 de 765 bultos
+    todos los días. El aviso vive en el botón de cada artículo y en
+    ningún otro lado.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    # Dos de las tres compras del fixture no tienen foto: si hubiera un
+    # contador de guía, este es el caso donde aparecería.
+    assert "faltan fotos" not in respuesta.text.lower()
+    assert "2 de 3" not in respuesta.text
+
+
+def test_procesados_hoy_marca_SIN_FOTO_solo_en_las_recepcionadas():
+    """La marca dice lo que FALTA, en gris, y solo donde significa algo.
+
+    Una rechazada o una que no ingresó puede no haber pasado nunca por la
+    balanza: ahí "sin foto" sería ruido sobre las filas donde no dice
+    nada. Los tres estados van juntos a propósito.
+    """
+    procesados = [
+        {"id": 10, "articulo_nombre": "EJEMPLO Con", "unidad_compra": "kilo", "proveedor_nombre": "EJEMPLO Prov",
+         "proveedor_codigo_puesto": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
+         "cantidad_cajones_real": 5, "contenido_por_cajon_real": 10, "estado": "recepcionado",
+         "procesada_el": datetime(2026, 9, 8, 9, 0), "fotos_balanza": 1},
+        {"id": 11, "articulo_nombre": "EJEMPLO Sin", "unidad_compra": "kilo", "proveedor_nombre": "EJEMPLO Prov",
+         "proveedor_codigo_puesto": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
+         "cantidad_cajones_real": 5, "contenido_por_cajon_real": 10, "estado": "recepcionado",
+         "procesada_el": datetime(2026, 9, 8, 9, 30), "fotos_balanza": 0},
+        {"id": 12, "articulo_nombre": "EJEMPLO Rechazada", "unidad_compra": "kilo", "proveedor_nombre": "EJEMPLO Prov",
+         "proveedor_codigo_puesto": "N07P41", "cantidad_cajones": 5, "contenido_por_cajon": 10,
+         "cantidad_cajones_real": None, "contenido_por_cajon_real": None, "estado": "rechazado",
+         "procesada_el": datetime(2026, 9, 8, 10, 0), "fotos_balanza": 0},
+    ]
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=procesados),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.text.count("sin foto") == 1, "solo la recepcionada sin foto"
+    # Y es la 11, no la 12: el orden del HTML lo confirma.
+    posicion_sin_foto = respuesta.text.index("sin foto")
+    assert respuesta.text.index("EJEMPLO Sin") < posicion_sin_foto < respuesta.text.index("EJEMPLO Rechazada")
+    # No dice nada sobre la que SÍ tiene: el que audita busca lo que falta.
+    assert "con foto" not in respuesta.text
 
 
 def test_ver_recepcion_confirmacion_es_en_el_lugar_no_confirm_nativo():

@@ -116,10 +116,19 @@
     cursor: pointer;
   }
   .boton-exito { background: #16a34a; color: #fff; }
+  /* Sigue siendo el botón verde de siempre —recibir es lo normal— con el
+     texto más largo entrando sin desbordar en un celular angosto. */
+  .boton-recibir.boton-sin-foto { background: #15803d; font-size: 0.9rem; }
+  .texto-confirmacion-sin-foto {
+    font-size: 0.85rem;
+    color: #b45309;
+    margin: -0.35rem 0 0.6rem;
+  }
   .boton-peligro { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
   .boton-advertencia { background: #fff; color: #b45309; border: 1px solid #d97706; }
   .boton-neutro { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  .sin-foto-balanza { margin: 0.35rem 0 0.15rem; font-size: 0.8rem; color: #9ca3af; }
   /* Foto de la balanza. El input file va escondido y lo dispara el label:
      un input file crudo es un control chico y feo de tocar con el pulgar,
      y lo que hace falta acá es un boton grande. */
@@ -255,6 +264,15 @@
         {% if p.estado == "recepcionado" and p.cantidad_cajones_real is not none and p.contenido_por_cajon_real is not none %}
         <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|kilos }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|kilos }}{{ p.unidad_compra|sufijo_unidad }}</p>
         {% endif %}
+        {# En gris y diciendo lo que FALTA: el que audita busca eso, no lo
+           que está. Cuando están todas, la columna queda vacía.
+           Y SOLO en las recepcionadas: una rechazada o una que no ingresó
+           puede no haber pasado nunca por la balanza, así que ahí "sin
+           foto" no es un hallazgo — es ruido justo donde no significa
+           nada. #}
+        {% if p.estado == "recepcionado" and not p.fotos_balanza %}
+        <p class="sin-foto-balanza">sin foto</p>
+        {% endif %}
         {% if p.deshacer_bloqueado %}
         <p class="aviso-bloqueo">Ya se recepcionó: para corregirla hace falta Gerencia.</p>
         {% else %}
@@ -326,7 +344,17 @@
         </div>
 
         <div class="acciones-compra" id="acciones-{{ c.id }}">
-          <button type="button" class="boton-exito boton-recibir" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
+          {# SIN FOTO AVISA, NO TRABA: el camión no se para por una foto.
+             Y el aviso va en el TEXTO DEL BOTÓN, no en un cartel aparte:
+             así se lee antes de apretar y no después. Un cartel a nivel
+             guía estaría puesto durante toda la recepción por
+             construcción —al empezar faltan todas— y ya sabemos en qué
+             termina eso: el aviso de "no hay cajas de esta ficha" salía
+             en 135 de 765 bultos, todos los días. #}
+          <button type="button" class="boton-exito boton-recibir{{ '' if c.fotos_balanza else ' boton-sin-foto' }}"
+                  onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">
+            {{ "Recibir" if c.fotos_balanza else "Recibir sin foto de balanza" }}
+          </button>
           <p class="titulo-problemas">Si algo salió mal:</p>
           <div class="acciones-renglon">
             <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
@@ -337,6 +365,9 @@
 
         <div class="confirmacion" id="confirmacion-recibir-{{ c.id }}">
           <p class="texto-confirmacion">¿Recepcionar {{ c.articulo_nombre }}?</p>
+          {% if not c.fotos_balanza %}
+          <p class="texto-confirmacion-sin-foto">Sin foto de la balanza. Se recibe igual.</p>
+          {% endif %}
           <div class="acciones-renglon">
             <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-exito">Sí</button>
             <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'recibir')">No</button>
