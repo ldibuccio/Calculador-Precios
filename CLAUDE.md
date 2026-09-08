@@ -982,3 +982,34 @@ La señal de que ya pasó es la misma en las dos familias: **un comentario que
 afirma algo que dejó de ser cierto.** Ninguno de los dos mintió cuando se
 escribió — envejecieron sin que nadie los tocara. Es el mismo síntoma del
 docstring de la alerta que explicaba el bug que la pantalla seguía teniendo.
+
+Corolario 23, del 08/09, y es el primero de esta lista que anota un ACIERTO
+—no un bug— porque el mecanismo es el mismo de siempre visto del lado bueno:
+**una consulta barata puede borrar una pantalla entera antes de escribirla.**
+
+Estaba planeado el desglose del Remanente por contenido de cajón: pantalla
+nueva, renglón "sin dato", y aviso de descuadre para cuando el desglose no
+sumara al total. Antes de codear se corrieron dos consultas de menos de 2500
+caracteres. `arts_mezclados` dio **0**: ningún artículo tiene dos tamaños de
+cajón conviviendo, así que **el Remanente ya suma bultos comparables** y no
+había nada que desglosar. Ver `docs/desglose_del_remanente_por_contenido.md`.
+
+Es el corolario 6 dado vuelta. Allá una medición falsa mandó a perseguir 212
+cajas que no existían: **la consulta de diagnóstico decide qué se arregla
+después.** Acá decidió qué **no se construye**, que es la misma potencia
+usada temprano. La diferencia entre los dos casos no es la suerte: es que
+ésta se corrió ANTES y aquélla se leyó DESPUÉS.
+
+Y la parte que se puede repetir: **la premisa se mide, no se hereda.** "El
+Remanente no puede sumar bultos de distinto contenido" era verdad sobre el
+ESQUEMA —dos formatos del mismo artículo son posibles— y falsa sobre los
+DATOS. Un requisito que nace de lo que la base permite, y no de lo que la
+base tiene, se verifica con un `count(distinct ...)` antes de diseñar nada.
+
+El otro pedazo, y es el que da el criterio para leer un porcentaje feo: el
+15,6% "sin dato" **cerró exacto contra una sola fuente** (`809+674+0+274 =
+1757`, `274/1757 = 15,59%`, todo movimientos, `cajas_sin_ficha` = 0). Un
+número que se explica ENTERO por un origen conocido y transitorio no es
+deuda: es la foto del corte consumiéndose. **Antes de construir para cubrir
+un "sin dato", hay que ver si el sin-dato tiene UNA causa o varias** — con
+una, casi siempre se apaga solo.
