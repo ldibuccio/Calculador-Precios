@@ -12,7 +12,7 @@ cargadas desde el corte:
 
 ```
 guías R desde el corte (todas)     32 guías · 615 bultos · $13.862.224
-comieron de CAJA ARMADA            19 guías · 226 bultos ·  $3.572.620
+comieron de CAJA ARMADA            19 guías · 226 bultos ·  $3.572.620   <-- MAL, ver abajo
 comieron de lote ANTERIOR al corte 18 guías · 260 bultos ·  $4.705.353
 consumos sin lote                   0
 ```
@@ -83,8 +83,9 @@ lote distinto** y el FIFO tiene una sola pila:
 | `merma` / `ajuste` | cualquiera | ambiguo por diseño |
 
 Es E5 (el contador que mezcla cajones y cajas) apareciendo en el costeo.
-**Ritmo medido: 19 guías y $3.572.620 en dos días.** No es un caso de
-borde.
+**Ritmo medido: 10 guías y $2.798.438,92 desde el corte** (corregido el
+08/09; acá decía 19 y $3.572.620 "en dos días", que contaba el día del
+corte y no eran dos días). No es un caso de borde igual.
 
 ## Lo que NO se arregla hacia atrás
 
@@ -361,7 +362,8 @@ nunca se cargaron.
 2. **En el FIFO, y ahí no se cancela nunca.** El total puede cerrar en cero y
    aun así cada bulto haber salido del lote equivocado: un reproceso tomando
    cajas ya armadas como materia prima. Eso es lo que medimos el 07/09 —19 de
-   32 guías, $3.572.620— y no lo arregla ningún ciclo completo.
+   20 guías, $2.798.438,92 (corregido el 08/09)— y no lo arregla ningún
+   ciclo completo.
 
 **El corolario práctico**: un total que cierra no prueba que las unidades
 estén bien. La mezcla se esconde justamente en el número que más se mira.
@@ -584,8 +586,9 @@ la columna y el cambio de gate.
 ## E5, la dirección inversa: ¿un armado se come cajones?
 
 `corte_fifo_1` midió una dirección: **guías R que consumieron cajas ya
-armadas** como si fueran materia prima — 19 de 32 guías en dos días,
-$3.572.620. La dirección inversa es la otra mitad del mismo agujero: **un
+armadas** como si fueran materia prima — 10 de 20 guías desde el corte,
+$2.798.438,92 (corregido el 08/09). La dirección inversa es la otra mitad
+del mismo agujero: **un
 armado que se costea contra un cajón** en vez de contra una caja.
 
 Las dos salen de lo mismo: el reparto ordena por fecha y **no mira el tipo de
@@ -678,8 +681,9 @@ da saldo 0; 29 de 30 da saldo 1 y `reng_cortos` 1; el renglón sin tildar da
 movimientos devuelve una fila de ceros, no una pantalla vacía. Los datos de
 prueba se borraron.
 
-**Esto no toca E5.** La fuga se midió con 19 guías, 226 bultos y $3.572.620
-en dos días; Mango era el ejemplo de cómo se ve el problema, no la prueba de
+**Esto no toca E5.** La fuga se midió con 10 guías, 134 bultos y
+$2.798.438,92 desde el corte (corregido el 08/09); Mango era el ejemplo de
+cómo se ve el problema, no la prueba de
 que existe.
 
 ## E5 paso 2: el backtest del freno con el filtro puesto
@@ -793,7 +797,8 @@ fila de ceros. Los datos de prueba se borraron.
 
 `e5_2` sobre Frutamax dio **`cajon` 494 de `armado` 765 — el 65%— y
 $14.618.218,30**, con `sin_costo` 0. Cuatro veces la fuga que veníamos
-midiendo del lado del reproceso ($3.572.620), y por el lado que ninguna de
+midiendo del lado del reproceso ($2.798.438,92 ya corregido), y por el lado
+que ninguna de
 las dos direcciones tapaba.
 
 Pero **el 65% crudo no es todo problema**, y hay que decirlo antes de
@@ -900,3 +905,48 @@ caja armada (7 bultos, $700), una posterior que comió caja armada (4, $200),
 una posterior que comió un **reingreso** (3, $60) y una posterior que solo
 comió compra (no entra en ninguna de las dos). Las seis filas dan exactamente
 lo esperado y la identidad se cumple. Los datos de prueba se borraron.
+
+### Cerrado (08/09): fue el día del corte, entero
+
+```
+1 corte_fifo_1 (>=)   19 guías · 226.00 · $3.572.620,02
+2 e5_1 (>)            10 guías · 134.00 · $2.798.438,92
+3 día del corte        9 guías ·  92.00 ·   $774.181,10
+4 reingreso_rechazo    0       ·   0.00 ·         $0,00
+5 todas, >= corte     32 guías · 615.00 · $13.862.224,25
+6 todas, > corte      20 guías · 448.00 · $10.489.043,15
+```
+
+`3.572.620,02 − 774.181,10 = 2.798.438,92`, y la fila 4 en cero: **la única
+causa fue el día del corte, no hay tercera.** Los tres conteos de guías
+también cierran: 32 con `>=`, 20 con `>` (los mismos 20 de `e5_3`), y 12 son
+del día del corte.
+
+**El número bueno del lado del reproceso es $2.798.438,92, no $3.572.620.**
+Corregido en `app/db.py` y en las cinco citas del doc.
+
+Es la **octava aparición** de la asimetría del día del corte y la peor de
+las ocho: las anteriores ensuciaban una cuenta, ésta **decidió cuánto valía
+el problema**. El $3,5M se citó todo el día como el tamaño de la fuga, entró
+en un docstring de producción, y sostuvo la decisión de no anular las 32
+guías. El canario del corolario 12 —correr también con la regla vieja y
+exigir que el número se mueva— es exactamente lo que lo habría atajado el
+mismo día.
+
+Y la glosa: *"en dos días"* nunca lo midió nadie. La consulta dice `>=
+corte`. Un período inventado al contar un resultado, repetido cinco veces
+hasta volverse un hecho.
+
+## El veredicto: A y B van juntas
+
+```
+Lado del reproceso (A)   $2.798.438,92   ← e5_1, exacto
+Lado del armado (B)      $9.658.218,30   ← e5_4, aproximado por lo bajo
+```
+
+`e5_4` dio `cajon 494` (reproduce `e5_2`), `mal 359`, `sin_opcion 135`.
+**El 73% del cajón que se comieron los armados tenía caja disponible**: no
+es la operación normal del galpón, que es lo que había que descartar.
+
+B es **3,5 veces** A. A sola arregla el 22% y deja el resto abierto con la
+sensación de estar cerrado.

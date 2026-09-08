@@ -186,6 +186,34 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 15, del 08/09: **la asimetría del día del corte llegó a la
+OCTAVA, y esta vez no ensució una cuenta: decidió cuánto valía el
+problema.**
+
+`corte_fifo_1` medía con `>=` y dio "19 guías, $3.572.620". El número se
+citó todo el día como el tamaño de la fuga del reproceso, entró en un
+docstring de `app/db.py`, y sostuvo la decisión de no anular 32 guías. El
+número real es **$2.798.438,92**: los $774.181 de diferencia eran las 9
+guías del día del corte, y la descomposición cerró exacta (`e5_5`).
+
+Dos cosas que se llevan:
+
+1. **Una consulta de diagnóstico con la regla vieja no da un número
+   aproximado: da OTRO número.** El corolario 6 ya lo decía y esta es su
+   confirmación más cara. El canario del corolario 12 —correrla también
+   con la regla vieja y exigir que el resultado SE MUEVA— la habría
+   atajado el mismo día que se escribió.
+2. **La glosa al contar un resultado se vuelve un hecho.** El doc decía
+   "19 de 32 guías R **en dos días**" en cinco lugares. La consulta nunca
+   midió dos días: dice `fecha_operacion >= corte`, o sea todo desde el
+   31/08. Nadie inventó el número; alguien le agregó un período al
+   contarlo, y el período viajó solo.
+
+   Por eso: **al escribir el resultado de una consulta, el recorte se copia
+   de la consulta, no de la memoria.** Si el `where` dice `>= corte`, lo
+   que se escribe es "desde el corte".
+
+
 Corolario 14, del 08/09, y va corto: **cuando una decisión estrena letras
 —opción A, opción B, caso 1— revisar si esas letras ya están usadas cerca.**
 
