@@ -186,6 +186,39 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 13, del 08/09: **un atajo exacto sobre el conjunto entero deja de
+serlo apenas se lo aplica a un subconjunto.** No se rompe: sigue devolviendo
+un número, y el número ya no contesta la pregunta.
+
+El freno de `crear_reproceso` compara contra la SUMA DE LOS RESTANTES de los
+lotes (`bultos_en_los_lotes`, core/stock.py). `corte_fifo_5b` la calculaba
+como `greatest(entradas − salidas, 0)`, y estaba bien: sumados TODOS los
+lotes, el restante total es exactamente el neto. El atajo se ahorra rejugar
+el FIFO entero y da el mismo número.
+
+Al medir el filtro de `TIPOS_LOTE_TRABAJADO` la pregunta cambió a "¿cuánto
+restante queda **de los lotes de materia prima**?", y ahí el atajo miente:
+para contestarla hay que saber **cuáles** lotes se comió la demanda, no
+cuánta demanda hubo. Dos escenarios con las mismas entradas y las mismas
+salidas dan restantes filtrados distintos según el orden. La fórmula vieja
+no distingue: devuelve el mismo neto para los dos.
+
+Es la familia del corolario 8 —el alcance— pero corrida de lugar: allá eran
+dos cuentas con el mismo nombre y distinto alcance; **acá es la MISMA
+fórmula en un universo nuevo**, y por eso no hay dos nombres que comparar ni
+nada que grepear. Lo único que cambió está afuera de la fórmula.
+
+**Cómo se busca**: cuando una consulta empieza a filtrar por una dimensión
+que antes no miraba, revisar si alguna de sus cuentas era un **atajo que
+valía por sumar sobre todo**. Un `sum`, un neto, un promedio, un `max` que
+se justificaba con "total, se cancelan" son los candidatos.
+
+**Cómo se evita**: dejar la fórmula vieja de CONTROL al lado de la nueva.
+En `e5_3` la columna `frenan_hoy` se calcula con el rejuego completo y tiene
+que dar el mismo 0 que dio el backtest viejo; si no lo da, el modelo nuevo
+está mal y eso se mira antes que el número que se fue a buscar.
+
+
 Corolario 12, del 08/09: **la asimetría del día del corte apareció SIETE
 veces, y a esta altura eso ya no es una coincidencia: es que el criterio no
 está escrito en ningún lado una sola vez.**
