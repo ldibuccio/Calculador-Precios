@@ -1153,3 +1153,40 @@ los dos signos, y ninguno de los dos es un error.
 Y el TOTAL del fixture lo muestra crudo: −699,98, de los cuales −1000 son del
 artículo sin costo. Sin `caja_s_costo` al lado, ese −$700 se lee como un
 ahorro real.
+
+## `corte_fifo_15` no encontró nada, y eso es un resultado
+
+Corrida en Frutamax el 08/09 contra Palta +2, Zapallito +1 y Perita +1:
+**CAUSAS ENCONTRADAS EN TOTAL = 0.** Ninguna de las cuatro que propuse
+—compra sin recepcionar, rechazo fuera del stock normal, merma o ajuste,
+sistema con decimales— explica esos tres desvíos.
+
+Que el cero se vea es el corolario de diseño funcionando: la consulta
+devuelve **conteos y no una lista**, así que "no hay causas" y "no corrió"
+no son la misma pantalla. Con una lista de ofensores, este resultado habría
+sido indistinguible de un error de tipeo.
+
+Y el `>= c0.f0` **leído de la base y no clavado** también se pagó solo: la
+consulta se escribió creyendo que el corte era el 31/08 y midió bien contra
+el 05/09 sin que nadie la tocara.
+
+### La quinta causa, y por qué no puede estar en esta consulta
+
+**Las cuatro miran registros del sistema.** Todas contestan la misma forma de
+pregunta: *"¿el sistema sabe algo que el conteo no vio?"*. Ninguna puede
+contestar la de al lado:
+
+- **el conteo vio algo que el sistema no puede saber** (mercadería que entró
+  sin cargarse, un reingreso que volvió y nadie anotó), o
+- **el conteo estuvo mal.**
+
+Y ese segundo caso no es hipotético: **Mango terminó siendo exactamente eso**
+—un error de conteo de 2 cajones— el mismo día. Una consulta escrita sobre
+`compras`, `movimientos_stock` y `conteos_stock` no tiene por dónde verlo.
+
+Es la forma del corolario 11: la medición está bien y contesta la mitad de la
+pregunta. Por eso el orden que sigue es el correcto —mirar las tarjetas
+contra el número VIVO antes de ajustar, porque los tres salieron de
+`corte_fifo_13`, que compara contra el `stock_sistema` congelado— y por eso
+**si después de ajustar los tres vuelven a aparecer mañana, la lista está
+incompleta y la quinta causa está afuera del sistema, no adentro.**
