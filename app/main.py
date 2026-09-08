@@ -99,6 +99,8 @@ from app.db import (
     completar_costo_reproceso,
     contar_reprocesos_costo_incompleto,
     contar_reprocesos_sin_costo_posible,
+    contar_bultos_esperando_guia_r,
+    bultos_esperando_guia_r_por_articulo,
     contar_stock_deposito_negativo,
     crear_conteo_stock,
     crear_movimiento_stock,
@@ -6988,12 +6990,38 @@ def ver_remanente_deposito(request: Request, fecha: str | None = None):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
     hoy = _hoy_argentina()
+    # LOS QUE ESPERAN LA GUÍA R, para que la porción lleve su link. Sin esto
+    # el bulto sin lote es MUDO acá: el número de arriba no se mueve —es un
+    # neto, y el armado resta con pared o sin ella— así que nada en esta
+    # pantalla diría que falta cargar un papel.
+    #
+    # Solo cuando se mira HOY: a una fecha pasada el link llevaría al detalle
+    # del artículo, que muestra el estado ACTUAL, y serían dos épocas en la
+    # misma pantalla.
+    #
+    # Si falla, la pantalla sale igual y sin links: el Remanente tiene que
+    # poder mostrarse aunque el rejuego del FIFO se caiga.
+    esperando = {}
+    porciones_esperando = []
+    if hasta == hoy:
+        try:
+            esperando = bultos_esperando_guia_r_por_articulo()
+        except Exception:
+            logger.exception("No se pudo calcular qué armados esperan la guía R")
+        # Los que más esperan, arriba: con veinte renglones, el de abajo no
+        # existe. El nombre lo trae la propia consulta desde articulos.nombre.
+        porciones_esperando = sorted(
+            ({"articulo_id": articulo_id, **datos} for articulo_id, datos in esperando.items()),
+            key=lambda p: (-p["bultos"], p["nombre"]),
+        )
     contexto.update({
         "hoy": hasta,
         "fecha": hasta.isoformat(),
         "fecha_maxima": hoy.isoformat(),
         "es_hoy": hasta == hoy,
         "aviso": aviso,
+        "esperando_guia_r": esperando,
+        "porciones_esperando": porciones_esperando,
     })
     return templates.TemplateResponse(request, "administracion_stock_remanente.html", contexto)
 
@@ -9187,6 +9215,29 @@ ALERTAS = [
         # mandaría al operario a un módulo que ya no es suyo.
         modulos=("administracion",),
         contar=lambda: contar_stock_deposito_negativo(),
+    ),
+    DefinicionAlerta(
+        codigo="armado_esperando_guia_r",
+        # La contracara de la pared del armado: con envase, una caja no
+        # puede salir de un cajón sin pasar por una guía R, así que el bulto
+        # queda sin lote hasta que el papel entre. Eso es información
+        # verdadera —salió y no está cargado— pero SIN ESTA ALERTA es muda:
+        # el stock no se mueve (es un neto y el armado resta igual), y en la
+        # Rentabilidad Real la salida sale del cálculo con su venta, en una
+        # pantalla de Gerencia que no se mira todos los días.
+        titulo="Armados esperando la guía R que los explica",
+        titulo_corto="Falta cargar guías R",
+        url="/administracion/stock/remanente",
+        texto_link="Ver en el Remanente",
+        # Administración y no Depósito: el que carga la guía R es Depósito,
+        # pero el que ve que falta es quien mira los números. Y el operario
+        # ya lo tiene en su propia pantalla, en el desglose de lotes del
+        # armado ("N sin lote", en amarillo y sin trabar).
+        modulos=("administracion",),
+        # SE APAGA SOLA: el conteo sale del rejuego del FIFO, que se
+        # recalcula entero en cada corrida. Cargada la guía R —con la fecha
+        # del día que armó— la siguiente corrida da cero. Sin botón.
+        contar=lambda: contar_bultos_esperando_guia_r(),
     ),
     DefinicionAlerta(
         codigo="guias_r_costo_incompleto",

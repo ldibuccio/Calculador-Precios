@@ -9735,6 +9735,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}) as leidos_ia,
         patch("app.main.contar_stock_vacios_negativos", return_value=0),
         patch("app.main.contar_stock_deposito_negativo", return_value=0),
+        patch("app.main.contar_bultos_esperando_guia_r", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_pedidos_incompletos", return_value={"casos": 0, "mas_viejo": None}) as incompletos,
@@ -21255,3 +21256,58 @@ def test_el_excel_del_remanente_ya_NO_trae_el_sistema_al_contar():
     encabezados = [c.value for c in hoja[4]]
     assert "Sistema al contar" not in encabezados
     assert hoja.max_column == len(encabezados) == 5
+
+
+def test_el_remanente_muestra_los_armados_que_ESPERAN_la_guia_R():
+    """Sin este bloque el bulto sin lote es MUDO en esta pantalla.
+
+    El número de arriba no se mueve —es un neto, y el armado resta con
+    pared o sin ella—, así que nada diría que falta cargar un papel. Y va
+    SEPARADO de los negativos aunque se parezcan: allá salió mercadería que
+    ninguna guía cubre y hay que averiguar qué pasó; acá se sabe qué pasó y
+    la acción es una sola.
+    """
+    esperando = {41: {"nombre": "EJEMPLO Uno", "bultos": 12.0, "mas_viejo": date(2026, 9, 7)},
+                 42: {"nombre": "EJEMPLO Dos", "bultos": 30.0, "mas_viejo": date(2026, 9, 8)}}
+    with patch("app.main.bultos_esperando_guia_r_por_articulo", return_value=esperando):
+        cuerpo = _remanente().text.split("</style>")[-1]
+
+    assert "Armados esperando su guía R" in cuerpo
+    assert "No falta mercadería" in cuerpo
+    # El link va al detalle del artículo, que es donde se ve de qué lotes salió.
+    assert '/administracion/stock/sistema/41' in cuerpo
+    # En dos mitades porque la plantilla parte la frase en dos líneas: un
+    # assert que cruza el salto se rompe con cualquier reindentado y no dice
+    # nada sobre el contenido.
+    assert "12 bultos esperando desde el" in cuerpo
+    assert "07/09" in cuerpo
+    # Los que más esperan, arriba: con veinte renglones el de abajo no existe.
+    assert cuerpo.index("EJEMPLO Dos") < cuerpo.index("EJEMPLO Uno")
+
+
+def test_el_remanente_de_una_fecha_PASADA_no_ofrece_el_link():
+    """El detalle del artículo muestra el estado ACTUAL.
+
+    Ofrecerlo desde una foto del pasado pondría dos épocas en la misma
+    pantalla, que es justo lo que `_fecha_del_remanente` evita cuando
+    rechaza las fechas anteriores al corte.
+    """
+    with patch("app.main.bultos_esperando_guia_r_por_articulo") as calculo:
+        cuerpo = _remanente(url="/administracion/stock/remanente?fecha=2026-09-05").text
+
+    assert "Armados esperando su guía R" not in cuerpo
+    calculo.assert_not_called()
+
+
+def test_el_remanente_sale_igual_si_el_rejuego_del_FIFO_se_cae():
+    """El Remanente tiene que poder mostrarse aunque el cálculo falle.
+
+    Es la lista de lo que hay en el depósito; que se caiga entera porque un
+    bloque secundario no se pudo calcular sería cambiar un aviso por una
+    pantalla de error.
+    """
+    with patch("app.main.bultos_esperando_guia_r_por_articulo", side_effect=RuntimeError("boom")):
+        respuesta = _remanente()
+
+    assert respuesta.status_code == 200
+    assert "Armados esperando su guía R" not in respuesta.text

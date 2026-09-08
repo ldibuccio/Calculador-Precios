@@ -6112,3 +6112,78 @@ def test_la_zona_argentina_es_una_ZONA_y_no_un_offset_numerico():
         "la zona argentina escrita como un número, que no sobrevive a un cambio "
         "de horario de verano:\n" + "\n".join(ofensoras)
     )
+
+
+def _fifo_de_un_articulo(entradas, salidas):
+    """Un cursor falso que devuelve un solo artículo con sus lotes y salidas."""
+    cursor = MagicMock()
+    # (id, nombre): la consulta de candidatos trae el nombre para que el que
+    # muestra no necesite una segunda vuelta.
+    cursor.fetchall.return_value = [(7, "EJEMPLO Uno")]
+    return cursor, {7: (entradas, salidas)}
+
+
+def test_la_alerta_de_la_guia_R_cuenta_BULTOS_y_SE_APAGA_SOLA():
+    """El número sale del rejuego del FIFO, no de una foto guardada.
+
+    Por eso se apaga sola: cargada la guía R —con la fecha del día que
+    armó— la siguiente corrida rejuega la historia entera y ya no encuentra
+    nada esperando. No hay estado que limpiar ni botón que apretar.
+
+    El test corre las DOS situaciones con la misma función: sin la guía R y
+    con ella. Si alguien cambiara el conteo por una consulta propia que
+    lee algo persistido, la segunda mitad seguiría contando 10 y cae.
+    """
+    from app.db import contar_bultos_esperando_guia_r
+
+    cajon = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 8, 0)), "tipo_lote": "guia",
+             "cantidad": 10.0, "costo_bulto": 50.0}
+    caja = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 16, 0)), "tipo_lote": "reproceso",
+            "cantidad": 10.0, "costo_bulto": 80.0}
+    armado = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+              "cantidad": 10.0, "ficha_con_envase": True, "fecha": date(2026, 9, 7)}
+
+    for etiqueta, lotes, esperado in (("sin la guía R", [cajon], 10.0),
+                                      ("con la guía R", [cajon, caja], 0.0)):
+        cursor, datos = _fifo_de_un_articulo([dict(l) for l in lotes], [dict(armado)])
+        conexion = MagicMock()
+        conexion.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        conexion.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("app.db.obtener_conexion", return_value=conexion),
+            patch("app.db._fecha_corte", return_value=date(2026, 9, 5)),
+            patch("app.db._entradas_y_salidas_stock_varios", return_value=datos),
+        ):
+            resultado = contar_bultos_esperando_guia_r()
+        assert resultado["casos"] == esperado, f"{etiqueta}: dio {resultado['casos']}"
+
+    # Y la fecha que muestra la alerta es la del armado que espera.
+    assert resultado["mas_viejo"] is None, "sin nada esperando no hay fecha que mostrar"
+
+
+def test_la_alerta_no_cuenta_el_sin_lote_de_VERDAD():
+    """Solo lo que alguien puede cerrar cargando el papel.
+
+    Un `sin_lote` real —salió más de lo que había— no se arregla con una
+    guía R. Si entrara acá, el número no bajaría nunca y la alerta se
+    aprendería a ignorar, arrastrando a las demás. Es la misma razón por la
+    que la alerta de guías R incompletas deja afuera las que no tienen
+    precio POSIBLE.
+    """
+    from app.db import contar_bultos_esperando_guia_r
+
+    # Un armado SIN envase que salió sin lote: es sin_lote de verdad.
+    armado = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+              "cantidad": 10.0, "ficha_con_envase": False, "fecha": date(2026, 9, 7)}
+    cursor, datos = _fifo_de_un_articulo([], [armado])
+    conexion = MagicMock()
+    conexion.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+    conexion.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.db._entradas_y_salidas_stock_varios", return_value=datos),
+    ):
+        resultado = contar_bultos_esperando_guia_r()
+
+    assert resultado["casos"] == 0

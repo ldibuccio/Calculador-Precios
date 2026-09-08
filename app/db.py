@@ -7830,6 +7830,98 @@ def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
         conexion.close()
 
 
+def bultos_esperando_guia_r_por_articulo() -> dict:
+    """{articulo_id: {"nombre", "bultos", "mas_viejo"}} de armados SIN LOTE esperando la guía R.
+
+    SE APAGA SOLA, y no por un truco: sale del MISMO rejuego del FIFO que
+    la Rentabilidad Real y la pantalla del artículo, y ese rejuego se
+    recalcula entero en cada lectura. Cuando entra la guía R —fechada en el
+    día que armó— la siguiente corrida cuenta cero. No hay nada persistido
+    que limpiar ni botón que apretar.
+
+    Sale de `atribuir_costos_fifo` y NO de una consulta propia: una segunda
+    versión de la cuenta se separaría de la pantalla, y el día que difieran
+    la alerta va a mandar a mirar donde el problema no está.
+
+    Cuenta BULTOS y no salidas: "faltan 3 guías R" no dice el tamaño, y el
+    que decide qué hacer primero mira los bultos. `mas_viejo` es la fecha
+    del armado más viejo que sigue esperando.
+
+    Solo lo que ALGUIEN PUEDE CERRAR, igual que la alerta de las guías R
+    incompletas: acá todo lo contado se cierra cargando el papel. El
+    `sin_lote` de verdad —salió más de lo que había— no entra: ése no se
+    arregla con una guía R y haría que el número no baje nunca.
+    """
+    from core.costo_real import atribuir_costos_fifo
+
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            corte = _fecha_corte(cursor)
+            # Los candidatos: artículos con armado posterior al corte sobre una
+            # ficha CON envase. Sin este recorte habría que rejugar el FIFO de
+            # todo el catálogo para contestar por unos pocos.
+            cursor.execute(
+                """
+                SELECT DISTINCT r.articulo_id, a.nombre
+                FROM pedidos_renglones r
+                JOIN fichas_logistica f ON f.id = r.ficha_id
+                JOIN articulos a ON a.id = r.articulo_id
+                WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                  AND r.articulo_id IS NOT NULL AND f.envase_id IS NOT NULL
+                  AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
+                """,
+                (corte,),
+            )
+            # El nombre viene de acá y no lo busca el llamador: sale de
+            # `articulos.nombre`, la misma fuente que el resto del módulo, y
+            # así el que muestra no necesita una segunda consulta para
+            # ponerle nombre a un id.
+            nombres = dict(cursor.fetchall())
+            ids = list(nombres)
+            if not ids:
+                return {}
+
+            por_articulo = _entradas_y_salidas_stock_varios(cursor, ids, corte)
+    finally:
+        conexion.close()
+
+    por_id = {}
+    for articulo_id, (entradas, salidas) in por_articulo.items():
+        for salida in atribuir_costos_fifo(entradas, salidas):
+            esperando = salida["motivos_sin_costo"].get("falta_cargar_guia_r", 0.0)
+            if esperando <= 0:
+                continue
+            fila = por_id.setdefault(
+                articulo_id,
+                {"nombre": nombres.get(articulo_id, "?"), "bultos": 0.0, "mas_viejo": None},
+            )
+            fila["bultos"] += esperando
+            fecha = salida.get("fecha")
+            if fecha is not None and (fila["mas_viejo"] is None or fecha < fila["mas_viejo"]):
+                fila["mas_viejo"] = fecha
+    for fila in por_id.values():
+        fila["bultos"] = round(fila["bultos"], 2)
+    return por_id
+
+
+def contar_bultos_esperando_guia_r() -> dict:
+    """El TOTAL de lo de arriba, para la alerta. Una cuenta, dos lectores.
+
+    La alerta y el Remanente salen de la misma función a propósito: con dos
+    consultas, un día una diría un número y la otra otro, y la alerta
+    mandaría a mirar donde el problema no está. Ya nos costó una vez.
+    """
+    por_articulo = bultos_esperando_guia_r_por_articulo()
+    if not por_articulo:
+        return {"casos": 0, "mas_viejo": None}
+    fechas = [f["mas_viejo"] for f in por_articulo.values() if f["mas_viejo"] is not None]
+    return {
+        "casos": round(sum(f["bultos"] for f in por_articulo.values()), 2),
+        "mas_viejo": min(fechas) if fechas else None,
+    }
+
+
 def contar_stock_deposito_negativo() -> int:
     """Auditoría: cuántos artículos del depósito tienen stock por debajo de cero.
 

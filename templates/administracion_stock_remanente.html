@@ -164,6 +164,36 @@
   .negativo .nombre { font-size: 1.05rem; font-weight: 700; display: block; }
   .negativo .falta { font-size: 0.95rem; }
   .negativo .ir { color: #9a3412; font-weight: 700; text-decoration: underline; }
+  /* AZUL y no naranja: no es un faltante. La mercadería está —salió, y el
+     cajón sigue entero en el galpón—; lo que falta es el papel. Con el
+     mismo color que los negativos se leerían como el mismo problema, y el
+     que lo mire saldría a contar bultos en vez de a cargar una guía R. */
+  .bloque-espera {
+    margin-top: 1.5rem;
+    background: #eff6ff;
+    border: 1px solid #93c5fd;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .bloque-espera h2 { color: #1e40af; }
+  .bloque-espera .intro {
+    margin: 0 0 0.75rem;
+    color: #1e3a8a;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+  .espera {
+    display: block;
+    padding: 0.8rem 0;
+    border-top: 1px solid #bfdbfe;
+    color: #1e3a8a;
+    text-decoration: none;
+  }
+  .espera:first-of-type { border-top: none; }
+  .espera .nombre { font-size: 1.05rem; font-weight: 700; display: block; }
+  .espera .cuantos { font-size: 0.95rem; }
+  .espera .ir { color: #1e40af; font-weight: 700; text-decoration: underline; }
   .totales {
     display: flex;
     flex-wrap: wrap;
@@ -257,6 +287,30 @@
      45" dice qué pasó; "−45" se lee como una cantidad y se resta de algo.
      Es el mismo defecto del "sin procesar −95" que esta pantalla vino a
      reemplazar. #}
+  {# ESPERANDO EL PAPEL, y va SEPARADO de los negativos aunque se parezcan.
+     Son dos cosas distintas: allá salió mercadería que ninguna guía cubre y
+     hay que averiguar qué pasó; acá se sabe exactamente qué pasó —se armaron
+     cajas y no se cargó la guía R— y la acción es una sola.
+
+     Existe porque sin esto el bulto sin lote es MUDO en esta pantalla: el
+     número de arriba no se mueve (es un neto, y el armado resta con pared o
+     sin ella), así que nada diría que falta cargar un papel. #}
+  {% if esperando_guia_r %}
+  <div class="bloque-espera">
+    <h2>Armados esperando su guía R</h2>
+    <p class="intro">Se armaron cajas y salieron, pero la guía R que las explica todavía no está
+      cargada. <strong>No falta mercadería:</strong> el cajón sigue entero en el galpón y estos
+      bultos se acomodan solos apenas entre el papel — con la fecha del día en que se armaron.</p>
+    {% for p in porciones_esperando %}
+    <a class="espera" href="/administracion/stock/sistema/{{ p.articulo_id }}">
+      <span class="nombre">{{ p.nombre }}</span>
+      <span class="cuantos">{{ p.bultos|numero }} bultos esperando desde el
+        {{ p.mas_viejo.strftime('%d/%m') }} · <span class="ir">ver de qué lotes salió</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if negativos %}
   <div class="bloque-negativos">
     <h2>Bultos que faltan explicar</h2>
