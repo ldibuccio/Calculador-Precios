@@ -7017,10 +7017,12 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
     lugar donde se decide qué es un lote: `reprocesos.bultos_primera` entra
     como lote del MISMO artículo que los cajones de las compras, así que un
     reproceso puede tomar cajas ya armadas como si fueran materia prima.
-    Medido bien el 08/09: 10 de 20 guías R desde el corte, $2.798.438,92.
-    (El 07/09 dijimos 19 de 32 y $3.572.620 "en dos días": esa medición
-    contaba el día del corte —`>=`— y el período no eran dos días sino
-    todo desde el 31/08. Ver e5_5.) Es otro
+    Medido bien el 08/09: 10 de 20 guías R posteriores al corte,
+    $2.798.438,92 en dos días (06 y 07/09; el corte de Frutamax es el
+    05/09). El 07/09 dijimos 19 de 32 y $3.572.620: esa medición contaba
+    el día del corte —`>=`— y por eso abarcaba tres días. Ver e5_5.
+    LA FECHA DE CORTE ES POR BASE Y SE MUEVE: Palmala tiene 31/08. No
+    asumirla nunca; sale de corte_modelo. Es otro
     problema —la mezcla de unidades, E5— y necesita otro arreglo.
     """
     ids = list(articulo_ids)

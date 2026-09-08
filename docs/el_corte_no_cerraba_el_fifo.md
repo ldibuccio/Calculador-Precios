@@ -83,9 +83,13 @@ lote distinto** y el FIFO tiene una sola pila:
 | `merma` / `ajuste` | cualquiera | ambiguo por diseño |
 
 Es E5 (el contador que mezcla cajones y cajas) apareciendo en el costeo.
-**Ritmo medido: 10 guías y $2.798.438,92 desde el corte** (corregido el
-08/09; acá decía 19 y $3.572.620 "en dos días", que contaba el día del
-corte y no eran dos días). No es un caso de borde igual.
+**Ritmo medido: 10 guías y $2.798.438,92 en DOS DÍAS (06 y 07/09).**
+Corregido dos veces el 08/09 y la segunda por mi culpa: acá decía 19 guías
+y $3.572.620 "en dos días" (contaba el día del corte), lo corregí a
+"$2.798.438,92 desde el 31/08" **asumiendo la fecha de corte en vez de
+leerla**, y el corte de Frutamax es el **05/09**. Como `e5_1` filtra
+`> corte`, el período real son 06 y 07/09: dos días. El ritmo diario es el
+alto, no el bajo.
 
 ## Lo que NO se arregla hacia atrás
 
@@ -586,8 +590,8 @@ la columna y el cambio de gate.
 ## E5, la dirección inversa: ¿un armado se come cajones?
 
 `corte_fifo_1` midió una dirección: **guías R que consumieron cajas ya
-armadas** como si fueran materia prima — 10 de 20 guías desde el corte,
-$2.798.438,92 (corregido el 08/09). La dirección inversa es la otra mitad
+armadas** como si fueran materia prima — 10 de 20 guías posteriores al
+corte, $2.798.438,92 en dos días (06 y 07/09). La dirección inversa es la otra mitad
 del mismo agujero: **un
 armado que se costea contra un cajón** en vez de contra una caja.
 
@@ -682,7 +686,7 @@ movimientos devuelve una fila de ceros, no una pantalla vacía. Los datos de
 prueba se borraron.
 
 **Esto no toca E5.** La fuga se midió con 10 guías, 134 bultos y
-$2.798.438,92 desde el corte (corregido el 08/09); Mango era el ejemplo de
+$2.798.438,92 en dos días (06 y 07/09); Mango era el ejemplo de
 cómo se ve el problema, no la prueba de
 que existe.
 
@@ -879,8 +883,10 @@ La diferencia es el mismo `>=`.
 ### Un error de documentación que sí puedo afirmar ya
 
 El doc dice, en cuatro lugares, *"19 de 32 guías R **en dos días**"*. La
-consulta no mide dos días: mide `rp.fecha_operacion >= corte`, o sea **todo
-desde el 31/08**. El "en dos días" fue una glosa al contar el resultado, no
+consulta no mide dos días: mide `rp.fecha_operacion >= corte`, y el corte de
+Frutamax es el **05/09**, así que son 05, 06 y 07/09 — **tres** días
+(la última guía R es del 07/09). El "en dos días" fue una glosa al contar el
+resultado, no
 lo que la consulta preguntó, y viajó a `app/db.py:7020` y a la decisión de no
 anular las 32 guías. El ritmo real por día es más bajo que el que citamos.
 
@@ -934,7 +940,12 @@ exigir que el número se mueva— es exactamente lo que lo habría atajado el
 mismo día.
 
 Y la glosa: *"en dos días"* nunca lo midió nadie. La consulta dice `>=
-corte`. Un período inventado al contar un resultado, repetido cinco veces
+corte`, que sobre Frutamax son tres días (05 al 07/09).
+
+**Y la corrección introdujo otro número mal, por la misma causa.** Al
+corregir escribí "todo desde el 31/08": la fecha no la leí de la base, la
+asumí del `insert` que trae la migración. El corte de Frutamax se movió al
+05/09 en algún momento; el de Palmala sigue en 31/08. Ver el corolario 18. Un período inventado al contar un resultado, repetido cinco veces
 hasta volverse un hecho.
 
 ## El veredicto: A y B van juntas
@@ -1045,3 +1056,44 @@ Verificado en los tres escenarios: fila normal, fila borrada (`corte` NULL,
 todo en cero, `ultima_guia_r` delatando) y fecha distinta (los conteos caen a
 cero y `ultima_guia_r` sigue mostrando actividad). Y los cuatro fixtures
 anteriores siguen dando los mismos números con la columna puesta.
+
+## Palmala: E5 no existe ahí, y por qué eso hay que confirmarlo y no suponerlo
+
+`e5_0` en las dos, 08/09:
+
+```
+FRUTAMAX  corte 2026-09-05 · post 20 · el día 12 · inicial 8 · compras 24 · armados 60 · última guía R 07/09
+PALMALA   corte 2026-08-31 · post  0 · el día  0 · inicial 0 · compras 36 · armados  1 · última guía R NULL
+```
+
+Palmala **no tiene una sola guía R**. Sin reprocesos no hay cajas armadas, y
+sin cajas armadas no hay dos pilas. Correr `e5_3` o `e5_4` ahí daría ceros, y
+esos ceros no significarían nada: son el mismo cero que da una base sin
+configurar.
+
+### Pero sí hay un camino a la pila trabajada sin ningún reproceso
+
+`TIPOS_LOTE_TRABAJADO` son **dos**: `reproceso` y `reingreso_rechazo`. El
+reingreso por rechazo nace en `movimientos_stock`, no en `reprocesos` —
+salió armado y volvió—, y entra al FIFO como lote con
+`tipo_lote = 'reingreso_rechazo'`. **Un artículo que nunca se reprocesó puede
+tener pila trabajada.**
+
+Con un matiz que está en la consulta de entradas: solo cuenta el que vuelve
+al stock normal (`destino_rechazo` NULL o `'stock'`). El que se manda a
+segunda o a reproceso sale del circuito y su costo ya se imputó como pérdida.
+
+Por eso `db/e5_0b_pila_trabajada_sin_guias_r.sql`, que se corre en las dos.
+Verificado contra el esquema real con una base de cero guías R y dos
+reingresos —uno a stock y otro a segunda—: cuenta 1 como lote, 1 fuera del
+circuito y 2 históricos.
+
+### Qué implica para el deploy
+
+- **A** solo actúa sobre `crear_reproceso`. Sin guías R es inerte en Palmala,
+  hoy y hasta que Palmala cargue la primera. El día que la cargue, la pared
+  va a estar puesta — que es lo que se quiere.
+- **B** actúa sobre los armados. Si Palmala tiene reingresos que volvieron a
+  stock, B **sí** cambia la atribución ahí, aunque no haya un solo reproceso.
+  Con 1 armado post-corte el movimiento va a ser chico, pero "chico" no es
+  "cero" y se mide antes, no después.

@@ -186,6 +186,39 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 18, del 08/09: **un valor que vive en la BASE no se lee del código
+que lo creó.** La migración es un registro fiel de lo que se insertó UNA VEZ;
+no dice nada de lo que el valor es HOY.
+
+Corrigiendo el "en dos días" del corolario 15 escribí que la medición
+abarcaba "todo desde el 31/08". Esa fecha no salió de la base: salió del
+`insert into corte_modelo (id, fecha) values (1, '2026-08-31')` de
+`agregar_corte_y_stock_inicial.sql`. **El corte de Frutamax es el 05/09** —
+se movió en algún momento— y el de Palmala sigue en 31/08. O sea que
+`corte_fifo_1` (`>=`) abarcaba tres días y `e5_1` (`>`) dos, y el "en dos
+días" original estaba MÁS CERCA que mi corrección.
+
+Tres cosas se llevan:
+
+1. **La corrección de un número mal introdujo otro número mal, por la misma
+   causa.** No es mala suerte: al corregir se escribe rápido y con la
+   sensación de estar arreglando, que es cuando menos se verifica. **Un
+   commit que corrige un dato verifica el dato nuevo con el mismo rigor que
+   le exigió al viejo**, o la segunda vuelta sale peor que la primera —
+   porque ahora el número viene con la autoridad de "esto ya se revisó".
+2. **La fuente que consulté era correcta sobre el pasado.** Es la familia
+   del comentario que envejece, con una vuelta más: no había nada mal
+   escrito en la migración. Lo que estuvo mal fue usarla como afirmación
+   sobre el presente. Y el docstring de `_fecha_corte` lo dice desde
+   siempre: la fecha vive en la base "para que se lea de un solo lugar".
+3. **El arreglo ya estaba puesto y no lo usé.** El día anterior las seis
+   consultas de E5 ganaron una columna `corte` justamente para esto
+   (corolario 17). Si hubiera mirado esa columna en el resultado que ya
+   tenía a la vista, el 05/09 estaba ahí. **Una salvaguarda que no se lee no
+   sirve**, y la salvaguarda tiene que aparecer donde se toma la decisión,
+   no en una consulta aparte.
+
+
 Corolario 17, del 08/09: **una medición contra UNA base decide un deploy que
 sale en LAS DOS.** El sistema corre sobre Frutamax y Palmala, y todo lo de
 E5 se midió sobre Frutamax: `frenan_con_a = 0` decidió que A se mergeaba sin
@@ -266,9 +299,11 @@ Dos cosas que se llevan:
    atajado el mismo día que se escribió.
 2. **La glosa al contar un resultado se vuelve un hecho.** El doc decía
    "19 de 32 guías R **en dos días**" en cinco lugares. La consulta nunca
-   midió dos días: dice `fecha_operacion >= corte`, o sea todo desde el
-   31/08. Nadie inventó el número; alguien le agregó un período al
-   contarlo, y el período viajó solo.
+   midió dos días: dice `fecha_operacion >= corte`, y sobre Frutamax eso
+   son TRES días (05 al 07/09). Nadie inventó el número; alguien le agregó
+   un período al contarlo, y el período viajó solo. (Al corregir esto
+   escribí "todo desde el 31/08", que también estaba mal: ver el
+   corolario 18.)
 
    Por eso: **al escribir el resultado de una consulta, el recorte se copia
    de la consulta, no de la memoria.** Si el `where` dice `>= corte`, lo
