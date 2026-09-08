@@ -17294,8 +17294,7 @@ def test_cotejo_stock_compara_contra_la_foto_congelada_y_arma_el_link_de_ajuste(
          "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Anco",
          "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
     ]
-    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
-        respuesta = cliente.get("/administracion/stock/cotejo")
+    respuesta = _cotejo(conteos)
 
     assert respuesta.status_code == 200
     # La diferencia es contra la FOTO del conteo, resaltada.
@@ -19526,8 +19525,7 @@ def test_cotejo_dice_de_que_porcion_es_cada_tarjeta():
          "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Banana",
          "ficha_id": 11, "ficha_nombre": "Banana Bolivia", "ficha_cliente": "Día"},
     ]
-    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
-        respuesta = cliente.get("/administracion/stock/cotejo")
+    respuesta = _cotejo(conteos)
 
     cuerpo = respuesta.text.split("</style>")[-1]
     assert "Bultos sueltos" in cuerpo
@@ -19547,8 +19545,7 @@ def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
          "creado_en": datetime(2026, 8, 25, 11, 0), "articulo_nombre": "Banana",
          "ficha_id": 11, "ficha_nombre": "Banana Bolivia", "ficha_cliente": "Día"},
     ]
-    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
-        respuesta = cliente.get("/administracion/stock/cotejo")
+    respuesta = _cotejo(conteos)
 
     cuerpo = respuesta.text.split("</style>")[-1]
     # La diferencia se muestra igual: -8.
@@ -19558,14 +19555,106 @@ def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
     assert "/administracion/stock/guias-r" in cuerpo
 
 
+def _cotejo(conteos, porciones=None):
+    """El Cotejo con sus dos lecturas: los conteos y el sistema DE HOY.
+
+    Desde el 08/09 la tarjeta compara contra el estado actual y no contra la
+    foto congelada, así que hay que darle las dos. Sin `porciones`, el
+    sistema de hoy es el mismo de la foto: la tarjeta no se movió.
+    """
+    if porciones is None:
+        porciones = [
+            {"articulo_id": c["articulo_id"], "ficha_id": c["ficha_id"],
+             "bultos": c["stock_sistema"], "contable": True}
+            for c in conteos
+        ]
+    with (
+        patch("app.main.listar_ultimos_conteos_stock", return_value=conteos),
+        patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}),
+    ):
+        return cliente.get("/administracion/stock/cotejo")
+
+
+def test_la_ayuda_del_cotejo_dice_contra_QUE_compara():
+    """La ayuda decía "contra lo que el sistema decía EN ese momento", que
+    era cierto hasta el 08/09 y dejó de serlo con la tarjeta comparando
+    contra hoy. Un texto que envejeció es el síntoma de siempre."""
+    respuesta = _cotejo([])
+
+    assert "el sistema dice <strong>hoy</strong>" in respuesta.text
+    assert "EN ese momento" not in respuesta.text
+
+
+def test_cotejo_NO_ofrece_ajustar_si_el_desvio_ya_se_resolvio():
+    """Mango: contó 1 con el sistema en −12, y el trabajo del día se cargó
+    catorce minutos después. Hoy el sistema dice 1 y no hay nada que ajustar.
+
+    Hasta el 08/09 la tarjeta mostraba +13 y un botón, para siempre, porque
+    el gate miraba la foto congelada mientras la pantalla de ajuste calculaba
+    contra el stock actual.
+    """
+    conteos = [
+        {"id": 1, "articulo_id": 1, "cantidad": 1.0, "stock_sistema": -12.0,
+         "creado_en": datetime(2026, 9, 7, 16, 37), "articulo_nombre": "Mango",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    porciones = [{"articulo_id": 1, "ficha_id": None, "bultos": 1.0, "contable": True}]
+
+    respuesta = _cotejo(conteos, porciones)
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Ajustar a lo contado" not in cuerpo
+    # Y explica por qué el número no es el que se vio al contar.
+    assert "Al contar, el sistema decía" in cuerpo
+    assert "Desde entonces se cargó movimiento" in cuerpo
+
+
+def test_cotejo_SI_ofrece_ajustar_si_el_desvio_aparecio_DESPUES_del_conteo():
+    """La cara que no tenía salida: foto limpia y desvío vivo.
+
+    Se contó cuando todo estaba cargado —diferencia cero— y después se cargó
+    una merma. Hasta el 08/09 esa tarjeta no mostraba botón ninguno: la lista
+    la daba por sana y no había forma de actuar sobre ella.
+    """
+    conteos = [
+        {"id": 2, "articulo_id": 3, "cantidad": 20.0, "stock_sistema": 20.0,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "Perita",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    porciones = [{"articulo_id": 3, "ficha_id": None, "bultos": 14.0, "contable": True}]
+
+    respuesta = _cotejo(conteos, porciones)
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Ajustar a lo contado" in cuerpo
+    assert "+6" in cuerpo
+
+
+def test_cotejo_le_pone_numero_a_la_porcion_que_el_remanente_no_lista():
+    """Una porción en cero o en negativo no es una pila y no sale del
+    Remanente, pero en el Cotejo tiene que tener número igual: es justo la
+    que hay que poder mirar. Se le pregunta de a una, con la misma función."""
+    conteos = [
+        {"id": 3, "articulo_id": 5, "cantidad": 2.0, "stock_sistema": 0.0,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "Lima",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    with patch("app.main.stock_de_porcion", return_value=-1.0) as porcion:
+        respuesta = _cotejo(conteos, porciones=[])
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "+3" in cuerpo
+    assert "Ajustar a lo contado" in cuerpo
+    porcion.assert_called_once_with(5, None)
+
+
 def test_cotejo_si_ofrece_ajustar_stock_en_una_diferencia_de_SUELTOS():
     conteos = [
         {"id": 5, "articulo_id": 1, "cantidad": 12.0, "stock_sistema": 15.0,
          "creado_en": datetime(2026, 8, 25, 10, 30), "articulo_nombre": "Banana",
          "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
     ]
-    with patch("app.main.listar_ultimos_conteos_stock", return_value=conteos):
-        respuesta = cliente.get("/administracion/stock/cotejo")
+    respuesta = _cotejo(conteos)
 
     assert "Ajustar a lo contado" in respuesta.text
     assert "articulo_id=1&amp;contado=12.0" in respuesta.text
@@ -19577,7 +19666,10 @@ def test_cotejo_no_inventa_renglones_de_fichas_que_nunca_se_contaron():
     Si listara todas las fichas de todos los clientes en cero, la pantalla
     se vuelve ilegible y se deja de mirar.
     """
-    with patch("app.main.listar_ultimos_conteos_stock", return_value=[]) as mock_listar:
+    with (
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]) as mock_listar,
+        patch("app.main._remanente_a_fecha", return_value={"porciones": []}),
+    ):
         respuesta = cliente.get("/administracion/stock/cotejo")
 
     assert respuesta.status_code == 200
@@ -19590,6 +19682,7 @@ def test_las_pantallas_que_se_mudaron_vuelven_a_ADMINISTRACION():
     # seguía apuntando al hub de Depósito, donde esos botones ya no están.
     with (
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main._remanente_a_fecha", return_value={"porciones": []}),
         patch("app.main.listar_articulos", return_value=[]),
     ):
         cotejo = cliente.get("/administracion/stock/cotejo")

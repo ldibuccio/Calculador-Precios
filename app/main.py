@@ -7960,12 +7960,41 @@ def ver_cotejo_stock(request: Request):
     """
     try:
         conteos = listar_ultimos_conteos_stock()
+        # EL SISTEMA DE HOY, por porción. Sale del Remanente —la misma
+        # función que dibuja esa pantalla— y no de una cuenta propia.
+        hoy = _remanente_a_fecha(_hoy_argentina())
+        sistema_hoy = {
+            (p["articulo_id"], p["ficha_id"]): float(p["bultos"])
+            for p in hoy["porciones"] if p.get("contable", True)
+        }
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
     filas = []
     for conteo in conteos:
         fila = dict(conteo, diferencia=round(float(conteo["cantidad"]) - float(conteo["stock_sistema"]), 2))
+        # Una porción en CERO o en negativo no es una pila y el Remanente no
+        # la lista, pero acá tiene que tener número igual: justo esa es la
+        # que hay que poder mirar. Sale de la misma función, de a una.
+        clave = (conteo["articulo_id"], conteo["ficha_id"])
+        if clave in sistema_hoy:
+            fila["sistema_hoy"] = sistema_hoy[clave]
+        else:
+            try:
+                fila["sistema_hoy"] = stock_de_porcion(conteo["articulo_id"], conteo["ficha_id"])
+            except Exception:
+                logger.exception("No se pudo leer el stock actual de una porción del cotejo")
+                fila["sistema_hoy"] = None
+        fila["dif_hoy"] = (
+            None if fila["sistema_hoy"] is None
+            else round(float(conteo["cantidad"]) - fila["sistema_hoy"], 2)
+        )
+        # Se movió entre el conteo y ahora: la foto congelada ya no describe
+        # el estado, y por eso la tarjeta muestra las dos.
+        fila["se_movio"] = (
+            fila["sistema_hoy"] is not None
+            and round(float(conteo["stock_sistema"]) - fila["sistema_hoy"], 2) != 0
+        )
         # Con diferencia, botón directo a la pantalla de ajuste, precargada
         # con este conteo (la cantidad final se calcula ahí contra el stock
         # ACTUAL, no contra esta foto — ver ver_ajustar_stock_deposito).
@@ -7975,7 +8004,13 @@ def ver_cotejo_stock(request: Request):
         # cajas de Bolivia y faltan de Ecuador, el total del artículo está
         # bien y ajustarlo lo rompería — lo que hay que corregir es a qué
         # ficha fue una guía R, que se hace en Guías R desde la etapa 1.
-        if fila["diferencia"] != 0 and fila["ficha_id"] is None:
+        # EL BOTÓN SE DECIDE CON EL DESVÍO DE HOY, no con la foto. Hasta el
+        # 08/09 se ofrecía según `diferencia` —la congelada— mientras la
+        # pantalla de ajuste calculaba contra el stock actual: la lista
+        # decidía con un número y la acción usaba otro. Las dos caras del
+        # error: Mango mostraba 13 y un botón con el desvío ya resuelto, y
+        # una porción con foto limpia y desvío vivo no mostraba nada.
+        if fila["dif_hoy"] not in (None, 0) and fila["ficha_id"] is None:
             fila["query_ajuste"] = urlencode(
                 {
                     "articulo_id": conteo["articulo_id"],

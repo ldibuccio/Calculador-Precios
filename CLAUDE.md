@@ -186,6 +186,30 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 9, del 08/09: **un test que PARCHEA la función que quiere
+verificar no verifica nada.** El parche fija el valor y el test comprueba la
+aritmética contra su propio invento.
+
+Los dos tests del ajuste desde el Cotejo hacían
+`patch("app.main.stock_deposito_de_articulo", return_value=18.0)` y
+verificaban que la precarga diera −6. Pasaban. Y pasaban igual con el bug,
+porque lo que estaba mal no era la resta sino **cuál** número entraba en
+ella: el total del artículo en vez de los sueltos. El parche tapaba
+exactamente la línea rota.
+
+Es la misma forma que el assert de substring del 07/09, que matcheaba el
+`anulado_el` de `pedidos` creyendo mirar el de `pedidos_renglones`: **el test
+miraba algo que se parecía a lo que importaba.**
+
+La regla que se llevan los dos: **cuando un bug aparece en código que YA
+tenía test, el test es parte del bug**, y se arregla en el mismo commit. Un
+test que no cayó cuando debía es una segunda cosa rota, no un espectador.
+
+Y para escribirlo de nuevo: si hay que parchear, que el parche devuelva un
+valor que **haga fallar la versión equivocada**. En el test nuevo del ajuste,
+los sueltos y el total están a propósito muy separados (5 contra 35), así que
+enchufar el total da −29 y el test cae.
+
 Corolario 8, del 08/09: **dos cuentas con el mismo nombre y distinto
 ALCANCE.** No es que digan cosas distintas: es que una es el artículo entero
 y la otra una parte, y las dos se llaman "stock".

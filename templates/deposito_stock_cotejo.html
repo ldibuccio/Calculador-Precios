@@ -35,6 +35,12 @@
   .numeros .celda { flex: 1; }
   .numeros .etiqueta { display: block; color: #666; font-size: 0.78rem; }
   .numeros .valor { display: block; font-size: 1.25rem; font-weight: 800; }
+  .al-contar {
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
+    color: #666;
+    line-height: 1.4;
+  }
   .diferencia-cero { color: #16a34a; }
   .diferencia-distinta { color: #dc2626; }
   .tarjeta.con-diferencia { border: 2px solid #fecaca; }
@@ -82,11 +88,11 @@
   {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
-  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema decía EN ese momento (la foto se guarda al contar, así la comparación cierra aunque después haya movimientos). Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.</p>
+  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema dice <strong>hoy</strong>: eso es lo que dice si el desvío sigue existiendo. Si al contar el sistema decía otra cosa, la tarjeta lo aclara abajo — pasa cuando el trabajo del día se carga después del conteo. Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.</p>
 
   {% if filas %}
     {% for f in filas %}
-    <div class="tarjeta {% if f.diferencia != 0 %}con-diferencia{% endif %}">
+    <div class="tarjeta {% if f.dif_hoy not in (none, 0) %}con-diferencia{% endif %}">
       <p class="encabezado">{{ f.articulo_nombre }}</p>
       <p class="que-conto">
         {% if f.ficha_id %}Cajas de {{ f.ficha_nombre }}{% if f.ficha_cliente %} · {{ f.ficha_cliente }}{% endif %}
@@ -99,21 +105,34 @@
           <span class="valor">{{ f.cantidad|numero }}</span>
         </div>
         <div class="celda">
-          <span class="etiqueta">Sistema</span>
-          <span class="valor">{{ f.stock_sistema|numero }}</span>
+          <span class="etiqueta">Sistema hoy</span>
+          <span class="valor">{% if f.sistema_hoy is none %}—{% else %}{{ f.sistema_hoy|numero }}{% endif %}</span>
         </div>
         <div class="celda">
           <span class="etiqueta">Diferencia</span>
-          <span class="valor {% if f.diferencia == 0 %}diferencia-cero{% else %}diferencia-distinta{% endif %}">
-            {% if f.diferencia > 0 %}+{% endif %}{{ f.diferencia|numero }}
+          {% if f.dif_hoy is none %}
+          <span class="valor">—</span>
+          {% else %}
+          <span class="valor {% if f.dif_hoy == 0 %}diferencia-cero{% else %}diferencia-distinta{% endif %}">
+            {% if f.dif_hoy > 0 %}+{% endif %}{{ f.dif_hoy|numero }}
           </span>
+          {% endif %}
         </div>
       </div>
+      {% if f.se_movio %}
+      {# La foto congelada ya no describe el estado. Va en chico y abajo: lo
+         que hay que mirar para decidir es el desvío de HOY. Sin esta línea,
+         el número de arriba parecería contradecir al que el operario vio
+         cuando contó. #}
+      <p class="al-contar">Al contar, el sistema decía <strong>{{ f.stock_sistema|numero }}</strong>
+        (diferencia {% if f.diferencia > 0 %}+{% endif %}{{ f.diferencia|numero }}).
+        Desde entonces se cargó movimiento.</p>
+      {% endif %}
       {% if f.query_ajuste %}
       {# La cantidad final se calcula en la pantalla de ajuste contra el
          stock ACTUAL (con aviso si cambió desde este conteo). #}
       <a class="boton-ajustar" href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
-      {% elif f.diferencia != 0 %}
+      {% elif f.dif_hoy not in (none, 0) %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar
          perfecto. Si sobran cajas de una ficha y faltan de otra, lo que
