@@ -186,6 +186,34 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 8, del 08/09: **dos cuentas con el mismo nombre y distinto
+ALCANCE.** No es que digan cosas distintas: es que una es el artículo entero
+y la otra una parte, y las dos se llaman "stock".
+
+El Cotejo lista PORCIONES —los sueltos de un artículo y las cajas de cada
+ficha— y su diferencia es `contado − sueltos`. Su botón "Ajustar" precargaba
+`contado − stock_deposito_de_articulo(id)`, que es el TOTAL: sueltos MÁS
+cajas. Verificado con el código real: un limón con 5 sueltos y 30 cajas
+armadas da `sueltos = 5` y `total = 35`, así que **contando los 5 exactos la
+precarga salía −30** — el botón proponía borrar del total tantos bultos como
+cajas armadas tuviera el artículo.
+
+No explotó por diseño sino por suerte: el botón solo se ofrece cuando los
+sueltos difieren, y el caso que lo destapó tenía cero cajas.
+
+**Cómo se busca**, y es la más barata de todas: **grepear la función, no el
+concepto.** Un solo llamador la usaba mal, y el grep completo tardó un
+segundo y acotó el daño. Lo que no sirve es buscar "stock": aparece en todos
+lados y no distingue alcances.
+
+**Cómo se evita**: el nombre lleva el alcance. `stock_de_porcion(articulo,
+ficha)` no se puede confundir con `stock_deposito_de_articulo(articulo)`, y
+la que devuelve el total lo dice en la primera línea del docstring. Y cuando
+dos pantallas comparan el mismo número, **las dos salen de la misma
+función**: acá `_stock_de_ficha`, que es la que además congela el
+`stock_sistema` de cada conteo — así el conteo, el Cotejo y el ajuste no se
+pueden separar.
+
 Corolario 7, del 07/09: **una diferencia entre dos cuentas no está en
 ninguna de las dos.**
 

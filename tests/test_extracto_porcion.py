@@ -166,3 +166,46 @@ def test_el_cierre_del_modelo_viejo_tiene_nombre_y_no_sale_crudo():
     extracto = armar_extracto(eventos, venia=12.0, quedo=0.0)
 
     assert extracto["filas"][0]["descripcion"] == "Cierre del modelo viejo — corte 31/08"
+
+
+def test_el_reproceso_dice_A_DONDE_FUERON_las_cajas():
+    """Desde los sueltos el reproceso solo saca, y eso se lee como faltante.
+
+    Del 08/09: el renglón decía solo "Reproceso R177 −25" y un artículo donde
+    la conversión no es 1 a 1 —el mango entra en cajones de 12u y sale en
+    cajas de 10u— deja al que lee sin forma de saber que el otro lado está en
+    otra pila. Ninguno de los dos números explica al otro.
+    """
+    eventos = {
+        "compras": [],
+        "reprocesos": [{"id": 177, "tomados": 25.0, "primera": 30.0, "segunda": 0.0,
+                        "ficha_id": 9, "tipo": "normal", "destino": "Mango Caja Día"}],
+        "armados": [],
+        "movimientos": [],
+        "remitos": [],
+    }
+    filas = armar_extracto(eventos, venia=26.0, quedo=1.0)["filas"]
+
+    renglon = [f for f in filas if "R177" in f["descripcion"]]
+    assert len(renglon) == 1
+    assert renglon[0]["descripcion"] == "Reproceso R177 → Mango Caja Día"
+    assert renglon[0]["bultos"] == -25.0
+
+
+def test_el_reproceso_SIN_ficha_no_inventa_destino():
+    """La guía R sin asignar deja su primera en los sueltos, y ya tiene su
+    propio renglón que lo dice. Un "→" sin nombre sería peor que nada."""
+    eventos = {
+        "compras": [],
+        "reprocesos": [{"id": 178, "tomados": 10.0, "primera": 12.0, "segunda": 0.0,
+                        "ficha_id": None, "tipo": "normal"}],
+        "armados": [],
+        "movimientos": [],
+        "remitos": [],
+    }
+    filas = armar_extracto(eventos, venia=10.0, quedo=12.0)["filas"]
+
+    descripciones = [f["descripcion"] for f in filas]
+    assert "Reproceso R178" in descripciones
+    assert "Reproceso R178 (sin asignar)" in descripciones
+    assert not any("→" in d for d in descripciones)

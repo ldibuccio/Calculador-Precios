@@ -275,7 +275,7 @@ from app.db import (
     recepcionar_compra,
     rechazar_compra,
     registrar_costo_envase,
-    stock_deposito_de_articulo,
+    stock_de_porcion,
     stock_deposito_por_articulo,
     stock_vacios,
     stock_vacios_de_tipo,
@@ -6831,6 +6831,18 @@ def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | Non
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    # A DÓNDE FUERON LAS CAJAS de cada guía R del día. El nombre sale de las
+    # porciones del Remanente —la misma que titula la pila en la pantalla—,
+    # así que el renglón nombra la pila a la que el operario puede ir.
+    nombres = {
+        (p["articulo_id"], p["ficha_id"]): p["nombre"]
+        for p in hoy["porciones"] + ayer["porciones"]
+        if p.get("ficha_id") is not None
+    }
+    for rp in eventos["reprocesos"]:
+        if rp["ficha_id"] is not None:
+            rp["destino"] = nombres.get((articulo_id, rp["ficha_id"]))
+
     porcion = _porcion_buscada(hoy["porciones"], articulo_id, ficha_id, es_segunda)
     anterior = _porcion_buscada(ayer["porciones"], articulo_id, ficha_id, es_segunda)
     if porcion is None and anterior is None:
@@ -7008,12 +7020,19 @@ def ver_ajustar_stock_deposito(
     stock en lo contado, aunque hayan entrado movimientos después del
     conteo. Si el stock cambió desde el conteo, la pantalla lo dice con
     todos los números ANTES de guardar — mismo diseño que Vacíos.
+
+    Y ese "stock actual" es el de la PORCIÓN, no el del artículo. Hasta el
+    08/09 era el total —sueltos más cajas— contra un contado que es solo de
+    sueltos: un limón con 5 sueltos y 30 cajas armadas daba una precarga de
+    −30 contando los 5 exactos, o sea proponía borrar las cajas. No explotó
+    porque el botón solo aparece cuando los sueltos difieren y el caso que
+    lo destapó tenía cero cajas.
     """
     precarga = {"motivo": motivo.strip()} if motivo and motivo.strip() else {}
     contado_valor = _numero_query_o_none(contado)
     if articulo_id and articulo_id.strip().isdigit() and contado_valor is not None:
         try:
-            stock_actual = stock_deposito_de_articulo(int(articulo_id))
+            stock_actual = stock_de_porcion(int(articulo_id))
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 

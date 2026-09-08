@@ -58,7 +58,16 @@ def _eventos_de_sueltos(eventos) -> list[dict]:
         filas.append(_renglon(f"Compra recibida — {compra['proveedor']}", compra["bultos"]))
     for rp in eventos["reprocesos"]:
         if rp["tomados"]:
-            filas.append(_renglon(f"Reproceso R{rp['id']}", -rp["tomados"]))
+            # A DÓNDE FUE EL OTRO LADO. Desde esta pila el reproceso solo
+            # saca, y eso está bien —los cajones y las cajas son pilas
+            # distintas—, pero un renglón que solo dice "−25" se lee como
+            # mercadería que falta. Y es peor donde la conversión no es 1 a
+            # 1: el mango entra en cajones de 12u y sale en cajas de 10u, así
+            # que de 25 salen 30 y ninguno de los dos números explica al otro.
+            filas.append(_renglon(
+                f"Reproceso R{rp['id']}" + (f" → {rp['destino']}" if rp.get("destino") else ""),
+                -rp["tomados"],
+            ))
         # La primera SIN ficha no tiene pila propia: queda con los sueltos.
         # Es la guía R "sin asignar", y acá se ve dónde cayó.
         if rp["primera"] and rp["ficha_id"] is None:

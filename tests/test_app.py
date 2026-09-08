@@ -17312,7 +17312,7 @@ def test_ajustar_desde_cotejo_precarga_contra_el_stock_actual_y_avisa_si_se_movi
     # ajuste para dejarlo en lo contado (12) es -6, no el -3 del cotejo —
     # y la pantalla lo explica ANTES de guardar.
     with (
-        patch("app.main.stock_deposito_de_articulo", return_value=18.0),
+        patch("app.main.stock_de_porcion", return_value=18.0),
         patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
     ):
         respuesta = cliente.get(
@@ -17326,9 +17326,35 @@ def test_ajustar_desde_cotejo_precarga_contra_el_stock_actual_y_avisa_si_se_movi
     assert "el ajuste sugerido para dejarlo en lo contado es -6" in respuesta.text
 
 
+def test_ajustar_compara_la_PORCION_y_no_el_total_del_articulo():
+    """El contado es de los SUELTOS; el total del artículo incluye las cajas.
+
+    Del 08/09: la precarga usaba `stock_deposito_de_articulo`, que devuelve
+    el total. Un limón con 5 sueltos y 30 cajas armadas da sueltos 5 y total
+    35, así que contando los 5 exactos la precarga salía −30: proponía borrar
+    del total tantos bultos como cajas armadas tuviera el artículo.
+
+    Acá los dos números están a propósito muy separados: sueltos 5 y total 35.
+    Contando 6 el ajuste es +1; con el total sería −29.
+    """
+    with (
+        patch("app.main.stock_de_porcion", return_value=5.0) as porcion,
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Limon"}]),
+    ):
+        respuesta = cliente.get(
+            "/administracion/stock/ajustar?articulo_id=1&contado=6.0&stock_conteo=5.0&fecha_conteo=2026-09-08"
+        )
+
+    assert respuesta.status_code == 200
+    assert 'value="1.0"' in respuesta.text
+    assert "-29" not in respuesta.text
+    # Y se le pidió la PORCIÓN, no el artículo: sin ficha_id son los sueltos.
+    porcion.assert_called_once_with(1)
+
+
 def test_ajustar_desde_cotejo_sin_movimientos_no_avisa():
     with (
-        patch("app.main.stock_deposito_de_articulo", return_value=15.0),
+        patch("app.main.stock_de_porcion", return_value=15.0),
         patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "Banana"}]),
     ):
         respuesta = cliente.get(
