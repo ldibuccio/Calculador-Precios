@@ -1821,3 +1821,70 @@ número mal — hubo un merge que salió antes que un mensaje que nunca se
 escribió, y nada avisó porque no había nada que fallara. Es la familia del
 push silencioso: lo que hay que mirar es el estado final —¿se mandó el
 número?— y no que nadie se haya quejado.
+
+## Las tildes del código de cliente: medición antes de la migración (08/09)
+
+Es lo único de la lista que **puede estar rompiendo hoy**, y el daño no cae
+sobre el stock sino sobre la **facturación** — la lección de Palmala: la
+exclusión se decidió mirando una cuenta y el daño cayó sobre otra.
+
+El índice `fichas_logistica_codigo_cliente_unico` pliega `lower(trim(...))`.
+`normalizar_texto` (core/matcheo_comanda.py), que es quien matchea el código
+del pedido contra la ficha, pliega **tres cosas más**:
+
+| | índice | `normalizar_texto` |
+|---|---|---|
+| mayúsculas | sí | sí |
+| espacios de los bordes | sí | sí |
+| **tildes** | **no** | sí (NFD + descarte de `Mn`) |
+| **eñe** | **no** | sí — `ñ` se descompone y queda `n` |
+| **espacios internos** | **no** | sí (`\s+` → un espacio) |
+
+La eñe es la que no estaba dicha en ningún lado y es la más fácil de cargar
+sin querer: **`PIÑA-1` y `PINA-1` entran los dos** y el matcheo los ve
+iguales.
+
+### Medido contra el esquema real, no contra un `create table` propio
+
+`db/tildes_1_codigos_con_tilde_y_colisiones.sql`, corrida sobre Postgres 16
+cargado con `db/esquema_completo.sql` y un fixture de nombres inventados
+(`CLIENTE EJEMPLO A/B`, `EJEMPLO Uno`). Los números son **del fixture, no de
+producción**.
+
+Lo primero que mostró la prueba, y no era el objetivo: **las nueve fichas
+entraron sin que el índice único rebotara una sola vez.** `CÓD-2` al lado de
+`COD-2`, `PIÑA-1` al lado de `PINA-1`, `X  9` al lado de `X 9`, todas del
+mismo cliente. El hueco no es teórico: la base real los acepta hoy.
+
+Predicción escrita **antes** de correr, y las siete columnas dieron exacto:
+`fichas_con_codigo` 7 · `con_tilde` 3 · `con_enie` 1 · `con_espacio_doble` 1
+· `colisiones_nuevas` 3 · `fichas_en_colision` 6 · `dup_regla_vieja` 0.
+
+### El canario
+
+Corrida de nuevo con la regla VIEJA puesta (`nueva = lower(c)`, sin plegar
+nada), `colisiones_nuevas` cae de **3 a 0**. La consulta mira algo. Una
+medición que da lo mismo con el arreglo sacado es una medición que no está
+puesta — corolario 12.
+
+Las otras tres columnas no se mueven, y es a propósito: describen `c`
+directamente en vez de comparar dos reglas.
+
+### `translate`, no `unaccent`
+
+Decidido: SQL puro. `unaccent` se habilita por proyecto, así que una regla
+de unicidad que dependa de él **se pierde sola el día que se crea la base de
+la tercera empresa** — y en silencio, porque la base nueva simplemente no va
+a tener el índice. `translate` + `lower` + `regexp_replace` viajan con el
+esquema.
+
+### El número que decide el orden de la migración
+
+`colisiones_nuevas` > 0 en producción significa que el `create unique index`
+**rebota**, y en el editor de Supabase eso deja el trabajo a medias. Con
+colisiones hay que limpiar primero y crear el índice después; sin
+colisiones, la migración es de un solo bloque.
+
+Y `dup_regla_vieja` es el testigo del corolario 17: tiene que dar 0 en las
+dos bases. Si no da 0, **el índice único no existe en esa base** y todo lo
+demás se estaba leyendo sobre una suposición falsa.

@@ -58,13 +58,35 @@ porque el desglose podía no cerrar y eso había que decirlo.
 una, corridas antes de codear, borraron una pantalla entera con su lógica de
 descuadre y sus tests.
 
-## Lo único que quedaba vivo ya está arreglado
+## RESUELTO, no pendiente: `arts_con_cajas` = 15
 
-`arts_con_cajas` = 15: quince artículos con materia prima y producto
-terminado en la misma pila del FIFO, donde un reproceso puede consumir cajas
-ya armadas y un armado puede costearse contra un cajón. **Ese es E5, y lo
-arreglaron A (la pared) y B (las dos pasadas)**, mergeadas el 08/09. No es un
-pendiente: es la medición del problema que ya se cerró.
+Que quede escrito con todas las letras, porque dentro de tres meses este
+número se lee solo y parece un problema abierto: **no lo es.**
+
+`arts_con_cajas` = 15 son quince artículos que tienen compras **y** guías R
+desde el corte, o sea **materia prima y producto terminado en la misma pila
+del FIFO**. Con las dos juntas y un FIFO que ordena por fecha sin mirar el
+tipo de lote, pasan las dos cosas: un reproceso puede consumir cajas ya
+armadas, y un armado puede costearse contra un cajón.
+
+**Eso es E5, y E5 está arreglado.** Las dos piezas se mergearon el 08/09:
+
+- **A — la pared**: una guía R nunca toma lotes trabajados
+  (`lotes_permitidos` con `TIPOS_LOTE_TRABAJADO`). Si con eso no alcanza,
+  decide el freno.
+- **B — las dos pasadas**: un armado toma primero los lotes trabajados y
+  recién después cae al cajón (`pasadas_de_lotes`). Es preferencia, no
+  pared, porque 135 de 765 bultos son de artículos de envase perdido que no
+  van a tener caja armada nunca.
+
+O sea que el 15 **es la medición del problema que ya se cerró**, no una
+cuenta de deuda. Un artículo con las dos pilas juntas hoy ya no se costea
+mal: el orden lo decide el tipo de lote antes que la fecha.
+
+**No abrir un pendiente a partir de este número.** Si alguna vez hay que
+volver a mirarlo, lo que importa no es cuántos artículos tienen las dos
+pilas —van a ser cada vez más, y está bien— sino si `e5_4` vuelve a dar
+`mal` distinto de ~0.
 
 ## Pendiente de esta medición
 
