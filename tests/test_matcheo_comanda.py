@@ -340,3 +340,52 @@ def test_adivinar_articulo_aprendizaje_tiene_prioridad_sobre_conversion():
     aprendizaje = {"manzana vde": 999}
     resultado = adivinar_articulo("MANZANA VDE", aprendizaje, ARTICULOS_DE_PRUEBA, CONVERSIONES_DE_PRUEBA)
     assert resultado == 999
+
+
+def test_el_plegado_del_INDICE_es_el_mismo_que_el_de_normalizar_texto():
+    """La regla de "es el mismo código" vive en DOS lugares y tiene que decir lo mismo.
+
+    `normalizar_texto` decide si el código de un pedido matchea una ficha;
+    el índice único `fichas_logistica_codigo_cliente_unico` decide si dos
+    fichas pueden compartirlo. Si se separan, entran dos fichas que el
+    matcheo ve iguales y el sistema elige una en silencio — que es
+    exactamente lo que el comentario del índice promete impedir.
+
+    El índice no puede llamar a Python, así que la lista de `translate` es
+    una COPIA. Este test es lo único que la sostiene: lee la lista del
+    archivo de la migración (no la repite acá — copiarla sería una tercera
+    copia) y exige las dos direcciones.
+
+    La segunda dirección es la que importa: una lista a medias es media
+    regla. Se escribió con los cinco acentos del español y `ÿ` se colaba —
+    Python lo pliega a `y` y el índice lo veía distinto.
+    """
+    import re
+    import unicodedata
+    from pathlib import Path
+
+    sql = Path("db/plegar_tildes_en_codigo_cliente.sql").read_text(encoding="utf-8")
+    # Anclado en el translate: un findall suelto se come los comentarios.
+    par = re.search(r"translate\(btrim\(codigo_cliente\),\s*'([^'\n]+)',\s*'([^'\n]+)'\)", sql)
+    assert par, "no encontré las dos listas de translate en la migración"
+    desde, hasta = par.group(1), par.group(2)
+    assert len(desde) == len(hasta), "translate necesita las dos listas del mismo largo"
+
+    # Ida: cada carácter que el índice pliega, Python lo pliega IGUAL.
+    for original, plegado in zip(desde, hasta):
+        assert normalizar_texto(original) == plegado.lower(), (
+            f"el índice pliega {original!r} a {plegado!r} y normalizar_texto no"
+        )
+
+    # Vuelta, la que encuentra los que FALTAN: ningún carácter del rango que
+    # Python pliega puede quedar afuera de la lista. Los que no aparecen no
+    # se nombran solos — por eso hay que enumerar el rango, no la lista.
+    for punto in range(0x00C0, 0x0180):
+        caracter = chr(punto)
+        sin_marcas = "".join(
+            c for c in unicodedata.normalize("NFD", caracter) if unicodedata.category(c) != "Mn"
+        )
+        if sin_marcas != caracter and len(sin_marcas) == 1:
+            assert caracter in desde, (
+                f"normalizar_texto pliega {caracter!r} a {sin_marcas!r} y el índice no lo tiene"
+            )
