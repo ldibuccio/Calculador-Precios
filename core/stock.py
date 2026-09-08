@@ -141,6 +141,29 @@ def prioridad_de_lote(salida) -> Prioridad:
     return _PRIORIDAD_POR_SALIDA.get(salida.get("tipo"), SIN_PREFERENCIA)
 
 
+# Cuando el freno del reproceso corre, la guía R TODAVÍA NO EXISTE: es la
+# salida que está por nacer. Va como constante porque son tres los que
+# tienen que preguntar por ella —el freno, el desglose de la pantalla y la
+# escritura de los consumos— y el tipo escrito a mano en tres lados es una
+# regla escrita tres veces.
+SALIDA_REPROCESO = {"tipo": "reproceso_toma"}
+
+
+def lotes_permitidos(lotes: list[dict], salida: dict) -> list[dict]:
+    """Los lotes que ESTA salida tiene permitido consumir, en el MISMO orden.
+
+    Saca los PROHIBIDOS y nada más. La preferencia (`prefiere`) es un orden
+    y NO se aplica acá a propósito: reordenar la lista rompería el `break`
+    de `repartir_fifo` y de `atribuir_costos_fifo`, que vale justamente
+    porque los lotes vienen ordenados por fecha. La preferencia se aplica
+    adentro del reparto, con dos pasadas sobre esta misma lista ordenada.
+    """
+    prohibidos = prioridad_de_lote(salida).prohibe
+    if not prohibidos:
+        return lotes
+    return [lote for lote in lotes if lote["tipo_lote"] not in prohibidos]
+
+
 def lote_posterior_a_la_salida(lote, salida) -> bool:
     """¿Este lote entró DESPUÉS de que esta salida ocurrió?
 
@@ -346,8 +369,12 @@ def reparto_para_reproceso(entradas: list[dict], salidas: list[dict], fecha) -> 
     return reparto_a_la_fecha(entradas, salidas, fecha, salidas_hasta=fecha - timedelta(days=1))
 
 
-def bultos_en_los_lotes(reparto: dict) -> float:
+def bultos_en_los_lotes(lotes: list[dict]) -> float:
     """Contra qué número compara el freno: la SUMA DE LOS RESTANTES, no el neto.
+
+    Recibe la LISTA y no el reparto entero desde la pieza 2: el freno de la
+    guía R mide contra los lotes que ella TIENE PERMITIDO tomar, que no son
+    todos los del reparto. Pedir la lista obliga al llamador a decir cuál.
 
     Decidido el 01/09. Este número NUNCA puede ser negativo —los restantes
     son >= 0 por construcción— y el negativo del neto vive en `sin_lote`,
@@ -356,7 +383,7 @@ def bultos_en_los_lotes(reparto: dict) -> float:
     por un agujero que ya estaba ahí antes de que tocara nada sería trabarlo
     por lo mismo que está arreglando.
     """
-    return round(sum(float(lote["restante"]) for lote in reparto["lotes"]), 2)
+    return round(sum(float(lote["restante"]) for lote in lotes), 2)
 
 
 def propuesta_fifo(lotes: list[dict], total: float) -> list[dict]:
@@ -380,7 +407,9 @@ def propuesta_fifo(lotes: list[dict], total: float) -> list[dict]:
     return consumos
 
 
-def validar_reparto_declarado(lotes: list[dict], total: float, reparto: list[dict]) -> str | None:
+def validar_reparto_declarado(
+    lotes: list[dict], total: float, reparto: list[dict], salida: dict | None = None
+) -> str | None:
     """El reparto que editó el operario, ¿se puede cumplir? Devuelve el motivo, o None si está bien.
 
     Se revalida SIEMPRE en el server contra los lotes frescos, aunque la
@@ -388,9 +417,15 @@ def validar_reparto_declarado(lotes: list[dict], total: float, reparto: list[dic
     apretó Guardar, otro pudo armar un pedido y mover los restantes. Si algo
     cambió, el motivo vuelve a la pantalla junto con una propuesta nueva.
     """
+    prohibidos = prioridad_de_lote(salida).prohibe if salida is not None else ()
     por_lote = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in lotes}
     suma = 0.0
     for fila in reparto:
+        # El prohibido se contesta ANTES de buscarlo: como no está en la
+        # lista, el lookup lo daría por "ya no está disponible", que manda
+        # al operario a mirar el stock cuando el problema es otro.
+        if fila.get("tipo_lote") in prohibidos:
+            return "Una guía R no puede tomar cajas ya armadas: elegí mercadería sin procesar."
         lote = por_lote.get((fila.get("tipo_lote"), fila.get("origen_id")))
         if lote is None:
             return "Uno de los lotes que elegiste ya no está disponible."

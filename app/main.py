@@ -8309,7 +8309,7 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
     antes de que apriete Guardar. Pero el freno de verdad está en
     crear_reproceso — esto es cortesía, no control.
     """
-    from core.stock import bultos_en_los_lotes, propuesta_fifo
+    from core.stock import SALIDA_REPROCESO, bultos_en_los_lotes, lotes_permitidos, propuesta_fifo
 
     hoy = _hoy_argentina()
     try:
@@ -8321,14 +8321,18 @@ def desglose_reproceso(articulo_id: int, fecha: str = "", bultos: float = 0):
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
-    disponible = bultos_en_los_lotes(reparto)
+    # La MISMA lista que va a ver el freno: si la pantalla ofreciera un lote
+    # que crear_reproceso rechaza, el operario armaría un reparto que no se
+    # puede guardar y el cartel llegaría recién al apretar Guardar.
+    lotes = lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO)
+    disponible = bultos_en_los_lotes(lotes)
     propuesta = {
         f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
-        for c in propuesta_fifo(reparto["lotes"], bultos)
+        for c in propuesta_fifo(lotes, bultos)
     }
     return JSONResponse(
         {
-            "lotes": _desglose_para_pantalla(reparto["lotes"]),
+            "lotes": _desglose_para_pantalla(lotes),
             "disponible": disponible,
             "alcanza": round(float(bultos) - disponible, 2) <= 0,
             "propuesta": propuesta,

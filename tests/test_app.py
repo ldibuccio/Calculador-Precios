@@ -20901,3 +20901,36 @@ def test_todos_los_tipos_de_salida_posibles_tienen_prioridad_DECIDIDA():
 
     sin_decidir = posibles - set(_PRIORIDAD_POR_SALIDA)
     assert not sin_decidir, f"tipos de salida sin prioridad decidida: {sin_decidir}"
+
+
+def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
+    """El comentario de `crear_reproceso` promete que el freno, el desglose de
+    la pantalla y la escritura de los consumos miran LA MISMA lista. La pared
+    de la pieza 2 tiene que estar en los tres o la promesa se rompe: la
+    pantalla ofrecería un lote que el freno después rechaza.
+
+    Se mira el TEXTO porque es un problema de CABLEADO, no de lógica: el que
+    se olvida no nombra la función que le falta (corolario 3 — hay que
+    grepear a los que construyen, no al campo nuevo).
+    """
+    db_py = open("app/db.py", encoding="utf-8").read()
+    main_py = open("app/main.py", encoding="utf-8").read()
+
+    # 1 y 3) el freno y la escritura, en crear_reproceso.
+    cuerpo = db_py[db_py.index("def crear_reproceso("):]
+    cuerpo = cuerpo[: cuerpo.index("\ndef ")]
+    assert "lotes_permitidos(a_la_fecha[\"lotes\"], SALIDA_REPROCESO)" in cuerpo
+    assert "bultos_en_los_lotes(lotes)" in cuerpo
+    assert "validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)" in cuerpo
+
+    # 2) el desglose que dibuja la pantalla.
+    desglose = main_py[main_py.index("def desglose_reproceso("):]
+    desglose = desglose[: desglose.index("\ndef ")]
+    assert "lotes_permitidos(reparto[\"lotes\"], SALIDA_REPROCESO)" in desglose
+    assert "bultos_en_los_lotes(lotes)" in desglose
+    assert "propuesta_fifo(lotes, bultos)" in desglose
+    assert "_desglose_para_pantalla(lotes)" in desglose
+    # Y que no quede ninguna lectura de la lista sin filtrar.
+    assert "reparto[\"lotes\"]" not in desglose.replace(
+        "lotes_permitidos(reparto[\"lotes\"], SALIDA_REPROCESO)", ""
+    )

@@ -186,6 +186,28 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 16, del 08/09, y es una PRÁCTICA, no un patrón de bug: **un test
+de "esto no está duplicado" hay que correrlo con la duplicación puesta, o
+no sabés si mira algo.**
+
+El test decía `prioridad_de_lote(...).prefiere is TIPOS_LOTE_TRABAJADO`.
+No parcheaba nada, comparaba exactamente lo que había que comparar, y aun
+así **no podía fallar**: CPython comparte la tupla constante dentro del
+mismo módulo, así que la lista copiada a mano da el mismo objeto. Pasaba
+con la copia puesta y con la copia sacada.
+
+Es el corolario 9 en su forma más difícil de ver —no hay un `patch` que
+delate el tapado— y no hay forma de razonarlo leyendo el test: hay que
+romper el código a propósito y mirar si cae. El arreglo terminó siendo un
+test de TEXTO (la tupla escrita una sola vez en `core/` y `app/`), que es
+lo único que distingue una referencia de una copia.
+
+Y de yapa, el primer regex dio falso positivo con `TIPOS_LOTE_STOCK`, que
+contiene los dos nombres seguidos y es otra lista. **Probarlo con la
+duplicación puesta también encontró eso**: sin la prueba, el test habría
+entrado al repo fallando por una razón equivocada.
+
+
 Corolario 15, del 08/09: **la asimetría del día del corte llegó a la
 OCTAVA, y esta vez no ensució una cuenta: decidió cuánto valía el
 problema.**

@@ -329,7 +329,7 @@ def test_el_numero_del_freno_NUNCA_es_negativo():
     reparto = reparto_para_reproceso(entradas, salidas, date(2026, 9, 5))
 
     assert reparto["stock"] == -15
-    assert bultos_en_los_lotes(reparto) == 0
+    assert bultos_en_los_lotes(reparto["lotes"]) == 0
 
 
 def test_la_propuesta_es_del_mas_viejo_primero_y_no_nombra_los_lotes_vacios():
@@ -494,3 +494,128 @@ def test_los_documentos_congelados_que_no_entran_se_nombran_del_mas_nuevo_para_a
     assert documentos_que_no_entran(consumos, 30) == []
     # Con 5 no entra ninguna.
     assert [g["reproceso_id"] for g in documentos_que_no_entran(consumos, 5)] == [38, 41]
+
+
+# --- Pieza 2 de E5: la PARED del reproceso ---------------------------------
+#
+# Una guía R no puede costearse contra una caja ya armada: reprocesar algo
+# que ya pasó por la mesa es contar dos veces el mismo trabajo. Medido el
+# 08/09: 10 de 20 guías R desde el corte lo hicieron, $2.798.438,92.
+
+from core.stock import (  # noqa: E402
+    SALIDA_REPROCESO,
+    lotes_permitidos,
+    validar_reparto_declarado,
+)
+
+
+def _cajon(dia, cantidad, origen_id):
+    return dict(_lote_fechado(dia, cantidad), tipo_lote="guia", origen_id=origen_id)
+
+
+def _caja_armada(dia, cantidad, origen_id):
+    return dict(_lote_fechado(dia, cantidad), tipo_lote="reproceso", origen_id=origen_id)
+
+
+def _reingreso(dia, cantidad, origen_id):
+    return dict(_lote_fechado(dia, cantidad), tipo_lote="reingreso_rechazo", origen_id=origen_id)
+
+
+def test_una_guia_R_no_ve_los_lotes_ya_trabajados():
+    lotes = reparto_para_reproceso(
+        [_cajon(1, 10, 55), _caja_armada(2, 40, 9), _reingreso(3, 7, 4)], [], date(2026, 9, 5)
+    )["lotes"]
+
+    permitidos = lotes_permitidos(lotes, SALIDA_REPROCESO)
+
+    assert [(l["tipo_lote"], l["origen_id"]) for l in permitidos] == [("guia", 55)]
+
+
+def test_el_freno_de_la_guia_R_no_cuenta_las_cajas_armadas():
+    """Los números están MUY separados a propósito: 10 de cajón contra 47 de
+    trabajado. Si la pared no está, el freno mide 57 y deja pasar un
+    reproceso de 50 que no tenía con qué."""
+    lotes = reparto_para_reproceso(
+        [_cajon(1, 10, 55), _caja_armada(2, 40, 9), _reingreso(3, 7, 4)], [], date(2026, 9, 5)
+    )["lotes"]
+
+    assert bultos_en_los_lotes(lotes) == 57
+    assert bultos_en_los_lotes(lotes_permitidos(lotes, SALIDA_REPROCESO)) == 10
+
+
+def test_la_propuesta_de_una_guia_R_no_nombra_una_caja_armada():
+    lotes = reparto_para_reproceso(
+        [_caja_armada(1, 40, 9), _cajon(2, 10, 55)], [], date(2026, 9, 5)
+    )["lotes"]
+
+    # La caja armada es MÁS VIEJA que el cajón: sin la pared el FIFO la
+    # propone primero, que es exactamente el caso que se fue a arreglar.
+    assert propuesta_fifo(lotes, 5) == [{"tipo_lote": "reproceso", "origen_id": 9, "bultos": 5.0}]
+    assert propuesta_fifo(lotes_permitidos(lotes, SALIDA_REPROCESO), 5) == [
+        {"tipo_lote": "guia", "origen_id": 55, "bultos": 5.0}
+    ]
+
+
+def test_el_operario_no_puede_ELEGIR_a_mano_una_caja_armada():
+    """La pared tiene que valer también para el desglose editado, o es una
+    sugerencia. Y el motivo es propio: como el lote no está en la lista, sin
+    este chequeo el mensaje diría "ya no está disponible" y mandaría al
+    operario a mirar el stock, que no tiene nada que ver.
+    """
+    lotes = reparto_para_reproceso([_cajon(1, 10, 55), _caja_armada(2, 40, 9)], [], date(2026, 9, 5))["lotes"]
+    permitidos = lotes_permitidos(lotes, SALIDA_REPROCESO)
+    elegido = [{"tipo_lote": "reproceso", "origen_id": 9, "bultos": 5.0}]
+
+    motivo = validar_reparto_declarado(permitidos, 5, elegido, SALIDA_REPROCESO)
+
+    assert motivo is not None
+    assert "cajas ya armadas" in motivo
+    # Sin la salida no hay pared: la firma vieja sigue funcionando igual.
+    assert validar_reparto_declarado(lotes, 5, elegido) is None
+
+
+def test_el_filtro_NO_reordena_la_lista():
+    """El `break` de repartir_fifo y el de atribuir_costos_fifo valen porque
+    los lotes vienen por fecha. Si el filtro reordenara, los dos se romperían
+    en silencio: dejarían de mirar lotes que sí podían usar."""
+    lotes = reparto_para_reproceso(
+        [_cajon(1, 10, 55), _caja_armada(2, 40, 9), _cajon(3, 5, 56)], [], date(2026, 9, 5)
+    )["lotes"]
+
+    permitidos = lotes_permitidos(lotes, SALIDA_REPROCESO)
+
+    assert [l["orden"] for l in permitidos] == sorted(l["orden"] for l in permitidos)
+    assert [l["origen_id"] for l in permitidos] == [55, 56]
+
+
+def test_un_armado_todavia_ve_TODOS_los_lotes():
+    """La pieza 2 es solo la pared de la guía R. La preferencia del armado es
+    la pieza 3, y hasta entonces el armado se reparte exactamente como antes:
+    este test tiene que seguir pasando después de la 3."""
+    lotes = reparto_para_reproceso([_cajon(1, 10, 55), _caja_armada(2, 40, 9)], [], date(2026, 9, 5))["lotes"]
+
+    assert lotes_permitidos(lotes, {"tipo": "armado"}) == lotes
+
+
+def test_el_reparto_sigue_siendo_la_FOTO_COMPLETA():
+    """La pared se aplica al OFRECER, no al repartir, y la diferencia es todo.
+
+    Si se filtraran las entradas ANTES de `repartir_fifo`, los bultos que de
+    verdad salieron de una caja armada quedarían colgados de los cajones y el
+    restante del cajón saldría más chico de lo que es — o sea que la pared
+    puesta en el lugar equivocado le inventa un faltante al cajón.
+
+    Se prueba con una merma DIRIGIDA a la caja armada, que es la única salida
+    que hoy elige lote sin depender del orden: con la lista completa se come
+    la caja y el cajón queda intacto; con las entradas filtradas, la merma no
+    encontraría su lote, caería al FIFO y se comería 30 del cajón.
+    """
+    entradas = [_cajon(1, 50, 55), _caja_armada(2, 40, 9)]
+    merma = _dirigida((date(2026, 9, 3), 3), 30, "reproceso", 9)
+    reparto = reparto_para_reproceso(entradas, salidas_para_reparto([merma]), date(2026, 9, 5))
+
+    por_lote = {(l["tipo_lote"], l["origen_id"]): l for l in reparto["lotes"]}
+    assert por_lote[("reproceso", 9)]["restante"] == 10   # la merma salió de acá
+    assert por_lote[("guia", 55)]["restante"] == 50       # y el cajón ni se tocó
+    # Y lo que la guía R puede tomar sigue siendo el cajón entero.
+    assert bultos_en_los_lotes(lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO)) == 50

@@ -7980,7 +7980,9 @@ def crear_reproceso(
     y lo va a ser siempre.
     """
     from core.stock import (
+        SALIDA_REPROCESO,
         bultos_en_los_lotes,
+        lotes_permitidos,
         propuesta_fifo,
         reparto_para_reproceso,
         salidas_para_reparto,
@@ -8012,9 +8014,15 @@ def crear_reproceso(
             # contra listas distintas, la pantalla aprobaría un reparto que
             # acá no se puede cumplir.
             a_la_fecha = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha_operacion)
-            lotes = a_la_fecha["lotes"]
+            # LA PARED (pieza 2 de E5): una guía R no puede costearse contra
+            # una caja ya armada. El reparto de arriba sigue siendo la foto
+            # completa —los armados tienen que poder haberse comido esas
+            # cajas— y lo que se recorta es lo que ESTA salida puede tomar.
+            # Filtrar antes del reparto sería otra cosa: le devolvería a los
+            # cajones las salidas que en realidad comieron cajas.
+            lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
 
-            disponible = bultos_en_los_lotes(a_la_fecha)
+            disponible = bultos_en_los_lotes(lotes)
             if round(float(bultos_tomados) - disponible, 2) > 0:
                 raise StockInsuficienteParaReproceso(float(bultos_tomados), disponible, lotes)
 
@@ -8022,7 +8030,7 @@ def crear_reproceso(
             if reparto is None:
                 declarado = propuesta_fifo(lotes, bultos_tomados)
             else:
-                motivo = validar_reparto_declarado(lotes, bultos_tomados, reparto)
+                motivo = validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)
                 if motivo is not None:
                     raise RepartoDesactualizado(motivo)
                 declarado = [fila for fila in reparto if float(fila.get("bultos") or 0) > 0]
