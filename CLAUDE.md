@@ -1208,3 +1208,34 @@ Corolario del corolario, para reconocerlo sin haberlo sufrido: **si la
 consulta que sostiene una guarda tiene `count`, `sum`, `max` o `avg` en el
 `select`, la guarda no puede distinguir "no hay" de "hay cero".** No hace
 falta razonar el lenguaje: alcanza con mirar si hay un agregado.
+
+Corolario 28, del 08/09, y es el caso más limpio del **comentario que
+envejece**: no envejeció con el tiempo — **envejeció en el mismo commit que
+lo volvió falso**, y ninguno de los dos lo vio.
+
+La pantalla de armar, cuando el desglose vuelve sin nada repartido, decía:
+*"No hay lotes cargados de este artículo a esa fecha: salió sin lote."* Era
+cierta: hasta ese día, la única forma de que la propuesta viniera vacía era
+que no hubiera lotes. La pared del armado agregó una segunda —para un
+artículo con envase de ficha, el cajón **está ahí**, listado y con 0
+propuestos, y la pared simplemente no lo ofrece— y la frase pasó a mandar a
+buscar mercadería que no falta.
+
+Los otros comentarios envejecidos de esta lista (`eliminar_compra`, el
+docstring de la alerta) se separaron **meses** después, por un cambio que
+alguien más hizo en otro módulo. Éste no: **el mismo diff que agregó el
+camino nuevo dejó la frase vieja tres líneas más abajo.** No hay historia
+que reconstruir ni módulo lejano que culpar. Estaba a la vista, en el
+archivo abierto, en la revisión.
+
+Y por eso la señal es distinta de "buscar comentarios viejos", que es una
+tarea sin fin y que nadie hace: **cuando un cambio hace que una rama del
+código deje de alcanzarse por el motivo de antes, el texto de esa rama hay
+que releerlo.** Es una pregunta corta y se hace en el momento: *toqué esta
+condición — ¿qué dice el `else`?*
+
+Aplica a cualquier rama que AFIRME algo sobre por qué llegó ahí: el `else`,
+el caso vacío, el mensaje de error, el default. Engancha con el corolario 5
+—*una rama por defecto que afirma algo es una aserción sin verificar*— y le
+agrega **cuándo** verificarla: el día que se agrega un camino que puede
+caer en ella.

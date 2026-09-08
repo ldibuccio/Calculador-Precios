@@ -5447,6 +5447,11 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
         "armado": armado,
         "lotes": reparto["lotes"],
         "editado": bool(elegidos),
+        # Viaja a la pantalla para que el cartel del caso vacío diga la
+        # verdad: con envase, "no hay lotes" es FALSO —el cajón está ahí— y
+        # lo que falta es la guía R. Sale de la MISMA salida que decide la
+        # pared, no de una segunda lectura de la ficha.
+        "ficha_con_envase": bool(esta.get("ficha_con_envase")),
         # Lo que ya eligió, o la propuesta del más viejo primero si no tocó nada.
         "propuesta": (
             {f"{e['lote_tipo']}:{e['lote_origen_id']}": float(e["bultos"]) for e in elegidos}

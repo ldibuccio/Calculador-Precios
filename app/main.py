@@ -13276,6 +13276,7 @@ def lotes_del_renglon_armado(renglon_id: int):
             "editado": desglose["editado"],
             "lotes": _desglose_para_pantalla(desglose["lotes"]),
             "propuesta": desglose["propuesta"],
+            "ficha_con_envase": desglose["ficha_con_envase"],
         }
     )
 

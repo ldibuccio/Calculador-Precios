@@ -6237,3 +6237,33 @@ def test_anular_pedido_sin_armados_da_de_baja_SOLO_la_cabecera():
     escrituras = [" ".join(c.args[0].split()) for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
     assert escrituras == ["UPDATE pedidos SET anulado_el = now() WHERE id = %s"]
     conexion.commit.assert_called_once()
+
+
+def test_el_desglose_dice_si_la_ficha_tiene_ENVASE():
+    """Para que el cartel del caso vacío no mienta.
+
+    Con envase, "no hay lotes cargados" es FALSO: el cajón está en la lista
+    con 0 propuestos, y lo que pasa es que la pared no se lo ofrece al
+    armado. El dato sale de la MISMA salida que decide la pared
+    (`_SQL_SALIDAS_STOCK`), no de una segunda lectura de la ficha — con dos
+    lecturas, el día que difieran el cartel diría una cosa y el reparto otra.
+    """
+    from app.db import desglose_de_renglon_armado
+
+    entradas = [{"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 8, 0)), "tipo_lote": "guia",
+                 "origen_id": 5, "cantidad": 10.0, "costo_bulto": 50.0, "detalle": "PROV EJEMPLO",
+                 "fecha_lote": date(2026, 9, 7)}]
+    salida = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+              "cantidad": 10.0, "renglon_id": 55, "ficha_con_envase": True}
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, 10.0, datetime(2026, 9, 7, 11, 0))])
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._entradas_y_salidas_stock", return_value=(entradas, [salida])),
+    ):
+        desglose = desglose_de_renglon_armado(55)
+
+    assert desglose["ficha_con_envase"] is True
+    # Y la pared se ve en la propuesta: el cajón está listado pero no se ofrece.
+    assert desglose["propuesta"] == {}, "con envase y sin caja no se propone nada"
+    assert [lote["tipo_lote"] for lote in desglose["lotes"]] == ["guia"], "el cajón sigue en la lista"

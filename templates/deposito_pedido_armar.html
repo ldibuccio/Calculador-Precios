@@ -828,9 +828,16 @@
       const lista = partes.length > 1
         ? partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1]
         : partes.join("");
-      document.getElementById("resumen-lotes-" + renglonId).textContent = !partes.length
-        ? "No hay lotes cargados de este artículo a esa fecha: salió sin lote."
-        : (datos.editado ? "Lo dijiste vos: " : "Del más viejo primero: ") + lista + ".";
+      // EL CASO VACÍO DICE DOS COSAS DISTINTAS, y hasta hoy decía una sola.
+      // Con envase de ficha no es que no haya lotes —el cajón está ahí, en
+      // datos.lotes con 0 propuestos—: es que una caja no puede salir de un
+      // cajón sin pasar por una guía R, y la pared no se lo ofrece. La frase
+      // vieja mandaba a buscar mercadería que no falta.
+      document.getElementById("resumen-lotes-" + renglonId).textContent = partes.length
+        ? (datos.editado ? "Lo dijiste vos: " : "Del más viejo primero: ") + lista + "."
+        : (datos.ficha_con_envase
+            ? "Faltan cajas armadas de esta ficha: cargá la guía R."
+            : "No hay lotes cargados de este artículo a esa fecha: salió sin lote.");
     }
 
     function mostrarTotalLotes(renglonId) {

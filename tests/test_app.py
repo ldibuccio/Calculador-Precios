@@ -20177,11 +20177,16 @@ def test_el_desglose_de_un_renglon_armado_trae_la_propuesta_y_los_lotes():
              "detalle": "Vitale", "restante": 8.0},
         ],
         "propuesta": {"guia:101": 13.0, "guia:102": 2.0},
+        # Viaja para que el cartel del caso vacío diga la verdad: con envase,
+        # "no hay lotes" es falso — el cajón está ahí y la pared no se lo
+        # ofrece. Acá es False: este renglón sale de cajones y está bien.
+        "ficha_con_envase": False,
     }
     with patch("app.main.desglose_de_renglon_armado", return_value=desglose):
         datos = cliente.get("/deposito/pedido/renglones/55/lotes").json()
 
     assert datos["armado"] == 15.0
+    assert datos["ficha_con_envase"] is False
     assert datos["editado"] is False
     assert datos["propuesta"] == {"guia:101": 13.0, "guia:102": 2.0}
     # Fecha y cantidad; el proveedor no viaja porque cada día tiene un lote solo.
