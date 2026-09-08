@@ -1187,3 +1187,24 @@ Y el detalle del turno, que es el de siempre: **lo agarró probar los
 cuatro casos, no leer el bloque.** El `if not found` leído se ve
 perfectamente razonable — es la línea que uno escribiría—, y solo corrida
 contra un id inexistente muestra que no hace nada.
+
+**La trampa CRUZA DE LENGUAJE**, y eso es lo que la vuelve peligrosa: no
+es una particularidad de plpgsql, es del AGREGADO. El mismo día apareció
+en Python, al escribir la versión de aplicación de ese mismo bloque:
+
+```python
+cursor.execute("SELECT count(*) FROM pedidos WHERE id = %s", (pedido_id,))
+if cursor.fetchone() is None:   # NUNCA es None
+```
+
+`fetchone()` de un `count(*)` devuelve `(0,)`, jamás `None`. Es el mismo
+hecho —un agregado sin `group by` siempre produce exactamente una fila— y
+por eso todos los idiomas que existen para preguntar "¿había algo?" fallan
+igual: `not found`, `fetchone() is None`, `rowcount == 0`, un `if not
+filas`. La forma correcta es la misma en los dos: **preguntar por la
+existencia con un `select` SIN agregado, y contar después.**
+
+Corolario del corolario, para reconocerlo sin haberlo sufrido: **si la
+consulta que sostiene una guarda tiene `count`, `sum`, `max` o `avg` en el
+`select`, la guarda no puede distinguir "no hay" de "hay cero".** No hace
+falta razonar el lenguaje: alcanza con mirar si hay un agregado.
