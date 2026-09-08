@@ -366,8 +366,8 @@ nunca se cargaron.
 2. **En el FIFO, y ahí no se cancela nunca.** El total puede cerrar en cero y
    aun así cada bulto haber salido del lote equivocado: un reproceso tomando
    cajas ya armadas como materia prima. Eso es lo que medimos el 07/09 —19 de
-   20 guías, $2.798.438,92 (corregido el 08/09)— y no lo arregla ningún
-   ciclo completo.
+   20 guías, $2.798.438,92 (Frutamax, corte 05/09, 06 y 07/09)— y no lo
+   arregla ningún ciclo completo.
 
 **El corolario práctico**: un total que cierra no prueba que las unidades
 estén bien. La mezcla se esconde justamente en el número que más se mira.
@@ -799,8 +799,8 @@ fila de ceros. Los datos de prueba se borraron.
 
 ## Los 494: separar "se fue al cajón teniendo caja" de "no tenía otra opción"
 
-`e5_2` sobre Frutamax dio **`cajon` 494 de `armado` 765 — el 65%— y
-$14.618.218,30**, con `sin_costo` 0. Cuatro veces la fuga que veníamos
+`e5_2` sobre **Frutamax (corte 05/09, `> corte`: 06 y 07/09)** dio **`cajon`
+494 de `armado` 765 — el 65%— y $14.618.218,30**, con `sin_costo` 0. Cuatro veces la fuga que veníamos
 midiendo del lado del reproceso ($2.798.438,92 ya corregido), y por el lado
 que ninguna de
 las dos direcciones tapaba.
@@ -949,6 +949,10 @@ asumí del `insert` que trae la migración. El corte de Frutamax se movió al
 hasta volverse un hecho.
 
 ## El veredicto: A y B van juntas
+
+Todo lo de abajo es **FRUTAMAX, corte 05/09, recorte `> corte`, o sea 06 y
+07/09** — dos días. La ficha va pegada a los números y no en un párrafo
+aparte: ver el corolario 19.
 
 ```
 Lado del reproceso (A)   $2.798.438,92   ← e5_1, exacto

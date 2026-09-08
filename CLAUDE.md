@@ -186,6 +186,36 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 19, del 08/09, y es de otra familia que todos los anteriores: **la
+salvaguarda funcionó, el dato estaba a la vista, y no se leyó.**
+
+Los otros corolarios son sobre datos que no existían, que engañaban, o que
+se veían igual que su ausencia. Éste es sobre un dato **correcto, presente y
+visible**. El día anterior las seis consultas de E5 ganaron una columna
+`corte` justamente para que no se pudiera confundir la base contra la que se
+midió (corolario 17). El resultado que tenía adelante decía `2026-09-05`.
+Escribí "desde el 31/08" igual.
+
+**Por eso el arreglo NO es agregar otra columna.** Más salida no arregla que
+no se lea: la empeora, porque hay más para saltear. Los dos que sí sirven:
+
+1. **El parámetro viaja ADENTRO del número, en la misma oración.** No
+   "$2.798.438,92 desde el corte" sino "$2.798.438,92 (Frutamax, corte
+   05/09, `> corte`, 06 y 07/09)". Escrito así, **no se puede citar el
+   número sin escribir el recorte**, y para escribir el recorte hay que ir a
+   buscarlo. Una ficha al lado del número, no un párrafo aparte que se lee
+   una vez.
+2. **Al corregir un dato se vuelve al RESULTADO, no al texto anterior.** Ese
+   fue el mecanismo exacto: corregí prosa mirando prosa. El resultado crudo
+   —donde estaba el 05/09— no lo volví a abrir en ningún momento. La prosa
+   es lo que estaba mal; releerla solo confirma lo que ya decía.
+
+Y la observación que cierra: lo que sí lo agarró fue `e5_0` corrido en las
+DOS bases, que puso los dos cortes en la misma pantalla. **La verificación
+que funciona es la que hace chocar dos fuentes**, no la que agrega un dato
+más a una sola.
+
+
 Corolario 18, del 08/09: **un valor que vive en la BASE no se lee del código
 que lo creó.** La migración es un registro fiel de lo que se insertó UNA VEZ;
 no dice nada de lo que el valor es HOY.
