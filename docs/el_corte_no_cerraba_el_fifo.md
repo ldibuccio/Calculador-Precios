@@ -1638,3 +1638,28 @@ cada uno donde va. Base vacía devuelve una fila.
 
 **Si el par predice bien, sirve para sembrar la marca. Si no, la marca hay
 que cargarla a mano ficha por ficha, y eso es el pendiente real.**
+
+## Estado al cierre del 08/09, una línea por cosa
+
+- **Tolerancia de kilos**: implementada, ±3 kg **por bulto**, compara
+  `kilos_enviados / bultos` contra `fichas_logistica.contenido_caja`, avisa
+  en la pantalla de armar y solo para fichas por kilo. **Sin cambios.**
+- **Aviso "no hay cajas de esta ficha"**: previsto en
+  `docs/diseno_base_datos.md`, **sin implementar**. Es el que resuelve lo de
+  anoche — el armado de un artículo que va reenvasado saliendo del cajón en
+  silencio.
+- **Campo que distinga reenvasado de directo**: **no existe** en el esquema.
+  `db/ficha_1_hay_campo_que_diga_reprocesado.sql` mide si el par
+  `contenido_caja` / `contenido_referencia` puede sembrarlo.
+- **Marcador de versión**: no existe; por eso "verificá en la pantalla" no
+  distingue "no funciona" de "estás mirando lo viejo".
+- **A y B**: mergeadas. E5 cerrado del lado del diagnóstico, con la
+  partición 271 / 359 / 135 cruzada por dos consultas independientes.
+
+Mañana, en este orden: **marcador de versión**, **`ficha_1`**, y el **aviso
+de "no hay cajas"**.
+
+Sin correr, sin urgencia: `e5_8` / `e5_9` (el factor de precio entre lotes),
+`e5_11` (envase fijo entre los 630), `remanente_1` y `remanente_2` (alcance
+del desglose por contenido), `corte_fifo_15` con los tres desvíos sin causa,
+y la caja de Día de Mango.
