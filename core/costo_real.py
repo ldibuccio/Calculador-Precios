@@ -62,7 +62,7 @@ un número chico y cierto que uno grande y mentiroso.
 """
 
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
-from core.stock import lote_posterior_a_la_salida, lotes_senalados
+from core.stock import es_lote_trabajado, lote_posterior_a_la_salida, lotes_senalados
 
 ETIQUETAS_MOTIVO_REAL = {
     "sin_kilaje": "Renglón armado sin kilaje cargado",
@@ -82,18 +82,6 @@ ETIQUETAS_MOTIVO_REAL = {
 # pérdida (no queda primera que lo absorba, a diferencia del reproceso).
 DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
-# La merma parte en dos: qué se está tirando, materia prima o trabajo.
-# Tirar un cajón crudo cuesta lo que costó comprarlo; tirar un bulto que
-# ya pasó por la mesa cuesta eso MÁS el laburo que se le puso, y el costo
-# del lote ya lo refleja. Un lote de compra es el cajón como vino, y un
-# ajuste (stock inicial, corrección de registro) se cuenta igual: es
-# mercadería sin procesar. Una guía R ya pasó por la mesa, y un reingreso
-# por rechazo también — salió armado y volvió.
-TIPOS_LOTE_TRABAJADO = ("reproceso", "reingreso_rechazo")
-
-
-def _es_trabajado(tipo_lote) -> bool:
-    return tipo_lote in TIPOS_LOTE_TRABAJADO
 
 
 _MOTIVO_POR_TIPO_LOTE = {
@@ -376,7 +364,7 @@ def calcular_rentabilidad_real(
                 # FIFO, y puede comerse la punta de un cajón crudo y seguir
                 # con una guía R. Cada porción se imputa a lo que era.
                 for consumo in salida["consumos_lotes"]:
-                    lado = "trabajada" if _es_trabajado(consumo["tipo_lote"]) else "cruda"
+                    lado = "trabajada" if es_lote_trabajado(consumo["tipo_lote"]) else "cruda"
                     fila[f"costo_mermas_{lado}"] += consumo["costo"]
                     fila[f"bultos_mermados_{lado}"] += consumo["bultos"]
 

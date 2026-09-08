@@ -20751,3 +20751,153 @@ def test_la_ventana_de_pedidos_incompletos_sale_del_listado_y_no_de_un_7_suelto(
     # Y el default sigue siendo el de la pantalla, sin sorpresas.
     assert DIAS_PASADOS_LISTADO_PEDIDOS == 7
 
+
+
+# ── Pieza 1 de E5: la regla de prioridad de lote ────────────────────────────
+#
+# Solo la REGLA. Todavía no la usa nadie: el reparto (piezas 2 y 3) se aplica
+# después. Estos tests fijan las decisiones del 08/09 para que un cambio de
+# criterio tenga que ser deliberado.
+
+
+def test_un_armado_PREFIERE_la_caja_armada_pero_no_la_exige():
+    """Preferencia, no pared, y la diferencia es el galpón parado.
+
+    135 de los 494 bultos medidos son armados de artículos que NO se
+    reprocesan nunca (manzana, pera, arándano: salen en el envase que
+    vienen). Si la caja armada fuera obligatoria, esos 135 se quedarían sin
+    lote todos los días y la pantalla diría "salió más de lo que había".
+    """
+    from core.stock import TIPOS_LOTE_TRABAJADO, prioridad_de_lote
+
+    prioridad = prioridad_de_lote({"tipo": "armado"})
+    assert prioridad.prefiere == TIPOS_LOTE_TRABAJADO
+    assert prioridad.prohibe == ()
+
+
+def test_una_guia_R_tiene_PROHIBIDA_la_caja_armada():
+    """Acá sí es pared: reprocesar una caja ya armada es contar dos veces el
+    mismo trabajo. Si no alcanza, el que decide es el freno de
+    crear_reproceso, no el reparto estirándose.
+    """
+    from core.stock import TIPOS_LOTE_TRABAJADO, prioridad_de_lote
+
+    prioridad = prioridad_de_lote({"tipo": "reproceso_toma"})
+    assert prioridad.prohibe == TIPOS_LOTE_TRABAJADO
+    assert prioridad.prefiere == ()
+
+
+def test_la_lista_de_lotes_trabajados_esta_escrita_UNA_SOLA_VEZ():
+    """Una regla escrita dos veces son DOS reglas: se separan sin que nadie
+    lo note. El corte de la merma (costo_real) y la prioridad del FIFO tienen
+    que salir de la misma constante.
+
+    Este test mira el TEXTO y no la identidad de los objetos, y la primera
+    versión miraba la identidad: `prefiere is TIPOS_LOTE_TRABAJADO` pasaba
+    igual con la lista copiada, porque CPython comparte la tupla constante
+    dentro del mismo módulo. Era un test que no podía fallar — corolario 9,
+    encontrado el mismo día que se escribió.
+    """
+    import glob
+
+    # La TUPLA de dos, cerrada: `("guia", "reproceso", "reingreso_rechazo",
+    # ...)` de app/main.py es otra lista y no una copia de ésta. Atrapa la
+    # copia literal, que es como se copian estas listas; no pretende atrapar
+    # una reescrita al revés o partida en dos líneas.
+    literal = re.compile(r"""\(\s*['"]reproceso['"],\s*['"]reingreso_rechazo['"]\s*\)""")
+    copias = []
+    for ruta in glob.glob("core/*.py") + glob.glob("app/*.py"):
+        texto = open(ruta, encoding="utf-8").read()
+        for linea in texto.splitlines():
+            if literal.search(linea):
+                copias.append((ruta, linea.strip()))
+
+    assert len(copias) == 1, f"la lista está escrita en más de un lugar: {copias}"
+    ruta, linea = copias[0]
+    assert ruta == "core/stock.py" and linea.startswith("TIPOS_LOTE_TRABAJADO ="), copias
+
+    # Y que la regla efectivamente la use.
+    from core.stock import TIPOS_LOTE_TRABAJADO, prioridad_de_lote
+
+    assert prioridad_de_lote({"tipo": "armado"}).prefiere == TIPOS_LOTE_TRABAJADO
+    assert prioridad_de_lote({"tipo": "reproceso_toma"}).prohibe == TIPOS_LOTE_TRABAJADO
+
+
+def test_merma_y_ajuste_quedan_en_FIFO_puro_y_es_una_DECISION():
+    """No es un olvido: una merma puede ser de un cajón podrido o de una caja
+    golpeada y el tipo de movimiento no lo dice. El operario que sí lo sabe
+    tiene la merma dirigida, que gana antes que cualquier FIFO.
+
+    Se verifica que estén NOMBRADOS en la tabla, no solo que devuelvan el
+    default: un tipo decidido y uno olvidado se ven igual desde afuera.
+    """
+    from core.stock import SIN_PREFERENCIA, _PRIORIDAD_POR_SALIDA, prioridad_de_lote
+
+    for tipo in ("merma", "ajuste"):
+        assert tipo in _PRIORIDAD_POR_SALIDA, f"{tipo} tiene que estar decidido explícitamente"
+        assert prioridad_de_lote({"tipo": tipo}) == SIN_PREFERENCIA
+
+
+def test_una_salida_de_tipo_desconocido_se_reparte_como_siempre():
+    """El default es SEGURO: sin preferencia, o sea el FIFO de antes. Una
+    salida de un tipo nuevo nunca se queda sin lote por una regla que no la
+    contemplaba, y tampoco explota en producción con el galpón trabajando.
+    Lo que avisa de un tipo nuevo es el test de abajo.
+    """
+    from core.stock import SIN_PREFERENCIA, prioridad_de_lote
+
+    assert prioridad_de_lote({"tipo": "todavia_no_existe"}) == SIN_PREFERENCIA
+    assert prioridad_de_lote({}) == SIN_PREFERENCIA
+
+
+def test_ningun_tipo_de_lote_esta_a_la_vez_preferido_y_prohibido():
+    """Invariante de la tabla entera. `prefiere` es un orden y `prohibe` es
+    una pared: un tipo en las dos no tiene interpretación posible.
+    """
+    from core.stock import _PRIORIDAD_POR_SALIDA
+
+    for tipo, prioridad in _PRIORIDAD_POR_SALIDA.items():
+        assert not (set(prioridad.prefiere) & set(prioridad.prohibe)), tipo
+
+
+def test_todos_los_tipos_de_salida_posibles_tienen_prioridad_DECIDIDA():
+    """Lee la lista de la base y de la consulta, no de la memoria.
+
+    Es el corolario del `{% else %}` de Guías R aplicado acá: el día que
+    `movimientos_stock.tipo` gane un valor que pueda ser salida, falla este
+    test y no una atribución silenciosa en la Rentabilidad Real.
+
+    Así se enteró `stock_inicial` de que también tenía que estar: el CHECK
+    no le prohíbe ser negativo, así que puede aparecer como salida.
+    """
+    import re
+
+    from app.db import _SQL_SALIDAS_STOCK
+    from core.stock import _PRIORIDAD_POR_SALIDA
+
+    esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
+    bloque = re.search(r"create table movimientos_stock.*?\n\);", esquema, re.S).group(0)
+    check = re.search(r"tipo text not null check \(tipo in \((.*?)\)\)", bloque, re.S).group(1)
+    del_check = set(re.findall(r"'([a-z_]+)'", check))
+    assert del_check == {
+        "ajuste",
+        "merma",
+        "reingreso_rechazo",
+        "stock_inicial",
+        "cierre_modelo_viejo",
+    }, del_check
+
+    # Los otros dos tipos de salida son literales de la consulta.
+    literales = {t for t in ("armado", "reproceso_toma") if f"'{t}'" in _SQL_SALIDAS_STOCK}
+    assert literales == {"armado", "reproceso_toma"}, literales
+
+    # reingreso_rechazo NUNCA es salida (el CHECK lo obliga positivo) y
+    # cierre_modelo_viejo lo saca la consulta por tipo. Los dos se verifican
+    # contra su fuente: si mañana se cae la guarda, el tipo entra a la lista.
+    assert "movimientos_stock_reingreso_positivo" in bloque
+    assert "check (tipo <> 'reingreso_rechazo' or cantidad > 0)" in bloque
+    assert "m.tipo <> 'cierre_modelo_viejo'" in _SQL_SALIDAS_STOCK
+    posibles = (del_check - {"reingreso_rechazo", "cierre_modelo_viejo"}) | literales
+
+    sin_decidir = posibles - set(_PRIORIDAD_POR_SALIDA)
+    assert not sin_decidir, f"tipos de salida sin prioridad decidida: {sin_decidir}"

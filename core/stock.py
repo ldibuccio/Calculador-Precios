@@ -25,6 +25,7 @@ Todo en BULTOS (lo que se cuenta en el piso).
 """
 
 from datetime import timedelta
+from typing import NamedTuple
 
 
 def fecha_de_orden(orden):
@@ -43,6 +44,101 @@ def fecha_de_orden(orden):
     if isinstance(orden, (tuple, list)) and orden:
         return orden[0]
     return None
+
+
+# ── Qué lote prefiere cada salida ────────────────────────────────────────
+#
+# El FIFO ordena por FECHA y hasta acá no miraba QUÉ era cada lote, así que
+# `reprocesos.bultos_primera` (una caja ya armada) entraba a la misma pila
+# que los cajones de las compras. Medido el 08/09 desde el corte: 10 guías R
+# se costearon contra cajas armadas ($2.798.438,92 — e5_1) y 359 de 494
+# bultos de armado se costearon contra cajones TENIENDO caja disponible
+# ($9.658.218,30 — e5_4).
+#
+# Esto es SOLO la regla. Nadie la usa todavía: quién la aplica y cómo son
+# las piezas 2 y 3.
+
+# La merma parte en dos: qué se está tirando, materia prima o trabajo.
+# Tirar un cajón crudo cuesta lo que costó comprarlo; tirar un bulto que
+# ya pasó por la mesa cuesta eso MÁS el laburo que se le puso, y el costo
+# del lote ya lo refleja. Un lote de compra es el cajón como vino, y un
+# ajuste (stock inicial, corrección de registro) se cuenta igual: es
+# mercadería sin procesar. Una guía R ya pasó por la mesa, y un reingreso
+# por rechazo también — salió armado y volvió.
+#
+# Vive acá y no en core/costo_real.py porque ese módulo importa de éste, y
+# al revés sería un ciclo. Es UNA definición: el corte de la merma y la
+# prioridad del FIFO tienen que decir lo mismo o se separan.
+TIPOS_LOTE_TRABAJADO = ("reproceso", "reingreso_rechazo")
+
+
+def es_lote_trabajado(tipo_lote) -> bool:
+    """¿Este lote ya pasó por la mesa? (guía R o reingreso por rechazo)."""
+    return tipo_lote in TIPOS_LOTE_TRABAJADO
+
+
+class Prioridad(NamedTuple):
+    """Qué lotes prefiere una salida y cuáles tiene PROHIBIDOS.
+
+    Son dos cosas distintas y conviene que se llamen distinto:
+
+    - `prefiere` es un ORDEN. La salida busca primero entre esos tipos y,
+      si no alcanzan, sigue con el resto. Nunca deja bultos sin lote por
+      preferir: un artículo que no se reprocesa nunca (manzana, pera,
+      arándano) no tiene una sola caja armada, y su armado tiene que poder
+      salir del cajón como siempre. Medido: 135 de los 494 bultos son eso.
+    - `prohibe` es una PARED. La salida no puede tocar esos tipos aunque se
+      quede corta; el que decide qué hacer con eso es el freno, no el
+      reparto.
+
+    Un tipo no puede estar en las dos.
+    """
+
+    prefiere: tuple
+    prohibe: tuple
+
+
+SIN_PREFERENCIA = Prioridad(prefiere=(), prohibe=())
+
+# La tabla completa, y explícita hasta en los casos que no hacen nada: un
+# tipo que cayera al default por olvido y otro que caiga por decisión se
+# ven igual desde afuera. El test que lee el CHECK de la base exige que
+# estén todos nombrados acá.
+_PRIORIDAD_POR_SALIDA = {
+    # Un armado toma CAJA ARMADA primero. Es preferencia y no pared: si no
+    # hay cajas, sale del cajón, que es lo que pasa todos los días con los
+    # artículos que no se reprocesan.
+    "armado": Prioridad(prefiere=TIPOS_LOTE_TRABAJADO, prohibe=()),
+    # Una guía R toma MATERIA PRIMA y nada más. Acá sí es pared: reprocesar
+    # una caja ya armada no es un reproceso, es contar dos veces el mismo
+    # trabajo. Si no alcanza, frena (crear_reproceso), no se estira.
+    "reproceso_toma": Prioridad(prefiere=(), prohibe=TIPOS_LOTE_TRABAJADO),
+    # Merma y ajuste: FIFO PURO, sin preferencia, y es una decisión tomada
+    # el 08/09, no un olvido. Una merma puede ser de un cajón podrido o de
+    # una caja que se golpeó, y no hay forma de saberlo desde el tipo de
+    # movimiento. Inventar una preferencia acá sería afirmar algo que nadie
+    # verificó; el operario que SÍ lo sabe ya tiene la merma dirigida
+    # (lote_tipo / lote_origen_id), que gana antes que cualquier FIFO.
+    "merma": SIN_PREFERENCIA,
+    "ajuste": SIN_PREFERENCIA,
+    # Un stock_inicial negativo no debería existir —la foto del corte suma—
+    # pero la base no lo prohíbe (no hay CHECK de signo), así que si aparece
+    # como salida se comporta como un ajuste. Nombrado a propósito: es la
+    # diferencia entre "decidido" y "se nos pasó".
+    "stock_inicial": SIN_PREFERENCIA,
+}
+
+
+def prioridad_de_lote(salida) -> Prioridad:
+    """Qué lotes prefiere y cuáles tiene prohibidos esta salida.
+
+    El default es SIN_PREFERENCIA —el FIFO de siempre— y es el default
+    SEGURO: una salida de un tipo que todavía no existe se reparte como se
+    repartía antes, nunca se queda sin lote por una regla nueva. Lo que
+    avisa de un tipo nuevo es el test contra el CHECK, no una excepción en
+    producción con el galpón trabajando.
+    """
+    return _PRIORIDAD_POR_SALIDA.get(salida.get("tipo"), SIN_PREFERENCIA)
 
 
 def lote_posterior_a_la_salida(lote, salida) -> bool:
