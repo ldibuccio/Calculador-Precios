@@ -1581,3 +1581,60 @@ renglón por estado (4/3/2/1), base vacía devuelve una fila de ceros.
 El resultado decide una cosa sola: si los 135 caen en "ficha sin envase" o
 "sin ficha", la lectura de que salen del cajón legítimamente queda
 confirmada por el dato y no por el nombre del artículo.
+
+## NO existe el campo que diga si un artículo va reprocesado (08/09)
+
+La pregunta del dueño, y es más grande que E5: **¿qué campo dice si un
+artículo se despacha en su cajón original o en caja armada?**
+
+Enumerado el esquema entero: **ninguno.** Los únicos booleanos son `activo`
+(en cinco tablas), `envase_variable`, los tres de casillas de pedidos y
+`consumos_editados`. `fichas_logistica` tiene `unidad_venta`, `envase_id`,
+`contenido_caja`, `envase_variable` y los alias del cliente — nada que
+distinga *reenvasado* de *directo*.
+
+Y no es que esté en otro lado: **el sistema elige por disponibilidad.**
+`listar_articulos_para_reproceso` filtra por stock a favor, y su docstring
+dice, textual, que reprocesar cajas ya armadas *"es raro pero el FIFO lo
+admite (un lote de guía R es un lote como cualquier otro), así que esta
+pantalla no es el lugar para prohibirlo"*.
+
+**O sea que el dueño tiene razón en el planteo**: B resuelve por
+disponibilidad algo cuya respuesta correcta la tiene la ficha. Con el campo
+cargado, para un artículo que va reprocesado la regla sería **pared** —
+Perita sin caja tendría que avisar fuerte, no caer al cajón en silencio.
+
+Con dos salvedades que no cambian el diagnóstico y sí el arreglo:
+
+- **La pared seguiría sin poder vivir en el FIFO.** El reparto es una cuenta
+  derivada: negarle el cajón a un armado ya ocurrido no lo frena, lo manda a
+  `sin_lote`. Con el campo, lo que se gana es **un aviso que hoy no se puede
+  ni escribir** —"esta ficha va en caja y no hay caja"— que es exactamente
+  el que `docs/diseno_base_datos.md` dejó previsto y sin implementar.
+- **B no queda mal por esto.** Sin el campo, la disponibilidad es la mejor
+  aproximación que hay, y la partición cerró sin residuo. Lo que cambia es
+  que deja de ser *la* respuesta y pasa a ser *la respuesta provisoria*.
+
+### Lo más cerca que hay es un par derivado, y hay que probarlo antes de creerle
+
+```
+fichas_logistica.contenido_caja   = lo que el cliente pide por bulto
+articulos.contenido_referencia    = lo que trae el bulto que se compra
+```
+
+Si difieren, el bulto de venta no es el de compra: reenvasado. Pero los dos
+son **nullable**, y `contenido_referencia` es explícitamente *"solo
+referencia"*.
+
+`db/ficha_1_hay_campo_que_diga_reprocesado.sql` cruza ese par contra el hecho
+consumado (¿el artículo tuvo guías R alguna vez?) y devuelve la matriz
+completa: aciertos, falsos negativos (`gr_sin_señal`), falsos positivos
+(`sin_gr_pero_difiere`), negativos, y **`sin_dato_para_saber` aparte** —
+porque "no difieren" y "no hay dato cargado" dan los dos cero y significan
+cosas distintas.
+
+Verificada contra el esquema real con un artículo por cuadrante: 1/1/1/1/1,
+cada uno donde va. Base vacía devuelve una fila.
+
+**Si el par predice bien, sirve para sembrar la marca. Si no, la marca hay
+que cargarla a mano ficha por ficha, y eso es el pendiente real.**
