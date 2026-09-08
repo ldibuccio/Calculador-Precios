@@ -7865,9 +7865,16 @@ def bultos_esperando_guia_r_por_articulo() -> dict:
                 """
                 SELECT DISTINCT r.articulo_id, a.nombre
                 FROM pedidos_renglones r
+                JOIN pedidos p ON p.id = r.pedido_id
                 JOIN fichas_logistica f ON f.id = r.ficha_id
                 JOIN articulos a ON a.id = r.articulo_id
-                WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                -- p.anulado_el: un pedido anulado no aporta candidatos. Hoy
+                -- no cambia el numero —el conteo sale del rejuego, que ya lo
+                -- descarta— pero era el unico lector de pedidos_renglones por
+                -- RANGO que no lo filtraba, y un criterio que falta en un
+                -- lugar es como empiezan a separarse.
+                WHERE p.anulado_el IS NULL
+                  AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
                   AND r.articulo_id IS NOT NULL AND f.envase_id IS NOT NULL
                   AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
                 """,
