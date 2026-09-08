@@ -740,3 +740,51 @@ filtro es lo que produce el número); con una base vacía devuelve una fila de
 ceros; y **con una compra fechada el día del corte, cambiar el piso a `>=`
 se lleva el freno puesto (1 → 0)** — que es el canario que pide el corolario
 12. Los datos de prueba se borraron.
+
+## El alcance de E5 por artículo, y una colisión de nombres que había que sacar
+
+`db/e5_1_alcance_de_la_mezcla.sql` llamaba **A** y **B** a dos cosas —
+"tamaños de cajón mezclados" y "cajones y cajas conviviendo"— y desde que
+las opciones de arreglo se llaman A (el reproceso no consume lotes
+trabajados) y B (dos pilas separadas), el mismo archivo decía A y B con otro
+significado.
+
+Es la forma de siempre: **dos cosas distintas con el mismo nombre**, esta
+vez sin ningún daño en las cuentas y con todo el daño posible en la próxima
+lectura. Se separó en dos archivos:
+
+- **`db/remanente_1_tamanos_y_pilas.sql`** (el viejo, renombrado): las dos
+  condiciones estructurales, ahora numeradas 1 y 2, sin letras. Es lo que
+  alimenta la decisión del Remanente, no la de E5.
+- **`db/e5_1_alcance_por_articulo.sql`** (nuevo): el lado de **A**, por
+  artículo.
+
+### Por qué el lado de A es exacto y el de B no
+
+No es una diferencia de esfuerzo, es de dónde vive el dato:
+
+- Lo que consumió una guía R está **congelado** en `reprocesos_consumos`.
+  `e5_1` lo lee y suma: exacto, sin rejugar nada.
+- Lo que consumió un armado **no se guarda**. `e5_2` tiene que rejugar el
+  FIFO y por eso aproxima.
+
+Así que `e5_1` da la lista de artículos donde A muerde, con su plata, y
+`e5_2` da el total del otro lado. Juntos dicen si A sola alcanza.
+
+`sin_costo` va al lado de `plata` por lo mismo de siempre: un lote sin costo
+no suma pesos y sí suma bultos, y sin esa columna "poca plata" y "muchos
+bultos sin precio" se ven igual.
+
+### Cómo se verificó
+
+Contra el esquema real, con dos artículos de nombre inventado. **EJEMPLO
+Seis** tiene una guía R que consumió 6 bultos de una compra (no cuentan), 4
+de otra guía R a $100 (cuentan) y 2 de un reingreso sin costo (cuentan como
+bultos, no como plata). **EJEMPLO Siete** consumió solo compra y no tiene
+que aparecer.
+
+Da `guias_r = 1`, `bultos_de_caja = 6`, `plata = 400.00`, `sin_costo = 2`, y
+Siete efectivamente no aparece. Canario: agregando `'compra'` a la lista de
+orígenes, Seis salta a 12 bultos y $700 y Siete entra en el listado — o sea
+que el filtro es lo que produce el número. Con una base vacía devuelve una
+fila de ceros. Los datos de prueba se borraron.

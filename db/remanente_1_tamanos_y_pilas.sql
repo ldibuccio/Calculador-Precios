@@ -1,12 +1,14 @@
 -- El tamaño de la mezcla, por articulo, desde el corte. Mide DOS cosas
--- distintas que se confunden:
---  A) contenidos: cuantos tamaños de cajon distintos conviven. Si es >1, el
+-- distintas que se confunden, y NO son los arreglos A y B de E5 (este
+-- archivo se llamaba e5_1_alcance_de_la_mezcla.sql y usaba esas letras
+-- para estas dos, que es exactamente la colision que habia que sacar):
+--  1) tamaños_de_cajon: cuantos contenidos distintos conviven. Si es >1, el
 --     numero de SUELTOS del Remanente suma bultos que no son comparables.
---  B) cajones_y_cajas: si el articulo tiene compras Y guias R, su pila del
+--  2) cajones_y_cajas: si el articulo tiene compras Y guias R, su pila del
 --     FIFO tiene materia prima y producto terminado juntos, y un reproceso
 --     puede consumir cajas ya armadas.
 -- Son independientes: un articulo con un solo tamaño de cajon igual tiene
--- el problema B si arma cajas.
+-- el problema 2 si arma cajas.
 with c0 as (select fecha f0 from corte_modelo where id = 1),
 comp as (
  select c.articulo_id aid, count(*) compras,
@@ -28,9 +30,9 @@ select a.nombre as articulo,
  coalesce(m.contenidos, 0) as tamanos_de_cajon,
  m.menor, m.mayor, coalesce(m.cajones, 0) as cajones,
  coalesce(r.guias, 0) as guias_r, coalesce(r.cajas, 0) as cajas,
- case when coalesce(m.contenidos,0) > 1 and coalesce(r.guias,0) > 0 then 'A y B'
-      when coalesce(m.contenidos,0) > 1 then 'A: tamaños mezclados'
-      when coalesce(r.guias,0) > 0 then 'B: cajones y cajas'
+ case when coalesce(m.contenidos,0) > 1 and coalesce(r.guias,0) > 0 then 'las dos'
+      when coalesce(m.contenidos,0) > 1 then 'tamaños mezclados'
+      when coalesce(r.guias,0) > 0 then 'cajones y cajas'
       else '' end as problema,
  count(*) filter (where coalesce(m.contenidos,0) > 1) over () as con_tamanos_mezclados,
  count(*) filter (where coalesce(r.guias,0) > 0) over () as con_cajones_y_cajas
