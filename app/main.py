@@ -177,6 +177,10 @@ from app.db import (
     listar_mails_pedido,
     listar_mails_pedido_sin_procesar_de_cliente,
     listar_pedidos_vigentes_con_armado,
+    PedidoConArmado,
+    PedidoInexistente,
+    PedidoYaAnulado,
+    anular_pedido,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
     buscar_renglones_pedidos,
@@ -12263,6 +12267,12 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
                 "kilos": 0.0,
                 "bultos": 0.0,
                 "sin_kilaje": 0,
+                # El pedido VIGENTE de esa fecha: un grupo es exactamente un
+                # pedido, porque la consulta sale del DISTINCT ON de siempre.
+                # Va acá para poder ofrecer "Anular" sin una segunda consulta
+                # que podría elegir otro.
+                "pedido_id": renglon["pedido_id"],
+                "armados": 0,
             }
             grupos_por_fecha[fecha] = grupo
             grupos.append(grupo)
@@ -12272,6 +12282,8 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
         bultos = float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None else float(renglon["cantidad"])
         anulado = renglon["anulado_el"] is not None
         armado = renglon["armado_el"] is not None
+        if armado and not anulado:
+            grupo["armados"] += 1
         kilos = float(renglon["kilos_enviados"]) if renglon["kilos_enviados"] is not None else None
 
         fila = {
@@ -12333,6 +12345,7 @@ def ver_buscar_pedidos(
     cliente_id: str | None = None,
     fecha_desde: str | None = None,
     fecha_hasta: str | None = None,
+    aviso: str | None = None,
 ):
     """Buscar Pedidos: lo que se mandó por fecha y artículo, con los KILOS REALES del depósito.
 
@@ -12355,6 +12368,7 @@ def ver_buscar_pedidos(
         "error_fecha": error_fecha,
         "grupos": None,
         "totales": None,
+        "aviso": aviso,
     }
     if cliente_valor is None or error_fecha:
         return templates.TemplateResponse(request, "deposito_pedido_buscar.html", contexto)
@@ -12384,6 +12398,44 @@ def _datos_exportar_pedidos(cliente_id, fecha_desde, fecha_hasta):
     grupos, totales = _grupos_buscar_pedidos(renglones)
     nombre_cliente = cliente_dato["nombre"] if cliente_dato else f"#{cliente_valor}"
     return desde, hasta, nombre_cliente, grupos, totales
+
+
+@app.post("/administracion/pedidos/{pedido_id}/anular")
+def anular_pedido_ruta(pedido_id: int, cliente_id: str = Form(""),
+                       fecha_desde: str = Form(""), fecha_hasta: str = Form("")):
+    """Anula un pedido ENTERO. Solo en Administración: no es decisión de galpón.
+
+    Existía únicamente como SQL a mano, y que la única forma de arreglar un
+    pedido mal cargado sea abrir el editor de la base es un agujero: hoy lo
+    hace el dueño, mañana lo necesita alguien que no puede.
+
+    Las tres guardas viven en `anular_pedido` (app/db.py) y no acá: la ruta
+    solo traduce sus excepciones a un aviso en la pantalla. Si la regla
+    estuviera acá, el día que otro llamador anule un pedido se la saltearía.
+
+    Vuelve a la búsqueda con los mismos filtros, no a una pantalla de
+    resultado: lo que hay que ver después de anular es la lista sin ese
+    pedido.
+    """
+    filtros = {"cliente_id": cliente_id, "fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
+    try:
+        anular_pedido(pedido_id)
+    except PedidoConArmado as error:
+        aviso = (f"No se anuló: el pedido tiene {error.armados} renglón(es) armados. "
+                 "La mercadería ya salió del galpón, así que anularlo borraría salidas "
+                 "de stock que pasaron. Desarmá esos renglones primero.")
+    except PedidoYaAnulado:
+        aviso = "Ese pedido ya estaba anulado."
+    except PedidoInexistente:
+        aviso = "Ese pedido no existe."
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo anular el pedido: {error_db}") from error_db
+    else:
+        aviso = f"Pedido {pedido_id} anulado. Queda de registro; no lo cuenta ninguna pantalla."
+    return RedirectResponse(
+        url="/administracion/pedidos/buscar?" + urlencode({**filtros, "aviso": aviso}),
+        status_code=303,
+    )
 
 
 @app.get("/administracion/pedidos/buscar/exportar-pdf")

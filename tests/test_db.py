@@ -6187,3 +6187,53 @@ def test_la_alerta_no_cuenta_el_sin_lote_de_VERDAD():
         resultado = contar_bultos_esperando_guia_r()
 
     assert resultado["casos"] == 0
+
+
+def test_anular_pedido_rechaza_lo_que_no_se_puede_anular():
+    """Las tres guardas, y la que importa es la del armado.
+
+    Con renglones armados la mercadería YA SALIÓ del galpón: anular el
+    pedido borraría salidas de stock que ocurrieron. Eso se decide renglón
+    por renglón, no de un saque.
+
+    La existencia se lee con un SELECT SIN AGREGADO. La versión SQL de esto
+    usaba `count(*)` y no funcionaba: un agregado devuelve UNA FILA con 0
+    aunque no haya nada, así que anular un id inexistente pasaba en
+    silencio y sobre uno YA anulado pisaba su `anulado_el` original — que
+    es peor que no anular, porque borra cuándo se anuló de verdad.
+    """
+    from app.db import PedidoConArmado, PedidoInexistente, PedidoYaAnulado, anular_pedido
+
+    casos = [
+        ([None], PedidoInexistente),                       # no existe: fetchone da None
+        ([(datetime(2026, 8, 11, 10, 0),)], PedidoYaAnulado),
+        ([(None,), (2,)], PedidoConArmado),                # vivo, con 2 armados
+    ]
+    for filas, esperada in casos:
+        conexion, cursor = _conexion_falsa(filas_fetchone=filas)
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            with pytest.raises(esperada):
+                anular_pedido(19)
+        # Lo que importa: NINGUNO de los tres escribió.
+        escrituras = [c for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
+        assert not escrituras, f"{esperada.__name__} llegó a escribir"
+
+
+def test_anular_pedido_sin_armados_da_de_baja_SOLO_la_cabecera():
+    """Los renglones no se tocan.
+
+    Alcanza con `pedidos.anulado_el`: los lectores por rango descartan el
+    pedido anulado por el CTE `vigentes` o por un `p.anulado_el` propio.
+    Anular además los renglones sería el mismo hecho escrito dos veces —y
+    `anular_renglon_pedido` BORRA el armado, así que restaurar el pedido
+    después perdería los tildes.
+    """
+    from app.db import anular_pedido
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(None,), (0,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        anular_pedido(19)
+
+    escrituras = [" ".join(c.args[0].split()) for c in cursor.execute.call_args_list if "UPDATE" in c.args[0]]
+    assert escrituras == ["UPDATE pedidos SET anulado_el = now() WHERE id = %s"]
+    conexion.commit.assert_called_once()

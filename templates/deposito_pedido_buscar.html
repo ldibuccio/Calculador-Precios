@@ -106,9 +106,45 @@
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
   }
+  .anular {
+    width: 100%;
+    padding: 0.9rem 1rem;
+    margin-top: 1rem;
+    background: #fff;
+    color: #b91c1c;
+    border: 1px solid #b91c1c;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .anular[disabled] { color: #9ca3af; border-color: #d1d5db; cursor: not-allowed; }
+  .anular-bloqueado { margin: 0; }
+  .anular-bloqueado span {
+    display: block;
+    margin-top: 0.5rem;
+    color: #6b7280;
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+  .aviso-anular {
+    margin: 0 0 1rem;
+    padding: 0.9rem 1rem;
+    background: #eff6ff;
+    border: 1px solid #93c5fd;
+    border-radius: 8px;
+    color: #1e3a8a;
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
   .fila-subtotal {
     display: flex;
     justify-content: space-between;
+    /* A 390 px la derecha se envuelve a dos renglones y sin gap queda
+       "Subtotal240 kg" pegado. El wrap es correcto —el texto es largo—,
+       lo que faltaba era el aire. */
+    flex-wrap: wrap;
+    gap: 0.15rem 0.75rem;
     padding-top: 0.55rem;
     margin-top: 0.35rem;
     border-top: 2px solid #ddd;
@@ -167,6 +203,10 @@
     {% endif %}
   </div>
 
+  {% if aviso %}
+  <div class="aviso-anular">{{ aviso }}</div>
+  {% endif %}
+
   {% for g in grupos %}
   <div class="tarjeta">
     <h2>Pedido del {{ g.fecha_mostrar }}</h2>
@@ -188,6 +228,30 @@
       <span>Subtotal</span>
       <span>{{ g.kilos|numero }} kg{% if g.sin_kilaje %} ({{ g.sin_kilaje }} sin kilaje){% endif %} · {{ g.bultos|numero }} bultos</span>
     </div>
+
+    {# ANULAR EL PEDIDO ENTERO. Vive acá y no en Depósito a propósito: dar de
+       baja un pedido completo no es una decisión de galpón.
+
+       Con renglones armados el botón queda DESHABILITADO Y A LA VISTA, con
+       el motivo al lado. Esconderlo sería más prolijo y peor: un botón que
+       no está no enseña por qué, y el que lo busca termina en el editor de
+       la base — que es de donde venimos. #}
+    {% if g.armados %}
+    <p class="anular-bloqueado">
+      <button type="button" class="anular" disabled>Anular este pedido</button>
+      <span>No se puede: {{ g.armados }} renglón{{ 'es' if g.armados != 1 }} ya armado{{ 's' if g.armados != 1 }}.
+        La mercadería salió del galpón, así que anularlo borraría salidas de stock que pasaron.
+        Desarmá esos renglones primero.</span>
+    </p>
+    {% else %}
+    <form method="post" action="/administracion/pedidos/{{ g.pedido_id }}/anular"
+          onsubmit="return confirm('¿Anular el pedido del {{ g.fecha_mostrar }}? Queda de registro y deja de contar en todas las pantallas.');">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+      <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <button type="submit" class="anular">Anular este pedido</button>
+    </form>
+    {% endif %}
   </div>
   {% endfor %}
 

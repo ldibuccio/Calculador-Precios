@@ -5045,6 +5045,79 @@ def crear_pedido(
         conexion.close()
 
 
+class PedidoInexistente(Exception):
+    """No hay pedido con ese id."""
+
+    def __init__(self, pedido_id: int):
+        self.pedido_id = pedido_id
+        super().__init__(f"No existe el pedido {pedido_id}")
+
+
+class PedidoYaAnulado(Exception):
+    """Ya estaba anulado: no se pisa su fecha original."""
+
+    def __init__(self, pedido_id: int, anulado_el):
+        self.pedido_id = pedido_id
+        self.anulado_el = anulado_el
+        super().__init__(f"El pedido {pedido_id} ya estaba anulado")
+
+
+class PedidoConArmado(Exception):
+    """Anular un pedido con renglones ARMADOS borraría salidas de stock que ya pasaron."""
+
+    def __init__(self, armados: int):
+        self.armados = armados
+        super().__init__(f"El pedido tiene {armados} renglón(es) armados")
+
+
+def anular_pedido(pedido_id: int) -> None:
+    """Baja lógica de un pedido ENTERO. Nunca DELETE: queda de registro.
+
+    Alcanza con `pedidos.anulado_el` y los renglones NO se tocan. Los
+    lectores de `pedidos_renglones` que trabajan por RANGO descartan el
+    pedido anulado —o por el CTE `vigentes`, que es `from pedidos where
+    anulado_el is null`, o por un `p.anulado_el is null` propio—; los que
+    no lo filtran piden UN pedido o UN renglón por id y no suman en
+    ninguna cuenta. Anular además los renglones sería escribir el mismo
+    hecho dos veces, y `anular_renglon_pedido` BORRA el armado, así que
+    restaurar el pedido después perdería los tildes.
+
+    TRES GUARDAS, y la del medio es la que importa: con renglones armados
+    la mercadería ya salió del galpón, así que anular el pedido borraría
+    salidas de stock que ocurrieron. Eso se decide renglón por renglón.
+
+    La existencia se lee con un SELECT SIN AGREGADO. Con `count(*)`,
+    `cursor.rowcount` y el `not found` de plpgsql dan siempre una fila:
+    la versión SQL de esto anulaba ids inexistentes en silencio y pisaba
+    el `anulado_el` original de uno ya anulado. Ver corolario 27.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT anulado_el FROM pedidos WHERE id = %s", (pedido_id,))
+            fila = cursor.fetchone()
+            if fila is None:
+                raise PedidoInexistente(pedido_id)
+            if fila[0] is not None:
+                raise PedidoYaAnulado(pedido_id, fila[0])
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM pedidos_renglones
+                WHERE pedido_id = %s AND armado_el IS NOT NULL AND anulado_el IS NULL
+                """,
+                (pedido_id,),
+            )
+            (armados,) = cursor.fetchone()
+            if armados:
+                raise PedidoConArmado(int(armados))
+
+            cursor.execute("UPDATE pedidos SET anulado_el = now() WHERE id = %s", (pedido_id,))
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
 def obtener_pedido_vigente(cliente_id: int, fecha) -> dict | None:
     """El pedido VIVO de un cliente para una fecha (el más nuevo sin anular), o None.
 
@@ -5521,7 +5594,7 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                       AND fecha_operacion >= %s AND fecha_operacion <= %s
                     ORDER BY fecha_operacion, creado_en DESC
                 )
-                SELECT v.fecha_operacion, r.id, r.sucursal, r.articulo_id,
+                SELECT v.fecha_operacion, v.id AS pedido_id, r.id, r.sucursal, r.articulo_id,
                        COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
                        r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el
                 FROM vigentes v

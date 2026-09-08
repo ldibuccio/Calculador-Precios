@@ -16311,14 +16311,18 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
     assert "Terminar pedido (1 sin tildar)" in respuesta.text
 
 
+# pedido_id: cada fecha es UN pedido vigente (sale del DISTINCT ON), y el
+# grupo lo lleva para poder ofrecer "Anular" sin una segunda consulta.
+# El del 21/08 tiene un renglón armado; el del 20/08 no (su único renglón
+# está anulado), así que sirven para los dos estados del botón.
 RENGLONES_BUSCAR_DE_PRUEBA = [
-    {"fecha_operacion": date(2026, 8, 21), "id": 11, "sucursal": "VL", "articulo_id": 1,
+    {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 11, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 15.0, "cantidad_armada": 12.0,
      "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None},
-    {"fecha_operacion": date(2026, 8, 21), "id": 12, "sucursal": "BZ", "articulo_id": 2,
+    {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 12, "sucursal": "BZ", "articulo_id": 2,
      "articulo_nombre": "Batata", "cantidad": 40.0, "cantidad_armada": None,
      "kilos_enviados": None, "armado_el": None, "anulado_el": None},
-    {"fecha_operacion": date(2026, 8, 20), "id": 13, "sucursal": "VL", "articulo_id": 1,
+    {"fecha_operacion": date(2026, 8, 20), "pedido_id": 72, "id": 13, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 10.0, "cantidad_armada": None,
      "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0)},
 ]
@@ -21388,3 +21392,69 @@ def test_la_regla_de_la_fecha_DUDOSA_esta_escrita_UNA_vez():
     assert "motivo_fecha_dudosa(" in fuente
     sueltos = re.findall(r"fecha_llegada\)\.days\)\s*>\s*\d+", fuente)
     assert not sueltos, f"el umbral volvió a escribirse a mano en app/main.py: {sueltos}"
+
+
+def test_buscar_pedidos_ofrece_anular_y_lo_BLOQUEA_con_el_motivo_a_la_vista():
+    """El botón deshabilitado se muestra igual, con el porqué al lado.
+
+    Esconderlo sería más prolijo y peor: un botón que no está no enseña por
+    qué, y el que lo busca termina en el editor de la base — que es
+    exactamente de donde viene esta pantalla.
+
+    El fixture tiene los dos casos: el pedido del 21/08 con un renglón
+    armado (bloqueado) y el del 20/08 sin ninguno (ofrecido).
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        cuerpo = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-20&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    # El del 20/08 no tiene armados: se ofrece, y apunta a SU pedido.
+    assert 'action="/administracion/pedidos/72/anular"' in cuerpo
+    # El del 21/08 sí: bloqueado, y el motivo se lee.
+    assert 'action="/administracion/pedidos/71/anular"' not in cuerpo
+    assert "disabled" in cuerpo
+    assert "1 renglón ya armado" in cuerpo
+
+
+def test_anular_un_pedido_con_armados_no_escribe_y_lo_dice():
+    """La regla vive en app/db.py; la ruta solo traduce la excepción."""
+    from app.db import PedidoConArmado
+
+    with patch("app.main.anular_pedido", side_effect=PedidoConArmado(3)) as anular:
+        respuesta = cliente.post(
+            "/administracion/pedidos/71/anular",
+            data={"cliente_id": "1", "fecha_desde": "2026-08-20", "fecha_hasta": "2026-08-22"},
+            follow_redirects=False,
+        )
+
+    anular.assert_called_once_with(71)
+    assert respuesta.status_code == 303
+    destino = respuesta.headers["location"]
+    assert "No+se+anul%C3%B3" in destino and "3" in destino
+    # Y vuelve con los MISMOS filtros: lo que hay que ver después es la lista.
+    assert "cliente_id=1" in destino and "fecha_desde=2026-08-20" in destino
+
+
+def test_anular_un_pedido_sin_armados_sale_bien_y_vuelve_a_la_lista():
+    with patch("app.main.anular_pedido") as anular:
+        respuesta = cliente.post(
+            "/administracion/pedidos/72/anular",
+            data={"cliente_id": "1", "fecha_desde": "2026-08-20", "fecha_hasta": "2026-08-22"},
+            follow_redirects=False,
+        )
+
+    anular.assert_called_once_with(72)
+    assert respuesta.status_code == 303
+    assert "anulado" in respuesta.headers["location"]
+
+
+def test_anular_un_pedido_NO_se_puede_desde_Deposito():
+    """Dar de baja un pedido entero no es una decisión de galpón."""
+    rutas = [r.path for r in app.routes if "anular" in getattr(r, "path", "")]
+    de_pedidos = [r for r in rutas if "pedido" in r and "renglon" not in r]
+    assert de_pedidos == ["/administracion/pedidos/{pedido_id}/anular"], de_pedidos
