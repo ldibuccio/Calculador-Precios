@@ -1582,7 +1582,7 @@ El resultado decide una cosa sola: si los 135 caen en "ficha sin envase" o
 "sin ficha", la lectura de que salen del cajón legítimamente queda
 confirmada por el dato y no por el nombre del artículo.
 
-## NO existe el campo que diga si un artículo va reprocesado (08/09)
+## NO existe el campo que diga si un artículo va reprocesado — MAL, VER ABAJO
 
 La pregunta del dueño, y es más grande que E5: **¿qué campo dice si un
 artículo se despacha en su cajón original o en caja armada?**
@@ -1663,3 +1663,65 @@ Sin correr, sin urgencia: `e5_8` / `e5_9` (el factor de precio entre lotes),
 `e5_11` (envase fijo entre los 630), `remanente_1` y `remanente_2` (alcance
 del desglose por contenido), `corte_fifo_15` con los tres desvíos sin causa,
 y la caja de Día de Mango.
+
+## El campo SÍ existe: `fichas_logistica.envase_id` (08/09, corrección)
+
+Dije que no existía. **Está, y lo encontró el dueño mirando el resultado de
+`e5_11`:**
+
+```
+TOTAL   armado 765 · con_caja_previa 630 · envase_fijo 570 · env_variable 60
+        · sin_envase 135 · sin_ficha 0
+```
+
+- Los **135** de `sin_envase` son exactamente Mzn Red 40, Mzn Gob 20, Mzn
+  Granny 15, Arándano 30, Pera 30 — **todos con `con_caja_previa` = 0**.
+- Los **630** son 570 de envase fijo + 60 de envase variable (Mango 30 y
+  Cherry 30).
+- **Cero cruces en las dos direcciones.**
+
+Y la lectura correcta no es "envase fijo" sino **"la ficha tiene envase
+asignado", variable o no**: `envase_variable` dice si el TAMAÑO del envase se
+decide por compra, no si lo hay.
+
+### Verificado contra el código, y el código ya lo decía
+
+No es una correlación afortunada sobre siete artículos. `app/main.py`, en
+mayúsculas, desde antes de esta conversación:
+
+> **SIN ENVASE ES "ENVASE PERDIDO", NO UN DATO QUE FALTA. La mercadería sale
+> en el envase del proveedor y no vuelve**, así que no hay caja nuestra que
+> nombrar — y es el caso de la MAYORÍA de la fruta, no una excepción.
+
+Y `core/fichas.py`, bajo el comentario **`# Sin envase compartido (se
+entrega en su propio cajón)`**, lista con `envase: None` a **Mzn Granny, Mzn
+Red, Pera, Man Gob y Arándano** — los cinco artículos de los 135, nombrados
+en el código antes de que los midiéramos.
+
+O sea: `envase_id` no nulo = *va en una caja nuestra, hay que reenvasarlo*.
+`envase_id` nulo = *sale en el cajón del proveedor*.
+
+### Nada lee el nulo como dato faltante
+
+Revisado, que era el punto 3 del dueño:
+
+- `_validar_envase`: *"opcional: 'sin envase' es válido"*.
+- El formulario ofrece **"Sin envase (perdido)"** como opción deliberada.
+- El costeo le pone `SIN_ENVASE = 0` *"porque no compramos ninguna caja para
+  eso"* (`app/costeo.py`, dos lugares).
+- **La única aparición de `envase_id IS NULL` como condición en todo el repo
+  era mi propia `e5_11`.** Ninguna alerta, ninguna lista de pendientes.
+
+### Consecuencias
+
+1. **`ficha_1` no hace falta y se borra.** Deducir la marca de
+   `contenido_caja` vs `contenido_referencia` era resolver por inferencia
+   algo que ya está declarado. Una consulta que contesta una pregunta ya
+   contestada solo invita a volver a decidirla.
+2. **El aviso "no hay cajas de esta ficha" se puede escribir hoy**, sin
+   migración: la condición es `envase_id` no nulo y cero cajas armadas
+   disponibles de esa ficha.
+3. **B sigue siendo correcto pero deja de ser la última palabra.** Resuelve
+   por disponibilidad lo que la ficha declara. Con `envase_id` a la vista, un
+   armado de Perita sin caja es un caso para avisar, no para costear en
+   silencio contra el cajón.

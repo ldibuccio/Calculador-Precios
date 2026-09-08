@@ -186,6 +186,40 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 20, del 08/09: **enumerar los TIPOS de columna no es enumerar los
+SIGNIFICADOS.** Buscando el campo que dijera si un artículo se despacha
+reenvasado o en su cajón original, listé todos los `boolean` del esquema,
+no encontré ninguno, y dije que el campo no existía.
+
+Existía: **`fichas_logistica.envase_id` no nulo**. El significado no estaba
+en el tipo —es una FK nullable, no una marca— sino en un docstring de
+`app/main.py` escrito EN MAYÚSCULAS antes de esta conversación: *"SIN ENVASE
+ES 'ENVASE PERDIDO', NO UN DATO QUE FALTA. La mercadería sale en el envase
+del proveedor y no vuelve"*. Y `core/fichas.py` lista, bajo el comentario
+`# Sin envase compartido (se entrega en su propio cajón)`, exactamente los
+cinco artículos que después medimos como "no se reprocesan nunca".
+
+Dos errores encadenados, y el segundo es el caro:
+
+1. **Busqué la FORMA que esperaba** (un booleano llamado algo como
+   `es_reprocesado`) en vez del HECHO. Un `NOT NULL`/`NULL` de una FK lleva
+   tanto significado como una marca, y no aparece grepeando `boolean`.
+2. **Enumeré el esquema y no el vocabulario.** La palabra que había que
+   buscar era "envase", y estaba en tres lugares del código diciendo
+   justo esto. `grep` de la COLUMNA hubiera fallado igual; el que servía era
+   `grep` del CONCEPTO.
+
+De acá en adelante, antes de afirmar que un dato no existe: **buscar el
+concepto en los comentarios y docstrings, no solo la columna en el
+esquema.** En este proyecto el significado de una columna vive casi siempre
+en un comentario, y "no está en el `create table`" no es "no está".
+
+Y el corolario del corolario, que es el que más duele: **una afirmación
+NEGATIVA ("no existe X") necesita más verificación que una positiva**, no
+menos. Una positiva se cae sola cuando alguien mira; una negativa cierra la
+búsqueda y manda a construir lo que ya estaba.
+
+
 Corolario 19, del 08/09, y es de otra familia que todos los anteriores: **la
 salvaguarda funcionó, el dato estaba a la vista, y no se leyó.**
 
