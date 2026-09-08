@@ -7061,7 +7061,16 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
                    g.fecha_operacion AS fecha_lote,
                    p.nombre AS detalle,
                    NULL AS motivo,
-                   c.cantidad_cajones_real AS cantidad,
+                   -- COALESCE y no la columna pelada: cantidad_cajones_real
+                   -- es NULLABLE y el unico check de compras
+                   -- (compras_cantidad_cargada_check) exige kilos o
+                   -- fraccion, NO cajones. Nada obliga a que una compra
+                   -- recepcionada los tenga cargados, asi que sin esto un
+                   -- lote podria entrar al FIFO con cantidad NULL y romper
+                   -- la aritmetica de core/stock.py. Medido el 08/09
+                   -- (db/nulos_1_compras_sin_cajones.sql): cero en las dos
+                   -- bases, o sea que esto es preventivo y no repara nada.
+                   COALESCE(c.cantidad_cajones_real, 0) AS cantidad,
                    c.importe AS costo_bulto,
                    NULL::bigint AS cliente_lote_id,
                    c.articulo_id AS articulo_id
@@ -7072,6 +7081,14 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
               -- ESTRICTO: una compra recepcionada el día del corte ya está
               -- adentro de la foto que se contó esa tarde.
               AND (c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
+              -- LA MISMA GUARDA QUE LAS OTRAS DOS RAMAS de este UNION:
+              -- movimientos pide `m.cantidad > 0` y reprocesos
+              -- `rp.bultos_primera > 0`. Esta era la unica sin ella, asi que
+              -- una compra recepcionada con 0 cajones —o con NULL— entraba
+              -- como un lote que no aporta ningun bulto. Un lote de cero no
+              -- es un lote: el FIFO lo saltea igual, pero aparece en el
+              -- detalle y hace ruido.
+              AND c.cantidad_cajones_real > 0
             UNION ALL
             -- costo_por_bulto: solo los reingresos VINCULADOS lo tienen (el
             -- congelado del listado anclado al pedido de origen); ajustes y

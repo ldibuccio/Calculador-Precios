@@ -5958,3 +5958,59 @@ def test_listar_ultimos_conteos_stock_con_tope_no_trae_conteos_posteriores():
     # las 21:15 del 03/09 es del 03/09 acá y del 04/09 en UTC.
     assert "(c.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= %s::date" in consulta
     assert parametros == (date(2026, 9, 3), date(2026, 9, 3))
+
+
+def test_las_TRES_ramas_de_los_lotes_exigen_que_el_lote_TENGA_bultos():
+    """Un lote sin bultos no es un lote, y eso vale para las tres fuentes.
+
+    La consulta de lotes une compras, movimientos y reprocesos. Dos de las
+    tres siempre pidieron `> 0` (`m.cantidad`, `rp.bultos_primera`); la de
+    compras era la ÚNICA sin la guarda, así que una compra recepcionada con
+    cero cajones —o con `cantidad_cajones_real` en NULL, que la base
+    permite: `compras_cantidad_cargada_check` exige kilos o fracción, NO
+    cajones— entraba como lote fantasma.
+
+    Es la familia del corolario 5: la misma regla escrita en tres lugares
+    que no se nombran entre sí, y una que se la olvidó. El test la fija
+    sobre las tres a la vez para que la próxima rama nazca con ella.
+
+    Los asserts van con el ALIAS (corolario 4): sin `c.`/`m.`/`rp.` un
+    `cantidad > 0` matchearía la rama de al lado y el test miraría algo que
+    se le parece.
+    """
+    from app.db import _entradas_y_salidas_stock_varios
+
+    cursor = MagicMock()
+    cursor.description = []
+    cursor.fetchall.return_value = []
+    _entradas_y_salidas_stock_varios(cursor, [7], corte=date(2026, 9, 5))
+
+    # call_args da el ÚLTIMO execute, que es el de SALIDAS. La de lotes es la
+    # primera: mirar el que no es deja el test verde afirmando otra cosa.
+    consulta = " ".join(cursor.execute.call_args_list[0].args[0].split())
+    assert "'guia' AS tipo_lote" in consulta, "no es la consulta de lotes"
+    assert "AND c.cantidad_cajones_real > 0" in consulta
+    assert "m.cantidad > 0" in consulta
+    assert "rp.bultos_primera > 0" in consulta
+
+
+def test_la_cantidad_del_lote_de_compra_nunca_llega_NULA():
+    """`cantidad_cajones_real` es nullable y entra directo a la aritmética.
+
+    La guarda del test de arriba ya deja afuera el NULL, pero la cuenta que
+    MUESTRA el número se hace cargo igual (corolario 21): si mañana alguien
+    afloja el `WHERE`, el `COALESCE` sigue impidiendo que un `None` llegue a
+    `core/stock.py`. Redundante a propósito — es la redundancia que sobrevive
+    al tercer llamador.
+    """
+    from app.db import _entradas_y_salidas_stock_varios
+
+    cursor = MagicMock()
+    cursor.description = []
+    cursor.fetchall.return_value = []
+    _entradas_y_salidas_stock_varios(cursor, [7], corte=date(2026, 9, 5))
+
+    consulta = " ".join(cursor.execute.call_args_list[0].args[0].split())
+    assert "'guia' AS tipo_lote" in consulta, "no es la consulta de lotes"
+    assert "COALESCE(c.cantidad_cajones_real, 0) AS cantidad" in consulta
+    assert "c.cantidad_cajones_real AS cantidad" not in consulta
