@@ -45,12 +45,6 @@
     line-height: 1.45;
     color: #92400e;
   }
-  .al-contar {
-    margin: 0.5rem 0 0;
-    font-size: 0.82rem;
-    color: #666;
-    line-height: 1.4;
-  }
   .diferencia-cero { color: #16a34a; }
   .diferencia-distinta { color: #dc2626; }
   .tarjeta.con-diferencia { border: 2px solid #fecaca; }
@@ -98,7 +92,7 @@
   {% set barra_atras = "/administracion" %}
   {% include "_barra_navegacion.html" %}
 
-  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema dice <strong>hoy</strong>: eso es lo que dice si el desvío sigue existiendo. Si al contar el sistema decía otra cosa, la tarjeta lo aclara abajo — pasa cuando el trabajo del día se carga después del conteo. Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.</p>
+  <p class="ayuda">Cada tarjeta compara el último conteo físico contra lo que el sistema dice <strong>hoy</strong>: eso es lo que dice si el desvío sigue existiendo. <strong>Diferencia = Sistema − Físico</strong>, así que un número en <strong>positivo es mercadería que falta</strong>. Un artículo puede tener varias tarjetas: sus bultos sueltos y las cajas de cada ficha se cuentan por separado.</p>
 
   {% if filas %}
     {% for f in filas %}
@@ -129,15 +123,6 @@
           {% endif %}
         </div>
       </div>
-      {% if f.se_movio %}
-      {# La foto congelada ya no describe el estado. Va en chico y abajo: lo
-         que hay que mirar para decidir es el desvío de HOY. Sin esta línea,
-         el número de arriba parecería contradecir al que el operario vio
-         cuando contó. #}
-      <p class="al-contar">Al contar, el sistema decía <strong>{{ f.stock_sistema|numero }}</strong>
-        (diferencia {% if f.diferencia > 0 %}+{% endif %}{{ f.diferencia|numero }}).
-        Desde entonces se cargó movimiento.</p>
-      {% endif %}
       {% if f.opuestas %}
       {# SIGNOS OPUESTOS entre porciones del mismo artículo: la firma de una
          guía R que fue a la ficha equivocada. Va en LAS DOS tarjetas, no

@@ -8068,7 +8068,7 @@ def ver_cotejo_stock(request: Request):
 
     filas = []
     for conteo in conteos:
-        fila = dict(conteo, diferencia=round(float(conteo["cantidad"]) - float(conteo["stock_sistema"]), 2))
+        fila = dict(conteo)
         # Una porción en CERO o en negativo no es una pila y el Remanente no
         # la lista, pero acá tiene que tener número igual: justo esa es la
         # que hay que poder mirar. Sale de la misma función, de a una.
@@ -8081,15 +8081,19 @@ def ver_cotejo_stock(request: Request):
             except Exception:
                 logger.exception("No se pudo leer el stock actual de una porción del cotejo")
                 fila["sistema_hoy"] = None
+        # SISTEMA MENOS FÍSICO, y ese orden es la definición. Positivo = el
+        # sistema dice más de lo que hay en el piso, o sea FALTA mercadería,
+        # que es la pregunta que se viene a hacer acá. Al revés (contado
+        # menos sistema) un faltante salía en negativo y había que darlo
+        # vuelta en la cabeza para leerlo.
+        #
+        # No lo usa la precarga del ajuste: el botón manda `contado` y
+        # `stock_conteo` crudos y la cuenta se hace en la pantalla de ajuste
+        # contra el stock actual. Si algún día alguien la hace salir de acá,
+        # tiene que negarla — son dos convenciones distintas a propósito.
         fila["dif_hoy"] = (
             None if fila["sistema_hoy"] is None
-            else round(float(conteo["cantidad"]) - fila["sistema_hoy"], 2)
-        )
-        # Se movió entre el conteo y ahora: la foto congelada ya no describe
-        # el estado, y por eso la tarjeta muestra las dos.
-        fila["se_movio"] = (
-            fila["sistema_hoy"] is not None
-            and round(float(conteo["stock_sistema"]) - fila["sistema_hoy"], 2) != 0
+            else round(fila["sistema_hoy"] - float(conteo["cantidad"]), 2)
         )
         # Con diferencia, botón directo a la pantalla de ajuste, precargada
         # con este conteo (la cantidad final se calcula ahí contra el stock

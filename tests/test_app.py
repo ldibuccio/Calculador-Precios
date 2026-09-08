@@ -19552,8 +19552,9 @@ def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
     respuesta = _cotejo(conteos)
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    # La diferencia se muestra igual: -8.
-    assert "-8" in cuerpo
+    # La diferencia se muestra igual: el sistema dice 20 y en el piso hay 12,
+    # o sea +8 que faltan (Sistema − Físico).
+    assert "+8" in cuerpo
     assert "Ajustar a lo contado" not in cuerpo
     # Y manda donde sí se arregla.
     assert "/administracion/stock/guias-r" in cuerpo
@@ -19708,9 +19709,6 @@ def test_cotejo_NO_ofrece_ajustar_si_el_desvio_ya_se_resolvio():
 
     cuerpo = respuesta.text.split("</style>")[-1]
     assert "Ajustar a lo contado" not in cuerpo
-    # Y explica por qué el número no es el que se vio al contar.
-    assert "Al contar, el sistema decía" in cuerpo
-    assert "Desde entonces se cargó movimiento" in cuerpo
 
 
 def test_cotejo_SI_ofrece_ajustar_si_el_desvio_aparecio_DESPUES_del_conteo():
@@ -19731,7 +19729,8 @@ def test_cotejo_SI_ofrece_ajustar_si_el_desvio_aparecio_DESPUES_del_conteo():
 
     cuerpo = respuesta.text.split("</style>")[-1]
     assert "Ajustar a lo contado" in cuerpo
-    assert "+6" in cuerpo
+    # Sistema 14 contra 20 contados: −6, sobra en el piso.
+    assert "-6" in cuerpo
 
 
 def test_cotejo_le_pone_numero_a_la_porcion_que_el_remanente_no_lista():
@@ -19747,7 +19746,9 @@ def test_cotejo_le_pone_numero_a_la_porcion_que_el_remanente_no_lista():
         respuesta = _cotejo(conteos, porciones=[])
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    assert "+3" in cuerpo
+    # Sistema −1 contra 2 contados: −3, sobra mercadería sobre lo que el
+    # sistema cree tener (y lo que cree tener es imposible, por eso se mira).
+    assert "-3" in cuerpo
     assert "Ajustar a lo contado" in cuerpo
     porcion.assert_called_once_with(5, None)
 
@@ -21055,3 +21056,51 @@ def test_el_pie_no_mete_un_bloque_style_al_final():
 
     assert "<style" not in markup
     assert "style=" in markup
+
+
+def test_la_diferencia_del_cotejo_es_SISTEMA_MENOS_FISICO():
+    """El contrato del signo, escrito para que no se dé vuelta solo.
+
+    Positivo = el sistema dice más de lo que hay en el piso = FALTA
+    mercadería. Es la pregunta que se viene a hacer a esta pantalla, y con
+    la convención al revés un faltante salía en negativo.
+
+    Los dos números están MUY separados a propósito (sistema 50, contado 8):
+    con la resta al revés el test da −42 y cae. Un fixture con 10 y 11 se
+    habría dejado pasar los dos órdenes.
+    """
+    conteos = [
+        {"id": 90, "articulo_id": 41, "cantidad": 8.0, "stock_sistema": 8.0,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "EJEMPLO Faltante",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    porciones = [{"articulo_id": 41, "ficha_id": None, "bultos": 50.0, "contable": True}]
+
+    cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
+
+    assert "+42" in cuerpo, "50 en el sistema menos 8 contados son +42 que faltan"
+    assert "-42" not in cuerpo, "la resta quedó al revés"
+    # Y la ayuda dice la convención, porque un signo sin regla al lado se
+    # lee como el que lo mira quiera.
+    assert "Sistema − Físico" in cuerpo
+
+
+def test_el_cotejo_ya_NO_muestra_lo_que_el_sistema_decia_al_contar():
+    """Se sacó el 08/09: la tarjeta compara contra HOY y ese es el número
+    con el que se decide. El segundo número, con su propia diferencia y la
+    convención de signo VIEJA, competía con el de arriba en la misma
+    tarjeta. Dos números casi iguales al lado se leen como una
+    contradicción, no como un dato de contexto.
+    """
+    conteos = [
+        {"id": 91, "articulo_id": 42, "cantidad": 1.0, "stock_sistema": -12.0,
+         "creado_en": datetime(2026, 9, 7, 16, 37), "articulo_nombre": "EJEMPLO Movido",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    porciones = [{"articulo_id": 42, "ficha_id": None, "bultos": 1.0, "contable": True}]
+
+    cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
+
+    assert "Al contar, el sistema decía" not in cuerpo
+    assert "Desde entonces se cargó movimiento" not in cuerpo
+    assert "al-contar" not in cuerpo
