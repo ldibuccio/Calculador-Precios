@@ -6806,21 +6806,32 @@ def _fecha_del_remanente(fecha_texto: str | None) -> tuple:
 def _pegar_conteos_a_porciones(porciones: list[dict], conteos: list[dict]) -> None:
     """Le pega a cada porción su último conteo físico, con la MISMA cuenta que el Cotejo.
 
-    La diferencia es `contado − stock_sistema`, o sea contra LA FOTO que se
-    congeló al contar, no contra el sistema de hoy. Es la fórmula exacta de
-    ver_cotejo_stock, y tiene que serlo: si el Excel restara contra el stock
-    actual, la misma porción mostraría una diferencia en el archivo y otra en
-    el Cotejo el mismo día — dos cuentas del mismo cruce diciendo cosas
-    distintas.
+    `diferencia = bultos − físico`, o sea SISTEMA MENOS FÍSICO contra el
+    sistema de ESTE momento (`bultos` es la columna Sistema del archivo, a la
+    fecha del archivo). Positivo = el sistema dice más de lo que hay en el
+    piso, o sea falta mercadería.
 
-    Y además no significaría lo que parece: `físico(ayer) − sistema(hoy)` es
-    la discrepancia MÁS todo movimiento legítimo posterior al conteo. Una caja
-    contada ayer y despachada hoy saldría como diferencia sin que nada esté
-    mal.
+    HASTA EL 08/09 restaba contra `conteos_stock.stock_sistema`, la foto
+    congelada al contar, y el argumento escrito acá era que así se comparaban
+    dos números del MISMO instante — mientras que contra el sistema de hoy la
+    resta se come todo movimiento legítimo posterior al conteo.
 
-    Por eso la fila lleva también `stock_sistema` y `contado_el`: sin la foto
-    al lado, la diferencia no se puede verificar contra ningún otro número del
-    archivo, y sin la fecha no se sabe si es de hoy o de hace un mes.
+    El argumento era correcto y la premisa era falsa. Los dos números del
+    mismo instante NO son comparables: la foto se toma con el sistema a medio
+    actualizar —el trabajo del día se carga después de que el operario
+    contó—, así que la comparación limpia en teoría daba el número equivocado
+    en la práctica. Mango es el caso: contó 1 con el sistema en −12, el
+    trabajo se cargó catorce minutos más tarde, y la foto decía +13 para
+    siempre sobre un desvío que ya no existía.
+
+    Y la objeción de las dos cuentas se resolvió sola en la otra dirección:
+    el Cotejo también compara contra hoy desde el 08/09, así que las dos
+    dicen lo mismo. De yapa, ahora la diferencia SE PUEDE VERIFICAR dentro
+    del archivo: es la resta de las dos columnas de al lado.
+
+    `contado_el` se queda, y es lo único que sostiene el número: dice de
+    cuándo es el físico. Sin esa fecha, un conteo de hace un mes se lee igual
+    que uno de hoy.
 
     Una porción no contable (la segunda) no busca conteo: no puede tener uno.
     """
@@ -6833,13 +6844,15 @@ def _pegar_conteos_a_porciones(porciones: list[dict], conteos: list[dict]) -> No
         if conteo is None:
             porcion["fisico"] = None
             porcion["contado_el"] = None
-            porcion["stock_sistema"] = None
             porcion["diferencia"] = None
             continue
         porcion["fisico"] = float(conteo["cantidad"])
         porcion["contado_el"] = conteo["creado_en"]
-        porcion["stock_sistema"] = float(conteo["stock_sistema"])
-        porcion["diferencia"] = round(float(conteo["cantidad"]) - float(conteo["stock_sistema"]), 2)
+        # `stock_sistema` (la foto congelada) NO se pega más. Un número muerto
+        # con la convención de signo contraria al lado del vivo es la trampa
+        # de dos cuentas con el mismo nombre: el día que alguien lo vuelva a
+        # mostrar, va a mostrar lo otro sin saberlo.
+        porcion["diferencia"] = round(float(porcion["bultos"]) - float(conteo["cantidad"]), 2)
 
 
 def _remanente_a_fecha(hasta) -> dict:

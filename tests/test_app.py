@@ -13695,20 +13695,22 @@ def test_el_excel_del_remanente_trae_el_fisico_y_la_diferencia():
     assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
     assert hoja.title == "Remanente"
     assert [c.value for c in hoja[4]] == [
-        "Producto", "Sistema", "Físico", "Contado el", "Sistema al contar", "Diferencia",
+        "Producto", "Sistema", "Físico", "Contado el", "Diferencia",
     ]
-    assert hoja.max_column == 6
-    # SIN PLATA sigue valiendo: las cuatro nuevas son bultos y una fecha.
-    filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=6, values_only=True)}
+    assert hoja.max_column == 5
+    # SIN PLATA sigue valiendo: las nuevas son bultos y una fecha.
+    filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=5, values_only=True)}
 
-    # COINCIDE: contó 20 contra una foto de 20.
-    assert filas["Mandarina"][1:] == (20.0, 20.0, "06/09/2026", 20.0, 0.0)
-    # DIFIERE, y la diferencia NO sale de restar las columnas de al lado:
-    # el sistema de hoy dice 15 y la foto del 02/09 también decía 15, pero
-    # contó 13. Por eso "Sistema al contar" viaja: es la base del número.
-    assert filas["Pomelo Caja Día"][1:] == (15.0, 13.0, "02/09/2026", 15.0, -2.0)
-    # SIN CONTEO: "—" y las otras tres vacías.
-    assert filas["Berenjena Caja Día"][1:] == (20.0, "—", None, None, None)
+    # COINCIDE: el sistema dice 20 y se contaron 20.
+    assert filas["Mandarina"][1:] == (20.0, 20.0, "06/09/2026", 0.0)
+    # DIFIERE, y ahora la diferencia SÍ sale de restar las dos columnas de al
+    # lado: 15 − 13 = +2, o sea faltan 2. Hasta el 08/09 se restaba contra la
+    # foto del 02/09 y salía −2, con el signo al revés y una columna más para
+    # poder verificarlo.
+    assert filas["Pomelo Caja Día"][1:] == (15.0, 13.0, "02/09/2026", 2.0)
+    assert filas["Pomelo Caja Día"][4] == filas["Pomelo Caja Día"][1] - filas["Pomelo Caja Día"][2]
+    # SIN CONTEO: "—" y las otras dos vacías.
+    assert filas["Berenjena Caja Día"][1:] == (20.0, "—", None, None)
 
 
 def test_el_excel_del_remanente_distingue_sin_conteo_de_no_se_cuenta():
@@ -13720,7 +13722,7 @@ def test_el_excel_del_remanente_distingue_sin_conteo_de_no_se_cuenta():
     puede existir.
     """
     _, hoja = _hoja_remanente()
-    filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=6, values_only=True)}
+    filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=5, values_only=True)}
 
     assert filas["Mandarina Segunda"][2] == "no se cuenta"
     assert filas["Berenjena Caja Día"][2] == "—"
@@ -13735,9 +13737,9 @@ def test_el_excel_del_remanente_pinta_solo_las_filas_con_diferencia():
     _, hoja = _hoja_remanente()
     pintadas = {
         f[0].value
-        for f in hoja.iter_rows(min_row=5, max_col=6)
-        if f[0].value and f[5].fill.start_color.rgb
-        and f[5].fill.start_color.rgb.endswith("FFF2CC")
+        for f in hoja.iter_rows(min_row=5, max_col=5)
+        if f[0].value and f[4].fill.start_color.rgb
+        and f[4].fill.start_color.rgb.endswith("FFF2CC")
     }
     assert pintadas == {"Pomelo Caja Día"}
 
@@ -13748,13 +13750,13 @@ def test_el_excel_del_remanente_no_totaliza_el_fisico_ni_la_diferencia():
     cero y parece que está todo bien."""
     _, hoja = _hoja_remanente()
     cierres = [
-        f for f in hoja.iter_rows(min_row=5, max_col=6, values_only=True)
+        f for f in hoja.iter_rows(min_row=5, max_col=5, values_only=True)
         if f[0] and (str(f[0]).startswith("Subtotal") or str(f[0]).startswith("TOTAL"))
     ]
     assert cierres  # que existan, si no el test no prueba nada
     for fila in cierres:
         assert fila[1] is not None  # el Sistema sí se suma
-        assert fila[2:] == (None, None, None, None)
+        assert fila[2:] == (None, None, None)
 
 
 def test_el_excel_del_remanente_sale_en_EL_MISMO_ORDEN_que_la_pantalla():
@@ -21104,3 +21106,56 @@ def test_el_cotejo_ya_NO_muestra_lo_que_el_sistema_decia_al_contar():
     assert "Al contar, el sistema decía" not in cuerpo
     assert "Desde entonces se cargó movimiento" not in cuerpo
     assert "al-contar" not in cuerpo
+
+
+def test_la_diferencia_del_EXCEL_es_la_MISMA_que_la_del_Cotejo():
+    """Dos cuentas del mismo cruce tienen que dar el mismo número.
+
+    Era la objeción que sostenía la foto congelada: si el Excel restaba
+    contra el stock de hoy y el Cotejo contra la foto, la misma porción
+    mostraba una diferencia en el archivo y otra en la pantalla el mismo
+    día. La objeción era buena; la salida fue mover LOS DOS a "Sistema de
+    ahora − Físico", no dejar los dos en la foto.
+
+    El test corre los DOS caminos —`_pegar_conteos_a_porciones` para el
+    Excel y `ver_cotejo_stock` para la pantalla— sobre los mismos datos y
+    exige el mismo número. Son funciones distintas en archivos distintos:
+    nada más que esto las mantiene juntas.
+    """
+    from app.main import _pegar_conteos_a_porciones
+
+    conteos = [
+        {"id": 70, "articulo_id": 61, "cantidad": 13.0, "stock_sistema": 15.0,
+         "creado_en": datetime(2026, 9, 2, 10, 0), "articulo_nombre": "EJEMPLO Cruce",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+    ]
+    porciones = [{"articulo_id": 61, "ficha_id": None, "nombre": "EJEMPLO Cruce",
+                  "bultos": 15.0, "contable": True}]
+
+    # El camino del Excel.
+    del_excel = [dict(p) for p in porciones]
+    _pegar_conteos_a_porciones(del_excel, conteos)
+
+    # El camino de la pantalla, leído del HTML que sale de verdad.
+    cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
+
+    assert del_excel[0]["diferencia"] == 2.0, "sistema 15 menos 13 contados"
+    assert "+2" in cuerpo
+    # Y la foto congelada (15) daría −2: si alguna de las dos volviera a
+    # usarla, este assert cae junto con el de arriba.
+    assert del_excel[0]["diferencia"] != round(13.0 - 15.0, 2)
+
+
+def test_el_excel_del_remanente_ya_NO_trae_el_sistema_al_contar():
+    """La columna se fue con la foto congelada.
+
+    Existía para poder verificar la diferencia dentro del archivo, porque no
+    salía de restar las columnas de al lado. Ahora sí sale, así que la
+    columna dejó de tener trabajo — y una columna sin trabajo con un número
+    de otra convención adentro es la trampa de siempre.
+    """
+    _, hoja = _hoja_remanente()
+
+    encabezados = [c.value for c in hoja[4]]
+    assert "Sistema al contar" not in encabezados
+    assert hoja.max_column == len(encabezados) == 5

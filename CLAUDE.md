@@ -1053,3 +1053,54 @@ sale bien sobre una base detenida no es una segunda confirmación: es la
 misma confirmación contada dos veces. Si el testigo dice que la base está
 quieta, esa base **no vota**, y hay que decirlo así en vez de sumarla como
 si hubiera confirmado algo.
+
+Corolario 25, del 08/09, y es el hermano exacto del 23: **un argumento
+puede ser CORRECTO y llevar al número equivocado, porque lo que falla no es
+el razonamiento sino la premisa que nadie midió.**
+
+El Cotejo y el Excel restaban contra `conteos_stock.stock_sistema`, la foto
+del sistema congelada en el instante del conteo. El argumento escrito en dos
+docstrings para defenderla era éste, y sigue siendo válido: **comparar
+`físico(ayer)` contra `sistema(hoy)` mete adentro de la resta todo
+movimiento legítimo posterior** — una caja contada ayer y despachada hoy
+sale como diferencia sin que nada esté mal. Contra la foto, los dos números
+son del mismo instante y la comparación es limpia.
+
+La premisa era que **la foto describe el sistema de ese instante**. Es
+falsa: el conteo se toma en el piso y **el trabajo del día se carga
+después**, así que la foto se saca con el sistema a medio actualizar. Los
+dos números del mismo instante no son comparables porque uno de los dos
+todavía no terminó de existir.
+
+Mango es la medida del daño: contó 1 con el sistema en −12, el trabajo se
+cargó **catorce minutos más tarde**, y la tarjeta mostró +13 para siempre
+sobre un desvío que ya no existía.
+
+Tres cosas que se llevan:
+
+1. **La validez de un argumento no dice nada de su premisa**, y un argumento
+   bien construido es más difícil de revisar que uno flojo: se defiende
+   mejor, convence más rápido y **se copia a los docstrings**, donde después
+   envejece con toda la autoridad de algo razonado. Los dos que había acá
+   explicaban con precisión por qué el número tenía que salir de la foto.
+2. **La premisa era medible y nadie la midió.** "¿La foto del conteo está
+   completa cuando se saca?" se contesta con una consulta de dos líneas
+   —comparar `creado_en` del conteo contra el `creado_en` de las guías R de
+   ese día— y decidía todo el diseño. Es literalmente el corolario 23: la
+   premisa se mide, no se hereda. Allá era el esquema contra los datos; acá
+   es **cómo se toma el dato en la realidad contra lo que el diseño supone**,
+   que es la misma familia que el corolario 5.
+3. **Cuando una objeción válida defiende un diseño equivocado, casi siempre
+   hay una salida que la satisface por el otro lado.** La objeción de verdad
+   era "el Excel y el Cotejo van a decir números distintos el mismo día". Se
+   resolvió moviendo **los dos** a Sistema − Físico de ahora, no dejando los
+   dos en la foto. De yapa, la diferencia ahora se verifica restando dos
+   columnas vecinas del archivo, que era justo lo que la columna "Sistema al
+   contar" venía a permitir — y por eso esa columna se fue.
+
+Y la que NO se tocó, dicho acá para no re-derivarlo en tres meses: el Cotejo
+de VACÍOS (`listar_ultimos_conteos_vacios`) sigue midiendo contra la foto más
+los ajustes posteriores, y está bien. Ahí el circuito es otro —los cajones no
+tienen un "trabajo del día" que se cargue después del conteo— así que la
+premisa que acá era falsa, allá se cumple. **Buscar la otra copia es
+obligatorio (corolario 2); copiarle el arreglo, no.**
