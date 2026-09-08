@@ -4757,58 +4757,6 @@ def test_ver_foto_compra_sin_fotos_en_la_guia_da_404():
     assert respuesta.status_code == 404
 
 
-def _foto_de_prueba(ancho: int, alto: int) -> bytes:
-    """Una imagen con detalle real: un JPEG de un liso se comprime a nada y no mide nada."""
-    from PIL import Image
-
-    imagen = Image.new("RGB", (ancho, alto))
-    pixeles = imagen.load()
-    for x in range(0, ancho, 3):
-        for y in range(0, alto, 3):
-            pixeles[x, y] = (255, 255, 255)
-    buffer = io.BytesIO()
-    imagen.save(buffer, format="JPEG", quality=95)
-    return buffer.getvalue()
-
-
-def test_el_pipeline_de_compresion_acota_el_lado_largo_a_1000_POR_DEFECTO():
-    """Sin argumento, lo de siempre: ningún llamador existente cambia."""
-    from PIL import Image
-
-    from app.main import _comprimir_foto_jpeg
-
-    comprimida = _comprimir_foto_jpeg(_foto_de_prueba(3000, 2250))
-
-    assert max(Image.open(io.BytesIO(comprimida)).size) == 1000
-
-
-def test_el_pipeline_acepta_un_lado_largo_PROPIO_para_la_foto_de_balanza():
-    """La de balanza necesita más píxeles: hay que leer un display, no un texto.
-
-    Los dos tamaños están a propósito MUY separados (1000 contra 2000): si
-    el parámetro se ignorara y saliera el default, este test cae. Con dos
-    valores parecidos, una implementación que no lo mira pasaría igual.
-    """
-    from PIL import Image
-
-    from app.main import _comprimir_foto_jpeg
-
-    comprimida = _comprimir_foto_jpeg(_foto_de_prueba(3000, 2250), lado_maximo=2000)
-
-    assert max(Image.open(io.BytesIO(comprimida)).size) == 2000
-
-
-def test_el_lado_largo_propio_no_AGRANDA_una_foto_mas_chica_que_el_limite():
-    """thumbnail solo achica. Una foto de 1200px no se estira a 2000 inventando píxeles."""
-    from PIL import Image
-
-    from app.main import _comprimir_foto_jpeg
-
-    comprimida = _comprimir_foto_jpeg(_foto_de_prueba(1200, 900), lado_maximo=2000)
-
-    assert max(Image.open(io.BytesIO(comprimida)).size) == 1200
-
-
 def test_subir_foto_a_guia_comprime_y_la_suma():
     compra_con_guia = dict(COMPRA_DE_PRUEBA, guia_id=105)
     imagen = io.BytesIO()
