@@ -1175,7 +1175,7 @@ def test_contar_senas_pendientes_viejas_usa_el_criterio_de_la_pantalla():
     assert "sena_vale_el IS NULL" in consulta
     assert "sena_anulada_el IS NULL" in consulta
     assert "anulado_el IS NULL" in consulta
-    assert "creado_en < %s" in consulta
+    assert "v.creado_en < ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     assert parametros == (date(2026, 7, 30),)
 
 
@@ -1230,7 +1230,7 @@ def test_listar_compras_procesadas_hoy_retiro_filtra_por_tipo_y_fecha():
     assert "estado_retiro IN ('retirado', 'cancelado')" in consulta
     # Rango sargable (>= fecha AND < fecha+1) en vez de ::date, para
     # que la consulta pueda usar el índice de retiro_procesado_el.
-    assert "c.retiro_procesado_el >= %s AND c.retiro_procesado_el < %s::date + 1" in consulta
+    assert "c.retiro_procesado_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.retiro_procesado_el < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     assert "::date =" not in consulta
     assert "ORDER BY c.retiro_procesado_el DESC" in consulta
     assert parametros == ("Clark", date(2026, 8, 17), date(2026, 8, 17))
@@ -1336,7 +1336,7 @@ def test_listar_compras_procesadas_hoy_recepcion_filtra_por_estado_y_fecha():
     consulta, parametros = cursor.execute.call_args[0]
     assert "c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')" in consulta
     # Rango sargable en vez de ::date (mismo criterio que Retiro).
-    assert "c.procesada_el >= %s AND c.procesada_el < %s::date + 1" in consulta
+    assert "c.procesada_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.procesada_el < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     assert "::date =" not in consulta
     assert "ORDER BY c.procesada_el DESC" in consulta
     assert parametros == (date(2026, 8, 17), date(2026, 8, 17))
@@ -2288,7 +2288,7 @@ def test_listar_ajustes_vacios_por_rango_incluye_los_anulados_marcados():
     assert "anulado_el IS NULL" not in consulta
     assert "a.anulado_el" in consulta
     assert "a.motivo" in consulta
-    assert "a.creado_en >= %s AND a.creado_en < %s::date + 1" in consulta
+    assert "a.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND a.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     assert parametros == (date(2026, 8, 12), date(2026, 8, 19))
 
 
@@ -2566,7 +2566,7 @@ def test_las_senas_toman_el_valor_del_dia_QUE_SE_RECIBIERON_no_el_de_hoy():
             funcion()
 
         consulta = cursor.execute.call_args[0][0]
-        assert "h.vigente_desde <= v.creado_en::date" in consulta
+        assert "h.vigente_desde <= (v.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date" in consulta
         assert "CURRENT_DATE" not in consulta
         assert "ORDER BY h.vigente_desde DESC" in consulta
 
@@ -2828,7 +2828,7 @@ def test_el_aviso_retroactivo_cuenta_solo_las_senas_que_de_verdad_cambian():
         assert contar_senas_afectadas_por_valor(3, 500, date(2026, 8, 10)) == 7
 
     consulta, parametros = cursor.execute.call_args.args
-    assert "v.creado_en::date >= %s" in consulta
+    assert "v.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     assert "actual.vigente_desde IS NULL OR actual.vigente_desde <= %s" in consulta
     assert "actual.monto IS DISTINCT FROM %s" in consulta
     # Una anulada no es una seña que se le deba a nadie: no se cuenta.
@@ -3149,7 +3149,7 @@ def test_stock_vacios_a_fecha_filtra_las_tres_sumas_y_excluye_anulados_siempre()
     consulta, parametros = cursor.execute.call_args.args
     # Las TRES sumas (recibidos, devueltos, ajustes) cortan a la fecha, con
     # el patrón sargable de siempre.
-    assert consulta.count("AND creado_en < %s::date + 1") == 3
+    assert consulta.count("AND creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')") == 3
     assert parametros == (date(2026, 8, 10), date(2026, 8, 10), date(2026, 8, 10))
     # Los anulados quedan afuera SIEMPRE (sin mirar cuándo se anularon): un
     # movimiento anulado no existió nunca, ni siquiera en fechas anteriores
@@ -3167,8 +3167,8 @@ def test_buscar_ingresos_deposito_filtra_por_dia_de_recepcion_y_estado_default()
     consulta, parametros = cursor.execute.call_args.args
     # El rango es por el día de la RECEPCIÓN (patrón sargable sobre
     # procesada_el), no por la fecha de compra.
-    assert "c.procesada_el >= %s" in consulta
-    assert "c.procesada_el < %s::date + 1" in consulta
+    assert "c.procesada_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
+    assert "c.procesada_el < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     # Default: solo lo que hay que pagar (los rechazos parciales entran
     # solos: son estado 'recepcionado').
     assert "c.estado = %s" in consulta
@@ -3594,7 +3594,7 @@ def test_contar_mails_pedido_leidos_con_ia_mira_la_ventana_reciente():
 
     assert resultado == {"casos": 1, "mas_viejo": date(2026, 8, 22)}
     consulta, parametros = cursor.execute.call_args.args
-    assert "leido_con_ia AND recibido_el >= %s" in consulta
+    assert "leido_con_ia AND recibido_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')" in consulta
     assert parametros == (date(2026, 8, 15),)
 
 
@@ -6014,3 +6014,50 @@ def test_la_cantidad_del_lote_de_compra_nunca_llega_NULA():
     assert "'guia' AS tipo_lote" in consulta, "no es la consulta de lotes"
     assert "COALESCE(c.cantidad_cajones_real, 0) AS cantidad" in consulta
     assert "c.cantidad_cajones_real AS cantidad" not in consulta
+
+
+def test_ninguna_consulta_compara_un_timestamptz_contra_una_FECHA_sin_zona():
+    """La regla, en un solo lugar, porque estaba escrita en catorce.
+
+    `creado_en >= %s` con un `date` argentino del lado de Python NO compara
+    lo que parece: Postgres promueve la fecha usando la zona de la SESIÓN, y
+    `app/db.py` no fija ninguna, así que queda la del servidor (UTC en
+    Supabase). El día corre de 21:00 a 21:00 hora argentina, y un registro
+    de las 21:30 cae en el día siguiente. Verificado contra Postgres 16 en
+    UTC: un conteo del 08/09 21:30 aparecía en la lista del 09/09.
+
+    La forma correcta convierte los BORDES y deja la columna pelada, para no
+    perder el índice — con la columna convertida el plan pasa de Index Only
+    Scan a Seq Scan (verificado con EXPLAIN):
+
+        creado_en >= ((%s::date)::timestamp AT TIME ZONE '<zona>')
+        creado_en <  ((%s::date + 1)::timestamp AT TIME ZONE '<zona>')
+
+    Las columnas se leen del ESQUEMA y no de una lista escrita acá: el día
+    que una tabla nueva estrene un `timestamptz`, este test la mira sola.
+    Los que faltan no se nombran solos — por eso se enumera el esquema.
+    """
+    import re
+    from pathlib import Path
+
+    esquema = Path("db/esquema_completo.sql").read_text(encoding="utf-8")
+    columnas = sorted(set(re.findall(r"^\s+([a-z_]+)\s+timestamptz", esquema, re.M)))
+    assert len(columnas) > 10, f"el esquema tendría que traer varias; trajo {columnas}"
+
+    ofensoras = []
+    for archivo in ("app/db.py", "app/main.py"):
+        for numero, linea in enumerate(Path(archivo).read_text(encoding="utf-8").split("\n"), 1):
+            if "AT TIME ZONE" in linea:
+                continue
+            for columna in columnas:
+                # Comparada contra un parámetro o una fecha literal, o casteada
+                # a date: las tres formas dependen de la zona de la sesión.
+                sospechosa = (
+                    re.search(rf"\b{columna}\s*(>=|<=|>|<)\s*(%s|')", linea)
+                    or re.search(rf"\b{columna}::date", linea)
+                )
+                if sospechosa:
+                    ofensoras.append(f"{archivo}:{numero}: {linea.strip()[:90]}")
+                    break
+
+    assert not ofensoras, "comparan un timestamptz contra una fecha sin zona:\n" + "\n".join(ofensoras)

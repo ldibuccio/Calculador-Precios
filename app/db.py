@@ -2579,7 +2579,7 @@ def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.estado IN ('recepcionado', 'rechazado', 'no_ingresado')
-                  AND c.procesada_el >= %s AND c.procesada_el < %s::date + 1
+                  AND c.procesada_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.procesada_el < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY c.procesada_el DESC
                 """,
                 (fecha, fecha),
@@ -2712,7 +2712,7 @@ def _condiciones_buscar_ingresos(fecha_desde, fecha_hasta, proveedor_id, articul
     parciales — son recepciones), 'rechazado', 'no_ingresado', o None =
     las tres (para controlar).
     """
-    condiciones = ["c.procesada_el >= %s", "c.procesada_el < %s::date + 1"]
+    condiciones = ["c.procesada_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')", "c.procesada_el < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')"]
     parametros: list = [fecha_desde, fecha_hasta]
     if proveedor_id is not None:
         condiciones.append("c.proveedor_id = %s")
@@ -2911,7 +2911,7 @@ def contar_senas_pendientes_viejas(fecha_limite) -> dict:
                 SELECT COUNT(*), MIN(creado_en) FROM vacios_recibidos v
                 WHERE v.sena_pagada_el IS NULL AND v.sena_vale_el IS NULL AND v.sena_anulada_el IS NULL
                   AND v.anulado_el IS NULL
-                  AND v.creado_en < %s
+                  AND v.creado_en < ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 """,
                 (fecha_limite,),
             )
@@ -3131,7 +3131,7 @@ def listar_compras_procesadas_hoy_retiro(tipo_retiro: str, fecha) -> list[dict]:
                 JOIN proveedores p ON p.id = c.proveedor_id
                 WHERE c.tipo_retiro = %s
                   AND c.estado_retiro IN ('retirado', 'cancelado')
-                  AND c.retiro_procesado_el >= %s AND c.retiro_procesado_el < %s::date + 1
+                  AND c.retiro_procesado_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.retiro_procesado_el < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY c.retiro_procesado_el DESC
                 """,
                 (tipo_retiro, fecha, fecha),
@@ -3992,7 +3992,7 @@ def listar_vacios_recibidos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 JOIN clientes_puesto c ON c.id = v.cliente_puesto_id
                 JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.creado_en >= %s AND v.creado_en < %s::date + 1
+                WHERE v.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND v.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY v.creado_en DESC
                 """,
                 (fecha_desde, fecha_hasta),
@@ -4022,7 +4022,7 @@ def listar_vacios_devueltos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 FROM vacios_devueltos v
                 JOIN proveedores_puesto p ON p.id = v.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = v.tipo_envase_id
-                WHERE v.creado_en >= %s AND v.creado_en < %s::date + 1
+                WHERE v.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND v.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY v.creado_en DESC
                 """,
                 (fecha_desde, fecha_hasta),
@@ -4138,7 +4138,7 @@ def stock_vacios(fecha_hasta=None) -> list[dict]:
     esa pantalla cuenta qué pasó el día del conteo, y esta cuenta qué hay
     hoy. En cero y cerrado, no hay nada que haya.
     """
-    filtro_fecha = "" if fecha_hasta is None else "AND creado_en < %s::date + 1"
+    filtro_fecha = "" if fecha_hasta is None else "AND creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')"
     parametros = tuple() if fecha_hasta is None else (fecha_hasta, fecha_hasta, fecha_hasta)
     conexion = obtener_conexion()
     try:
@@ -4212,7 +4212,7 @@ def listar_ajustes_vacios_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 FROM ajustes_vacios a
                 JOIN proveedores_puesto p ON p.id = a.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = a.tipo_envase_id
-                WHERE a.creado_en >= %s AND a.creado_en < %s::date + 1
+                WHERE a.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND a.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY a.creado_en DESC
                 """,
                 (fecha_desde, fecha_hasta),
@@ -4281,7 +4281,7 @@ def listar_conteos_vacios_de_fecha(fecha) -> list[dict]:
                 FROM conteos_vacios c
                 JOIN proveedores_puesto p ON p.id = c.proveedor_id
                 JOIN tipos_envase_puesto t ON t.id = c.tipo_envase_id
-                WHERE c.creado_en >= %s AND c.creado_en < %s::date + 1
+                WHERE c.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY c.creado_en DESC
                 """,
                 (fecha, fecha),
@@ -4390,7 +4390,7 @@ VALOR_SENA_VIGENTE = """
         SELECT h.monto, h.vigente_desde
         FROM senas_valor_historial h
         WHERE h.tipo_envase_id = v.tipo_envase_id
-          AND h.vigente_desde <= v.creado_en::date
+          AND h.vigente_desde <= (v.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
         ORDER BY h.vigente_desde DESC, h.creado_en DESC
         LIMIT 1
     ) valor ON true
@@ -4537,13 +4537,13 @@ def contar_senas_afectadas_por_valor(tipo_envase_id: int, monto, vigente_desde) 
                     SELECT h.monto, h.vigente_desde
                     FROM senas_valor_historial h
                     WHERE h.tipo_envase_id = v.tipo_envase_id
-                      AND h.vigente_desde <= v.creado_en::date
+                      AND h.vigente_desde <= (v.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
                     ORDER BY h.vigente_desde DESC, h.creado_en DESC
                     LIMIT 1
                 ) actual ON true
                 WHERE v.tipo_envase_id = %s
                   AND v.anulado_el IS NULL
-                  AND v.creado_en::date >= %s
+                  AND v.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                   AND (actual.vigente_desde IS NULL OR actual.vigente_desde <= %s)
                   AND actual.monto IS DISTINCT FROM %s
                 """,
@@ -6083,7 +6083,7 @@ def contar_mails_pedido_sin_procesar() -> dict:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COUNT(*), MIN(recibido_el)::date
+                SELECT COUNT(*), MIN((recibido_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
                 FROM mails_pedido
                 WHERE estado IN ('pendiente', 'error')
                 """
@@ -6124,9 +6124,9 @@ def contar_mails_pedido_leidos_con_ia(fecha_desde) -> dict:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COUNT(*), MIN(recibido_el)::date
+                SELECT COUNT(*), MIN((recibido_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
                 FROM mails_pedido
-                WHERE leido_con_ia AND recibido_el >= %s
+                WHERE leido_con_ia AND recibido_el >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 """,
                 (fecha_desde,),
             )
@@ -7575,6 +7575,18 @@ def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None =
 def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     """Conteos de un día para la lista "Contado hoy" del operario.
 
+    EL DÍA ES ARGENTINO Y HAY QUE DECIRLO. `fecha` viene de
+    `_hoy_argentina()`, pero comparar un `timestamptz` contra un `date`
+    pelado deja que Postgres resuelva el borde con la zona de la SESIÓN, y
+    acá no se fija ninguna: queda la del servidor, UTC en Supabase. Así el
+    día corría de 21:00 a 21:00 hora argentina y **un conteo cargado a las
+    21:30 aparecía en la lista de mañana** — verificado contra Postgres 16
+    en UTC. Por eso los bordes se construyen con AT TIME ZONE.
+
+    La columna queda PELADA a propósito: convertirla a ella en vez de a los
+    bordes da el mismo resultado y tira el índice (Index Only Scan pasa a
+    Seq Scan, verificado con EXPLAIN).
+
     SIN stock_sistema en el SELECT, a propósito: esta lista la ve el
     operario, y el número del sistema no puede viajar ni escondido en el
     HTML de su pantalla.
@@ -7597,7 +7609,7 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
                 LEFT JOIN fichas_logistica f ON f.id = c.ficha_id
                 LEFT JOIN articulos fa ON fa.id = f.articulo_id
                 LEFT JOIN clientes cl ON cl.id = f.cliente_id
-                WHERE c.creado_en >= %s AND c.creado_en < %s::date + 1
+                WHERE c.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 ORDER BY c.creado_en DESC
                 """,
                 (fecha, fecha),
