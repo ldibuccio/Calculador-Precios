@@ -186,6 +186,23 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 14, del 08/09, y va corto: **cuando una decisión estrena letras
+—opción A, opción B, caso 1— revisar si esas letras ya están usadas cerca.**
+
+`e5_1_alcance_de_la_mezcla.sql` llamaba A y B a "tamaños de cajón
+mezclados" y "cajones y cajas conviviendo". Las opciones de arreglo de E5
+se bautizaron A y B en el mismo hilo, y el archivo pasó a decir A y B con
+otro significado.
+
+No rompió ninguna cuenta, y **por eso es peor que las otras de esta
+familia**: no deja rastro. Un número mal siempre termina apareciendo; un
+nombre reusado solo se cobra en la próxima lectura, cuando ya nadie se
+acuerda de que hubo dos.
+
+El arreglo es de un minuto si se hace el día que se bautiza: `grep` de la
+letra en `db/` y en `docs/`, y el que llegó segundo se queda sin ella.
+
+
 Corolario 13, del 08/09: **un atajo exacto sobre el conjunto entero deja de
 serlo apenas se lo aplica a un subconjunto.** No se rompe: sigue devolviendo
 un número, y el número ya no contesta la pregunta.
