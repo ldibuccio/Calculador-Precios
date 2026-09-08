@@ -19575,6 +19575,63 @@ def _cotejo(conteos, porciones=None):
         return cliente.get("/administracion/stock/cotejo")
 
 
+def _articulo_partido(dif_sueltos=-2.0, dif_cajas=1.0):
+    """Un artículo con sus dos porciones en desvío. Los conteos son 1 y 1; el
+    sistema se mueve para dar la diferencia pedida."""
+    conteos = [
+        {"id": 1, "articulo_id": 2, "cantidad": 1.0, "stock_sistema": 1.0 - dif_sueltos,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "EJEMPLO Partido",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+        {"id": 2, "articulo_id": 2, "cantidad": 1.0, "stock_sistema": 1.0 - dif_cajas,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "EJEMPLO Partido",
+         "ficha_id": 9, "ficha_nombre": "Caja de ejemplo", "ficha_cliente": "Cliente"},
+    ]
+    porciones = [
+        {"articulo_id": 2, "ficha_id": None, "bultos": 1.0 - dif_sueltos, "contable": True},
+        {"articulo_id": 2, "ficha_id": 9, "bultos": 1.0 - dif_cajas, "contable": True},
+    ]
+    return conteos, porciones
+
+
+def test_signos_opuestos_avisan_en_LAS_DOS_tarjetas():
+    """La firma de una guía R que fue a la ficha equivocada: falta en una pila
+    y sobra en la otra, y la mercadería está toda en el galpón.
+
+    El aviso va en las dos. Si saliera solo en la de sueltos, la de cajas
+    seguiría dando su consejo sin saber que tiene una hermana con el signo
+    contrario — que es la asimetría que esto viene a cerrar.
+    """
+    cuerpo = _cotejo(*_articulo_partido()).text.split("</style>")[-1]
+
+    assert cuerpo.count("guía R que fue a la ficha equivocada") == 2
+    # Cada una NOMBRA a la otra.
+    assert "las cajas de Caja de ejemplo" in cuerpo
+    assert "los bultos sueltos" in cuerpo
+
+
+def test_con_signos_opuestos_el_boton_de_ajuste_queda_en_SEGUNDO_PLANO_pero_no_desaparece():
+    """Puede haber una guía R mal atribuida Y mercadería faltante encima.
+    Más difícil de apretar, no imposible."""
+    cuerpo = _cotejo(*_articulo_partido()).text.split("</style>")[-1]
+
+    # El ajuste sigue estando, y en segundo plano.
+    assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
+    # Y el recomendado —revisar la guía R— es el que queda de primero: dos
+    # botones secundarios serían dos caminos sin recomendación.
+    assert '<a class="boton-ajustar" href="/administracion/stock/guias-r">' in cuerpo
+
+
+def test_la_firma_es_el_SIGNO_y_no_que_se_cancelen():
+    """−2 y +1 no suman cero y es el mismo caso. Atarlo a que la suma dé cero
+    dejaría afuera justo los que además tienen faltante real encima."""
+    # Se cancelan: avisa.
+    assert "ficha equivocada" in _cotejo(*_articulo_partido(-3.0, 3.0)).text
+    # NO se cancelan: avisa igual.
+    assert "ficha equivocada" in _cotejo(*_articulo_partido(-9.0, 1.0)).text
+    # Mismo signo en las dos: NO es la firma, no avisa.
+    assert "ficha equivocada" not in _cotejo(*_articulo_partido(-2.0, -1.0)).text
+
+
 def test_el_cotejo_pone_los_desvios_ARRIBA_y_no_separa_las_porciones():
     """Con treinta tarjetas, un desvío en el puesto veinte no existe.
 

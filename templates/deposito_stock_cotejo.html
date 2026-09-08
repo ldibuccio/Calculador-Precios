@@ -35,6 +35,16 @@
   .numeros .celda { flex: 1; }
   .numeros .etiqueta { display: block; color: #666; font-size: 0.78rem; }
   .numeros .valor { display: block; font-size: 1.25rem; font-weight: 800; }
+  .ojo-opuesto {
+    margin: 0.6rem 0;
+    padding: 0.6rem 0.7rem;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: #92400e;
+  }
   .al-contar {
     margin: 0.5rem 0 0;
     font-size: 0.82rem;
@@ -128,11 +138,32 @@
         (diferencia {% if f.diferencia > 0 %}+{% endif %}{{ f.diferencia|numero }}).
         Desde entonces se cargó movimiento.</p>
       {% endif %}
+      {% if f.opuestas %}
+      {# SIGNOS OPUESTOS entre porciones del mismo artículo: la firma de una
+         guía R que fue a la ficha equivocada. Va en LAS DOS tarjetas, no
+         solo en la de sueltos — si saliera en una, la otra seguiría dando
+         su consejo sin saber que tiene una hermana con el signo contrario. #}
+      <p class="ojo-opuesto">⚠ En este artículo,
+        {% for o in f.opuestas %}{% if not loop.first %} y {% endif %}{{ o.nombre }}
+        {% if o.dif > 0 %}tienen <strong>+{{ o.dif|numero }}</strong>{% else %}tienen
+        <strong>{{ o.dif|numero }}</strong>{% endif %}{% endfor %}.
+        Signos contrarios en dos pilas del mismo artículo es la firma de una
+        <strong>guía R que fue a la ficha equivocada</strong>: la mercadería no falta,
+        cambió de pila. Ajustar acá borraría bultos que están en el galpón.</p>
+      {# Éste queda de PRIMERO: con signos opuestos, revisar la guía R es la
+         acción recomendada y el ajuste el camino de excepción. Dos botones
+         secundarios serían dos caminos sin recomendación. #}
+      <a class="boton-ajustar" href="/administracion/stock/guias-r">Revisar las Guías R</a>
+      {% endif %}
       {% if f.query_ajuste %}
       {# La cantidad final se calcula en la pantalla de ajuste contra el
-         stock ACTUAL (con aviso si cambió desde este conteo). #}
-      <a class="boton-ajustar" href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
-      {% elif f.dif_hoy not in (none, 0) %}
+         stock ACTUAL (con aviso si cambió desde este conteo).
+         Con una hermana de signo opuesto el botón pasa a segundo plano pero
+         NO desaparece: puede haber una guía R mal atribuida Y mercadería
+         faltante de verdad encima. Más difícil de apretar, no imposible. #}
+      <a class="boton-ajustar {% if f.opuestas %}secundario{% endif %}"
+         href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      {% elif f.dif_hoy not in (none, 0) and not f.opuestas %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar
          perfecto. Si sobran cajas de una ficha y faltan de otra, lo que

@@ -7950,6 +7950,18 @@ def cargar_stock_fisico_deposito_ruta(
     )
 
 
+def _nombre_de_porcion(fila) -> str:
+    """Cómo se llama una porción cuando se la nombra DESDE OTRA tarjeta.
+
+    En su propia tarjeta la porción ya tiene título; acá hay que decir cuál
+    es la hermana, así que va con artículo de por medio ("los bultos
+    sueltos", "las cajas de X") para que la frase se lea entera.
+    """
+    if fila["ficha_id"] is None:
+        return "los bultos sueltos"
+    return f"las cajas de {fila['ficha_nombre'] or 'la otra ficha'}"
+
+
 @app.get("/administracion/stock/cotejo")
 def ver_cotejo_stock(request: Request):
     """Cotejo (control): el último conteo físico de cada PORCIÓN contra la foto del sistema de ese instante.
@@ -8020,6 +8032,35 @@ def ver_cotejo_stock(request: Request):
                 }
             )
         filas.append(fila)
+
+    # SIGNOS OPUESTOS ENTRE PORCIONES DEL MISMO ARTÍCULO. Es la firma de una
+    # guía R que fue a la ficha equivocada: las cajas salieron de una pila y
+    # entraron en otra, así que falta en una y sobra en la otra, y el total
+    # del artículo puede estar perfecto. Ahí el ajuste NO corresponde —
+    # borraría bultos que están en el galpón— y lo que hay que corregir es la
+    # guía R.
+    #
+    # La firma es EL SIGNO, no que se cancelen: −2 y +1 no suman cero y es el
+    # mismo caso. Atarlo a que la suma dé cero dejaría afuera todos los que
+    # además tienen faltante real encima, que son los que más importan.
+    #
+    # El aviso va en LAS DOS tarjetas. Si saliera solo en la de sueltos, la
+    # de cajas seguiría diciendo lo suyo sin saber que tiene una hermana con
+    # el signo contrario, y volveríamos a dos tarjetas que se contradicen.
+    por_articulo = {}
+    for fila in filas:
+        if fila["dif_hoy"] not in (None, 0):
+            por_articulo.setdefault(fila["articulo_id"], []).append(fila)
+    for hermanas in por_articulo.values():
+        for fila in hermanas:
+            opuestas = [
+                o for o in hermanas
+                if o is not fila and (o["dif_hoy"] > 0) != (fila["dif_hoy"] > 0)
+            ]
+            if opuestas:
+                fila["opuestas"] = [
+                    {"nombre": _nombre_de_porcion(o), "dif": o["dif_hoy"]} for o in opuestas
+                ]
 
     # LOS DESVÍOS ARRIBA. Con treinta tarjetas, una en el puesto veinte no
     # existe. Ordena por artículo y no por porción a propósito: los sueltos y

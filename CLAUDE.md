@@ -186,6 +186,28 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 10, del 08/09: **un cambio de PRESENTACIÓN puede encontrar un bug
+de LÓGICA, y no es donde uno busca.**
+
+El Cotejo se ordenó por desvío para que lo importante quedara arriba —una
+mejora de lectura, sin tocar ninguna cuenta—. El orden agrupó las porciones
+de cada artículo, y ahí se vio que **las dos tarjetas del mismo artículo se
+contradecían**: la de sueltos ofrecía "Ajustar a lo contado" y la de cajas
+decía, tres centímetros más abajo, "no ajustes el stock, revisá la guía R".
+
+Las dos siempre dijeron eso. Lo que faltaba era que cayeran juntas. Con
+treinta tarjetas mezcladas por orden de conteo, nadie las vio una al lado de
+la otra en meses.
+
+**La señal a buscar**: dos vistas del mismo hecho que dan consejos
+incompatibles. Se esconden mientras estén separadas —por orden, por
+paginado, por pantalla— y el día que se juntan la contradicción salta sola.
+
+De acá en adelante, cuando se cambie un orden, un agrupamiento o un filtro de
+listado: **leer dos renglones vecinos que antes no lo eran**. No es
+verificación de que el orden funcione: es la única vez que esas dos cosas se
+van a mirar juntas.
+
 Corolario 9, del 08/09: **un test que PARCHEA la función que quiere
 verificar no verifica nada.** El parche fija el valor y el test comprueba la
 aritmética contra su propio invento.
