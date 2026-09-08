@@ -1531,3 +1531,53 @@ fechas de guía R contra fechas de armado— y coinciden **al bulto**.
 Lo que queda abierto no es del diagnóstico sino de la magnitud: el factor de
 precio entre lotes (`e5_8` / `e5_9`), que decide cuánto de los −$4.391.314,26
 es reenvasado y cuánto precio entre días. No cambia qué se arregla.
+
+## ¿La ficha obliga el envase? No, y no es un olvido
+
+### 1. El armado no valida nada
+
+`marcar_renglon_armado` (app/db.py) es un `UPDATE` pelado: no mira la ficha,
+no mira si existe una caja armada, no mira el stock. **No hay validación de
+ninguna clase.**
+
+Y no es un descuido: la regla está escrita y es de las que sostienen el
+sistema. `core/stock.py`, línea 16: *"el armado jamás se traba por stock"*.
+`docs/diseno_base_datos.md`: *"el armado **avisa y no traba**. Un pedido
+puede salir con mercadería que el sistema no tiene — **el piso es la verdad,
+el camión sale igual**"*.
+
+Ese mismo párrafo del diseño ya contesta la pregunta, y la contesta como
+**aviso**: E5 dejó *"los dos avisos (la tolerancia de kilos y el de **no hay
+cajas de esta ficha**)"*. O sea que "armaste sin caja" ya estaba pensado —
+como cartel, deliberadamente no como freno.
+
+### 2. Por qué la pared no puede vivir en el FIFO
+
+Dos razones, y la segunda es estructural:
+
+- **La ficha no obliga el envase ni siquiera en el dato.**
+  `fichas_logistica.envase_variable` dice, textual: *"si es true, el envase
+  de la ficha es solo referencia/default: se decide por compra"*. Y
+  `envase_id` es nullable. La lectura dura —envase obligatorio— es solo
+  `envase_id` no nulo **y** `envase_variable = false`.
+- **El FIFO no puede frenar nada.** La pared de la guía R funciona porque
+  `crear_reproceso` es una ESCRITURA que se puede rechazar. El reparto es
+  una cuenta DERIVADA sobre hechos ya registrados: no puede negarle un cajón
+  a un armado que ya ocurrió. Si le negara el cajón, el armado no se
+  frenaría — **caería a `sin_lote`**, o sea que pasaríamos de un costo mal
+  imputado a un costo perdido. Estrictamente peor.
+
+Una pared de verdad tendría que vivir en `marcar_renglon_armado`, y eso es
+una decisión de producto que contradice la regla de arriba, no un ajuste del
+FIFO.
+
+### 3. Cuántos de los 630 tienen envase fijo
+
+`db/e5_11_envase_de_ficha_y_armado.sql` cruza la partición de `e5_10` contra
+los cuatro estados posibles de la ficha: envase fijo, envase variable, ficha
+sin envase y renglón sin ficha. Verificada contra el esquema real con un
+renglón por estado (4/3/2/1), base vacía devuelve una fila de ceros.
+
+El resultado decide una cosa sola: si los 135 caen en "ficha sin envase" o
+"sin ficha", la lectura de que salen del cajón legítimamente queda
+confirmada por el dato y no por el nombre del artículo.
