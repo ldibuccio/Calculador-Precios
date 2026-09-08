@@ -1793,3 +1793,31 @@ tests del aviso **pasaban por la razón equivocada**: verificaban el cartel
 sobre fichas que hoy no deberían recibirlo. Corregido el fixture en el mismo
 commit, más un test nuevo —la ficha de envase perdido no recibe el aviso—
 verificado con la condición vieja puesta: cae.
+
+## Sabido: la condición previa se convirtió en un hecho consumado
+
+Estaba acordado que el número de la Rentabilidad Real se entregaba **antes**
+del merge de B, para que el anuncio saliera primero. No salió: **B ya está
+mergeada y no se anunció nada.**
+
+Lo que eso significa, dicho por Lionel:
+
+> No es grave porque cambió para el lado bueno —los costos bajaron— pero el
+> que mire los números de los últimos 30 días va a ver otra cosa que ayer y
+> no va a saber por qué.
+
+O sea que **la Rentabilidad Real ya cambió sola**: el armado que antes se
+costeaba contra cajón ahora se costea contra caja armada, los costos de esos
+30 días bajan (medido en `e5_6b`: −$4.391.314,26 sobre Frutamax, con
+`caja_s_costo` = 0 y `cajon_s_costo` = 0) y la rentabilidad reportada sube.
+Nadie tocó una guía; la pantalla dice otra cosa que ayer.
+
+Queda anotado como **sabido**, no como pendiente: Lionel decide si hace falta
+avisarle a alguien.
+
+Y la lección, que es de las que no dejan rastro en ninguna cuenta: **una
+condición previa acordada no se cumple sola.** No hubo error de código ni
+número mal — hubo un merge que salió antes que un mensaje que nunca se
+escribió, y nada avisó porque no había nada que fallara. Es la familia del
+push silencioso: lo que hay que mirar es el estado final —¿se mandó el
+número?— y no que nadie se haya quejado.
