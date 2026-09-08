@@ -195,6 +195,28 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     if not prefiere:
         return [lotes]
     preferidos = [lote for lote in lotes if lote["tipo_lote"] in prefiere]
+
+    # LA PARED DEL ARMADO, y se expresa QUITANDO la pasada de respaldo en vez
+    # de agregando una prohibición. Es la misma decisión escrita al revés, y
+    # importa: acá está el único lugar donde se decide qué lotes ve una
+    # salida, y lo llaman LAS DOS copias del FIFO (`repartir_fifo` para el
+    # stock y `atribuir_costos_fifo` para el costo). Escrita así no se pueden
+    # desfasar; escrita como un filtro en cada una, sí.
+    #
+    # Con envase, la mercadería sale en NUESTRA caja: una caja no puede salir
+    # de un cajón sin pasar por una guía R. Si no hay caja, el bulto queda
+    # SIN LOTE —que es información verdadera: salió y el papel no está— y se
+    # asigna solo cuando la guía R aparece, porque el reparto se rejuega en
+    # cada lectura y `lote_posterior_a_la_salida` compara FECHAS.
+    #
+    # El cajón queda intacto A PROPÓSITO: no lo consumió el armado, lo va a
+    # consumir el reproceso. Si el armado le bajara el restante, la guía R
+    # que viene a explicarlo no lo encontraría y el freno la rechazaría —
+    # verificado. Medida la ventana el 08/09 sobre Frutamax: 18 de 20 guías
+    # R se cargan el mismo día y el peor caso fue 1 día.
+    if salida.get("ficha_con_envase"):
+        return [preferidos]
+
     if not preferidos:
         return [lotes]
     return [preferidos, [lote for lote in lotes if lote["tipo_lote"] not in prefiere]]

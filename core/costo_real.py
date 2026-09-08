@@ -79,6 +79,13 @@ ETIQUETAS_MOTIVO_REAL = {
     "guia_r_incompleta": "Consumió la primera de una guía R con costo incompleto",
     "compensatorio_del_corte": "Consumió el compensatorio del corte (mercadería que el modelo viejo dejó debiendo, sin costo posible)",
     "sin_lote": "Salida sin lote (salió más de lo que había en el sistema)",
+    # SEPARADO de sin_lote a propósito, y no es un matiz: la etiqueta de
+    # arriba diría algo FALSO acá. Con la pared del armado el cajón SÍ
+    # estaba — no se le permitió tomarlo, porque una caja no puede salir de
+    # un cajón sin pasar por una guía R. El nombre dice QUÉ HACER y no
+    # describe un estado: el que lo lee tiene que ir a cargar el papel, no a
+    # buscar mercadería que no falta.
+    "falta_cargar_guia_r": "Falta cargar la guía R que arma estas cajas (la mercadería salió, el papel no está)",
     "devolucion_sin_valor": "Devolución vinculada que no se pudo valuar (renglón sin kilaje o sin precio a la fecha del pedido)",
     "rechazo_sin_costo": "Rechazo mandado a segunda sin costo congelado (no se puede valuar la pérdida)",
 }
@@ -242,7 +249,11 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
                 _consumir(salida, lote, min(lote["restante"], cuenta["pendiente"]))
         if cuenta["pendiente"] > 0:
             cuenta["sin_costo"] += cuenta["pendiente"]
-            cuenta["motivos"]["sin_lote"] = cuenta["motivos"].get("sin_lote", 0.0) + cuenta["pendiente"]
+            # Cuál de los dos motivos sale de la MISMA condición que arma la
+            # pared (`pasadas_de_lotes`, core/stock.py): si la ficha tiene
+            # envase, lo que falta no es mercadería, es la guía R.
+            motivo = "falta_cargar_guia_r" if salida.get("ficha_con_envase") else "sin_lote"
+            cuenta["motivos"][motivo] = cuenta["motivos"].get(motivo, 0.0) + cuenta["pendiente"]
 
     for salida in resultado:
         cuenta = cuentas[id(salida)]

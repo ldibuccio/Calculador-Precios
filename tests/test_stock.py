@@ -619,3 +619,132 @@ def test_el_reparto_sigue_siendo_la_FOTO_COMPLETA():
     assert por_lote[("guia", 55)]["restante"] == 50       # y el cajón ni se tocó
     # Y lo que la guía R puede tomar sigue siendo el cajón entero.
     assert bultos_en_los_lotes(lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO)) == 50
+
+
+# --- La pared del armado: una ficha CON envase no sale de un cajón ---------
+#
+# Los helpers llevan el sufijo _pared A PROPÓSITO: este archivo ya tenía un
+# `_cajon` con otra firma, y definir el mío al final lo PISABA para los tests
+# de arriba —siete se rompieron con un TypeError—. Un helper redefinido no
+# avisa: cambia el comportamiento de los tests que ya estaban.
+#
+# El FIFO ordena por fecha y la ficha del cliente nunca entró en esa
+# decisión. B lo mitigó por DISPONIBILIDAD (el armado prefiere una caja si
+# la hay); esto lo cierra por REGLA: con envase, si no hay caja, el bulto
+# queda sin lote y espera la guía R. Ver docs/el_corte_no_cerraba_el_fifo.md.
+
+from datetime import datetime  # noqa: E402
+
+from core.costo_real import atribuir_costos_fifo  # noqa: E402
+from core.stock import pasadas_de_lotes  # noqa: E402
+
+_AYER = date(2026, 9, 7)
+_HOY = date(2026, 9, 8)
+
+
+def _cajon_pared(dia=_AYER, cantidad=10.0):
+    return {"orden": (dia, datetime(2026, 9, 7, 8, 0)), "tipo_lote": "guia",
+            "cantidad": cantidad, "costo_bulto": 50.0}
+
+
+def _caja_pared(dia=_AYER, cantidad=10.0):
+    return {"orden": (dia, datetime(2026, 9, 7, 16, 0)), "tipo_lote": "reproceso",
+            "cantidad": cantidad, "costo_bulto": 80.0}
+
+
+def _armado_pared(con_envase, dia=_AYER, cantidad=10.0):
+    return {"orden": (dia, datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+            "cantidad": cantidad, "ficha_con_envase": con_envase}
+
+
+def test_la_pared_deja_el_bulto_SIN_LOTE_y_el_cajon_INTACTO():
+    """Con envase y sin caja, el armado no cae al cajón.
+
+    El cajón queda intacto A PROPÓSITO y no es un descuido: no lo consumió
+    el armado, lo va a consumir el reproceso. Si el armado le bajara el
+    restante, la guía R que viene a explicarlo no lo encontraría y el freno
+    la rechazaría.
+    """
+    reparto = repartir_fifo([_cajon_pared()], [_armado_pared(con_envase=True)])
+
+    assert reparto["sin_lote"] == 10.0
+    assert reparto["lotes"][0]["restante"] == 10.0, "el cajón tiene que quedar entero"
+    # El TOTAL no cambia: la pared mueve la atribución, no la cuenta 1.
+    assert reparto["stock"] == 0.0
+
+
+def test_SIN_envase_el_armado_sigue_saliendo_del_cajon_pared():
+    """Manzana, pera y arándano van en su cajón y el cajón es lo correcto.
+
+    Son 135 de los 765 bultos medidos el 08/09. Si la pared los alcanzara,
+    inventaría un faltante diario sobre mercadería que salió bien.
+    """
+    reparto = repartir_fifo([_cajon_pared()], [_armado_pared(con_envase=False)])
+
+    assert reparto["sin_lote"] == 0.0
+    assert reparto["lotes"][0]["restante"] == 0.0
+
+
+def test_con_envase_y_CON_caja_el_armado_toma_la_caja_y_no_el_cajon_pared():
+    """La pared no cambia el caso bueno: con caja disponible, sale de la caja."""
+    reparto = repartir_fifo([_cajon_pared(), _caja_pared()], [_armado_pared(con_envase=True)])
+
+    por_tipo = {lote["tipo_lote"]: lote["restante"] for lote in reparto["lotes"]}
+    assert por_tipo["reproceso"] == 0.0, "la caja es la que se consume"
+    assert por_tipo["guia"] == 10.0, "el cajón no se toca"
+    assert reparto["sin_lote"] == 0.0
+
+
+def test_la_pared_vale_IGUAL_en_las_DOS_copias_del_FIFO():
+    """El stock y el costo tienen que decir lo mismo, o se separan en silencio.
+
+    `repartir_fifo` (stock) y `atribuir_costos_fifo` (costo) son dos
+    funciones distintas que recorren la misma historia. Ya se separaron una
+    vez —el stock decía que el lote fue para una salida mientras el costo se
+    lo cobraba a otra— y por eso la pared vive en `pasadas_de_lotes`, que es
+    la única función que las dos llaman.
+
+    Este test es lo que sostiene esa decisión: si alguien implementa la
+    pared en una sola, cae.
+    """
+    for con_envase in (True, False):
+        reparto = repartir_fifo([_cajon_pared()], [_armado_pared(con_envase)])
+        costeo = atribuir_costos_fifo([_cajon_pared()], [_armado_pared(con_envase)])[0]
+
+        assert reparto["sin_lote"] == costeo["bultos_sin_costo"], (
+            f"con_envase={con_envase}: el stock dice {reparto['sin_lote']} sin lote "
+            f"y el costo dice {costeo['bultos_sin_costo']}"
+        )
+        consumido_costo = sum(c["bultos"] for c in costeo["consumos_lotes"])
+        consumido_stock = sum(lote["consumido"] for lote in reparto["lotes"])
+        assert consumido_stock == consumido_costo
+
+
+def test_la_pared_se_resuelve_SOLA_cuando_entra_la_guia_R():
+    """Sin proceso de cierre y sin pantalla de pendientes.
+
+    El reparto se rejuega en cada lectura y `lote_posterior_a_la_salida`
+    compara FECHAS, no relojes: una guía R cargada hoy con fecha de ayer
+    cubre el armado de ayer. Lo único que hay que cuidar es la fecha, y eso
+    es procedimiento, no código.
+    """
+    armado = _armado_pared(con_envase=True)
+
+    # Antes de la guía R: el bulto espera.
+    assert repartir_fifo([_cajon_pared()], [armado])["sin_lote"] == 10.0
+
+    # La guía R llega FECHADA AYER (aunque se cargue hoy): el armado la toma.
+    con_guia = repartir_fifo([_cajon_pared(), _caja_pared(dia=_AYER)], [armado])
+    assert con_guia["sin_lote"] == 0.0
+
+    # Fechada HOY sobre un armado de AYER, en cambio, es posterior y no lo
+    # cubre. Ése es el caso que hay que evitar por procedimiento.
+    con_guia_de_hoy = repartir_fifo([_cajon_pared(), _caja_pared(dia=_HOY)], [armado])
+    assert con_guia_de_hoy["sin_lote"] == 10.0
+
+
+def test_la_pared_no_toca_las_salidas_que_no_son_armado_pared():
+    """Una merma o una toma de reproceso no tienen ficha: la pared no las mira."""
+    merma = {"orden": (_AYER, datetime(2026, 9, 7, 12, 0)), "tipo": "merma", "cantidad": 4.0}
+    assert pasadas_de_lotes([_cajon_pared()], merma) == [[_cajon_pared()]]
+    assert repartir_fifo([_cajon_pared()], [merma])["sin_lote"] == 0.0

@@ -8671,16 +8671,24 @@ _SQL_SALIDAS_STOCK = """
                NULL AS lote_tipo,
                NULL::bigint AS lote_origen_id,
                r.ficha_id,
+               -- LA PARED DEL ARMADO viaja con la salida, no se deduce
+               -- después: con envase, la mercadería sale en NUESTRA caja, y
+               -- una caja no puede salir de un cajón sin pasar por una guía
+               -- R. Sin envase es "envase perdido" (manzana, pera, arándano)
+               -- y el cajón del proveedor ES lo que se despacha.
+               -- Es el campo que acertó 630 de 630 y 135 de 135 el 08/09.
+               (f.envase_id IS NOT NULL) AS ficha_con_envase,
                r.id AS renglon_id,
                r.articulo_id AS articulo_id
         FROM pedidos_renglones r
         JOIN vigentes v ON v.id = r.pedido_id
+        LEFT JOIN fichas_logistica f ON f.id = r.ficha_id
         WHERE r.armado_el IS NOT NULL AND r.anulado_el IS NULL AND r.articulo_id = ANY(%s)
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date > %s
         UNION ALL
         SELECT m.fecha_operacion, m.creado_en, m.tipo, m.fecha_operacion,
                -m.cantidad, NULL, NULL, m.motivo, NULL,
-               m.lote_tipo, m.lote_origen_id, NULL, NULL::bigint, m.articulo_id
+               m.lote_tipo, m.lote_origen_id, NULL, FALSE, NULL::bigint, m.articulo_id
         FROM movimientos_stock m
         WHERE m.anulado_el IS NULL AND m.cantidad < 0 AND m.articulo_id = ANY(%s)
           AND m.fecha_operacion > %s
@@ -8693,7 +8701,7 @@ _SQL_SALIDAS_STOCK = """
         UNION ALL
         SELECT rp.fecha_operacion, rp.creado_en, 'reproceso_toma', rp.fecha_operacion,
                rp.bultos_tomados, NULL, NULL, NULL, rp.bultos_segunda,
-               NULL, NULL, NULL, NULL::bigint, rp.articulo_id
+               NULL, NULL, NULL, FALSE, NULL::bigint, rp.articulo_id
         FROM reprocesos rp
         WHERE rp.anulado_el IS NULL AND rp.articulo_id = ANY(%s)
           AND rp.fecha_operacion > %s

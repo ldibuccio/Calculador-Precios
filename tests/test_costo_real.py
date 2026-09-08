@@ -883,3 +883,54 @@ def test_los_DOS_repartos_emparejan_igual_con_la_preferencia_puesta():
             consumido_reparto[lote["tipo_lote"]] = consumido_reparto.get(lote["tipo_lote"], 0.0) + lote["consumido"]
 
     assert por_tipo == consumido_reparto
+
+
+def test_el_armado_con_envase_que_espera_la_guia_R_tiene_MOTIVO_PROPIO():
+    """`sin_lote` diría algo falso acá: el cajón SÍ estaba.
+
+    Lo que falta no es mercadería —el cajón está en el galpón, entero— sino
+    la guía R que lo convierte en cajas. Mandar a alguien a buscar bultos
+    que no faltan es peor que no avisar.
+    """
+    from datetime import datetime
+
+    cajon = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 8, 0)),
+             "tipo_lote": "guia", "cantidad": 10.0, "costo_bulto": 50.0}
+    armado = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)),
+              "tipo": "armado", "cantidad": 10.0, "ficha_con_envase": True}
+
+    salida = atribuir_costos_fifo([dict(cajon)], [dict(armado)])[0]
+
+    assert salida["motivos_sin_costo"] == {"falta_cargar_guia_r": 10.0}
+    assert "sin_lote" not in salida["motivos_sin_costo"]
+
+    # Y sin envase sigue siendo el de siempre: el cajón es lo que se despacha.
+    directo = dict(armado, ficha_con_envase=False)
+    salida_directa = atribuir_costos_fifo([dict(cajon)], [directo])[0]
+    assert salida_directa["motivos_sin_costo"] == {}, "sin envase toma el cajón y no hay motivo"
+
+
+def test_TODOS_los_motivos_que_el_codigo_emite_tienen_etiqueta():
+    """Un motivo sin etiqueta revienta con KeyError en la pantalla, no antes.
+
+    `calcular_rentabilidad_real` hace `ETIQUETAS_MOTIVO_REAL[motivo]` pelado
+    —bien, porque callar sería peor—, pero eso pone el error en la pantalla
+    de Gerencia y no en el commit que agregó el motivo. Este test lo mueve
+    al commit: lee los motivos del CÓDIGO, no de una lista escrita acá.
+    """
+    import re
+    from pathlib import Path
+
+    fuente = Path("core/costo_real.py").read_text(encoding="utf-8")
+    emitidos = set(re.findall(r'_sumar_afuera\(\s*"([a-z_]+)"', fuente))
+    emitidos |= set(re.findall(r'motivos\["([a-z_]+)"\]', fuente))
+    # Anclado en la VARIABLE `motivo` y no en un ternario cualquiera: sin eso
+    # se colaba el `lado = "trabajada" if ... else "cruda"` de las mermas,
+    # que no es un motivo. Un regex suelto encuentra de más y el test falla
+    # por lo que no es, que es la peor forma de fallar.
+    for a, b in re.findall(r'\bmotivo = "([a-z_]+)" if .+? else "([a-z_]+)"', fuente):
+        emitidos |= {a, b}
+
+    assert "falta_cargar_guia_r" in emitidos, "el regex dejó de encontrar los motivos"
+    faltan = sorted(emitidos - set(ETIQUETAS_MOTIVO_REAL))
+    assert not faltan, f"motivos que el código emite y no tienen etiqueta: {faltan}"
