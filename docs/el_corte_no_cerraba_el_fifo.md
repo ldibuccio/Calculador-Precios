@@ -788,3 +788,63 @@ Siete efectivamente no aparece. Canario: agregando `'compra'` a la lista de
 orígenes, Seis salta a 12 bultos y $700 y Siete entra en el listado — o sea
 que el filtro es lo que produce el número. Con una base vacía devuelve una
 fila de ceros. Los datos de prueba se borraron.
+
+## Los 494: separar "se fue al cajón teniendo caja" de "no tenía otra opción"
+
+`e5_2` sobre Frutamax dio **`cajon` 494 de `armado` 765 — el 65%— y
+$14.618.218,30**, con `sin_costo` 0. Cuatro veces la fuga que veníamos
+midiendo del lado del reproceso ($3.572.620), y por el lado que ninguna de
+las dos direcciones tapaba.
+
+Pero **el 65% crudo no es todo problema**, y hay que decirlo antes de
+decidir nada con él. Hay artículos que **no se reprocesan nunca** —el
+docstring de `_cajas_por_ficha` los nombra: manzana, pera, arándano, salen
+en el envase que vienen—. Ahí no hay ninguna caja que el FIFO podría haber
+elegido: el armado sale del cajón porque es lo único que existe, y está bien
+atribuido. Contarlos como fuga sería exactamente el corolario 6: una
+medición que decide qué se arregla, con un número que mezcla dos cosas.
+
+`db/e5_4_cajon_con_caja_disponible.sql` parte el número en dos:
+
+- **`mal`** — el armado que se fue al cajón **teniendo caja disponible**.
+  Es lo que B arregla, y lo único que cuenta como fuga.
+- **`sin_opcion`** — el resto. No había caja: ni B ni A lo cambian.
+
+### La definición de "disponible", y el error que casi se me pasa
+
+Disponible = lotes trabajados con fecha ≤ la del armado que quedaron **sin
+usar DESPUÉS de esa salida**.
+
+El "después" no es un detalle. La primera versión miraba el restante **antes**
+de la salida, y eso cuenta como "disponibles" **las mismas cajas que esa
+salida se estaba comiendo**: el caso de agotamiento —se come las 5 cajas que
+había y desborda 7 al cajón— daba `mal = 5` cuando la respuesta correcta es
+0, porque esas 5 no estaban disponibles *en lugar* del cajón, ya se habían
+usado. Con el restante posterior da 0.
+
+Es la misma familia del corolario 13: la fórmula no se rompe, contesta otra
+pregunta. Acá se agarró porque el fixture tenía el caso de agotamiento
+separado del de orden y los números esperados estaban escritos antes de
+correr.
+
+### Cómo se verificó
+
+Tres artículos de nombre inventado, uno por caso:
+
+- **EJEMPLO Ocho** — nunca se reprocesa. Compra 20, armado 10. Todo
+  `sin_opcion`.
+- **EJEMPLO Nueve** — hay 10 cajas y el cajón es más viejo: el FIFO va al
+  cajón igual. 10 a `mal`, $1000.
+- **EJEMPLO Diez** — 5 cajas de la foto y un armado de 12: se come las 5 y
+  desborda 7. `sin_opcion`, no `mal`.
+
+Da `cajon 27`, `mal 10`, `sin_opcion 17`, `plata_mal 1000.00`. Y el control
+que más vale: **`e5_2`, que es una consulta escrita aparte, da `cajon` 27
+sobre el mismo fixture** — dos caminos distintos al mismo número. Con base
+vacía devuelve ceros (no NULLs), y con una compra fechada el día del corte
+el canario del corolario 12 muerde: pasando el piso a `>=`, 27 → 32 y
+`mal` 10 → 15. Los datos de prueba se borraron.
+
+La plata de `mal` se prorratea con el costo promedio del cajón de cada
+salida: el `min()` no cae sobre lotes concretos, así que no hay costo exacto
+que sumar.
