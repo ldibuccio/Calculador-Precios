@@ -21,6 +21,17 @@
   }
   h2 { font-size: 1rem; margin: 0 0 0.5rem; }
   .sub { color: #666; font-size: 0.88rem; margin: 0 0 0.25rem; }
+  .ratificar {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+    padding: 0.7rem 0;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  /* Grande de verdad: a 390 px un checkbox por defecto es intocable. */
+  .ratificar input { width: 1.5rem; height: 1.5rem; flex: none; }
   .aviso {
     background: #fef9c3;
     color: #713f12;
@@ -136,7 +147,18 @@
   {% endif %}
 
   {% if aviso_fecha %}
-  <div class="aviso">{{ aviso_fecha }}</div>
+  {# EL TILDE, y no un botón más: el aviso solo ya estaba y no alcanzó —
+     un pedido fechado 30 días atrás se guardó igual, con el cartel a la
+     vista. Un click en Guardar es un reflejo; tildar "la fecha es
+     correcta" es una decisión. El servidor lo exige también, así que esto
+     no es la guarda sino la forma de cumplirla sin perder el trabajo. #}
+  <div class="aviso">
+    {{ aviso_fecha }}
+    <label class="ratificar">
+      <input type="checkbox" name="fecha_ratificada" value="1" form="form-confirmar" required>
+      Sí, la fecha es correcta — guardar igual
+    </label>
+  </div>
   {% endif %}
 
   {% if pedido_vigente %}

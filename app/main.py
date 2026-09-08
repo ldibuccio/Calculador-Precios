@@ -303,6 +303,7 @@ from core.casilla_pedidos import (
     ErrorCasilla,
     clave_casilla_configurada,
     fecha_de_pedido_del_asunto,
+    motivo_fecha_dudosa,
     revisar_casilla,
     separar_remitentes,
     texto_del_mail_guardado,
@@ -12531,6 +12532,9 @@ async def confirmar_pedido(request: Request):
         raise HTTPException(status_code=400, detail="Cliente inválido")
     fecha_valor = _fecha_pedido_o_hoy(str(form.get("fecha", "")))
     texto_original = str(form.get("texto_original", "")) or None
+    # El operario tildó "sí, la fecha es correcta". Viaja para poder
+    # exigirlo ACÁ y no solo en el HTML: el servidor es el que decide.
+    fecha_ratificada = str(form.get("fecha_ratificada", "")).strip() == "1"
 
     # Las fichas del cliente: la pantalla manda cuál eligió para cada
     # renglón y de acá sale el artículo. Una ficha que no sea de ESTE
@@ -12630,6 +12634,21 @@ async def confirmar_pedido(request: Request):
 
     if not renglones:
         raise HTTPException(status_code=400, detail="El pedido no tiene ningún renglón para guardar.")
+
+    # LA MISMA REGLA QUE FRENA AL AUTO-CONFIRMADO, acá también. Estaba solo
+    # como cartel en la pantalla y el guardado no la miraba: por eso un
+    # pedido fechado 30 días atrás ("Pedido Dia 09-08" llegado el 08/09, el
+    # día y el mes dados vuelta) entró por el camino del humano, que es el
+    # que la gente usa. El automático lo había frenado bien.
+    #
+    # No traba: pide un TILDE. Un pedido con fecha absurda tiene que pasar
+    # por ojo humano, y un click reflejo en Guardar no es eso — tildar
+    # "sí, la fecha es correcta" sí. Y queda del lado del servidor porque
+    # el `required` del HTML se saltea con un POST a mano.
+    if mail is not None and not fecha_ratificada:
+        motivo = motivo_fecha_dudosa(fecha_valor, mail["recibido_el"].astimezone(ARGENTINA).date())
+        if motivo is not None:
+            raise HTTPException(status_code=400, detail=f"{motivo} Volvé y tildá que la fecha es correcta.")
 
     try:
         pedido_vigente = obtener_pedido_vigente(cliente_id, fecha_valor)
@@ -13786,7 +13805,10 @@ def _intentar_auto_confirmar(mail: dict) -> bool:
 
     fecha_llegada = mail["recibido_el"].astimezone(ARGENTINA).date()
     fecha_valor = fecha_de_pedido_del_asunto(mail["asunto"], fecha_llegada)
-    if fecha_valor is None or abs((fecha_valor - fecha_llegada).days) > 5:
+    # La MISMA función que usa la revisión a mano. Acá es pared —el mail
+    # queda pendiente y lo mira una persona—; allá es cartel. Que las dos
+    # fuerzas salgan de la misma regla es lo que impide que se separen.
+    if motivo_fecha_dudosa(fecha_valor, fecha_llegada) is not None:
         return False
 
     texto = texto_del_mail_guardado(mail["cuerpo_crudo"], mail["cuerpo_texto"])
@@ -14105,18 +14127,9 @@ def revisar_mail_pedido_ruta(request: Request, mail_id: int):
     # el respaldo. Se recalcula en CADA relectura — nunca queda congelada.
     fecha_llegada = mail["recibido_el"].astimezone(ARGENTINA).date()
     fecha_valor = fecha_de_pedido_del_asunto(mail["asunto"], fecha_llegada)
-    aviso_fecha = None
+    aviso_fecha = motivo_fecha_dudosa(fecha_valor, fecha_llegada)
     if fecha_valor is None:
         fecha_valor = fecha_llegada
-        aviso_fecha = (
-            f"El asunto del mail no trae fecha: el pedido quedó con la fecha de llegada "
-            f"({fecha_llegada.strftime('%d/%m/%Y')}). Fijate que sea la que corresponde antes de guardar."
-        )
-    elif abs((fecha_valor - fecha_llegada).days) > 5:
-        aviso_fecha = (
-            f"Ojo: la fecha del asunto ({fecha_valor.strftime('%d/%m/%Y')}) está lejos de la llegada del mail "
-            f"({fecha_llegada.strftime('%d/%m/%Y')}) — puede ser un error de tipeo de Día. Revisala antes de guardar."
-        )
     try:
         contexto = _contexto_revision_pedido(
             mail["cliente_id"], mail["cliente_nombre"], fecha_valor, datos, texto, [],

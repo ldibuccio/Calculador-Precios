@@ -67,6 +67,41 @@ def separar_remitentes(remitentes_permitidos: str) -> list[str]:
 _PATRON_FECHA_ASUNTO = re.compile(r"\b(\d{1,2})[-/](\d{1,2})(?:[-/](\d{2,4}))?\b")
 
 
+# CUÁNTO PUEDE ALEJARSE del día que llegó el mail la fecha que dice el
+# asunto. El mail del mediodía es para el día siguiente, así que 0 y 1 son
+# lo normal; cinco deja lugar a un feriado largo. Más que eso es un error de
+# tipeo — y el que muerde es el DÍA Y MES DADOS VUELTA: "Pedido Dia 09-08"
+# llegado el 08/09 se lee 9 de agosto y cae 30 días atrás.
+#
+# ESTABA ESCRITO DOS VECES, con dos fuerzas distintas: pared en el
+# auto-confirmado y solo un cartel en la revisión a mano. La pared frenó y
+# el cartel no, así que un pedido fechado 30 días atrás entró por el camino
+# del humano — que es justamente el que la gente usa. Una regla escrita dos
+# veces son dos reglas.
+DIAS_MAXIMOS_DESVIO_FECHA = 5
+
+
+def motivo_fecha_dudosa(fecha_pedido: date | None, fecha_llegada: date) -> str | None:
+    """Por qué NO hay que creerle a esta fecha, o None si es creíble.
+
+    Devuelve el texto para mostrar, no un booleano: el que decide necesita
+    ver los dos días, y un `True` obliga a cada llamador a redactar el
+    mismo mensaje por su cuenta — que es como se separan.
+    """
+    if fecha_pedido is None:
+        return (
+            f"El asunto del mail no trae fecha: el pedido quedaría con la fecha de llegada "
+            f"({fecha_llegada.strftime('%d/%m/%Y')}). Fijate que sea la que corresponde antes de guardar."
+        )
+    if abs((fecha_pedido - fecha_llegada).days) > DIAS_MAXIMOS_DESVIO_FECHA:
+        return (
+            f"Ojo: el pedido quedaría fechado el {fecha_pedido.strftime('%d/%m/%Y')} y el mail llegó el "
+            f"{fecha_llegada.strftime('%d/%m/%Y')} — {abs((fecha_pedido - fecha_llegada).days)} días de "
+            f"diferencia. Suele ser el día y el mes dados vuelta en el asunto. Revisala antes de guardar."
+        )
+    return None
+
+
 def fecha_de_pedido_del_asunto(asunto: str | None, fecha_llegada: date) -> date | None:
     """La fecha del pedido leída del ASUNTO ("Pedido Dia 22-08 Sabado" -> 22/08), o None si no trae.
 

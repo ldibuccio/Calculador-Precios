@@ -14819,7 +14819,13 @@ def test_revisar_mail_con_fecha_del_asunto_lejana_avisa_posible_tipeo():
     assert respuesta.status_code == 200
     # La fecha del asunto igual manda (15/09), pero con el aviso bien visible.
     assert 'name="fecha" value="2026-09-15"' in respuesta.text
-    assert "puede ser un error de tipeo" in respuesta.text
+    # El aviso nombra el modo de falla REAL —el día y el mes dados vuelta—
+    # y muestra LOS DOS días. Decía "puede ser un error de tipeo", que es
+    # cierto y no dice qué mirar.
+    assert "días de diferencia" in respuesta.text
+    assert "dados vuelta" in respuesta.text
+    # Y los dos días, para que se pueda decidir sin salir de la pantalla.
+    assert "15/09/2026" in respuesta.text and "22/08/2026" in respuesta.text
 
 
 def test_revisar_mail_reconvierte_el_crudo_html_y_lee_por_estructura():
@@ -21311,3 +21317,74 @@ def test_el_remanente_sale_igual_si_el_rejuego_del_FIFO_se_cae():
 
     assert respuesta.status_code == 200
     assert "Armados esperando su guía R" not in respuesta.text
+
+
+def test_guardar_un_pedido_con_FECHA_ABSURDA_no_pasa_sin_tildar():
+    """El caso real del 08/09: "Pedido Dia 09-08" llegado el 08/09.
+
+    El día y el mes dados vuelta: el pedido queda fechado el 09/08, treinta
+    días atrás. El auto-confirmado lo frenaba bien; la revisión a mano solo
+    mostraba un cartel, y el guardado NO miraba nada — así entró.
+
+    Ahora el servidor lo exige, no el HTML: un POST a mano que se saltee el
+    `required` del checkbox rebota igual.
+    """
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, asunto="Pedido Dia 09-08")
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.crear_pedido") as crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={"cliente_id": "1", "fecha": "2026-09-09", "mail_id": "9",
+                  "renglon_0_ficha_id": str(FICHAS_PEDIDO_DE_PRUEBA[0]["id"]),
+                  "renglon_0_cantidad_S1": "10", "cantidad_renglones": "1"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "días de diferencia" in respuesta.text
+    crear.assert_not_called(), "no se puede haber guardado nada"
+
+
+def test_con_el_tilde_puesto_el_pedido_de_fecha_rara_SI_se_guarda():
+    """Avisa y pide una decisión, pero no traba: la fecha rara puede ser real."""
+    mail = dict(MAIL_PEDIDO_DE_PRUEBA, asunto="Pedido Dia 09-08")
+    with (
+        patch("app.main.obtener_mail_pedido", return_value=mail),
+        patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PEDIDO_DE_PRUEBA),
+        patch("app.main.obtener_pedido_vigente", return_value=None),
+        patch("app.main.crear_pedido", return_value=77) as crear,
+        patch("app.main.marcar_mail_pedido_confirmado"),
+        patch("app.main.guardar_alias_en_ficha"),
+    ):
+        respuesta = cliente.post(
+            "/deposito/pedido/cargar/confirmar",
+            data={"cliente_id": "1", "fecha": "2026-09-09", "mail_id": "9",
+                  "fecha_ratificada": "1",
+                  "renglon_0_ficha_id": str(FICHAS_PEDIDO_DE_PRUEBA[0]["id"]),
+                  "renglon_0_cantidad_S1": "10", "cantidad_renglones": "1"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    crear.assert_called_once()
+
+
+def test_la_regla_de_la_fecha_DUDOSA_esta_escrita_UNA_vez():
+    """El auto-confirmado y la revisión tienen que salir de la misma función.
+
+    Estaba escrita dos veces, `abs(...) > 5` en cada lado, con dos fuerzas
+    distintas: pared allá y cartel acá. La pared frenó, el cartel no, y el
+    pedido entró por el camino del humano. Una regla escrita dos veces son
+    dos reglas.
+    """
+    import re
+    from pathlib import Path
+
+    fuente = Path("app/main.py").read_text(encoding="utf-8")
+    assert "motivo_fecha_dudosa(" in fuente
+    sueltos = re.findall(r"fecha_llegada\)\.days\)\s*>\s*\d+", fuente)
+    assert not sueltos, f"el umbral volvió a escribirse a mano en app/main.py: {sueltos}"
