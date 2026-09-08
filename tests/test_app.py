@@ -3040,6 +3040,7 @@ def test_ver_editar_compra_error_de_base_da_500():
 
 def test_ver_detalle_compra_muestra_toda_la_historia():
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3059,6 +3060,7 @@ def test_ver_detalle_compra_muestra_toda_la_historia():
 def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_retirada=8)
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3071,6 +3073,7 @@ def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
 def test_ver_detalle_compra_marca_la_diferencia_de_recepcion():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=9)
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3080,12 +3083,54 @@ def test_ver_detalle_compra_marca_la_diferencia_de_recepcion():
     assert "Diferencia contra lo comprado" in respuesta.text
 
 
+def test_el_detalle_muestra_LAS_DOS_fotos_CON_SU_ETIQUETA():
+    """La comanda y el pesaje son cosas distintas y se ven juntas.
+
+    Acá mira el que audita. Sin el título al lado de cada una se
+    confunden, y una foto mal leída vale menos que ninguna.
+    """
+    with (
+        patch(
+            "app.main.listar_fotos_de_recepcion",
+            return_value=[{"id": 3, "foto_ruta": "2026-09-08/balanza-30-1.jpg", "creado_en": None}],
+        ),
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[
+            {"id": 9, "foto_ruta": "2026-08-16/a.jpg", "creado_en": datetime(2026, 8, 16, 10, 0)},
+        ]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "Fotos de la comanda (guía)" in respuesta.text
+    assert "Fotos del pesaje (balanza)" in respuesta.text
+    # Cada una apunta a SU ruta: la de la guía por foto_id, la de balanza
+    # por compra. Mezcladas, el detalle mostraría dos veces la misma.
+    assert 'src="/compras/30/fotos/9/ver"' in respuesta.text
+    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in respuesta.text
+    assert "Esta compra no tiene foto de la balanza." not in respuesta.text
+
+
+def test_el_detalle_dice_que_NO_hay_foto_de_balanza_cuando_no_la_hay():
+    """El bloque aparece igual, vacío: que no esté no puede verse como que no existe la función."""
+    with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert "Fotos del pesaje (balanza)" in respuesta.text
+    assert "Esta compra no tiene foto de la balanza." in respuesta.text
+
+
 def test_ver_detalle_compra_con_fotos_muestra_la_galeria_de_la_guia():
     fotos = [
         {"id": 9, "foto_ruta": "2026-08-16/a.jpg", "creado_en": datetime(2026, 8, 16, 10, 0)},
         {"id": 10, "foto_ruta": "2026-08-16/b.pdf", "creado_en": datetime(2026, 8, 16, 11, 0)},
     ]
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
     ):
@@ -3124,6 +3169,7 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
     # Mercado): 'ingreso_directo' es otra cosa, tiene su propia etiqueta.
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, retiro_origen="ingreso_directo")
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3135,6 +3181,7 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
 
 def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3147,6 +3194,7 @@ def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
 def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="pendiente")
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3159,6 +3207,7 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
 def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, cantidad_cajones_real=8, cantidad_cajones_rechazada=2, motivo_rechazo="podrido")
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3171,6 +3220,7 @@ def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
 
 def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -3182,6 +3232,7 @@ def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
 
 def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):
@@ -4092,19 +4143,59 @@ COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
         "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
+        "fotos_balanza": 1,
     },
     {
         "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
         "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
+        "fotos_balanza": 0,
     },
     {
         "id": 3, "guia_id": 106, "guia_punto": 1, "articulo_nombre": "Frutilla", "unidad_compra": "cubeta",
         "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
         "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 60,
+        "fotos_balanza": 0,
     },
 ]
+
+
+def test_el_renglon_de_recepcion_ofrece_SACAR_LA_FOTO_de_la_balanza():
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    # Una por ARTÍCULO: el form cuelga del renglón, no de la guía.
+    assert 'action="/deposito/recepcion/2/foto-balanza"' in respuesta.text
+    assert 'action="/deposito/recepcion/3/foto-balanza"' in respuesta.text
+    # capture="environment" abre la cámara de atrás directo; sin eso el
+    # operario pasa por el carrete y elige un archivo viejo.
+    assert 'capture="environment"' in respuesta.text
+    assert "Sacar foto de la balanza" in respuesta.text
+
+
+def test_el_renglon_QUE_YA_TIENE_FOTO_ofrece_verla_y_sacar_otra():
+    """Los dos casos en la misma pantalla, que es como va a estar en el galpón.
+
+    La compra 1 tiene foto y la 2 no. Si la pantalla ofreciera "Ver la
+    foto" en las dos, o en ninguna, este test cae — con un fixture donde
+    todas fueran iguales no se notaría.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert 'href="/deposito/recepcion/1/foto-balanza/ver"' in respuesta.text
+    assert 'href="/deposito/recepcion/2/foto-balanza/ver"' not in respuesta.text
+    assert "Sacar otra" in respuesta.text
 
 
 def test_ver_recepcion_agrupa_por_guia_y_muestra_estimado():
@@ -4246,6 +4337,96 @@ def test_ver_recepcion_error_de_base_da_500():
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 500
+
+
+def test_subir_la_foto_de_balanza_comprime_y_la_cuelga_de_LA_COMPRA():
+    """El pipeline de siempre (1000px q60) y la compra como dueño, no la guía."""
+    with (
+        patch("app.main._comprimir_foto_jpeg", return_value=b"jpeg-chico") as mock_comprimir,
+        patch("app.main.subir_foto_comanda", return_value="2026-09-08/balanza-7-x.jpg") as mock_subir,
+        patch("app.main.agregar_foto_recepcion") as mock_guardar,
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/7/foto-balanza",
+            files={"archivo": ("balanza.jpg", b"bytes-de-la-foto", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert respuesta.headers["location"] == "/deposito/recepcion"
+    # Sin argumento de tamaño: la foto de balanza usa el MISMO pipeline que
+    # todo lo demás. Lo que hay que ver es que la mercadería estaba sobre
+    # la balanza, no leer el display — el operario redondea igual.
+    mock_comprimir.assert_called_once_with(b"bytes-de-la-foto")
+    assert mock_subir.call_args.args[0] == b"jpeg-chico"
+    mock_guardar.assert_called_once_with(7, "2026-09-08/balanza-7-x.jpg")
+
+
+def test_la_foto_de_balanza_NO_sube_el_original_a_Storage():
+    """Lo que llega al bucket es lo comprimido, nunca los bytes del teléfono.
+
+    Con los dos valores distintos a propósito: si alguien pasara el
+    original por error, subir_foto_comanda recibiría b"original-gigante"
+    y esto cae.
+    """
+    with (
+        patch("app.main._comprimir_foto_jpeg", return_value=b"chica") as mock_comprimir,
+        patch("app.main.subir_foto_comanda", return_value="r.jpg") as mock_subir,
+        patch("app.main.agregar_foto_recepcion"),
+    ):
+        cliente.post(
+            "/deposito/recepcion/7/foto-balanza",
+            files={"archivo": ("b.jpg", b"original-gigante", "image/jpeg")},
+        )
+
+    assert mock_subir.call_args.args[0] == b"chica"
+    assert mock_comprimir.call_args.args[0] == b"original-gigante"
+
+
+def test_si_el_archivo_no_es_una_imagen_avisa_y_NO_toca_la_base():
+    with (
+        patch("app.main._comprimir_foto_jpeg", return_value=None),
+        patch("app.main.subir_foto_comanda") as mock_subir,
+        patch("app.main.agregar_foto_recepcion") as mock_guardar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/7/foto-balanza",
+            files={"archivo": ("cosa.txt", b"esto no es una foto", "text/plain")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Eso no es una foto" in respuesta.text
+    mock_subir.assert_not_called()
+    mock_guardar.assert_not_called()
+
+
+def test_si_falla_el_Storage_la_compra_SIGUE_PENDIENTE_y_se_puede_recibir():
+    """El camión no se para por una foto: la recepción queda intacta.
+
+    Devuelve la pantalla con el cartel, no una página de error cruda —
+    desde ahí el operario recibe igual, con foto o sin.
+    """
+    with (
+        patch("app.main._comprimir_foto_jpeg", return_value=b"chica"),
+        patch("app.main.subir_foto_comanda", side_effect=RuntimeError("sin conexión")),
+        patch("app.main.agregar_foto_recepcion") as mock_guardar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/7/foto-balanza",
+            files={"archivo": ("b.jpg", b"foto", "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 500
+    assert "No se pudo subir la foto" in respuesta.text
+    mock_guardar.assert_not_called()
+    # Y los renglones siguen ahí, con su botón de recibir.
+    assert "Tomate Cherry" in respuesta.text
 
 
 def test_recepcionar_compra_guarda_los_reales_y_redirige():
@@ -20380,6 +20561,7 @@ def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave(
     se encuentra una pantalla de clave sin entender por qué."""
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, estado="recepcionado")
     with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
     ):

@@ -243,6 +243,29 @@
   <div class="tarjeta">
     {% set fotos_volver = "detalle" %}
     {% include "_fotos_guia.html" %}
+
+    {# LAS DOS FOTOS EN LA MISMA TARJETA Y CADA UNA CON SU TÍTULO. Son de
+       cosas distintas —el papel del proveedor y la mercadería sobre la
+       balanza— y sin la etiqueta al lado se confunden: acá es donde mira
+       el que audita, y una foto mal leída vale menos que ninguna. #}
+    <div class="fotos-guia">
+      <h3>Fotos del pesaje (balanza)</h3>
+      {% if fotos_balanza %}
+      <div class="fotos-guia-tira">
+        {% for f in fotos_balanza %}
+        <div class="foto-guia-item">
+          <a href="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver" target="_blank" rel="noopener">
+            <img src="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver"
+                 alt="Mercadería sobre la balanza" loading="lazy">
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="fotos-guia-vacio">Esta compra no tiene foto de la balanza.</p>
+      {% endif %}
+      <p class="fotos-guia-nota">La saca Depósito al recepcionar. Cuelga de este artículo, no de la guía.</p>
+    </div>
   </div>
 
   <a class="volver" href="/compras/buscar">Volver a Buscar Compras</a>

@@ -120,6 +120,43 @@
   .boton-advertencia { background: #fff; color: #b45309; border: 1px solid #d97706; }
   .boton-neutro { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  /* Foto de la balanza. El input file va escondido y lo dispara el label:
+     un input file crudo es un control chico y feo de tocar con el pulgar,
+     y lo que hace falta acá es un boton grande. */
+  .foto-balanza { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
+  .foto-balanza input[type="file"] { display: none; }
+  .foto-balanza form { flex: 1 1 100%; margin: 0; }
+  .foto-balanza form.con-foto { flex: 1 1 45%; }
+  .boton-foto {
+    display: block;
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px dashed #9ca3af;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #444;
+    background: #fff;
+    text-align: center;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  /* Ya hay foto: verde y con borde lleno, para que se vea de un vistazo
+     cual renglon tiene y cual no sin leer nada. */
+  .boton-foto-ver {
+    flex: 1 1 45%;
+    display: block;
+    padding: 0.75rem;
+    border: 1px solid #16a34a;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #15803d;
+    background: #f0fdf4;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
   /* Confirmación en dos pasos, en el lugar: nada de confirm() nativo —
      dos toques deliberados dentro del mismo renglón. */
   .confirmacion { display: none; }
@@ -268,6 +305,25 @@
           <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
                  value="{{ c.contenido_por_cajon }}">
         </form>
+
+        {# La foto va ARRIBA de los botones: el orden de la pantalla es el
+           orden del trabajo — pesar, sacar la foto, y recien ahi recibir. #}
+        <div class="foto-balanza">
+          {% if c.fotos_balanza %}
+          <a class="boton-foto-ver" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank">Ver la foto ✓</a>
+          {% endif %}
+          <form method="post" action="/deposito/recepcion/{{ c.id }}/foto-balanza"
+                enctype="multipart/form-data" class="{{ 'con-foto' if c.fotos_balanza else '' }}">
+            <label class="boton-foto" for="foto-balanza-{{ c.id }}">
+              {{ "Sacar otra" if c.fotos_balanza else "Sacar foto de la balanza" }}
+            </label>
+            {# capture="environment": abre la camara de atras directo, sin
+               pasar por el carrete. Se sube sola al sacarla — un boton
+               "Subir" aparte es un toque de mas con las manos ocupadas. #}
+            <input type="file" id="foto-balanza-{{ c.id }}" name="archivo" accept="image/*"
+                   capture="environment" onchange="this.form.submit()">
+          </form>
+        </div>
 
         <div class="acciones-compra" id="acciones-{{ c.id }}">
           <button type="button" class="boton-exito boton-recibir" onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>

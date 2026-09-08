@@ -279,6 +279,8 @@ from app.db import (
     obtener_proveedor,
     obtener_ultimo_disponible_cliente,
     listar_estado_alertas,
+    agregar_foto_recepcion,
+    listar_fotos_de_recepcion,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
@@ -4223,6 +4225,7 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
         {
             "compra": compra,
             "fotos_guia": _fotos_de_la_guia_de(compra),
+            "fotos_balanza": listar_fotos_de_recepcion(compra_id),
             "estado_retiro_label": ESTADOS_RETIRO_LABELS.get(compra["estado_retiro"], compra["estado_retiro"]),
             "estado_recepcion_label": ESTADOS_RECEPCION_LABELS.get(compra["estado"], compra["estado"]),
             "origen_retiro_label": ORIGENES_RETIRO_LABELS.get(compra["retiro_origen"], compra["retiro_origen"]),
@@ -6514,6 +6517,72 @@ def _url_recepcion_con_procesado(compra_id: int, aviso_retiro: str | None) -> st
     if aviso_retiro:
         parametros["aviso"] = aviso_retiro
     return f"/deposito/recepcion?{urlencode(parametros)}"
+
+
+@app.post("/deposito/recepcion/{compra_id}/foto-balanza")
+async def subir_foto_de_balanza(request: Request, compra_id: int, archivo: UploadFile = File(...)):
+    """Cuelga a esta compra la foto de la mercadería sobre la balanza. Se suma, no reemplaza.
+
+    Va por el pipeline de siempre (1000 px, calidad 60): lo que hay que
+    ver es que la mercadería estaba sobre la balanza y que la balanza
+    estaba pesando, no leer el número del display. Ver el corolario 29 —
+    el requisito de leerlo no existía, y encima el operario redondea.
+
+    Solo imágenes: una comanda puede ser un PDF o un Excel del proveedor,
+    esto es una foto sacada en el momento.
+
+    Un fallo acá NO frena nada: se vuelve a la pantalla con el cartel y la
+    compra sigue pendiente, lista para recibir con o sin foto.
+    """
+    bytes_archivo = await archivo.read()
+    if not bytes_archivo:
+        return _renderizar_pantalla_recepcion(request, error="La foto llegó vacía, probá de nuevo.", status_code=400)
+
+    comprimida = _comprimir_foto_jpeg(bytes_archivo)
+    if comprimida is None:
+        return _renderizar_pantalla_recepcion(
+            request, error="Eso no es una foto: sacá una imagen de la mercadería sobre la balanza.", status_code=400
+        )
+
+    try:
+        foto_ruta = subir_foto_comanda(comprimida, f"balanza-{compra_id}")
+    except Exception as error_storage:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo subir la foto: {error_storage}", status_code=500
+        )
+
+    try:
+        agregar_foto_recepcion(compra_id, foto_ruta)
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo guardar la foto: {error_db}", status_code=500
+        )
+
+    return RedirectResponse(url="/deposito/recepcion", status_code=303)
+
+
+@app.get("/deposito/recepcion/{compra_id}/foto-balanza/ver")
+def ver_foto_de_balanza(compra_id: int):
+    """URL firmada de la ÚLTIMA foto de balanza de esta compra.
+
+    La última y no todas: en el renglón hay una sola cosa que mirar, y si
+    el operario sacó una segunda es porque la primera no servía. El
+    detalle de la compra sí las muestra todas.
+    """
+    try:
+        fotos = listar_fotos_de_recepcion(compra_id)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    if not fotos:
+        raise HTTPException(status_code=404, detail="Esta compra no tiene foto de balanza")
+
+    try:
+        url_firmada = obtener_url_foto(fotos[-1]["foto_ruta"])
+    except Exception as error_storage:
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo generar el link de la foto: {error_storage}"
+        ) from error_storage
+    return RedirectResponse(url=url_firmada, status_code=307)
 
 
 @app.post("/deposito/recepcion/{compra_id}/recepcionar")

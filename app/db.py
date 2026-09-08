@@ -2120,7 +2120,8 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
                 SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
                        a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
-                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion
+                       c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion,
+                       (SELECT COUNT(*) FROM fotos_recepcion f WHERE f.compra_id = c.id) AS fotos_balanza
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -2574,7 +2575,8 @@ def listar_compras_procesadas_hoy_recepcion(fecha) -> list[dict]:
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real,
-                       c.estado, c.procesada_el
+                       c.estado, c.procesada_el,
+                       (SELECT COUNT(*) FROM fotos_recepcion f WHERE f.compra_id = c.id) AS fotos_balanza
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -3472,6 +3474,41 @@ def agregar_foto_guia(guia_id: int, foto_ruta: str) -> None:
                 (guia_id, foto_ruta),
             )
         conexion.commit()
+    finally:
+        conexion.close()
+
+
+def agregar_foto_recepcion(compra_id: int, foto_ruta: str) -> None:
+    """Cuelga una foto de balanza a ESTA compra. Nunca reemplaza: si la ruta ya estaba, no hace nada.
+
+    Varias filas por compra a propósito: si la primera salió movida, el
+    operario saca otra y quedan las dos. "Falta la foto" es que no haya
+    NINGUNA, no que no haya exactamente una.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO fotos_recepcion (compra_id, foto_ruta) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (compra_id, foto_ruta),
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def listar_fotos_de_recepcion(compra_id: int) -> list[dict]:
+    """Las fotos de balanza de una compra, más viejas primero (el orden en que se sacaron)."""
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, foto_ruta, creado_en FROM fotos_recepcion WHERE compra_id = %s ORDER BY creado_en, id",
+                (compra_id,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            filas = cursor.fetchall()
+        return [dict(zip(columnas, fila)) for fila in filas]
     finally:
         conexion.close()
 
