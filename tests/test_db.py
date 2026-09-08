@@ -116,7 +116,7 @@ from app.db import (
     agregar_foto_guia_del_dia,
     borrar_foto_guia,
     listar_fotos_de_guia,
-    limpiar_foto_ruta_de_compras,
+    olvidar_foto_borrada,
     listar_clientes,
     listar_compras_para_costeo,
     listar_compras_pendientes_recepcion,
@@ -170,6 +170,86 @@ def _conexion_falsa(filas_fetchone=None, filas_fetchall=None):
     return conexion, cursor
 
 
+def _sql_que_contiene(cursor, fragmento: str) -> str:
+    """La consulta que ejecutó el cursor y contiene este fragmento, sin depender del ORDEN.
+
+    Buscar por posición (`call_args_list[0]`) hace que cualquier sentencia
+    nueva rompa tests que no tienen nada que ver con ella.
+    """
+    return next(ll.args[0] for ll in cursor.execute.call_args_list if fragmento in ll.args[0])
+
+
+def _conexion_falsa_con_varios_fetchall(filas_fetchone, secuencia_fetchall):
+    """Como _conexion_falsa pero con fetchall() devolviendo un valor DISTINTO por llamada.
+
+    Aparte y no un parámetro más del helper viejo: ése usa return_value y
+    hay veinte tests apoyados en eso.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone)
+    cursor.fetchall.side_effect = secuencia_fetchall
+    return conexion, cursor
+
+
+def test_borrar_una_compra_CON_FOTO_DE_BALANZA_devuelve_la_ruta_para_sacarla_del_Storage():
+    """El caso que hoy revienta, y el que queda mal si alguien lo arregla con cascade.
+
+    La foto de balanza cuelga de ESTA compra y no la comparte con nadie,
+    así que al borrar la compra el archivo tiene que irse del bucket. La
+    fila sola no alcanza: sin la ruta devuelta, nadie lo saca nunca y el
+    archivo queda ocupando lugar para siempre, sin ninguna fila que lo
+    nombre — no hay pantalla donde se vea que está de más.
+
+    Y por eso este test es la guarda contra el "on delete cascade": con
+    cascade la fila se va sola, este DELETE no existe, la lista vuelve
+    VACÍA y el test cae. Que caiga es su función.
+    """
+    conexion, cursor = _conexion_falsa_con_varios_fetchall(
+        [
+            (None,),  # RETURNING guia_id: la compra se borró y no tenía guía
+        ],
+        [
+            [("2026-09-08/n07p41-999-abcdef12.jpg",)],  # RETURNING de fotos_recepcion
+        ],
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = eliminar_compra(30)
+
+    assert resultado == ["2026-09-08/n07p41-999-abcdef12.jpg"], (
+        "la ruta de la foto de balanza tiene que volver para que quien llama la saque del Storage"
+    )
+
+    # Y la foto se borra ANTES que la compra: la FK va sin cascade a
+    # propósito, así que al revés el DELETE de compras falla.
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    orden_foto = next(i for i, c in enumerate(consultas) if "DELETE FROM fotos_recepcion" in c)
+    orden_compra = next(i for i, c in enumerate(consultas) if "DELETE FROM compras" in c)
+    assert orden_foto < orden_compra, "la foto se borra antes que la compra, o la FK rechaza el DELETE"
+    conexion.commit.assert_called_once()
+
+
+def test_la_migracion_de_fotos_recepcion_NO_lleva_on_delete_cascade():
+    """Leído del esquema real, no de la memoria de quien lo escribió.
+
+    Con cascade el archivo queda huérfano en el bucket: la fila se va sin
+    que nadie devuelva la ruta, y no hay ninguna pantalla donde se vea un
+    archivo que ya no nombra nadie. Es la decisión escrita en
+    docs/foto_de_balanza_al_recepcionar.md, y acá está lo que la sostiene
+    el día que alguien resuelva el error de FK por el camino corto.
+    """
+    from pathlib import Path
+
+    esquema = Path("db/esquema_completo.sql").read_text(encoding="utf-8")
+    inicio = esquema.index("create table fotos_recepcion")
+    definicion = esquema[inicio : esquema.index(");", inicio)]
+
+    assert "references compras (id)" in definicion
+    assert "cascade" not in definicion.lower(), (
+        "fotos_recepcion.compra_id NO puede llevar on delete cascade: el archivo del Storage "
+        "quedaría huérfano. El borrado devuelve la ruta, ver eliminar_compra."
+    )
+
+
 def test_eliminar_compra_ultima_de_su_guia_devuelve_las_fotos_sin_otros_usos():
     # Al borrar el ÚLTIMO renglón de la guía, las fotos de la guía se dan
     # de baja y se devuelven las rutas que ningúna otra guía usa.
@@ -179,8 +259,10 @@ def test_eliminar_compra_ultima_de_su_guia_devuelve_las_fotos_sin_otros_usos():
             (0,),  # COUNT de compras de la guía tras el DELETE: quedó vacía
             (0,),  # COUNT de otras guías usando la ruta: ninguna
         ],
-        filas_fetchall=[("2026-08-13/n07p41-123-abcdef12.jpg",)],  # RETURNING de fotos_guia
     )
+    # Primer fetchall: el RETURNING de fotos_recepcion — esta compra no tiene
+    # foto de balanza. Segundo: el de fotos_guia.
+    cursor.fetchall.side_effect = [[], [("2026-08-13/n07p41-123-abcdef12.jpg",)]]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
@@ -203,8 +285,8 @@ def test_eliminar_compra_con_renglones_restantes_no_toca_las_fotos():
         resultado = eliminar_compra(30)
 
     assert resultado == []
-    # SELECT compra + DELETE + COUNT de la guía: nada de fotos.
-    assert cursor.execute.call_count == 2  # DELETE + COUNT de la guía
+    # DELETE de fotos_recepcion (vacío) + DELETE de la compra + COUNT de la guía.
+    assert cursor.execute.call_count == 3
     assert not any("fotos_guia" in ll.args[0] for ll in cursor.execute.call_args_list)
     conexion.commit.assert_called_once()
 
@@ -218,8 +300,8 @@ def test_eliminar_compra_foto_compartida_por_otra_guia_no_se_borra_del_storage()
             (0,),  # la guía quedó vacía
             (1,),  # otra guía sigue usando la misma ruta
         ],
-        filas_fetchall=[("2026-08-13/listado-abc123.jpg",)],
     )
+    cursor.fetchall.side_effect = [[], [("2026-08-13/listado-abc123.jpg",)]]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compra(30)
@@ -242,7 +324,10 @@ def test_eliminar_compra_sin_guia_no_toca_fotos():
         resultado = eliminar_compra(30)
 
     assert resultado == []
-    assert cursor.execute.call_count == 1  # solo el DELETE: sin guía no hay fotos que mirar
+    # El DELETE de fotos_recepcion (vacío) y el de la compra: sin guía no hay
+    # fotos de comanda que mirar.
+    assert cursor.execute.call_count == 2
+    assert not any("fotos_guia" in ll.args[0] for ll in cursor.execute.call_args_list)
 
 
 def test_eliminar_compra_rechazada_se_puede_borrar_igual_que_antes():
@@ -292,8 +377,9 @@ def test_eliminar_compra_recepcionada_no_se_borra():
         except ValueError as error:
             assert str(error) == "Esta compra ya fue recepcionada, no se puede eliminar."
 
-    # Ni el DELETE ni ningún commit: se corta antes de tocar nada.
-    assert cursor.execute.call_count == 2  # el DELETE que no borró + el SELECT del mensaje
+    # Sin commit: la transacción entera vuelve atrás, incluido el DELETE de
+    # fotos_recepcion que corre primero — la foto sigue ahí.
+    assert cursor.execute.call_count == 3  # fotos_recepcion + el DELETE que no borró + el SELECT
     conexion.commit.assert_not_called()
     conexion.close.assert_called_once()
 
@@ -316,7 +402,9 @@ def test_eliminar_compra_no_ingresada_no_se_borra():
         except ValueError as error:
             assert str(error) == 'Esta compra quedó registrada como "No ingresó" en Depósito, no se puede eliminar.'
 
-    assert cursor.execute.call_count == 2  # el DELETE que no borró + el SELECT del mensaje
+    # Sin commit: la transacción entera vuelve atrás, incluido el DELETE de
+    # fotos_recepcion que corre primero — la foto sigue ahí.
+    assert cursor.execute.call_count == 3  # fotos_recepcion + el DELETE que no borró + el SELECT
     conexion.commit.assert_not_called()
 
 
@@ -335,7 +423,9 @@ def test_eliminar_compra_retirada_no_se_borra():
         except ValueError as error:
             assert str(error) == "Esta compra ya fue retirada, no se puede eliminar."
 
-    assert cursor.execute.call_count == 2  # el DELETE que no borró + el SELECT del mensaje
+    # Sin commit: la transacción entera vuelve atrás, incluido el DELETE de
+    # fotos_recepcion que corre primero — la foto sigue ahí.
+    assert cursor.execute.call_count == 3  # fotos_recepcion + el DELETE que no borró + el SELECT
     conexion.commit.assert_not_called()
 
 
@@ -1395,8 +1485,10 @@ def test_eliminar_compras_del_dia_por_proveedor_devuelve_borradas_y_protegidas()
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = eliminar_compras_del_dia_por_proveedor(date(2026, 8, 16), 7)
 
-    assert resultado == {"borradas": 3, "protegidas": 2}
-    consulta_delete = cursor.execute.call_args_list[1].args[0]
+    assert resultado == {"borradas": 3, "protegidas": 2, "rutas_a_borrar": []}
+    consulta_delete = next(
+        ll.args[0] for ll in cursor.execute.call_args_list if "DELETE FROM compras" in ll.args[0]
+    )
     assert "estado IS DISTINCT FROM 'recepcionado'" in consulta_delete
     assert "estado_retiro IS DISTINCT FROM 'retirado'" in consulta_delete
     conexion.commit.assert_called_once()
@@ -1487,11 +1579,18 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     consulta, parametros = cursor.execute.call_args[0]
     # Una sola pasada sobre fotos_guia: candidata si TODAS las guías que
     # usan la ruta son de antes del corte.
-    assert parametros == (date(2023, 8, 15),)
     assert "FROM fotos_guia" in consulta
     assert "JOIN guias_compra" in consulta
     assert "GROUP BY f.foto_ruta" in consulta
     assert "HAVING MAX(g.fecha_operacion) < %s" in consulta
+    # Y LAS DE BALANZA EN LA MISMA PASADA. Sin esto no se borran nunca:
+    # no aparecen siquiera como candidatas, y el archivo queda para
+    # siempre. Con el MISMO corte que las comandas — una sola perilla.
+    assert "FROM fotos_recepcion" in consulta
+    assert "JOIN compras" in consulta
+    assert parametros == (date(2023, 8, 15), date(2023, 8, 15)), (
+        "el corte va a las dos mitades del UNION, y es el mismo"
+    )
 
 
 def test_listar_fotos_para_limpiar_vacio_da_lista_vacia():
@@ -1503,18 +1602,43 @@ def test_listar_fotos_para_limpiar_vacio_da_lista_vacia():
     assert resultado == []
 
 
-def test_limpiar_foto_ruta_de_compras_borra_solo_fotos_guia():
+def test_olvidar_foto_borrada_limpia_LAS_DOS_tablas():
+    """El archivo ya se fue del Storage: la fila que quede apunta a la nada.
+
+    Antes esto miraba solo fotos_guia y el test lo afirmaba como correcto.
+    Con las fotos de balanza eso deja "Ver foto" roto para siempre y SIN
+    ningún síntoma: el DELETE no encuentra la fila, no da error, y el
+    contador de la pantalla la cuenta como borrada.
+    """
     conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 1
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        limpiar_foto_ruta_de_compras("2020-01-01/a.jpg")
+        olvidar_foto_borrada("2020-01-01/a.jpg")
 
-    # Las fotos viven SOLO en fotos_guia: la vieja compras.foto_ruta ya no
-    # se toca (columna borrada por drop_foto_ruta_compras.sql).
-    assert cursor.execute.call_count == 1
-    consulta_delete = cursor.execute.call_args_list[0].args[0]
-    assert "DELETE FROM fotos_guia WHERE foto_ruta = %s" in consulta_delete
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert any("DELETE FROM fotos_guia WHERE foto_ruta = %s" in c for c in consultas)
+    assert any("DELETE FROM fotos_recepcion WHERE foto_ruta = %s" in c for c in consultas)
     conexion.commit.assert_called_once()
+    conexion.close.assert_called_once()
+
+
+def test_olvidar_foto_borrada_LEVANTA_si_no_toco_ninguna_fila():
+    """Sin esto, borrar a medias se reporta como éxito.
+
+    El archivo ya no está en el bucket cuando se llama a esta función. Si
+    no borra ninguna fila, "ya estaba limpio" y "estoy mirando la tabla
+    equivocada" son indistinguibles, y la segunda es la que hay que ver.
+    """
+    conexion, cursor = _conexion_falsa()
+    cursor.rowcount = 0
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            olvidar_foto_borrada("2020-01-01/a.jpg")
+
+    assert "2020-01-01/a.jpg" in str(error.value)
+    conexion.commit.assert_not_called()
     conexion.close.assert_called_once()
 
 
@@ -5667,15 +5791,21 @@ def test_el_borrado_de_a_uno_y_el_cancelar_del_dia_usan_LA_MISMA_condicion():
     conexion, cursor = _conexion_falsa([(105,), (0,)], filas_fetchall=[])
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_compra(30)
-    sql_de_a_uno = cursor.execute.call_args_list[0].args[0]
+    sql_de_a_uno = _sql_que_contiene(cursor, "DELETE FROM compras")
 
     conexion, cursor = _conexion_falsa([(7,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_compras_del_dia_por_proveedor(date(2026, 9, 4), 3)
-    sql_del_dia = cursor.execute.call_args_list[1].args[0]
+    sql_del_dia = _sql_que_contiene(cursor, "DELETE FROM compras")
+    sql_fotos_del_dia = _sql_que_contiene(cursor, "DELETE FROM fotos_recepcion")
 
     assert _SQL_COMPRA_BORRABLE in sql_de_a_uno
     assert _SQL_COMPRA_BORRABLE in sql_del_dia
+    # Y LA TERCERA COPIA, que es nueva: el borrado de las fotos del día tiene
+    # que recortar por lo MISMO que el de las compras. Con un criterio propio
+    # borraría la foto de una compra que después queda protegida — la fila
+    # sobrevive, el archivo no, y "Ver foto" queda roto sin que nada avise.
+    assert _SQL_COMPRA_BORRABLE in sql_fotos_del_dia
 
 
 def test_el_borrado_de_a_uno_decide_en_el_delete_y_no_antes():
@@ -5685,9 +5815,13 @@ def test_el_borrado_de_a_uno_decide_en_el_delete_y_no_antes():
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_compra(30)
 
-    primera = cursor.execute.call_args_list[0].args[0]
-    assert primera.strip().startswith("DELETE FROM compras")
-    assert "RETURNING guia_id" in primera
+    consultas = [ll.args[0] for ll in cursor.execute.call_args_list]
+    hasta_el_delete = consultas[: next(i for i, c in enumerate(consultas) if "DELETE FROM compras" in c)]
+    # Lo que importa no es que el DELETE sea el PRIMERO —hoy lo precede el de
+    # fotos_recepcion, que la FK obliga— sino que antes no haya ningún SELECT
+    # preguntando "¿se puede?". Eso es lo que se separa del constraint.
+    assert not any("SELECT" in c.upper() for c in hasta_el_delete), hasta_el_delete
+    assert "RETURNING guia_id" in _sql_que_contiene(cursor, "DELETE FROM compras")
 
 
 def test_el_motivo_dice_que_no_sabe_cuando_no_sabe():

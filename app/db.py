@@ -3253,17 +3253,34 @@ def eliminar_compra(compra_id: int) -> list[str]:
     bug; mientras tanto el caso real —un rechazo apretado por error— se
     resuelve con el Deshacer del mismo día, que la devuelve a 'pendiente'.
 
-    Las fotos cuelgan de la GUÍA (fotos_guia), no del renglón: borrar una
-    compra no toca las fotos mientras la guía siga teniendo renglones.
+    Las fotos de COMANDA cuelgan de la GUÍA (fotos_guia), no del renglón:
+    borrar una compra no las toca mientras la guía siga teniendo renglones.
     Si esta era la ÚLTIMA compra de su guía, las fotos de la guía se dan
     de baja también, y se devuelven las rutas a borrar del Storage — SOLO
     las que ninguna otra guía usa (el Listado consolidado comparte un
     archivo entre varias guías). Todo dentro de la misma transacción,
     para no tener carrera entre el DELETE y los conteos.
+
+    La foto de BALANZA (fotos_recepcion) es al revés en las dos cosas:
+    cuelga de ESTA compra y su archivo no se comparte con nadie, así que
+    se va siempre y sin contar usos. Se devuelve junto con las otras: para
+    quien llama son todas "rutas a borrar del Storage".
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            # LA FOTO DE BALANZA VA PRIMERO, y no es un detalle de orden:
+            # fotos_recepcion.compra_id es una FK SIN "on delete cascade"
+            # —a propósito, para que el archivo no quede huérfano en el
+            # bucket—, así que el DELETE de compras FALLA mientras la foto
+            # esté. Si después resulta que la compra no se puede borrar,
+            # esto se deshace solo: se sale por el ValueError sin commit.
+            cursor.execute(
+                "DELETE FROM fotos_recepcion WHERE compra_id = %s RETURNING foto_ruta",
+                (compra_id,),
+            )
+            rutas_de_balanza = [f[0] for f in cursor.fetchall()]
+
             cursor.execute(
                 f"DELETE FROM compras WHERE id = %s AND ({_SQL_COMPRA_BORRABLE}) RETURNING guia_id",
                 (compra_id,),
@@ -3273,7 +3290,7 @@ def eliminar_compra(compra_id: int) -> list[str]:
                 raise ValueError(_motivo_por_el_que_no_se_puede_eliminar(cursor, compra_id))
             (guia_id,) = fila
 
-            rutas_a_borrar: list[str] = []
+            rutas_a_borrar: list[str] = list(rutas_de_balanza)
             if guia_id is not None:
                 cursor.execute("SELECT COUNT(*) FROM compras WHERE guia_id = %s", (guia_id,))
                 (renglones_restantes,) = cursor.fetchone()
@@ -3327,9 +3344,19 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     la misma fecha_operacion (se cargan juntos y esa fecha no se puede
     editar después), pero este chequeo se hace igual por las dudas.
 
-    Las fotos cuelgan de las guías (fotos_guia): un archivo es candidato
-    si TODAS las guías que lo usan son de antes de fecha_corte —
+    Las fotos de comanda cuelgan de las guías (fotos_guia): un archivo es
+    candidato si TODAS las guías que lo usan son de antes de fecha_corte —
     MAX(fecha de guía) por ruta, una sola pasada.
+
+    Y las de BALANZA (fotos_recepcion) entran por la fecha de su compra,
+    con el MISMO corte: una sola perilla de retención para los dos tipos.
+    Que sean la misma es una decisión, no una herencia — si algún día
+    tienen que durar distinto, la razón va escrita acá.
+
+    Sin esta segunda mitad las fotos de balanza no se borrarían NUNCA: no
+    aparecerían siquiera como candidatas, y en dos años son miles de
+    archivos inmortales. Van con olvidar_foto_borrada, que limpia las dos
+    tablas — separarlas deja el archivo borrado del bucket y la fila viva.
     """
     conexion = obtener_conexion()
     try:
@@ -3340,8 +3367,18 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
                 JOIN guias_compra g ON g.id = f.guia_id
                 GROUP BY f.foto_ruta
                 HAVING MAX(g.fecha_operacion) < %s
+                UNION
+                -- Sin MAX ni GROUP BY, y a diferencia del lado de arriba:
+                -- una foto de balanza NO se comparte entre compras. Lo
+                -- garantiza _armar_ruta_unica (core/storage.py), que le
+                -- pone timestamp en ms + 8 random a cada subida, así que
+                -- dos filas nunca traen la misma ruta. Si eso cambiara,
+                -- este es uno de los lugares que cambia.
+                SELECT f.foto_ruta FROM fotos_recepcion f
+                JOIN compras c ON c.id = f.compra_id
+                WHERE c.fecha_operacion < %s
                 """,
-                (fecha_corte,),
+                (fecha_corte, fecha_corte),
             )
             filas = cursor.fetchall()
         return [fila[0] for fila in filas]
@@ -3349,18 +3386,34 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
         conexion.close()
 
 
-def limpiar_foto_ruta_de_compras(foto_ruta: str) -> None:
-    """Borra los registros de un archivo ya eliminado del bucket: sus filas de fotos_guia.
+def olvidar_foto_borrada(foto_ruta: str) -> None:
+    """Borra los registros de un archivo ya eliminado del bucket: sus filas de fotos_guia Y de fotos_recepcion.
 
-    Se usa después de borrar el archivo del Storage (limpieza de fotos
-    viejas). Las fotos viven SOLO en fotos_guia: compras.foto_ruta quedó
-    muerta tras agregar_fotos_guia.sql y su DROP es
-    db/drop_foto_ruta_compras.sql.
+    Se llama DESPUÉS de sacar el archivo del Storage (limpieza de fotos
+    viejas), así que si acá no se borra ninguna fila queda una apuntando a
+    un archivo que ya no existe: "Ver foto" roto para siempre y sin ningún
+    síntoma. Por eso, si no tocó nada, LEVANTA — no se puede distinguir
+    "ya estaba limpio" de "miré la tabla equivocada", y la segunda es la
+    que hay que ver. Quien llama loguea y no cuenta esa foto como
+    borrada, así que la pantalla muestra el desfasaje.
+
+    Antes se llamaba limpiar_foto_ruta_de_compras y el nombre mentía dos
+    veces: nunca tocó compras (compras.foto_ruta murió en
+    db/drop_foto_ruta_compras.sql) y ahora tampoco es una sola tabla.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute("DELETE FROM fotos_guia WHERE foto_ruta = %s", (foto_ruta,))
+            filas_tocadas = cursor.rowcount
+            cursor.execute("DELETE FROM fotos_recepcion WHERE foto_ruta = %s", (foto_ruta,))
+            filas_tocadas += cursor.rowcount
+            if filas_tocadas == 0:
+                raise ValueError(
+                    f"El archivo {foto_ruta} ya se borró del Storage y no tenía fila en fotos_guia "
+                    "ni en fotos_recepcion: o alguien la borró en el medio, o esta función está "
+                    "mirando tablas que no son"
+                )
         conexion.commit()
     finally:
         conexion.close()
@@ -3467,7 +3520,10 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
     puso el alta por default y no lo verificó nadie. Antes contaba como
     "protegida" y el comprador no podía descartar su propia carga.
 
-    Devuelve {"borradas": int, "protegidas": int}.
+    Devuelve {"borradas": int, "protegidas": int, "rutas_a_borrar": list[str]}
+    — las rutas son fotos de balanza de las compras que SÍ se borraron, y
+    quien llama tiene que sacarlas del Storage (igual que con
+    eliminar_compra).
     """
     conexion = obtener_conexion()
     try:
@@ -3477,6 +3533,26 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
                 (fecha_operacion, proveedor_id),
             )
             (total,) = cursor.fetchone()
+
+            # La misma razón que en eliminar_compra, y es LA COPIA de esa
+            # regla: sin este DELETE previo, el de abajo revienta por la FK
+            # apenas una de estas compras tenga foto de balanza. El
+            # criterio de borrable NO se reescribe acá — va adentro del
+            # subselect, donde las únicas columnas visibles son las de
+            # compras y no se puede colar la de otra tabla.
+            cursor.execute(
+                f"""
+                DELETE FROM fotos_recepcion
+                WHERE compra_id IN (
+                    SELECT id FROM compras
+                    WHERE fecha_operacion = %s AND proveedor_id = %s
+                      AND ({_SQL_COMPRA_BORRABLE})
+                )
+                RETURNING foto_ruta
+                """,
+                (fecha_operacion, proveedor_id),
+            )
+            rutas_a_borrar = [f[0] for f in cursor.fetchall()]
 
             cursor.execute(
                 f"""
@@ -3488,7 +3564,7 @@ def eliminar_compras_del_dia_por_proveedor(fecha_operacion, proveedor_id: int) -
             )
             borradas = cursor.rowcount
         conexion.commit()
-        return {"borradas": borradas, "protegidas": total - borradas}
+        return {"borradas": borradas, "protegidas": total - borradas, "rutas_a_borrar": rutas_a_borrar}
     finally:
         conexion.close()
 

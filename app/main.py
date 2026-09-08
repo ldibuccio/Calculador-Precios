@@ -204,7 +204,7 @@ from app.db import (
     renombrar_proveedor_puesto,
     renombrar_tipo_envase_puesto,
     registrar_tick_revision,
-    limpiar_foto_ruta_de_compras,
+    olvidar_foto_borrada,
     listar_fotos_de_guia,
     listar_fotos_pedido,
     listar_ajustes_vacios_por_rango,
@@ -2959,6 +2959,10 @@ def cancelar_carga_proveedor(request: Request, proveedor_id: int = Form(...)):
             status_code=500,
         )
 
+    # Las fotos de balanza de las que SÍ se borraron: sus filas ya no están,
+    # así que si el archivo no se saca ahora no lo saca nadie nunca más.
+    _borrar_fotos_del_storage(resultado["rutas_a_borrar"], f"la carga del día del proveedor {proveedor_id}")
+
     if resultado["protegidas"]:
         aviso = (
             f"{resultado['borradas']} compras canceladas. {resultado['protegidas']} no se pudieron eliminar: "
@@ -3899,25 +3903,37 @@ def editar_compra(
     return RedirectResponse(url=destino, status_code=303)
 
 
-def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
-    """Borra una compra y, si esta era la última que usaba su foto, también el archivo del Storage.
+def _borrar_fotos_del_storage(rutas, contexto: str) -> None:
+    """Saca del Storage archivos cuyas filas ya se borraron. Nunca levanta.
 
     Borrar la foto es un extra: si falla (sin conexión, credencial mala,
     lo que sea), se loguea completo y se sigue igual — la compra ya se
     borró, una foto huérfana es un mal menor frente a no poder borrar
-    nada. Si falla el borrado de la COMPRA en sí, esta función deja que
-    la excepción se propague: eso sí lo tiene que ver quien llama.
+    nada.
+
+    Vive acá UNA sola vez porque hay DOS caminos que borran compras —una
+    sola, y el Cancelar del día entero— y los dos tienen que tratar la
+    foto igual. Escrita en cada uno, se separan: ya nos pasó con el FIFO
+    y con el emparejamiento de los renglones.
     """
-    rutas_a_borrar = eliminar_compra(compra_id)
-    for ruta in rutas_a_borrar:
+    for ruta in rutas:
         try:
             borrar_foto_comanda(ruta)
         except Exception:
             logger.exception(
-                "No se pudo borrar de Supabase Storage la foto %s (la compra %s ya se borró igual)",
+                "No se pudo borrar de Supabase Storage la foto %s (%s ya se borró igual)",
                 ruta,
-                compra_id,
+                contexto,
             )
+
+
+def _eliminar_compra_y_su_foto_si_corresponde(compra_id: int) -> None:
+    """Borra una compra y sus fotos del Storage: la de balanza siempre, la de comanda si era la última que la usaba.
+
+    Si falla el borrado de la COMPRA en sí, esta función deja que la
+    excepción se propague: eso sí lo tiene que ver quien llama.
+    """
+    _borrar_fotos_del_storage(eliminar_compra(compra_id), f"la compra {compra_id}")
 
 
 @app.post("/compras/{compra_id}/eliminar")
@@ -5578,10 +5594,12 @@ def limpiar_fotos_viejas_ruta(request: Request):
             continue
 
         try:
-            limpiar_foto_ruta_de_compras(foto_ruta)
+            olvidar_foto_borrada(foto_ruta)
         except Exception:
             logger.exception(
-                "Se borró del Storage la foto vieja %s pero no se pudo limpiar foto_ruta en la base", foto_ruta
+                "Se borró del Storage la foto vieja %s pero no se pudo limpiar su fila (fotos_guia / "
+                "fotos_recepcion): queda una fila apuntando a un archivo que ya no existe",
+                foto_ruta,
             )
             continue
 

@@ -1607,7 +1607,7 @@ def test_limpiar_fotos_viejas_borra_las_encontradas_y_limpia_foto_ruta():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_fotos_para_limpiar", return_value=["2020-01-01/a.jpg", "2020-02-02/b.jpg"]),
         patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
-        patch("app.main.limpiar_foto_ruta_de_compras") as mock_limpiar_ruta,
+        patch("app.main.olvidar_foto_borrada") as mock_limpiar_ruta,
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 10, "bytes_totales": 500}),
     ):
         respuesta = cliente.post("/sistema/limpiar-fotos-viejas")
@@ -1647,7 +1647,7 @@ def test_limpiar_fotos_viejas_si_falla_una_sigue_con_las_demas():
             return_value=["2020-01-01/a.jpg", "2020-02-02/b.jpg"],
         ),
         patch("app.main.borrar_foto_comanda", side_effect=borrar_side_effect) as mock_borrar_foto,
-        patch("app.main.limpiar_foto_ruta_de_compras") as mock_limpiar_ruta,
+        patch("app.main.olvidar_foto_borrada") as mock_limpiar_ruta,
         patch("app.main.obtener_uso_storage_bucket", return_value={"cantidad": 10, "bytes_totales": 500}),
     ):
         respuesta = cliente.post("/sistema/limpiar-fotos-viejas")
@@ -2861,7 +2861,7 @@ def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_al_hub():
     # búsqueda que nadie pidió (terminar de cargar sí va a Buscar).
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 0}) as mock_eliminar,
+        patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 0, "rutas_a_borrar": []}) as mock_eliminar,
     ):
         respuesta = cliente.post(
             "/compras/nueva/cancelar",
@@ -2883,7 +2883,7 @@ def test_cancelar_carga_proveedor_borra_todo_lo_de_hoy_y_va_al_hub():
 def test_cancelar_carga_proveedor_con_protegidas_avisa_sin_tecnicismos():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 2}),
+        patch("app.main.eliminar_compras_del_dia_por_proveedor", return_value={"borradas": 3, "protegidas": 2, "rutas_a_borrar": []}),
     ):
         respuesta = cliente.post(
             "/compras/nueva/cancelar",
@@ -2894,6 +2894,48 @@ def test_cancelar_carga_proveedor_con_protegidas_avisa_sin_tecnicismos():
     assert respuesta.status_code == 303
     location = respuesta.headers["location"]
     assert "aviso=3+compras+canceladas.+2+no+se+pudieron+eliminar%3A+ya+fueron+retiradas+o+recepcionadas." in location
+
+
+def test_cancelar_la_carga_del_dia_SACA_DEL_STORAGE_las_fotos_de_balanza():
+    """El Cancelar del día es la COPIA del borrado de a uno, y tiene que borrar igual.
+
+    Las filas de esas compras ya no están cuando esto vuelve: si el archivo
+    no se saca ahora, no lo saca nadie nunca más — queda en el bucket sin
+    ninguna fila que lo nombre, y no hay pantalla donde se vea que sobra.
+    """
+    rutas = ["2026-09-08/n07p41-1-aaaaaaa1.jpg", "2026-09-08/n07p41-2-aaaaaaa2.jpg"]
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch(
+            "app.main.eliminar_compras_del_dia_por_proveedor",
+            return_value={"borradas": 2, "protegidas": 0, "rutas_a_borrar": rutas},
+        ),
+        patch("app.main.borrar_foto_comanda") as mock_borrar_foto,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/cancelar", data={"proveedor_id": "200"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    assert [ll.args[0] for ll in mock_borrar_foto.call_args_list] == rutas
+
+
+def test_cancelar_la_carga_del_dia_sigue_aunque_el_Storage_falle():
+    """Borrar la foto es un extra: las compras ya se borraron y eso no se deshace."""
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch(
+            "app.main.eliminar_compras_del_dia_por_proveedor",
+            return_value={"borradas": 1, "protegidas": 0, "rutas_a_borrar": ["2026-09-08/x.jpg"]},
+        ),
+        patch("app.main.borrar_foto_comanda", side_effect=RuntimeError("sin conexión")),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva/cancelar", data={"proveedor_id": "200"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    assert "aviso=1+compras+canceladas." in respuesta.headers["location"]
 
 
 def test_cancelar_carga_proveedor_error_de_base_muestra_mensaje_claro():
