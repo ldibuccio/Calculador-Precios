@@ -1257,3 +1257,88 @@ toca la atribución. Lo que sí queda tocado es la vieja observación del dueño
 —el Remanente no puede sumar bultos de distinto contenido—, que deja de ser
 una molestia de presentación: **es el mismo hecho, visto del lado de la
 cantidad.**
+
+## La predicción falló a medias, y la falla dice qué faltaba
+
+`e5_7` sobre Frutamax dio ratios que van en la dirección correcta y son **3 a
+4 veces chicos**: Perita 3,00 contra un `x_hoy/x_conb` de 12,2; Pepino 2,73
+contra 7,9; Zapallito 2,44 contra 5,6.
+
+**Mi predicción tenía un supuesto que no escribí**: que la caja disponible
+salió DEL MISMO cajón que el armado se está comiendo. No es así, y de ahí
+sale la identidad completa. Como
+`costo_por_bulto_primera = costo_total / bultos_primera` y
+`costo_total = tomados × cb_consumido`:
+
+```
+costo_por_bulto_primera = cb_consumido × (tomados / primera)
+x_hoy / x_conb          = (cb_armado / cb_consumido) × (primera / tomados)
+                           └─ el factor que faltaba ─┘   └─ lo que medí ─┘
+```
+
+**El factor que falta es de PRECIO ENTRE LOTES**: el cajón que la guía R se
+comió no es el que come el armado. Y tiene una razón estructural, no de
+ruido: **la guía R va antes en el orden del FIFO** —su primera recién existe
+después— así que se lleva el lote más viejo y al armado le queda el más
+nuevo. Con precios en alza, eso da un factor sistemáticamente mayor a 1.
+Tendencia, no ley: Tomate Redondo da 0,81 y es el caso inverso.
+
+Aislado contra el esquema real (`EJEMPLO Precio Entre Lotes`): un artículo
+con `primera/tomados = 1,00` y merma 0 —o sea, con el reenvasado explicando
+CERO— donde la guía R come el cajón viejo de $10.000 y al armado le queda el
+nuevo de $40.000. `e5_7` dice 1,00, `e5_6b` dice `x_hoy 40.000 / x_conb
+10.000 = 4`, y `e5_8` dice `x_consumido 10.000`. **Todo el efecto salió del
+factor de precio.** Y la identidad se verifica sola:
+`x_prim_teorico = x_prim_real = 10.000`.
+
+### Y la corrección de mi explicación de Tomate Redondo
+
+Dije que su signo positivo era el markup por merma. **Está mal**: con
+`primera_por_tomado = 1,00` (60 y 60) y merma 0, la merma no puede ser. Es
+el mismo factor de precio corrido para el otro lado — la guía R consumió un
+cajón **23% más caro** que el que come el armado (`0,81 = 1/1,23`). Una sola
+causa para los dos signos, pero no la que dije.
+
+### Pomelo: e5_7 y e5_6b miran poblaciones distintas
+
+`e5_7` filtra `tipo='normal'`. `e5_6b` cuenta como trabajado **tres**
+fuentes:
+
+| Fuente | Tiene ratio | De dónde sale su costo |
+|---|---|---|
+| guía R `normal` | sí (`tomados > 0`) | del cajón que consumió |
+| guía R `inicial` | **no** (`tomados = 0`) | **cargado a mano en el corte** |
+| `reingreso_rechazo` | no | congelado del pedido de origen |
+
+Frutamax tiene **8 guías R `inicial`** (`e5_0`). Producen sin consumir y su
+costo no sale de ningún cajón: si se cargó bajo, tira el `x_conb` para abajo
+sin que ningún ratio lo explique. Y el reingreso, que Palmala nos enseñó que
+existe sin reprocesos, tampoco está en `e5_7`.
+
+**O sea que comparar el ratio de `e5_7` contra el `x_conb` de `e5_6b` era
+comparar poblaciones distintas** — la misma forma del corolario 13, una
+cuenta correcta aplicada a otro universo. `db/e5_9_...sql` las separa.
+Verificado: con una guía R `inicial` de 25 bultos a $2.000 al lado de una
+`normal` de 10 a $10.000, `e5_9` muestra las dos y `e5_7` sigue viendo solo
+la segunda.
+
+### Qué queda por medir, y qué NO se puede afirmar todavía
+
+Hay **dos candidatos** para las tres cuartas partes que faltan, y los dos son
+medibles:
+
+1. **El precio entre lotes** → `e5_8` (`x_consumido` contra el `x_hoy` que ya
+   está).
+2. **La población** → `e5_9` (`x_inicial` y `x_reing` contra `x_normal`).
+
+Hasta correr las dos **no se puede decir cuál pesa más**, y decirlo sería
+repetir el error de esta vuelta: dar por explicado con la primera causa que
+encaja.
+
+### Lo que sí se sostiene sobre el número
+
+B no abarata: **cobra lo que efectivamente salió.** Hoy el FIFO le cobra al
+armado un objeto distinto del que se despachó —más grande por el reenvasado,
+y/o comprado otro día a otro precio—. Los −$4,4M son el tamaño de esa
+imputación equivocada, en la dirección en que cae. Eso no depende de cuál de
+los dos factores pese más.
