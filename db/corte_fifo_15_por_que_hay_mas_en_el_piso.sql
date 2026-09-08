@@ -1,4 +1,13 @@
 -- Piso con MAS que el sistema: las cuatro causas visibles en los datos.
+--
+-- CORRIDA Y CERRADA (Frutamax, 08/09, corte 05/09): CAUSAS ENCONTRADAS = 0
+-- contra Palta +2, Zapallito +1 y Perita +1. Los tres eran ERROR DE CONTEO
+-- del deposito, igual que Mango el mismo dia. Las cuatro causas de abajo
+-- miran REGISTROS DEL SISTEMA y ninguna puede ver a alguien contando mal,
+-- asi que una quinta consulta sobre estas mismas tablas vuelve a dar cero.
+-- No es codigo muerto: sigue sirviendo para descartar el sistema. Pero un
+-- cero de aca NO es "sin explicacion" -- con 1 o 2 bultos de diferencia
+-- es, muy probablemente, el conteo. Ver docs/procedimiento_corte.md, paso 8.
 with c0 as (select fecha f0 from corte_modelo where id = 1),
 a0 as (select id, nombre from articulos
        where nombre ilike any (array['%palta%','%zapallito%','%perita%'])),

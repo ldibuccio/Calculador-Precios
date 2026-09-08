@@ -1191,6 +1191,35 @@ contra el número VIVO antes de ajustar, porque los tres salieron de
 **si después de ajustar los tres vuelven a aparecer mañana, la lista está
 incompleta y la quinta causa está afuera del sistema, no adentro.**
 
+### CERRADO (08/09): la quinta causa era el conteo
+
+Los tres eran **error de conteo del depósito**, igual que Mango. Palta +2,
+Zapallito +1 y Perita +1 quedan **bajados**: no hay nada del sistema que
+arreglar y `corte_fifo_15` no tiene una quinta consulta pendiente.
+
+Con Mango son **cuatro artículos el mismo día**, y ahí está el patrón que
+sirve para el próximo corte: **`corte_fifo_15` dio cero causas adentro del
+sistema y la explicación estaba afuera.** La quinta causa que buscábamos no
+era una quinta consulta — era el operario contando mal.
+
+**El criterio, para no volver a escribir cuatro consultas:** cuando la
+diferencia es de **1 o 2 bultos** y ninguna causa del sistema la explica, la
+hipótesis más probable es el conteo, no un bug. Y se confirma con
+aritmética, no con SQL: en Mango alcanzó con `2 + 16 + 10 − 25 = 3` contra
+el 1 contado, y no hizo falta ninguna consulta más.
+
+Es el corolario 11 leído al derecho: la medición no falló, contestó bien la
+mitad que le tocaba. Lo que faltaba no era precisión sino **cambiar de
+universo** — dejar de preguntarle a `compras`, `movimientos_stock` y
+`conteos_stock`, que solo saben de registros, y mirar el hecho del mundo.
+Una consulta más sobre las mismas tres tablas iba a dar cero otra vez, y el
+cero se lee como "el problema sigue sin explicarse".
+
+Lo que NO se cierra acá: **1 caja de Día de Mango contada en el piso contra
+0 en el sistema** (`db/mango_1_cajas_de_dia_y_pedido_completo.sql`). Esa no
+es de 1 o 2 bultos sobre un cajón contado a ojo: es una caja armada, que
+tiene papel. Sigue abierta.
+
 ## La caja que cuesta la doceava parte del cajón: no es un error de unidad
 
 Con las cuatro columnas, Frutamax (corte 05/09, 06 y 07/09): `caja_s_costo` y
@@ -1660,8 +1689,9 @@ de "no hay cajas"**.
 
 Sin correr, sin urgencia: `e5_8` / `e5_9` (el factor de precio entre lotes),
 `e5_11` (envase fijo entre los 630), `remanente_1` y `remanente_2` (alcance
-del desglose por contenido), `corte_fifo_15` con los tres desvíos sin causa,
-y la caja de Día de Mango.
+del desglose por contenido), y la caja de Día de Mango. **Los tres desvíos
+de `corte_fifo_15` ya no están acá: eran error de conteo** — ver la sección
+de esa consulta.
 
 ## El campo SÍ existe: `fichas_logistica.envase_id` (08/09, corrección)
 

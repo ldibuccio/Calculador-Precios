@@ -321,6 +321,29 @@ Solo lectura. Por artículo: sueltos, cajas armadas, stock, y la diferencia.
 **La columna `dif` tiene que dar 0 en TODAS las filas.** Cualquier otra cosa
 se mira antes de abrir el depósito.
 
+### Si la `dif` es de 1 o 2 bultos, mirá el conteo antes que el sistema
+
+Del 08/09, y son CUATRO artículos el mismo día: Mango, Palta +2, Zapallito
++1 y Perita +1. Los cuatro terminaron siendo **error de conteo del
+depósito**, no un bug.
+
+`corte_fifo_15` se escribió con las cuatro causas que el sistema puede
+tener —compra sin recepcionar, rechazo fuera del stock normal, merma o
+ajuste, sistema con decimales— y devolvió **cero causas en total**. Lo que
+faltaba no era una quinta consulta: era que la explicación estaba **afuera
+del sistema**. Una consulta sobre `compras`, `movimientos_stock` y
+`conteos_stock` solo sabe de registros y no tiene por dónde ver a un
+operario contando mal.
+
+Por eso, cuando la `dif` es de **1 o 2 bultos** y ninguna causa del sistema
+la explica, la hipótesis más probable es el conteo. Y se confirma con
+**aritmética, no con SQL**: en Mango alcanzó con `2 + 16 + 10 − 25 = 3`
+contra el 1 contado en el piso, y no hizo falta ninguna consulta más.
+
+Cuidado con la trampa de seguir buscando: una quinta consulta sobre las
+mismas tres tablas va a dar cero otra vez, y **ese cero se lee como "el
+problema sigue sin explicarse"** cuando en realidad ya está explicado.
+
 ---
 
 ## Si hay que abortar
