@@ -1101,3 +1101,55 @@ circuito y 2 históricos.
   stock, B **sí** cambia la atribución ahí, aunque no haya un solo reproceso.
   Con 1 armado post-corte el movimiento va a ser chico, pero "chico" no es
   "cero" y se mide antes, no después.
+
+## El delta de −$4,4M no se puede usar todavía, y la culpa es mía
+
+`e5_6b` sobre **Frutamax (corte 05/09, `> corte`: 06 y 07/09)** dio 359
+bultos, `costo_hoy $9.658.218,30`, `delta −$4.391.314,26` — o sea −45%: con B
+los costos de los armados bajan y la rentabilidad ya reportada sube.
+
+**Pero le faltaba la columna de honestidad, y justo a la consulta que decide
+qué se le dice al galpón.** `e5_1` y `e5_2` traen `sin_costo`; `e5_4` y
+`e5_6b` no lo traían. Y acá muerde más que en ninguna:
+
+`costo_por_bulto_primera` es **NULL cuando el costo de la guía R quedó
+incompleto** (lo dice el comentario del esquema). En `e5_6b`,
+`pdisp = sum(rest*cb) filter (where trab)` **saltea los NULL**, pero `disp`
+cuenta esos bultos igual. O sea que una caja sin costo entra al promedio
+**como si fuera gratis**, y eso empuja el delta hacia **NEGATIVO** — que es
+exactamente la dirección del resultado que estaba por llevarse al galpón.
+
+Arreglado: `e5_6b` trae ahora `caja_s_costo`, `cajon_s_costo`, y los dos
+pesos por bulto `x_hoy` y `x_conb`. **Con `caja_s_costo > 0` el delta está
+sesgado y no se usa.**
+
+### Los tres mecanismos, separados en un fixture
+
+Un artículo por mecanismo, contra el esquema real:
+
+| Artículo (inventado) | Qué tiene | `x_hoy` | `x_conb` | `delta` | `caja_s_costo` |
+|---|---|---|---|---|---|
+| `EJEMPLO Pasa Derecho` | guía R toma 10, produce 10, sin merma ni segunda | 100 | 100 | **0.00** | 0 |
+| `EJEMPLO Con Merma` | toma 10, produce 7 | 100 | 142,86 | **+300,02** | 0 |
+| `EJEMPLO Caja Sin Costo` | `costo_por_bulto_primera` NULL | 100 | 0 | **−1000** | 10 |
+
+**El `delta = 0.00` con bultos > 0 es un resultado real, no un artefacto**,
+y tiene un mecanismo concreto: una guía R sin merma ni segunda hace
+`costo_por_bulto_primera = costo_total / bultos_primera = cb del cajón`. El
+costo **pasa derecho** y B mueve la atribución sin mover un peso. Se
+distingue del artefacto mirando `x_hoy` contra `x_conb`: iguales = real;
+`x_conb` en 0 con `caja_s_costo > 0` = sin costo cargado.
+
+**El signo positivo también tiene mecanismo, y es el mismo que explica los
+dos**: `TODO el costo va a la primera` (segunda y merma valen cero), así que
+una guía R con merma entrega una caja más cara que el cajón en la proporción
+`tomados / primera`. Eso empuja el delta **para arriba** siempre. Contra eso
+juega la diferencia de precio entre el cajón que el armado come hoy y el
+lote de caja disponible, que son de días distintos y en fruta se mueve
+fuerte. **Donde manda el markup del reproceso, el delta es positivo; donde
+manda la caída de precio entre días, negativo.** Una sola explicación para
+los dos signos, y ninguno de los dos es un error.
+
+Y el TOTAL del fixture lo muestra crudo: −699,98, de los cuales −1000 son del
+artículo sin costo. Sin `caja_s_costo` al lado, ese −$700 se lee como un
+ahorro real.
