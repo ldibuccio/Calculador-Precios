@@ -580,3 +580,65 @@ que hay del otro lado sería empeorarlo.
 
 Orden correcto: primero que `Ajustar` compare porción contra porción, después
 la columna y el cambio de gate.
+
+## E5, la dirección inversa: ¿un armado se come cajones?
+
+`corte_fifo_1` midió una dirección: **guías R que consumieron cajas ya
+armadas** como si fueran materia prima — 19 de 32 guías en dos días,
+$3.572.620. La dirección inversa es la otra mitad del mismo agujero: **un
+armado que se costea contra un cajón** en vez de contra una caja.
+
+Las dos salen de lo mismo: el reparto ordena por fecha y **no mira el tipo de
+lote**, aunque `TIPOS_LOTE_TRABAJADO` (core/costo_real.py) ya separe materia
+prima de producto trabajado y tenga su docstring desde antes.
+
+### Por qué no se puede leer de una tabla
+
+Los consumos de una guía R están **congelados** en `reprocesos_consumos`: por
+eso `corte_fifo_1` es una lectura directa. La atribución de un armado **no se
+guarda en ningún lado** — `atribuir_costos_fifo` la recalcula cada vez que
+alguien abre la Rentabilidad Real. No hay tabla que leer.
+
+Así que `db/e5_2_el_armado_se_come_cajones.sql` **rejuega el FIFO en SQL**:
+lotes y salidas, cada uno ordenado por fecha, ocupan tramos del mismo eje de
+bultos (sumas corridas), y lo que se solapa entre el tramo de un armado y el
+tramo de un lote es lo que ese armado tomó de ese lote. Después se filtra por
+tipo: lo que cayó en un lote que **no** es `reproceso` ni `reingreso_rechazo`
+es cajón.
+
+### Lo que aproxima, dicho antes de leer el número
+
+Es para el **orden de magnitud**, no para la cifra exacta:
+
+- No tiene el redondeo del código.
+- La demanda que la guarda `lote_posterior_a_la_salida` bloquea acá **cae
+  afuera** en vez de correrse al lote siguiente. Subestima.
+- `plata` ignora los lotes sin costo, y por eso al lado va `sin_costo`: sin
+  esa columna, "poca plata" y "muchos bultos sin precio" se ven igual.
+
+El piso del corte está puesto con la misma asimetría que producción
+(`stock_inicial` y guías R `tipo='inicial'` del día del corte entran; todo lo
+demás de ese día, no), y los pedidos se filtran con el mismo `DISTINCT ON`
+que `_SQL_SALIDAS_STOCK`, para que un pedido corregido no cuente dos veces.
+
+### Cómo se verificó
+
+Contra el esquema real (`db/esquema_completo.sql` en un Postgres 16
+descartable), con un fixture de tres artículos de nombre inventado que
+**hace fallar la versión equivocada**:
+
+- **EJEMPLO Uno** — hay cajas de sobra y el armado llega después: aporta 0.
+- **EJEMPLO Dos** — hay 10 cajas disponibles y el armado igual se come el
+  cajón, porque el cajón es más viejo. **Es el caso de ORDEN, no de
+  agotamiento**, y es el que un saldo corrido de la pila de cajas —la primera
+  forma que le di a esta consulta— no ve: para ese modelo el saldo nunca baja
+  de cero. Aporta 10.
+- **EJEMPLO Tres** — las cajas se agotan y el armado desborda al cajón.
+  Aporta 7.
+
+Resultado: `cajon = 17`, `plata = 1000.00`, `sin_costo = 7`, `armado = 32`,
+los cuatro exactos. Dos canarios más: con `>=` en el piso (la regla vieja) el
+número se mueve a 22, así que el piso está de verdad ejercido; y contra una
+base vacía devuelve **una fila de ceros**, no una pantalla vacía.
+
+Los datos de prueba se borraron al terminar.

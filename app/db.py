@@ -7000,14 +7000,18 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
 
     - Las ENTRADAS se recortan: un lote anterior al corte no existe para el
       FIFO. Más el compensatorio, que se va POR TIPO y no por fecha.
-    - Las SALIDAS no se recortan, y no es un olvido. `repartir_fifo` ya
-      impide que una salida consuma un lote posterior a ella
-      (`lote_posterior_a_la_salida`), así que una salida vieja no puede
-      alcanzar un lote nuevo por más que esté en la lista: se queda sin lote
-      y cae a `sin_lote`, que es exactamente lo que se quiere ver. Sacarlas
-      sería peor: desaparecerían de la Rentabilidad Real las entregas
-      anteriores al corte, y una entrega sin costo es un dato incompleto,
-      pero una entrega que no aparece es un dato perdido.
+    - Las SALIDAS también se recortan, y ESTRICTO en las tres patas: el
+      conteo del corte se toma a la tarde, así que una salida de ese día ya
+      está adentro de la foto y volver a restarla la contaría dos veces. El
+      criterio vive en `_salidas_stock_varios`, que además dice qué se
+      pierde (las entregas del día del corte y anteriores se quedan sin
+      atribución de costo).
+
+      Este párrafo decía lo contrario hasta el 08/09 —"las salidas no se
+      recortan, y no es un olvido"— y era cierto mientras el piso estuvo
+      solo de un lado. Queda anotado porque es exactamente la señal que
+      describe CLAUDE.md: un comentario que envejeció sin que nadie lo
+      tocara.
 
     Lo que el piso NO arregla, y hay que decirlo acá porque es el mismo
     lugar donde se decide qué es un lote: `reprocesos.bultos_primera` entra
