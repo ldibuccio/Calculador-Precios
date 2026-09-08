@@ -186,6 +186,36 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 22, del 08/09: **un fixture que fija el caso equivocado convierte
+al test en el GUARDIÁN del bug.** Y es distinto del corolario 9: allá el test
+no podía fallar; acá podía fallar, y fallaba por lo incorrecto.
+
+El aviso "no hay cajas de esta ficha" saltaba para cualquier ficha sin cajas,
+incluidas las de **envase perdido** —manzana, pera, arándano— que no van a
+tener cajas armadas nunca. Salía en 135 de 765 bultos, todos los días.
+
+`FICHAS_E5` tenía `envase_id: None` en las dos fichas, así que los cuatro
+tests del aviso **verificaban el cartel exactamente sobre los casos donde
+está mal**. No es que no cubrieran el bug: **lo codificaban como
+comportamiento esperado.**
+
+Y ahí está el daño de verdad: **el que arregle el código rompe los tests y va
+a pensar que se equivocó él.** Un test rojo después de un arreglo correcto es
+la señal más cara que hay — o se revierte el arreglo, o se pierde media hora
+averiguando que el equivocado era el fixture.
+
+Engancha con la regla que ya está —*los datos de un fixture se escriben como
+son en producción*— y le agrega el porqué: en producción esas fichas TIENEN
+envase, en el fixture no lo tenían, y esa sola diferencia hizo que cuatro
+tests defendieran lo contrario de lo que había que hacer.
+
+**Cómo se reconoce**, y es lo único que sirve porque un test verde no se
+mira: cuando un arreglo rompe tests, la primera pregunta no es "¿qué rompí?"
+sino **"¿este test afirma lo que hoy queremos que pase, o lo que pasaba?"**.
+Si el fixture no se parece a producción en el campo que el arreglo tocó, el
+test es parte del bug y se arregla en el mismo commit.
+
+
 Corolario 21, del 08/09, y va corto: **una operación partida en dos
 funciones queda correcta solo mientras las dos se acuerden.**
 
