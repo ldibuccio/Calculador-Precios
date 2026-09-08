@@ -550,3 +550,33 @@ Así que Mango no cierra en cero con los datos guardados, y ninguna consulta
 lo va a lograr. La única salida es **un conteo nuevo tomado DESPUÉS de cargar
 las guías R del día** — la regla nueva —, que da una foto sin déficits
 tapados y una diferencia atribuible.
+
+## VIVO (08/09): el botón Ajustar compara sueltos contra el TOTAL del artículo
+
+El Cotejo lista **porciones**: los sueltos de un artículo y las cajas de cada
+ficha, cada una con su propio `stock_sistema`. Su `diferencia` es
+`contado − sueltos`, que está bien.
+
+Pero el botón "Ajustar" precarga `contado − stock_deposito_de_articulo(id)`, y
+esa función devuelve el **TOTAL del artículo** —sueltos más cajas—, no los
+sueltos. Verificado con el código real: un limón con 5 sueltos y 30 cajas
+armadas da `sueltos = 5` y `total = 35`, así que contando los 5 exactos la
+precarga sería **−30**.
+
+O sea: cuando el botón aparece, **propone borrar del total tantos bultos como
+cajas armadas tenga el artículo.** Hoy no explotó porque el botón solo se
+ofrece cuando los sueltos difieren, y en Mango las cajas eran 0.
+
+Es la tercera vez que aparece la misma forma en este módulo: **dos cuentas
+con el mismo nombre y distinto alcance.** El Cotejo dice "stock" y son los
+sueltos; Ajustar dice "stock" y es el artículo entero.
+
+### Por qué esto BLOQUEA la columna "Dif. hoy"
+
+El cambio propuesto —que el botón se ofrezca según el desvío contra el stock
+actual en vez de contra la foto— **haría aparecer el botón más seguido**,
+sobre una precarga que ya está mal. Ampliar la puerta antes de arreglar lo
+que hay del otro lado sería empeorarlo.
+
+Orden correcto: primero que `Ajustar` compare porción contra porción, después
+la columna y el cambio de gate.
