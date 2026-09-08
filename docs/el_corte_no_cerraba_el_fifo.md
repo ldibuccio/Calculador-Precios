@@ -642,3 +642,42 @@ número se mueve a 22, así que el piso está de verdad ejercido; y contra una
 base vacía devuelve **una fila de ceros**, no una pantalla vacía.
 
 Los datos de prueba se borraron al terminar.
+
+## La caja de Día en el piso de Mango: el 0 del Cotejo puede ser un negativo
+
+Del 08/09. Los cajones de Mango cerraron: 2 + 16 + 10 − 25 = **3**, el sistema
+dice 3, el depósito contó 1. Es un error de conteo de 2 cajones y no hay
+ningún −2 que explicar (queda **bajada** la hipótesis de la guía R con la
+ficha cambiada, y cerrado el "Sin explicar" del 05/09 y 06/09).
+
+Lo que queda abierto es otra cosa: **1 caja de Día contada en el piso contra
+0 en el sistema.**
+
+Y hay un detalle del Cotejo que hay que tener a mano antes de leer ese 0:
+`_cajas_por_ficha` devuelve `disponibles = max(saldo, 0)`. **Un saldo
+negativo y un saldo cero se ven exactamente igual en la pantalla.** Es la
+misma no-linealidad del piso del corolario 7, un nivel más arriba: acá no
+ensucia una resta, esconde un signo.
+
+Por eso `db/mango_1_cajas_de_dia_y_pedido_completo.sql` devuelve el
+**saldo sin piso**, y al lado las tres columnas que separan las causas
+posibles de esa caja:
+
+| Lo que devuelve | Qué significa |
+|---|---|
+| `reng_cortos > 0` | Se armó menos de lo pedido: el pedido **no** salió completo y la caja es lo que no se despachó. |
+| `reng_sin_armar > 0` | Hay renglón sin tildar: no descontó stock, y la caja está esperando. |
+| `saldo_sin_piso < 0` | Se armó **más** de lo producido: la guía R declaró de menos, y la caja contada es real pero el sistema no la tiene. |
+| Todo en cero y `saldo_sin_piso = 0` | El pedido salió completo: la caja no viene de este pedido — o es de otra ficha, o la guía R produjo una más de las declaradas. |
+
+Verificada contra el esquema real con un fixture de nombres inventados
+(`EJEMPLO Mango`, `EJEMPLO Caja Dia`) que recorre los cuatro casos: 30 de 30
+da saldo 0; 29 de 30 da saldo 1 y `reng_cortos` 1; el renglón sin tildar da
+`reng_sin_armar` 1 y 30 bultos; y produciendo 28 contra 30 armados da
+**−2**, que es justo lo que el Cotejo mostraría como 0. Con el artículo sin
+movimientos devuelve una fila de ceros, no una pantalla vacía. Los datos de
+prueba se borraron.
+
+**Esto no toca E5.** La fuga se midió con 19 guías, 226 bultos y $3.572.620
+en dos días; Mango era el ejemplo de cómo se ve el problema, no la prueba de
+que existe.
