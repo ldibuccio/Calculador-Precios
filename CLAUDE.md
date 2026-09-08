@@ -1013,3 +1013,43 @@ número que se explica ENTERO por un origen conocido y transitorio no es
 deuda: es la foto del corte consumiéndose. **Antes de construir para cubrir
 un "sin dato", hay que ver si el sin-dato tiene UNA causa o varias** — con
 una, casi siempre se apaga solo.
+
+Corolario 24, del 08/09, y es el que más cara va a salir si se olvida:
+**una base PARADA contesta cero a todo, y el cero se lee como "acá no hay
+problema".**
+
+Salió de costado corriendo `nulos_1` en las dos bases: **Palmala no
+recepciona una compra desde el 01/09** — siete días. Sumado a que no arma
+pedidos hace diez y a que no tiene una sola guía R, esa base está
+prácticamente detenida. El dato no es de software y el negocio es de
+Lionel; lo que es nuestro es la consecuencia sobre las mediciones.
+
+Y la consecuencia es fea porque **es indistinguible de la buena noticia**:
+
+- `e5_3` sobre Palmala: `frenan_con_a = 0`. Se lee "A no rompe nada".
+- `e5_4` sobre Palmala: `mal = 0`. Se lee "acá E5 no pasa".
+- `tildes_1` sobre Palmala: 0 colisiones. Ése sí es real — mide fichas
+  cargadas, no actividad.
+
+Los dos primeros ceros **no dicen que el arreglo esté bien: dicen que no
+hubo nada que medir.** Y es exactamente la familia de la ausencia de filas
+que mordió con el backfill, pero peor: allá la pantalla vacía al menos se
+veía rara. Acá vuelve una fila, con un cero prolijo adentro, y el cero es
+verdadero. No hay nada que se vea mal.
+
+Por eso, de acá en adelante, y es barato: **toda medición sobre una base
+trae un TESTIGO DE ACTIVIDAD al lado del número** — la última recepción, la
+última guía R, el último pedido armado. `nulos_1` ya lo trae
+(`ultima_recepcion`), y fue justamente esa columna la que destapó esto: sin
+ella el `post 36` de Palmala se leía como una base en marcha.
+
+Un cero con "última recepción hace siete días" al lado es un cero que se
+entiende. Un cero solo es un cero que miente por omisión — y encima
+tranquiliza, que es lo peor que puede hacer una medición.
+
+Corolario del corolario, para el momento de decidir: **el corolario 17 dice
+correr en las dos bases; éste dice que correr no alcanza.** Una medición que
+sale bien sobre una base detenida no es una segunda confirmación: es la
+misma confirmación contada dos veces. Si el testigo dice que la base está
+quieta, esa base **no vota**, y hay que decirlo así en vez de sumarla como
+si hubiera confirmado algo.
