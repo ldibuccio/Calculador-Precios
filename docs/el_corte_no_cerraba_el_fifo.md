@@ -848,3 +848,55 @@ el canario del corolario 12 muerde: pasando el piso a `>=`, 27 → 32 y
 La plata de `mal` se prorratea con el costo promedio del cajón de cada
 salida: el `min()` no cae sobre lotes concretos, así que no hay costo exacto
 que sumar.
+
+## Los $3.572.620 y los $2.798.438,92 no son el mismo número (08/09)
+
+`e5_1` dio **$2.798.438,92 / 134 bultos / 10 guías** donde yo había dicho que
+tenía que dar los $3.572.620 / 226 bultos / 19 guías **o más**, porque cubre
+los mismos días y sale de una tabla congelada. Dio menos. **Esa afirmación
+mía era falsa**, y de las dos consultas al menos una está mal.
+
+Comparadas línea por línea, `corte_fifo_1` y `e5_1` **no hacen la misma
+pregunta**, y difieren en exactamente dos cosas:
+
+| | `corte_fifo_1` | `e5_1` |
+|---|---|---|
+| Piso | `fecha_operacion >= corte` | `> corte` (estricto) |
+| Orígenes | solo `reproceso` | `reproceso` **y** `reingreso_rechazo` |
+
+Las dos diferencias empujan en direcciones opuestas, así que el neto podía
+dar para cualquier lado. `db/e5_5_por_que_no_dan_igual.sql` las separa en
+una fila cada una.
+
+**Y hay un tercer conteo de guías**: `corte_fifo_1` decía 32, `e5_3` dice 20.
+La diferencia es el mismo `>=`.
+
+### Un error de documentación que sí puedo afirmar ya
+
+El doc dice, en cuatro lugares, *"19 de 32 guías R **en dos días**"*. La
+consulta no mide dos días: mide `rp.fecha_operacion >= corte`, o sea **todo
+desde el 31/08**. El "en dos días" fue una glosa al contar el resultado, no
+lo que la consulta preguntó, y viajó a `app/db.py:7020` y a la decisión de no
+anular las 32 guías. El ritmo real por día es más bajo que el que citamos.
+
+### La identidad que cierra el caso
+
+En el fixture, `fila 1 − fila 3 = fila 2 − fila 4` (900 − 700 = 260 − 60 =
+200): sacando el día del corte de un lado y los reingresos del otro, las dos
+consultas coinciden. **Si esa identidad se cumple sobre producción, la
+brecha está explicada entera por esas dos causas.** Si no se cumple, hay una
+tercera y hay que buscarla.
+
+Si la fila 3 se lleva los $774.181,08 y los 92 bultos que faltan, esto es la
+**octava aparición** de la asimetría del día del corte — y la segunda dentro
+de una consulta de diagnóstico, que es justo lo que el corolario 6 dice que
+es más caro que un bug: un número con autoridad de medición que decide qué
+se arregla. Esta vez decidió que la fuga del lado del reproceso valía $3,5M.
+
+### Cómo se verificó
+
+Cuatro guías R de un artículo inventado: una **el día del corte** que comió
+caja armada (7 bultos, $700), una posterior que comió caja armada (4, $200),
+una posterior que comió un **reingreso** (3, $60) y una posterior que solo
+comió compra (no entra en ninguna de las dos). Las seis filas dan exactamente
+lo esperado y la identidad se cumple. Los datos de prueba se borraron.
