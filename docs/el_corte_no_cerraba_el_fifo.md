@@ -1404,3 +1404,42 @@ Se deja abierto a propósito: el diagnóstico de fondo no depende de cuál pese
 más —el FIFO le cobra al armado un objeto distinto del que salió— y con el
 sistema ya arreglado el número va a ser otro. **Si después de B algo sigue
 raro, se mira ahí.**
+
+## La consulta de control de B no puede existir, y hay que decirlo
+
+Ofrecí escribir una consulta que rejugara el FIFO **con la preferencia
+puesta** para confirmar en producción que `mal` cayó a ~0. **No sirve, y
+ofrecerla fue un error del mismo tipo que veníamos persiguiendo.** Dos
+razones, y la segunda es la que la mata:
+
+1. **Sería circular.** Una consulta que implementa B y después mide "¿queda
+   armado comiendo cajón teniendo caja?" da cero **por construcción de la
+   regla que ella misma escribió**. Estaría verificando el SQL, no el
+   sistema. Es el fixture armado a partir de la hipótesis, con otra ropa.
+2. **No hay nada que leer.** B no escribe una sola fila. La atribución de un
+   armado **no se persiste**: `guardar_lotes_elegidos` guarda *solo la
+   excepción* —la elección a mano del operario— y su docstring lo dice
+   textual: *"el default nunca se escribe"*. Lo que B cambia se recalcula en
+   cada pantalla y no queda en ninguna tabla.
+
+**O sea que ninguna consulta SQL puede ver si B está corriendo.** Lo único
+que lee el código de producción es producción.
+
+### Y eso deja un agujero de verificación que sí conviene tapar
+
+No hay **marcador de versión** en la app: `/salud/db` existe, pero nada dice
+qué commit está sirviendo. Entonces "mirá la pantalla y fijate si bajaron los
+costos" no distingue dos cosas:
+
+- que B no funcione, y
+- que se esté mirando la versión vieja.
+
+Es exactamente la familia del push que salió con código 0: **lo que hay que
+mirar es el estado final, no que nadie se haya quejado.** Hasta que exista
+ese marcador, la verificación en pantalla tiene que apoyarse en una señal
+BINARIA del código nuevo, no en un número que puede bajar por otra causa.
+
+La señal binaria de B: **abrir el desglose de un renglón armado de un
+artículo que se reenvasa** (Perita, Pepino, Cherry). Si propone un lote
+`reproceso` primero, está corriendo el código nuevo; si propone un `guia`,
+es el viejo. No depende de ningún importe.
