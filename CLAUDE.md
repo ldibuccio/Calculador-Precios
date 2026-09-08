@@ -431,6 +431,25 @@ De acá en adelante:
    este caso el 74 y el 26 eran del cliente y la estructura de dos fichas era
    invención — y no estaba dicho, que es lo que la volvió creíble.
 
+Corolario del 08/09, y es el mismo error por un vector nuevo: **una CAPTURA
+DE PANTALLA con nombres de artículos reales se lee como producción.**
+
+Se mandó el Cotejo a 390px con cuatro tarjetas de ejemplo, una de ellas
+"Tomate Perita" con un desvío de +6. El número era del fixture; el de
+producción era +1. Y como al lado había tres tarjetas más con nombres reales
+y el mensaje hablaba de un hallazgo real, se leyó —con razón— como una
+medición, y llevó a preguntar cuál de los dos números estaba mal. Ninguno:
+uno era de la base y el otro mío.
+
+Es el mismo corolario de abajo, pero la captura es peor que una tabla de
+texto: **no tiene dónde escribir la aclaración.** El pie del mensaje se
+separa de la imagen apenas se scrollea.
+
+De acá en adelante, en toda captura de prueba: **nombres inventados y que se
+note** ("EJEMPLO Uno", "Caja de ejemplo"). Si el caso exige un artículo real
+—porque el bug depende de sus datos—, va dicho en la misma línea que la
+captura y con el número al lado.
+
 Corolario del 05/09, y es la SEGUNDA vez con el mismo fixture: **un número de
 un fixture no se presenta con la etiqueta de un dato de producción.** Se
 predijo "Pepino · Pepino Bolsa: −150 → −40" para verificar un arreglo. Los dos
