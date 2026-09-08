@@ -297,6 +297,17 @@ comment on column compras.carga_token is 'Token único por comanda leída por fo
 create index compras_carga_token_idx on compras (carga_token);
 comment on column compras.contenido_por_cajon_real is 'Contenido por cajón real. Lo tipea Depósito directo (pesa/cuenta un bulto, no toda la carga).';
 
+create table fotos_recepcion (
+    id         bigint generated always as identity primary key,
+    compra_id  bigint not null references compras (id),
+    foto_ruta  text not null,
+    creado_en  timestamptz not null default now(),
+    unique (compra_id, foto_ruta)
+);
+
+comment on table fotos_recepcion is 'Foto de la mercadería sobre la BALANZA al recepcionar, en el bucket "comandas". Una por ARTÍCULO: una fila de compras es un artículo. A diferencia de fotos_guia, el archivo NUNCA se comparte — es el pesaje de esta compra y de ninguna otra —, y por eso al borrar la compra se borra también el archivo del Storage (la FK va sin cascade a propósito: con cascade el archivo quedaría huérfano en el bucket).';
+comment on column fotos_recepcion.foto_ruta is 'Ruta del archivo en el bucket "comandas". Entra en la limpieza de fotos viejas con el MISMO corte que las comandas (3 años, una sola perilla): ver listar_fotos_para_limpiar en app/db.py.';
+
 -- ----------------------------------------------------------------------------
 -- 8. PRECIOS_VENTA_HISTORIAL — precio de venta por artículo y cliente
 -- ----------------------------------------------------------------------------
