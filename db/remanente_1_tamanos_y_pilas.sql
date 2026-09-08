@@ -9,6 +9,10 @@
 --     puede consumir cajas ya armadas.
 -- Son independientes: un articulo con un solo tamaño de cajon igual tiene
 -- el problema 2 si arma cajas.
+-- La fila TOTAL trae CONTEOS de articulos (arts_mezclados, arts_con_cajas):
+-- con una lista, "ninguno" y "no corrio" son la misma pantalla. OJO que en
+-- la fila TOTAL, tamanos_de_cajon es el MAXIMO que convive en un articulo,
+-- no cuantos tamanos hay en total: el numero que decide es arts_mezclados.
 with c0 as (select fecha f0 from corte_modelo where id = 1),
 comp as (
  select c.articulo_id aid, count(*) compras,
@@ -26,18 +30,18 @@ rep as (
   and fecha_operacion > c0.f0
  group by 1
 )
-select a.nombre as articulo,
- coalesce(m.contenidos, 0) as tamanos_de_cajon,
- m.menor, m.mayor, coalesce(m.cajones, 0) as cajones,
- coalesce(r.guias, 0) as guias_r, coalesce(r.cajas, 0) as cajas,
- case when coalesce(m.contenidos,0) > 1 and coalesce(r.guias,0) > 0 then 'las dos'
-      when coalesce(m.contenidos,0) > 1 then 'tamaños mezclados'
-      when coalesce(r.guias,0) > 0 then 'cajones y cajas'
-      else '' end as problema,
- count(*) filter (where coalesce(m.contenidos,0) > 1) over () as con_tamanos_mezclados,
- count(*) filter (where coalesce(r.guias,0) > 0) over () as con_cajones_y_cajas
+select (select fecha from corte_modelo where id=1) corte,
+coalesce(a.nombre,'TOTAL') articulo,
+max(m.contenidos) tamanos_de_cajon,
+min(m.menor) menor, max(m.mayor) mayor,
+round(coalesce(sum(m.cajones),0),2) cajones,
+coalesce(sum(r.guias),0) guias_r,
+round(coalesce(sum(r.cajas),0),2) cajas,
+count(*) filter (where coalesce(m.contenidos,0)>1) arts_mezclados,
+count(*) filter (where coalesce(r.guias,0)>0) arts_con_cajas
 from articulos a
 left join comp m on m.aid = a.id
 left join rep r on r.aid = a.id
 where m.aid is not null or r.aid is not null
-order by (coalesce(m.contenidos,0) > 1) desc, coalesce(r.cajas,0) desc, a.nombre;
+group by grouping sets ((),(a.nombre))
+order by grouping(a.nombre) desc, 3 desc nulls last, 8 desc;
