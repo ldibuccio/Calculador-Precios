@@ -18,7 +18,21 @@ UMBRAL_SIMILITUD_ARTICULO = 0.7
 
 
 def normalizar_texto(texto: str | None) -> str:
-    """Minúsculas, sin acentos, sin espacios de más. Para comparar texto leído contra la base."""
+    """Minúsculas, sin acentos, sin espacios de más. Para comparar texto leído contra la base.
+
+    ES LA MISMA REGLA QUE EL ÍNDICE `fichas_logistica_codigo_cliente_unico`,
+    que decide qué códigos de cliente pueden convivir. El índice la escribe
+    en SQL (`db/plegar_tildes_en_codigo_cliente.sql`, corrida en las dos
+    bases el 08/09) y acá está en Python: son dos, y dos se separan solas.
+    Hasta esa migración el índice NO plegaba tildes y ésta sí, así que
+    `CÓD-2` entraba al lado de `COD-2` y para el matcheo eran el mismo — el
+    sistema elegía una ficha en silencio.
+
+    Lo que impide que se vuelvan a separar es
+    `test_el_plegado_de_Python_y_el_del_INDICE_son_LA_MISMA_regla`, que LEE
+    la tabla del .sql en vez de copiarla y compara en los dos sentidos. Si
+    tocás esta función, ese test es el que tiene que seguir pasando.
+    """
     if not texto:
         return ""
 

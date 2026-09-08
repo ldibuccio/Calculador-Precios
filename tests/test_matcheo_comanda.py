@@ -13,6 +13,47 @@ def test_normalizar_texto_minusculas_sin_acentos_sin_espacios_de_mas():
     assert normalizar_texto("Morrón Rojo") == "morron rojo"
 
 
+def test_el_plegado_de_Python_y_el_del_INDICE_son_LA_MISMA_regla():
+    """La regla de "es el mismo código" vive en dos lados: acá y en el índice único.
+
+    Escritas dos veces se separan sin que nadie lo note, y ya nos pasó:
+    "ruben" al lado de "Rubén" entraron los dos porque ninguna de las dos
+    plegaba tildes. Después el índice se arregló
+    (db/plegar_tildes_en_codigo_cliente.sql, corrida en las dos bases el
+    08/09) y esto es lo que impide que se vuelvan a separar.
+
+    La tabla se LEE del .sql, no se copia: copiada, el día que alguien
+    agregue un carácter allá, acá seguiría diciendo que está todo bien —
+    que es exactamente cómo se separan dos reglas.
+
+    Se mira en los DOS sentidos, porque cada uno falla distinto: si la
+    base pliega algo que Python no, el matcheo ve dos códigos donde el
+    índice ve uno y no deja cargarlos; si Python pliega algo que la base
+    no, entran los dos y el sistema elige uno en silencio — que es el caso
+    caro, el de "ruben".
+    """
+    import re
+    from pathlib import Path
+
+    sql = Path("db/plegar_tildes_en_codigo_cliente.sql").read_text(encoding="utf-8")
+    tabla = re.search(r"translate\(btrim\(codigo_cliente\),\s*'([^']+)',\s*'([^']+)'\)", sql, re.S)
+    assert tabla is not None, "no se encontró el translate del índice en la migración"
+    desde, hacia = tabla.group(1), tabla.group(2)
+    assert len(desde) == len(hacia), "translate con listas de distinto largo: la base plegaría cualquier cosa"
+
+    de_mas = [c for c, plegado in zip(desde, hacia) if normalizar_texto(c) != plegado.lower()]
+    assert de_mas == [], f"la base los pliega y normalizar_texto no, o distinto: {de_mas}"
+
+    # Latin-1 + Latin Extended-A entera, no los cinco acentos del español:
+    # una lista a medias es media regla, y ya mordió con 'ÿ'.
+    faltantes = [
+        chr(p)
+        for p in range(0xC0, 0x180)
+        if normalizar_texto(chr(p)) != chr(p).lower() and chr(p) not in desde
+    ]
+    assert faltantes == [], f"normalizar_texto los pliega y el índice no: {faltantes}"
+
+
 def test_normalizar_texto_vacio_o_none():
     assert normalizar_texto("") == ""
     assert normalizar_texto(None) == ""

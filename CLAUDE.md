@@ -159,19 +159,28 @@ De acá en adelante:
    dice.** Es la señal de que las dos reglas se volvieron a separar, y tragarla
    es cómo se pierde meses después.
 
-Y hay una VIVA, encontrada el 07/09 al escribir el backfill de Palmala: el
-índice `fichas_logistica_codigo_cliente_unico` pliega `lower(trim(...))` y
-**no pliega tildes**; `normalizar_texto` (core/matcheo_comanda.py), que es
-quien matchea el código del pedido contra la ficha, **sí las pliega**. Así que
-`CÓD-2` puede entrar al lado de `COD-2` —el índice los ve distintos— y para el
-matcheo son el mismo código: el sistema elegiría una en silencio, que es
-exactamente lo que el comentario de ese índice dice que viene a impedir.
+Hubo una VIVA entre el 07 y el 08/09, y **ya está cerrada**: el índice
+`fichas_logistica_codigo_cliente_unico` plegaba `lower(trim(...))` y **no
+plegaba tildes**; `normalizar_texto` (core/matcheo_comanda.py), que es quien
+matchea el código del pedido contra la ficha, **sí las plegaba**. Así que
+`CÓD-2` podía entrar al lado de `COD-2` —el índice los veía distintos— y para
+el matcheo eran el mismo código: el sistema elegía una en silencio, que es
+exactamente lo que el comentario de ese índice dice que viene a impedir. El
+caso de "ruben" al lado de "Rubén", con los mismos dos plegados y la misma
+tilde faltando de un lado.
 
-Es el caso de "ruben" al lado de "Rubén", con los mismos dos plegados y la
-misma tilde faltando de un lado. No se arregló todavía porque el arreglo es
-una migración y hay que ver primero si hay códigos con tilde cargados; **la
-guarda de ambigüedad del backfill cubre justo esa grieta** y por eso no es
-código muerto.
+**Arreglado el 08/09** con `db/plegar_tildes_en_codigo_cliente.sql`, corrida
+en las DOS bases (`pliega_tildes` y `pliega_espacios` en `true`). El índice
+pliega ahora tildes, eñe y espacios internos, con `translate` en SQL puro y
+la lista Latin-1 + Latin Extended-A entera.
+
+Y lo que impide que se vuelvan a separar no es que hoy coincidan: es
+`test_el_plegado_de_Python_y_el_del_INDICE_son_LA_MISMA_regla`, que **lee la
+tabla del `.sql`** —no la copia, porque copiada envejece en silencio— y
+compara en los DOS sentidos. Cada dirección falla distinto: si la base pliega
+algo que Python no, el matcheo ve dos códigos donde el índice ve uno y no
+deja cargarlos; si Python pliega algo que la base no, entran los dos y el
+sistema elige uno en silencio, que es el caso caro.
 
 Corolario 2, y es de la COSTUMBRE, no de la regla: **cuando se arregla una
 copia, hay que ir a buscar la otra.** Pasó TRES veces en la misma semana. El
