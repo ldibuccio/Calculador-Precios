@@ -1888,3 +1888,81 @@ colisiones, la migración es de un solo bloque.
 Y `dup_regla_vieja` es el testigo del corolario 17: tiene que dar 0 en las
 dos bases. Si no da 0, **el índice único no existe en esa base** y todo lo
 demás se estaba leyendo sobre una suposición falsa.
+
+## La pared del armado: la ficha manda sobre la disponibilidad (08/09)
+
+B mitigó E5 por **disponibilidad**: el armado prefiere una caja armada si la
+hay. Esto lo cierra por **regla**: para una ficha con `envase_id` no nulo,
+una caja no puede salir de un cajón sin pasar por una guía R. Si no hay
+caja, el bulto queda **sin lote** y espera el papel.
+
+### Las dos copias, por construcción y no por disciplina
+
+La pared se expresa **quitando la pasada de respaldo** en `pasadas_de_lotes`,
+que es la única función que llaman las dos copias del FIFO — `repartir_fifo`
+para el stock y `atribuir_costos_fifo` para el costo. Escrita así no se
+pueden desfasar. Un test corre las dos sobre los mismos datos y exige el
+mismo número.
+
+### La reserva del cajón NO se puede hacer, y la razón es física
+
+La idea era: que el armado no impute costo pero sí baje el restante del
+cajón, para que no aparezca disponible. Simulado con el freno real:
+
+```
+A) el armado se lleva el cajón:  restante 0  → la guía R que toma 10 FRENA
+B) el armado no lo toca:         restante 10 → la guía R PUEDE cargarse
+```
+
+**El cajón no lo consumió el armado: lo consume el reproceso.** El recorrido
+es cajón → (reproceso) → caja → (armado) → camión. Reservarlo para el armado
+deja a la guía R sin nada que tomar, y el freno la rechaza — o sea que la
+reserva rompe justo el autoajuste que hace que todo esto funcione.
+
+Dicho de una vez: **el cajón intacto no es un efecto colateral de la pared,
+es su precondición.**
+
+### La ventana, medida antes de mergear
+
+`db/ventana_1_cuanto_tarda_la_guia_r.sql` sobre Frutamax:
+
+```
+guias 20 · mismo_dia 18 · un_dia 2 · dos_a_tres 0 · cuatro_o_mas 0
+peor 1 · promedio 0.10 · fechada_en_el_futuro 0
+```
+
+**La ventana son horas.** Por eso la pared va sin que el freno tenga que
+distinguir "restante real" de "restante que espera papel". Si `peor` sube a
+3 o 4, esa distinción vuelve a la mesa: hay que volver a correr la medición
+en un par de semanas.
+
+Y `fechada_en_el_futuro` = 0 sostiene todo el análisis de posterioridad.
+
+### Se resuelve solo, y por qué
+
+La atribución del armado **no se persiste** (`lotes_elegidos` guarda solo la
+excepción del operario), y `lote_posterior_a_la_salida` compara **fechas, no
+relojes**. Corrido con el FIFO real:
+
+```
+guía R fechada 07/09, cargada 08/09 09:00 → cubierto 10 de 10 · $1000
+guía R fechada 08/09, cargada 08/09 09:00 → cubierto  0 de 10 · sin_lote 10
+```
+
+O sea que el único cuidado es **fechar la guía R con el día en que se armaron
+las cajas**, no con el día en que se carga el papel. Eso es procedimiento, no
+código, y es lo que hay que sostener.
+
+### Las tres que la vuelven audible
+
+Sola, la pared es correcta y muda: el stock **no se mueve** (es un neto, y el
+armado resta con pared o sin ella).
+
+1. **`falta_cargar_guia_r`** como motivo propio en "afuera del cálculo". La
+   etiqueta de `sin_lote` —"salió más de lo que había"— sería falsa acá: el
+   cajón sí estaba. El nombre dice qué hacer y no describe un estado.
+2. **La alerta**, que se apaga sola porque cuenta sobre el rejuego. Solo lo
+   que alguien puede cerrar cargando el papel; el `sin_lote` de verdad no
+   entra, o el número no bajaría nunca y la alerta se aprendería a ignorar.
+3. **El bloque del Remanente**, separado de los negativos y en azul: no es un
+   faltante. Allá hay que averiguar qué pasó; acá se sabe y la acción es una.
