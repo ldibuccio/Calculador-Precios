@@ -3019,18 +3019,25 @@ def _generar_preview_foto(imagen: bytes) -> str:
     return f"data:image/jpeg;base64,{base64.standard_b64encode(comprimida).decode('ascii')}"
 
 
-def _comprimir_foto_jpeg(imagen: bytes) -> bytes | None:
-    """El pipeline de compresión de fotos del sistema: EXIF aplicado, máx 1000px, JPEG calidad 60.
+def _comprimir_foto_jpeg(imagen: bytes, lado_maximo: int = LADO_MAXIMO_PREVIEW_FOTO) -> bytes | None:
+    """El pipeline de compresión de fotos del sistema: EXIF aplicado, lado largo acotado, JPEG calidad 60.
 
     Lo usan el preview de comandas y la subida de fotos a la guía — todo
     lo que termina en Storage pasa por acá, nunca originales de varios MB.
     None si los bytes no son una imagen legible.
+
+    lado_maximo entra por parámetro y NO por una segunda función: una foto
+    de balanza necesita más píxeles que una comanda —hay que leer un
+    display de siete segmentos, no un texto— y duplicar el pipeline sería
+    duplicar el EXIF, el convert y la calidad, que son los que tienen que
+    seguir siendo iguales para todos. El default es el de siempre, así que
+    ningún llamador existente cambia de comportamiento.
     """
     try:
         imagen_pil = Image.open(io.BytesIO(imagen))
         imagen_pil = ImageOps.exif_transpose(imagen_pil)
         imagen_pil = imagen_pil.convert("RGB")
-        imagen_pil.thumbnail((LADO_MAXIMO_PREVIEW_FOTO, LADO_MAXIMO_PREVIEW_FOTO))
+        imagen_pil.thumbnail((lado_maximo, lado_maximo))
         buffer = io.BytesIO()
         imagen_pil.save(buffer, format="JPEG", quality=CALIDAD_PREVIEW_FOTO)
         return buffer.getvalue()
