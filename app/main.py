@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlencode
@@ -714,6 +715,89 @@ templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
+
+
+# ── EL MARCADOR DE VERSIÓN ──────────────────────────────────────────────
+#
+# Sale del DEPLOY, nunca de una constante que alguien actualiza a mano: una
+# constante así miente a las dos semanas, y un marcador que miente es PEOR
+# que no tenerlo — hace creer que se está mirando algo que no es. El 08/09
+# perdimos una tarde justamente por no poder distinguir "el arreglo no
+# funciona" de "estás mirando la versión vieja".
+#
+# Por eso la regla de acá: **si el dato no está, se dice que no está.**
+# Nada de rellenar con algo plausible.
+
+
+def _commit_del_deploy() -> str | None:
+    """El commit corto que inyecta la plataforma, o None si no lo inyectó.
+
+    Railway pone RAILWAY_GIT_COMMIT_SHA. Los otros dos nombres están por si
+    el deploy cambia de casa (Heroku pone SOURCE_VERSION); no cuestan nada y
+    evitan que el marcador se apague en silencio el día de la mudanza.
+    """
+    for variable in ("RAILWAY_GIT_COMMIT_SHA", "SOURCE_VERSION", "GIT_COMMIT"):
+        valor = (os.environ.get(variable) or "").strip()
+        if valor:
+            return valor[:7]
+    return None
+
+
+def _fecha_del_commit():
+    """Cuándo se hizo el commit que está corriendo, o None si no se puede saber.
+
+    Se lee del repo si el contenedor lo trae. Puede no traerlo —muchas
+    imágenes copian el código sin `.git`—, y en ese caso NO se inventa: el
+    llamador cae a la hora de arranque y la pantalla lo dice con otra
+    palabra. La diferencia importa: un contenedor que reinicia sin deploy
+    nuevo mueve la hora de arranque y no mueve el commit, así que confundir
+    las dos haría parecer fresco a código viejo, que es exactamente el
+    problema que este marcador viene a resolver.
+    """
+    try:
+        salida = subprocess.run(
+            ["git", "show", "-s", "--format=%cI", "HEAD"],
+            capture_output=True, text=True, timeout=3, check=True,
+        )
+        return datetime.fromisoformat(salida.stdout.strip()).astimezone(ARGENTINA)
+    except Exception:
+        return None
+
+
+VERSION_COMMIT = _commit_del_deploy()
+VERSION_ARRANQUE = datetime.now(ARGENTINA)
+VERSION_FECHA_COMMIT = _fecha_del_commit()
+
+
+def _version_app() -> dict:
+    """Lo que se muestra en el pie y devuelve /salud/db.
+
+    `fecha_es` dice de QUÉ es la fecha, y va al lado del número en la
+    pantalla: "commiteado" es la fecha real del código, "levantado" es
+    cuándo arrancó este proceso — que es lo mejor que hay cuando el
+    contenedor no trae el repo, y que puede ser mucho más nueva que el
+    código.
+
+    Los dos son VERBOS y de la misma forma a propósito: con "commit" a
+    secas, la línea sin commit inyectado quedaba "sin commit · commit
+    08/09", que se lee como un error de la pantalla.
+    """
+    if VERSION_FECHA_COMMIT is not None:
+        fecha, fecha_es = VERSION_FECHA_COMMIT, "commiteado"
+    else:
+        fecha, fecha_es = VERSION_ARRANQUE, "levantado"
+    # La conversión va ACÁ y no solo en `_fecha_del_commit`: si la deja el
+    # que provee el dato, la hora argentina depende de que los dos caminos
+    # se acuerden, y el día que alguien agregue un tercero se muestra UTC
+    # sin que nada avise. Sobre un valor ya argentino no hace nada.
+    return {
+        "commit": VERSION_COMMIT,
+        "fecha": fecha.astimezone(ARGENTINA).strftime("%d/%m %H:%M"),
+        "fecha_es": fecha_es,
+    }
+
+
+templates.env.globals["version_app"] = _version_app()
 templates.env.filters["hora"] = _formatear_hora
 templates.env.filters["hora_corta"] = _formatear_hora_corta
 
@@ -1194,7 +1278,7 @@ def salud_db() -> dict:
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error}") from error
 
-    return {"articulos": cantidad_articulos}
+    return {"articulos": cantidad_articulos, "version": _version_app()}
 
 
 @app.get("/articulos")

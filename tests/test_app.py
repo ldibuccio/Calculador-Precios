@@ -111,7 +111,11 @@ def test_salud_db_devuelve_la_cantidad_de_articulos():
         respuesta = cliente.get("/salud/db")
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {"articulos": 29}
+    cuerpo = respuesta.json()
+    assert cuerpo["articulos"] == 29
+    # El marcador de versión viaja acá además de en el pie: es lo que se
+    # puede mirar sin abrir una pantalla.
+    assert set(cuerpo["version"]) == {"commit", "fecha", "fecha_es"}
 
 
 def test_salud_db_sin_database_url_devuelve_error_claro():
@@ -20934,3 +20938,94 @@ def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     assert "reparto[\"lotes\"]" not in desglose.replace(
         "lotes_permitidos(reparto[\"lotes\"], SALIDA_REPROCESO)", ""
     )
+
+
+# ── El marcador de versión ─────────────────────────────────────────────────
+#
+# Del 08/09: "verificá en la pantalla" no distinguía entre "el arreglo no
+# funciona" y "estás mirando la versión vieja", y eso costó una tarde.
+
+
+def test_el_pie_de_version_esta_en_TODAS_las_pantallas_completas():
+    """Un marcador que aparece en algunas pantallas miente por omisión en las
+    otras — y justo en la pantalla donde uno duda es donde no estaría.
+
+    Se lee el directorio, no una lista escrita a mano: el día que alguien
+    agregue una pantalla nueva, falla acá. Los parciales (`_*.html`) quedan
+    afuera porque se incluyen dentro de una pantalla que sí lo tiene.
+    """
+    import pathlib
+
+    faltan = []
+    for ruta in sorted(pathlib.Path("templates").glob("*.html")):
+        if ruta.name.startswith("_"):
+            continue
+        texto = ruta.read_text(encoding="utf-8")
+        if "</body>" in texto and "_pie_version.html" not in texto:
+            faltan.append(ruta.name)
+
+    assert not faltan, f"pantallas sin marcador de versión: {faltan}"
+
+
+def test_sin_commit_inyectado_el_marcador_lo_DICE_y_no_inventa():
+    """La regla del marcador: si el dato no está, se dice que no está.
+
+    Rellenar el hueco con algo plausible reproduce exactamente el problema
+    que vino a resolver — hacer creer que se está mirando algo que no es.
+    """
+    from app.main import _commit_del_deploy
+
+    with patch.dict("os.environ", {}, clear=True):
+        assert _commit_del_deploy() is None
+
+
+def test_el_commit_sale_del_ENTORNO_del_deploy_y_no_de_una_constante():
+    """Que salga del deploy es el requisito: una constante que hay que tocar
+    en cada merge miente a las dos semanas.
+
+    Se prueban los tres nombres, y en orden: si mañana el deploy cambia de
+    casa, el marcador no se apaga en silencio.
+    """
+    from app.main import _commit_del_deploy
+
+    for variable in ("RAILWAY_GIT_COMMIT_SHA", "SOURCE_VERSION", "GIT_COMMIT"):
+        with patch.dict("os.environ", {variable: "abc1234567890"}, clear=True):
+            assert _commit_del_deploy() == "abc1234", variable
+
+
+def test_la_fecha_DICE_si_es_del_commit_o_del_arranque():
+    """No es decorativo. "levantado" puede ser mucho más nuevo que el código
+    —un contenedor que reinicia sin deploy mueve el arranque y no el commit—
+    así que llamarlas igual haría parecer fresco a código viejo, que es
+    justo el problema que este marcador resuelve.
+    """
+    from app.main import _version_app
+
+    with patch("app.main.VERSION_FECHA_COMMIT", None):
+        assert _version_app()["fecha_es"] == "levantado"
+
+    # Y que no se lean como un error de la pantalla al lado de "sin commit".
+    assert "commit" != _version_app()["fecha_es"]
+
+    with patch("app.main.VERSION_FECHA_COMMIT", datetime(2026, 9, 8, 14, 20, tzinfo=timezone.utc)):
+        version = _version_app()
+        assert version["fecha_es"] == "commiteado"
+        assert version["fecha"] == "08/09 11:20"  # convertido a hora argentina
+
+
+def test_el_pie_no_mete_un_bloque_style_al_final():
+    """El estilo del pie va INLINE a propósito: se inserta al final del body y
+    cuarenta y ocho tests parten el HTML por el ÚLTIMO </style> para quedarse
+    con el contenido. Un <style> acá los rompería a todos por una razón que
+    no tiene nada que ver con lo que prueban.
+    """
+    import re
+
+    pie = open("templates/_pie_version.html", encoding="utf-8").read()
+    # Sin el comentario de Jinja, que NOMBRA <style> al explicar por qué no
+    # lo usa: mirar el archivo entero hacía fallar al test por su propia
+    # explicación.
+    markup = re.sub(r"\{#.*?#\}", "", pie, flags=re.S)
+
+    assert "<style" not in markup
+    assert "style=" in markup

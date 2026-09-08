@@ -1,0 +1,21 @@
+{# El marcador de versión. Va en TODAS las pantallas completas, y un test lo
+   exige: un marcador que aparece en algunas miente por omisión en las otras
+   — justo en la pantalla donde uno duda es donde no estaría.
+
+   `fecha_es` dice de qué es la fecha y NO es decorativo: "commit" es cuándo
+   se escribió el código que corre; "levantado" es cuándo arrancó este
+   proceso, que puede ser mucho más nuevo si el contenedor reinició sin
+   deploy. Confundirlas haría parecer fresco a código viejo.
+
+   Sin commit inyectado dice "sin commit" y no un valor plausible: el 08/09
+   nos costó una tarde no poder distinguir "no funciona" de "estás mirando
+   lo viejo", y un marcador que rellena el hueco reproduce ese problema.
+
+   El estilo va INLINE y no en un bloque <style>: este pie se inserta al
+   final del body, y cuarenta y ocho tests parten el HTML por el ÚLTIMO
+   </style> para quedarse con el contenido. Un <style> acá los rompería a
+   todos y por una razón que no tiene nada que ver con lo que prueban. #}
+<footer style="margin:24px 12px 16px;text-align:center;font-size:0.75rem;color:#999;line-height:1.4">
+  {% if version_app.commit %}{{ version_app.commit }}{% else %}sin commit{% endif %}
+  · {{ version_app.fecha_es }} {{ version_app.fecha }}
+</footer>
