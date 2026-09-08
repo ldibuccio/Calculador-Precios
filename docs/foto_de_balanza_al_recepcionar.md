@@ -141,17 +141,35 @@ construcción** —al empezar faltan todas— y ya tenemos la medida de en qué
 termina eso: el aviso de "no hay cajas de esta ficha" salía en **135 de 765
 bultos, todos los días**.
 
-## LO ÚNICO ABIERTO: ¿1000 px y calidad 60 alcanzan para leer el display?
+## CERRADO — la resolución no se toca, y el requisito no existía
 
-No se sabe, **se mide**, y decide todo lo demás (corolario 23: la premisa se
-mide, no se hereda). Aritmética de partida, y es una estimación mía, no una
-medición: un dígito de ~25 mm a 1 m de un teléfono común cae en **~19 px de
-alto** después del achique — al filo. A 50 cm son ~38 px, cómodo.
+Estuvo abierto medio día y no tendría que haberlo estado nunca. La
+pregunta era si 1000 px y calidad 60 dejan leer el display. Se midió sobre
+una foto real sacada a la distancia a la que va a trabajar el operario: el
+dígito queda en **~14 px** (1,4% del alto del cuadro), los trazos pierden
+la forma cerrada, y el número se lee **"177 o 17,7"** — sin poder decidir
+si hay coma.
 
-Y hay una tensión de diseño escondida en "sacá una foto": **la foto tiene dos
-trabajos** —probar que la mercadería estaba sobre la balanza (pide abrir) y
-leer el display (pide acercarse)— y tiran para lados opuestos. La prueba está
-armada para distinguir cuál gana, no para confirmar que se puede.
+De ahí salió una propuesta de subir el lado largo a 2000, un parámetro
+nuevo en `_comprimir_foto_jpeg`, y la idea de guardar un recorte del
+display aparte.
 
-Tres fotos, misma carga y mismo número en el display, cambiando **una sola
-cosa: la distancia.**
+**Nada de eso va, porque el requisito que lo pedía no existía.** Lo que se
+necesita de la foto es ver que **la mercadería estaba sobre la balanza y
+que la balanza estaba pesando** — el cajón, la balanza, el display
+encendido. A 1000 px eso se ve. "Foto de la balanza" se leyó como "foto
+legible del número", y esa lectura se coló en el planteo, en la prueba de
+las tres distancias y casi en un cambio al pipeline de TODAS las fotos del
+sistema.
+
+Y hay un hecho que lo cierra del todo, que no es de software: **el operario
+redondea el pesaje.** Aunque el display se leyera perfecto, el número no
+iba a coincidir con lo cargado. Cotejar foto contra sistema no tiene
+sentido acá, y sin cotejo la legibilidad no vale nada.
+
+Queda entonces, y es lo que estaba desde el principio:
+
+- `_comprimir_foto_jpeg` **como está**: 1000 px, calidad 60, sin argumento
+  nuevo (el parámetro se mergeó y se revirtió el mismo día).
+- **Sin recorte del display.**
+- **Sin resolución especial** para `fotos_recepcion`.

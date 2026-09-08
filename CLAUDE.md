@@ -1239,3 +1239,49 @@ el caso vacío, el mensaje de error, el default. Engancha con el corolario 5
 —*una rama por defecto que afirma algo es una aserción sin verificar*— y le
 agrega **cuándo** verificarla: el día que se agrega un camino que puede
 caer en ella.
+
+Corolario 29, del 08/09: **un requisito derivado de una premisa que nadie
+enunció.** No es un dato mal medido ni una copia olvidada: es trabajo
+entero —una prueba de campo, una decisión de diseño y casi un cambio al
+pipeline de todas las fotos del sistema— construido sobre algo que nadie
+pidió.
+
+El pedido era "foto de la mercadería sobre la balanza al recepcionar". Se
+leyó como **"foto legible del número del display"**, y esa lectura nunca
+se dijo en voz alta: entró como si fuera parte del pedido. De ahí salió,
+en orden, una tensión de diseño inventada ("la foto tiene dos trabajos y
+tiran para lados opuestos"), una prueba de tres distancias en el galpón,
+la medición del dígito en píxeles, la propuesta de subir el lado largo a
+2000, un parámetro nuevo en `_comprimir_foto_jpeg` —mergeado— y la idea de
+guardar un recorte del display aparte.
+
+Lo que se necesitaba era ver **que la mercadería estaba sobre la balanza y
+que la balanza estaba pesando**. A 1000 px eso ya se veía. Todo lo demás
+sobraba.
+
+**La pregunta que lo destrabó fue "¿para qué querés leer el pesaje?", y la
+hizo el dueño, no nosotros.** Y la respuesta la cierra sin apelación: **el
+operario redondea.** Aunque el display se leyera perfecto, el número no
+coincidiría con lo cargado. Cotejar foto contra sistema no tiene sentido
+acá, y sin cotejo la legibilidad no vale nada. Ese hecho no está en el
+código ni en la base: está en cómo se trabaja.
+
+Es pariente del corolario 25 —la premisa que nadie midió— pero un escalón
+más arriba y peor: **allá la premisa era falsa; acá el REQUISITO no
+existía.** Una premisa falsa se descubre midiendo. Un requisito inventado
+no se puede medir, porque las mediciones que uno diseña salen de él: la
+prueba de las tres distancias estaba bien hecha, contestó exactamente lo
+que preguntaba, y la pregunta era de más.
+
+**La señal, y es la única barata que hay: cuando una prueba empieza a
+costar más que la función, revisar qué requisito la está pidiendo y quién
+lo enunció.** Acá la función era subir un archivo; la prueba pedía ir al
+galpón, sacar fotos a tres distancias, cuidar la luz y no mandarlas por
+WhatsApp. Esa desproporción era el aviso, y estuvo a la vista todo el
+tiempo.
+
+Y un detalle del método que ESTA vez salió bien y conviene repetir: el
+parámetro se mergeó con el default en 1000, así que revertirlo fue un solo
+`git revert` y ningún llamador existente se enteró. **Un cambio que
+todavía no tiene usuarios se escribe de forma que deshacerlo sea gratis**,
+porque el requisito que lo pidió puede no sobrevivir al día.
