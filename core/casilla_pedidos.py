@@ -40,7 +40,7 @@ CLAVE_CASILLA_ENV_VAR = "CLAVE_CASILLA_PEDIDOS"
 # revisión automática corre en un bucle y no puede quedar colgada para siempre.
 SEGUNDOS_TIMEOUT_IMAP = 60
 
-ARGENTINA = timezone(timedelta(hours=-3))
+from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 
 # Abreviaturas de mes del criterio SINCE de IMAP (RFC 3501): van EN INGLÉS
 # siempre, independientes del locale — no usar strftime("%b").

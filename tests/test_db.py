@@ -6061,3 +6061,48 @@ def test_ninguna_consulta_compara_un_timestamptz_contra_una_FECHA_sin_zona():
                     break
 
     assert not ofensoras, "comparan un timestamptz contra una fecha sin zona:\n" + "\n".join(ofensoras)
+
+
+def test_la_zona_argentina_es_una_ZONA_y_no_un_offset_numerico():
+    """`timezone(timedelta(hours=-3))` es un número, no una zona.
+
+    Hoy coincide: Argentina no mueve el reloj desde 2009. El día que lo
+    mueva, un offset fijo sigue diciendo −3 cuando son −2, **en silencio** —
+    no hay error que leer, solo horas mal. Y estaba escrito TRES veces
+    (app/main.py, app/costeo.py, core/casilla_pedidos.py), así que el día
+    del cambio habría que acordarse de los tres.
+
+    Es la misma regla que en el SQL, donde va `AT TIME ZONE
+    'America/Argentina/Buenos_Aires'` y nunca un `interval '3 hours'`. El
+    test la exige de los dos lados: que las dos mitades nombren la MISMA
+    zona, y no un número que hoy da igual.
+    """
+    import re
+    from datetime import timedelta
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    from core.zona import ARGENTINA, NOMBRE_ZONA
+
+    assert isinstance(ARGENTINA, ZoneInfo), "tiene que ser una zona, no un offset fijo"
+    assert NOMBRE_ZONA == "America/Argentina/Buenos_Aires"
+    # Y hoy da lo mismo que el número que reemplazó: el cambio no movió nada.
+    assert datetime(2026, 9, 8, 12, 0, tzinfo=ARGENTINA).utcoffset() == timedelta(hours=-3)
+
+    # Nadie vuelve a escribir el offset a mano, ni en Python ni en SQL.
+    ofensoras = []
+    for archivo in Path(".").glob("[ac]*/**/*.py"):
+        if "test" in str(archivo):
+            continue
+        for numero, linea in enumerate(archivo.read_text(encoding="utf-8").split("\n"), 1):
+            if re.search(r"timezone\(\s*timedelta\(\s*hours\s*=\s*-3", linea):
+                ofensoras.append(f"{archivo}:{numero}: {linea.strip()[:80]}")
+    for archivo in list(Path("app").glob("*.py")) + list(Path("core").glob("*.py")):
+        for numero, linea in enumerate(archivo.read_text(encoding="utf-8").split("\n"), 1):
+            if re.search(r"interval\s+'-?\s*[0-9]+\s+hours?'", linea):
+                ofensoras.append(f"{archivo}:{numero}: {linea.strip()[:80]}")
+
+    assert not ofensoras, (
+        "la zona argentina escrita como un número, que no sobrevive a un cambio "
+        "de horario de verano:\n" + "\n".join(ofensoras)
+    )

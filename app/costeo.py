@@ -29,7 +29,7 @@ from core.motor_costeo import (
     utilidad_real_multi_concepto as calcular_utilidad_real,
 )
 
-ARGENTINA = timezone(timedelta(hours=-3))
+from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 VENTANA_COSTEO_HORAS = 48
 LIMITE_APARICION_DIAS = 15
 LIMITE_COSTO_ANTERIOR_DIAS = 20

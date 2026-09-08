@@ -367,7 +367,7 @@ ORIGENES_RETIRO_LABELS = {
 # es correcto; acortarlo la achica sola, que también.
 DIAS_PASADOS_LISTADO_PEDIDOS = 7
 
-ARGENTINA = timezone(timedelta(hours=-3))
+from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
 
 # Para el nombre del archivo de Disponibles (ej. "Disponibles_Frutamax_14_Ago_2026.xlsx").
