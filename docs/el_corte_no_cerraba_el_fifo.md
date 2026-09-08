@@ -1484,3 +1484,50 @@ contra armado del 03; guía R del 05 contra armado del 03; y uno sin guías):
 7 / 7 / 7, cada uno en su columna. Base vacía devuelve una fila de ceros y el
 canario del corte muerde (con `>=`, los 7 pasan de `nunca` a
 `con_caja_previa`).
+
+## E5 cerrado del lado del diagnóstico (08/09)
+
+Todo lo de abajo es **Frutamax, corte 05/09, recorte `> corte`: 06 y 07/09**,
+dos días.
+
+### La partición de los 765 bultos de armado
+
+```
+armado total                                              765
+├─ ya se costea contra CAJA hoy .......................... 271   nada que hacer
+├─ se costea contra CAJÓN teniendo caja disponible ....... 359   ← lo que arregla B
+└─ se costea contra CAJÓN sin caja disponible ............ 135   cajón legítimo
+   └─ Mzn Red 40 · Mzn Gob 20 · Mzn Granny 15 · Arándano 30 · Pera 30
+```
+
+Y **cierra sin residuo por dos caminos escritos por separado**, que es lo
+que lo vuelve una verificación y no una afirmación:
+
+| De `e5_4` | | De `e5_10` |
+|---|---|---|
+| `armado − cajon` = 765 − 494 = **271** | | |
+| `mal` = **359** | | |
+| suma **630** | **=** | `con_caja_previa` = **630** |
+| `sin_opcion` = **135** | **=** | `nunca` = **135** |
+| | | `solo_posterior` = **0** |
+
+Las dos consultas se escribieron en momentos distintos, con estructuras
+distintas —`e5_4` rejuega el FIFO por intervalos, `e5_10` solo compara
+fechas de guía R contra fechas de armado— y coinciden **al bulto**.
+
+### Las tres cosas que quedan afirmadas
+
+1. **Hay un solo mecanismo.** El FIFO ordena por fecha y no mira el tipo de
+   lote, así que le cobra al armado un objeto distinto del que salió.
+2. **No hay nada escondido en la mitad que dimos por sana.** Los 135 de
+   `sin_opcion` son exactamente los cinco artículos que no se reprocesan
+   nunca —manzanas, pera, arándano—, los mismos que el docstring de
+   `_cajas_por_ficha` viene nombrando desde antes de que los midiéramos.
+3. **No hay problema de procedimiento.** `solo_posterior = 0` en todos: las
+   guías R se cargan a tiempo. La hipótesis de que el armado se adelantaba a
+   la guía R queda descartada **con datos**, no solo con el argumento de que
+   el FIFO compara fechas.
+
+Lo que queda abierto no es del diagnóstico sino de la magnitud: el factor de
+precio entre lotes (`e5_8` / `e5_9`), que decide cuánto de los −$4.391.314,26
+es reenvasado y cuánto precio entre días. No cambia qué se arregla.
