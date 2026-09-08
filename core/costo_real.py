@@ -62,7 +62,12 @@ un número chico y cierto que uno grande y mentiroso.
 """
 
 from core.rentabilidad import ETIQUETAS_GRUPO, ETIQUETA_SIN_GRUPO, ORDEN_GRUPOS
-from core.stock import es_lote_trabajado, lote_posterior_a_la_salida, lotes_senalados
+from core.stock import (
+    es_lote_trabajado,
+    lote_posterior_a_la_salida,
+    lotes_senalados,
+    pasadas_de_lotes,
+)
 
 ETIQUETAS_MOTIVO_REAL = {
     "sin_kilaje": "Renglón armado sin kilaje cargado",
@@ -201,23 +206,40 @@ def atribuir_costos_fifo(entradas: list[dict], salidas: list[dict]) -> list[dict
             if lote["restante"] > 0:
                 _consumir(salida, lote, min(lote["restante"], pedidos, pendiente))
 
-    # PASADA 2 — el FIFO de siempre con lo que quedó pendiente. El índice
-    # avanza SOLO sobre lotes agotados, que ya no vuelven (incluidos los que
-    # vació la pasada de arriba). Un lote posterior a esta salida se saltea
-    # pero NO se pasa de largo: una salida más nueva sí va a poder consumirlo.
+    # PASADA 2 — el FIFO con lo que quedó pendiente, ahora con la preferencia
+    # por tipo de lote (`pasadas_de_lotes`). Misma forma que `repartir_fifo`:
+    # una pasada por los preferidos y otra por el resto, cada una en orden de
+    # fecha, que es lo que mantiene válido el `break` del lote posterior.
+    #
+    # EL ÍNDICE CAMBIÓ DE INVARIANTE Y ES LO MÁS DELICADO DE ACÁ. Antes
+    # avanzaba mientras el lote de adelante estuviera agotado, apoyado en que
+    # los lotes se consumían de adelante hacia atrás. Con la preferencia eso
+    # dejó de ser cierto: un armado saltea el cajón viejo para ir a la caja de
+    # más adelante, y el cajón queda VIVO DETRÁS del índice. Si el índice lo
+    # pasara de largo, la salida siguiente no lo vería nunca.
+    #
+    # Así que ahora el índice solo se come el PREFIJO agotado —lo único que
+    # sigue siendo verdad— y cada salida recorre desde ahí. Sigue ahorrando
+    # el rescaneo de los lotes muertos del principio, que es para lo que
+    # estaba, y no promete nada más. Lo cuida
+    # test_el_INDICE_no_se_pasa_de_largo_el_lote_que_el_armado_SALTEO.
     indice = 0
     for salida in resultado:
         cuenta = cuentas[id(salida)]
-        while cuenta["pendiente"] > 0 and indice < len(lotes):
-            lote = lotes[indice]
-            if lote["restante"] <= 0:
-                indice += 1
-                continue
-            if lote_posterior_a_la_salida(lote, salida):
-                # Los lotes están ordenados: de acá en adelante son todos
-                # posteriores. Esta salida no tiene con qué costearse.
-                break
-            _consumir(salida, lote, min(lote["restante"], cuenta["pendiente"]))
+        while indice < len(lotes) and lotes[indice]["restante"] <= 0:
+            indice += 1
+        for pasada in pasadas_de_lotes(lotes[indice:], salida):
+            for lote in pasada:
+                if cuenta["pendiente"] <= 0:
+                    break
+                if lote["restante"] <= 0:
+                    continue
+                if lote_posterior_a_la_salida(lote, salida):
+                    # Ordenados por fecha: de acá en adelante son todos
+                    # posteriores EN ESTA pasada. La siguiente arranca de
+                    # nuevo, y su primer lote puede ser anterior a éste.
+                    break
+                _consumir(salida, lote, min(lote["restante"], cuenta["pendiente"]))
         if cuenta["pendiente"] > 0:
             cuenta["sin_costo"] += cuenta["pendiente"]
             cuenta["motivos"]["sin_lote"] = cuenta["motivos"].get("sin_lote", 0.0) + cuenta["pendiente"]

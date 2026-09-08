@@ -762,3 +762,124 @@ def test_merma_sin_lote_elegido_sigue_saliendo_del_mas_viejo():
     )
 
     assert resultado["grupos"][0]["filas"][0]["costo_mermas"] == 10 * 500.0
+
+
+# --- Pieza 3 de E5: el armado toma CAJA ARMADA antes que cajón -------------
+#
+# Medido el 08/09 (Frutamax, corte 05/09, 06 y 07/09): 359 de 494 bultos de
+# armado se costearon contra cajones TENIENDO caja disponible. El FIFO ordena
+# por fecha y no mira el tipo de lote, así que le cobra al armado un objeto
+# distinto del que se despachó.
+
+
+def _cruda(dia, cantidad, costo):
+    return _lote((date(2026, 9, dia), dia), cantidad, costo, tipo_lote="guia")
+
+
+def _caja(dia, cantidad, costo):
+    return _lote((date(2026, 9, dia), dia), cantidad, costo, tipo_lote="reproceso")
+
+
+def _salida(dia, cantidad, tipo="armado"):
+    return {"orden": (date(2026, 9, dia), dia), "tipo": tipo, "cantidad": cantidad}
+
+
+def test_un_armado_prefiere_la_caja_armada_aunque_el_cajon_sea_MAS_VIEJO():
+    """El caso de ORDEN, que es el que se lleva la mayor parte: hay cajón y hay
+    caja, el cajón es más viejo, y hasta la pieza 3 el FIFO mandaba el armado
+    al cajón. Los costos están MUY separados a propósito ($100 contra $50)
+    para que la versión equivocada dé otro número y no otro decimal.
+    """
+    salidas = atribuir_costos_fifo([_cruda(1, 10, 100.0), _caja(2, 10, 50.0)],
+                                   [_salida(3, 10)])
+
+    assert [c["tipo_lote"] for c in salidas[0]["consumos_lotes"]] == ["reproceso"]
+    assert salidas[0]["costo"] == 500.0
+
+
+def test_el_INDICE_no_se_pasa_de_largo_el_lote_que_el_armado_SALTEO():
+    """EL TEST DEL ÍNDICE, y va antes que el código a propósito.
+
+    `atribuir_costos_fifo` recorre los lotes con un índice COMPARTIDO entre
+    salidas, que avanza solo sobre lotes agotados. Ese invariante vale
+    mientras los lotes se consuman de adelante hacia atrás. Con la
+    preferencia por tipo dejan de consumirse así: un armado saltea el cajón
+    viejo para ir a la caja de más adelante, y el cajón queda vivo DETRÁS del
+    índice.
+
+    Si el índice se pasara de largo, la salida siguiente no vería ese cajón y
+    caería en el que viene después. Acá el de después vale $999 contra $100,
+    así que el bug no se disimula: son 9.990 contra 1.000.
+    """
+    entradas = [_cruda(1, 10, 100.0), _caja(2, 10, 50.0), _cruda(3, 10, 999.0)]
+    salidas = atribuir_costos_fifo(entradas, [_salida(4, 10), _salida(5, 10),
+                                              _salida(6, 10, tipo="merma")])
+
+    primero, segundo, tercero = salidas
+    # El armado del día 4 se lleva la caja y DEJA VIVO el cajón del día 1.
+    assert primero["costo"] == 500.0
+    # El del día 5 ya no tiene caja: tiene que encontrar ese cajón viejo.
+    assert [c["tipo_lote"] for c in segundo["consumos_lotes"]] == ["guia"]
+    assert segundo["costo"] == 1000.0, "el índice se pasó de largo el cajón viejo"
+    # Y la merma, que no tiene preferencia, se queda con lo que sobró.
+    assert tercero["costo"] == 9990.0
+
+
+def test_sin_caja_armada_el_armado_sigue_saliendo_del_cajon():
+    """La preferencia NO es una pared. 135 de los 494 bultos medidos son
+    artículos que no se reprocesan nunca: si la caja fuera obligatoria, esos
+    quedarían sin lote todos los días."""
+    salidas = atribuir_costos_fifo([_cruda(1, 10, 100.0)], [_salida(3, 10)])
+
+    assert salidas[0]["costo"] == 1000.0
+    assert salidas[0]["bultos_sin_costo"] == 0
+
+
+def test_una_merma_sigue_en_FIFO_puro():
+    """Decisión del 08/09: merma y ajuste sin preferencia. Una merma puede ser
+    de un cajón podrido o de una caja golpeada y el tipo no lo dice."""
+    salidas = atribuir_costos_fifo([_cruda(1, 10, 100.0), _caja(2, 10, 50.0)],
+                                   [_salida(3, 10, tipo="merma")])
+
+    assert [c["tipo_lote"] for c in salidas[0]["consumos_lotes"]] == ["guia"]
+
+
+def test_un_reproceso_toma_dentro_del_REPARTO_sigue_viendo_todos_los_lotes():
+    """Decisión, no olvido: la PARED de la guía R (pieza 2) vive donde se le
+    OFRECEN los lotes, no adentro del reparto.
+
+    El reparto rejuega la historia, y la historia de las 10 guías R medidas es
+    que SÍ se comieron cajas armadas — de ahí salieron los $2.798.438,92, de
+    `reprocesos_consumos`, que está congelado. Si el reparto les negara esas
+    cajas, la pantalla de stock contradiría el documento congelado.
+
+    Y hay una segunda razón, más dura: el backtest que autorizó A
+    (`frenan_con_a = 0`) modeló exactamente esto. Cambiarlo acá invalidaría la
+    medición que dejó mergear A sin avisar al galpón.
+    """
+    salidas = atribuir_costos_fifo([_caja(1, 10, 50.0), _cruda(2, 10, 100.0)],
+                                   [_salida(3, 10, tipo="reproceso_toma")])
+
+    assert [c["tipo_lote"] for c in salidas[0]["consumos_lotes"]] == ["reproceso"]
+
+
+def test_los_DOS_repartos_emparejan_igual_con_la_preferencia_puesta():
+    """El emparejamiento del FIFO ya se separó una vez entre estas dos
+    funciones (está en CLAUDE.md). La preferencia entra en las dos o en
+    ninguna."""
+    entradas = [_cruda(1, 10, 100.0), _caja(2, 10, 50.0), _cruda(3, 10, 999.0)]
+    salidas = [_salida(4, 10), _salida(5, 10)]
+
+    reparto = repartir_fifo([dict(e) for e in entradas], [dict(s) for s in salidas])
+    atribuido = atribuir_costos_fifo([dict(e) for e in entradas], [dict(s) for s in salidas])
+
+    por_tipo = {}
+    for salida in atribuido:
+        for consumo in salida["consumos_lotes"]:
+            por_tipo[consumo["tipo_lote"]] = por_tipo.get(consumo["tipo_lote"], 0.0) + consumo["bultos"]
+    consumido_reparto = {}
+    for lote in reparto["lotes"]:
+        if lote["consumido"]:
+            consumido_reparto[lote["tipo_lote"]] = consumido_reparto.get(lote["tipo_lote"], 0.0) + lote["consumido"]
+
+    assert por_tipo == consumido_reparto

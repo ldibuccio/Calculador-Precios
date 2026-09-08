@@ -1342,3 +1342,65 @@ armado un objeto distinto del que se despachó —más grande por el reenvasado,
 y/o comprado otro día a otro precio—. Los −$4,4M son el tamaño de esa
 imputación equivocada, en la dirección en que cae. Eso no depende de cuál de
 los dos factores pese más.
+
+## Pieza 3: el armado toma caja armada antes que cajón
+
+Las dos pasadas, en `repartir_fifo` y en `atribuir_costos_fifo`, **en el
+mismo commit** — el emparejamiento del FIFO ya se separó una vez entre esas
+dos funciones y está en CLAUDE.md.
+
+### Dos pasadas y no una lista reordenada
+
+`pasadas_de_lotes(lotes, salida)` devuelve una lista **por pasada**: primero
+los tipos preferidos, después el resto, **cada una en el orden de fecha
+original**. Reordenar por tipo habría roto el `break` de los dos loops —
+cortan al llegar a un lote posterior a la salida, y eso vale solo porque los
+lotes vienen por fecha. Con la lista mezclada cortarían de más y en silencio.
+
+### El índice cambió de invariante, y ese es el punto delicado
+
+`atribuir_costos_fifo` recorre con un índice **compartido entre salidas**.
+Antes avanzaba mientras el lote de adelante estuviera agotado, apoyado en que
+los lotes se consumen de adelante hacia atrás. **Con la preferencia eso deja
+de ser cierto**: un armado saltea el cajón viejo para ir a la caja de más
+adelante, y el cajón queda vivo DETRÁS del índice.
+
+Ahora el índice solo se come el **prefijo agotado** —lo único que sigue
+siendo verdad— y cada salida recorre desde ahí. Sigue ahorrando el rescaneo
+de los lotes muertos del principio, que es para lo que estaba, y no promete
+nada más.
+
+**El test se escribió antes que el código**, y se verificó que agarra el bug:
+con el invariante viejo puesto, `test_el_INDICE_no_se_pasa_de_largo_el_lote_que_el_armado_SALTEO`
+falla con su propio mensaje. El caso tiene los costos separados a propósito
+($100 contra $999) para que el bug dé otro número y no otro decimal.
+
+### La pared de la guía R NO entró al reparto, y es una decisión
+
+`pasadas_de_lotes` aplica la **preferencia** y no la **prohibición**. La
+pared sigue donde la puso la pieza 2: donde se le ofrecen los lotes a una
+guía R nueva. Dos razones, las dos escritas en el código:
+
+1. El reparto **rejuega la historia**, y la historia de las 10 guías R
+   medidas es que sí se comieron cajas armadas — de ahí salieron los
+   $2.798.438,92, leídos de `reprocesos_consumos`, que está congelado. Un
+   reparto que se las negara pondría la pantalla de stock a contradecir el
+   documento congelado.
+2. **El backtest que autorizó A (`frenan_con_a = 0`) modeló exactamente
+   esto.** Cambiarlo acá invalidaría la medición que dejó mergear A sin
+   avisarle al galpón.
+
+Queda pinchado con `test_un_reproceso_toma_dentro_del_REPARTO_sigue_viendo_todos_los_lotes`
+para que sea una decisión y no un olvido.
+
+### PREGUNTA ABIERTA: el ratio que no cerró
+
+`e5_7` dio ratios 3 a 4 veces más chicos que `x_hoy/x_conb`, y quedaron **dos
+candidatos sin separar**: el precio entre lotes (`e5_8`) y la población de
+lotes trabajados —`normal` contra `inicial` y `reingreso`— (`e5_9`). Las dos
+consultas están escritas y sin correr.
+
+Se deja abierto a propósito: el diagnóstico de fondo no depende de cuál pese
+más —el FIFO le cobra al armado un objeto distinto del que salió— y con el
+sistema ya arreglado el número va a ser otro. **Si después de B algo sigue
+raro, se mira ahí.**

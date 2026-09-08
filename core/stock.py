@@ -164,6 +164,42 @@ def lotes_permitidos(lotes: list[dict], salida: dict) -> list[dict]:
     return [lote for lote in lotes if lote["tipo_lote"] not in prohibidos]
 
 
+def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
+    """Las listas que ESTA salida recorre, en orden de preferencia.
+
+    Devuelve una lista POR PASADA, cada una en el mismo orden de fecha que
+    venía. Sin preferencia devuelve una sola pasada con todo, o sea el FIFO
+    de siempre.
+
+    DOS PASADAS Y NO UNA LISTA REORDENADA, y es la parte que importa: el
+    `break` de `repartir_fifo` y el de `atribuir_costos_fifo` cortan cuando
+    llegan a un lote posterior a la salida, y eso vale SOLO porque los lotes
+    vienen por fecha. Reordenando por tipo, los dos cortarían de más y en
+    silencio. Adentro de cada pasada el orden sigue siendo la fecha, así que
+    el corte sigue siendo correcto.
+
+    Aplica la PREFERENCIA y NO la prohibición, y es una decisión del 08/09,
+    no un olvido: la pared de la guía R vive donde se le OFRECEN los lotes
+    (`lotes_permitidos`, pieza 2) y no acá adentro. Dos razones:
+
+    - Estas funciones REJUEGAN LA HISTORIA, y la historia de las 10 guías R
+      medidas es que sí se comieron cajas armadas: de ahí salieron los
+      $2.798.438,92, leídos de `reprocesos_consumos`, que está congelado. Un
+      reparto que se las negara pondría la pantalla de stock a contradecir
+      el documento congelado.
+    - El backtest que autorizó A (`frenan_con_a = 0`) modeló exactamente
+      esto. Cambiarlo acá invalidaría la medición que dejó mergear A sin
+      avisarle al galpón.
+    """
+    prefiere = prioridad_de_lote(salida).prefiere
+    if not prefiere:
+        return [lotes]
+    preferidos = [lote for lote in lotes if lote["tipo_lote"] in prefiere]
+    if not preferidos:
+        return [lotes]
+    return [preferidos, [lote for lote in lotes if lote["tipo_lote"] not in prefiere]]
+
+
 def lote_posterior_a_la_salida(lote, salida) -> bool:
     """¿Este lote entró DESPUÉS de que esta salida ocurrió?
 
@@ -298,19 +334,24 @@ def repartir_fifo(entradas: list[dict], salidas: list[dict]) -> dict:
     sin_lote = 0.0
     for salida, cantidad in restos:
         pendiente = cantidad
-        for lote in lotes:
-            if pendiente <= 0:
-                break
-            if lote["restante"] <= 0:
-                continue
-            if lote_posterior_a_la_salida(lote, salida):
-                # Los lotes vienen ordenados: de acá en adelante son todos
-                # posteriores, no hay nada más que mirar para esta salida.
-                break
-            consumo = min(lote["restante"], pendiente)
-            lote["consumido"] += consumo
-            lote["restante"] -= consumo
-            pendiente -= consumo
+        # Una pasada por tipo preferido y otra con el resto. Cada pasada
+        # sigue ordenada por fecha, que es lo que hace válido el `break`.
+        for pasada in pasadas_de_lotes(lotes, salida):
+            for lote in pasada:
+                if pendiente <= 0:
+                    break
+                if lote["restante"] <= 0:
+                    continue
+                if lote_posterior_a_la_salida(lote, salida):
+                    # Los lotes vienen ordenados: de acá en adelante son
+                    # todos posteriores, no hay más que mirar EN ESTA
+                    # pasada. La siguiente arranca de nuevo desde su
+                    # primer lote, que puede ser anterior a éste.
+                    break
+                consumo = min(lote["restante"], pendiente)
+                lote["consumido"] += consumo
+                lote["restante"] -= consumo
+                pendiente -= consumo
         sin_lote += pendiente
 
     total_entradas = sum(float(e["cantidad"]) for e in entradas)
@@ -386,24 +427,33 @@ def bultos_en_los_lotes(lotes: list[dict]) -> float:
     return round(sum(float(lote["restante"]) for lote in lotes), 2)
 
 
-def propuesta_fifo(lotes: list[dict], total: float) -> list[dict]:
+def propuesta_fifo(lotes: list[dict], total: float, salida: dict | None = None) -> list[dict]:
     """Del más viejo primero: cuánto sale de cada lote para juntar `total`.
 
     Es el default del desglose y lo que se escribe si el operario no toca
     nada. Devuelve solo los lotes que aportan algo. Si los lotes no llegan a
     cubrir `total`, devuelve lo que hay: el que decide que eso no se puede
     guardar es el freno, no esta función.
+
+    `salida` le da la MISMA preferencia que va a usar el reparto. Sin ella
+    propone el FIFO puro, que es lo que quiere el que ya recibió la lista
+    filtrada. Si la propuesta y el reparto salieran de reglas distintas, la
+    pantalla aprobaría un reparto que el server después no cumple — que es
+    exactamente lo que el comentario de `crear_reproceso` promete que no
+    puede pasar.
     """
     consumos = []
     pendiente = round(float(total), 2)
-    for lote in lotes:
-        if pendiente <= 0:
-            break
-        if lote["restante"] <= 0:
-            continue
-        bultos = round(min(float(lote["restante"]), pendiente), 2)
-        pendiente = round(pendiente - bultos, 2)
-        consumos.append({"tipo_lote": lote["tipo_lote"], "origen_id": lote["origen_id"], "bultos": bultos})
+    pasadas = pasadas_de_lotes(lotes, salida) if salida is not None else [lotes]
+    for pasada in pasadas:
+        for lote in pasada:
+            if pendiente <= 0:
+                break
+            if lote["restante"] <= 0:
+                continue
+            bultos = round(min(float(lote["restante"]), pendiente), 2)
+            pendiente = round(pendiente - bultos, 2)
+            consumos.append({"tipo_lote": lote["tipo_lote"], "origen_id": lote["origen_id"], "bultos": bultos})
     return consumos
 
 

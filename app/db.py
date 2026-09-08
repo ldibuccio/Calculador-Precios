@@ -5379,7 +5379,9 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
             {f"{e['lote_tipo']}:{e['lote_origen_id']}": float(e["bultos"]) for e in elegidos}
             if elegidos
             else {f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
-                  for c in propuesta_fifo(reparto["lotes"], armado)}
+                  # Con `esta` para que proponga lo mismo que va a repartir:
+                  # el armado toma caja armada antes que cajón.
+                  for c in propuesta_fifo(reparto["lotes"], armado, esta)}
         ),
     }
 
@@ -8030,13 +8032,13 @@ def crear_reproceso(
 
             editados = False
             if reparto is None:
-                declarado = propuesta_fifo(lotes, bultos_tomados)
+                declarado = propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
             else:
                 motivo = validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)
                 if motivo is not None:
                     raise RepartoDesactualizado(motivo)
                 declarado = [fila for fila in reparto if float(fila.get("bultos") or 0) > 0]
-                editados = declarado != propuesta_fifo(lotes, bultos_tomados)
+                editados = declarado != propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
 
             por_lote = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in lotes}
             consumos = []
