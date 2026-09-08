@@ -129,6 +129,19 @@
   .boton-neutro { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
   .sin-foto-balanza { margin: 0.35rem 0 0.15rem; font-size: 0.8rem; color: #9ca3af; }
+  .modal-sin-foto {
+    border: none;
+    border-radius: 12px;
+    padding: 1.25rem;
+    width: min(92vw, 22rem);
+    box-sizing: border-box;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  }
+  .modal-sin-foto::backdrop { background: rgba(0, 0, 0, 0.55); }
+  .modal-titulo { font-size: 1.05rem; font-weight: 700; margin: 0 0 0.5rem; }
+  .modal-texto { font-size: 0.95rem; color: #444; margin: 0 0 1.1rem; line-height: 1.35; }
+  .boton-modal-primario { background: #2563eb; color: #fff; margin-bottom: 0.6rem; }
+  .boton-modal-secundario { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
   /* Foto de la balanza. El input file va escondido y lo dispara el label:
      un input file crudo es un control chico y feo de tocar con el pulgar,
      y lo que hace falta acá es un boton grande. */
@@ -136,19 +149,32 @@
   .foto-balanza input[type="file"] { display: none; }
   .foto-balanza form { flex: 1 1 100%; margin: 0; }
   .foto-balanza form.con-foto { flex: 1 1 45%; }
+  /* Azul SÓLIDO: probado en el galpón, punteado sobre blanco no se ve.
+     Mientras falta la foto es la acción principal del renglón, y va
+     arriba del verde de recibir porque ese es el orden del trabajo. */
   .boton-foto {
     display: block;
     width: 100%;
-    padding: 0.75rem;
-    border: 1px dashed #9ca3af;
+    padding: 0.9rem 0.75rem;
+    border: none;
     border-radius: 8px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #444;
-    background: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    background: #2563eb;
     text-align: center;
     box-sizing: border-box;
     cursor: pointer;
+  }
+  /* Con la foto ya sacada, "Sacar otra" deja de ser lo principal: ahí lo
+     que sigue es recibir, y dos botones fuertes compiten por el pulgar. */
+  .boton-foto.secundaria {
+    background: #fff;
+    color: #444;
+    border: 1px solid #ccc;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.75rem;
   }
   /* Ya hay foto: verde y con borde lleno, para que se vea de un vistazo
      cual renglon tiene y cual no sin leer nada. */
@@ -332,7 +358,7 @@
           {% endif %}
           <form method="post" action="/deposito/recepcion/{{ c.id }}/foto-balanza"
                 enctype="multipart/form-data" class="{{ 'con-foto' if c.fotos_balanza else '' }}">
-            <label class="boton-foto" for="foto-balanza-{{ c.id }}">
+            <label class="boton-foto{{ ' secundaria' if c.fotos_balanza else '' }}" for="foto-balanza-{{ c.id }}">
               {{ "Sacar otra" if c.fotos_balanza else "Sacar foto de la balanza" }}
             </label>
             {# capture="environment": abre la camara de atras directo, sin
@@ -351,10 +377,13 @@
              construcción —al empezar faltan todas— y ya sabemos en qué
              termina eso: el aviso de "no hay cajas de esta ficha" salía
              en 135 de 765 bultos, todos los días. #}
-          <button type="button" class="boton-exito boton-recibir{{ '' if c.fotos_balanza else ' boton-sin-foto' }}"
-                  onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">
-            {{ "Recibir" if c.fotos_balanza else "Recibir sin foto de balanza" }}
-          </button>
+          {% if c.fotos_balanza %}
+          <button type="button" class="boton-exito boton-recibir"
+                  onclick="mostrarConfirmacion('{{ c.id }}', 'recibir')">Recibir</button>
+          {% else %}
+          <button type="button" class="boton-exito boton-recibir boton-sin-foto"
+                  onclick="abrirModalSinFoto('{{ c.id }}')">Recibir sin foto de balanza</button>
+          {% endif %}
           <p class="titulo-problemas">Si algo salió mal:</p>
           <div class="acciones-renglon">
             <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
@@ -363,11 +392,31 @@
           </div>
         </div>
 
+        {% if not c.fotos_balanza %}
+        {# <dialog> nativo y showModal(): tapa la pantalla de verdad, deja el
+           fondo inerte y no se cierra tocando afuera (eso hay que
+           programarlo, y acá NO se programa). El toque al costado que
+           descarta es lo que convierte un aviso en un cartel que nadie mira. #}
+        <dialog class="modal-sin-foto" id="modal-sin-foto-{{ c.id }}" data-compra="{{ c.id }}">
+          <p class="modal-titulo">No sacaste la foto de la balanza</p>
+          <p class="modal-texto">
+            Sacala antes de recibir {{ c.articulo_nombre }}: es la prueba de que la mercadería se pesó.
+          </p>
+          <button type="button" class="boton-modal-primario" onclick="sacarLaFotoDesdeElModal('{{ c.id }}')">
+            Sacar la foto
+          </button>
+          {# Sigue SIN trabar: este botón manda el mismo form de siempre. La
+             diferencia con el cartel de antes no es que frene, es que lo leyó. #}
+          <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-modal-secundario">
+            Recibir sin foto
+          </button>
+        </dialog>
+        {% endif %}
+
         <div class="confirmacion" id="confirmacion-recibir-{{ c.id }}">
+          {# Sin foto ya no se llega acá: ese camino lo toma el modal. Por eso
+             esta confirmación volvió a ser la de siempre. #}
           <p class="texto-confirmacion">¿Recepcionar {{ c.articulo_nombre }}?</p>
-          {% if not c.fotos_balanza %}
-          <p class="texto-confirmacion-sin-foto">Sin foto de la balanza. Se recibe igual.</p>
-          {% endif %}
           <div class="acciones-renglon">
             <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-exito">Sí</button>
             <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'recibir')">No</button>
@@ -443,6 +492,38 @@
       document.getElementById('acciones-' + compraId).style.display = 'none';
       document.getElementById('confirmacion-' + accion + '-' + compraId).classList.add('visible');
     }
+
+    // EL MODAL DE "SIN FOTO". No traba: de sus dos botones, uno recibe.
+    // Lo que hace es que no se pueda seguir sin haber leído — un cartel
+    // atrás de la pantalla ya se probó que nadie lo mira.
+    function abrirModalSinFoto(compraId) {
+      document.getElementById('modal-sin-foto-' + compraId).showModal();
+      // El botón de atrás de Android: en los navegadores nuevos cierra un
+      // <dialog> abierto (y lo frena el preventDefault del 'cancel' de
+      // abajo), pero no en todos. Una entrada de historial propia, que se
+      // vuelve a poner si el sistema la saca, cubre a los viejos.
+      history.pushState({ modalSinFoto: compraId }, '');
+    }
+
+    // Abre la cámara DESDE EL MODAL: el que no sacó la foto no tiene que
+    // ir a buscar el botón de atrás, que es donde se pierde.
+    function sacarLaFotoDesdeElModal(compraId) {
+      document.getElementById('modal-sin-foto-' + compraId).close();
+      document.getElementById('foto-balanza-' + compraId).click();
+    }
+
+    document.querySelectorAll('dialog.modal-sin-foto').forEach(function (modal) {
+      // Sin esto, Escape (y el atrás de los navegadores nuevos) lo cierran
+      // sin elegir, que es exactamente el toque al costado que no queremos.
+      modal.addEventListener('cancel', function (evento) { evento.preventDefault(); });
+    });
+
+    window.addEventListener('popstate', function () {
+      var abierto = document.querySelector('dialog.modal-sin-foto[open]');
+      if (abierto) {
+        history.pushState({ modalSinFoto: abierto.dataset.compra }, '');
+      }
+    });
 
     function ocultarConfirmacion(compraId, accion) {
       document.getElementById('confirmacion-' + accion + '-' + compraId).classList.remove('visible');

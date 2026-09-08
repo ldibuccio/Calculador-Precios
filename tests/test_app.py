@@ -4297,8 +4297,75 @@ def test_el_boton_de_recibir_CAMBIA_DE_TEXTO_cuando_falta_la_foto():
     pegado = _pegado(respuesta.text)
     assert ">Recibir<" in pegado
     assert ">Recibir sin foto de balanza<" in pegado
-    # Y lo repite donde se decide de verdad, en la confirmación.
-    assert "Sin foto de la balanza. Se recibe igual." in respuesta.text
+    # Y el que no tiene foto NO va a la confirmación en el lugar: va al
+    # modal. La línea vieja ("Sin foto de la balanza. Se recibe igual.")
+    # vivía en esa confirmación y dejó de alcanzarse en el mismo cambio.
+    assert 'onclick="abrirModalSinFoto(\'2\')"' in respuesta.text
+    assert 'onclick="mostrarConfirmacion(\'1\', \'recibir\')"' in respuesta.text
+    assert "Sin foto de la balanza. Se recibe igual." not in respuesta.text
+
+
+def test_el_modal_sin_foto_tiene_LAS_DOS_salidas_y_ninguna_es_cerrarlo():
+    """Un aviso que se puede descartar con un toque es el cartel que nadie mira.
+
+    Las únicas dos salidas son sacar la foto o recibir sin ella. Y la de
+    recibir manda el MISMO form de siempre —sigue sin trabar—: lo que
+    cambia no es que frene, es que lo leyó.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    pegado = _pegado(respuesta.text)
+    assert '<dialog class="modal-sin-foto" id="modal-sin-foto-2"' in respuesta.text
+    assert ">Sacar la foto<" in pegado
+    assert ">Recibir sin foto<" in pegado
+    # La secundaria manda el form de recepción real, no una ruta aparte.
+    assert 'form="form-recepcionar-2"' in respuesta.text
+    # Y no hay ninguna forma de cerrarlo: ni cruz, ni Cancelar, ni un
+    # handler de click en el fondo. Si alguna aparece, este test cae.
+    modal = respuesta.text[respuesta.text.index("modal-sin-foto-2") :]
+    modal = modal[: modal.index("</dialog>")]
+    for salida in ("Cancelar", "Cerrar", "&times;", "close()", "backdrop"):
+        assert salida not in modal, f"el modal tiene una salida de más: {salida}"
+
+
+def test_el_modal_solo_existe_donde_FALTA_la_foto():
+    """Con la foto sacada no hay nada que preguntar: es la confirmación de siempre."""
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    # La compra 1 tiene foto; la 2 y la 3 no.
+    assert "modal-sin-foto-1" not in respuesta.text
+    assert "modal-sin-foto-2" in respuesta.text
+    assert "modal-sin-foto-3" in respuesta.text
+
+
+def test_el_modal_NO_deja_cerrarse_con_Escape_ni_con_el_boton_de_atras():
+    """Las dos formas de descartar sin elegir, y las dos están tapadas.
+
+    Escape (y el atrás de los navegadores nuevos) llegan como el evento
+    'cancel' del <dialog>; el atrás de los viejos, como un popstate. Sin
+    las dos, "no se puede cerrar" vale solo en algunos teléfonos.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert "addEventListener('cancel'" in respuesta.text
+    assert "evento.preventDefault()" in respuesta.text
+    assert "addEventListener('popstate'" in respuesta.text
+    assert "history.pushState" in respuesta.text
 
 
 def test_NO_hay_un_cartel_de_guia_avisando_por_las_fotos_que_faltan():
