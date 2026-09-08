@@ -1104,3 +1104,49 @@ los ajustes posteriores, y está bien. Ahí el circuito es otro —los cajones n
 tienen un "trabajo del día" que se cargue después del conteo— así que la
 premisa que acá era falsa, allá se cumple. **Buscar la otra copia es
 obligatorio (corolario 2); copiarle el arreglo, no.**
+
+Corolario 26, del 08/09, y es la regla escrita dos veces con un agravante
+que no habíamos visto: **no se separaron por descuido — se escribieron
+distinto A PROPÓSITO, una como pared y otra como aviso, y nadie revisó
+nunca si esa diferencia tenía sentido.**
+
+El chequeo es el mismo: la fecha que dice el asunto del mail no puede estar
+a más de cinco días de la llegada. Estaba en dos lugares:
+
+- `_intentar_auto_confirmar` — **pared**: `return False`, el mail queda
+  pendiente y lo mira una persona.
+- La revisión a mano — **cartel**: `aviso_fecha`, y a guardar.
+- Y `confirmar_pedido`, que es el que ESCRIBE, no lo miraba en absoluto.
+
+Un mail con el día y el mes dados vuelta ("Pedido Dia 09-08" llegado el
+08/09) quedó fechado **treinta días atrás**. El automático lo frenó bien.
+Lo confirmó una persona, con el cartel a la vista.
+
+**La ironía es el hallazgo: el candado automático era más estricto que el
+manual, y el camino flojo era el que usa la gente.** La intuición dice lo
+contrario —"el humano revisa, la máquina no"— y por eso la asimetría se
+escribió sin que nadie la discutiera: suena razonable. Pero un cartel que
+se puede pasar con el mismo click que ya se iba a hacer no es una revisión
+humana: es un cartel.
+
+Tres cosas para la próxima:
+
+1. **Cuando la misma regla existe en dos fuerzas, eso se DECIDE, no se
+   hereda.** La pregunta no es "¿está en los dos lados?" sino "¿por qué
+   allá frena y acá avisa?". Si la respuesta no está escrita, no se
+   pensó — se escribió cada una en su momento y nunca se miraron juntas.
+2. **La guarda va donde se ESCRIBE, no donde se muestra.** El aviso vivía
+   en la pantalla de revisión y el `POST` que guarda no revalidaba nada:
+   un formulario armado a mano entraba sin ver el cartel. El servidor es
+   el que decide; el HTML es la forma de cumplirlo cómodo.
+3. **Entre trabar y avisar hay un escalón, y casi siempre es el que va: el
+   TILDE.** "Sí, la fecha es correcta" convierte un reflejo en una
+   decisión sin quitarle el poder al que sabe. Trabar habría sido peor —la
+   fecha rara puede ser real—, y avisar ya se probó que no alcanza.
+
+Y el diagnóstico también se llevó una lección: la primera hipótesis fue
+que el auto-confirmado ignoraba el chequeo. **Se descartó corriendo la
+función real con el asunto real**, no leyendo el código: `'Pedido Dia
+09-08'` con llegada 08/09 devuelve 2026-08-09, 30 días, y el candado
+devuelve False. Leer el `if` habría alcanzado para confirmarlo, pero
+correrlo es lo que lo volvió un hecho.
