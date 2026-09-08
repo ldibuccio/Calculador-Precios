@@ -41,7 +41,7 @@ window w as (partition by g.id order by e.d,e.rid nulls first)),
 res as (select id,t,trab,greatest(fin-greatest(ini,dd),0) rest from lot),
 r as (select id,t,sum(rest) hoy,
 coalesce(sum(rest) filter (where not trab),0) con_a from res group by id,t)
-select count(*) guias,
+select (select f0 from c0) corte,count(*) guias,
 count(*) filter (where t>hoy) frenan_hoy,
 count(*) filter (where t>con_a) frenan_con_a,
 coalesce(sum(greatest(t-con_a,0)),0) sin_cubrir

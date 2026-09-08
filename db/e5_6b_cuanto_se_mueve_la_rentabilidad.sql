@@ -19,7 +19,8 @@ coalesce(sum(rest*cb) filter (where trab),0) pdisp from k group by aid,si),
 x as (select aid,least(caj,disp) mal,
 pl*least(caj,disp)/nullif(caj,0) hoy,
 pdisp*least(caj,disp)/nullif(disp,0) conb from per)
-select coalesce(a.nombre,'TOTAL') articulo,
+select (select fecha from corte_modelo where id=1) corte,
+coalesce(a.nombre,'TOTAL') articulo,
 round(coalesce(sum(mal),0),2) bultos,
 round(coalesce(sum(hoy),0),2) costo_hoy,
 round(coalesce(sum(conb-hoy),0),2) delta

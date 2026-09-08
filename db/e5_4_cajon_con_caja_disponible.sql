@@ -1,4 +1,4 @@
--- E5, parte el cajon: docs/el_corte_no_cerraba_el_fifo.md
+-- E5: docs/el_corte_no_cerraba_el_fifo.md
 with c0 as (select fecha f0,'America/Argentina/Buenos_Aires' z
 from corte_modelo where id=1),
 vig as (select distinct on (cliente_id,fecha_operacion) id from pedidos
@@ -39,8 +39,8 @@ greatest(lf-greatest(li,sf),0) rest from j),
 per as (select coalesce(sum(ov) filter (where not trab),0) caj,
 coalesce(sum(ov*cb) filter (where not trab),0) pl,
 coalesce(sum(rest) filter (where trab),0) disp from k group by aid,si)
-select coalesce(sum(caj),0) cajon,
+select (select f0 from c0) corte,coalesce(sum(caj),0) cajon,
 coalesce(sum(least(caj,disp)),0) mal,
-coalesce(sum(caj-least(caj,disp)),0) sin_opcion,
-round(coalesce(sum(pl*least(caj,disp)/nullif(caj,0)),0),2) plata_mal
+coalesce(sum(caj-least(caj,disp)),0) sin_op,
+round(coalesce(sum(pl*least(caj,disp)/nullif(caj,0)),0),2) plata
 from per;

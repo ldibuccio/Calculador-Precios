@@ -14,7 +14,7 @@ from reprocesos rp join reprocesos_consumos rc on rc.reproceso_id=rp.id,c0
 where rp.anulado_el is null and rp.fecha_operacion>c0.f0
 and rc.origen in ('reproceso','reingreso_rechazo')
 group by 1,2)
-select coalesce(a.nombre,'TOTAL') articulo,
+select (select f0 from c0) corte,coalesce(a.nombre,'TOTAL') articulo,
 count(distinct c.gid) guias_r,
 coalesce(sum(c.b),0) bultos_de_caja,
 round(coalesce(sum(c.p),0),2) plata,

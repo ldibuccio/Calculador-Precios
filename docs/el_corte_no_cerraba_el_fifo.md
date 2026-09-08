@@ -999,3 +999,49 @@ Ese último no mordía en el primer intento: el fixture no tenía nada fechado
 el día del corte y los dos números daban iguales. **Un canario que no se
 mueve no dice que el piso esté bien; dice que no lo probaste** — el
 corolario 12 pide que el número SE MUEVA, y hubo que darle con qué.
+
+## Todo esto se midió contra UNA base, y el deploy sale en las dos
+
+Frutamax y Palmala. `frenan_con_a = 0` —lo que decidió que A se mergeaba sin
+avisar al galpón— salió de Frutamax nomás. Antes de mergear la pieza 3 hay
+que correr en Palmala: `e5_3` (¿A traba guías reales ahí?), `e5_4` (¿B mueve
+plata ahí, o es cero?) y `e5_6` (¿cuánto se mueve su rentabilidad?).
+
+### El agujero que había que tapar antes
+
+Todas las consultas de E5 leen `corte_modelo where id=1`. Del esquema se
+puede afirmar dos cosas y una tercera no:
+
+1. **No puede haber ambigüedad de fila.** `id integer primary key check (id
+   = 1)` deja como mucho una, así que "otro corte" solo puede significar
+   otra FECHA, nunca otra fila.
+2. **La fila la crea la migración** (`agregar_corte_y_stock_inicial.sql`) con
+   `'2026-08-31'` escrito a mano. Si Palmala corrió esa migración y nadie
+   editó la fecha, es la misma.
+3. **Si corrió esa migración y si la fecha sigue igual, no lo puedo saber
+   desde acá**: es un dato, y el SQL contra las bases reales no lo corro yo.
+
+Y si la fila NO estuviera, el resultado era el peor posible: el CTE sale
+vacío, el cross join deja todo en cero, y `e5_3`/`e5_4` devuelven **una fila
+de ceros que se lee igual que "acá no hay problema"**. Verificado corriendo
+las consultas con la fila borrada.
+
+Lo agravante es que **producción sí tiene la guarda**: `_fecha_corte` levanta
+un `RuntimeError` que dice "la base quedó a medio configurar". El código
+grita y la medición contestaba cero.
+
+Arreglado en dos partes:
+
+- **`db/e5_0_contra_que_base_mido.sql`** — se corre PRIMERO en las dos y se
+  comparan. Trae `filas_corte`, `corte`, y los conteos post-corte. Va sin
+  `FROM` a propósito, así la fila vuelve siempre. Y trae `ultima_guia_r`, que
+  **no depende del corte**: es el testigo independiente. Corte en NULL con
+  guías R recientes al lado es una contradicción visible en la misma fila.
+- **Las seis consultas de E5 traen ahora una columna `corte`**, con
+  `(select f0 from c0)` y no un cross join — el cross join con la fila
+  faltante dejaría la consulta sin filas.
+
+Verificado en los tres escenarios: fila normal, fila borrada (`corte` NULL,
+todo en cero, `ultima_guia_r` delatando) y fecha distinta (los conteos caen a
+cero y `ultima_guia_r` sigue mostrando actividad). Y los cuatro fixtures
+anteriores siguen dando los mismos números con la columna puesta.

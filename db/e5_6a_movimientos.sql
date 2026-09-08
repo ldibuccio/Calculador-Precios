@@ -37,7 +37,8 @@ select rp.articulo_id,rp.fecha_operacion,rp.creado_en,rp.bultos_tomados,
 null,false,2
 from reprocesos rp,c0 where rp.anulado_el is null and rp.fecha_operacion>c0.f0;
 
-select count(*) filas,count(*) filter (where lado=1) lotes,
+select (select fecha from corte_modelo where id=1) corte,
+count(*) filas,count(*) filter (where lado=1) lotes,
 count(*) filter (where lado=1 and trab) lotes_trabajados,
 count(*) filter (where lado=3) armados,
 count(*) filter (where lado=2) otras_salidas,

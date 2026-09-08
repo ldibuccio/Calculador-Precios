@@ -186,6 +186,45 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 17, del 08/09: **una medición contra UNA base decide un deploy que
+sale en LAS DOS.** El sistema corre sobre Frutamax y Palmala, y todo lo de
+E5 se midió sobre Frutamax: `frenan_con_a = 0` decidió que A se mergeaba sin
+avisar al galpón — de UNA de las dos bases.
+
+Ya nos pasó con Palmala y el backfill (la exclusión que se decidió mirando
+una cuenta y el daño cayó sobre otra). La forma es la misma: **el alcance de
+la decisión es más grande que el alcance de la medición**, y nada avisa
+porque la medición que se corrió salió bien.
+
+De acá en adelante: **toda medición que decide un merge se corre en las DOS
+bases antes de mergear**, y el resultado se escribe con el nombre de la base
+al lado. Un número sin base es un número a medias.
+
+Y el corolario del corolario, que es lo que lo vuelve peligroso: **una
+consulta parametrizada por un dato de la base miente distinto en cada
+base.** Todas las de E5 leen `corte_modelo where id=1`. Si esa fila no
+existe, el CTE sale vacío, el cross join deja todo en cero y `e5_3`/`e5_4`
+devuelven **una fila de ceros que se lee igual que "acá no hay problema"**.
+Verificado corriéndolo con la fila borrada.
+
+Lo agravante: **producción SÍ tiene la guarda.** `_fecha_corte` levanta un
+`RuntimeError` que dice "la base quedó a medio configurar". El código grita
+y la medición contesta cero. Es la misma lectura escrita dos veces, una con
+guarda y otra sin, y la que decide qué se arregla es la que no la tiene.
+
+Por eso, de acá en adelante: **toda consulta parametrizada por un dato de la
+base devuelve ese dato como columna.** Las seis de E5 traen ahora `corte`, y
+con `(select f0 from c0)` y no un cross join: el cross join con la fila
+faltante deja la consulta SIN FILAS, que es la pantalla vacía que no
+distingue "todo bien" de "no corrió". El escalar devuelve NULL y la fila
+vuelve igual.
+
+Y conviene que haya **un testigo independiente del parámetro**: `e5_0` trae
+`ultima_guia_r`, que no depende del corte. Corte en NULL con guías R
+recientes al lado es una contradicción visible en la misma fila; sin ese
+testigo, todos los ceros se explican solos.
+
+
 Corolario 16, del 08/09, y es una PRÁCTICA, no un patrón de bug: **un test
 de "esto no está duplicado" hay que correrlo con la duplicación puesta, o
 no sabés si mira algo.**
