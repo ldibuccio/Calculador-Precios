@@ -6060,4 +6060,10 @@ def test_ninguna_consulta_compara_un_timestamptz_contra_una_FECHA_sin_zona():
                     ofensoras.append(f"{archivo}:{numero}: {linea.strip()[:90]}")
                     break
 
-    assert not ofensoras, "comparan un timestamptz contra una fecha sin zona:\n" + "\n".join(ofensoras)
+    assert not ofensoras, (
+        "comparan un timestamptz contra una fecha sin zona:\n" + "\n".join(ofensoras)
+        + "\n\nEs literal a propósito: no distingue SQL de prosa. Si lo que quedó "
+          "marcado es un comentario o un docstring que NOMBRA el patrón, reescribí "
+          "esa frase — vale más un test estricto con un falso positivo evitable que "
+          "uno astuto con un agujero."
+    )

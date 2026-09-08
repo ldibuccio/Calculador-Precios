@@ -7572,6 +7572,45 @@ def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None =
         conexion.close()
 
 
+def fecha_conteo_stock_mas_cercana(fecha):
+    """El día con conteos más cercano al pedido, para cuando el pedido no tiene ninguno.
+
+    Sirve para no dejar al operario en un "no hay nada" sin salida: si
+    buscó el martes y contó el lunes, la pantalla le ofrece el lunes.
+
+    Mira para los dos lados. Si empatan (uno antes y uno después, a la
+    misma distancia) gana el POSTERIOR, que es el conteo más nuevo.
+
+    Devuelve None solo si no hay ningún conteo en toda la tabla.
+
+    Devuelve una FECHA y nada más: ningún número del sistema puede salir
+    por esta pantalla, que es la del operario.
+
+    El día es ARGENTINO, como el de listar_conteos_stock_de_fecha: sin la
+    conversión, el casteo a fecha usa la zona de la sesión (UTC en Supabase)
+    y ofrecería un día corrido tres horas respecto del que la lista muestra.
+    Acá se convierte la columna y no un borde porque no hay borde: es un
+    DISTINCT sobre toda la tabla, no un filtro con índice que preservar.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT f.fecha
+                FROM (SELECT DISTINCT (creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha
+                      FROM conteos_stock) f
+                ORDER BY abs(f.fecha - %s::date), f.fecha DESC
+                LIMIT 1
+                """,
+                (fecha,),
+            )
+            fila = cursor.fetchone()
+            return fila[0] if fila else None
+    finally:
+        conexion.close()
+
+
 def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     """Conteos de un día para la lista "Contado hoy" del operario.
 
