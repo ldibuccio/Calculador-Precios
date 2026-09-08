@@ -1443,3 +1443,44 @@ La señal binaria de B: **abrir el desglose de un renglón armado de un
 artículo que se reenvasa** (Perita, Pepino, Cherry). Si propone un lote
 `reproceso` primero, está corriendo el código nuevo; si propone un `guia`,
 es el viejo. No depende de ningún importe.
+
+## ¿El armado se adelanta a la guía R? Para los 11 de Perita, no
+
+La pregunta de procedimiento —el armado se registra antes que la guía R del
+día, así que en ese instante la caja no existe— **no puede explicar el `mal`
+de `e5_4`**, y se descarta leyendo la definición, no opinando:
+
+- `e5_4` exige `l.d <= s.d`: la caja tiene que estar fechada **el día del
+  armado o antes** para contar como disponible.
+- Producción usa el mismo criterio. `lote_posterior_a_la_salida` compara
+  **fechas y no relojes**, y su docstring lo dice: *"un lote cargado a la
+  tarde cubre una salida de esa misma mañana"*.
+
+Así que los 11 bultos de Perita ($550.000) tenían una caja fechada ese día o
+antes, con restante, y el FIFO se fue al cajón igual. **Es E5 puro, opción 1,
+y B lo arregla.**
+
+### Pero la pregunta es buena, y el problema que describe existe: está en otra columna
+
+Si la guía R quedó fechada **después** del armado, la caja no entra en `disp`
+y ese armado no cae en `mal` — cae en **`sin_opcion` (135 bultos)**. O sea
+que el problema de procedimiento, si existe, **está escondido justo en la
+mitad que dimos por legítima.**
+
+`db/e5_10_la_guia_R_llego_tarde.sql` parte los bultos de armado en tres:
+
+| Columna | Qué significa | Quién lo arregla |
+|---|---|---|
+| `con_caja_previa` | había guía R ese día o antes | **B** |
+| `solo_posterior` | no había, pero hay una después | **procedimiento**, ninguna regla de FIFO |
+| `nunca` | el artículo no se reprocesa | nadie: cajón legítimo |
+
+Es la misma familia que *"cargar las guías R ANTES de contar"* de
+`docs/procedimiento_corte.md`, un paso más adelante: allá ensuciaba el
+conteo, acá ensucia el costo.
+
+Verificada contra el esquema real con un artículo por caso (guía R del 02
+contra armado del 03; guía R del 05 contra armado del 03; y uno sin guías):
+7 / 7 / 7, cada uno en su columna. Base vacía devuelve una fila de ceros y el
+canario del corte muerde (con `>=`, los 7 pasan de `nunca` a
+`con_caja_previa`).
