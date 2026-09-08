@@ -1150,3 +1150,40 @@ función real con el asunto real**, no leyendo el código: `'Pedido Dia
 09-08'` con llegada 08/09 devuelve 2026-08-09, 30 días, y el candado
 devuelve False. Leer el `if` habría alcanzado para confirmarlo, pero
 correrlo es lo que lo volvió un hecho.
+
+Corolario 27, del 08/09: **la MISMA propiedad de un `count(*)` es lo que
+salva a una consulta de verificación y lo que arruina a una guarda.**
+
+La regla que ya teníamos dice que una consulta de verificación devuelve
+CONTEOS y no una lista, porque un agregado **siempre trae una fila** y así
+el cero se ve — con una lista, "no hay ninguno" y "no corrió" son la misma
+pantalla vacía.
+
+En una guarda de plpgsql esa misma propiedad la vuelve inútil:
+
+```sql
+select count(*) ... into v_armados from pedidos p ... where p.id = v_pedido;
+if not found then raise exception 'no existe'; end if;   -- NUNCA se dispara
+```
+
+`not found` no se dispara **jamás** después de un agregado: la fila vuelve
+con 0 aunque no haya nada que contar. Probado en los cuatro casos: anular
+un id inexistente salía `DO` sin hacer nada, y sobre un pedido YA anulado
+**pisaba su `anulado_el` original con la fecha de hoy** — que es peor que
+no anular, porque borra cuándo se anuló de verdad.
+
+La forma correcta es separar las dos preguntas: **la existencia con un
+`select` SIN agregado** (ahí `not found` sí funciona) y el conteo después,
+ya sabiendo que la fila existe.
+
+Lo que se lleva, y es más general que el `count`: **una propiedad no es
+buena o mala, lo es para un uso.** "Siempre devuelve una fila" es
+exactamente lo que se quiere al MOSTRAR y exactamente lo que no se quiere
+al DECIDIR. Cuando una técnica se copia de un contexto al otro, hay que
+preguntarse qué propiedad la hacía servir allá y si acá juega para el
+mismo lado.
+
+Y el detalle del turno, que es el de siempre: **lo agarró probar los
+cuatro casos, no leer el bloque.** El `if not found` leído se ve
+perfectamente razonable — es la línea que uno escribiría—, y solo corrida
+contra un id inexistente muestra que no hace nada.
