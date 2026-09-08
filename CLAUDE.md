@@ -186,6 +186,25 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 21, del 08/09, y va corto: **una operación partida en dos
+funciones queda correcta solo mientras las dos se acuerden.**
+
+La conversión a hora argentina vivía en `_fecha_del_commit` y el formateo en
+`_version_app`. El resultado era correcto —el único camino que existía
+convertía— pero por convención entre dos funciones, no por construcción. Un
+tercer camino que trajera la fecha sin convertir mostraba UTC y nada avisaba.
+
+Es la familia del alcance: misma operación, dos lugares, y el que muestra no
+se hace cargo. **Lo hace la que muestra**, siempre, aunque sea redundante:
+`astimezone` sobre un valor ya convertido no hace nada, y esa redundancia es
+justamente la que sobrevive al tercer llamador.
+
+Y el detalle del turno: **lo agarró un test nuevo, no la suite vieja.** La
+suite pasaba porque el único camino existente convertía. Un test que fija el
+CONTRATO —"esta función devuelve hora argentina"— encuentra lo que un test
+del camino feliz no puede ver.
+
+
 Corolario 20, del 08/09: **enumerar los TIPOS de columna no es enumerar los
 SIGNIFICADOS.** Buscando el campo que dijera si un artículo se despacha
 reenvasado o en su cajón original, listé todos los `boolean` del esquema,

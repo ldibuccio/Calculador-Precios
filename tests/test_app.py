@@ -19802,12 +19802,16 @@ def test_las_pantallas_que_se_mudaron_vuelven_a_ADMINISTRACION():
 # qué envase vino un bulto (ver el pendiente con nombre propio en
 # docs/diseno_base_datos.md).
 
+# Las dos van EN CAJA NUESTRA (envase_id cargado). Tenían `envase_id: None`
+# y con eso los tests del aviso pasaban por la razón equivocada: una ficha
+# sin envase es "envase perdido" —sale en el cajón del proveedor— y nunca
+# tiene cajas armadas, así que el aviso no le corresponde.
 FICHAS_E5 = [
     {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
-     "envase_id": None, "envase_nombre": None, "contenido_caja": 15, "unidad_venta": "kilo",
+     "envase_id": 7, "envase_nombre": "Caja Chica Día", "contenido_caja": 15, "unidad_venta": "kilo",
      "envase_variable": False, "nombre_cliente": "BANANA", "codigo_cliente": "90101"},
     {"id": 902, "articulo_id": 2, "articulo_nombre": "Batata", "articulo_grupo": "hortaliza",
-     "envase_id": None, "envase_nombre": None, "contenido_caja": 10, "unidad_venta": "kilo",
+     "envase_id": 7, "envase_nombre": "Caja Chica Día", "contenido_caja": 10, "unidad_venta": "kilo",
      "envase_variable": False, "nombre_cliente": None, "codigo_cliente": "90102"},
 ]
 
@@ -19857,7 +19861,9 @@ def test_armar_sin_cajas_de_la_ficha_avisa_SIN_decir_ningun_numero():
     cuerpo = _armar_e5([_renglon()], con_cajas=set())
 
     assert "No hay cajas armadas de esta ficha" in cuerpo
-    assert "Fijate si hay que reprocesar" in cuerpo
+    # Y DICE QUÉ HACER: la caja que falta casi siempre está en el piso y lo
+    # que falta es el papel, así que el texto manda a cargar la guía R.
+    assert "cargá la guía R antes de tildar" in cuerpo
     # Ni el número ni la palabra: no dice "0 cajas" ni "hay 0".
     assert "0 cajas" not in cuerpo
     # Y NO traba: el botón de tildar sigue estando.
@@ -19870,7 +19876,7 @@ def test_armar_avisa_por_la_FICHA_y_no_por_el_articulo():
     # decir que haya cajas de Banana Bolivia.
     fichas = FICHAS_E5 + [
         {"id": 903, "articulo_id": 1, "articulo_nombre": "Banana", "articulo_grupo": "fruta",
-         "envase_id": None, "envase_nombre": None, "contenido_caja": 18, "unidad_venta": "kilo",
+         "envase_id": 7, "envase_nombre": "Caja Chica Día", "contenido_caja": 18, "unidad_venta": "kilo",
          "envase_variable": False, "nombre_cliente": "BANANA ECUADOR", "codigo_cliente": "90109"},
     ]
     renglones = [
@@ -19883,6 +19889,26 @@ def test_armar_avisa_por_la_FICHA_y_no_por_el_articulo():
     # El que avisa es el de Ecuador, que es el que no tiene.
     bolivia, ecuador = cuerpo.split("Banana Ecuador", 1)
     assert "No hay cajas armadas de esta ficha" not in bolivia
+
+
+def test_una_ficha_SIN_ENVASE_no_recibe_el_aviso_aunque_no_tenga_cajas():
+    """Manzana, pera y arándano salen en el cajón del proveedor: su ficha
+    tiene `envase_id` nulo —"envase perdido", no un dato que falta— y NUNCA
+    van a tener cajas armadas.
+
+    Sin esta condición el cartel salía en cada uno de esos renglones todos
+    los días. Un cartel permanente se deja de leer justo el día que dice
+    algo, así que esto no es un detalle de prolijidad: es lo que hace que el
+    aviso sirva.
+
+    Medido el 08/09: 135 de los 765 bultos de armado son de estos cinco
+    artículos.
+    """
+    fichas = [dict(FICHAS_E5[0], id=904, envase_id=None, envase_nombre=None,
+                   nombre_cliente="MANZANA")]
+    cuerpo = _armar_e5([_renglon(ficha_id=904)], con_cajas=set(), fichas=fichas)
+
+    assert "No hay cajas armadas de esta ficha" not in cuerpo
 
 
 def test_armar_un_renglon_sin_ficha_no_se_marca():

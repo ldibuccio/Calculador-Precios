@@ -592,9 +592,15 @@
              y el stock del sistema no puede viajar acá ni escondido (si
              lo ve, arma contra el sistema en vez de contra el piso). Y no
              traba nada: el piso es la verdad, y puede estar viendo cajas
-             que todavía nadie cargó como guía R. #}
+             que todavía nadie cargó como guía R — por eso el texto manda a
+             CARGAR LA GUÍA R y no solo a "fijarse": la caja que falta casi
+             siempre está en el piso y lo que falta es el papel.
+             Sale SOLO en fichas con envase: las de envase perdido
+             (manzana, pera) nunca van a tener cajas y el cartel sería
+             permanente. #}
           {% if r.sin_cajas_de_la_ficha %}
-          <p class="aviso-sin-cajas">No hay cajas armadas de esta ficha. Fijate si hay que reprocesar antes de mandarlo.</p>
+          <p class="aviso-sin-cajas">No hay cajas armadas de esta ficha.
+            Si ya las armaste, cargá la guía R antes de tildar; si no, hay que reprocesar.</p>
           {% endif %}
           {# Lo que se carga es el kilaje POR BULTO (el que arma sabe que
              el cajón va con 16 kg): precargado con la ficha, editable.

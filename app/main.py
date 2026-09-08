@@ -12874,6 +12874,10 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
     # borrada) cae al kilaje de alguna ficha de su artículo, que es lo
     # mejor que hay y lo que se hacía siempre.
     contenido_por_ficha = {f["id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")}
+    # Las fichas que se despachan en UNA CAJA NUESTRA. Con `envase_id` nulo
+    # la mercadería sale en el envase del proveedor ("envase perdido") y no
+    # hay caja que reprocesar: son las que no tienen que recibir el aviso.
+    fichas_con_envase = {f["id"] for f in fichas if f.get("envase_id")}
     unidad_por_ficha = {f["id"]: f.get("unidad_venta") for f in fichas}
     contenido_por_articulo = {
         f["articulo_id"]: float(f["contenido_caja"]) for f in fichas if f.get("contenido_caja")
@@ -12925,10 +12929,19 @@ def ver_armar_pedido(request: Request, cliente_id: str | None = None, fecha: str
         # bananas no quiere decir que haya cajas de Banana Bolivia. Avisa
         # y NO traba: el piso es la verdad, y el que arma puede estar
         # viendo cajas que todavía nadie cargó como guía R.
-        # Un renglón sin ficha (viejo, o ficha borrada) no se marca: no
-        # hay ficha de la cual mirar el stock.
+        #
+        # SOLO PARA FICHAS CON ENVASE, y esto es lo que arregla el 08/09.
+        # `envase_id` nulo NO es un dato que falta: es "envase perdido", la
+        # mercadería sale en el cajón del proveedor y no vuelve — manzana,
+        # pera, arándano. Esas fichas NUNCA van a tener cajas armadas,
+        # así que sin esta condición el cartel salía en cada renglón de
+        # manzana todos los días, y un cartel que aparece siempre se deja
+        # de leer justo el día que dice algo.
+        #
+        # Un renglón sin ficha (viejo, o ficha borrada) tampoco se marca:
+        # no hay ficha de la cual mirar el envase ni el stock.
         r["sin_cajas_de_la_ficha"] = (
-            r.get("ficha_id") is not None and r["ficha_id"] not in con_cajas
+            r.get("ficha_id") in fichas_con_envase and r["ficha_id"] not in con_cajas
         )
     for r in armados:
         # Con qué comparar para la marca "editado a mano": el cálculo de

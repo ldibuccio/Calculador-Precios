@@ -1644,10 +1644,9 @@ que cargarla a mano ficha por ficha, y eso es el pendiente real.**
 - **Tolerancia de kilos**: implementada, ±3 kg **por bulto**, compara
   `kilos_enviados / bultos` contra `fichas_logistica.contenido_caja`, avisa
   en la pantalla de armar y solo para fichas por kilo. **Sin cambios.**
-- **Aviso "no hay cajas de esta ficha"**: previsto en
-  `docs/diseno_base_datos.md`, **sin implementar**. Es el que resuelve lo de
-  anoche — el armado de un artículo que va reenvasado saliendo del cajón en
-  silencio.
+- **Aviso "no hay cajas de esta ficha"**: ESTABA IMPLEMENTADO desde E5
+  (29/08) y yo dije que no. Lo que le faltaba era la condición del envase —
+  ver la sección de abajo.
 - **Campo que distinga reenvasado de directo**: **no existe** en el esquema.
   `db/ficha_1_hay_campo_que_diga_reprocesado.sql` mide si el par
   `contenido_caja` / `contenido_referencia` puede sembrarlo.
@@ -1741,3 +1740,56 @@ Revisado, que era el punto 3 del dueño:
    por disponibilidad lo que la ficha declara. Con `envase_id` a la vista, un
    armado de Perita sin caja es un caso para avisar, no para costear en
    silencio contra el cajón.
+
+## El aviso "no hay cajas de esta ficha" ya existía. Le faltaba una condición
+
+Dije dos veces que estaba *"previsto y sin implementar"*. **Estaba
+implementado desde E5 (29/08)**: `sin_cajas_de_la_ficha` en `app/main.py`,
+dibujado en `deposito_pedido_armar.html`, con estilo propio y cuatro tests.
+Hasta la función que lo alimenta —`fichas_con_cajas_armadas`— tiene un
+docstring que dice que es para esta pantalla y por qué devuelve solo ids.
+
+Me equivoqué por lo mismo del corolario 20: **afirmé una negativa sin
+buscarla como se busca una.** Un `grep` de la frase la encontraba.
+
+### Lo que sí faltaba, y era lo que lo volvía inútil
+
+La condición era:
+
+```python
+r["ficha_id"] is not None and r["ficha_id"] not in con_cajas
+```
+
+O sea que **saltaba para cualquier ficha sin cajas** — incluidas manzana,
+pera y arándano, cuyas fichas tienen `envase_id` nulo ("envase perdido":
+salen en el cajón del proveedor) y por lo tanto **no van a tener cajas
+armadas nunca**. El cartel salía en cada uno de esos renglones, todos los
+días, para siempre.
+
+**Un cartel permanente se deja de leer justo el día que dice algo.** Medido:
+135 de los 765 bultos de armado son de esos cinco artículos.
+
+Arreglado con la condición que salió del hallazgo de anoche:
+
+```python
+r["ficha_id"] in fichas_con_envase and r["ficha_id"] not in con_cajas
+```
+
+### Y el texto ahora manda a cargar la guía R
+
+Antes: *"Fijate si hay que reprocesar antes de mandarlo."* Ahora:
+
+> **No hay cajas armadas de esta ficha. Si ya las armaste, cargá la guía R
+> antes de tildar; si no, hay que reprocesar.**
+
+La caja que falta **casi siempre está en el piso y lo que falta es el
+papel** — el aviso tiene que llevar a eso y no a "fijarse". Sigue sin trabar:
+el armado jamás se traba por stock.
+
+### Los tests eran parte del bug
+
+`FICHAS_E5` tenía `envase_id: None` en las dos fichas, así que los cuatro
+tests del aviso **pasaban por la razón equivocada**: verificaban el cartel
+sobre fichas que hoy no deberían recibirlo. Corregido el fixture en el mismo
+commit, más un test nuevo —la ficha de envase perdido no recibe el aviso—
+verificado con la condición vieja puesta: cae.
