@@ -19575,6 +19575,49 @@ def _cotejo(conteos, porciones=None):
         return cliente.get("/administracion/stock/cotejo")
 
 
+def test_el_cotejo_pone_los_desvios_ARRIBA_y_no_separa_las_porciones():
+    """Con treinta tarjetas, un desvío en el puesto veinte no existe.
+
+    Pero ordena por ARTÍCULO y no por porción: los sueltos y las cajas de un
+    mismo artículo van juntos, porque leerlos de a pares es lo que distingue
+    "falta mercadería" de "una guía R fue a la ficha equivocada" — esa se ve
+    como −2 en una pila y +1 en la otra, y separadas no dicen nada.
+    """
+    def conteo(id_, aid, nombre, cantidad, sistema, ficha_id=None, ficha=None):
+        return {"id": id_, "articulo_id": aid, "cantidad": cantidad,
+                "stock_sistema": sistema, "creado_en": datetime(2026, 9, 8, 9, 0),
+                "articulo_nombre": nombre, "ficha_id": ficha_id,
+                "ficha_nombre": ficha, "ficha_cliente": "Cliente" if ficha else None}
+
+    conteos = [
+        conteo(1, 1, "EJEMPLO Sano", 10.0, 10.0),
+        # Las dos porciones del mismo artículo, con la firma de la ficha
+        # cambiada: −2 en una y +1 en la otra.
+        conteo(2, 2, "EJEMPLO Partido", 1.0, 3.0),
+        conteo(3, 3, "EJEMPLO Grande", 5.0, 30.0),
+        conteo(4, 2, "EJEMPLO Partido", 1.0, 0.0, ficha_id=9, ficha="Caja de ejemplo"),
+    ]
+    porciones = [
+        {"articulo_id": 1, "ficha_id": None, "bultos": 10.0, "contable": True},
+        {"articulo_id": 2, "ficha_id": None, "bultos": 3.0, "contable": True},
+        {"articulo_id": 2, "ficha_id": 9, "bultos": 0.0, "contable": True},
+        {"articulo_id": 3, "ficha_id": None, "bultos": 30.0, "contable": True},
+    ]
+
+    cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
+    orden = [
+        cuerpo.index("EJEMPLO Grande"),
+        cuerpo.index("EJEMPLO Partido"),
+        cuerpo.index("EJEMPLO Sano"),
+    ]
+    # El de −25 primero, después el partido (−2 y +1), y el sano al final.
+    assert orden == sorted(orden)
+    # Y las dos porciones del partido quedaron pegadas: entre la primera y la
+    # segunda no se coló el artículo sano.
+    entre = cuerpo[cuerpo.index("EJEMPLO Partido"):cuerpo.rindex("EJEMPLO Partido")]
+    assert "EJEMPLO Sano" not in entre and "EJEMPLO Grande" not in entre
+
+
 def test_la_ayuda_del_cotejo_dice_contra_QUE_compara():
     """La ayuda decía "contra lo que el sistema decía EN ese momento", que
     era cierto hasta el 08/09 y dejó de serlo con la tarjeta comparando

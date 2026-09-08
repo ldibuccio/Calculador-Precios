@@ -445,10 +445,22 @@ Es el mismo corolario de abajo, pero la captura es peor que una tabla de
 texto: **no tiene dónde escribir la aclaración.** El pie del mensaje se
 separa de la imagen apenas se scrollea.
 
+**Y el bucle se cerró**: a partir de ese +6 se pidió la lista de todos los
+artículos afectados. Una vuelta más y la consulta se escribía para perseguir
+un número inventado — que es exactamente el corolario 6 (una medición falsa
+decide qué se arregla después) alimentado por éste. Las dos familias se
+encadenan: el fixture entra como dato, el dato pide una medición, y la
+medición se escribe para un hecho que no existe.
+
+Lo que lo hizo peor no fue el número suelto: fue que **llegó con la autoridad
+de una medición**, en un mensaje que tenía hallazgos reales al lado. Un
+número de fixture rodeado de datos verdaderos hereda su credibilidad.
+
 De acá en adelante, en toda captura de prueba: **nombres inventados y que se
 note** ("EJEMPLO Uno", "Caja de ejemplo"). Si el caso exige un artículo real
-—porque el bug depende de sus datos—, va dicho en la misma línea que la
-captura y con el número al lado.
+—porque el bug depende de sus datos—, va dicho **en la línea ANTERIOR a la
+imagen, no en el pie**: el pie se separa de la captura apenas se scrollea, y
+lo que se lee primero es la imagen.
 
 Corolario del 05/09, y es la SEGUNDA vez con el mismo fixture: **un número de
 un fixture no se presenta con la etiqueta de un dato de producción.** Se

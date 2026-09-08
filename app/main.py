@@ -8021,6 +8021,29 @@ def ver_cotejo_stock(request: Request):
             )
         filas.append(fila)
 
+    # LOS DESVÍOS ARRIBA. Con treinta tarjetas, una en el puesto veinte no
+    # existe. Ordena por artículo y no por porción a propósito: los sueltos y
+    # las cajas de un mismo artículo tienen que quedar JUNTOS, porque leerlos
+    # de a pares es lo que distingue "falta mercadería" de "una guía R fue a
+    # la ficha equivocada" — esa se ve como −2 en una pila y +1 en la otra, y
+    # separadas no dice nada.
+    #
+    # Una porción sin número (no se pudo leer su stock) pesa como infinito:
+    # "no sé" va arriba, con los desvíos, y no abajo con lo sano.
+    peso = {}
+    for fila in filas:
+        actual = peso.get(fila["articulo_id"], 0.0)
+        propio = float("inf") if fila["dif_hoy"] is None else abs(fila["dif_hoy"])
+        peso[fila["articulo_id"]] = max(actual, propio)
+    filas.sort(key=lambda f: (
+        -peso[f["articulo_id"]],
+        f["articulo_nombre"] or "",
+        # Dentro del artículo, los sueltos primero y después sus fichas: es
+        # el mismo orden en que se recorre el depósito.
+        f["ficha_id"] is not None,
+        f["ficha_nombre"] or "",
+    ))
+
     return templates.TemplateResponse(request, "deposito_stock_cotejo.html", {"filas": filas})
 
 
