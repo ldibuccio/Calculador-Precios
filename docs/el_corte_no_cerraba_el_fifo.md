@@ -681,3 +681,62 @@ prueba se borraron.
 **Esto no toca E5.** La fuga se midió con 19 guías, 226 bultos y $3.572.620
 en dos días; Mango era el ejemplo de cómo se ve el problema, no la prueba de
 que existe.
+
+## E5 paso 2: el backtest del freno con el filtro puesto
+
+Antes de tocar `crear_reproceso` hay que saber a cuánta gente traba. Con A,
+una guía R solo puede costearse contra **materia prima**: los lotes de
+`TIPOS_LOTE_TRABAJADO` (`reproceso`, `reingreso_rechazo`) dejan de estar
+disponibles para ella. El freno mide contra la **suma de los restantes**
+(`bultos_en_los_lotes`, core/stock.py), así que sacar lotes de la lista baja
+ese número y puede empezar a trabar guías que hoy pasan.
+
+`db/e5_3_backtest_del_freno_con_filtro.sql` lo mide sobre las guías R ya
+cargadas, con la ventana exacta del freno (`reparto_para_reproceso`:
+entradas hasta la fecha inclusive, salidas hasta el día anterior, y sin las
+guías R posteriores, que cuando ésa se cargó no existían).
+
+Devuelve cuatro números en una fila: `guias`, `frenan_hoy`, `frenan_con_a` y
+`sin_cubrir` (los bultos que la materia prima no llega a cubrir).
+
+### Cómo calcula los restantes, y por qué no es `entradas − salidas`
+
+`corte_fifo_5b` usaba `greatest(entradas − salidas, 0)`. Eso es exacto
+mientras se miren TODOS los lotes —la suma de los restantes de todos es el
+neto—, pero **deja de serlo apenas se filtra por tipo**: hay que saber
+cuáles lotes se comió la demanda, no cuánta demanda hubo.
+
+Así que se rejuega el FIFO con la misma forma que `e5_2`: los lotes ordenados
+por fecha ocupan tramos del eje, la demanda consume el prefijo `[0, D)`, y el
+restante de cada lote es `max(0, fin − max(ini, D))`. Sumando sobre todos da
+`max(0, S − D)` —o sea la fórmula vieja, que por eso sigue de control en
+`frenan_hoy`— y sumando solo sobre los NO trabajados da el número con A.
+
+**Sobreestima**, y va dicho: la demanda que `lote_posterior_a_la_salida`
+bloquea acá consume igual, así que deja menos restante del que habría y
+puede reportar más frenos de los reales. Para decidir si A se puede mergear,
+errar por el lado pesimista es el lado correcto.
+
+Y un detalle que ahorra media consulta: las guías R normales se sacan de la
+misma lista de movimientos, por `bultos_tomados > 0`. No es una
+aproximación — el CHECK `reprocesos_bultos_tomados_check` obliga a que
+`inicial` tome exactamente 0 y `normal` tome más de 0.
+
+### Cómo se verificó
+
+Contra el esquema real, con un fixture de dos artículos de nombre inventado
+que **hace fallar la versión sin filtro**:
+
+- **EJEMPLO Cuatro** — compra 10 el 01/09; la guía R del 01/09 toma esos 10
+  y produce 10 cajas; la guía R del 02/09 toma 10 más. Hoy no frena, porque
+  se come las cajas de la anterior. **Con A frena**: materia prima
+  disponible, cero.
+- **EJEMPLO Cinco** — 100 cajones de sobra: no frena de ninguna de las dos
+  formas.
+
+Da `guias = 3`, `frenan_hoy = 0`, `frenan_con_a = 1`, `sin_cubrir = 10`.
+Tres canarios: con el filtro anulado `frenan_con_a` vuelve a 0 (o sea que el
+filtro es lo que produce el número); con una base vacía devuelve una fila de
+ceros; y **con una compra fechada el día del corte, cambiar el piso a `>=`
+se lleva el freno puesto (1 → 0)** — que es el canario que pide el corolario
+12. Los datos de prueba se borraron.

@@ -186,6 +186,66 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+Corolario 12, del 08/09: **la asimetría del día del corte apareció SIETE
+veces, y a esta altura eso ya no es una coincidencia: es que el criterio no
+está escrito en ningún lado una sola vez.**
+
+La lista completa, para que la próxima no se descubra de cero:
+
+1. La cuenta por ficha (`_SQL_STOCK_PARTIDO`).
+2. El pool de segunda.
+3. El FIFO, que era la única de las tres que NO la tenía (corolario 5).
+4. Las siete consultas de `db/` que quedaron midiendo con la regla vieja
+   después de arreglar el piso — una inventó 212 cajas (corolario 6).
+5. Entre dos cuentas y no adentro de ninguna: los sueltos derivados por
+   resta (corolario 7).
+6. El `>=` que escribí al implementar el piso, **cuarenta líneas debajo del
+   comentario que dice textual que con `>=` el día del corte se cuenta dos
+   veces**. Lo agarró la verificación antes del merge.
+7. El `>=` de la medición de la dirección inversa (08/09): con `>=` da 22
+   donde la regla buena da 17. Lo agarró un canario puesto a propósito.
+
+Las siete son el mismo hecho del mundo —**el conteo del corte se toma a la
+tarde, así que la foto ya viene neta del trabajo de ese día**— reescrito
+siete veces en siete lugares que no se nombran entre sí. El corolario 5
+decía cómo buscarlas (por las CUENTAS que leen el dato, no por el código);
+esto agrega el diagnóstico: **mientras el criterio siga siendo una condición
+que cada consulta escribe a mano, va a haber una octava.**
+
+Por eso, hasta que exista un solo lugar donde esté escrito: **toda consulta
+nueva que recorte por el corte lleva un canario** — se corre también con la
+regla vieja y se verifica que el número SE MUEVA. Un piso que no cambia nada
+al romperlo es un piso que no está puesto.
+
+Corolario 11, del 08/09: **una medición que parece la del problema puede
+estar midiendo solo su caso más obvio — y el que se le escapa es el más
+grande.**
+
+Para medir cuánto armado se costea contra cajones, la primera forma que le
+di a la consulta fue un **saldo corrido de la pila de cajas**: cuando el
+armado acumulado pasa a las cajas producidas, el excedente salió de un
+cajón. Es intuitiva, es corta, y mide **agotamiento**: armé más de lo que
+produje.
+
+Se le escapa entero el caso de **orden**: hay diez cajas disponibles, pero
+el cajón es más viejo y el FIFO —que ordena por fecha y no mira el tipo de
+lote— manda el armado al cajón igual. Para el saldo corrido ese caso es
+invisible: el saldo nunca baja de cero.
+
+En el fixture de tres artículos, el caso de orden aporta **10 de 17**. La
+versión intuitiva veía **menos del 40%**, y no como un error de precisión
+sino como un agujero: el caso más común del problema no estaba en la cuenta.
+
+Es de la familia del corolario 7 pero dado vuelta. Allá una diferencia no
+estaba en ninguna de las dos cuentas; **acá la medición está bien y contesta
+otra pregunta.** Y como devuelve un número plausible, nada avisa.
+
+**Cómo se busca**: escrita la medición, preguntarse **qué caso del problema
+NO puede hacerla dar distinto de cero**. Si hay uno, esa es la mitad que
+falta. Y el fixture lleva ese caso adentro a propósito, separado del obvio,
+para que se vea cuánto aporta cada uno.
+
+
 Corolario 10, del 08/09: **un cambio de PRESENTACIÓN puede encontrar un bug
 de LÓGICA, y no es donde uno busca.**
 
