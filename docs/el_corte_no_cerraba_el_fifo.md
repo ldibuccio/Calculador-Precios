@@ -1190,3 +1190,70 @@ contra el número VIVO antes de ajustar, porque los tres salieron de
 `corte_fifo_13`, que compara contra el `stock_sistema` congelado— y por eso
 **si después de ajustar los tres vuelven a aparecer mañana, la lista está
 incompleta y la quinta causa está afuera del sistema, no adentro.**
+
+## La caja que cuesta la doceava parte del cajón: no es un error de unidad
+
+Con las cuatro columnas, Frutamax (corte 05/09, 06 y 07/09): `caja_s_costo` y
+`cajon_s_costo` **en cero en todos**, así que el sesgo que temía no existe.
+Pero aparecieron razones enormes entre los dos lados:
+
+```
+Tomate Perita   x_hoy 50.000,00 → x_conb 4.095,38   ×12,2
+Pepino               22.625,00 →      2.869,09      ×7,9
+Zapallito            34.230,77 →      6.075,76      ×5,6
+Morron Verde         35.000,00 →      8.707,89      ×4,0
+Tomate Cherry        58.407,28 →     16.685,61      ×3,5
+```
+
+### No es un error de unidad en la consulta
+
+`compras.importe` **es por bulto**, no el total de la compra. Está dicho
+textual en el docstring de `recepcionar_compra`: *"como el importe es por
+bulto, ninguna cuenta cambia"*. Y producción lo usa así en los dos lugares
+que importan: `c.importe AS costo_bulto` en la consulta de entradas del FIFO,
+y `SET costo_por_bulto = c.importe` al completar `reprocesos_consumos`. La
+medición usa el mismo campo con el mismo significado que producción — si
+estuviera mal, la Rentabilidad Real estaría igual de mal.
+
+### Tampoco es el precio moviéndose entre días
+
+Es **el bulto que dejó de ser el mismo objeto**.
+`costo_por_bulto_primera = costo_total / bultos_primera`, y **nada ata
+`bultos_primera` con `bultos_tomados`**: el único check del esquema es
+`bultos_primera >= 0`. Un cajón grande partido en doce cajas chicas da doce
+bultos de primera por uno tomado, y el costo por bulto cae doce veces sin
+que falte ni sobre un peso.
+
+O sea que *"harían falta doce veces más bultos de primera que tomados, que es
+imposible"* — no es imposible: **es exactamente lo que hace un reproceso que
+reenvasa.**
+
+Y de ahí sale una predicción verificable, que es lo que la separa de una
+explicación cómoda:
+
+> **`x_hoy / x_conb` tiene que dar parecido a `bultos_primera / bultos_tomados`
+> de las guías R de ese artículo.**
+
+Reproducido contra el esquema real con dos artículos inventados: uno que
+parte 1 cajón en 12 cajas da `primera_por_tomado 12,00` y
+`x_hoy/x_conb = 50.000/4.166,67 = 12,00`; uno que va 1 a 1 da ratio 1,00 y
+`x_hoy = x_conb`. **Los mismos números por los dos caminos.** La consulta que
+lo mide sobre datos reales es `db/e5_7_cuantas_cajas_salen_de_un_cajon.sql`.
+
+### Lo que esto le cambia al número
+
+Si la predicción se cumple, **los −$4,4M dejan de ser un ahorro y pasan a ser
+la corrección de un sobrecosteo.** Un armado de un artículo reenvasado
+despacha CAJAS, y hoy el FIFO se las cobra contra CAJONES: le pone el precio
+del objeto grande a lo que salió chico. B no "abarata" nada — deja de cobrar
+de más.
+
+Eso hace a B más urgente, no menos, y cambia lo que hay que anunciar: **la
+Rentabilidad Real viene sobre-costeando los artículos que se reenvasan.**
+
+Y hay un alcance que conviene tener claro: **el error es solo de costo.** El
+stock en cantidad se calcula aparte (`compras + primera − armados`) y no lo
+toca la atribución. Lo que sí queda tocado es la vieja observación del dueño
+—el Remanente no puede sumar bultos de distinto contenido—, que deja de ser
+una molestia de presentación: **es el mismo hecho, visto del lado de la
+cantidad.**
