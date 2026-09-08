@@ -950,3 +950,52 @@ es la operación normal del galpón, que es lo que había que descartar.
 
 B es **3,5 veces** A. A sola arregla el 22% y deja el resto abierto con la
 sensación de estar cerrado.
+
+## Antes de mergear B: cuánto se mueve la rentabilidad ya reportada
+
+Condición del dueño, y va **antes** del merge y no en el mismo commit: si
+mueve mucho, avisa al galpón primero. `db/e5_6a/6b/6c` lo miden **por
+artículo y con signo**, porque un total de $9M no dice a quién avisarle y
+porque no es lo mismo que la rentabilidad histórica suba o baje.
+
+- `delta > 0` → con B el costo atribuido SUBE, o sea **la rentabilidad que
+  ya se reportó BAJA**.
+- `delta < 0` → al revés.
+
+Va en tres bloques con una tabla de trabajo real (`e5_mov`), como el
+backtest del freno: entero no entra en 2500, y las CTE no sobreviven de una
+sentencia a la otra en el editor. El bloque C la borra.
+
+### Dos aproximaciones, y las dos por lo bajo
+
+1. La de siempre: la demanda que `lote_posterior_a_la_salida` bloquea acá
+   consume igual.
+2. Nueva: los bultos que cambian de pila se cuestan con el **promedio** de
+   cada lado, no lote por lote. El `min()` de `e5_4` no cae sobre lotes
+   concretos, así que no hay un costo exacto que sumar, y hacerlo lote por
+   lote pedía una ventana más adentro que no entraba.
+
+Sirve para decidir si hay que avisar, no para cerrar un balance.
+
+### Cómo se verificó
+
+Tres artículos inventados, dos de ellos con el mismo desvío de bultos y
+signos opuestos a propósito:
+
+- **EJEMPLO Doce** — la caja armada sale más cara que el cajón ($150 contra
+  $100): con B el costo sube, `delta +500`.
+- **EJEMPLO Trece** — la caja armada sale más barata ($50 contra $200): con
+  B el costo baja, `delta −1500`.
+- **EJEMPLO Catorce** — no se reprocesa nunca: no cambia nada y no aparece.
+
+`TOTAL` da 20 bultos, $3.000 de costo hoy y `delta −1000`. Tres canarios:
+anulando la preferencia el `delta` vuelve a 0 en las tres filas (o sea que
+la preferencia es lo que produce el número); base vacía devuelve una fila
+de ceros; y **el canario del corte muerde** — con una compra fechada el
+31/08 y el piso en `>=`, el costo de Doce pasa de $1.000 a $70 y su delta de
++500 a +1430.
+
+Ese último no mordía en el primer intento: el fixture no tenía nada fechado
+el día del corte y los dos números daban iguales. **Un canario que no se
+mueve no dice que el piso esté bien; dice que no lo probaste** — el
+corolario 12 pide que el número SE MUEVA, y hubo que darle con qué.
