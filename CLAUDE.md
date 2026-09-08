@@ -219,6 +219,25 @@ NEGATIVA ("no existe X") necesita más verificación que una positiva**, no
 menos. Una positiva se cae sola cuando alguien mira; una negativa cierra la
 búsqueda y manda a construir lo que ya estaba.
 
+**Y hay una tercera, medida**: dado por inexistente el campo directo, propuse
+DEDUCIRLO de un par derivado (`contenido_caja` contra
+`contenido_referencia`: si difieren, se reenvasa). Corrido sobre 33
+artículos dio **7 falsos negativos y 2 falsos positivos** —casi un tercio
+mal— contra **630 de 630 y 135 de 135 sin un cruce** del campo directo.
+
+El mecanismo del fallo es la parte que sirve para la próxima: los siete
+falsos negativos **se reenvasan al mismo kilaje** —el cajón trae 16 kg y la
+caja lleva 16 kg, cambia la caja y no el peso—, y un derivado que compara
+NÚMEROS no puede ver un cambio que no mueve ningún número. **Falló
+exactamente en el caso más común**, no en el borde.
+
+O sea: **un campo derivado no es un sustituto barato de uno declarado.**
+Codifica una hipótesis sobre cómo se manifiesta el hecho, y cuando el hecho
+se manifiesta de otra forma —acá, cambiando el envase sin cambiar el
+contenido— el derivado no falla ruidosamente: **acierta en la mayoría y
+miente en un tercio**, que es la peor proporción posible para que alguien lo
+dé por bueno.
+
 
 Corolario 19, del 08/09, y es de otra familia que todos los anteriores: **la
 salvaguarda funcionó, el dato estaba a la vista, y no se leyó.**

@@ -1714,10 +1714,26 @@ Revisado, que era el punto 3 del dueño:
 
 ### Consecuencias
 
-1. **`ficha_1` no hace falta y se borra.** Deducir la marca de
-   `contenido_caja` vs `contenido_referencia` era resolver por inferencia
-   algo que ya está declarado. Una consulta que contesta una pregunta ya
-   contestada solo invita a volver a decidirla.
+1. **`ficha_1` no hace falta y se borra** — y alcanzó a correrse antes,
+   así que además está MEDIDO que no servía:
+
+   ```
+   gr_y_difiere 9 · gr_sin_señal 7 · sin_gr_pero_difiere 2
+   · sin_gr_ni_señal 15 · sin_dato_para_saber 0
+   ```
+
+   **7 falsos negativos y 2 falsos positivos sobre 33 artículos**, casi un
+   tercio mal, y con `sin_dato_para_saber` en cero: no falla por falta de
+   carga, falla por diseño.
+
+   **Y el mecanismo del fallo es lo que más vale**: los siete falsos
+   negativos —Ombligo, Pomelo, Cherry, Redondo, Jugo, Mandarina, Mango— se
+   reprocesan y tienen `contenido_caja` = `contenido_referencia`. Se
+   **reenvasa al mismo kilaje**: el cajón trae 16 kg y la caja lleva 16 kg,
+   cambia la caja y no el peso. El par derivado solo ve reenvasado cuando
+   cambia el NÚMERO, y el caso más común no cambia el número.
+
+   Contra eso, `envase_id` acertó **630 de 630 y 135 de 135, sin un cruce**.
 2. **El aviso "no hay cajas de esta ficha" se puede escribir hoy**, sin
    migración: la condición es `envase_id` no nulo y cero cajas armadas
    disponibles de esa ficha.
