@@ -859,14 +859,19 @@ create table conteos_stock (
     -- ("los sueltos"), así que nulear al borrar una ficha convertiría un
     -- conteo de cajas en uno de sueltos, y el Cotejo mostraría una
     -- diferencia inexplicable en los dos lados a la vez.
-    ficha_id bigint references fichas_logistica (id)
+    ficha_id bigint references fichas_logistica (id),
+    -- La TERCERA porción. Sin esto, un conteo de segunda entra como
+    -- (articulo, NULL) y pisa al de sueltos: los dos tienen ficha_id nulo.
+    es_segunda boolean not null default false,
+    constraint conteos_stock_segunda_sin_ficha
+        check (not es_segunda or ficha_id is null)
 );
 
 -- El orden exacto del DISTINCT ON del Cotejo, para que salga del índice
 -- sin ordenar la tabla. Con el conteo partido por ficha, esta tabla pasa a
 -- crecer por ficha y no por artículo.
 create index conteos_stock_cotejo_idx
-    on conteos_stock (articulo_id, ficha_id, creado_en desc);
+    on conteos_stock (articulo_id, ficha_id, es_segunda, creado_en desc);
 
 comment on table conteos_stock is
     'Stock Físico del depósito: lo que el operario contó (en bultos), sin ver el sistema. stock_sistema es la foto del sistema en el instante del conteo, para el Cotejo.';
@@ -989,7 +994,29 @@ create table remitos_segunda (
     bultos numeric not null check (bultos > 0),
     fecha_operacion date not null,
     creado_en timestamptz not null default now(),
-    anulado_el timestamptz
+    anulado_el timestamptz,
+    destino text not null default 'puesto' check (destino in ('puesto', 'merma')),
+    motivo text,
+    -- Las dos direcciones en una igualdad: la merma SIEMPRE lleva motivo y
+    -- el remito al Puesto NUNCA.
+    constraint remitos_segunda_motivo_solo_merma
+        check ((destino = 'merma') = (motivo is not null)),
+    constraint remitos_segunda_motivo_de_la_lista
+        check (motivo is null or motivo in (
+            'podrido', 'sobremadurado', 'deshidratado', 'golpeado', 'no se llego a remitir'
+        ))
+);
+
+create table fotos_merma (
+    id                bigint generated always as identity primary key,
+    movimiento_id     bigint references movimientos_stock (id),
+    salida_segunda_id bigint references remitos_segunda (id),
+    foto_ruta         text not null,
+    creado_en         timestamptz not null default now(),
+    constraint fotos_merma_un_solo_dueno
+        check ((movimiento_id is not null) <> (salida_segunda_id is not null)),
+    unique (movimiento_id, foto_ruta),
+    unique (salida_segunda_id, foto_ruta)
 );
 
 comment on table remitos_segunda is

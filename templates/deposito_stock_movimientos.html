@@ -77,8 +77,11 @@
   }
   .pill-ajuste { background: #facc15; color: #713f12; }
   .pill-merma { background: #fecaca; color: #991b1b; }
+  .sin-foto { color: #b45309; font-weight: 600; }
+  .con-foto { color: #6b7280; }
   .pill-reingreso_rechazo { background: #fed7aa; color: #9a3412; }
   .pill-remito_segunda { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
+  .pill-merma_segunda { background: #fecaca; color: #991b1b; border: 1px solid #fca5a5; }
   .boton-anular {
     padding: 0.6rem 0.9rem;
     background: #fff;
@@ -133,6 +136,18 @@
               {%- elif m.destino_rechazo == "reproceso" %} · <strong>volvió a cajón grande</strong> ({{ m.bultos_segunda|numero }} cajones al pool de segunda){% endif %}
             {%- endif %}
             {%- if m.lote_tipo %} · mermado de un lote elegido a mano{% endif %}
+            {# SIN FOTO A LA VISTA. Una merma legítima y una que tapa un
+               faltante se ven idénticas como número; lo único que las separa
+               sin trabar a nadie es que la que no tiene foto lo diga acá.
+               Solo en las mermas: en un ajuste o un reingreso no se pide.
+
+               `es_merma` lo decide la ruta y no un `m.tipo == "merma"` acá:
+               las mermas son DOS tipos —la de stock y la del pool de
+               segunda— y la de segunda quedaba afuera de esa comparación. #}
+            {%- if m.es_merma %}
+              {%- if m.fotos %} · <span class="con-foto">con foto</span>
+              {%- else %} · <span class="sin-foto">sin foto</span>{% endif %}
+            {%- endif %}
             {%- if m.stock_sistema is not none %} · el sistema decía {{ m.stock_sistema|numero }}{% endif %}
           </span>
         </div>
@@ -150,7 +165,7 @@
     {% else %}
     <p class="vacio">Sin movimientos en este rango.</p>
     {% endif %}
-    <p class="ayuda">Solo los movimientos cargados a mano (ajustes, mermas, reingresos y remitos de segunda) — las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>: nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.</p>
+    <p class="ayuda">Solo los movimientos cargados a mano (ajustes, mermas, reingresos y salidas de segunda: remito y merma) — las compras y los armados se corrigen en sus pantallas. Corregir acá es <strong>anular y cargar de nuevo</strong>: nunca se edita ni se borra, y el stock y el FIFO se reacomodan solos.</p>
   </div>
 {% include "_pie_version.html" %}
 </body>
