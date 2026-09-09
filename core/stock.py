@@ -222,6 +222,51 @@ def pasadas_de_lotes(lotes: list[dict], salida: dict) -> list[list[dict]]:
     return [preferidos, [lote for lote in lotes if lote["tipo_lote"] not in prefiere]]
 
 
+def lotes_ofrecidos(lotes: list[dict], salida: dict) -> list[dict]:
+    """Los lotes que la pared le OFRECE a esta salida, en orden y sin repetir.
+
+    Sale de `pasadas_de_lotes` y por eso NO vuelve a preguntar por
+    `ficha_con_envase`: la condición se decide UNA vez, arriba.
+
+    EN EL ORDEN QUE ENTRARON, que es el de fecha, y no en el de las pasadas.
+    Las pasadas están ordenadas por preferencia —primero lo trabajado— y eso
+    sirve para repartir, pero acá la lista se le muestra a una persona: un
+    desglose que salta del 05/09 al 01/09 porque uno es caja y el otro cajón
+    no se lee. Filtra, no reordena.
+
+    Los tres que tienen que decir lo mismo la leen de acá:
+
+    - el reparto, que recorre las pasadas (`repartir_fifo`, `atribuir_costos_fifo`);
+    - la pantalla del armado, que NO LISTA lo que no se puede elegir — un
+      cajón a la vista en una ficha con envase invita a preguntarse por qué
+      está ahí, y la respuesta es que no tendría que estar;
+    - `guardar_lotes_elegidos`, que lo RECHAZA si llega igual por un POST a
+      mano. La guarda no puede vivir solo en el HTML: el que decide es el
+      servidor y la pantalla es la forma de cumplirlo cómodo.
+
+    Hasta el 09/09 la pared vivía solo en `pasadas_de_lotes`, y
+    `lotes_senalados` —la corrección del que arma— corre ANTES, en la pasada
+    de los dirigidos. Un renglón con el cajón elegido a mano se llevaba el
+    cajón, con envase y todo: medido corriendo `repartir_fifo`, 10 bultos
+    consumidos del cajón donde la pared sola dejaba 10 sin lote.
+    """
+    # Por identidad y no por igualdad: las pasadas contienen los MISMOS
+    # objetos que entraron, y dos lotes distintos pueden ser dicts iguales.
+    ofrecidos = {id(lote) for pasada in pasadas_de_lotes(lotes, salida) for lote in pasada}
+    return [lote for lote in lotes if id(lote) in ofrecidos]
+
+
+def lote_ofrecido(lote: dict, salida: dict) -> bool:
+    """¿La pared le ofrece ESTE lote a esta salida?
+
+    Se contesta preguntándole a `lotes_ofrecidos` por una lista de UNO, y no
+    con una condición propia: una copia acá se separaría de la pared el día
+    que la pared cambie, que es exactamente cómo se abrió el agujero que
+    esto viene a cerrar.
+    """
+    return bool(lotes_ofrecidos([lote], salida))
+
+
 def lote_posterior_a_la_salida(lote, salida) -> bool:
     """¿Este lote entró DESPUÉS de que esta salida ocurrió?
 

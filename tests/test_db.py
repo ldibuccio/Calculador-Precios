@@ -1,3 +1,4 @@
+import inspect
 from datetime import date, datetime, time
 import pytest
 from unittest.mock import MagicMock, patch
@@ -5639,21 +5640,105 @@ def test_guardar_lotes_elegidos_borra_y_reescribe_y_los_ceros_no_entran():
     """
     from app.db import guardar_lotes_elegidos
 
-    conexion, cursor = _conexion_falsa()
+    # Sin envase: la pared no aplica y el cajón es una opción legítima, que
+    # es el caso de todos los días.
+    salida = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+              "cantidad": 5.0, "renglon_id": 55, "ficha_con_envase": False}
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])
 
-    with patch("app.db.obtener_conexion", return_value=conexion):
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._entradas_y_salidas_stock", return_value=([], [salida])),
+    ):
         guardar_lotes_elegidos(55, [
             {"lote_tipo": "guia", "lote_origen_id": 101, "bultos": 5},
             {"lote_tipo": "guia", "lote_origen_id": 102, "bultos": 0},
         ])
 
     consultas = [c.args[0] for c in cursor.execute.call_args_list]
-    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in consultas[0]
-    assert cursor.execute.call_args_list[0].args[1] == (55,)
+    borrado = _sql_que_contiene(cursor, "DELETE FROM pedidos_renglones_lotes_elegidos")
+    assert "DELETE FROM pedidos_renglones_lotes_elegidos" in borrado
     # Un solo INSERT: el de cero no entra.
-    assert len([c for c in consultas if "INSERT INTO" in c]) == 1
-    assert cursor.execute.call_args_list[1].args[1] == (55, "guia", 101, 5)
+    inserts = [ll for ll in cursor.execute.call_args_list if "INSERT INTO" in ll.args[0]]
+    assert len(inserts) == 1
+    assert inserts[0].args[1] == (55, "guia", 101, 5)
     conexion.commit.assert_called_once()
+
+
+def _guardar_elegido(lote_tipo, *, con_envase, renglon_id=55):
+    """`guardar_lotes_elegidos` con una salida armada a mano. Devuelve el cursor.
+
+    Se le da la SALIDA y no la ficha: `ficha_con_envase` viaja con la salida
+    desde `_SQL_SALIDAS_STOCK`, que es de donde lo lee la pared. Leer la
+    ficha por su cuenta sería la segunda copia de la condición.
+    """
+    from app.db import guardar_lotes_elegidos
+
+    salida = {"orden": (date(2026, 9, 7), datetime(2026, 9, 7, 11, 0)), "tipo": "armado",
+              "cantidad": 5.0, "renglon_id": renglon_id, "ficha_con_envase": con_envase}
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._entradas_y_salidas_stock", return_value=([], [salida])),
+    ):
+        guardar_lotes_elegidos(renglon_id, [
+            {"lote_tipo": lote_tipo, "lote_origen_id": 101, "bultos": 5},
+        ])
+    return cursor
+
+
+def test_guardar_lotes_elegidos_RECHAZA_el_cajon_en_una_ficha_con_envase():
+    """LA PUERTA QUE QUEDABA ABIERTA, y no es la pantalla: es el POST.
+
+    `lotes_senalados` corre en la pasada de los DIRIGIDOS, antes de que
+    `pasadas_de_lotes` decida qué se ofrece. Un renglón con el cajón elegido
+    a mano se llevaba el cajón, con envase y todo — medido el 09/09 sobre
+    `repartir_fifo`: 10 bultos consumidos donde la pared sola dejaba 10 sin
+    lote.
+
+    Que la pantalla ya no lo liste no alcanza: la guarda va donde se ESCRIBE.
+    Es lo mismo del tilde de la fecha del 08/09 — un formulario armado a mano
+    entraba sin ver el cartel.
+    """
+    with pytest.raises(ValueError) as rechazo:
+        _guardar_elegido("guia", con_envase=True)
+
+    # Y el motivo dice QUÉ pasó y qué hacer, no "no se pudo guardar".
+    assert "cajón" in str(rechazo.value)
+    assert "guía R" in str(rechazo.value)
+
+
+def test_la_pared_del_POST_no_traba_lo_que_SIEMPRE_estuvo_permitido():
+    """EL CASO FELIZ, y es el único que distingue una guarda que funciona de
+    una que frena siempre (corolario 30: la batería de negativos toda en
+    verde con la guarda rota).
+
+    Dos permitidos, por razones distintas: el cajón SIN envase —el caso de
+    todos los días, envase perdido— y la caja armada CON envase, que es
+    justo lo que la pared sí ofrece.
+    """
+    for lote_tipo, con_envase in (("guia", False), ("reproceso", True)):
+        cursor = _guardar_elegido(lote_tipo, con_envase=con_envase)
+        inserts = [ll for ll in cursor.execute.call_args_list if "INSERT INTO" in ll.args[0]]
+        assert len(inserts) == 1, f"{lote_tipo} con envase={con_envase} tendría que entrar"
+
+
+def test_la_pared_del_POST_pregunta_por_pasadas_de_lotes_y_no_por_su_propia_condicion():
+    """La razón vive en UN lugar. Si `guardar_lotes_elegidos` escribiera su
+    propio `if ficha_con_envase`, el día que la pared cambie quedarían dos
+    reglas y la que rechaza dejaría de ser la que el reparto aplica.
+
+    Se verifica moviendo la PARED y comprobando que la guarda la sigue: con
+    la pared apagada, el cajón con envase pasa a entrar.
+    """
+    from app import db as db_modulo
+
+    assert "ficha_con_envase" not in inspect.getsource(db_modulo.guardar_lotes_elegidos)
+
+    with patch("core.stock.pasadas_de_lotes", side_effect=lambda lotes, salida: [lotes]):
+        cursor = _guardar_elegido("guia", con_envase=True)
+    inserts = [ll for ll in cursor.execute.call_args_list if "INSERT INTO" in ll.args[0]]
+    assert len(inserts) == 1, "la guarda no siguió a la pared: tiene condición propia"
 
 
 def test_guardar_lotes_elegidos_vacio_deja_el_renglon_sin_correccion():
@@ -6476,11 +6561,18 @@ def test_anular_pedido_sin_armados_da_de_baja_SOLO_la_cabecera():
 def test_el_desglose_dice_si_la_ficha_tiene_ENVASE():
     """Para que el cartel del caso vacío no mienta.
 
-    Con envase, "no hay lotes cargados" es FALSO: el cajón está en la lista
-    con 0 propuestos, y lo que pasa es que la pared no se lo ofrece al
-    armado. El dato sale de la MISMA salida que decide la pared
-    (`_SQL_SALIDAS_STOCK`), no de una segunda lectura de la ficha — con dos
-    lecturas, el día que difieran el cartel diría una cosa y el reparto otra.
+    Con envase, "no hay lotes cargados" es FALSO: lo que pasa es que la pared
+    no le ofrece el cajón al armado. El dato sale de la MISMA salida que
+    decide la pared (`_SQL_SALIDAS_STOCK`), no de una segunda lectura de la
+    ficha — con dos lecturas, el día que difieran el cartel diría una cosa y
+    el reparto otra.
+
+    Desde el 09/09 EL CAJÓN TAMPOCO SE LISTA. Hasta entonces aparecía con 0
+    propuestos, y el input al lado alcanzaba para elegirlo a mano: la
+    corrección del que arma corre en la pasada de los dirigidos, ANTES de la
+    pared, así que el cajón se consumía igual. Este assert decía "el cajón
+    sigue en la lista" y era el diseño de ayer; hoy afirma lo contrario a
+    propósito.
     """
     from app.db import desglose_de_renglon_armado
 
@@ -6500,4 +6592,4 @@ def test_el_desglose_dice_si_la_ficha_tiene_ENVASE():
     assert desglose["ficha_con_envase"] is True
     # Y la pared se ve en la propuesta: el cajón está listado pero no se ofrece.
     assert desglose["propuesta"] == {}, "con envase y sin caja no se propone nada"
-    assert [lote["tipo_lote"] for lote in desglose["lotes"]] == ["guia"], "el cajón sigue en la lista"
+    assert desglose["lotes"] == [], "el cajón no se lista: no es una opción peor, es la que la regla prohíbe"

@@ -5556,7 +5556,7 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     emparejamiento": se cierra con la función de emparejamiento única, no
     escribiendo acá una tercera versión del reparto.
     """
-    from core.stock import propuesta_fifo, reparto_a_la_fecha, salidas_para_reparto
+    from core.stock import lotes_ofrecidos, propuesta_fifo, reparto_a_la_fecha, salidas_para_reparto
 
     conexion = obtener_conexion()
     try:
@@ -5586,10 +5586,23 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     reparto = reparto_a_la_fecha(entradas, salidas_para_reparto(anteriores), esta["orden"][0])
     elegidos = esta.get("lotes_elegidos")
 
+    # EL CAJÓN NO SE LISTA. En una ficha con envase un cajón no es una opción
+    # peor: es la cosa que la regla prohíbe. Listarlo sin input, o listarlo y
+    # avisar al guardar, dejan a la vista algo que no se puede elegir, y eso
+    # invita a preguntarse por qué está ahí. Si no queda ninguno, el caso
+    # vacío de la pantalla ya dice lo que corresponde —"faltan cajas armadas
+    # de esta ficha: cargá la guía R"— y no "no hay lotes".
+    #
+    # Sale de `lotes_ofrecidos`, la MISMA que usa el reparto y la que
+    # rechaza en guardar_lotes_elegidos: la pantalla no puede ofrecer algo
+    # que el server después no acepte.
+    ofrecidos = lotes_ofrecidos(reparto["lotes"], esta)
+    claves_ofrecidas = {(lote["tipo_lote"], lote["origen_id"]) for lote in ofrecidos}
+
     return {
         "articulo_id": articulo_id,
         "armado": armado,
-        "lotes": reparto["lotes"],
+        "lotes": ofrecidos,
         "editado": bool(elegidos),
         # Viaja a la pantalla para que el cartel del caso vacío diga la
         # verdad: con envase, "no hay lotes" es FALSO —el cajón está ahí— y
@@ -5597,8 +5610,15 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
         # pared, no de una segunda lectura de la ficha.
         "ficha_con_envase": bool(esta.get("ficha_con_envase")),
         # Lo que ya eligió, o la propuesta del más viejo primero si no tocó nada.
+        # Una corrección VIEJA puede apuntar a un lote que hoy no se ofrece
+        # (se guardó antes de la pared). Se filtra con la misma clave: si no
+        # se filtrara, la propuesta pondría bultos en una fila que no existe
+        # y el total de la pantalla no cerraría con ninguna suma visible.
+        # Lo que queda afuera aparece como "sin lote" en el total, que es lo
+        # que de verdad es.
         "propuesta": (
-            {f"{e['lote_tipo']}:{e['lote_origen_id']}": float(e["bultos"]) for e in elegidos}
+            {f"{e['lote_tipo']}:{e['lote_origen_id']}": float(e["bultos"]) for e in elegidos
+             if (e["lote_tipo"], e["lote_origen_id"]) in claves_ofrecidas}
             if elegidos
             else {f"{c['tipo_lote']}:{c['origen_id']}": c["bultos"]
                   # Con `esta` para que proponga lo mismo que va a repartir:
@@ -5624,10 +5644,49 @@ def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
     TRABA — lo que no esté elegido cae al FIFO, igual que hoy. Lo único que
     rechaza es lo imposible, y lo rechaza la base: más de lo que hay en un
     lote no se puede pedir, pero eso lo mira quien arma la propuesta.
+
+    LO QUE SÍ RECHAZA, y es la excepción a "avisa y no traba": un lote que la
+    pared no le ofrece a esta salida. No es un reparto discutible, es uno que
+    no pudo pasar — con envase, una caja no sale de un cajón sin una guía R
+    en el medio. La guarda va acá y no solo en la pantalla porque la pantalla
+    es la forma cómoda de cumplirla, no la que decide: sin esto, un POST a
+    mano entra igual y `lotes_senalados` —que corre ANTES de la pared, en la
+    pasada de los dirigidos— se lleva el cajón. Es el mismo hallazgo del
+    tilde de la fecha del 08/09: la guarda va donde se ESCRIBE.
+
+    El motivo sale de `lote_ofrecido`, que pregunta por `pasadas_de_lotes`.
+    Escrito acá como una condición propia se separaría de la pared el día
+    que la pared cambie, que es como se abrió este agujero.
     """
+    from core.stock import lote_ofrecido
+
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            if lotes:
+                cursor.execute(
+                    """
+                    SELECT articulo_id FROM pedidos_renglones
+                    WHERE id = %s AND armado_el IS NOT NULL AND anulado_el IS NULL
+                    """,
+                    (renglon_id,),
+                )
+                fila = cursor.fetchone()
+                # SIN AGREGADO a propósito: con un count(*) esto nunca sería
+                # None y el renglón inexistente pasaría de largo (corolario 27).
+                if fila is None:
+                    raise ValueError("Ese renglón no está armado: no se puede corregir de dónde salió.")
+                _, salidas = _entradas_y_salidas_stock(cursor, fila[0])
+                esta = next((s for s in salidas if s.get("renglon_id") == renglon_id), None)
+                if esta is None:
+                    raise ValueError("No se encontró la salida de ese renglón.")
+                for lote in lotes:
+                    candidato = {"tipo_lote": lote["lote_tipo"], "origen_id": lote["lote_origen_id"]}
+                    if not lote_ofrecido(candidato, esta):
+                        raise ValueError(
+                            "Esa mercadería sale en caja propia: no puede salir de un cajón. "
+                            "Lo que falta es la guía R que arme esas cajas."
+                        )
             _borrar_lotes_elegidos(cursor, renglon_id)
             for lote in lotes:
                 if float(lote["bultos"]) <= 0:

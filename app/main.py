@@ -13473,6 +13473,11 @@ def guardar_lotes_del_renglon_ruta(
     Se guarda SOLO LA EXCEPCIÓN: con el reparto vacío no queda ninguna fila y
     el renglón vuelve a repartirse por FIFO. Aceptar la propuesta es no
     guardar nada.
+
+    LO ÚNICO QUE TRABA es un lote que la pared no ofrece —con envase, un
+    cajón—, y lo traba `guardar_lotes_elegidos` en el server. La pantalla ya
+    no lo lista, así que por acá no puede llegar; esto es para el POST a
+    mano, que es donde la pared tenía la puerta abierta hasta el 09/09.
     """
     error, reparto_valor = _reparto_del_formulario(reparto)
     if error is None:
@@ -13485,6 +13490,11 @@ def guardar_lotes_del_renglon_ruta(
                     for fila in (reparto_valor or [])
                 ],
             )
+        except ValueError as rechazo:
+            # 400 y no 500: no se rompió nada, se pidió algo que no puede
+            # pasar. Y el motivo viaja, que es lo que distingue una pared de
+            # un "no se pudo".
+            raise HTTPException(status_code=400, detail=str(rechazo)) from rechazo
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"No se pudo guardar de dónde salió: {error_db}") from error_db
 

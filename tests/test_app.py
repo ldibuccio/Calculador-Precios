@@ -20788,6 +20788,27 @@ def test_aceptar_la_propuesta_BORRA_la_correccion_y_vuelve_al_FIFO():
     mock_guardar.assert_called_once_with(55, [])
 
 
+def test_el_lote_que_la_pared_no_ofrece_vuelve_400_con_el_MOTIVO():
+    """400 y no 500: no se rompió nada, se pidió algo que no puede pasar.
+
+    Y el motivo viaja hasta la respuesta. Un "no se pudo guardar de dónde
+    salió" manda a mirar la conexión; lo que hay que decir es que esa
+    mercadería sale en caja propia y que falta la guía R.
+    """
+    with patch("app.main.guardar_lotes_elegidos",
+               side_effect=ValueError("Esa mercadería sale en caja propia: no puede salir de "
+                                      "un cajón. Lo que falta es la guía R que arme esas cajas.")):
+        respuesta = cliente.post(
+            "/deposito/pedido/7/renglones/55/lotes",
+            data={"cliente_id": "1", "fecha": "2026-09-02", "sucursal": "VL",
+                  "reparto": '[{"tipo_lote": "guia", "origen_id": 101, "bultos": 5}]'},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "guía R" in respuesta.json()["detail"]
+
+
 def test_guardar_de_donde_salio_NO_TRABA_si_no_llega_a_lo_armado():
     """La diferencia con el reproceso, y es toda la entrega: acá el camión ya
     salió. Lo que no se reparta cae al FIFO o a sin_lote, como hasta hoy."""
