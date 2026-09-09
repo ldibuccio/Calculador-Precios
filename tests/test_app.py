@@ -3317,6 +3317,178 @@ def test_una_compra_NORMAL_no_dice_nada_de_fecha_anterior():
     assert "Cargada con fecha anterior" not in cuerpo
 
 
+def _merma_segunda(archivos=None, **datos):
+    """POST a la merma de segunda con lo mínimo, parcheando la base.
+
+    Por default va SIN foto y CON el tilde puesto, que es el camino que el
+    server acepta sin archivo. Los tests de la foto pasan `archivos` y sacan
+    el tilde.
+    """
+    campos = {"articulo_id": "1", "bultos": "7", "motivo": "podrido",
+              "fecha_operacion": "2026-09-09", "sin_foto_confirmado": "1"}
+    campos.update(datos)
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
+        patch("app.main.stock_deposito_por_articulo", return_value=[]),
+        patch("app.main.crear_salida_de_segunda") as mock_crear,
+    ):
+        respuesta = cliente.post("/deposito/stock/merma-segunda", data=campos,
+                                 files=archivos, follow_redirects=False)
+    return respuesta, mock_crear
+
+
+def test_la_merma_de_segunda_sale_del_POOL_y_no_del_stock_normal():
+    """LA COLISIÓN QUE NO PUEDE VOLVER. Guardada en movimientos_stock, la
+    merma bajaría el stock normal del artículo Y sería una salida del FIFO
+    que consume lotes — y la segunda no tiene lotes, su costo ya se fue a la
+    primera. Restaría de dos pilas equivocadas a la vez.
+    """
+    respuesta, mock_crear = _merma_segunda()
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(1, 7.0, date(2026, 9, 9),
+                                       destino="merma", motivo="podrido", foto_ruta=None)
+
+
+def test_la_merma_de_segunda_NO_TRABA_contra_el_pool():
+    """Mismo criterio que el remito, el conteo y el armado: si sale más de lo
+    que el sistema cree tener, el pool queda negativo y se ve. Un negativo
+    dice "acá pasó algo"; un freno diría "no pasó nada", que es mentira."""
+    respuesta, mock_crear = _merma_segunda(bultos="99999")
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.args[1] == 99999.0
+
+
+def test_la_merma_de_segunda_exige_motivo_DE_LA_LISTA():
+    """De lista y no texto libre, al revés que la merma de stock normal. La
+    base es la que rechaza; acá se ataja antes para no mandarla a rebotar."""
+    respuesta, mock_crear = _merma_segunda(motivo="cualquier cosa")
+    assert respuesta.status_code == 400
+    assert "no está en la lista" in respuesta.text
+    mock_crear.assert_not_called()
+
+    respuesta, mock_crear = _merma_segunda(motivo="")
+    assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_sin_foto_y_sin_el_TILDE_el_SERVER_no_guarda_ninguna_de_las_dos_mermas():
+    """LA GUARDA VA DONDE SE ESCRIBE, no donde se muestra.
+
+    El botón deshabilitado es la forma de cumplirla cómodo; el que decide
+    es el POST. Un formulario armado a mano —o el mismo formulario con el
+    JS caído— entra sin ver el tilde, que es exactamente cómo el aviso de
+    la fecha del pedido se pasaba con el mismo click que ya se iba a hacer.
+
+    Y es un TILDE y no un freno: con el tilde puesto la merma se guarda
+    igual (lo prueban los tests de al lado, que van sin foto). Lo que no
+    puede pasar es que salga sin foto sin que nadie lo decida.
+    """
+    respuesta, mock_crear = _merma_segunda(sin_foto_confirmado="")
+    assert respuesta.status_code == 400
+    assert "tildá" in respuesta.text
+    mock_crear.assert_not_called()
+
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
+        patch("app.main.crear_movimiento_stock") as mock_movimiento,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido"},
+        )
+
+    assert respuesta.status_code == 400
+    mock_movimiento.assert_not_called()
+
+
+def test_con_la_foto_puesta_el_tilde_NO_hace_falta_en_las_dos_mermas():
+    """El caso feliz, y va con el de arriba porque es el único que distingue
+    "la guarda funciona" de "la guarda siempre frena": una batería de casos
+    negativos pasa entera con una guarda que aborta siempre.
+
+    De paso fija el PREFIJO: la foto de una merma va a `merma/`, que es la
+    quinta pata de la limpieza de 3 años. Sin prefijo propio se mezcla con
+    las comandas y la limpieza la barre con otro criterio.
+    """
+    with (
+        patch("app.main._comprimir_foto_jpeg", return_value=b"chica") as mock_comprimir,
+        patch("app.main.subir_foto_comanda", return_value="merma/2026-09-09/x.jpg") as mock_subir,
+    ):
+        respuesta, mock_crear = _merma_segunda(
+            sin_foto_confirmado="",
+            archivos={"foto": ("tirado.jpg", _imagen_de_prueba(), "image/jpeg")},
+        )
+
+    assert respuesta.status_code == 303
+    mock_comprimir.assert_called_once()
+    assert mock_subir.call_args.kwargs["prefijo"] == "merma"
+    # Y la ruta llega hasta la escritura: si se quedara en la ruta, la foto
+    # estaría en el bucket y la merma no sabría cuál es la suya.
+    assert mock_crear.call_args.kwargs["foto_ruta"] == "merma/2026-09-09/x.jpg"
+
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
+        patch("app.main._comprimir_foto_jpeg", return_value=b"chica"),
+        patch("app.main.subir_foto_comanda", return_value="merma/2026-09-09/y.jpg") as mock_subir,
+        patch("app.main.crear_movimiento_stock") as mock_movimiento,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/merma",
+            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido"},
+            files={"foto": ("tirado.jpg", _imagen_de_prueba(), "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_subir.call_args.kwargs["prefijo"] == "merma"
+    assert mock_movimiento.call_args.kwargs["foto_ruta"] == "merma/2026-09-09/y.jpg"
+    # Con foto, el aviso NO grita SIN FOTO.
+    assert "SIN+FOTO" not in respuesta.headers["location"]
+
+
+def test_el_aviso_de_la_merma_avisa_cuando_quedo_SIN_FOTO():
+    """Se lo dice al que la cargó, que todavía está parado al lado de la
+    mercadería y puede sacarla — no al que mire Movimientos en un mes."""
+    respuesta, _ = _merma_segunda()
+    assert "SIN+FOTO" in respuesta.headers["location"]
+
+
+def test_una_foto_ROTA_no_guarda_la_merma_a_medias():
+    """Sube antes de escribir, así que si el archivo no es una foto la merma
+    NO se guarda: guardarla y perder la foto es el agujero que se viene a
+    tapar, y al revés (foto sin merma) deja un huérfano que barre la
+    limpieza."""
+    with patch("app.main._comprimir_foto_jpeg", return_value=None):
+        respuesta, mock_crear = _merma_segunda(
+            sin_foto_confirmado="",
+            archivos={"foto": ("nota.txt", b"esto no es una foto", "text/plain")},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Eso no es una foto" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_los_motivos_salen_del_CHECK_del_esquema_y_no_de_una_copia():
+    """Copiados envejecen en silencio: alguien agrega un motivo a la base y
+    la pantalla sigue ofreciendo los viejos. Se leen del mismo archivo que
+    define el constraint, igual que los siete orígenes de consumo."""
+    from app.main import MOTIVOS_MERMA_SEGUNDA
+
+    esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
+    bloque = re.search(
+        r"constraint remitos_segunda_motivo_de_la_lista\s*check \(motivo is null or motivo in \((.*?)\)\)",
+        esquema, re.S,
+    )
+    assert bloque is not None, "el CHECK de motivos cambió de forma: la pantalla se queda sin lista"
+    assert MOTIVOS_MERMA_SEGUNDA == tuple(re.findall(r"'([^']+)'", bloque.group(1)))
+    assert len(MOTIVOS_MERMA_SEGUNDA) >= 3
+
+
 def test_el_ingreso_retroactivo_pide_la_clave_de_GERENCIA():
     """La puerta primero. Es una perilla para reescribir el pasado: un lote
     fechado para atrás puede cambiar a qué lote se atribuyeron armados
@@ -17263,7 +17435,10 @@ def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
     ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
-            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido"},
+            # Con el tilde puesto: sin foto y sin tilde el server ya no
+            # guarda (la guarda vive en el POST, no en el botón deshabilitado).
+            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido",
+                  "sin_foto_confirmado": "1"},
             follow_redirects=False,
         )
 
@@ -17271,7 +17446,9 @@ def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
     # Siempre negativa: el signo lo pone el tipo, no la persona.
     # Sin lote elegido: el FIFO de siempre (lote en None).
     mock_crear.assert_called_once_with(
-        1, "merma", -3.0, "podrido", date(2026, 8, 25), lote_tipo=None, lote_origen_id=None
+        1, "merma", -3.0, "podrido", date(2026, 8, 25), lote_tipo=None, lote_origen_id=None,
+        # Sin foto: el operario pudo pasar por el modal y elegir guardar igual.
+        foto_ruta=None,
     )
     # Pantalla de OPERARIO: el aviso repite lo cargado, JAMÁS el stock
     # resultante (17 no puede aparecer).
@@ -17471,14 +17648,15 @@ def test_merma_dirigida_a_un_lote_guarda_el_lote_y_lo_dice_en_el_aviso():
     ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
-            data={"articulo_id": "2", "cantidad": "10", "motivo": "se pudrió", "lote": "reproceso:9"},
+            data={"articulo_id": "2", "cantidad": "10", "motivo": "se pudrió",
+                  "lote": "reproceso:9", "sin_foto_confirmado": "1"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
         2, "merma", -10.0, "se pudrió", date(2026, 8, 26),
-        lote_tipo="reproceso", lote_origen_id=9,
+        lote_tipo="reproceso", lote_origen_id=9, foto_ruta=None,
     )
     assert "Salieron+de%3A+Gu%C3%ADa+R9+armada+para+D%C3%ADa" in respuesta.headers["location"]
 
@@ -18936,7 +19114,7 @@ def test_remito_segunda_lista_solo_articulos_con_segunda_y_guarda():
 
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.crear_remito_segunda") as mock_crear,
+        patch("app.main.crear_salida_de_segunda") as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
@@ -18953,9 +19131,14 @@ def test_remito_segunda_lista_solo_articulos_con_segunda_y_guarda():
 
 
 def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
+    # Como vuelven de la base: `destino` es NOT NULL con default 'puesto',
+    # así que una fila sin él no existe en producción — y un fixture que no
+    # se parece a producción en el campo que decide la etiqueta convierte al
+    # test en el guardián del bug.
     remitos = [{"id": 7, "bultos": 2.0, "fecha_operacion": date(2026, 8, 25),
                 "creado_en": datetime(2026, 8, 25, 14, 0), "anulado_el": None,
-                "articulo_nombre": "Banana"}]
+                "destino": "puesto", "motivo": None, "fotos": 0,
+                "articulo_nombre": "EJEMPLO Uno"}]
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
@@ -18970,6 +19153,84 @@ def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
     # Sale del pool: cantidad negativa; y no tiene foto del sistema.
     assert "-2" in respuesta.text
     assert "el sistema decía" not in respuesta.text
+    # El remito al Puesto NO es una merma: no se le pide foto y por eso no
+    # lleva el "sin foto" que sí llevan las dos mermas.
+    assert "sin foto" not in respuesta.text
+
+
+def test_la_merma_de_segunda_NO_se_muestra_como_remitida_al_Puesto():
+    """LA RAMA QUE ENVEJECIÓ EN EL MISMO COMMIT. Cuando el único destino era
+    el Puesto, este listado escribía "Remito 2ª" y "Segunda remitida al
+    Puesto" fijos, y era cierto. Con la merma, esa misma rama diría que se
+    remitió al Puesto mercadería que se tiró — y el motivo real, que está en
+    la fila, quedaba tapado por la etiqueta.
+
+    Es el `else` que afirma algo: el día que se agrega un camino que puede
+    caer en él, el texto hay que releerlo.
+    """
+    salidas = [{"id": 9, "bultos": 4.0, "fecha_operacion": date(2026, 9, 9),
+                "creado_en": datetime(2026, 9, 9, 10, 0), "anulado_el": None,
+                "destino": "merma", "motivo": "podrido", "fotos": 1,
+                "articulo_nombre": "EJEMPLO Uno"}]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+    ):
+        cuerpo = cliente.get("/administracion/stock/movimientos").text
+
+    assert "Merma 2ª" in cuerpo
+    assert "Segunda remitida al Puesto" not in cuerpo
+    assert "podrido" in cuerpo
+
+
+def test_el_SIN_FOTO_llega_a_LAS_DOS_mermas_y_a_ninguna_otra_cosa():
+    """Una merma legítima y una que tapa un faltante se ven idénticas como
+    número; lo único que las separa sin trabar a nadie es que la que no
+    tiene foto lo diga acá.
+
+    Las mermas son DOS —la de stock y la del pool— y la pregunta se hace por
+    `es_merma` y no por `m.tipo == "merma"`, que dejaba a la de segunda
+    afuera. Un ajuste no lleva la marca: ahí no se pide foto, y un "sin
+    foto" en algo que nunca la tuvo se lee como un faltante.
+    """
+    movimientos = [
+        {"id": 1, "tipo": "merma", "cantidad": -3.0, "motivo": "podrido",
+         "fecha_operacion": date(2026, 9, 9), "creado_en": datetime(2026, 9, 9, 9, 0),
+         "anulado_el": None, "articulo_nombre": "EJEMPLO Uno", "cliente_nombre": None,
+         "stock_sistema": None, "lote_tipo": None, "fotos": 0},
+        {"id": 2, "tipo": "ajuste", "cantidad": -1.0, "motivo": "conteo",
+         "fecha_operacion": date(2026, 9, 9), "creado_en": datetime(2026, 9, 9, 8, 0),
+         "anulado_el": None, "articulo_nombre": "EJEMPLO Dos", "cliente_nombre": None,
+         "stock_sistema": None, "lote_tipo": None, "fotos": 0},
+    ]
+    salidas = [{"id": 9, "bultos": 4.0, "fecha_operacion": date(2026, 9, 9),
+                "creado_en": datetime(2026, 9, 9, 10, 0), "anulado_el": None,
+                "destino": "merma", "motivo": "podrido", "fotos": 0,
+                "articulo_nombre": "EJEMPLO Tres"}]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=movimientos),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+    ):
+        cuerpo = cliente.get("/administracion/stock/movimientos").text
+
+    # Dos "sin foto" y NO tres: el ajuste no lleva la marca.
+    assert cuerpo.count(">sin foto<") == 2
+    renglones = cuerpo.split('class="renglon')
+    ajuste = next(r for r in renglones if "EJEMPLO Dos" in r)
+    assert "sin foto" not in ajuste
+    # Y con foto, lo dice también: sin el par, "sin foto" no se distingue de
+    # una pantalla vieja que no muestra nada.
+    salidas[0]["fotos"] = 1
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+    ):
+        cuerpo = cliente.get("/administracion/stock/movimientos").text
+    assert ">con foto<" in cuerpo
+    assert "sin foto" not in cuerpo
 
 
 def test_anular_remito_segunda_vuelve_al_rango():

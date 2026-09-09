@@ -3480,8 +3480,24 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
                 WHERE h.foto_ruta IS NOT NULL
                 GROUP BY h.foto_ruta
                 HAVING MAX(h.creado_en) < ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
+                UNION
+                -- LA FOTO DE LA MERMA, y son DOS dueños posibles: la merma
+                -- de stock normal cuelga de movimientos_stock y la del pool
+                -- de segunda de remitos_segunda. Las dos por su
+                -- `fecha_operacion`, que es la fecha declarada del hecho.
+                --
+                -- La ANULADA también entra: la foto es el registro de lo
+                -- que se afirmó y no se borra al anular la merma, pero a
+                -- los 3 años se va como todo lo demás.
+                SELECT f.foto_ruta FROM fotos_merma f
+                JOIN movimientos_stock m ON m.id = f.movimiento_id
+                WHERE m.fecha_operacion < %s
+                UNION
+                SELECT f.foto_ruta FROM fotos_merma f
+                JOIN remitos_segunda r ON r.id = f.salida_segunda_id
+                WHERE r.fecha_operacion < %s
                 """,
-                (fecha_corte, fecha_corte, fecha_corte, fecha_corte),
+                (fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte, fecha_corte),
             )
             filas = cursor.fetchall()
         return [fila[0] for fila in filas]
@@ -3490,7 +3506,7 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
 
 
 def olvidar_foto_borrada(foto_ruta: str) -> None:
-    """Borra los registros de un archivo ya eliminado del bucket: sus filas de fotos_guia Y de fotos_recepcion.
+    """Borra los registros de un archivo ya eliminado del bucket: fotos_guia, fotos_recepcion, fotos_merma y precios_venta_historial.
 
     Se llama DESPUÉS de sacar el archivo del Storage (limpieza de fotos
     viejas), así que si acá no se borra ninguna fila queda una apuntando a
@@ -3513,6 +3529,8 @@ def olvidar_foto_borrada(foto_ruta: str) -> None:
             filas_tocadas += cursor.rowcount
             cursor.execute("DELETE FROM fotos_pedido WHERE foto_ruta = %s", (foto_ruta,))
             filas_tocadas += cursor.rowcount
+            cursor.execute("DELETE FROM fotos_merma WHERE foto_ruta = %s", (foto_ruta,))
+            filas_tocadas += cursor.rowcount
             # Acá NO se borra la fila: el precio es el dato y la foto era
             # solo de dónde salió. Se le saca la ruta, que es lo que quedó
             # apuntando a un archivo que ya no existe.
@@ -3522,9 +3540,10 @@ def olvidar_foto_borrada(foto_ruta: str) -> None:
             filas_tocadas += cursor.rowcount
             if filas_tocadas == 0:
                 raise ValueError(
-                    f"El archivo {foto_ruta} ya se borró del Storage y no tenía fila en fotos_guia "
-                    "ni en fotos_recepcion: o alguien la borró en el medio, o esta función está "
-                    "mirando tablas que no son"
+                    f"El archivo {foto_ruta} ya se borró del Storage y no tenía fila en ninguna "
+                    "de las tablas que guardan rutas (fotos_guia, fotos_recepcion, fotos_pedido, "
+                    "fotos_merma, precios_venta_historial): o alguien la borró en el medio, o esta "
+                    "función está mirando tablas que no son"
                 )
         conexion.commit()
     finally:
@@ -7153,6 +7172,7 @@ def crear_movimiento_stock(
     bultos_segunda: float | None = None,
     lote_tipo: str | None = None,
     lote_origen_id: int | None = None,
+    foto_ruta: str | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -7172,6 +7192,16 @@ def crear_movimiento_stock(
     Una merma puede venir DIRIGIDA a un lote (lote_tipo + lote_origen_id):
     el operario sabe cuál se pudrió y esa merma sale de ese lote, no del
     más viejo. Sin lote, todo sigue como siempre.
+
+    `foto_ruta` (la foto de lo que se tiró, ya subida al Storage) entra en
+    LA MISMA TRANSACCIÓN que el movimiento, y eso es lo que importa: una
+    merma guardada y su foto perdida porque el segundo commit falló sería
+    exactamente el agujero que la foto viene a tapar. O quedan las dos o no
+    queda ninguna.
+
+    El archivo se sube ANTES, así que un fallo del INSERT deja un huérfano
+    en el bucket. Es el mismo trato que la foto de balanza, y lo barre la
+    limpieza de 3 años.
     """
     conexion = obtener_conexion()
     try:
@@ -7184,11 +7214,21 @@ def crear_movimiento_stock(
                      pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
                      lote_tipo, lote_origen_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
                  lote_tipo, lote_origen_id),
             )
+            if foto_ruta:
+                # RETURNING y no currval(pg_get_serial_sequence(...)): el
+                # segundo también anda, pero se apoya en cómo se llama la
+                # secuencia y no se puede leer de un vistazo.
+                (movimiento_id,) = cursor.fetchone()
+                cursor.execute(
+                    "INSERT INTO fotos_merma (movimiento_id, foto_ruta) VALUES (%s, %s)",
+                    (movimiento_id, foto_ruta),
+                )
         conexion.commit()
         # Un rechazo que se va a segunda no toca el stock normal: entró y
         # salió en el mismo acto.
@@ -7660,7 +7700,14 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        m.stock_sistema, m.creado_en, m.anulado_el,
                        a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre,
                        m.pedido_renglon_id, m.destino_rechazo, m.bultos_segunda, m.lote_tipo,
-                       p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido
+                       p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido,
+                       -- CUÁNTAS FOTOS TIENE, no si tiene: el listado lo
+                       -- muestra como "sin foto" en gris cuando da 0, y eso
+                       -- es lo único que cambia el incentivo. Una merma
+                       -- legítima y una que tapa un faltante se ven iguales
+                       -- como número; el "sin foto" a la vista es lo que las
+                       -- separa sin trabar a nadie.
+                       (SELECT COUNT(*) FROM fotos_merma f WHERE f.movimiento_id = m.id) AS fotos
                 FROM movimientos_stock m
                 JOIN articulos a ON a.id = m.articulo_id
                 LEFT JOIN clientes cl ON cl.id = m.cliente_id
@@ -9070,8 +9117,31 @@ def anular_reproceso(reproceso_id: int) -> None:
         conexion.close()
 
 
-def crear_remito_segunda(articulo_id: int, bultos: float, fecha_operacion) -> None:
-    """Remito de segunda al Puesto (destino fijo): sale del pool de segunda y deja de ser problema del depósito.
+def crear_salida_de_segunda(articulo_id: int, bultos: float, fecha_operacion,
+                            destino: str = "puesto", motivo: str | None = None,
+                            foto_ruta: str | None = None) -> None:
+    """Saca bultos del pool de segunda. `destino` dice a dónde fueron.
+
+    Dos destinos y la misma resta: 'puesto' es el remito de siempre —se lo
+    lleva el Puesto y deja de ser problema del depósito— y 'merma' es que
+    se tiró. El pool baja igual con los dos, y ninguno mueve plata: la
+    segunda no lleva costo, porque el del reproceso viaja entero a la
+    primera y el de un rechazo mandado a segunda ya se imputó como pérdida
+    al entrar. Imputarla nombraría la misma pérdida dos veces.
+
+    NO TRABA CONTRA EL POOL, igual que el remito de siempre: si se saca más
+    de lo que el sistema cree tener, el pool queda negativo y se ve. Un
+    número negativo dice "acá pasó algo", que es información; un freno
+    diría "no pasó nada", que es mentira.
+
+    El motivo va SOLO con destino 'merma' y es obligatorio ahí — lo decide
+    la base con `remitos_segunda_motivo_solo_merma`, que cubre las dos
+    direcciones, y `remitos_segunda_motivo_de_la_lista`. Acá no se
+    revalida: si el constraint rechaza, el error sube.
+
+    `foto_ruta` entra en la MISMA transacción, por lo mismo que en
+    crear_movimiento_stock: una merma guardada con su foto perdida es
+    justo el agujero que la foto viene a tapar.
 
     A propósito no devuelve nada: la pantalla es de operario y el pool no
     se le muestra. El recupero económico va aparte, más adelante.
@@ -9080,23 +9150,40 @@ def crear_remito_segunda(articulo_id: int, bultos: float, fecha_operacion) -> No
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO remitos_segunda (articulo_id, bultos, fecha_operacion) VALUES (%s, %s, %s)",
-                (articulo_id, bultos, fecha_operacion),
+                """
+                INSERT INTO remitos_segunda (articulo_id, bultos, fecha_operacion, destino, motivo)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (articulo_id, bultos, fecha_operacion, destino, motivo),
             )
+            if foto_ruta:
+                (salida_id,) = cursor.fetchone()
+                cursor.execute(
+                    "INSERT INTO fotos_merma (salida_segunda_id, foto_ruta) VALUES (%s, %s)",
+                    (salida_id, foto_ruta),
+                )
         conexion.commit()
     finally:
         conexion.close()
 
 
 def listar_remitos_segunda_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
-    """Los remitos de segunda del rango (por fecha_operacion), anulados incluidos y marcados — para Movimientos."""
+    """Las SALIDAS del pool de segunda del rango (por fecha_operacion), anuladas incluidas y marcadas — para Movimientos.
+
+    Dos destinos: 'puesto' (el remito de siempre) y 'merma' (se tiró, con
+    motivo y foto). El nombre de la función quedó del día en que el remito
+    era la única salida, igual que el de la tabla.
+    """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT r.id, r.bultos, r.fecha_operacion, r.creado_en, r.anulado_el,
-                       a.nombre AS articulo_nombre
+                       r.destino, r.motivo,
+                       a.nombre AS articulo_nombre,
+                       (SELECT COUNT(*) FROM fotos_merma f WHERE f.salida_segunda_id = r.id) AS fotos
                 FROM remitos_segunda r
                 JOIN articulos a ON a.id = r.articulo_id
                 WHERE r.fecha_operacion >= %s AND r.fecha_operacion <= %s

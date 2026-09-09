@@ -1,7 +1,7 @@
 import inspect
 from datetime import date, datetime, time
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from app import db
 from app.db import (
@@ -1729,15 +1729,23 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     assert "JOIN guias_compra" in consulta
     assert "GROUP BY f.foto_ruta" in consulta
     assert "HAVING MAX(g.fecha_operacion) < %s" in consulta
-    # LOS CUATRO TIPOS DEL BUCKET EN LA MISMA PASADA. El que no esté acá
-    # no se borra NUNCA: no aparece siquiera como candidato. Y eso no es
-    # solo desperdicio — el bucket prefija por tipo solo lo NUEVO, así que
+    # LOS CINCO TIPOS DEL BUCKET EN LA MISMA PASADA. El que no esté acá no
+    # se borra NUNCA: no aparece siquiera como candidato. Y eso no es solo
+    # desperdicio — el bucket prefija por tipo solo lo NUEVO, así que
     # converge únicamente si lo viejo se vence (ver core/storage.py).
     assert "FROM fotos_recepcion" in consulta
     assert "FROM fotos_pedido" in consulta
     assert "FROM precios_venta_historial" in consulta
-    assert parametros == (date(2023, 8, 15),) * 4, (
-        "el corte va a las CUATRO patas del UNION, y es el mismo: una sola perilla"
+    assert "FROM fotos_merma" in consulta
+    # Y la merma son DOS patas, no una: sus dos dueños posibles viven en
+    # tablas distintas (movimientos_stock para el stock normal,
+    # remitos_segunda para el pool). Con una sola, las fotos del otro dueño
+    # serían inmortales.
+    assert consulta.count("FROM fotos_merma") == 2
+    assert "JOIN movimientos_stock m" in consulta
+    assert "JOIN remitos_segunda r" in consulta
+    assert parametros == (date(2023, 8, 15),) * 6, (
+        "el corte va a las SEIS patas del UNION, y es el mismo: una sola perilla"
     )
 
 
@@ -1750,13 +1758,19 @@ def test_listar_fotos_para_limpiar_vacio_da_lista_vacia():
     assert resultado == []
 
 
-def test_olvidar_foto_borrada_limpia_LAS_DOS_tablas():
+def test_olvidar_foto_borrada_limpia_TODAS_las_tablas_donde_vive_una_ruta():
     """El archivo ya se fue del Storage: la fila que quede apunta a la nada.
 
     Antes esto miraba solo fotos_guia y el test lo afirmaba como correcto.
-    Con las fotos de balanza eso deja "Ver foto" roto para siempre y SIN
+    Con las fotos de balanza eso dejaba "Ver foto" roto para siempre y SIN
     ningún síntoma: el DELETE no encuentra la fila, no da error, y el
     contador de la pantalla la cuenta como borrada.
+
+    Y VOLVIÓ A PASAR, con la misma forma: el test se quedó nombrando DOS
+    tablas cuando la función ya tocaba cuatro, así que fotos_pedido y
+    fotos_merma entraron sin nadie que las mirara. Un test que afirma un
+    subconjunto no protege lo que no nombra — por eso acá van todas Y el
+    total, para que agregar una tabla sin tocar este test falle.
     """
     conexion, cursor = _conexion_falsa()
     cursor.rowcount = 1
@@ -1765,8 +1779,16 @@ def test_olvidar_foto_borrada_limpia_LAS_DOS_tablas():
         olvidar_foto_borrada("2020-01-01/a.jpg")
 
     consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
-    assert any("DELETE FROM fotos_guia WHERE foto_ruta = %s" in c for c in consultas)
-    assert any("DELETE FROM fotos_recepcion WHERE foto_ruta = %s" in c for c in consultas)
+    for tabla in ("fotos_guia", "fotos_recepcion", "fotos_pedido", "fotos_merma"):
+        assert any(f"DELETE FROM {tabla} WHERE foto_ruta = %s" in c for c in consultas), tabla
+    # El historial de precios NO se borra: el precio es el dato y la foto
+    # era solo de dónde salió. Se le saca la ruta, que es lo que quedó
+    # apuntando a un archivo que no existe.
+    assert any("UPDATE precios_venta_historial SET foto_ruta = NULL" in c for c in consultas)
+    assert len(consultas) == 5, (
+        "apareció otra tabla con foto_ruta: agregala acá o la ruta huérfana "
+        "no se va a limpiar nunca, y el contador la va a contar como borrada"
+    )
     conexion.commit.assert_called_once()
     conexion.close.assert_called_once()
 
@@ -4350,6 +4372,70 @@ def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
         7, "merma", -3.0, "se pudrió", None, date(2026, 8, 26), 30.0, None, None,
         None, None, "reproceso", 9,
     )
+
+
+def test_la_foto_de_la_merma_entra_en_LA_MISMA_TRANSACCION_que_la_merma():
+    """O quedan las dos o no queda ninguna: una merma guardada con la foto
+    perdida porque el segundo commit falló sería exactamente el agujero que
+    la foto viene a tapar.
+
+    Se verifica por el ORDEN contra el único commit: los dos INSERT tienen
+    que estar antes. Un `crear_movimiento_stock` que commitea y después
+    guarda la foto pasa cualquier assert sobre los parámetros y falla acá.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,), (555,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(
+            7, "merma", -3.0, "se pudrió", date(2026, 8, 26),
+            foto_ruta="merma/2026-08-26/abc.jpg",
+        )
+
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert any("INSERT INTO movimientos_stock" in c for c in consultas)
+    foto = cursor.execute.call_args_list[-1]
+    assert "INSERT INTO fotos_merma" in foto.args[0]
+    # El id sale del RETURNING del INSERT de arriba, no de un currval().
+    assert foto.args[1] == (555, "merma/2026-08-26/abc.jpg")
+    conexion.commit.assert_called_once()
+    # Un solo commit, y DESPUÉS de las dos escrituras.
+    assert conexion.mock_calls.index(call.commit()) > max(
+        i for i, llamada in enumerate(conexion.mock_calls)
+        if "execute" in str(llamada)
+    )
+
+
+def test_sin_foto_la_merma_no_toca_fotos_merma():
+    """El caso feliz del otro lado: sin foto no se escribe una fila vacía.
+
+    Va con el de arriba a propósito — una batería que solo prueba el caso
+    con foto pasa entera con un INSERT que corre siempre.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(7, "merma", -3.0, "se pudrió", date(2026, 8, 26))
+
+    consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
+    assert not any("fotos_merma" in c for c in consultas)
+
+
+def test_la_foto_de_la_merma_de_segunda_cuelga_de_la_SALIDA_y_no_del_movimiento():
+    """Los dos dueños de fotos_merma son tablas distintas, y la de segunda no
+    pasa por movimientos_stock: guardarla como `movimiento_id` la colgaría de
+    un id de otra tabla — un puntero que apunta a cualquier cosa."""
+    from app.db import crear_salida_de_segunda
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(88,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_salida_de_segunda(1, 7.0, date(2026, 9, 9), destino="merma",
+                                motivo="podrido", foto_ruta="merma/2026-09-09/x.jpg")
+
+    foto = cursor.execute.call_args_list[-1]
+    assert "INSERT INTO fotos_merma (salida_segunda_id, foto_ruta)" in foto.args[0]
+    assert foto.args[1] == (88, "merma/2026-09-09/x.jpg")
+    conexion.commit.assert_called_once()
 
 
 def test_stock_de_porcion_es_la_MISMA_funcion_que_congela_el_conteo():

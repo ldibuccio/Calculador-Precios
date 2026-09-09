@@ -69,6 +69,42 @@ Esto no es una preferencia de estilo: es el entorno donde el SQL corre de
 verdad. Un script probado en Postgres local puede estar correcto y aun así
 romper —o peor, escribir a medias— en el editor.
 
+## Un `if not exists` sobre CONTENIDO es una trampa, no una protección
+
+Del 09/09. El bloque 2 de la migración de la merma de segunda crea el CHECK
+con la lista de motivos permitidos, envuelto en el `if not exists` de
+siempre. Se corrió con una lista, después se corrigió la lista, y se volvió
+a correr: **el bloque salió `DO` y no hizo nada.** El constraint ya existía,
+así que el `if not exists` lo salteó — con la lista vieja adentro.
+
+**El modo de falla es el peor que hay: un bloque idempotente que no hace
+nada se ve EXACTAMENTE IGUAL que uno que corrió bien.** Sale `DO` las dos
+veces. No hay error, no hay diferencia en la pantalla, y lo que quedó en la
+base no es lo que se mandó. Es la familia del push silencioso y la del
+editor que escribe a medias, con una vuelta más: acá el silencio es la
+respuesta CORRECTA del comando.
+
+La distinción que hay que hacer, y es la regla:
+
+- **Para ESTRUCTURA** —una columna, una tabla, un índice— el `if not
+  exists` está bien: la columna existe o no, y si existe es la misma.
+- **Para CONTENIDO** —una lista de valores permitidos, un umbral, un texto,
+  una fila de configuración— **la idempotencia deja de proteger y pasa a
+  esconder.** Lo que "ya existe" puede ser otra cosa que lo que se quiere.
+  Ahí va `drop ... if exists` y recrear, siempre, aunque parezca de más.
+
+**Cómo se reconoce antes de sufrirlo**: mirar qué protege el `if not
+exists`. Si adentro del bloque hay una lista de literales, un número, una
+fecha o una cadena, es contenido y la guarda está de más — o peor, en
+contra.
+
+Y lo único que lo agarró: **la consulta de verificación contaba el
+constraint POR NOMBRE**, así que dio `guarda_lista 0` cuando el bloque ya
+había salido `DO`. Es el corolario de siempre —la verificación se corre
+después y mira el estado final, no que el comando no se haya quejado— con
+la precisión de que **contar por nombre es lo que la hizo servir**: un
+"¿existe algún check?" habría dado 1 y tapado el problema igual.
+
 ## `git push origin main` parado en otra rama no falla ni avisa
 
 Pasó el 02/09. Dos commits quedaron en la rama, se corrió
@@ -1499,3 +1535,39 @@ Dos cosas que se llevan del método, más allá del botón:
   camino existe, está señalizado, y termina en una pantalla que resuelve un
   problema parecido pero distinto — que es más difícil de ver que un cartel
   que no lleva a ningún lado.
+
+Corolario 32, del 09/09: **una guarda puede estar PUESTA y no hacer nada, y
+el test que pregunta si está puesta no puede ver la diferencia.**
+
+Las dos mermas esconden el tilde de "no pude sacar la foto" cuando hay foto,
+para que no queden las dos cosas afirmadas a la vez. El JS pone
+`hidden`; el atributo quedaba puesto de verdad. Y el tilde se seguía viendo:
+`.sin-foto { display: flex }` le gana al `[hidden] { display: none }` del
+navegador, que viene sin `!important`.
+
+Cualquier test razonable lo da por bueno: el atributo está, el JS corrió, el
+DOM dice lo que tiene que decir. **Lo único que ve la diferencia entre "está
+escondido" y "se le pidió que se escondiera" es mirar la pantalla.**
+
+Y en la misma captura apareció el hermano, de la familia de la copia
+olvidada: `button.boton-guardar[disabled]` existía en la pantalla de segunda
+y no en la de merma normal, así que ahí el botón quedaba **rojo, grande y
+apagado** — el operario lo aprieta, no pasa nada, y la pantalla no le dice
+por qué. El `disabled` funcionaba perfecto; lo que faltaba era que se viera.
+
+Los dos son lo mismo dicho de dos formas: **el estado de un control es CSS,
+no el atributo.** Poner el atributo es la mitad del trabajo y es la mitad que
+los tests miran.
+
+De acá en adelante, cuando una pantalla esconda, deshabilite o resalte algo
+por JS: **la captura es parte del arreglo, no la verificación de después.**
+Y si el estado se define en dos plantillas, es una copia y vale el corolario
+2 — buscar la otra el día que se escribe la primera.
+
+**Y la forma general, que es más ancha que el `hidden`** (dicha por el dueño
+al leer esto): **el atributo es la INTENCIÓN, no el efecto.** Vale para todo
+lo que se verifique leyendo HTML —`hidden`, `disabled`, `required`, una
+clase, un `aria-`—: el test lee lo que la plantilla quiso, y lo que el
+operario tiene adelante lo decide el CSS, que el test no corre. Un assert
+sobre el atributo prueba que la orden se dio; no prueba que se haya
+cumplido. Los dos casos de acá tenían la orden dada.
