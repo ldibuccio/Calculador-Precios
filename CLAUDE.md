@@ -134,6 +134,86 @@ De acá en adelante, después de cualquier push que se dé por desplegado:
    confirma que corrió **no es la pantalla del editor: es la consulta de
    estado que se corre después**.
 
+## Una salida de una ficha con envase solo puede salir de esa ficha
+
+**Cosa fija del sistema, no el arreglo de un día.** Se tuvo que decir tres
+veces el 09/09 y cada vez apareció un lugar distinto donde no se cumplía.
+
+Cuando se arma un pedido y **no hay stock de la ficha del cliente, la única
+opción es sin asignar.** No toma de ningún otro lado: ni de los sueltos, ni
+del cajón, ni de otra ficha. La ficha queda **en negativo, en el aire**,
+hasta que alguien cargue la guía R — y ahí se acomoda solo, porque el
+reparto se rejuega en cada lectura y la comparación es por FECHA.
+
+**El hecho del mundo que la sostiene**, y por eso no es una preferencia:
+con envase, la mercadería sale en NUESTRA caja, y **una caja no puede salir
+de un cajón sin pasar por una guía R.** No es que prefiramos no tomar del
+cajón: es que ese armado no ocurrió. Si alguien dice que salió del cajón, lo
+que está describiendo es un reproceso que no se cargó.
+
+Sin envase es **envase perdido** (manzana, pera, arándano): sale en el cajón
+del proveedor, no se reprocesa nunca, y ahí nada de esto aplica.
+
+**LA CONDICIÓN ES UNA SOLA Y TIENE UN SOLO NOMBRE**: `envase_id IS NOT NULL`
+en `fichas_logistica`, que viaja con la salida como `ficha_con_envase` desde
+`_SQL_SALIDAS_STOCK`. No se deduce del nombre del artículo, ni del contenido
+de la caja, ni de ningún derivado — eso ya se midió y da un tercio mal
+(corolario 20). El campo directo acertó 630 de 630 y 135 de 135.
+
+Está escrita en tres lugares, y los tres tienen que decir lo mismo:
+
+1. **La cuenta de stock** — `_cajas_por_ficha` (app/db.py). Con envase, la
+   ficha **resta la salida completa y queda negativa**; los sueltos no
+   absorben el excedente. El piso `max(saldo, 0)` es SOLO de la rama sin
+   envase, y ahí sigue siendo obligatorio (04/09: Manzana Gob, total 63,
+   sueltos 233, botón de ajuste destructivo por 170).
+2. **El FIFO** — `pasadas_de_lotes` (core/stock.py). Con envase **no se le
+   ofrece el cajón**: una sola pasada, la de los preferidos, sin pasada de
+   respaldo. El bulto queda **sin lote**, que es información verdadera —
+   salió y el papel no está— y se costea cuando aparece la caja. El cajón
+   queda intacto a propósito: si el armado le bajara el restante, la guía R
+   que viene a explicarlo no lo encontraría y el freno la rechazaría.
+3. **La pantalla** — el Cotejo (templates/deposito_stock_cotejo.html). El
+   déficit **se ve como tal**, con el aviso de cargar la guía R, y sin botón
+   de ajuste de primero que lo tape: "Cargar la guía R" es el primario y el
+   ajuste queda en segundo plano. Y el aviso llega a la tarjeta de SUELTOS
+   aunque esa ficha no se haya contado nunca.
+
+### La vía de escape que SÍ queda abierta, y hay que decirla
+
+**`lotes_senalados` no pasa por la pared.** Corre en la PASADA 1 de
+`repartir_fifo` y de `atribuir_costos_fifo`, *antes* de que
+`pasadas_de_lotes` decida qué se ofrece. Un renglón con
+`pedidos_renglones_lotes_elegidos` apuntando a un cajón **se lleva el
+cajón**, con envase y todo.
+
+Medido el 09/09 corriendo `repartir_fifo`, no leyéndolo:
+
+```
+A) armado con envase, sin corrección     cajón consumido 0.0  · sin_lote 10.0
+B) el mismo, con el CAJÓN elegido        cajón consumido 10.0 · sin_lote  0.0
+C) el mismo, por merma dirigida          cajón consumido 10.0 · sin_lote  0.0
+```
+
+**Y es alcanzable desde la pantalla**, no solo por SQL: el desglose del
+armado lista TODOS los lotes con restante (`_desglose_para_pantalla` no
+filtra), el cajón aparece con 0 propuestos —eso está dicho en el comentario
+del caso vacío—, el input está ahí, y ni el submit ni
+`guardar_lotes_elegidos` ni el POST miran `ficha_con_envase`. Alcanza con
+tipear un número en el renglón del cajón y guardar.
+
+El argumento que la dejó abierta está escrito en `repartir_fifo` y es
+razonable en general: *"lo están SEÑALANDO con el dedo, no adivinándolo — si
+dicen que salió de ése, salió de ése, y discutirles la fecha sería negarles
+el piso"*. **Acá no aplica**, y es la única excepción a esa frase: no se
+trata de quién sabe más, sino de algo que no puede haber pasado. El piso
+manda sobre lo que se puede observar; no sobre lo físicamente imposible.
+
+Queda ABIERTA a propósito y no tapada en silencio: cerrarla toca la pantalla
+del operario y hay que decidir la forma (no listar el cajón, listarlo sin
+input, o avisar al guardar). Anotada acá para que la próxima vez que alguien
+diga "la pared está puesta" sepa dónde no lo está.
+
 ## Una regla de negocio no puede estar escrita dos veces
 
 Si la misma regla vive en el código y en la base, son **dos** reglas: se
