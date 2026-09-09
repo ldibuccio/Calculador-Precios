@@ -1571,3 +1571,68 @@ clase, un `aria-`—: el test lee lo que la plantilla quiso, y lo que el
 operario tiene adelante lo decide el CSS, que el test no corre. Un assert
 sobre el atributo prueba que la orden se dio; no prueba que se haya
 cumplido. Los dos casos de acá tenían la orden dada.
+
+Corolario 33, del 09/09: **estuve a punto de escribir acá, como hecho, una
+afirmación negativa que era falsa** — y lo que la frenó no fue saber la
+regla, fue el reflejo de verificar de más justo antes de dejarla escrita.
+
+Las tres consultas de mermas dieron cero en Frutamax, con `ultima_merma` en
+NULL: nunca se cargó una merma. Las dos de ajustes dieron cero desde el
+corte y **un solo ajuste en toda la historia**, del 26/08. La conclusión
+salió sola y sonaba bien: *"la baja no se registra en ninguna columna"*.
+
+**Es falsa. Hay una cuarta, y es la que más chances tiene de no estar en
+cero: `reprocesos.bultos_merma`.** No se parece a las otras tres —no es un
+movimiento, es una columna de la guía R— y la carga el operario en cada
+armado. Con treinta y pico de guías R cargadas, dar por inexistente el
+registro de la merma era negar el que más se usa.
+
+**Lo que hay que separar, y es la corrección de fondo: son DOS mermas
+distintas, no una mal registrada.**
+
+- **La del REPROCESO** — lo que se descarta al reenvasar. **Se registra**,
+  adentro del armado, desde siempre. Ver `db/mermas_4_la_de_las_guias_r.sql`.
+- **La de GALPÓN** — la fruta que se pudre esperando, fuera de todo armado.
+  **Ésa no tiene registro**, y es la que la pantalla nueva viene a cubrir.
+
+O sea que la pantalla no está creando la costumbre de cargar merma: la
+costumbre existe y vive adentro de la guía R. Lo que está creando es la
+puerta para el caso que hoy **no tiene ninguna**.
+
+Tres cosas que se llevan:
+
+1. **Enumeré las puertas que esperaba, no el concepto.** Miré
+   `movimientos_stock` (tipo 'merma' y tipo 'ajuste') y `remitos_segunda`,
+   que son las tres puertas de la baja de galpón — o sea, las tres formas
+   que ya tenía en la cabeza. Es **exactamente el corolario 20**, y lo
+   encontró exactamente lo que el 20 dice que hay que hacer: `grep` del
+   CONCEPTO (merma, descarte, tirado, perdido) en vez de la columna.
+2. **Saber la regla no la dispara.** El corolario 20 estaba escrito, con su
+   propio "una afirmación negativa necesita más verificación que una
+   positiva", y aun así redacté la negativa. Lo que la frenó fue el momento:
+   **estaba por escribirla en CLAUDE.md**, y una afirmación destinada a
+   quedar escrita se relee distinto que una dicha al pasar. La lección
+   operativa no es "acordate del 20": es **antes de dejar por escrito un
+   "no existe", grepear el concepto una vez más.** Cuesta un minuto y es lo
+   único que funcionó.
+3. **Una negativa mal escrita ACÁ es la peor de todas.** Este archivo se lee
+   como el estado del mundo. Un número mal en un mensaje se corrige al día
+   siguiente; un "no se registra en ninguna columna" escrito acá cierra la
+   búsqueda para el que lo lea en tres meses, y manda a construir el
+   registro que ya existía.
+
+**Y lo que SÍ está medido, dicho con precisión**, porque acá también se
+mezcla fácil: está medido que **no hay ni una merma ni un ajuste** desde el
+corte, así que ningún desvío del Cotejo se explica por ellos. Que los
+desvíos los cause la merma de galpón sin registrar es la **hipótesis
+principal, no un hecho**: podrían ser kilajes, conteos mal tomados, u otra
+cosa. Se mediría cruzando los desvíos con `corte_fifo_15`, y por ahora no
+está hecho. La ausencia de causa registrada no es la presencia de esta causa.
+
+**La consecuencia práctica**, y es la que vale para el galpón: la merma con
+foto y motivo va a ser **lo primero que se cargue en esa pantalla**. No hay
+hábito previo que corregir, así que lo que salga bien o mal las primeras
+veces es lo que va a quedar. Conviene que alguien mire lo que cargan la
+primera semana — con diez mermas encima se revisa también si la lista corta
+de motivos alcanza, que hoy es una apuesta que no se puede validar contra
+nada.
