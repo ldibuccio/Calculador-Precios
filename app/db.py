@@ -7578,16 +7578,49 @@ _SQL_STOCK_PARTIDO = """
           AND (r.armado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
               <= tope.fecha
         GROUP BY r.articulo_id, r.ficha_id
+    ), reingresos_ficha AS (
+        -- LO QUE VUELVE YA ARMADO. Vuelven cajas de un cliente, en su caja,
+        -- y son de la ficha por la que salieron. Hasta el 09/09 esta cuenta
+        -- no leía movimientos_stock, así que NINGÚN reingreso entró nunca en
+        -- una ficha: se los comían los sueltos por resta, y el sistema
+        -- contaba cajas armadas como cajones sin procesar.
+        --
+        -- LA FICHA NO ES UNA COLUMNA SUYA: se llega por el renglón del que
+        -- volvió (pedido_renglon_id -> pedidos_renglones.ficha_id), que es
+        -- el mismo vínculo que ya usa el costo del reingreso. Medido en
+        -- Frutamax el 09/09: 5 reingresos, los 5 con ficha alcanzable, 0
+        -- huérfanos.
+        --
+        -- 'segunda' y 'reproceso' quedan afuera: eso NO vuelve al stock
+        -- normal, va al pool de segunda (mismo criterio que la pata
+        -- `reingresos` de _SQL_SUMAS_STOCK).
+        --
+        -- Y el corte con la MISMA ventana que los otros dos términos: si
+        -- este mirara toda la historia y los otros solo lo posterior, la
+        -- resta mezclaría dos eras. Un reingreso anterior al corte ya está
+        -- adentro de la foto del stock inicial.
+        SELECT pr.articulo_id, pr.ficha_id, SUM(m.cantidad) AS total
+        FROM movimientos_stock m
+        JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id, corte, tope
+        WHERE m.anulado_el IS NULL AND m.tipo = 'reingreso_rechazo'
+          AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
+          AND pr.ficha_id IS NOT NULL
+          AND m.fecha_operacion > corte.fecha
+          AND m.fecha_operacion <= tope.fecha
+        GROUP BY pr.articulo_id, pr.ficha_id
     ), fichas_con_algo AS (
         SELECT articulo_id, ficha_id FROM armadas
         UNION
         SELECT articulo_id, ficha_id FROM salidas_ficha
+        UNION
+        SELECT articulo_id, ficha_id FROM reingresos_ficha
     )
     SELECT f.articulo_id, f.ficha_id,
-           COALESCE(a.total, 0) - COALESCE(s.total, 0) AS stock
+           COALESCE(a.total, 0) + COALESCE(re.total, 0) - COALESCE(s.total, 0) AS stock
     FROM fichas_con_algo f
     LEFT JOIN armadas a ON a.articulo_id = f.articulo_id AND a.ficha_id = f.ficha_id
     LEFT JOIN salidas_ficha s ON s.articulo_id = f.articulo_id AND s.ficha_id = f.ficha_id
+    LEFT JOIN reingresos_ficha re ON re.articulo_id = f.articulo_id AND re.ficha_id = f.ficha_id
 """
 
 

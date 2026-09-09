@@ -228,33 +228,51 @@ def test_borrar_una_compra_CON_FOTO_DE_BALANZA_devuelve_la_ruta_para_sacarla_del
     conexion.commit.assert_called_once()
 
 
-def test_la_cuenta_por_ficha_TODAVIA_no_lee_movimientos_stock():
-    """TESTIGO DE UN AGUJERO CONOCIDO. Cuando caiga, es porque se arregló.
+def test_la_cuenta_por_ficha_SUMA_los_reingresos_de_esa_ficha():
+    """Vuelven cajas ya armadas de un cliente: son de la ficha, no cajones sueltos.
 
-    `_SQL_STOCK_PARTIDO` tiene dos términos —lo que las guías R produjeron
-    y lo que salió en pedidos— y NO mira `movimientos_stock`. Por eso
-    ningún reingreso por rechazo entró nunca en una ficha: vuelven cajas ya
-    armadas de un cliente y el sistema las cuenta como cajones sueltos.
+    Hasta el 09/09 `_SQL_STOCK_PARTIDO` no leía `movimientos_stock`, así que
+    NINGÚN reingreso entró nunca en una ficha — se los comían los sueltos
+    por resta. Reemplaza al testigo que marcaba ese agujero.
 
-    El FIFO sí las cuenta: `TIPOS_LOTE_TRABAJADO` incluye
-    `reingreso_rechazo`. Esa asimetría es la que hace que el déficit de la
-    ficha y el "sin lote" del FIFO den distinto (25 contra 15 en el caso de
-    Limón del 08/09) — ver
-    docs/el_deficit_de_la_ficha_y_el_sin_lote_del_fifo.md.
-
-    NO está acá para defender el agujero: está para que cerrarlo no pase
-    desapercibido. El día que `_SQL_STOCK_PARTIDO` sume una tercera pata,
-    este test cae, y el que lo vea tiene que ir al doc, revisar cuál de los
-    cuatro mecanismos sigue vivo, y BORRAR este test — no arreglarlo.
+    Se mira el SQL y no un resultado porque la consulta es una constante:
+    lo que puede volver a romperse es que alguien saque la pata, no que
+    calcule mal una fila.
     """
     from app.db import _SQL_STOCK_PARTIDO
-    from core.stock import TIPOS_LOTE_TRABAJADO
 
-    assert "movimientos_stock" not in _SQL_STOCK_PARTIDO, (
-        "la cuenta por ficha empezó a leer movimientos_stock: leé el doc y borrá este test"
+    assert "reingresos_ficha" in _SQL_STOCK_PARTIDO
+    # Por el renglón del que volvió: la ficha no es columna de movimientos_stock.
+    assert "pedidos_renglones pr ON pr.id = m.pedido_renglon_id" in _SQL_STOCK_PARTIDO
+    # Y SUMA, no resta: es mercadería que vuelve.
+    assert "COALESCE(a.total, 0) + COALESCE(re.total, 0) - COALESCE(s.total, 0)" in _SQL_STOCK_PARTIDO
+
+
+def test_el_reingreso_a_SEGUNDA_no_entra_en_la_ficha():
+    """Lo que va al pool de segunda no vuelve al stock normal.
+
+    Mismo criterio que la pata `reingresos` de _SQL_SUMAS_STOCK: si acá
+    entrara y allá no, la resta de los sueltos quedaría descuadrada — un
+    término en una cuenta y no en la otra cae ENTERO en la diferencia.
+    """
+    from app.db import _SQL_STOCK_PARTIDO
+
+    assert "m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock'" in _SQL_STOCK_PARTIDO
+
+
+def test_las_TRES_patas_de_la_cuenta_por_ficha_usan_la_MISMA_ventana_del_corte():
+    """Si una mirara toda la historia y las otras solo lo posterior, la resta mezcla dos eras.
+
+    Es la asimetría del día del corte, que en este proyecto ya apareció
+    ocho veces. La pata nueva se escribe con el mismo recorte que las dos
+    que ya estaban, y esto lo fija.
+    """
+    from app.db import _SQL_STOCK_PARTIDO
+
+    assert _SQL_STOCK_PARTIDO.count("corte.fecha") >= 3, (
+        "alguna pata de la cuenta por ficha dejó de recortar por el corte"
     )
-    # Y el otro lado de la asimetría, para que se lea junta con la de arriba.
-    assert "reingreso_rechazo" in TIPOS_LOTE_TRABAJADO
+    assert "m.fecha_operacion > corte.fecha" in _SQL_STOCK_PARTIDO
 
 
 def test_la_migracion_de_fotos_recepcion_NO_lleva_on_delete_cascade():

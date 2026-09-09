@@ -57,11 +57,44 @@ direcciones. `déficit ≥ sin_lote` lo rompe el mecanismo 2 (cronología), y
 `sin_lote ≥ déficit` lo rompe el 1 (reingreso). Medido: 25 contra 15, con los
 dos mecanismos actuando a la vez y en sentidos opuestos.
 
-Lo que sí se puede, y es lo que hay: **un testigo del mecanismo 1**, que es
-el único que es un bug. Ver
-`test_la_cuenta_por_ficha_TODAVIA_no_lee_movimientos_stock` — pincha el
-agujero conocido y **cae el día que se cierre**, obligando a releer esto en
-vez de descubrirlo de nuevo.
+Lo que sí se podía era **un testigo del mecanismo 1**, el único que era un
+bug. Ya cumplió y se borró: ver abajo.
 
-Cerrado el 1, siguen quedando el 2, el 3 y el 4. Los números van a seguir sin
+Cerrado el 1, **siguen el 2, el 3 y el 4**. Los números van a seguir sin
 coincidir, y va a seguir estando bien.
+
+## El mecanismo 1 quedó CERRADO (09/09)
+
+`_SQL_STOCK_PARTIDO` ganó una tercera pata, `reingresos_ficha`, que llega a
+la ficha por `pedido_renglon_id → pedidos_renglones.ficha_id`. Antes de
+tocarlo se midió en Frutamax: **5 reingresos, los 5 con ficha alcanzable, 0
+huérfanos, 60 bultos, 4 artículos** — no había ningún caso que no se pudiera
+reatribuir, y por eso el arreglo no necesitó decidir qué hacer con los que
+no llegan a una ficha.
+
+El testigo `test_la_cuenta_por_ficha_TODAVIA_no_lee_movimientos_stock` cayó
+al hacer el cambio, como decía su docstring, y **se borró en el mismo
+commit**. Lo reemplazan tres tests que fijan lo que ahora tiene que ser
+cierto: que la pata está, que el reingreso a *segunda* NO entra (va al pool
+de segunda, mismo criterio que `_SQL_SUMAS_STOCK`), y que las TRES patas
+recortan por el corte con la misma ventana.
+
+### Y una trampa que la medición destapó
+
+**El total de bultos de reingreso NO es lo que se mueve en pantalla.** Los
+sueltos salen de `total − Σ max(saldo, 0)`, así que un reingreso que solo
+achica un déficit —la ficha sigue en negativo— **no mueve un solo bulto**:
+baja el déficit y nada más.
+
+Medido con el A/B sobre el mismo fixture de Limón:
+
+```
+ANTES (dos patas)      ficha: disponibles 0 · deficit 25 · SUELTOS 16
+DESPUES (tres patas)   ficha: disponibles 0 · deficit 10 · SUELTOS 16
+```
+
+Los sueltos **no se movieron**. Buscar los 60 bultos en la pantalla y no
+encontrarlos mandaría a perseguir un bug que no existe — que es el corolario
+6 otra vez. Lo que se mueve por ficha es
+`max(saldo + reingreso, 0) − max(saldo, 0)`, y lo mide
+`db/reingresos_2_delta_por_articulo.sql`.
