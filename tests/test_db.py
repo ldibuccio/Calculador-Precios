@@ -228,6 +228,35 @@ def test_borrar_una_compra_CON_FOTO_DE_BALANZA_devuelve_la_ruta_para_sacarla_del
     conexion.commit.assert_called_once()
 
 
+def test_la_cuenta_por_ficha_TODAVIA_no_lee_movimientos_stock():
+    """TESTIGO DE UN AGUJERO CONOCIDO. Cuando caiga, es porque se arregló.
+
+    `_SQL_STOCK_PARTIDO` tiene dos términos —lo que las guías R produjeron
+    y lo que salió en pedidos— y NO mira `movimientos_stock`. Por eso
+    ningún reingreso por rechazo entró nunca en una ficha: vuelven cajas ya
+    armadas de un cliente y el sistema las cuenta como cajones sueltos.
+
+    El FIFO sí las cuenta: `TIPOS_LOTE_TRABAJADO` incluye
+    `reingreso_rechazo`. Esa asimetría es la que hace que el déficit de la
+    ficha y el "sin lote" del FIFO den distinto (25 contra 15 en el caso de
+    Limón del 08/09) — ver
+    docs/el_deficit_de_la_ficha_y_el_sin_lote_del_fifo.md.
+
+    NO está acá para defender el agujero: está para que cerrarlo no pase
+    desapercibido. El día que `_SQL_STOCK_PARTIDO` sume una tercera pata,
+    este test cae, y el que lo vea tiene que ir al doc, revisar cuál de los
+    cuatro mecanismos sigue vivo, y BORRAR este test — no arreglarlo.
+    """
+    from app.db import _SQL_STOCK_PARTIDO
+    from core.stock import TIPOS_LOTE_TRABAJADO
+
+    assert "movimientos_stock" not in _SQL_STOCK_PARTIDO, (
+        "la cuenta por ficha empezó a leer movimientos_stock: leé el doc y borrá este test"
+    )
+    # Y el otro lado de la asimetría, para que se lea junta con la de arriba.
+    assert "reingreso_rechazo" in TIPOS_LOTE_TRABAJADO
+
+
 def test_la_migracion_de_fotos_recepcion_NO_lleva_on_delete_cascade():
     """Leído del esquema real, no de la memoria de quien lo escribió.
 
