@@ -14137,19 +14137,27 @@ def test_el_excel_del_remanente_trae_el_fisico_y_la_diferencia():
     assert filas["Berenjena Caja Día"][1:] == (20.0, "—", None, None)
 
 
-def test_el_excel_del_remanente_distingue_sin_conteo_de_no_se_cuenta():
-    """Dos "—" con el mismo símbolo serían un solo dato con dos significados.
+def test_la_SEGUNDA_del_excel_espera_un_conteo_como_cualquier_otra_porcion():
+    """Este test decía lo contrario hasta el 09/09, y decía bien: la segunda
+    no se podía contar —conteos_stock tenía dos porciones y la segunda no
+    tiene ficha— así que su celda ponía "no se cuenta" para que nadie saliera
+    a buscar un conteo imposible.
 
-    La segunda NO SE PUEDE contar: Stock Físico ofrece "los bultos sueltos" o
-    "las cajas de una ficha", y crear_conteo_stock solo acepta ficha_id o None.
-    Su fila diría "—" para siempre, y alguien saldría a buscar un conteo que no
-    puede existir.
+    Con `es_segunda` en la tabla ya se cuenta, y ese cartel pasó a ser falso:
+    decía "no puede pasar" sobre algo que ahora es lo que hay que hacer. Es
+    el default que AFIRMA algo — mientras estuvo bien fue útil, y el día que
+    dejó de estarlo mandaba para el lado contrario.
+
+    Ahora su "—" significa lo mismo que el de cualquier porción sin contar:
+    falta contarla. Que es exactamente el caso de los 42 bultos que nadie
+    verificaba.
     """
     _, hoja = _hoja_remanente()
     filas = {f[0]: f for f in hoja.iter_rows(min_row=5, max_col=5, values_only=True)}
 
-    assert filas["Mandarina Segunda"][2] == "no se cuenta"
+    assert filas["Mandarina Segunda"][2] == "—"
     assert filas["Berenjena Caja Día"][2] == "—"
+    assert "no se cuenta" not in [f[2] for f in filas.values()]
 
 
 def test_el_excel_del_remanente_pinta_solo_las_filas_con_diferencia():
@@ -17577,7 +17585,7 @@ def test_stock_fisico_guarda_el_conteo_y_el_aviso_no_muestra_el_sistema():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(1, 12.0, ficha_id=None)
+    mock_crear.assert_called_once_with(1, 12.0, ficha_id=None, es_segunda=False)
     # Pantalla de OPERARIO: el aviso repite SOLO lo contado.
     destino = respuesta.headers["location"]
     assert "Conteo+guardado%3A+12+bultos+sueltos+de+Banana" in destino
@@ -17585,6 +17593,49 @@ def test_stock_fisico_guarda_el_conteo_y_el_aviso_no_muestra_el_sistema():
     # El artículo vuelve puesto: de un mismo artículo se cuentan los
     # sueltos y después las cajas de cada ficha, uno atrás de otro.
     assert "articulo_id=1" in destino
+
+
+def test_stock_fisico_guarda_el_conteo_de_la_SEGUNDA():
+    """La tercera porción. Hasta el 09/09 no se podía cargar y había 42
+    bultos de un artículo que nadie verificaba contra el piso."""
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
+        patch("app.main.crear_conteo_stock") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "1", "cantidad": "42", "que_conto": "segunda"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    # SIN ficha: la base lo prohíbe (conteos_stock_segunda_sin_ficha) y acá
+    # las dos ramas se excluyen antes de llegar.
+    mock_crear.assert_called_once_with(1, 42.0, ficha_id=None, es_segunda=True)
+    # Y el aviso dice QUÉ se contó, sin decir nunca el número del sistema.
+    destino = respuesta.headers["location"]
+    assert "Conteo+guardado%3A+42+bultos+de+segunda+de+EJEMPLO+Uno" in destino
+    assert "sistema" not in destino
+
+
+def test_la_SEGUNDA_se_ofrece_ARRIBA_de_las_fichas_y_no_al_final():
+    """Las dos primeras opciones son propiedades del ARTÍCULO y están
+    siempre; las fichas son una lista que puede ser larga. Algo puesto abajo
+    de ella se encuentra o no según cuántos clientes tenga ese artículo.
+
+    Se mide por POSICIÓN y no por presencia: estar en el HTML no alcanza
+    para que el operario la use, que es de lo que se trata.
+    """
+    with (
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main._fichas_por_articulo",
+              return_value={"1": [{"id": 11, "nombre": "Caja de ejemplo", "kilaje": None}]}),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
+    ):
+        cuerpo = cliente.get("/deposito/stock/fisico?articulo_id=1").text
+
+    assert cuerpo.index('value="sueltos"') < cuerpo.index('value="segunda"') < cuerpo.index('value="11"')
 
 
 def test_stock_fisico_guarda_el_conteo_de_las_cajas_de_una_ficha():
@@ -17602,7 +17653,7 @@ def test_stock_fisico_guarda_el_conteo_de_las_cajas_de_una_ficha():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(7, 12.0, ficha_id=11)
+    mock_crear.assert_called_once_with(7, 12.0, ficha_id=11, es_segunda=False)
     assert "cajas+de+Vea" in respuesta.headers["location"]
 
 
@@ -17688,7 +17739,7 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
         )
     # 0 vale: contó y no hay ninguno.
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(1, 0.0, ficha_id=None)
+    mock_crear.assert_called_once_with(1, 0.0, ficha_id=None, es_segunda=False)
 
     with (
         patch("app.main.crear_conteo_stock") as mock_crear,
@@ -20122,7 +20173,7 @@ def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
         # mismos, y parcharla siempre acá les pisaría el suyo.
         if sueltas is not None:
             pila.enter_context(patch("app.main.stock_de_porcion",
-                                     side_effect=lambda a, f: sueltas[(a, f)]))
+                                     side_effect=lambda a, f, seg=False: sueltas[(a, f)]))
         return cliente.get("/administracion/stock/cotejo")
 
 
@@ -20298,6 +20349,78 @@ def test_con_DEFICIT_el_aviso_es_el_del_deficit_y_NO_el_de_signos_opuestos():
     assert cuerpo.count("cargá la guía R que faltó") == 2
 
 
+def _articulo_con_segunda():
+    """Un artículo con sus tres porciones contadas. Los sueltos y la segunda
+    tienen los DOS `ficha_id` None: son las únicas que comparten ese campo, y
+    por eso son las que chocan si la clave no lleva `es_segunda`."""
+    conteos = [
+        {"id": 1, "articulo_id": 3, "cantidad": 5.0, "stock_sistema": 5.0,
+         "creado_en": datetime(2026, 9, 9, 9, 0), "articulo_nombre": "EJEMPLO Tres",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None, "es_segunda": False},
+        {"id": 2, "articulo_id": 3, "cantidad": 7.0, "stock_sistema": 7.0,
+         "creado_en": datetime(2026, 9, 9, 9, 0), "articulo_nombre": "EJEMPLO Tres",
+         "ficha_id": 9, "ficha_nombre": "Caja de ejemplo", "ficha_cliente": "Cliente",
+         "es_segunda": False},
+        {"id": 3, "articulo_id": 3, "cantidad": 40.0, "stock_sistema": 42.0,
+         "creado_en": datetime(2026, 9, 9, 9, 0), "articulo_nombre": "EJEMPLO Tres",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None, "es_segunda": True},
+    ]
+    porciones = [
+        {"articulo_id": 3, "ficha_id": None, "bultos": 5.0, "es_segunda": False},
+        {"articulo_id": 3, "ficha_id": 9, "bultos": 7.0, "es_segunda": False},
+        {"articulo_id": 3, "ficha_id": None, "bultos": 42.0, "es_segunda": True},
+    ]
+    return conteos, porciones
+
+
+def test_el_cotejo_le_da_a_la_SEGUNDA_su_propio_numero_y_no_el_de_los_sueltos():
+    """LA CLAVE SON TRES COSAS. Con dos, el sistema de una porción se le pega
+    a la otra —las dos tienen `ficha_id` None— y las DOS tarjetas mienten a
+    la vez: los sueltos dirían 42 y la segunda 5.
+
+    Los números están a propósito muy separados (5 contra 42): con dos
+    parecidos, la clave equivocada daría un desvío plausible y nada avisaría.
+    """
+    cuerpo = _cotejo(*_articulo_con_segunda()).text.split("</style>")[-1]
+
+    # LOS TÍTULOS DE LAS TRES TARJETAS, leídos del HTML y comparados enteros.
+    # Un `assert "Bultos sueltos" in cuerpo` pasaba con el bug puesto: lo
+    # ponía la tarjeta de los sueltos, y la de la segunda se titulaba así
+    # TAMBIÉN —tiene ficha_id None— así que el assert miraba algo que se
+    # parecía a lo que importaba. Se comparan los tres, no se busca uno.
+    titulos = [t.strip() for t in re.findall(r'class="que-conto">(.*?)</p>', cuerpo, re.S)]
+    assert titulos == ["Bultos sueltos", "Cajas de Caja de ejemplo · Cliente", "Segunda"]
+    # Segunda: contó 40 sobre 42 → faltan 2, que es SU desvío y no el de nadie.
+    assert "+2" in cuerpo
+    assert "42" in cuerpo
+    # Y NO le da el consejo de las fichas: en el pool de segunda no hay fichas.
+    assert "lo que cambia entre fichas" not in cuerpo
+    assert "La segunda entra por el" in cuerpo
+
+
+def test_la_SEGUNDA_no_ofrece_AJUSTAR_ni_entra_en_el_aviso_de_signos_opuestos():
+    """Dos reglas, y las dos por el mismo motivo: la segunda es otro circuito.
+
+    - Un ajuste mueve el TOTAL del artículo y la segunda no está en el total
+      (la pata `reingresos` la excluye, el pool la suma aparte). Ajustar
+      desde ahí movería la pila equivocada — corolario 8.
+    - El aviso de signos opuestos es la firma de una guía R que fue a la
+      ficha equivocada, o sea mercadería que cambió de pila DENTRO del stock
+      normal. Un signo contrario de la segunda no dice nada de una guía R.
+    """
+    conteos, porciones = _articulo_con_segunda()
+    # Los sueltos en −3 y la segunda en +2: signos opuestos si jugara.
+    conteos[0]["cantidad"] = 8.0
+
+    cuerpo = _cotejo(conteos, porciones).text.split("</style>")[-1]
+
+    assert "ficha equivocada" not in cuerpo
+    # El ajuste se ofrece en los SUELTOS (que sí mueven el total)...
+    assert "/administracion/stock/ajustar?articulo_id=3&amp;contado=8.0" in cuerpo
+    # ...y NO en la segunda: un solo botón de ajuste en toda la pantalla.
+    assert cuerpo.count("Ajustar a lo contado") == 1
+
+
 def test_el_cotejo_pone_los_desvios_ARRIBA_y_no_separa_las_porciones():
     """Con treinta tarjetas, un desvío en el puesto veinte no existe.
 
@@ -20411,7 +20534,9 @@ def test_cotejo_le_pone_numero_a_la_porcion_que_el_remanente_no_lista():
     # sistema cree tener (y lo que cree tener es imposible, por eso se mira).
     assert "-3" in cuerpo
     assert "Ajustar a lo contado" in cuerpo
-    porcion.assert_called_once_with(5, None)
+    # Con las TRES claves: sin la tercera, el fallback pediría los sueltos
+    # cuando lo que falta en las porciones es la segunda del mismo artículo.
+    porcion.assert_called_once_with(5, None, False)
 
 
 def test_cotejo_si_ofrece_ajustar_stock_en_una_diferencia_de_SUELTOS():

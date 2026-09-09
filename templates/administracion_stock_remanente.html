@@ -252,7 +252,7 @@
          fila. Va acá y no desde Movimientos porque la pregunta que contesta
          es "de este número, ¿cómo llegué?", y el número está justo acá. #}
       {% for p in porciones %}
-      <a class="porcion" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if not p.contable %}&segunda=1{% endif %}">
+      <a class="porcion" href="/administracion/stock/remanente/porcion?articulo_id={{ p.articulo_id }}&fecha={{ fecha }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">
         <span class="que">{{ p.nombre }}</span>
         <span class="cuanto">{{ p.bultos|numero }}</span>
       </a>

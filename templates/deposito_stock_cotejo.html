@@ -98,8 +98,14 @@
     {% for f in filas %}
     <div class="tarjeta {% if f.dif_hoy not in (none, 0) %}con-diferencia{% endif %}">
       <p class="encabezado">{{ f.articulo_nombre }}</p>
+      {# LA SEGUNDA VA PRIMERO en el if, y no es cosmético: tiene `ficha_id`
+         None igual que los sueltos, así que preguntando solo por la ficha su
+         tarjeta se titula "Bultos sueltos" y el operario lee el desvío de la
+         segunda como si fuera el de la pila suelta. Es el mismo choque de la
+         clave, servido en la presentación. #}
       <p class="que-conto">
-        {% if f.ficha_id %}Cajas de {{ f.ficha_nombre }}{% if f.ficha_cliente %} · {{ f.ficha_cliente }}{% endif %}
+        {% if f.es_segunda %}Segunda
+        {% elif f.ficha_id %}Cajas de {{ f.ficha_nombre }}{% if f.ficha_cliente %} · {{ f.ficha_cliente }}{% endif %}
         {% else %}Bultos sueltos{% endif %}
       </p>
       <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
@@ -183,6 +189,21 @@
          verdad encima. Más difícil de apretar, no imposible. #}
       <a class="boton-ajustar {% if f.opuestas or f.deficit %}secundario{% endif %}"
          href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
+      {% elif f.es_segunda and f.dif_hoy not in (none, 0) %}
+      {# LA SEGUNDA ES OTRO CIRCUITO y necesita su propio consejo. Caía en la
+         rama de abajo —la de las fichas— y le decía "lo que cambia entre
+         fichas es a cuál fueron las cajas", que sobre el pool de segunda no
+         significa nada: ahí no hay fichas. Un default que afirma algo es una
+         aserción sin verificar, y ésta mandaba a Guías R a buscar una
+         atribución que no existe.
+
+         Tampoco lleva "Ajustar": un ajuste mueve el TOTAL del artículo y la
+         segunda no está en el total. Hoy no hay pantalla que corrija el
+         pool — se corrige en lo que lo alimenta, y eso es lo que dice. #}
+      <p class="ayuda-ficha">La segunda entra por el <strong>renglón de segunda de las guías R</strong> y
+        por los <strong>rechazos que no vuelven al stock</strong>, y sale por el <strong>remito al
+        Puesto</strong>. Un desvío acá se corrige en alguno de esos tres, no ajustando el stock:
+        el ajuste mueve el total del artículo, y la segunda no está en ese total.</p>
       {% elif f.dif_hoy not in (none, 0) and not f.opuestas and not f.deficit %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar

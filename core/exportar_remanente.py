@@ -69,7 +69,7 @@ def _escribir_conteo(hoja, fila, porcion) -> None:
     contar") para poder verificarla; esa columna se fue con la foto.
     """
     if porcion.get("fisico") is None:
-        hoja.cell(row=fila, column=3, value="no se cuenta" if not porcion.get("contable") else "—")
+        hoja.cell(row=fila, column=3, value="—")
         return
     hoja.cell(row=fila, column=3, value=float(porcion["fisico"]))
     hoja.cell(row=fila, column=4, value=porcion["contado_el"].strftime("%d/%m/%Y"))

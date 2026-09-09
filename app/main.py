@@ -6816,7 +6816,7 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
                               # arma _nombre_de_caja y cambia con el cliente y el
                               # envase — unir por ahí se rompe sola.
                               "articulo_id": fila["articulo_id"], "ficha_id": None,
-                              "contable": True})
+                              "es_segunda": False})
         # Cuántas cajas de ESTE artículo tiene cada cliente acá: con una sola
         # el nombre va limpio, con dos hay que poder distinguirlas.
         cuantas = Counter(
@@ -6837,22 +6837,23 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
                 # piso son una pila aparte, no están con la fruta suelta.
                 "procesada": True,
                 "articulo_id": fila["articulo_id"], "ficha_id": ficha_id,
-                "contable": True,
+                "es_segunda": False,
             })
         if float(fila["segunda"]) > 0:
             # La segunda NO es una caja procesada: son bultos sueltos de
             # calidad menor esperando el remito al Puesto. Va con su artículo.
-            # contable=False: la segunda NO SE PUEDE CONTAR. Stock Físico
-            # ofrece "los bultos sueltos" o "las cajas de una ficha", y
-            # crear_conteo_stock solo acepta ficha_id o None — no hay forma
-            # de cargar un conteo de segunda. Sin esta marca, su "—" del
-            # Excel se leería igual que el de una porción que todavía nadie
-            # contó, y son dos cosas distintas: una espera al operario, la
-            # otra no puede pasar nunca.
+            #
+            # DESDE EL 09/09 SE CUENTA. Hasta entonces iba con contable=False
+            # y el comentario decía que no se podía cargar un conteo suyo —
+            # era cierto: conteos_stock tenía dos porciones y la segunda no
+            # tiene ficha, así que entraba como (articulo, NULL) y pisaba al
+            # de sueltos. Con `es_segunda` en la tabla ya hay dónde
+            # guardarlo, y había 42 bultos de un artículo sin que nadie los
+            # verificara contra el piso.
             porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
                               "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2),
                               "articulo_id": fila["articulo_id"], "ficha_id": None,
-                              "contable": False})
+                              "es_segunda": True})
 
     porciones.sort(key=lambda p: (_clave_alfabetica(p["articulo"]), p["orden"], _clave_alfabetica(p["nombre"])))
     return porciones
@@ -6940,13 +6941,26 @@ def _pegar_conteos_a_porciones(porciones: list[dict], conteos: list[dict]) -> No
     cuándo es el físico. Sin esa fecha, un conteo de hace un mes se lee igual
     que uno de hoy.
 
-    Una porción no contable (la segunda) no busca conteo: no puede tener uno.
+    LA CLAVE SON TRES COSAS, no dos: artículo, ficha y si es la segunda. La
+    segunda y los sueltos tienen los dos `ficha_id` None, así que con la
+    clave vieja el conteo de uno se le pegaba al otro — el mismo choque que
+    el DISTINCT ON tenía adentro, servido acá en Python.
+
+    Y TODAS buscan conteo. Hasta el 09/09 la segunda venía marcada
+    `contable: False` y esta función la salteaba: era cierto, no había dónde
+    guardar un conteo suyo. Con `es_segunda` en la tabla esa marca dejó de
+    distinguir nada —las tres porciones se cuentan— así que se fue, y con
+    ella el "no se cuenta" del Excel. La marca hacía DOS trabajos ("se puede
+    contar" y "es la segunda") y los dos lectores que la usaban para el
+    segundo —el link del Remanente al extracto y esa celda— pasaron a
+    `es_segunda`.
     """
-    por_clave = {(c["articulo_id"], c["ficha_id"]): c for c in conteos}
+    por_clave = {
+        (c["articulo_id"], c["ficha_id"], bool(c.get("es_segunda"))): c for c in conteos
+    }
     for porcion in porciones:
-        conteo = (
-            por_clave.get((porcion["articulo_id"], porcion["ficha_id"]))
-            if porcion.get("contable") else None
+        conteo = por_clave.get(
+            (porcion["articulo_id"], porcion["ficha_id"], bool(porcion.get("es_segunda")))
         )
         if conteo is None:
             porcion["fisico"] = None
@@ -7023,8 +7037,11 @@ def _porcion_buscada(porciones: list[dict], articulo_id: int, ficha_id, es_segun
     for porcion in porciones:
         if porcion["articulo_id"] != articulo_id:
             continue
-        de_segunda = not porcion.get("contable")
-        if de_segunda != es_segunda:
+        # Sale de `es_segunda` y NO de `not contable`, que es de dónde salía
+        # hasta el 09/09: eran lo mismo solo mientras la segunda fuera la
+        # única porción que no se podía contar. Desde que se cuenta, deducirlo
+        # de `contable` daba SIEMPRE False y la segunda no se encontraba.
+        if bool(porcion.get("es_segunda")) != es_segunda:
             continue
         if porcion["ficha_id"] == ficha_id:
             return porcion
@@ -8197,12 +8214,17 @@ def cargar_stock_fisico_deposito_ruta(
     No es obligatorio todos los días: es un control disponible. El aviso
     repite SOLO lo contado — jamás el stock del sistema.
 
-    que_conto es "sueltos" o el id de una ficha. NO se valida contra lo
-    que el sistema cree tener: el conteo es DECLARATIVO. Si cuenta cajas
-    de una ficha de la que el sistema no tiene nada, se guarda igual y el
-    Cotejo muestra la diferencia — que es justo para lo que está. Lo
+    que_conto es "sueltos", "segunda" o el id de una ficha. NO se valida
+    contra lo que el sistema cree tener: el conteo es DECLARATIVO. Si cuenta
+    cajas de una ficha de la que el sistema no tiene nada, se guarda igual y
+    el Cotejo muestra la diferencia — que es justo para lo que está. Lo
     único que se valida es que la ficha exista y sea de ESE artículo:
     una ficha de otro artículo no es un conteo raro, es un dato roto.
+
+    "segunda" es la tercera porción, desde el 09/09. No lleva ficha —la
+    base lo prohíbe con `conteos_stock_segunda_sin_ficha`— y por eso las
+    dos ramas se excluyen acá también: si alguna vez pudieran llegar
+    juntas, el INSERT rebota y no se guarda nada a medias.
     """
     texto_cantidad = cantidad.strip()
     error = None
@@ -8220,19 +8242,21 @@ def cargar_stock_fisico_deposito_ruta(
 
     articulo = None
     ficha = None
+    elegido = que_conto.strip()
+    es_segunda = elegido == "segunda"
     if not error:
         try:
             articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
-            if articulo is not None and que_conto.strip() and que_conto.strip() != "sueltos":
+            if articulo is not None and elegido and elegido not in ("sueltos", "segunda"):
                 fichas = _fichas_por_articulo().get(str(articulo_id).strip(), [])
-                ficha = next((f for f in fichas if str(f["id"]) == que_conto.strip()), None)
+                ficha = next((f for f in fichas if str(f["id"]) == elegido), None)
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         if articulo is None:
             error = "Elegí un artículo válido."
-        elif not que_conto.strip():
-            error = "Elegí qué contaste: los bultos sueltos o las cajas de una ficha."
-        elif que_conto.strip() != "sueltos" and ficha is None:
+        elif not elegido:
+            error = "Elegí qué contaste: los bultos sueltos, la segunda o las cajas de una ficha."
+        elif elegido not in ("sueltos", "segunda") and ficha is None:
             error = "Esa ficha no es de este artículo."
 
     if error:
@@ -8241,13 +8265,20 @@ def cargar_stock_fisico_deposito_ruta(
         )
 
     try:
-        crear_conteo_stock(articulo["id"], cantidad_valor, ficha_id=ficha["id"] if ficha else None)
+        crear_conteo_stock(articulo["id"], cantidad_valor,
+                           ficha_id=ficha["id"] if ficha else None,
+                           es_segunda=es_segunda)
     except Exception as error_db:
         return _renderizar_pantalla_stock_fisico_deposito(
             request, articulo_id=articulo_id, error=f"No se pudo guardar el conteo: {error_db}", status_code=500
         )
 
-    que = f"cajas de {ficha['nombre']}" if ficha else f"bultos sueltos de {articulo['nombre']}"
+    if ficha:
+        que = f"cajas de {ficha['nombre']}"
+    elif es_segunda:
+        que = f"bultos de segunda de {articulo['nombre']}"
+    else:
+        que = f"bultos sueltos de {articulo['nombre']}"
     aviso = f"Conteo guardado: {_formatear_numero(cantidad_valor)} {que}."
     # El artículo vuelve puesto: de un mismo artículo se cuentan los
     # sueltos y después las cajas de cada ficha, uno atrás de otro.
@@ -8264,6 +8295,8 @@ def _nombre_de_porcion(fila) -> str:
     es la hermana, así que va con artículo de por medio ("los bultos
     sueltos", "las cajas de X") para que la frase se lea entera.
     """
+    if fila.get("es_segunda"):
+        return "la segunda"
     if fila["ficha_id"] is None:
         return "los bultos sueltos"
     return f"las cajas de {fila['ficha_nombre'] or 'la otra ficha'}"
@@ -8283,9 +8316,12 @@ def ver_cotejo_stock(request: Request):
         # función que dibuja esa pantalla— y no de una cuenta propia.
         fecha_hoy = _hoy_argentina()
         hoy = _remanente_a_fecha(fecha_hoy)
+        # LA CLAVE SON TRES COSAS. La segunda y los sueltos tienen los dos
+        # `ficha_id` None: con dos claves, el número de una se le pega a la
+        # otra y las dos tarjetas mienten a la vez.
         sistema_hoy = {
-            (p["articulo_id"], p["ficha_id"]): float(p["bultos"])
-            for p in hoy["porciones"] if p.get("contable", True)
+            (p["articulo_id"], p["ficha_id"], bool(p.get("es_segunda"))): float(p["bultos"])
+            for p in hoy["porciones"]
         }
         # EL DÉFICIT DE CADA FICHA, de la MISMA función que lo calcula para
         # el Remanente y para el extracto. No se deriva acá de
@@ -8307,12 +8343,15 @@ def ver_cotejo_stock(request: Request):
         # Una porción en CERO o en negativo no es una pila y el Remanente no
         # la lista, pero acá tiene que tener número igual: justo esa es la
         # que hay que poder mirar. Sale de la misma función, de a una.
-        clave = (conteo["articulo_id"], conteo["ficha_id"])
+        es_segunda = bool(conteo.get("es_segunda"))
+        clave = (conteo["articulo_id"], conteo["ficha_id"], es_segunda)
         if clave in sistema_hoy:
             fila["sistema_hoy"] = sistema_hoy[clave]
         else:
             try:
-                fila["sistema_hoy"] = stock_de_porcion(conteo["articulo_id"], conteo["ficha_id"])
+                fila["sistema_hoy"] = stock_de_porcion(
+                    conteo["articulo_id"], conteo["ficha_id"], es_segunda
+                )
             except Exception:
                 logger.exception("No se pudo leer el stock actual de una porción del cotejo")
                 fila["sistema_hoy"] = None
@@ -8361,7 +8400,12 @@ def ver_cotejo_stock(request: Request):
         # decidía con un número y la acción usaba otro. Las dos caras del
         # error: Mango mostraba 13 y un botón con el desvío ya resuelto, y
         # una porción con foto limpia y desvío vivo no mostraba nada.
-        if fila["dif_hoy"] not in (None, 0) and fila["ficha_id"] is None:
+        # NI EN LA SEGUNDA, y no es lo mismo que "ficha_id is None". Un
+        # ajuste mueve el TOTAL del artículo, y la segunda no está en el
+        # total: la pata `reingresos` la excluye y el pool la suma aparte.
+        # Ajustar desde ahí movería la pila equivocada — es el corolario 8,
+        # dos cuentas con el mismo nombre y distinto alcance.
+        if fila["dif_hoy"] not in (None, 0) and fila["ficha_id"] is None and not es_segunda:
             fila["query_ajuste"] = urlencode(
                 {
                     "articulo_id": conteo["articulo_id"],
@@ -8386,9 +8430,15 @@ def ver_cotejo_stock(request: Request):
     # El aviso va en LAS DOS tarjetas. Si saliera solo en la de sueltos, la
     # de cajas seguiría diciendo lo suyo sin saber que tiene una hermana con
     # el signo contrario, y volveríamos a dos tarjetas que se contradicen.
+    #
+    # LA SEGUNDA NO JUEGA acá. El aviso es la firma de una guía R que fue a
+    # la ficha equivocada, o sea mercadería que cambió de pila DENTRO del
+    # stock normal. La segunda es otro circuito —entra por `bultos_segunda`
+    # y sale por remito al Puesto—, así que un signo contrario suyo no dice
+    # nada de una guía R y mandaría a buscar lo que no está.
     por_articulo = {}
     for fila in filas:
-        if fila["dif_hoy"] not in (None, 0):
+        if fila["dif_hoy"] not in (None, 0) and not fila.get("es_segunda"):
             por_articulo.setdefault(fila["articulo_id"], []).append(fila)
     for hermanas in por_articulo.values():
         for fila in hermanas:
@@ -8418,9 +8468,10 @@ def ver_cotejo_stock(request: Request):
     filas.sort(key=lambda f: (
         -peso[f["articulo_id"]],
         f["articulo_nombre"] or "",
-        # Dentro del artículo, los sueltos primero y después sus fichas: es
-        # el mismo orden en que se recorre el depósito.
-        f["ficha_id"] is not None,
+        # Dentro del artículo: los sueltos, después sus fichas, y la segunda
+        # al final. Es el mismo orden en que se recorre el depósito y el
+        # mismo `orden` (0, 1, 2) de _porciones_de_deposito.
+        2 if f.get("es_segunda") else (1 if f["ficha_id"] else 0),
         f["ficha_nombre"] or "",
     ))
 

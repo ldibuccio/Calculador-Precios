@@ -169,11 +169,22 @@
          asignar" en la guía R, y a propósito: allá es la excepción del que
          no sabe, y acá es el caso más común — la mayoría de la mercadería
          está sin procesar. Esconderlo abajo o marcarlo como especial sería
-         hacer más difícil justo lo que más se hace. #}
+         hacer más difícil justo lo que más se hace.
+
+         Y LA SEGUNDA VA SEGUNDA, arriba de las fichas y no al final. Las
+         dos primeras son propiedades del ARTÍCULO y están siempre; las
+         fichas son una lista que puede ser larga, y algo puesto abajo de
+         ella se encuentra o no según cuántos clientes tenga ese artículo.
+         Se ofrece SIEMPRE, aunque el sistema no tenga segunda de este
+         artículo: el conteo es declarativo y "conté y no hay" (cero) es un
+         dato tan bueno como cualquier otro. Filtrar por "tiene segunda"
+         además le contaría al operario algo del sistema, que es justo lo
+         que esta pantalla no hace. #}
       <label for="que_conto">Qué contaste</label>
       <select id="que_conto" name="que_conto" required>
         <option value="" selected disabled>Elegí qué contaste...</option>
         <option value="sueltos">Bultos sueltos (sin procesar)</option>
+        <option value="segunda">Segunda (lo que espera el remito al Puesto)</option>
         {% for ficha in fichas_por_articulo.get(articulo_id, []) %}
         <option value="{{ ficha.id }}">Cajas de {{ ficha.nombre }}{% if ficha.kilaje %} ({{ ficha.kilaje }}){% endif %}</option>
         {% endfor %}
@@ -205,7 +216,11 @@
       {% for c in contados_hoy %}
       <div class="fila-conteo">
         <span><strong>{{ c.articulo_nombre }}</strong>: {{ c.cantidad|numero }} bultos<br>
-          <span class="que">{% if c.ficha_id %}cajas de {{ c.ficha_nombre }}{% if c.ficha_cliente %} ({{ c.ficha_cliente }}){% endif %}{% else %}bultos sueltos{% endif %}</span>
+          {# La segunda tiene ficha_id NULL igual que los sueltos: si esto
+             preguntara solo por la ficha, un conteo de segunda se leería
+             como uno de sueltos y el operario creería haber cargado otra
+             cosa. Se pregunta primero por es_segunda. #}
+          <span class="que">{% if c.es_segunda %}segunda{% elif c.ficha_id %}cajas de {{ c.ficha_nombre }}{% if c.ficha_cliente %} ({{ c.ficha_cliente }}){% endif %}{% else %}bultos sueltos{% endif %}</span>
         </span>
         <span class="hora">{{ c.creado_en|hora }}</span>
       </div>

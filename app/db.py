@@ -6824,6 +6824,79 @@ def _sql_sumas_stock(por_articulo: bool) -> str:
     )
 
 
+# EL POOL DE SEGUNDA, escrito UNA sola vez. Lo usan la cuenta de todos los
+# artículos (`stock_deposito_por_articulo`, que dibuja el Remanente) y la de
+# UNO (`_segunda_de_articulo`, que congela el `stock_sistema` de un conteo de
+# segunda y le da el número al Cotejo cuando el pool no está en las
+# porciones). Con la cuenta escrita dos veces, el conteo se congelaría contra
+# un número y el Cotejo lo compararía contra otro — que es el bug del 08/09
+# con `stock_deposito_de_articulo` y los sueltos, servido de nuevo.
+#
+# Pide un CTE `tope` ya definido arriba (la fecha techo).
+_SQL_POOL_SEGUNDA = """
+                , corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)
+                , segunda AS (
+                    SELECT articulo_id, SUM(bultos_segunda) AS total
+                    FROM reprocesos, corte_seg, tope
+                    WHERE anulado_el IS NULL AND fecha_operacion <= tope.fecha
+                      AND (fecha_operacion > corte_seg.fecha
+                           OR (tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha))
+                      {filtro_articulo}
+                    GROUP BY articulo_id
+                ), segunda_rechazo AS (
+                    -- Los rechazos que no volvieron al stock: entran al
+                    -- mismo pool que la segunda de los reprocesos.
+                    SELECT articulo_id, SUM(bultos_segunda) AS total
+                    FROM movimientos_stock, corte_seg, tope
+                    WHERE anulado_el IS NULL AND destino_rechazo IN ('segunda', 'reproceso')
+                      AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
+                      {filtro_articulo}
+                    GROUP BY articulo_id
+                ), remitida AS (
+                    SELECT articulo_id, SUM(bultos) AS total
+                    FROM remitos_segunda, corte_seg, tope
+                    WHERE anulado_el IS NULL AND fecha_operacion > corte_seg.fecha
+                      AND fecha_operacion <= tope.fecha
+                      {filtro_articulo}
+                    GROUP BY articulo_id
+                )
+"""
+
+
+def _pool_segunda(producida, de_rechazos, remitida) -> float:
+    """Lo que HAY en el pool de segunda: lo producido más lo que volvió
+    rechazado y no fue al stock, menos lo remitido al Puesto.
+
+    La resta va acá y no en cada llamador por lo mismo que el SQL: es una
+    sola cuenta, y dos copias se separan.
+    """
+    return round(float(producida) + float(de_rechazos) - float(remitida), 2)
+
+
+def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
+    """El pool de segunda de UN artículo al cierre de `hasta`, con el cursor abierto.
+
+    Es la porción "Artículo Segunda" del Remanente, y sale de la MISMA
+    consulta y de la MISMA resta que la de todos los artículos. Por eso el
+    conteo, el Cotejo y el Remanente comparan el mismo número: si esta cuenta
+    cambia, los tres la siguen juntos (mismo criterio que `_stock_de_ficha`).
+    """
+    cursor.execute(
+        """
+        WITH tope AS (SELECT COALESCE(%s::date, CURRENT_DATE) AS fecha)
+        """
+        + _SQL_POOL_SEGUNDA.format(filtro_articulo="AND articulo_id = %s")
+        + """
+        SELECT COALESCE((SELECT total FROM segunda), 0),
+               COALESCE((SELECT total FROM segunda_rechazo), 0),
+               COALESCE((SELECT total FROM remitida), 0)
+        """,
+        (hasta, articulo_id, articulo_id, articulo_id),
+    )
+    return _pool_segunda(*cursor.fetchone())
+
+
 def stock_deposito_por_articulo(hasta) -> list[dict]:
     """El stock del sistema por artículo (bultos) AL CIERRE DE `hasta`, calculado siempre.
 
@@ -6877,30 +6950,9 @@ def stock_deposito_por_articulo(hasta) -> list[dict]:
                 -- El pool tiene PISO (el corte) y TECHO (la fecha pedida):
                 -- el piso lo rebasea y el techo lo corta. Los dos son sobre
                 -- `fecha_operacion`, así que se leen juntos.
-                , corte_seg AS (SELECT fecha FROM corte_modelo WHERE id = 1)
-                , segunda AS (
-                    SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM reprocesos, corte_seg, tope
-                    WHERE anulado_el IS NULL AND fecha_operacion <= tope.fecha
-                      AND (fecha_operacion > corte_seg.fecha
-                           OR (tipo = 'inicial' AND fecha_operacion >= corte_seg.fecha))
-                    GROUP BY articulo_id
-                ), segunda_rechazo AS (
-                    -- Los rechazos que no volvieron al stock: entran al
-                    -- mismo pool que la segunda de los reprocesos.
-                    SELECT articulo_id, SUM(bultos_segunda) AS total
-                    FROM movimientos_stock, corte_seg, tope
-                    WHERE anulado_el IS NULL AND destino_rechazo IN ('segunda', 'reproceso')
-                      AND fecha_operacion > corte_seg.fecha
-                      AND fecha_operacion <= tope.fecha
-                    GROUP BY articulo_id
-                ), remitida AS (
-                    SELECT articulo_id, SUM(bultos) AS total
-                    FROM remitos_segunda, corte_seg, tope
-                    WHERE anulado_el IS NULL AND fecha_operacion > corte_seg.fecha
-                      AND fecha_operacion <= tope.fecha
-                    GROUP BY articulo_id
-                )
+                """
+                + _SQL_POOL_SEGUNDA.format(filtro_articulo="")
+                + """
                 SELECT a.id AS articulo_id, a.nombre, a.grupo,
                        COALESCE(e.total, 0) AS entradas,
                        COALESCE(s.total, 0) AS salidas,
@@ -6937,9 +6989,8 @@ def stock_deposito_por_articulo(hasta) -> list[dict]:
             # La SEGUNDA es un pool aparte: no es vendible por pedidos y no
             # infla el stock normal — lo que se produjo (en reprocesos y en
             # rechazos que no volvieron al stock) menos lo remitido.
-            fila["segunda"] = (
-                float(fila["segunda_producida"]) + float(fila["segunda_de_rechazos"])
-                - float(fila["segunda_remitida"])
+            fila["segunda"] = _pool_segunda(
+                fila["segunda_producida"], fila["segunda_de_rechazos"], fila["segunda_remitida"]
             )
         return filas
     finally:
@@ -6985,8 +7036,9 @@ def stock_deposito_de_articulo(articulo_id: int) -> float:
         conexion.close()
 
 
-def stock_de_porcion(articulo_id: int, ficha_id: int | None = None) -> float:
-    """El stock actual de UNA porción: los sueltos del artículo, o las cajas de una ficha.
+def stock_de_porcion(articulo_id: int, ficha_id: int | None = None,
+                     es_segunda: bool = False) -> float:
+    """El stock actual de UNA porción: los sueltos, las cajas de una ficha, o la segunda.
 
     Es `_stock_de_ficha` con conexión propia — la MISMA función que congela
     el `stock_sistema` de cada conteo y que arma el Remanente. Por eso el
@@ -7002,6 +7054,8 @@ def stock_de_porcion(articulo_id: int, ficha_id: int | None = None) -> float:
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            if es_segunda:
+                return _segunda_de_articulo(cursor, articulo_id)
             return _stock_de_ficha(cursor, articulo_id, ficha_id)
     finally:
         conexion.close()
@@ -7928,7 +7982,8 @@ def _stock_de_ficha(cursor, articulo_id: int, ficha_id: int | None) -> float:
     return round(total - en_cajas, 2)
 
 
-def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None = None) -> None:
+def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None = None,
+                       es_segunda: bool = False) -> None:
     """Conteo físico del operario del depósito. El stock del sistema se graba acá, del lado del server — NUNCA se le devuelve.
 
     A propósito no retorna nada: la pantalla de Stock Físico no puede
@@ -7941,6 +7996,17 @@ def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None =
     son los bultos sueltos del artículo, sin procesar. Los sueltos son el
     caso más común, no una excepción.
 
+    Y `es_segunda` es la TERCERA porción, desde el 09/09. Hasta entonces la
+    segunda no se podía contar: no tiene ficha, así que un conteo suyo
+    entraba como (articulo, NULL) y pisaba al de sueltos. No faltaba una
+    pantalla — no había dónde guardarlo. La base lo separa con el check
+    `conteos_stock_segunda_sin_ficha`, así que un llamador que mande las dos
+    cosas rebota ahí y no se guarda a medias.
+
+    Su foto sale de `_segunda_de_articulo`, que es la MISMA cuenta que dibuja
+    la porción en el Remanente. Con dos cuentas, el conteo se congelaría
+    contra un número y el Cotejo lo compararía contra otro.
+
     El conteo es DECLARATIVO: no se valida contra lo que el sistema cree
     tener. Si cuenta cajas de una ficha de la que el sistema no tiene
     nada, se guarda igual y el Cotejo muestra la diferencia — que es
@@ -7949,13 +8015,16 @@ def crear_conteo_stock(articulo_id: int, cantidad: float, ficha_id: int | None =
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            stock_sistema = _stock_de_ficha(cursor, articulo_id, ficha_id)
+            stock_sistema = (
+                _segunda_de_articulo(cursor, articulo_id) if es_segunda
+                else _stock_de_ficha(cursor, articulo_id, ficha_id)
+            )
             cursor.execute(
                 """
-                INSERT INTO conteos_stock (articulo_id, cantidad, stock_sistema, ficha_id)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO conteos_stock (articulo_id, cantidad, stock_sistema, ficha_id, es_segunda)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (articulo_id, cantidad, stock_sistema, ficha_id),
+                (articulo_id, cantidad, stock_sistema, ficha_id, es_segunda),
             )
         conexion.commit()
     finally:
@@ -8020,9 +8089,11 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     operario, y el número del sistema no puede viajar ni escondido en el
     HTML de su pantalla.
 
-    Trae la ficha porque desde la etapa 3 el mismo artículo aparece
-    varias veces en la lista —los sueltos y cada ficha— y sin decir cuál
-    es cada uno, "Banana 40 / Banana 12" no se entiende.
+    Trae la ficha Y `es_segunda` porque el mismo artículo aparece varias
+    veces en la lista —los sueltos, cada ficha y la segunda— y sin decir
+    cuál es cada uno, "Banana 40 / Banana 12" no se entiende. Sin
+    `es_segunda`, el conteo de segunda se leería como uno de sueltos, que es
+    la misma confusión que el DISTINCT ON tenía adentro.
     """
     conexion = obtener_conexion()
     try:
@@ -8030,7 +8101,7 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.cantidad, c.creado_en, a.nombre AS articulo_nombre,
-                       c.ficha_id,
+                       c.ficha_id, c.es_segunda,
                        COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
                        cl.nombre AS ficha_cliente
                 FROM conteos_stock c
@@ -8050,12 +8121,18 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
 
 
 def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
-    """El ÚLTIMO conteo por PORCIÓN (artículo + ficha), con su foto del sistema, para el Cotejo.
+    """El ÚLTIMO conteo por PORCIÓN (artículo + ficha + segunda), con su foto del sistema, para el Cotejo.
 
     Desde la etapa 3 un artículo tiene varias porciones: sus bultos
-    sueltos y las cajas de cada ficha. El último de cada una vale por su
-    cuenta — contar las cajas de una ficha no invalida el conteo de
-    sueltos de la mañana.
+    sueltos, las cajas de cada ficha y —desde el 09/09— su segunda. El
+    último de cada una vale por su cuenta: contar las cajas de una ficha no
+    invalida el conteo de sueltos de la mañana.
+
+    LAS TRES CLAVES EN EL DISTINCT ON, y no dos. La segunda y los sueltos
+    tienen los dos `ficha_id` NULL, así que con la clave vieja compiten por
+    el mismo renglón y el último cargado TAPA al otro sin decir nada.
+    Medido: con (articulo_id, ficha_id) sobre sueltos 5 / ficha 7 / segunda
+    42, los 42 no vuelven.
 
     Sale de conteos_stock y de ningún otro lado: una ficha que nunca se
     contó no genera renglón. Si el Cotejo listara todas las fichas de
@@ -8080,8 +8157,9 @@ def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT DISTINCT ON (c.articulo_id, c.ficha_id)
-                       c.id, c.articulo_id, c.ficha_id, c.cantidad, c.stock_sistema, c.creado_en,
+                SELECT DISTINCT ON (c.articulo_id, c.ficha_id, c.es_segunda)
+                       c.id, c.articulo_id, c.ficha_id, c.es_segunda,
+                       c.cantidad, c.stock_sistema, c.creado_en,
                        a.nombre AS articulo_nombre,
                        COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
                        cl.nombre AS ficha_cliente
@@ -8092,7 +8170,7 @@ def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
                 LEFT JOIN clientes cl ON cl.id = f.cliente_id
                 WHERE %s::date IS NULL
                    OR (c.creado_en AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= %s::date
-                ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC
+                ORDER BY c.articulo_id, c.ficha_id, c.es_segunda, c.creado_en DESC
                 """,
                 (hasta, hasta),
             )
@@ -8100,8 +8178,11 @@ def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
         # Cada artículo junto, y adentro los sueltos primero: es la porción
         # más grande y la que más se cuenta.
+        # Cada artículo junto: los sueltos, después sus fichas, y la segunda
+        # al final — es el mismo orden en que se recorre el depósito, y el
+        # mismo `orden` que usa _porciones_de_deposito (0, 1, 2).
         filas.sort(key=lambda fila: (fila["articulo_nombre"],
-                                     fila["ficha_id"] is not None,
+                                     2 if fila["es_segunda"] else (1 if fila["ficha_id"] else 0),
                                      fila["ficha_nombre"] or ""))
         return filas
     finally:

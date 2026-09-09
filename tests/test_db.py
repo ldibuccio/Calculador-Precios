@@ -4538,7 +4538,7 @@ def test_crear_conteo_stock_graba_la_foto_y_no_devuelve_nada():
     insert = cursor.execute.call_args_list[-1]
     assert "INSERT INTO conteos_stock" in insert.args[0]
     # La foto del sistema se graba del lado del server...
-    assert insert.args[1] == (2, 4.0, 7.0, None)
+    assert insert.args[1] == (2, 4.0, 7.0, None, False)
     # ...y NUNCA se le devuelve al operario: si la ve, transcribe en vez
     # de contar.
     assert resultado is None
@@ -4561,7 +4561,37 @@ def test_crear_conteo_stock_de_una_ficha_congela_el_stock_DE_ESA_FICHA():
         crear_conteo_stock(2, 18.0, ficha_id=11)
 
     insert = cursor.execute.call_args_list[-1]
-    assert insert.args[1] == (2, 18.0, 20.0, 11)
+    assert insert.args[1] == (2, 18.0, 20.0, 11, False)
+
+
+def test_crear_conteo_stock_de_la_SEGUNDA_congela_EL_POOL_y_no_las_cajas():
+    """La foto de un conteo de segunda es el POOL, y sale de
+    `_segunda_de_articulo` — la MISMA cuenta que dibuja la porción en el
+    Remanente.
+
+    Con dos cuentas, el conteo se congelaría contra un número y el Cotejo lo
+    compararía contra otro: es el bug del 08/09 con los sueltos y el total,
+    servido de nuevo. Por eso el parche devuelve 42 mientras `_stock_de_ficha`
+    daría otra cosa — si alguien enchufa la función equivocada, el test cae.
+    """
+    from app.db import crear_conteo_stock
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = [(2, 11, 20.0, False)]
+
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._segunda_de_articulo", return_value=42.0) as pool,
+        patch("app.db._stock_de_ficha", return_value=999.0) as por_ficha,
+    ):
+        crear_conteo_stock(2, 40.0, es_segunda=True)
+
+    insert = cursor.execute.call_args_list[-1]
+    # es_segunda=True y ficha_id None: la base lo exige con el check
+    # conteos_stock_segunda_sin_ficha, y acá se cumple por construcción.
+    assert insert.args[1] == (2, 40.0, 42.0, None, True)
+    pool.assert_called_once()
+    por_ficha.assert_not_called()
 
 
 def test_crear_conteo_stock_de_sueltos_resta_las_cajas_de_todas_las_fichas():
@@ -4581,7 +4611,7 @@ def test_crear_conteo_stock_de_sueltos_resta_las_cajas_de_todas_las_fichas():
         crear_conteo_stock(2, 70.0)
 
     insert = cursor.execute.call_args_list[-1]
-    assert insert.args[1] == (2, 70.0, 75.0, None)
+    assert insert.args[1] == (2, 70.0, 75.0, None, False)
 
 
 def test_listar_conteos_stock_de_fecha_no_trae_el_stock_del_sistema():
@@ -4605,39 +4635,80 @@ def test_listar_ultimos_conteos_stock_trae_el_ultimo_por_PORCION():
 
     Contar las cajas de una ficha a la tarde no puede invalidar el conteo
     de bultos sueltos de la mañana: son dos cosas distintas del piso.
+
+    Y LAS PORCIONES SON TRES desde el 09/09. Este assert pedía dos claves
+    —era el diseño de ayer— y por eso no podía ver el choque: la segunda y
+    los sueltos tienen los dos `ficha_id` NULL, así que con
+    `DISTINCT ON (articulo_id, ficha_id)` el último cargado tapa al otro.
+    Medido antes de escribir esto, sobre sueltos 5 / ficha 7 / segunda 42:
+    con dos claves vuelven dos filas y los 42 no están.
     """
     from app.db import listar_ultimos_conteos_stock
 
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("id",), ("articulo_nombre",), ("ficha_id",), ("ficha_nombre",)]
+    cursor.description = [("id",), ("articulo_nombre",), ("ficha_id",),
+                          ("ficha_nombre",), ("es_segunda",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         listar_ultimos_conteos_stock()
 
     consulta = cursor.execute.call_args.args[0]
-    assert "DISTINCT ON (c.articulo_id, c.ficha_id)" in consulta
+    assert "DISTINCT ON (c.articulo_id, c.ficha_id, c.es_segunda)" in consulta
     assert "c.stock_sistema" in consulta
-    # El mismo orden que el índice conteos_stock_cotejo_idx.
-    assert "ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC" in consulta
+    # El mismo orden que el índice conteos_stock_cotejo_idx, con la tercera
+    # clave adentro: si el índice y el DISTINCT ON se separan, la consulta
+    # sigue dando bien y deja de salir del índice.
+    assert "ORDER BY c.articulo_id, c.ficha_id, c.es_segunda, c.creado_en DESC" in consulta
 
 
-def test_el_cotejo_ordena_los_sueltos_ANTES_que_las_fichas_del_mismo_articulo():
-    # Es la porción más grande y la que más se cuenta: va primero.
+def test_el_INDICE_del_cotejo_tiene_LAS_MISMAS_TRES_claves_que_el_DISTINCT_ON():
+    """Lee la migración, no la copia: copiada envejece en silencio.
+
+    Si el índice se quedara con dos claves, la consulta seguiría siendo
+    correcta y dejaría de salir del índice — un problema que no se ve
+    mirando resultados.
+    """
+    import pathlib
+    from app.db import listar_ultimos_conteos_stock
+
+    migracion = pathlib.Path("db/agregar_conteo_de_segunda_2_indice.sql").read_text()
+    assert "(articulo_id, ficha_id, es_segunda, creado_en desc)" in migracion
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_ultimos_conteos_stock()
+    consulta = cursor.execute.call_args.args[0]
+    assert "ORDER BY c.articulo_id, c.ficha_id, c.es_segunda, c.creado_en DESC" in consulta
+
+
+def test_el_cotejo_ordena_los_sueltos_ANTES_que_las_fichas_y_la_SEGUNDA_AL_FINAL():
+    """El mismo orden en que se recorre el depósito, y el mismo `orden`
+    (0, 1, 2) que usa _porciones_de_deposito para el Remanente.
+
+    La segunda entra con `ficha_id` None igual que los sueltos, así que
+    ordenar por "tiene ficha o no" la mandaría al principio, mezclada con
+    ellos: son las dos únicas porciones que comparten ese campo.
+    """
     from app.db import listar_ultimos_conteos_stock
 
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("articulo_nombre",), ("ficha_id",), ("ficha_nombre",)]
+    cursor.description = [("articulo_nombre",), ("ficha_id",), ("ficha_nombre",), ("es_segunda",)]
     cursor.fetchall.return_value = [
-        ("Banana", 12, "Banana Ecuador"),
-        ("Banana", None, None),
-        ("Banana", 11, "Banana Bolivia"),
+        ("Banana", None, None, True),
+        ("Banana", 12, "Banana Ecuador", False),
+        ("Banana", None, None, False),
+        ("Banana", 11, "Banana Bolivia", False),
     ]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         filas = listar_ultimos_conteos_stock()
 
-    assert [f["ficha_nombre"] for f in filas] == [None, "Banana Bolivia", "Banana Ecuador"]
+    assert [(f["ficha_nombre"], f["es_segunda"]) for f in filas] == [
+        (None, False), ("Banana Bolivia", False), ("Banana Ecuador", False), (None, True),
+    ]
 
 
 def test_contar_stock_deposito_negativo_hace_la_misma_cuenta_que_el_stock():
@@ -6241,9 +6312,9 @@ def test_facturacion_por_ficha_excluye_el_renglon_anulado():
 
 def test_listar_ultimos_conteos_stock_sin_tope_es_el_cotejo_de_siempre():
     conexion, cursor = _conexion_falsa()
-    cursor.description = [("id",), ("articulo_id",), ("ficha_id",), ("cantidad",),
-                          ("stock_sistema",), ("creado_en",), ("articulo_nombre",),
-                          ("ficha_nombre",), ("ficha_cliente",)]
+    cursor.description = [("id",), ("articulo_id",), ("ficha_id",), ("es_segunda",),
+                          ("cantidad",), ("stock_sistema",), ("creado_en",),
+                          ("articulo_nombre",), ("ficha_nombre",), ("ficha_cliente",)]
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -6251,8 +6322,8 @@ def test_listar_ultimos_conteos_stock_sin_tope_es_el_cotejo_de_siempre():
 
     consulta, parametros = cursor.execute.call_args.args
     # El último por PORCIÓN, en el orden del índice conteos_stock_cotejo_idx.
-    assert "DISTINCT ON (c.articulo_id, c.ficha_id)" in consulta
-    assert "ORDER BY c.articulo_id, c.ficha_id, c.creado_en DESC" in consulta
+    assert "DISTINCT ON (c.articulo_id, c.ficha_id, c.es_segunda)" in consulta
+    assert "ORDER BY c.articulo_id, c.ficha_id, c.es_segunda, c.creado_en DESC" in consulta
     # None = sin tope: el Cotejo siempre mira el presente.
     assert parametros == (None, None)
 
