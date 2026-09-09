@@ -1581,7 +1581,22 @@ def obtener_detalle_compra(compra_id: int) -> dict | None:
                        c.estado_retiro, c.retiro_procesado_el, c.retiro_origen, c.cantidad_cajones_retirada,
                        c.estado, c.procesada_el,
                        c.cantidad_cajones_real, c.contenido_por_cajon_real, c.cantidad_fraccion_real,
-                       c.cantidad_cajones_rechazada, c.motivo_rechazo
+                       c.cantidad_cajones_rechazada, c.motivo_rechazo,
+                       -- LA MARCA DE LA CARGA RETROACTIVA, derivada y sin
+                       -- columna nueva: `cargado_el` es cuándo se tipeó y
+                       -- `procesada_el` cuándo entró al stock. En una compra
+                       -- normal caen el mismo día; si la de entrada es
+                       -- ANTERIOR, alguien la fechó para atrás desde
+                       -- Gerencia. Sin esto, dentro de tres meses la fila se
+                       -- ve igual que una normal fechada un día en que nadie
+                       -- cargó nada.
+                       --
+                       -- Las dos pasadas a hora argentina antes de comparar:
+                       -- crudas, una carga de las 22:30 y una entrada del
+                       -- mismo día darían días distintos en UTC.
+                       ((c.procesada_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+                        < (c.cargado_el AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
+                           AS cargada_retroactiva
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -1663,6 +1678,7 @@ def crear_compra(
     tipo_retiro: str,
     foto_ruta: str | None = None,
     ingreso_directo_deposito: bool = False,
+    recepcionada_el=None,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
 
@@ -1718,6 +1734,13 @@ def crear_compra(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            # ANTES de tocar nada: si la fecha no pasa la guarda del corte,
+            # no se crea ni la guía. En su propia línea y no adentro de la
+            # lista de argumentos, donde el orden de evaluación queda
+            # escondido y se lee como si corriera después.
+            recepcionada_el = _recepcion_retroactiva_validada(
+                cursor, recepcionada_el, ingreso_directo_deposito
+            )
             _insertar_compra_con_guia(
                 cursor,
                 fecha_operacion,
@@ -1732,10 +1755,49 @@ def crear_compra(
                 tipo_retiro,
                 foto_ruta,
                 ingreso_directo_deposito=ingreso_directo_deposito,
+                recepcionada_el=recepcionada_el,
             )
         conexion.commit()
     finally:
         conexion.close()
+
+
+def _recepcion_retroactiva_validada(cursor, recepcionada_el, ingreso_directo_deposito: bool):
+    """La fecha de recepción elegida, validada contra el CORTE. None = ahora.
+
+    ESTRICTAMENTE POSTERIOR AL CORTE, y el día del corte también se
+    rechaza. No es un margen de seguridad: es la asimetría de siempre —el
+    conteo del corte se toma A LA TARDE, así que todo lo de ese día ya está
+    adentro de la foto—. El lote del FIFO pide que la fecha argentina de
+    `procesada_el` sea POSTERIOR al corte, y el total NO tiene piso: una
+    compra fechada el día del corte o
+    antes **suma al total y no existe como lote**: mercadería que el stock
+    tiene y el costeo no, saliendo "sin lote" para siempre. Medido el
+    09/09 sobre el esquema real, con el corte en 05/09:
+
+        fechada 06/09  -> lote del FIFO SI  · suma al total SI
+        fechada 05/09  -> lote del FIFO NO  · suma al total SI   <- se separan
+        fechada 04/09  -> lote del FIFO NO  · suma al total SI   <- se separan
+
+    El corte se lee de la base con `_fecha_corte`, que es de donde lo leen
+    las otras cuentas: escrito a mano acá sería otra copia, y además es
+    distinto en cada empresa.
+
+    Solo tiene sentido en el ingreso directo: en la carga normal la compra
+    nace 'pendiente' y la fecha de recepción la pone Depósito al recibirla.
+    """
+    if recepcionada_el is None:
+        return None
+    if not ingreso_directo_deposito:
+        raise ValueError("La fecha de recepción solo se puede elegir en un ingreso directo.")
+    corte = _fecha_corte(cursor)
+    if recepcionada_el.date() <= corte:
+        raise ValueError(
+            f"La fecha de recepción tiene que ser POSTERIOR al corte del modelo ({corte:%d/%m/%Y}). "
+            "Ese día ya está adentro de la foto del stock inicial, así que una compra fechada "
+            "ahí sumaría al total sin ser un lote del FIFO."
+        )
+    return recepcionada_el
 
 
 def _insertar_compra_con_guia(
@@ -1753,6 +1815,7 @@ def _insertar_compra_con_guia(
     foto_ruta: str | None,
     ingreso_directo_deposito: bool = False,
     carga_token: str | None = None,
+    recepcionada_el=None,
 ) -> None:
     """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear.
 
@@ -1764,6 +1827,19 @@ def _insertar_compra_con_guia(
     carga_token solo viene en compras que salen de una comanda leída por
     foto (ver crear_compras_de_comanda); en la carga manual y en el
     ingreso directo va None.
+
+    recepcionada_el (solo con ingreso_directo_deposito) es CUÁNDO ENTRÓ la
+    mercadería, que puede no ser hoy: mercadería que llegó hace días y se
+    descubre después que nunca se cargó. None = ahora, que es el caso
+    normal. Va a `procesada_el` y a `retiro_procesado_el`, que son las dos
+    columnas por las que el stock y el FIFO fechan una compra — la fecha de
+    OPERACIÓN no la mira ninguna de las dos cuentas.
+
+    `cargado_el` NO se toca y queda en `now()`: es cuándo se tipeó de
+    verdad, y esa diferencia contra `procesada_el` es lo único que después
+    dice que esta compra se cargó con fecha retroactiva. Sin eso, dentro de
+    tres meses la fila se ve igual que una normal fechada un día en que
+    nadie cargó nada.
     """
     cursor.execute(
         """
@@ -1801,7 +1877,8 @@ def _insertar_compra_con_guia(
                  cantidad_cajones_real, contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real,
                  procesada_el, retiro_procesado_el, retiro_origen)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    'recepcionado', 'retirado', %s, %s, %s, %s, now(), now(), 'ingreso_directo')
+                    'recepcionado', 'retirado', %s, %s, %s, %s,
+                    COALESCE(%s, now()), COALESCE(%s, now()), 'ingreso_directo')
             """,
             (
                 fecha_operacion,
@@ -1820,6 +1897,8 @@ def _insertar_compra_con_guia(
                 contenido_por_cajon,
                 cantidad_kilos,
                 cantidad_fraccion,
+                recepcionada_el,
+                recepcionada_el,
             ),
         )
     elif tipo_retiro in ORIGEN_RETIRO_AUTOMATICO_POR_TIPO:

@@ -3272,6 +3272,172 @@ def _puerta_de_gerencia_abierta(request):
             cliente.cookies.clear()
 
 
+def _con_clave_de_gerencia():
+    """La cookie de Gerencia puesta, para probar la PANTALLA y no la puerta."""
+    from app.main import _firma_acceso_gerencia
+    cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
+
+
+def test_una_compra_CARGADA_CON_FECHA_ANTERIOR_lo_dice_en_su_detalle():
+    """Sin esto, dentro de tres meses la fila se ve igual que una compra
+    normal fechada un día en que nadie cargó nada.
+
+    La marca no es una columna nueva: es que `procesada_el` (cuándo entró al
+    stock) sea ANTERIOR a `cargado_el` (cuándo se tipeó). En una compra
+    normal caen el mismo día.
+    """
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo",
+                  cargada_retroactiva=True,
+                  procesada_el=datetime(2026, 9, 7, 12, 0),
+                  cargado_el=datetime(2026, 9, 9, 16, 30))
+    with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        cuerpo = cliente.get("/compras/30/detalle").text
+
+    assert "Cargada con fecha anterior" in cuerpo
+    # Y dice LAS DOS fechas, que es lo que contesta la pregunta.
+    assert "07/09/2026" in cuerpo and "09/09/2026" in cuerpo
+
+
+def test_una_compra_NORMAL_no_dice_nada_de_fecha_anterior():
+    """El caso feliz, y es el que distingue un cartel que funciona de uno que
+    está siempre: si saliera en todas, dejaría de significar algo."""
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo",
+                  cargada_retroactiva=False)
+    with (
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+        patch("app.main.obtener_detalle_compra", return_value=compra),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+    ):
+        cuerpo = cliente.get("/compras/30/detalle").text
+
+    assert "Cargada con fecha anterior" not in cuerpo
+
+
+def test_el_ingreso_retroactivo_pide_la_clave_de_GERENCIA():
+    """La puerta primero. Es una perilla para reescribir el pasado: un lote
+    fechado para atrás puede cambiar a qué lote se atribuyeron armados
+    posteriores, o sea el costo de días ya mirados."""
+    cliente.cookies.clear()
+    with patch("app.main._clave_gerencia", return_value="secreta"):
+        respuesta = cliente.post(
+            "/gerencia/compras/ingreso-retroactivo",
+            data={"proveedor_id": "1", "articulo_id": "1", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "16", "importe": "0", "fecha_recepcion": "2026-09-07"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code != 303
+    assert "clave" in respuesta.text.lower()
+
+
+def test_el_ingreso_retroactivo_crea_la_compra_con_la_FECHA_ELEGIDA_y_importe_CERO():
+    """El caso real del 09/09: 10 bultos de Limón que entraron el 07/09 sin
+    cargo y nunca se cargaron."""
+    with (
+        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
+                                                         "unidad_compra": "kilo"}),
+        patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        _con_clave_de_gerencia()
+        respuesta = cliente.post(
+            "/gerencia/compras/ingreso-retroactivo",
+            data={"proveedor_id": "3", "articulo_id": "7", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "16", "importe": "0", "fecha_recepcion": "2026-09-07"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 303
+    llamada = mock_crear.call_args
+    # importe 0, NO None: son los dos significados distintos del vacío.
+    assert llamada.args[7] == 0
+    assert llamada.kwargs["ingreso_directo_deposito"] is True
+    # La fecha elegida, al MEDIODÍA argentino: a las 00:00 un corrimiento de
+    # zona la tira al día anterior.
+    momento = llamada.kwargs["recepcionada_el"]
+    assert momento.date() == date(2026, 9, 7)
+    assert momento.hour == 12
+    assert momento.utcoffset() is not None, "sin zona, la fecha depende del servidor"
+
+
+def test_el_ingreso_retroactivo_NO_INVENTA_la_guarda_del_corte_la_traduce():
+    """La regla vive en `crear_compra` contra `corte_modelo`. Acá solo se
+    traduce el rechazo a la pantalla — escrita también acá serían dos, y la
+    que decide sería la que no se ve."""
+    import inspect
+    from app.main import cargar_ingreso_retroactivo
+
+    # SIN el docstring: éste NOMBRA la regla para explicar dónde vive, y un
+    # assert literal sobre la fuente entera se marca a sí mismo. Es la misma
+    # trampa que el test de zonas horarias, que avisa de esto en su mensaje.
+    fuente = inspect.getsource(cargar_ingreso_retroactivo)
+    codigo = fuente.replace(cargar_ingreso_retroactivo.__doc__ or "", "")
+    assert "corte_modelo" not in codigo
+    assert "fecha_corte(" not in codigo
+
+    with (
+        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
+                                                         "unidad_compra": "kilo"}),
+        patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
+        patch("app.main.crear_compra",
+              side_effect=ValueError("La fecha de recepción tiene que ser POSTERIOR al corte del modelo (05/09/2026).")),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_proveedores", return_value=[]),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+    ):
+        _con_clave_de_gerencia()
+        respuesta = cliente.post(
+            "/gerencia/compras/ingreso-retroactivo",
+            data={"proveedor_id": "3", "articulo_id": "7", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "16", "importe": "0", "fecha_recepcion": "2026-09-05"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+
+    assert respuesta.status_code == 400
+    # 400 y no 500: no se rompió nada, se pidió algo que no puede pasar. Y el
+    # motivo llega entero a la pantalla.
+    assert "POSTERIOR al corte" in respuesta.text
+
+
+def test_el_importe_VACIO_sigue_siendo_sin_precio_y_no_cero():
+    """Los dos significados del vacío no se pueden juntar: NULL va a la lista
+    de pendientes de precio, 0 dice que vino sin cargo."""
+    with (
+        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
+                                                         "unidad_compra": "kilo"}),
+        patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        _con_clave_de_gerencia()
+        cliente.post(
+            "/gerencia/compras/ingreso-retroactivo",
+            data={"proveedor_id": "3", "articulo_id": "7", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "16", "importe": "", "fecha_recepcion": "2026-09-07"},
+            follow_redirects=False,
+        )
+    cliente.cookies.clear()
+    assert mock_crear.call_args.args[7] is None
+
+
+def test_el_CERO_sigue_prohibido_en_la_carga_normal_de_compras():
+    """El permiso es de UNA pantalla, no del validador. En la carga normal un
+    0 tipeado es un error: el precio que no se sabe se deja vacío."""
+    from app.main import _validar_importe
+
+    assert _validar_importe("0") == ("El importe tiene que ser mayor a cero.", None)
+    assert _validar_importe("0", permitir_cero=True) == (None, 0.0)
+    # Y el negativo sigue prohibido en las dos.
+    assert _validar_importe("-1", permitir_cero=True)[0] is not None
+
+
 def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
     with (

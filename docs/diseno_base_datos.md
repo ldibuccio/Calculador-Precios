@@ -4028,6 +4028,99 @@ merma de cajas**: si baja el total y la ficha a la vez (dos patas nuevas, una
 en cada cuenta) o si es una salida de la ficha que el total ya tenía contada.
 No se decide sin ese mapa.
 
+## El lote con fecha retroactiva, y la guía R que no se reacomoda (09/09)
+
+Desde el 09/09 Gerencia puede cargar mercadería que **entró un día y nunca
+se cargó**, con la fecha de ese día
+(`/gerencia/compras/ingreso-retroactivo`). Es el mismo camino de
+`/deposito/ingresar` —la compra nace `recepcionado`/`retirado`, con
+`retiro_origen = 'ingreso_directo'`, así que Logística no la ve nunca como
+pendiente— con la fecha elegida en vez de `now()`.
+
+**CUÁNTO SE MUEVE UN LOTE RETROACTIVO**, medido contra el esquema real antes
+de escribir la pantalla. Compra A de 20 a $1000 recibida el 08/09, un armado
+el 07/09 (sin lote) y otro el 09/09:
+
+```
+ANTES                                   sin_lote 10
+  armado 07/09  costo None  sin_costo 10   <- nada
+  armado 09/09  costo 10000               <- 10 de guia#500
+
+lote retroactivo de 10 a $0 el 07/09    sin_lote 0
+  armado 07/09  costo 0                   <- 10 del lote nuevo
+  armado 09/09  costo 10000               <- SIN MOVERSE
+
+lote retroactivo de 15 (sobran 5)
+  armado 07/09  costo 0                   <- 10 del lote nuevo
+  armado 09/09  costo 5000                <- 5 del nuevo ($0) + 5 de #500
+```
+
+La regla: **lo que el lote retroactivo alcanza a cubrir de armados ANTERIORES
+no toca a nadie; lo que SOBRA empuja hacia adelante y re-atribuye los
+posteriores.** Con el sobrante más barato, los armados de después se
+abaratan; con uno más caro, se encarecen.
+
+### Lo que NO se reacomoda: las guías R
+
+`reprocesos_consumos` es un **documento congelado** — su propio comentario lo
+dice: *"si después se corrige una recepción, el stock vivo se reacomoda pero
+esta trazabilidad y su costo no se mueven"*. O sea que después de un ingreso
+retroactivo, **el stock vivo y una guía R del mismo período pueden decir
+cosas distintas**: el reparto rejugado dirá que ese armado salió del lote
+nuevo, y la guía R seguirá mostrando el lote y el costo que congeló el día
+que se cargó.
+
+**Esto no es nuevo** —pasa igual al corregir una recepción, y está decidido
+así a propósito: un documento que se reescribe solo no es trazabilidad—. **Lo
+que cambia es la frecuencia.** Corregir una recepción es raro; cargar
+mercadería vieja va a pasar cada vez que aparezca un bulto sin cargar, y cada
+una de esas veces puede dejar una guía R diciendo otra cosa que el stock.
+
+Queda escrito acá para que el día que alguien vea la diferencia no la
+persiga como un bug. **La guía R tiene razón sobre lo que se pagó** (su costo
+está congelado y es el que se facturó); **el stock vivo tiene razón sobre lo
+que hay hoy.** Son dos preguntas distintas y las dos respuestas son
+correctas.
+
+### El tope: posterior al corte, ESTRICTO
+
+La guarda está en `crear_compra` (`_recepcion_retroactiva_validada`), lee el
+corte de `corte_modelo` y rechaza el día del corte además de los anteriores.
+No es margen de seguridad — es la asimetría de siempre, en su **novena**
+aparición. Medido con el corte en 05/09:
+
+```
+fechada 06/09  -> lote del FIFO SI  · suma al total SI
+fechada 05/09  -> lote del FIFO NO  · suma al total SI   <- se separan
+fechada 04/09  -> lote del FIFO NO  · suma al total SI   <- se separan
+```
+
+El lote del FIFO pide que la fecha argentina de `procesada_el` sea posterior
+al corte, y el total no tiene piso: fechada el día del corte o antes, la
+compra **suma al total y no existe como lote**. Mercadería que el stock tiene
+y el costeo no, saliendo "sin lote" para siempre.
+
+### La marca, sin columna nueva
+
+`cargado_el` (cuándo se tipeó) contra `procesada_el` (cuándo entró): en una
+compra normal caen el mismo día, y si la de entrada es anterior, se cargó con
+fecha retroactiva. Sale como `cargada_retroactiva` de
+`obtener_detalle_compra` y se ve en el Detalle de la compra, al lado de las
+dos fechas que lo dicen. Se descartó una columna de nota a propósito: el "por
+qué se descubrió tarde" es prosa que casi nunca se escribe bien y envejece;
+si a la segunda vez se extraña, se agrega.
+
+### El importe en 0
+
+Se acepta **solo en esta pantalla** (`_validar_importe(permitir_cero=True)`).
+En la carga normal un 0 tipeado es un error —el precio que no se sabe se deja
+vacío, que guarda NULL y va a pendientes de precio— y acá es una afirmación:
+vino sin cargo. Los dos significados están separados en la base desde
+siempre, y el costeo pregunta `costo_bulto is not None`, no por
+verdad/falsedad, así que un lote a 0 **se costea como cero y no como "sin
+costo"**. Medido: 5 bultos de un lote a 0 dan costo 0.0 y `bultos_sin_costo`
+0.0, y esa compra no aparece en las sin precio.
+
 ## PENDIENTE con nombre propio: la segunda se va al Puesto EN NUESTRA CAJA y el cartón no deja rastro (09/09)
 
 **La decisión ya está tomada y es de Lionel, no una hipótesis**: cuando vuelven

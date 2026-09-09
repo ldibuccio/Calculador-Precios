@@ -180,6 +180,17 @@ def _sql_que_contiene(cursor, fragmento: str) -> str:
     return next(ll.args[0] for ll in cursor.execute.call_args_list if fragmento in ll.args[0])
 
 
+def _sql_y_parametros_que_contienen(cursor, fragmento: str):
+    """La consulta que contiene este fragmento Y sus parámetros, sin depender del ORDEN.
+
+    El hermano de `_sql_que_contiene` para cuando también hacen falta los
+    parámetros: buscarlos por posición (`call_args_list[3]`) hace que
+    cualquier sentencia nueva rompa tests que no tienen nada que ver.
+    """
+    llamada = next(ll for ll in cursor.execute.call_args_list if fragmento in ll.args[0])
+    return llamada.args[0], llamada.args[1]
+
+
 def _conexion_falsa_con_varios_fetchall(filas_fetchone, secuencia_fetchall):
     """Como _conexion_falsa pero con fetchall() devolviendo un valor DISTINTO por llamada.
 
@@ -658,11 +669,98 @@ def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
     assert "procesada_el" in consulta_insert
     assert "retiro_procesado_el" in consulta_insert
     assert "'ingreso_directo'" in consulta_insert
-    # Las cantidades reales (los últimos 4 parámetros posicionales antes de
-    # guia_id/guia_punto) son iguales a las cargadas: cantidad_cajones=40,
-    # contenido_por_cajon=20, cantidad_kilos=800, cantidad_fraccion=None.
-    assert parametros_insert[-6:] == (105, 1, 40, 20, 800, None)
+    # LA TUPLA ENTERA, no un slice desde el final. Hasta el 09/09 esto
+    # decía `parametros_insert[-6:]`, y el día que el INSERT ganó dos
+    # parámetros —las dos fechas de recepción— el slice se corrió y el test
+    # cayó por la razón equivocada: no porque algo estuviera mal, sino
+    # porque contaba desde la punta que se movió. Comparada entera, falla
+    # el día que alguien agrega un campo, que es su función.
+    assert parametros_insert == (
+        date(2026, 8, 16), 5, 200, 40, 20, 800, None, None, None, "Clark", 105, 1,
+        # Las reales, iguales a las cargadas: no hay estimado previo.
+        40, 20, 800, None,
+        # procesada_el y retiro_procesado_el: None = now(), que es el caso
+        # de /deposito/ingresar. La fecha elegible es solo de Gerencia.
+        None, None,
+    )
     conexion.commit.assert_called_once()
+
+
+def test_el_ingreso_retroactivo_fecha_las_DOS_columnas_por_las_que_entra_al_stock():
+    """`procesada_el` y `retiro_procesado_el`, no `fecha_operacion`.
+
+    La fecha de OPERACIÓN no la mira ninguna de las dos cuentas: el total
+    filtra por `COALESCE(procesada_el, fecha_operacion)` y el lote del FIFO
+    se ordena por `procesada_el`. Fechar solo la de operación deja la
+    mercadería entrando el día en que se cargó, que es justo lo que esta
+    pantalla existe para evitar.
+
+    Y `cargado_el` NO va en el INSERT: se queda con su `now()`, que es lo
+    único que después distingue esta compra de una normal.
+    """
+    from app.db import crear_compra
+
+    conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,)])
+    momento = datetime(2026, 9, 7, 12, 0)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 9, 7), 5, 200, 10, 16, 160, None, 0, None, "Clark",
+            ingreso_directo_deposito=True, recepcionada_el=momento,
+        )
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "INSERT INTO compras")
+    assert "COALESCE(%s, now()), COALESCE(%s, now()), 'ingreso_directo'" in consulta
+    # Las dos últimas son la fecha elegida, y son la MISMA.
+    assert parametros[-2:] == (momento, momento)
+    assert "cargado_el" not in consulta
+    # El importe 0 viaja tal cual: no se convierte en NULL por el camino.
+    assert parametros[7] == 0
+
+
+def test_el_ingreso_retroactivo_RECHAZA_una_fecha_del_dia_del_corte_o_anterior():
+    """La novena aparición de la asimetría del día del corte.
+
+    El lote del FIFO pide que la fecha argentina de la recepción sea
+    POSTERIOR al corte, y el total no tiene piso: fechada el día del corte
+    o antes, la compra suma al total y NO existe como lote. Medido el
+    09/09 contra el esquema real con el corte en 05/09.
+
+    El corte se lee de `corte_modelo` con `_fecha_corte` —la misma que el
+    resto—, no escrito a mano: es distinto en cada empresa.
+    """
+    from app.db import crear_compra
+
+    for dia, tiene_que_entrar in ((date(2026, 9, 6), True),
+                                  (date(2026, 9, 5), False),
+                                  (date(2026, 9, 4), False)):
+        conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,)])
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            if tiene_que_entrar:
+                crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
+                             ingreso_directo_deposito=True,
+                             recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0))
+            else:
+                with pytest.raises(ValueError) as rechazo:
+                    crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
+                                 ingreso_directo_deposito=True,
+                                 recepcionada_el=datetime(dia.year, dia.month, dia.day, 12, 0))
+                assert "POSTERIOR al corte" in str(rechazo.value)
+                assert "05/09/2026" in str(rechazo.value)
+
+
+def test_la_fecha_de_recepcion_NO_se_puede_elegir_en_una_carga_normal():
+    """La perilla es solo del ingreso directo. En la carga normal la compra
+    nace 'pendiente' y la fecha de recepción la pone Depósito al recibirla:
+    dejarla elegir ahí sería fechar una recepción que todavía no pasó."""
+    from app.db import crear_compra
+
+    conexion, _ = _conexion_falsa([(105,), (0,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as rechazo:
+            crear_compra(date(2026, 9, 7), 5, 200, 10, 16, 160, None, None, None, "Clark",
+                         recepcionada_el=datetime(2026, 9, 7, 12, 0))
+    assert "solo se puede elegir en un ingreso directo" in str(rechazo.value)
 
 
 def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():

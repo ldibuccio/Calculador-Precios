@@ -1169,8 +1169,24 @@ def _validar_cantidad_opcional(texto: str, etiqueta: str) -> tuple[str | None, f
     return None, valor
 
 
-def _validar_importe(texto: str) -> tuple[str | None, float | None]:
-    """Valida el importe: opcional (compra sin precio, se arregla después), si viene tiene que ser positivo."""
+def _validar_importe(texto: str, permitir_cero: bool = False) -> tuple[str | None, float | None]:
+    """Valida el importe: opcional (compra sin precio, se arregla después), si viene tiene que ser positivo.
+
+    `permitir_cero` SOLO en el ingreso retroactivo de Gerencia, y la
+    diferencia es de significado, no de rigor: en la carga normal un 0
+    tipeado es un error —el precio no se sabe todavía y para eso está el
+    vacío, que guarda NULL y va a la lista de pendientes de precio—; en el
+    ingreso retroactivo alguien está AFIRMANDO que esa mercadería vino sin
+    cargo, que es un dato y no un faltante.
+
+    Los dos significados del cero están separados en la base desde siempre:
+    el comentario de `compras.importe` dice "Nulo = compra sin precio
+    todavia... El costeo debe excluir las filas con importe nulo" — NULO,
+    no cero. Y el costeo pregunta `costo_bulto is not None`, no por
+    verdad/falsedad, así que un lote a 0 se costea COMO CERO y no como
+    "sin costo". Medido el 09/09: 5 bultos de un lote a 0 dan costo 0.0 y
+    `bultos_sin_costo` 0.0, y esa compra no aparece en las sin precio.
+    """
     texto = texto.strip()
 
     if not texto:
@@ -1181,7 +1197,7 @@ def _validar_importe(texto: str) -> tuple[str | None, float | None]:
     except ValueError:
         return "El importe tiene que ser un número.", None
 
-    if valor <= 0:
+    if valor < 0 or (valor == 0 and not permitir_cero):
         return "El importe tiene que ser mayor a cero.", None
 
     return None, valor
@@ -4286,6 +4302,157 @@ def ver_corregir_recepcion_url_vieja(compra_id: int):
     alguien no puede terminar en un 404.
     """
     return RedirectResponse(url=f"/gerencia/compras/{compra_id}/corregir-recepcion", status_code=301)
+
+
+def _renderizar_ingreso_retroactivo(request: Request, *, precarga=None, error=None,
+                                    aviso=None, status_code: int = 200):
+    try:
+        corte = fecha_corte()
+        contexto = {
+            "articulos": listar_articulos(),
+            "proveedores": listar_proveedores(),
+            "hoy": _hoy_argentina(),
+            "corte": corte,
+            # El primer día que la guarda acepta, calculado ACÁ y no en la
+            # plantilla: la regla es "posterior al corte, estricto" y vive
+            # en `_recepcion_retroactiva_validada`. El `min` del input es
+            # comodidad; el que decide es el server.
+            "primer_dia": corte + timedelta(days=1),
+            "precarga": precarga or {},
+            "error": error,
+            "aviso": aviso,
+        }
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+    return templates.TemplateResponse(
+        request, "gerencia_ingreso_retroactivo.html", contexto, status_code=status_code
+    )
+
+
+@app.get("/gerencia/compras/ingreso-retroactivo")
+def ver_ingreso_retroactivo(request: Request, aviso: str | None = None):
+    """Cargar mercadería que ENTRÓ ANTES y nunca se cargó, con la fecha de ese día.
+
+    VIVE EN GERENCIA y no en Depósito, y no es una preferencia de menú: es
+    una perilla para reescribir el pasado. Un lote fechado para atrás se
+    inserta ANTES de los que ya existen y puede cambiar a qué lote se
+    atribuyeron armados posteriores —o sea el costo de días ya mirados—,
+    así que va detrás de la clave y no en la pantalla que el depósito usa
+    todos los días. `/deposito/ingresar` sigue existiendo para lo normal:
+    lo mismo, pero fechado ahora.
+
+    CUÁNTO SE MUEVE, medido el 09/09 sobre el esquema real: lo que el lote
+    retroactivo alcanza a cubrir de armados ANTERIORES no toca a nadie; lo
+    que SOBRA empuja hacia adelante y re-atribuye los posteriores. Con un
+    lote de 10 sobre un armado de 10, el armado siguiente no se enteró; con
+    uno de 15, el siguiente pasó de $10.000 a $5.000.
+
+    Lo que NO se reacomoda son las guías R: `reprocesos_consumos` es un
+    documento congelado y se queda con el costo que tenía. No es nuevo
+    —pasa igual al corregir una recepción— pero con esta pantalla va a
+    pasar más seguido.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+    return _renderizar_ingreso_retroactivo(request, aviso=aviso)
+
+
+@app.post("/gerencia/compras/ingreso-retroactivo")
+def cargar_ingreso_retroactivo(
+    request: Request,
+    proveedor_id: str = Form(""),
+    articulo_id: str = Form(""),
+    cantidad_cajones: str = Form(""),
+    contenido_por_cajon: str = Form(""),
+    importe: str = Form(""),
+    fecha_recepcion: str = Form(""),
+):
+    """Crea la compra YA RECEPCIONADA Y RETIRADA, fechada el día que entró.
+
+    Un solo paso porque la mercadería hace días que está en el galpón: no
+    hay nada que retirar ni que recibir. Es el mismo camino de
+    `/deposito/ingresar` (estado 'recepcionado'/'retirado', retiro_origen
+    'ingreso_directo', las reales iguales a las cargadas) con la fecha
+    elegida en vez de ahora, así que Logística no la ve nunca como
+    pendiente.
+
+    EL IMPORTE ACEPTA 0 acá y solo acá: es una afirmación ("vino sin
+    cargo"), no un faltante. El vacío sigue guardando NULL, que es el otro
+    significado y va a la lista de pendientes de precio.
+
+    La guarda de la fecha —posterior al corte, estricto— la aplica
+    `crear_compra` contra `corte_modelo`, no esta pantalla: acá se traduce
+    el error, no se re-decide.
+    """
+    puerta = _puerta_de_gerencia_para_escribir(request)
+    if puerta is not None:
+        return puerta
+
+    precarga = {
+        "proveedor_id": proveedor_id, "articulo_id": articulo_id,
+        "cantidad_cajones": cantidad_cajones, "contenido_por_cajon": contenido_por_cajon,
+        "importe": importe, "fecha_recepcion": fecha_recepcion,
+    }
+
+    error, cajones = _validar_cantidad_cajones(cantidad_cajones)
+    if error is None:
+        error, contenido = _validar_contenido_por_cajon(contenido_por_cajon)
+    if error is None:
+        error, importe_valor = _validar_importe(importe, permitir_cero=True)
+    if error is None and not fecha_recepcion.strip():
+        error = "Poné la fecha en que entró la mercadería."
+    if error is None:
+        try:
+            dia = date.fromisoformat(fecha_recepcion.strip())
+        except ValueError:
+            error = "La fecha en que entró no es válida."
+    if error is None and dia > _hoy_argentina():
+        error = "La fecha en que entró no puede ser futura."
+
+    articulo = proveedor = None
+    if error is None:
+        try:
+            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+            proveedor = obtener_proveedor(int(proveedor_id)) if proveedor_id.strip().isdigit() else None
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        if articulo is None:
+            error = "Elegí un artículo válido."
+        elif proveedor is None:
+            error = "Elegí un proveedor válido."
+
+    if error:
+        return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=error, status_code=400)
+
+    total = cajones * contenido
+    cantidad_kilos, cantidad_fraccion = (total, None) if articulo["unidad_compra"] == "kilo" else (None, total)
+    # Mediodía y no medianoche: la fecha que importa es el DÍA, y las dos
+    # cuentas la pasan a hora argentina antes de mirarla. A las 00:00 de
+    # Buenos Aires, un corrimiento de zona la tira al día anterior.
+    momento = datetime.combine(dia, time(12, 0), tzinfo=ARGENTINA)
+
+    try:
+        crear_compra(
+            dia, articulo["id"], proveedor["id"], cajones, contenido,
+            cantidad_kilos, cantidad_fraccion, importe_valor, None, "Clark",
+            ingreso_directo_deposito=True,
+            recepcionada_el=momento,
+        )
+    except ValueError as rechazo:
+        return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=str(rechazo), status_code=400)
+    except Exception as error_db:
+        return _renderizar_ingreso_retroactivo(
+            request, precarga=precarga, error=f"No se pudo guardar: {error_db}", status_code=500
+        )
+
+    aviso = (
+        f"Cargados {_formatear_numero(cajones)} bultos de {articulo['nombre']} "
+        f"con fecha de entrada {dia:%d/%m/%Y}."
+    )
+    return RedirectResponse(
+        url=f"/gerencia/compras/ingreso-retroactivo?{urlencode({'aviso': aviso})}", status_code=303
+    )
 
 
 @app.get("/gerencia/compras/{compra_id}/corregir-recepcion")
