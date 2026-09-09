@@ -4305,12 +4305,23 @@ def test_el_boton_de_recibir_CAMBIA_DE_TEXTO_cuando_falta_la_foto():
     assert "Sin foto de la balanza. Se recibe igual." not in respuesta.text
 
 
-def test_el_modal_sin_foto_tiene_LAS_DOS_salidas_y_ninguna_es_cerrarlo():
-    """Un aviso que se puede descartar con un toque es el cartel que nadie mira.
+def _html_del_modal(html: str, compra_id: int) -> str:
+    """El pedazo de HTML de UN modal, de su <dialog> a su </dialog>."""
+    desde = html.index(f'id="modal-sin-foto-{compra_id}"')
+    return html[desde : html.index("</dialog>", desde)]
 
-    Las únicas dos salidas son sacar la foto o recibir sin ella. Y la de
-    recibir manda el MISMO form de siempre —sigue sin trabar—: lo que
-    cambia no es que frene, es que lo leyó.
+
+def test_el_modal_sin_foto_tiene_LAS_TRES_salidas_y_TODAS_son_explicitas():
+    """La distinción es entre salida EXPLÍCITA y salida ACCIDENTAL, no entre dos y tres.
+
+    Hasta hoy este test decía "las DOS salidas y ninguna es cerrarlo", y
+    prohibía la palabra "Cancelar" adentro del modal. Estaba afirmando un
+    PROXY: lo que hay que impedir es que el aviso se descarte sin querer
+    —con un toque al costado, con Escape, con el atrás—, no que exista un
+    botón de volver. El operario que apretó Recibir sin querer necesita
+    poder salir; lo que no puede es salirse sin darse cuenta.
+
+    Las tres salidas, y ninguna otra cosa clickeable adentro del modal.
     """
     with (
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
@@ -4323,14 +4334,47 @@ def test_el_modal_sin_foto_tiene_LAS_DOS_salidas_y_ninguna_es_cerrarlo():
     assert '<dialog class="modal-sin-foto" id="modal-sin-foto-2"' in respuesta.text
     assert ">Sacar la foto<" in pegado
     assert ">Recibir sin foto<" in pegado
-    # La secundaria manda el form de recepción real, no una ruta aparte.
-    assert 'form="form-recepcionar-2"' in respuesta.text
-    # Y no hay ninguna forma de cerrarlo: ni cruz, ni Cancelar, ni un
-    # handler de click en el fondo. Si alguna aparece, este test cae.
-    modal = respuesta.text[respuesta.text.index("modal-sin-foto-2") :]
-    modal = modal[: modal.index("</dialog>")]
-    for salida in ("Cancelar", "Cerrar", "&times;", "close()", "backdrop"):
-        assert salida not in modal, f"el modal tiene una salida de más: {salida}"
+    assert ">Cancelar<" in pegado
+
+    modal = _html_del_modal(respuesta.text, 2)
+    # Exactamente tres botones: se cuentan en vez de prohibir palabras,
+    # porque prohibir palabras es lo que hizo que este test defendiera lo
+    # contrario de lo que hoy queremos.
+    assert modal.count("<button") == 3, "el modal tiene una salida de más o de menos"
+    # Recibir manda el form de recepción real, no una ruta aparte.
+    assert 'form="form-recepcionar-2"' in modal
+    # Cancelar NO manda nada: sin type=submit y sin form=.
+    cancelar = modal[modal.index("boton-modal-cancelar") :]
+    assert "cerrarModalSinFoto('2')" in cancelar
+    assert "form=" not in cancelar, "Cancelar no puede estar atado a ningún form"
+    # Y sigue sin haber salida ACCIDENTAL: ni cruz, ni handler del fondo.
+    for accidental in ("&times;", "backdrop", "onclick=\"this.close"):
+        assert accidental not in modal, f"el modal tiene una salida accidental: {accidental}"
+
+
+def test_cancelar_es_TERCIARIO_y_va_separado_de_recibir_sin_foto():
+    """La única que no hace nada no puede parecerse a la que más caro sale.
+
+    Sin fondo ni borde, y con margen arriba: pegada a "Recibir sin foto" el
+    dedo la confunde, y ahí el error no es volver atrás — es recibir.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    estilos = respuesta.text[respuesta.text.index(".boton-modal-cancelar") :][:400]
+    assert "background: none" in estilos
+    assert "border: none" in estilos
+    assert "margin-top" in estilos, "sin margen queda pegada a Recibir sin foto"
+
+    # Y el orden en la pantalla: Cancelar va ÚLTIMA, debajo de las otras dos.
+    modal = _html_del_modal(respuesta.text, 2)
+    assert modal.index("boton-modal-primario") < modal.index("boton-modal-secundario") < modal.index(
+        "boton-modal-cancelar"
+    )
 
 
 def test_el_modal_solo_existe_donde_FALTA_la_foto():

@@ -142,6 +142,18 @@
   .modal-texto { font-size: 0.95rem; color: #444; margin: 0 0 1.1rem; line-height: 1.35; }
   .boton-modal-primario { background: #2563eb; color: #fff; margin-bottom: 0.6rem; }
   .boton-modal-secundario { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
+  /* Terciaria: texto plano, sin fondo ni borde, y SEPARADA de las otras dos
+     por un margen grande. No tiene que competir con ellas — es la única que
+     no hace nada— y sobre todo no puede quedar al lado de "Recibir sin
+     foto", que es la que más caro sale apretar por error. */
+  .boton-modal-cancelar {
+    background: none;
+    border: none;
+    color: #6b7280;
+    font-weight: 600;
+    margin-top: 1.1rem;
+    text-decoration: underline;
+  }
   /* Foto de la balanza. El input file va escondido y lo dispara el label:
      un input file crudo es un control chico y feo de tocar con el pulgar,
      y lo que hace falta acá es un boton grande. */
@@ -410,6 +422,18 @@
           <button type="submit" form="form-recepcionar-{{ c.id }}" class="boton-modal-secundario">
             Recibir sin foto
           </button>
+          {# LA TERCERA SALIDA, y es la única que no hace nada: apretó Recibir
+             sin querer, o se dio cuenta de que tiene mal el kilaje. Va
+             SEPARADA y sin fondo porque es la que se aprieta por error menos
+             caro — y sobre todo para que no quede pegada a "Recibir sin
+             foto", que es la que más caro sale apretar de más.
+
+             No contradice que el modal no se cierre solo: esto es una salida
+             EXPLÍCITA. Lo que sigue sin poder pasar es la accidental —
+             Escape, tocar afuera, el botón de atrás. #}
+          <button type="button" class="boton-modal-cancelar" onclick="cerrarModalSinFoto('{{ c.id }}')">
+            Cancelar
+          </button>
         </dialog>
         {% endif %}
 
@@ -505,10 +529,23 @@
       history.pushState({ modalSinFoto: compraId }, '');
     }
 
+    // Cerrar el modal por una salida EXPLÍCITA (Cancelar, o al ir a sacar
+    // la foto). Distinto de cerrarlo solo, que es lo que no se puede.
+    function cerrarModalSinFoto(compraId) {
+      document.getElementById('modal-sin-foto-' + compraId).close();
+      // Saca la entrada de historial que puso abrirModalSinFoto, y SOLO si
+      // es la de arriba: un back() a ciegas se llevaría al operario fuera
+      // de la pantalla. Sin esto, el primer "atrás" después de cerrar no
+      // hace nada y parece que la pantalla se colgó.
+      if (history.state && history.state.modalSinFoto) {
+        history.back();
+      }
+    }
+
     // Abre la cámara DESDE EL MODAL: el que no sacó la foto no tiene que
     // ir a buscar el botón de atrás, que es donde se pierde.
     function sacarLaFotoDesdeElModal(compraId) {
-      document.getElementById('modal-sin-foto-' + compraId).close();
+      cerrarModalSinFoto(compraId);
       document.getElementById('foto-balanza-' + compraId).click();
     }
 
