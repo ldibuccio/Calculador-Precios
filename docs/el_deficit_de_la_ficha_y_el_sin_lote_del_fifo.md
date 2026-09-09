@@ -139,18 +139,29 @@ ahí nunca. Sería además la cuarta copia del mismo piso.
   contado: "…los sueltos se derivan por resta, así que mientras falte esa
   guía R el sistema los cuenta acá: ajustar a lo contado borraría bultos que
   están en el galpón."
-- **Guías R de primero** (naranja) y **Ajustar en segundo plano**, no
-  escondido: puede haber una guía R faltante *y* faltante real encima.
+- **"Cargar la guía R" de primero** (naranja), y va a
+  `/deposito/stock/reproceso`, que es **donde la guía R se carga**. Que sea
+  una pantalla de Depósito y el Cotejo de Administración no cambia nada: el
+  que mira el Cotejo es el que va a hacer que esa guía R se cargue. Mandarlo
+  a Guías R lo deja revisando una lista de las que ya existen buscando una
+  que no está — la tarde perdida del punto 1, servida por el propio aviso
+  que viene a evitarla. **El primario es el que arregla.**
+- **"Ver Guías R" de secundario**: la guía R puede existir y haber ido a otra
+  ficha, y ésa es la comprobación. Pero es la comprobación, no el arreglo.
+- **Ajustar en segundo plano**, no escondido: puede haber una guía R faltante
+  *y* faltante real encima.
 - El aviso de déficit **gana** sobre el de signos opuestos y no se muestran
-  los dos. Las dos historias no son la misma y las dos terminan en Guías R,
-  así que no se pierde consejo.
+  los dos. Las dos historias no son la misma, y el consejo de la vieja no se
+  pierde: "Ver Guías R" sigue estando, un escalón abajo.
 
 ### El canario, y el fixture que lo hacía inútil
 
-Los cuatro tests se corrieron **con el arreglo roto a propósito**, en cuatro
-formas: sin la rama del déficit (caen 4), sin bajar el ajuste a segundo plano
-(caen 2), con el déficit mirando solo la ficha y no sumando para los sueltos
-(caen 3), y con el déficit derivado de `sistema_hoy < 0` (caen 4).
+Los tests se corrieron **con el arreglo roto a propósito**, en seis formas:
+sin la rama del déficit (caen 5), sin bajar el ajuste a segundo plano (caen
+2), con el déficit mirando solo la ficha y no sumando para los sueltos (caen
+3), con el déficit derivado de `sistema_hoy < 0` (caen 5), con el primario
+apuntando otra vez a Guías R (caen 2) y con "Cargar la guía R" de secundario
+(caen 2).
 
 Ese último **no caía** en la primera versión, y la culpa era del fixture: le
 había puesto la ficha en −10 dentro de las porciones del Remanente, que en

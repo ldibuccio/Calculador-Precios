@@ -20222,6 +20222,28 @@ def test_una_ficha_en_DEFICIT_manda_a_cargar_la_guia_R_y_no_a_ajustar():
     assert "lo que cambia entre fichas es a cuál" not in cuerpo
 
 
+def test_el_PRIMARIO_del_deficit_va_donde_se_CARGA_la_guia_R_y_no_donde_se_MIRAN():
+    """El botón recomendado tiene que ser el que resuelve el problema.
+
+    Guías R lista las que YA existen y deja reasignarlas; la que falta se
+    carga en Reproceso. Que sea una pantalla de Depósito y ésta de
+    Administración no cambia nada: el que mira el Cotejo es el que va a
+    hacer que esa guía R se cargue, y mandarlo a revisar una lista buscando
+    una guía R que no está es justo la tarde perdida que el aviso evita.
+
+    Guías R queda de secundario porque sigue sirviendo —la guía R puede
+    existir y haber ido a otra ficha—, pero es la comprobación, no el
+    arreglo.
+    """
+    cuerpo = _cotejo(*_articulo_con_deficit()).text.split("</style>")[-1]
+
+    assert '<a class="boton-ajustar" href="/deposito/stock/reproceso">Cargar la guía R</a>' in cuerpo
+    # Y el de mirar existe, en segundo plano.
+    assert '<a class="boton-ajustar secundario" href="/administracion/stock/guias-r">Ver Guías R</a>' in cuerpo
+    # El primario NO es el de mirar.
+    assert '<a class="boton-ajustar" href="/administracion/stock/guias-r">' not in cuerpo
+
+
 def test_el_deficit_pone_en_SEGUNDO_PLANO_el_ajuste_de_los_SUELTOS():
     """EL BOTÓN PELIGROSO. Con la ficha en −10 los sueltos del sistema están
     10 de más, así que "Ajustar a lo contado" baja el total del artículo en
@@ -20237,8 +20259,8 @@ def test_el_deficit_pone_en_SEGUNDO_PLANO_el_ajuste_de_los_SUELTOS():
 
     assert "ficha equivocada" not in cuerpo
     assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
-    # Y el recomendado queda de primero.
-    assert '<a class="boton-ajustar" href="/administracion/stock/guias-r">' in cuerpo
+    # Y el recomendado —cargar la guía R que falta— queda de primero.
+    assert '<a class="boton-ajustar" href="/deposito/stock/reproceso">' in cuerpo
     assert "guía R que los produzca" in cuerpo
 
 
