@@ -1563,3 +1563,11 @@ De acá en adelante, cuando una pantalla esconda, deshabilite o resalte algo
 por JS: **la captura es parte del arreglo, no la verificación de después.**
 Y si el estado se define en dos plantillas, es una copia y vale el corolario
 2 — buscar la otra el día que se escribe la primera.
+
+**Y la forma general, que es más ancha que el `hidden`** (dicha por el dueño
+al leer esto): **el atributo es la INTENCIÓN, no el efecto.** Vale para todo
+lo que se verifique leyendo HTML —`hidden`, `disabled`, `required`, una
+clase, un `aria-`—: el test lee lo que la plantilla quiso, y lo que el
+operario tiene adelante lo decide el CSS, que el test no corre. Un assert
+sobre el atributo prueba que la orden se dio; no prueba que se haya
+cumplido. Los dos casos de acá tenían la orden dada.
