@@ -1571,3 +1571,184 @@ clase, un `aria-`—: el test lee lo que la plantilla quiso, y lo que el
 operario tiene adelante lo decide el CSS, que el test no corre. Un assert
 sobre el atributo prueba que la orden se dio; no prueba que se haya
 cumplido. Los dos casos de acá tenían la orden dada.
+
+Corolario 33, del 09/09: **estuve a punto de escribir acá, como hecho, una
+afirmación negativa que era falsa** — y lo que la frenó no fue saber la
+regla, fue el reflejo de verificar de más justo antes de dejarla escrita.
+
+Las tres consultas de mermas dieron cero en Frutamax, con `ultima_merma` en
+NULL: nunca se cargó una merma. Las dos de ajustes dieron cero desde el
+corte y **un solo ajuste en toda la historia**, del 26/08. La conclusión
+salió sola y sonaba bien: *"la baja no se registra en ninguna columna"*.
+
+**Es falsa. Hay una cuarta, y es la que más chances tiene de no estar en
+cero: `reprocesos.bultos_merma`.** No se parece a las otras tres —no es un
+movimiento, es una columna de la guía R— y la carga el operario en cada
+armado. Con treinta y pico de guías R cargadas, dar por inexistente el
+registro de la merma era negar el que más se usa.
+
+**Lo que hay que separar, y es la corrección de fondo: son DOS mermas
+distintas, no una mal registrada.**
+
+- **La del REPROCESO** — lo que se descarta al reenvasar. **Tiene dónde
+  anotarse**: `reprocesos.bultos_merma`, un campo del formulario de la guía R.
+- **La de GALPÓN** — la fruta que se pudre esperando, fuera de todo armado.
+  **No tiene dónde**, y es la que la pantalla nueva viene a cubrir.
+
+**Y acá va la corrección de la corrección, porque la primera versión de este
+corolario decía "la costumbre existe y vive adentro de la guía R" — y eso
+también era una afirmación sin medir.** Medido después
+(`db/mermas_4_la_de_las_guias_r.sql`, Frutamax, corte 05/09, `> corte`):
+**1 de 72 guías R declaró merma, por 1 bulto en total.** La puerta existe,
+está abierta, y no se usa.
+
+Así que el orden real es: la de galpón no tiene puerta, y la del reproceso
+tiene una que nadie cruza. **Hay dos lugares para declarar merma y en los dos
+el número es cero o casi.**
+
+Sobre el tamaño de ese "casi", una advertencia para el que lo cite: **la
+tentación es dividir 1 sobre los 1225 bultos tomados y decir 0,08%, y esa
+división mezcla unidades.** Lo tomado son CAJONES y lo producido son CAJAS —
+el docstring de la ruta lo dice sin vueltas (*"sin correlación entre tomado y
+producido: un cajón de 16 puede dar tres cajas de 6"*) y el sistema acepta
+producir más bultos de los que tomó. El dato que se sostiene es el CONTEO —
+1 de 72 guías, 1 bulto— no un porcentaje de pérdida. Es el corolario 13 con
+otra ropa: una división exacta entre cosas comparables deja de serlo cuando
+las cosas dejan de ser comparables, y sigue devolviendo un número.
+
+**Y la lección de método, que es la cara de esto que más se repite:** el
+párrafo que corregía una afirmación negativa mal verificada metió, en la
+misma frase, una POSITIVA igual de mal verificada. Deduje que la costumbre
+existía de que existiera la columna. Es el corolario 18 al pie de la letra
+—*al corregir se escribe rápido y con la sensación de estar arreglando, que
+es cuando menos se verifica*— y esta vez pasó adentro de un corolario cuyo
+tema era exactamente ese cuidado. **Escribir la regla no protege del caso;
+lo único que protegió las dos veces fue medir antes de dejarlo escrito.**
+
+Tres cosas que se llevan:
+
+1. **Enumeré las puertas que esperaba, no el concepto.** Miré
+   `movimientos_stock` (tipo 'merma' y tipo 'ajuste') y `remitos_segunda`,
+   que son las tres puertas de la baja de galpón — o sea, las tres formas
+   que ya tenía en la cabeza. Es **exactamente el corolario 20**, y lo
+   encontró exactamente lo que el 20 dice que hay que hacer: `grep` del
+   CONCEPTO (merma, descarte, tirado, perdido) en vez de la columna.
+2. **Saber la regla no la dispara.** El corolario 20 estaba escrito, con su
+   propio "una afirmación negativa necesita más verificación que una
+   positiva", y aun así redacté la negativa. Lo que la frenó fue el momento:
+   **estaba por escribirla en CLAUDE.md**, y una afirmación destinada a
+   quedar escrita se relee distinto que una dicha al pasar. La lección
+   operativa no es "acordate del 20": es **antes de dejar por escrito un
+   "no existe", grepear el concepto una vez más.** Cuesta un minuto y es lo
+   único que funcionó.
+3. **Una negativa mal escrita ACÁ es la peor de todas.** Este archivo se lee
+   como el estado del mundo. Un número mal en un mensaje se corrige al día
+   siguiente; un "no se registra en ninguna columna" escrito acá cierra la
+   búsqueda para el que lo lea en tres meses, y manda a construir el
+   registro que ya existía.
+
+**Y lo que SÍ está medido, dicho con precisión**, porque acá también se
+mezcla fácil: está medido que **no hay ni una merma ni un ajuste** desde el
+corte, así que ningún desvío del Cotejo se explica por ellos. Que los
+desvíos los cause la merma de galpón sin registrar es la **hipótesis
+principal, no un hecho**: podrían ser kilajes, conteos mal tomados, u otra
+cosa. Se mediría cruzando los desvíos con `corte_fifo_15`, y por ahora no
+está hecho. La ausencia de causa registrada no es la presencia de esta causa.
+
+**La consecuencia práctica**, y es la que vale para el galpón: la merma con
+foto y motivo va a ser **lo primero que se cargue en esa pantalla**. No hay
+hábito previo que corregir, así que lo que salga bien o mal las primeras
+veces es lo que va a quedar. Conviene que alguien mire lo que cargan la
+primera semana — con diez mermas encima se revisa también si la lista corta
+de motivos alcanza, que hoy es una apuesta que no se puede validar contra
+nada.
+
+## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
+
+Del 09/09, y va como regla y no como corolario porque **no es de la familia
+de las otras**: las demás son trampas del código, de una medición o de un
+comentario que envejece. Ésta es sobre la persona que carga, y sobre lo que
+el sistema le está pidiendo sin darse cuenta.
+
+**Si un dato no aparece en ninguna cuenta ni en ninguna decisión, el que lo
+carga lo aprende en dos semanas y lo saltea.** No hay capacitación que lo
+arregle, porque no hay nada que corregir: llenarlo o no llenarlo da el mismo
+resultado, y el que trabaja lo nota antes que nosotros. **El arreglo está del
+lado del sistema, no del lado del que carga.**
+
+### El caso que la produjo
+
+`reprocesos.bultos_merma` — el campo de merma de la guía R. Medido
+(`db/mermas_4_la_de_las_guias_r.sql`, Frutamax, corte 05/09, `> corte`):
+**1 de 72 guías R declaró merma, por 1 bulto.** En un negocio de fruta,
+reenvasar y descartar casi nada no pasa.
+
+La hipótesis razonable era que el formulario lo obligara: si el sistema
+exigiera `tomados = primera + segunda + merma`, un operario con descarte real
+y merma en cero **tendría que inflar primera o segunda para poder guardar**,
+y entonces el cero no sería descuido sino lo que la pantalla le pide. Sería
+un bug de diseño grande, así que se midió corriendo la ruta real con cuatro
+cargas, no leyendo el `if`:
+
+```
+A) cuadra exacto            tomados 20 · primera 18 · segunda 1 · merma 1  -> guarda
+B) falta 17 sin explicar    tomados 20 · primera  3 · segunda 0 · merma 0  -> GUARDA
+C) produce mas de lo tomado tomados 20 · primera 60 · segunda 0 · merma 0  -> GUARDA
+D) todo en cero             tomados 20 · primera  0 · segunda 0 · merma 0  -> rechaza
+```
+
+No hay identidad, ni en el CHECK de la base ni en la ruta. La única regla es
+la de D: *algo* tiene que haberse producido. **Y no puede haberla**: lo
+tomado son cajones y lo producido cajas, así que C no es un agujero sino el
+caso normal — un cajón de 16 da tres cajas de 6.
+
+Descartada la hipótesis, quedó la causa de verdad: **`bultos_merma` no
+alimenta ninguna cuenta.** El stock sale de `− tomados + primera`, la segunda
+es un pool aparte, y las mermas de la Rentabilidad Real salen de
+`movimientos_stock` (`salida["tipo"] == "merma"`), no de esta columna. Se
+escribe, se muestra en el detalle de la guía, y no mueve un solo número.
+
+Y de paso: **el descarte no se pierde de las cuentas.** Está adentro de
+`tomados − primera` — los cajones se fueron y volvieron menos cajas. Lo que
+se pierde es el **motivo**: el número existe y nadie sabe si fue merma,
+kilaje, o un reparto distinto.
+
+### La señal, y cómo se usa antes de sufrirla
+
+Antes de leer un campo vacío como desidia, preguntarse **qué pasa si se
+llena**. Si la respuesta es "nada" —no se traba nada, no cambia ningún total,
+no aparece en ninguna pantalla que alguien mire—, el vacío es la respuesta
+correcta al incentivo que hay puesto.
+
+Es la otra cara del corolario 26: allá, un cartel que se pasa con el mismo
+click que ya se iba a hacer no es una revisión; **acá, un campo que no mueve
+nada no es un registro.** En los dos casos el sistema parece tener algo que
+en realidad no tiene.
+
+### Por qué la merma de galpón sí debería funcionar
+
+Es la razón para esperar distinto de la pantalla nueva, y conviene que esté
+escrita antes de verlo: **la merma de galpón TIENE consecuencia — baja el
+stock.** El motivo y la foto van pegados a esa consecuencia, no sueltos: el
+operario carga la merma porque necesita que el stock baje, y el motivo y la
+foto viajan en el mismo formulario.
+
+Ese es exactamente el enganche que a `bultos_merma` le falta. Si en la
+primera semana la de galpón se carga y la del reproceso sigue en cero, eso
+**no** dice que el operario sea prolijo en una y no en la otra: dice que una
+pantalla le pide algo que necesita hacer y la otra un dato que no hace nada.
+
+### Lo que queda ANOTADO Y NO CONSTRUIDO
+
+Si algún día se quiere el motivo del descarte del reproceso, **la salida no
+es insistir con el campo ni pedir que lo llenen mejor: es darle
+consecuencia.** Dos formas, ninguna construida:
+
+- que la merma de la guía R **aparezca en la Rentabilidad Real** al lado de
+  las otras mermas, o
+- que la guía **avise cuando `tomados − primera` es grande y la merma dice
+  cero** — el aviso es la consecuencia más barata, y no obliga a nada.
+
+Y antes de construir cualquiera de las dos, medir si el motivo se necesita:
+puede pasar como con el desglose del Remanente (corolario 23), que la
+consulta previa borró la pantalla entera.
