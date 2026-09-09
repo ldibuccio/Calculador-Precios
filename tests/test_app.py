@@ -17636,6 +17636,9 @@ def test_la_SEGUNDA_se_ofrece_ARRIBA_de_las_fichas_y_no_al_final():
         cuerpo = cliente.get("/deposito/stock/fisico?articulo_id=1").text
 
     assert cuerpo.index('value="sueltos"') < cuerpo.index('value="segunda"') < cuerpo.index('value="11"')
+    # Y a la vista, no adentro de un picker que hay que abrir.
+    assert "<select" not in cuerpo.split('class="opciones"')[1].split("</fieldset>")[0]
+    assert 'type="radio"' in cuerpo
 
 
 def test_stock_fisico_guarda_el_conteo_de_las_cajas_de_una_ficha():
@@ -17721,10 +17724,22 @@ def test_stock_fisico_los_sueltos_van_PRIMEROS_y_al_mismo_nivel_que_las_fichas()
         respuesta = cliente.get("/deposito/stock/fisico?articulo_id=7")
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    selector = cuerpo.split('name="que_conto"')[1].split("</select>")[0]
-    assert "optgroup" not in selector
-    # Primera opción real, antes de cualquier ficha.
-    assert selector.index("Bultos sueltos") < selector.index("Cajas de")
+    grupo = cuerpo.split('class="opciones"')[1].split("</fieldset>")[0]
+    # Ninguna agrupada ni separada de las demás: las tres son botones del
+    # mismo grupo, y desde el 09/09 no hay select que abrir para verlas.
+    # (El de ARTÍCULO sigue siendo un select, y está bien: es la lista larga.)
+    assert "optgroup" not in grupo
+    assert "<select" not in grupo
+    # Las dos fijas, una vez cada una, más una por ficha (el fixture trae dos).
+    assert grupo.count('value="sueltos"') == 1
+    assert grupo.count('value="segunda"') == 1
+    assert grupo.count('type="radio"') == 2 + grupo.count("Cajas de")
+    # `required` en UNO del grupo alcanza para todo el grupo, y es lo que hace
+    # que el navegador no deje mandar sin elegir. Verificado en Chromium:
+    # checkValidity() da False con ninguno tildado.
+    assert grupo.count("required") == 1
+    # Y el orden: sueltos, segunda, y después las fichas.
+    assert grupo.index("Bultos sueltos") < grupo.index("Segunda") < grupo.index("Cajas de")
 
 
 def test_stock_fisico_acepta_cero_pero_no_negativos():

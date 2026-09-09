@@ -52,6 +52,70 @@
     box-sizing: border-box;
     background: #fff;
   }
+  /* QUÉ CONTASTE, en botones y no en un select. El select los tenía a los
+     tres al mismo nivel y aun así se elegía adentro de un picker nativo: en
+     el celular hay que abrirlo, buscar y confirmar, y lo que no se ve no se
+     usa. Acá las opciones están TODAS a la vista y se eligen con un toque.
+
+     Son radios de verdad, con el input escondido y el label haciendo de
+     botón: el teclado y el lector de pantalla siguen viendo un grupo de
+     opciones, y el `required` lo hace cumplir el navegador. */
+  .grupo-que-conto {
+    border: 0;
+    padding: 0;
+    margin: 0.7rem 0 0;
+  }
+  .grupo-que-conto legend {
+    padding: 0;
+    font-size: 0.95rem;
+    color: #444;
+  }
+  .opciones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+  }
+  .opciones input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .opciones label {
+    /* Que entre cómodo en 390px: dos por fila cuando son cortos, y una fila
+       entera cuando el nombre de la ficha es largo. Nunca desborda. */
+    flex: 1 1 45%;
+    min-width: 8rem;
+    margin: 0;
+    padding: 0.9rem 0.7rem;
+    border: 2px solid #d4d4d8;
+    border-radius: 10px;
+    background: #fff;
+    color: #333;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: center;
+    box-sizing: border-box;
+  }
+  .opciones input[type="radio"]:checked + label {
+    border-color: #2563eb;
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+  .opciones input[type="radio"]:focus-visible + label {
+    outline: 3px solid #93c5fd;
+    outline-offset: 2px;
+  }
+  .opciones .detalle {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: #666;
+    margin-top: 0.15rem;
+  }
+  .opciones input[type="radio"]:checked + label .detalle { color: #1d4ed8; }
   button.boton-guardar {
     display: block;
     width: 100%;
@@ -180,15 +244,21 @@
          dato tan bueno como cualquier otro. Filtrar por "tiene segunda"
          además le contaría al operario algo del sistema, que es justo lo
          que esta pantalla no hace. #}
-      <label for="que_conto">Qué contaste</label>
-      <select id="que_conto" name="que_conto" required>
-        <option value="" selected disabled>Elegí qué contaste...</option>
-        <option value="sueltos">Bultos sueltos (sin procesar)</option>
-        <option value="segunda">Segunda (lo que espera el remito al Puesto)</option>
-        {% for ficha in fichas_por_articulo.get(articulo_id, []) %}
-        <option value="{{ ficha.id }}">Cajas de {{ ficha.nombre }}{% if ficha.kilaje %} ({{ ficha.kilaje }}){% endif %}</option>
-        {% endfor %}
-      </select>
+      <fieldset class="grupo-que-conto">
+        <legend>Qué contaste</legend>
+        <div class="opciones">
+          <input type="radio" id="qc-sueltos" name="que_conto" value="sueltos" required>
+          <label for="qc-sueltos">Bultos sueltos<span class="detalle">sin procesar</span></label>
+
+          <input type="radio" id="qc-segunda" name="que_conto" value="segunda">
+          <label for="qc-segunda">Segunda<span class="detalle">espera el remito al Puesto</span></label>
+
+          {% for ficha in fichas_por_articulo.get(articulo_id, []) %}
+          <input type="radio" id="qc-{{ ficha.id }}" name="que_conto" value="{{ ficha.id }}">
+          <label for="qc-{{ ficha.id }}">Cajas de {{ ficha.nombre }}{% if ficha.kilaje %}<span class="detalle">{{ ficha.kilaje }}</span>{% endif %}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
 
       <label for="cantidad">Bultos contados</label>
       <input type="number" id="cantidad" name="cantidad" min="0" step="0.01" required
