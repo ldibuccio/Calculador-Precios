@@ -24,6 +24,7 @@ sueltos sin ser ningún evento).
 """
 
 SIN_EXPLICAR = "Sin explicar"
+SIN_GUIA_R = "Salieron sin guía R que las produzca"
 
 # Qué mueve cada porción, y NO es lo mismo para las tres:
 #
@@ -116,7 +117,8 @@ def _eventos_de_segunda(eventos) -> list[dict]:
 
 
 def armar_extracto(eventos: dict, venia: float, quedo: float,
-                   ficha_id: int | None = None, es_segunda: bool = False) -> dict:
+                   ficha_id: int | None = None, es_segunda: bool = False,
+                   deficit_nuevo: float = 0.0) -> dict:
     """Los renglones del extracto de UNA porción, con sus dos puntas ya dadas.
 
     `venia` y `quedo` NO se calculan acá: entran hechos, de
@@ -127,6 +129,18 @@ def armar_extracto(eventos: dict, venia: float, quedo: float,
     Si los eventos no explican la diferencia entre las dos puntas, el resto
     va en un renglón "Sin explicar". Nunca se reparte ni se omite: un
     faltante escondido adentro de otro renglón es peor que uno a la vista.
+
+    `deficit_nuevo` es cuánto CRECIÓ en el día el déficit de las fichas del
+    artículo, y solo tiene sentido en los SUELTOS. Es el "resto salió de
+    los sueltos" de `_cajas_por_ficha`: armaron cajas de una ficha sin que
+    hubiera cajas producidas, así que esos bultos salieron de la pila
+    suelta. Va como un renglón CON NOMBRE en vez de caer en "Sin
+    explicar", que es lo único que no es — el sistema sabe exactamente qué
+    es y hasta lo muestra en el Cotejo y abajo del Remanente.
+
+    Es un DELTA y no el déficit total a propósito: el extracto es un flujo
+    entre dos puntas, y el déficit es un saldo. Poner el saldo entero haría
+    aparecer todos los días el mismo faltante ya explicado el primero.
     """
     if es_segunda:
         filas = _eventos_de_segunda(eventos)
@@ -134,6 +148,8 @@ def armar_extracto(eventos: dict, venia: float, quedo: float,
         filas = _eventos_de_ficha(eventos, ficha_id)
     else:
         filas = _eventos_de_sueltos(eventos)
+        if deficit_nuevo:
+            filas.append(_renglon(SIN_GUIA_R, -deficit_nuevo))
 
     explicado = round(sum(f["bultos"] for f in filas), 2)
     sin_explicar = round(quedo - venia - explicado, 2)

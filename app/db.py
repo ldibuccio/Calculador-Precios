@@ -7719,6 +7719,34 @@ def cajas_armadas_por_ficha(hasta=None) -> dict:
         conexion.close()
 
 
+def deficit_de_cajas_por_ficha(hasta=None) -> dict:
+    """{(articulo_id, ficha_id): cuánto salió SIN caja armada detrás} al cierre de `hasta`.
+
+    La otra mitad de `cajas_armadas_por_ficha`, y sale de la MISMA
+    `_cajas_por_ficha`: una devuelve el índice 0 y ésta el 1, así que no
+    hay dos cuentas que se puedan separar.
+
+    Para qué: los sueltos se derivan por resta con el piso puesto
+    (`total − Σ disponibles`), así que un déficit de una ficha BAJA los
+    sueltos exactamente en esa cantidad — es el "resto salió de los
+    sueltos" del docstring de `_cajas_por_ficha`. Sin este número, ese
+    movimiento aparece en el extracto como "Sin explicar", que es lo único
+    que no es: el sistema sabe perfectamente qué es.
+
+    Solo las que tienen déficit: una ficha sin faltante no es un renglón.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            return {
+                clave: deficit
+                for clave, (_disponibles, deficit) in _cajas_por_ficha(cursor, hasta).items()
+                if deficit > 0
+            }
+    finally:
+        conexion.close()
+
+
 def fichas_con_cajas_armadas() -> set:
     """Los ficha_id que HOY tienen cajas armadas disponibles (más de cero).
 

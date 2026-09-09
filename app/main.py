@@ -281,6 +281,7 @@ from app.db import (
     listar_estado_alertas,
     agregar_foto_recepcion,
     listar_fotos_de_recepcion,
+    deficit_de_cajas_por_ficha,
     obtener_uso_storage_bucket,
     recepcionar_compra,
     rechazar_compra,
@@ -6989,6 +6990,22 @@ def _remanente_a_fecha(hasta) -> dict:
     }
 
 
+def _deficit_del_articulo(articulo_id: int, hasta) -> float:
+    """Cuánto salió sin caja armada detrás, sumando TODAS las fichas del artículo.
+
+    Se suma porque los sueltos son del artículo entero: cada ficha con
+    déficit le baja su parte a la misma pila.
+    """
+    return round(
+        sum(
+            deficit
+            for (art, _ficha), deficit in deficit_de_cajas_por_ficha(hasta).items()
+            if art == articulo_id
+        ),
+        2,
+    )
+
+
 def _porcion_buscada(porciones: list[dict], articulo_id: int, ficha_id, es_segunda: bool):
     """La porción del Remanente que se pidió, buscada por su CLAVE y no por el nombre.
 
@@ -7058,7 +7075,28 @@ def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | Non
     venia = float(anterior["bultos"]) if anterior else 0.0
     nombre = (porcion or anterior)["nombre"]
 
-    extracto = armar_extracto(eventos, venia, quedo, ficha_id=ficha_id, es_segunda=es_segunda)
+    # CUÁNTO CRECIÓ HOY el déficit de las fichas de este artículo. Solo se
+    # usa en los sueltos, que es donde ese crecimiento se ve como una baja:
+    # los sueltos salen de `total − Σ disponibles` y el disponible tiene
+    # piso, así que un déficit nuevo de 10 baja los sueltos en 10. Sin
+    # esto, ese movimiento caía en "Sin explicar" teniendo nombre.
+    deficit_nuevo = 0.0
+    if ficha_id is None and not es_segunda:
+        try:
+            deficit_nuevo = round(
+                _deficit_del_articulo(articulo_id, hasta)
+                - _deficit_del_articulo(articulo_id, hasta - timedelta(days=1)),
+                2,
+            )
+        except Exception:
+            # El extracto sale igual sin el renglón: lo que no se nombre
+            # vuelve a caer en "Sin explicar", que es el comportamiento de
+            # antes y no una pantalla rota.
+            logger.exception("No se pudo leer el déficit de cajas para el extracto")
+
+    extracto = armar_extracto(
+        eventos, venia, quedo, ficha_id=ficha_id, es_segunda=es_segunda, deficit_nuevo=deficit_nuevo
+    )
     return templates.TemplateResponse(
         request,
         "administracion_extracto_porcion.html",
