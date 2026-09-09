@@ -1332,3 +1332,52 @@ estar toda en verde con la guarda rota.** Si todos los casos que se prueban
 esperan un error, cualquier guarda que aborte siempre los pasa a todos. El
 caso feliz no es un trámite al final de la lista: es el único que
 distingue "la guarda funciona" de "la guarda siempre frena".
+
+Corolario 31, del 08/09, y es de DISEÑO, no de bugs: **una operación que
+existe, está probada, y no tiene puerta en la pantalla.** El sistema sabe
+hacerla —el SQL está escrito y corrido— pero la única forma de pedírsela es
+el editor de la base.
+
+Apareció DOS veces el mismo día, y por eso vale anotarlo:
+
+1. **Anular un pedido entero.** No había ruta; se hizo con SQL a mano. La
+   frase que lo cerró fue del dueño: *"que la única forma sea SQL a mano es
+   un agujero: hoy fui yo, mañana es un operario que no puede"*. Se
+   construyó la ruta ese mismo día.
+2. **Deshacer una recepción.** Depósito no puede: su Deshacer está bloqueado
+   para las recepcionadas ("para corregirla hace falta Gerencia"). Una
+   recepción apretada por error termina en el editor. **Queda abierto si va
+   un botón** — ver `db/revertir_una_recepcion.sql`.
+
+Y una tercera, más chica, del mismo día: **borrar una foto de balanza
+sola**. La única ruta que devuelve su ruta para sacarla del Storage borra la
+COMPRA entera.
+
+**La señal para reconocerlo**, y es barata: cuando por segunda vez se
+escribe un `.sql` a mano para la misma FORMA de operación, eso ya no es un
+arreglo puntual — es una función que falta. La primera vez es un
+incidente; la segunda es un diagnóstico.
+
+Dos cosas que se llevan del método, más allá del botón:
+
+- **El `.sql` que se escribió para el incidente vale como camino
+  permanente, y por eso NO se llama por el incidente.** `borrar_la_foto_de_
+  prueba_de_balanza.sql` no lo va a encontrar el que dentro de seis meses
+  necesite borrar una foto: se llama `borrar_una_foto_de_balanza.sql`, con
+  el caso del 08/09 adentro como ejemplo. Es el corolario 8 —el nombre
+  lleva el alcance— aplicado al día que un script deja de ser de un solo uso.
+- **Que no haya botón no es siempre un error.** Deshacer una recepción
+  mueve stock y puede haber sido correcta; el bloqueo de Depósito está
+  puesto a propósito, y el cartel manda a Gerencia, que existe.
+
+  Pero lo que Gerencia tiene es **Corregir Recepción, y eso es otra cosa**:
+  su docstring dice, textual, que *"NO cambia el estado (sigue
+  'recepcionado') ni toca procesada_el ni el retiro"*. Corrige el número de
+  una recepción que pasó; no deshace una que no tenía que pasar. **Ninguna
+  pantalla puede devolver una compra a 'pendiente'.**
+
+  Por eso la pregunta útil no es "¿le falta un botón?" sino **"¿lo que hay
+  del otro lado del cartel hace lo que el que llega necesita?"**. Acá el
+  camino existe, está señalizado, y termina en una pantalla que resuelve un
+  problema parecido pero distinto — que es más difícil de ver que un cartel
+  que no lleva a ningún lado.

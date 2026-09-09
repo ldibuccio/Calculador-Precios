@@ -1,6 +1,12 @@
--- Deshacer la recepción que dejó la prueba de la foto de balanza (08/09,
--- Palmala). Correr SOLO si el paso 1 de borrar_la_foto_de_prueba_de_balanza
--- devolvió estado_de_la_compra = 'recepcionado'.
+-- Deshacer UNA recepción: devuelve la compra a 'pendiente' y le saca los
+-- valores reales, así los bultos salen del stock.
+--
+-- No es un script de un solo uso. Depósito NO tiene botón de "deshacer
+-- recepción" —el Deshacer de la pantalla está bloqueado para las
+-- recepcionadas ("para corregirla hace falta Gerencia")— así que una
+-- recepción apretada por error se arregla acá hasta que ese botón exista.
+-- Estrenado el 08/09 revirtiendo la que dejó la prueba de la foto de
+-- balanza en Palmala: compra 181, 60 cajones de Cebolla.
 --
 -- POR QUÉ NO VA UN MOVIMIENTO COMPENSATORIO. La entrada de stock no es una
 -- fila en movimientos_stock: es LA COMPRA MISMA. El stock la lee así

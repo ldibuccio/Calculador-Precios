@@ -1,5 +1,11 @@
--- Sacar LA foto de balanza que quedó de la prueba del 08/09 en Palmala.
--- NO borra la compra: la compra es real, la foto es la de prueba.
+-- Sacar UNA foto de balanza: la fila de fotos_recepcion y el archivo del
+-- bucket. NO borra la compra.
+--
+-- No es un script de un solo uso. No hay ningún botón en la pantalla que
+-- borre una foto de balanza sola —el único camino que devuelve la ruta
+-- para sacarla del Storage es borrar la COMPRA entera— así que éste es EL
+-- camino mientras ese botón no exista. Estrenado el 08/09 sacando la foto
+-- que dejó la prueba en Palmala (compra 181).
 --
 -- Son TRES pasos y el del medio NO es SQL: el archivo del Storage se borra
 -- a mano desde el panel de Supabase, porque no hay ninguna ruta en la app

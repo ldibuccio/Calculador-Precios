@@ -206,5 +206,34 @@ Al limpiar se le pone `foto_ruta = NULL` y **la fila no se borra**: el
 precio es el dato, la foto era solo de dónde salió.
 
 La única foto de balanza que existía —la de la prueba del 08/09 en
-Palmala— se borra con `db/borrar_la_foto_de_prueba_de_balanza.sql`, así
-que `pesaje/` nace en cero en las dos bases.
+Palmala— se borró con `db/borrar_una_foto_de_balanza.sql`, así que
+**`pesaje/` nace en cero en las dos bases**: `recepcionadas 170 ·
+pendientes 163 · fotos_de_balanza 0`.
+
+## Lo que salió de la prueba y no era el objetivo (08/09)
+
+Probar la foto contra Palmala dejó dos residuos: la foto, y una compra
+recepcionada que no correspondía — **60 cajones de Cebolla que entraron al
+stock**, compra 181.
+
+Lo interesante es lo que hizo falta para sacarlos, porque **ninguna de las
+dos cosas tiene botón**:
+
+- No hay ruta que borre una foto de balanza sola. La única que devuelve la
+  ruta para sacar el archivo del Storage borra la COMPRA entera.
+- Depósito no puede deshacer una recepción: el Deshacer está bloqueado ahí
+  ("para corregirla hace falta Gerencia").
+
+Así que los dos caminos terminaron en el editor de la base, y quedaron
+escritos y probados contra el esquema real: `db/borrar_una_foto_de_balanza.sql`
+y `db/revertir_una_recepcion.sql`. No son de un solo uso — son EL camino
+mientras esos botones no existan.
+
+Y de paso contestó una pregunta que valía la pena: **la compra era del
+28/08 y el corte de Palmala es el 31/08, y aun así los 60 bultos contaban.**
+Ni el total ni el FIFO miran `fecha_operacion`: los dos recortan por
+`procesada_el`, que era de hoy. El total (`_SQL_SUMAS_STOCK`) directamente
+no tiene corte; el FIFO sí, y lo compara contra `procesada_el`. Medido
+reproduciendo la compra: 60 bultos en el total, lote visible en el FIFO
+ordenado por 08/09 con `fecha_lote` 28/08. Con el piso mirando
+`fecha_operacion` —que es lo que uno supone— no habría contado.
