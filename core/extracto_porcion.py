@@ -29,9 +29,11 @@ SIN_GUIA_R = "Salieron sin guía R que las produzca"
 # Qué mueve cada porción, y NO es lo mismo para las tres:
 #
 # - SUELTOS (el nombre pelado): compras, reprocesos tomados, la primera de
-#   una guía SIN ficha, los armados sin ficha, reingresos, mermas y ajustes.
-# - CAJAS DE UNA FICHA: SOLO dos cosas, la primera de un reproceso asignado a
-#   esa ficha y los armados de esa ficha. Ni la merma ni el ajuste pueden
+#   una guía SIN ficha, los armados sin ficha, los reingresos SIN ficha,
+#   mermas y ajustes.
+# - CAJAS DE UNA FICHA: TRES cosas, la primera de un reproceso asignado a
+#   esa ficha, los armados de esa ficha, y los reingresos de esa ficha —
+#   vuelven cajas armadas, en la caja del cliente. Ni la merma ni el ajuste pueden
 #   tocarlas: están escritos por ARTÍCULO a propósito (ver el Cotejo, "un
 #   ajuste de stock es por ARTÍCULO: mueve el total, no reparte entre
 #   fichas"). Consecuencia: hoy NO HAY FORMA de registrar una merma de cajas
@@ -51,6 +53,23 @@ ETIQUETAS_MOVIMIENTO = {
 
 def _renglon(descripcion, bultos):
     return {"descripcion": descripcion, "bultos": round(bultos, 2)}
+
+
+def _ficha_del_movimiento(mov):
+    """De qué FICHA es este movimiento, o None si es de la pila suelta.
+
+    No lo decide este módulo: lo decide la CUENTA. `eventos_de_stock_del_dia`
+    trae `ficha_id` no nulo solo cuando `_SQL_STOCK_PARTIDO` lo suma a esa
+    ficha, y las dos consultas usan la misma constante
+    (`_SQL_REINGRESO_ES_DE_LA_FICHA`). Acá solo se lee.
+
+    Existe como función y no como `mov.get("ficha_id")` suelto para que las
+    DOS mitades —la de sueltos, que lo saltea, y la de la ficha, que lo
+    lista— pregunten lo mismo. Escritas por separado se separan, y cuando se
+    separan el evento queda en una porción y el saldo en otra: los dos "Sin
+    explicar" del día salen iguales y de signo opuesto, que es la firma.
+    """
+    return mov.get("ficha_id")
 
 
 def _eventos_de_sueltos(eventos) -> list[dict]:
@@ -84,6 +103,12 @@ def _eventos_de_sueltos(eventos) -> list[dict]:
         # pool de segunda, y ahí aparece.
         if mov["tipo"] == "reingreso_rechazo" and mov["destino_rechazo"] not in (None, "stock"):
             continue
+        # Y el que volvió A UNA FICHA tampoco: vuelven cajas armadas, en la
+        # caja del cliente, y la cuenta las suma a esa ficha desde el 09/09.
+        # Un reingreso SIN ficha sigue siendo de acá — es mercadería que
+        # vuelve sin una pila propia a la que ir.
+        if _ficha_del_movimiento(mov) is not None:
+            continue
         etiqueta = ETIQUETAS_MOVIMIENTO.get(mov["tipo"], mov["tipo"])
         filas.append(_renglon(f"{etiqueta} — {mov['motivo']}", mov["cantidad"]))
     return filas
@@ -100,6 +125,13 @@ def _eventos_de_ficha(eventos, ficha_id: int) -> list[dict]:
                 f"Armado pedido {armado['cliente']} {armado['sucursal'] or ''}".strip(),
                 -armado["bultos"],
             ))
+    for mov in eventos["movimientos"]:
+        # LO QUE VUELVE YA ARMADO. Vuelven cajas de un cliente, en su caja, y
+        # son de la ficha por la que salieron: desde el 09/09 la cuenta las
+        # suma acá, así que el evento tiene que estar acá también.
+        if _ficha_del_movimiento(mov) == ficha_id:
+            etiqueta = ETIQUETAS_MOVIMIENTO.get(mov["tipo"], mov["tipo"])
+            filas.append(_renglon(f"{etiqueta} — {mov['motivo']}", mov["cantidad"]))
     return filas
 
 

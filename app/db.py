@@ -7611,9 +7611,31 @@ def anular_movimiento_stock(movimiento_id: int) -> None:
 # partirlo a mano, y por eso la asimetría de arriba no es un caso borde sino
 # la forma correcta de la regla.
 # Igual que las seis patas: PISO del corte y TECHO de la fecha pedida.
+# ¿ESTE REINGRESO ENTRA EN LA CUENTA DE UNA FICHA? Escrito UNA SOLA VEZ y
+# usado por las dos que tienen que coincidir: `_SQL_STOCK_PARTIDO`, que lo
+# SUMA a la ficha, y `eventos_de_stock_del_dia`, que lo MUESTRA en el
+# extracto de esa ficha.
+#
+# Hasta el 09/09 estaban separadas, y el paso 1 las partió: la cuenta empezó
+# a atribuirlo a la ficha y el extracto lo siguió listando como evento de
+# sueltos. El síntoma es inconfundible y sirve para reconocerlo si vuelve a
+# pasar — los dos "Sin explicar" del mismo día salen IGUALES Y DE SIGNO
+# OPUESTO (Limón 08/09: −15 en sueltos y +15 en la ficha), porque el evento
+# está de un lado y el saldo del otro.
+#
+# Pide el alias `m` para movimientos_stock y `pr` para el renglón por el que
+# salió (pr.id = m.pedido_renglon_id). La VENTANA del corte no está acá a
+# propósito: no es parte de "de quién es este reingreso", y cada consulta
+# recorta con la suya.
+_SQL_REINGRESO_ES_DE_LA_FICHA = """
+    m.tipo = 'reingreso_rechazo'
+    AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
+    AND pr.ficha_id IS NOT NULL
+"""
+
 _SQL_STOCK_PARTIDO = """
     WITH corte AS (SELECT fecha FROM corte_modelo WHERE id = 1),
-    tope AS (""" + _SQL_TOPE + """),
+    tope AS (""" + _SQL_TOPE + f"""),
     vigentes AS (
         SELECT DISTINCT ON (cliente_id, fecha_operacion) id
         FROM pedidos WHERE anulado_el IS NULL
@@ -7661,9 +7683,7 @@ _SQL_STOCK_PARTIDO = """
         SELECT pr.articulo_id, pr.ficha_id, SUM(m.cantidad) AS total
         FROM movimientos_stock m
         JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id, corte, tope
-        WHERE m.anulado_el IS NULL AND m.tipo = 'reingreso_rechazo'
-          AND (m.destino_rechazo IS NULL OR m.destino_rechazo = 'stock')
-          AND pr.ficha_id IS NOT NULL
+        WHERE m.anulado_el IS NULL AND {_SQL_REINGRESO_ES_DE_LA_FICHA}
           AND m.fecha_operacion > corte.fecha
           AND m.fecha_operacion <= tope.fecha
         GROUP BY pr.articulo_id, pr.ficha_id
@@ -8169,18 +8189,30 @@ def eventos_de_stock_del_dia(articulo_id: int, fecha) -> dict:
                 for f in cursor.fetchall()
             ]
 
+            # DE QUÉ PORCIÓN ES ESTE MOVIMIENTO. `ficha_id` viene NO NULO solo
+            # cuando la CUENTA lo atribuye a esa ficha, y se decide con
+            # `_SQL_REINGRESO_ES_DE_LA_FICHA` —la misma constante que usa
+            # `_SQL_STOCK_PARTIDO`—, no con una condición escrita acá. El
+            # extracto no puede repartir un evento con un criterio distinto
+            # del que reparte el saldo: eso es exactamente lo que rompió el
+            # 09/09, con los dos "Sin explicar" saliendo ±15.
+            #
+            # El LEFT JOIN no puede duplicar: `pr.id` es la clave primaria.
             cursor.execute(
-                """
-                SELECT tipo, cantidad, motivo, destino_rechazo, bultos_segunda
-                FROM movimientos_stock
-                WHERE articulo_id = %s AND anulado_el IS NULL AND fecha_operacion = %s
-                ORDER BY id
+                f"""
+                SELECT m.tipo, m.cantidad, m.motivo, m.destino_rechazo, m.bultos_segunda,
+                       CASE WHEN {_SQL_REINGRESO_ES_DE_LA_FICHA} THEN pr.ficha_id END AS ficha_id
+                FROM movimientos_stock m
+                LEFT JOIN pedidos_renglones pr ON pr.id = m.pedido_renglon_id
+                WHERE m.articulo_id = %s AND m.anulado_el IS NULL AND m.fecha_operacion = %s
+                ORDER BY m.id
                 """,
                 (articulo_id, fecha),
             )
             movimientos = [
                 {"tipo": f[0], "cantidad": float(f[1]), "motivo": f[2],
-                 "destino_rechazo": f[3], "bultos_segunda": float(f[4]) if f[4] is not None else None}
+                 "destino_rechazo": f[3], "bultos_segunda": float(f[4]) if f[4] is not None else None,
+                 "ficha_id": f[5]}
                 for f in cursor.fetchall()
             ]
 

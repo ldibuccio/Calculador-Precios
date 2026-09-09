@@ -259,3 +259,100 @@ def test_el_deficit_es_de_los_SUELTOS_y_no_de_la_ficha_ni_de_la_segunda():
 
     for extracto in (de_ficha, de_segunda):
         assert SIN_GUIA_R not in [f["descripcion"] for f in extracto["filas"]]
+
+
+# EL CASO DEL 09/09 EN FRUTAMAX, con los números reales de producción y el
+# artículo con nombre inventado. Limón, 08/09: volvieron 15 cajas armadas de
+# la ficha, y la cuenta por ficha (paso 1) empezó a sumarlas ahí mientras el
+# extracto las seguía listando como evento de SUELTOS.
+#
+# La firma del bug, y es lo que hay que reconocer si vuelve: los dos "Sin
+# explicar" del mismo día salen IGUALES Y DE SIGNO OPUESTO — −15 en sueltos
+# y +15 en la ficha. No es un faltante: es un evento en una porción y su
+# saldo en la otra.
+EVENTOS_08 = {
+    "compras": [{"proveedor": "PROVEEDOR EJEMPLO", "bultos": 40.0}],
+    "reprocesos": [
+        {"id": 188, "tomados": 11.0, "primera": 11.0, "segunda": 0.0, "ficha_id": 4, "tipo": "normal"},
+        {"id": 201, "tomados": 7.0, "primera": 7.0, "segunda": 0.0, "ficha_id": 4, "tipo": "normal"},
+        {"id": 206, "tomados": 7.0, "primera": 7.0, "segunda": 0.0, "ficha_id": 4, "tipo": "normal"},
+    ],
+    "armados": [
+        {"cliente": "CLIENTE EJEMPLO", "sucursal": "AA", "ficha_id": 4, "bultos": 10.0},
+        {"cliente": "CLIENTE EJEMPLO", "sucursal": "BB", "ficha_id": 4, "bultos": 10.0},
+        {"cliente": "CLIENTE EJEMPLO", "sucursal": "CC", "ficha_id": 4, "bultos": 15.0},
+    ],
+    # `ficha_id` lo trae la consulta, decidido con la MISMA constante que usa
+    # la cuenta: viene no nulo justo cuando _SQL_STOCK_PARTIDO lo suma ahí.
+    "movimientos": [{"tipo": "reingreso_rechazo", "cantidad": 15.0, "motivo": "Rechazo",
+                     "destino_rechazo": "stock", "bultos_segunda": None, "ficha_id": 4}],
+    "remitos": [],
+}
+
+
+def test_el_reingreso_CON_FICHA_no_es_un_evento_de_los_sueltos():
+    """Las dos puntas son las de producción: venía 1 y quedó 16.
+
+    Con el reingreso listado acá, lo explicado daba 30 y el "Sin explicar"
+    salía −15. Sacándolo, la cuenta cierra sola.
+    """
+    extracto = armar_extracto(EVENTOS_08, venia=1.0, quedo=16.0)
+
+    assert [(f["descripcion"], f["bultos"]) for f in extracto["filas"]] == [
+        ("Compra recibida — PROVEEDOR EJEMPLO", 40.0),
+        ("Reproceso R188", -11.0),
+        ("Reproceso R201", -7.0),
+        ("Reproceso R206", -7.0),
+    ]
+    assert extracto["sin_explicar"] == 0
+
+
+def test_el_reingreso_CON_FICHA_es_un_evento_de_esa_ficha():
+    """Vuelven cajas armadas, en la caja del cliente: son de la ficha por la
+    que salieron. Venía 10 y quedó 15, las dos puntas de producción."""
+    extracto = armar_extracto(EVENTOS_08, venia=10.0, quedo=15.0, ficha_id=4)
+
+    assert [(f["descripcion"], f["bultos"]) for f in extracto["filas"]] == [
+        ("Reproceso R188", 11.0),
+        ("Reproceso R201", 7.0),
+        ("Reproceso R206", 7.0),
+        ("Armado pedido CLIENTE EJEMPLO AA", -10.0),
+        ("Armado pedido CLIENTE EJEMPLO BB", -10.0),
+        ("Armado pedido CLIENTE EJEMPLO CC", -15.0),
+        ("Reingreso — Rechazo", 15.0),
+    ]
+    assert extracto["sin_explicar"] == 0
+
+
+def test_los_dos_SIN_EXPLICAR_del_mismo_dia_no_pueden_ser_OPUESTOS():
+    """LA FIRMA, escrita como test para que no haya que volver a
+    diagnosticarla: un evento en una porción y su saldo en otra sale siempre
+    así, y ninguna de las dos pantallas por separado se ve mal.
+
+    Se mide sobre las dos porciones a la vez, que es lo único que la muestra.
+    """
+    sueltos = armar_extracto(EVENTOS_08, venia=1.0, quedo=16.0)["sin_explicar"]
+    ficha = armar_extracto(EVENTOS_08, venia=10.0, quedo=15.0, ficha_id=4)["sin_explicar"]
+
+    assert not (sueltos and ficha and sueltos == -ficha), (
+        f"sueltos {sueltos} y ficha {ficha} son opuestos: el evento quedó de un lado "
+        "y el saldo del otro"
+    )
+
+
+def test_un_reingreso_SIN_FICHA_sigue_siendo_de_los_sueltos():
+    """El otro lado de la moneda, y es el que evita arreglar de más: un
+    rechazo que vuelve sin ficha no tiene pila propia a la que ir. La cuenta
+    tampoco lo mueve —`pr.ficha_id IS NOT NULL` en el CTE— así que sigue
+    entrando por el total y viéndose acá."""
+    eventos = dict(SIN_EVENTOS,
+                   movimientos=[{"tipo": "reingreso_rechazo", "cantidad": 8.0,
+                                 "motivo": "Rechazo", "destino_rechazo": "stock",
+                                 "bultos_segunda": None, "ficha_id": None}])
+
+    extracto = armar_extracto(eventos, venia=2.0, quedo=10.0)
+
+    assert [(f["descripcion"], f["bultos"]) for f in extracto["filas"]] == [
+        ("Reingreso — Rechazo", 8.0),
+    ]
+    assert extracto["sin_explicar"] == 0
