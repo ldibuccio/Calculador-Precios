@@ -1160,6 +1160,27 @@ misma confirmación contada dos veces. Si el testigo dice que la base está
 quieta, esa base **no vota**, y hay que decirlo así en vez de sumarla como
 si hubiera confirmado algo.
 
+**Y dado vuelta como regla operativa, del 09/09**, que es la forma en que
+sirve el día que hay que decidir: **mientras Palmala esté parada, cualquier
+verificación que dé bien ahí no verifica nada. Lo que hay que mirar es
+Frutamax.**
+
+Palmala sirve para UNA cosa y hay que usarla para esa: **confirmar que una
+migración no explota.** Eso no depende de que haya actividad —el `alter
+table` corre igual sobre una tabla quieta— y es información real: si el
+esquema de las dos bases se separó, ahí se ve.
+
+Todo lo demás que se mida ahí es la pantalla vacía del backfill con otro
+disfraz. Y la trampa no es que engañe: es que **tranquiliza**. Un "cero
+ofensores" sobre 51 conteos cuyo último es de hace dos semanas se lee igual
+que uno sobre una base en marcha, y el que lo lee suma dos confirmaciones
+donde hay una.
+
+Aplicado el 09/09 con `es_segunda`: la migración corrida en las dos bases
+—eso vale, y valió—, y el `conteos_de_segunda = 0` de Palmala descartado a
+mano por su `ultimo_conteo` del 26/08. Lo que decide si las tres pantallas
+andan es Frutamax.
+
 Corolario 25, del 08/09, y es el hermano exacto del 23: **un argumento
 puede ser CORRECTO y llevar al número equivocado, porque lo que falla no es
 el razonamiento sino la premisa que nadie midió.**

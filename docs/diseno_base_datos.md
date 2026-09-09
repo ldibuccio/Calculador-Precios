@@ -4028,6 +4028,43 @@ merma de cajas**: si baja el total y la ficha a la vez (dos patas nuevas, una
 en cada cuenta) o si es una salida de la ficha que el total ya tenía contada.
 No se decide sin ese mapa.
 
+## PENDIENTE con nombre propio: la segunda se va al Puesto EN NUESTRA CAJA y el cartón no deja rastro (09/09)
+
+**La decisión ya está tomada y es de Lionel, no una hipótesis**: cuando vuelven
+cajas armadas rechazadas que son segunda, **no se vacían — se mandan al Puesto
+tal cual, en nuestra caja**. Queda escrito acá porque en tres meses nadie se va
+a acordar de que esto se preguntó y se contestó, y se va a volver a preguntar.
+
+**Lo que pasa hoy**: el reingreso con `destino_rechazo = 'segunda'` suma sus
+`bultos_segunda` al pool del ARTÍCULO, y sale por `remitos_segunda`, que tiene
+`articulo_id` y `bultos` y nada más. En ese salto **se pierde que estaban en
+caja nuestra**: el pool no distingue, el remito tampoco, y el envase se va con
+la fruta sin que quede una fila en ningún lado. La fruta está contada; el
+cartón no.
+
+Faltan **dos piezas**, y son distintas:
+
+1. **Que el remito al Puesto registre cuántos envases salen**, para que el
+   circuito de vacíos lo sepa. Hoy el envase desaparece del sistema en el
+   momento en que la mercadería deja de ser stock.
+2. **Que el pool de segunda distinga lo que está en caja nuestra de lo que
+   está a granel**, porque son dos cosas con costo distinto: una se llevó un
+   cartón y la otra no. Un pool que las suma dice cuántos bultos hay y no
+   cuánto valen.
+
+**Por qué no se hizo junto con el conteo de la segunda** (09/09): eran dos
+problemas distintos y uno era urgente. Sin poder contar, no se puede verificar
+ningún arreglo — había 42 bultos de un artículo y 10 de otro que nadie
+comparaba contra el piso. Contar primero, corregir después.
+
+**Y una advertencia para el que lo retome**: la segunda partida en dos pilas
+son DOS PORCIONES, no una con un atributo. El conteo que se hizo el 09/09 usa
+`conteos_stock.es_segunda`, un booleano, y eso es correcto hoy —"es segunda"
+sigue siendo verdad bajo cualquier subdivisión— pero los conteos ya cargados
+como "toda la segunda del artículo" no van a ser ninguna de las dos pilas
+nuevas. Van a ser pocos y recientes; hay que decidir qué se hace con ellos y no
+descubrirlo el día del cambio.
+
 ## El backfill de Palmala: 393 renglones y la plata que faltaba (07/09)
 
 Cierre del hilo que empezó con un renglón del 05/09 que facturaba NULL.
