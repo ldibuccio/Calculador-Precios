@@ -7616,11 +7616,17 @@ _SQL_STOCK_PARTIDO = """
         SELECT articulo_id, ficha_id FROM reingresos_ficha
     )
     SELECT f.articulo_id, f.ficha_id,
-           COALESCE(a.total, 0) + COALESCE(re.total, 0) - COALESCE(s.total, 0) AS stock
+           COALESCE(a.total, 0) + COALESCE(re.total, 0) - COALESCE(s.total, 0) AS stock,
+           -- MISMA CONDICIÓN QUE LA PARED DEL FIFO (`ficha_con_envase` en
+           -- _SQL_SALIDAS_STOCK): la ficha que declara envase se reenvasa, y
+           -- un armado suyo NO puede salir de un cajón. Viaja acá para que
+           -- el piso se aplique o no según eso, en vez de ser dos reglas.
+           (fl.envase_id IS NOT NULL) AS con_envase
     FROM fichas_con_algo f
     LEFT JOIN armadas a ON a.articulo_id = f.articulo_id AND a.ficha_id = f.ficha_id
     LEFT JOIN salidas_ficha s ON s.articulo_id = f.articulo_id AND s.ficha_id = f.ficha_id
     LEFT JOIN reingresos_ficha re ON re.articulo_id = f.articulo_id AND re.ficha_id = f.ficha_id
+    LEFT JOIN fichas_logistica fl ON fl.id = f.ficha_id
 """
 
 
@@ -7659,9 +7665,24 @@ def _cajas_por_ficha(cursor, hasta=None) -> dict:
     """
     cursor.execute(_SQL_STOCK_PARTIDO, (hasta,))
     saldos = {}
-    for articulo_id, ficha_id, saldo in cursor.fetchall():
+    for articulo_id, ficha_id, saldo, con_envase in cursor.fetchall():
         valor = float(saldo)
-        saldos[(articulo_id, ficha_id)] = (max(valor, 0.0), max(-valor, 0.0))
+        if con_envase:
+            # CON ENVASE NO HAY PISO. Un pedido de Caja de Día no puede tomar
+            # nada que no sea de esa ficha: si no hay cajas, el armado queda
+            # en déficit y se resuelve cuando entra la guía R — igual que el
+            # costo, que la pared del FIFO deja sin lote hasta ese momento.
+            # Antes el excedente se escurría a los sueltos y el sistema
+            # descontaba limón sin procesar por un armado de caja.
+            saldos[(articulo_id, ficha_id)] = (valor, 0.0)
+        else:
+            # SIN ENVASE es envase perdido (manzana, pera, arándano): sale en
+            # el cajón del proveedor y NUNCA se reprocesa, así que su saldo es
+            # negativo puro y crece todos los días. Acá el piso SÍ va — sin él
+            # vuelve el 04/09: Manzana Gob, total 63, sueltos 233, botón de
+            # ajuste destructivo por 170. Medido el 09/09: sin scopear se
+            # moverían 320 bultos y 290 son de estas fichas.
+            saldos[(articulo_id, ficha_id)] = (max(valor, 0.0), max(-valor, 0.0))
     return saldos
 
 
@@ -7737,8 +7758,15 @@ def cajas_armadas_por_ficha(hasta=None) -> dict:
     salieron de más se ven abajo del Remanente, en "bultos que faltan
     explicar", y el déficit POR FICHA en el Cotejo.
 
-    Devuelve solo las que tienen más de cero. Una ficha sin cajas no es un
-    renglón: sería decirle al que arma que vaya a buscar una pila vacía.
+    Devuelve las que tienen algo, EN CUALQUIER SENTIDO: una ficha con envase
+    en déficit viene en negativo y tiene que aparecer. Filtrarla acá sería un
+    SEGUNDO piso —el primero está en _cajas_por_ficha— y entonces el
+    Remanente mostraría una cosa y _stock_de_ficha otra, que es la misma
+    cuenta escrita dos veces.
+
+    La que sí sigue pidiendo "más de cero" es fichas_con_cajas_armadas, y ahí
+    es correcto: al que arma no se le ofrece una pila vacía, y menos una
+    negativa.
     """
     conexion = obtener_conexion()
     try:
@@ -7746,7 +7774,7 @@ def cajas_armadas_por_ficha(hasta=None) -> dict:
             return {
                 clave: disponibles
                 for clave, (disponibles, _deficit) in _cajas_por_ficha(cursor, hasta).items()
-                if disponibles > 0
+                if disponibles != 0
             }
     finally:
         conexion.close()

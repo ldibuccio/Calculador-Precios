@@ -4554,7 +4554,7 @@ def test_crear_conteo_stock_de_una_ficha_congela_el_stock_DE_ESA_FICHA():
 
     conexion, cursor = _conexion_falsa()
     # cajas por ficha: la 11 tiene 20, la 12 tiene 5.
-    cursor.fetchall.return_value = [(2, 11, 20.0), (2, 12, 5.0)]
+    cursor.fetchall.return_value = [(2, 11, 20.0, False), (2, 12, 5.0, False)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_conteo_stock(2, 18.0, ficha_id=11)
@@ -4574,7 +4574,7 @@ def test_crear_conteo_stock_de_sueltos_resta_las_cajas_de_todas_las_fichas():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(100.0,)])
     # 20 + 5 en cajas de dos fichas de ESTE artículo, y 40 de otro que no
     # tiene que restar.
-    cursor.fetchall.return_value = [(2, 11, 20.0), (2, 12, 5.0), (9, 30, 40.0)]
+    cursor.fetchall.return_value = [(2, 11, 20.0, False), (2, 12, 5.0, False), (9, 30, 40.0, False)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_conteo_stock(2, 70.0)
@@ -5581,8 +5581,11 @@ def test_listar_articulos_para_reproceso_no_esconde_el_articulo_que_hay_que_repr
 
     conexion, cursor = _conexion_falsa()
     cursor.fetchall.side_effect = [
-        # _cajas_por_ficha: (articulo_id, ficha_id, cajas)
-        [(19, 5, -44.0), (17, 7, 12.0)],
+        # _cajas_por_ficha: (articulo_id, ficha_id, cajas, con_envase)
+        # Zapallito en déficit y SIN envase: el piso lo deja en 0 y el
+        # artículo desaparecería del selector si el filtro fuera solo por
+        # total — que es justo la falla del 31/08 que este test cuida.
+        [(19, 5, -44.0, False), (17, 7, 12.0, False)],
         # El stock por artículo (las seis patas)
         [(19, "Zapallito", 0.0), (17, "Berenjena", 12.0), (22, "Mango", 0.0), (9, "Pera", 5.0)],
     ]
@@ -5614,7 +5617,8 @@ def test_fichas_con_cajas_armadas_devuelve_SOLO_ids_sin_cantidades():
     from app.db import fichas_con_cajas_armadas
 
     conexion, cursor = _conexion_falsa()
-    cursor.fetchall.return_value = [(1, 11, 20.0), (1, 12, 0.0), (2, 13, 5.0), (2, 14, -3.0)]
+    cursor.fetchall.return_value = [(1, 11, 20.0, False), (1, 12, 0.0, False),
+                                    (2, 13, 5.0, False), (2, 14, -3.0, False)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = fichas_con_cajas_armadas()
@@ -5943,9 +5947,18 @@ def test_la_cuenta_por_ficha_arranca_en_el_CORTE_por_las_DOS_patas_y_asimetrica(
 
 
 def _cursor_con_saldos(saldos, filas_extra=None):
-    """Un cursor falso cuyo primer fetchall son los saldos por ficha."""
+    """Un cursor falso cuyo primer fetchall son los saldos por ficha.
+
+    Las filas se escriben `(articulo, ficha, saldo)` o
+    `(articulo, ficha, saldo, con_envase)`. Sin el cuarto se asume envase
+    PERDIDO, que es lo que son los casos históricos de estos tests —
+    Manzana Gob del 04/09 sale en el cajón del proveedor y no se reprocesa
+    nunca. Escribirlos como en producción es lo que hace que sigan
+    protegiendo lo que protegían.
+    """
     cursor = MagicMock()
-    cursor.fetchall.side_effect = [saldos] + list(filas_extra or [])
+    completas = [f if len(f) == 4 else (*f, False) for f in saldos]
+    cursor.fetchall.side_effect = [completas] + list(filas_extra or [])
     return cursor
 
 
@@ -5960,23 +5973,61 @@ def test_el_saldo_por_ficha_se_parte_en_disponibles_y_deficit():
     assert saldos[(2, 902)] == (55.0, 0.0)
 
 
-def test_el_stock_de_una_ficha_nunca_es_negativo():
-    # Manzana Gob del 04/09: -170 en la cuenta cruda.
-    cursor = _cursor_con_saldos([(1, 901, -170)])
+def test_el_stock_de_una_ficha_SIN_ENVASE_nunca_es_negativo():
+    """Manzana Gob del 04/09: −170 crudo, y el piso lo deja en 0.
+
+    Envase PERDIDO: sale en el cajón del proveedor y no se reprocesa
+    nunca, así que su saldo es negativo puro y crece todos los días. Acá
+    el piso va y se queda.
+    """
+    cursor = _cursor_con_saldos([(1, 901, -170, False)])
 
     assert _stock_de_ficha(cursor, 1, 901) == 0.0
+
+
+def test_el_stock_de_una_ficha_CON_ENVASE_SI_puede_ser_negativo():
+    """Y tiene que serlo: es lo que salió sin la guía R que lo produzca.
+
+    Un pedido de Caja de Día no puede tomar nada que no sea de esa ficha.
+    Si no hay cajas, el armado queda en déficit y se resuelve cuando entra
+    la guía R — igual que el costo, que la pared del FIFO deja sin lote
+    hasta ese momento. Antes el excedente se escurría a los sueltos y el
+    sistema descontaba mercadería sin procesar por un armado de caja.
+    """
+    cursor = _cursor_con_saldos([(1, 901, -10, True)])
+
+    assert _stock_de_ficha(cursor, 1, 901) == -10.0
 
 
 def test_los_sueltos_no_pueden_superar_el_total_del_articulo():
     # El caso que lo destapo: total 63, saldo por ficha -170. Sin piso los
     # sueltos daban 233 -- mas que TODO el stock del articulo -- y el
     # Cotejo mostraba una diferencia de 170 contra el conteo real.
-    cursor = _cursor_con_saldos([(1, 901, -170)])
+    cursor = _cursor_con_saldos([(1, 901, -170, False)])
 
     with patch("app.db._stock_deposito_actual", return_value=63.0):
         sueltos = _stock_de_ficha(cursor, 1, None)
 
     assert sueltos == 63.0
+
+
+def test_con_envase_el_deficit_NO_se_escurre_a_los_sueltos():
+    """La otra cara del anterior, y es el cambio del 09/09.
+
+    Los sueltos son `total − Σ disponibles`. Con el piso, un déficit de 10
+    los bajaba en 10: el armado de una caja descontaba mercadería sin
+    procesar. Sin piso, el déficit se queda en la ficha y los sueltos
+    quedan como están — que es lo que el operario ve en el piso.
+
+    Los dos números están a propósito separados (total 31, déficit 10)
+    para que un signo dado vuelta no pase desapercibido.
+    """
+    cursor = _cursor_con_saldos([(1, 901, -10, True)])
+
+    with patch("app.db._stock_deposito_actual", return_value=31.0):
+        sueltos = _stock_de_ficha(cursor, 1, None)
+
+    assert sueltos == 41.0
 
 
 def test_las_fichas_con_cajas_no_incluyen_una_ficha_en_deficit():
