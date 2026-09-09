@@ -1294,3 +1294,41 @@ parámetro se mergeó con el default en 1000, así que revertirlo fue un solo
 `git revert` y ningún llamador existente se enteró. **Un cambio que
 todavía no tiene usuarios se escribe de forma que deshacerlo sea gratis**,
 porque el requisito que lo pidió puede no sobrevivir al día.
+
+Corolario 30, del 08/09: **una guarda que compara contra un PLACEHOLDER
+verifica la ausencia del texto de ejemplo, y el texto de ejemplo es
+exactamente lo que el usuario va a reemplazar.**
+
+El bloque para borrar una foto tenía que abortar si nadie había pegado la
+ruta. La guarda era la obvia:
+
+```sql
+declare ruta text := 'PEGAR-ACA-LA-RUTA-DEL-PASO-1';
+begin
+  if ruta = 'PEGAR-ACA-LA-RUTA-DEL-PASO-1' then raise exception ...
+```
+
+Se lee perfecta. Y falla al revés de como uno espera: no deja pasar el
+caso malo, **frena el bueno.** Quien pega una ruta hace un
+buscar-y-reemplazar **global** —es lo natural, el placeholder está dos
+veces— y entonces las dos mitades cambian juntas, la comparación vuelve a
+dar `true`, y el bloque aborta **con la ruta correcta puesta**.
+
+El arreglo es cambiar qué se pregunta: **no "¿sigue estando el texto de
+ejemplo?" sino "¿esto tiene FORMA de dato?"**. Una ruta del bucket matchea
+`^[0-9]{4}-[0-9]{2}-[0-9]{2}/.+\.[a-z]+$`; el placeholder no la matchea
+nunca, y ningún reemplazo global puede hacer que la matchee. La regla vale
+para cualquier valor a pegar: un id se valida `> 0`, una fecha que parsee,
+un código con su patrón.
+
+**Cómo apareció, que es lo de siempre**: no leyendo el bloque —leído se ve
+bien— sino corriendo los cuatro casos. Y apareció **por el caso que tenía
+que PASAR**, no por uno que tenía que fallar. Los tres casos de aborto
+daban todos verde; el único que lo destapó fue el bueno, que abortó cuando
+no debía.
+
+Eso último es lo que más se lleva: **una batería de casos negativos puede
+estar toda en verde con la guarda rota.** Si todos los casos que se prueban
+esperan un error, cualquier guarda que aborte siempre los pasa a todos. El
+caso feliz no es un trámite al final de la lista: es el único que
+distingue "la guarda funciona" de "la guarda siempre frena".

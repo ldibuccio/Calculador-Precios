@@ -6,6 +6,10 @@ import pytest
 
 from core.storage import (
     BUCKET_COMANDAS,
+    PREFIJO_COMANDA,
+    PREFIJO_PEDIDO,
+    PREFIJO_PESAJE,
+    PREFIJO_PRECIOS,
     SUPABASE_SERVICE_KEY_ENV_VAR,
     SUPABASE_URL_ENV_VAR,
     _armar_ruta_unica,
@@ -38,19 +42,34 @@ def test_sanear_nombre_vacio_queda_vacio():
     assert _sanear_nombre(None) == ""
 
 
-def test_armar_ruta_unica_tiene_el_formato_fecha_base_timestamp_random():
-    ruta = _armar_ruta_unica("Saturno")
-    assert re.match(r"^\d{4}-\d{2}-\d{2}/saturno-\d+-[0-9a-f]{8}\.jpg$", ruta)
+def test_armar_ruta_unica_arranca_con_el_PREFIJO_DEL_TIPO():
+    ruta = _armar_ruta_unica("Saturno", PREFIJO_COMANDA)
+    assert re.match(r"^comanda/\d{4}-\d{2}-\d{2}/saturno-\d+-[0-9a-f]{8}\.jpg$", ruta)
+
+
+def test_los_CUATRO_tipos_van_cada_uno_a_su_carpeta():
+    """Sin prefijo, una carpeta de fecha mezcla los cuatro y mirar el bucket no sirve.
+
+    Los cuatro se prueban juntos porque se decidieron juntos: bautizados
+    de a uno, el quinto tipo vuelve a caer en la raíz.
+    """
+    rutas = {
+        prefijo: _armar_ruta_unica("EJEMPLO", prefijo)
+        for prefijo in (PREFIJO_COMANDA, PREFIJO_PRECIOS, PREFIJO_PEDIDO, PREFIJO_PESAJE)
+    }
+    assert sorted(rutas) == ["comanda", "pedido", "pesaje", "precios"]
+    for prefijo, ruta in rutas.items():
+        assert ruta.startswith(prefijo + "/"), f"{prefijo} no quedó en su carpeta: {ruta}"
 
 
 def test_armar_ruta_unica_dos_llamadas_seguidas_no_se_pisan():
-    ruta1 = _armar_ruta_unica("comanda")
-    ruta2 = _armar_ruta_unica("comanda")
+    ruta1 = _armar_ruta_unica("comanda", PREFIJO_COMANDA)
+    ruta2 = _armar_ruta_unica("comanda", PREFIJO_COMANDA)
     assert ruta1 != ruta2
 
 
 def test_armar_ruta_unica_base_vacia_usa_comanda_como_default():
-    ruta = _armar_ruta_unica("")
+    ruta = _armar_ruta_unica("", PREFIJO_COMANDA)
     assert "/comanda-" in ruta
 
 
@@ -80,7 +99,9 @@ def test_subir_foto_comanda_exitosa_devuelve_la_ruta_y_manda_las_credenciales(mo
     with patch("core.storage.httpx.post", return_value=_respuesta(200)) as mock_post:
         ruta = subir_foto_comanda(IMAGEN_DE_PRUEBA, "Saturno")
 
-    assert re.match(r"^\d{4}-\d{2}-\d{2}/saturno-\d+-[0-9a-f]{8}\.jpg$", ruta)
+    # Sin pasar prefijo el default es "comanda", que es lo que sube el
+    # flujo de compras: los tres tipos nuevos lo piden explícito.
+    assert re.match(r"^comanda/\d{4}-\d{2}-\d{2}/saturno-\d+-[0-9a-f]{8}\.jpg$", ruta)
 
     url_llamada, kwargs = mock_post.call_args[0], mock_post.call_args[1]
     assert url_llamada[0] == f"https://proyecto.supabase.co/storage/v1/object/{BUCKET_COMANDAS}/{ruta}"

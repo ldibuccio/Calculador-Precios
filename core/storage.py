@@ -25,6 +25,26 @@ SUPABASE_URL_ENV_VAR = "SUPABASE_URL"
 SUPABASE_SERVICE_KEY_ENV_VAR = "SUPABASE_SERVICE_KEY"
 
 BUCKET_COMANDAS = "comandas"
+
+# LOS CUATRO TIPOS QUE VIVEN EN EL BUCKET, cada uno con su carpeta. El
+# bucket se llama "comandas" y hace rato que guarda cuatro cosas: la
+# comanda del proveedor, el archivo de precios de un cliente, la captura
+# del mail de un pedido y la foto de la balanza. Sin prefijo, mirar el
+# bucket a mano no sirve —una carpeta de fecha los mezcla a los cuatro— y
+# contar o limpiar UN tipo obliga a ir a la base a preguntar cuál es cuál.
+#
+# Los cuatro se deciden JUNTOS a propósito, aunque hoy solo se necesite
+# uno: bautizados de a uno, el quinto tipo vuelve a caer en la raíz y
+# queda medio bucket prefijado y medio no, que es peor que ninguno.
+#
+# Lo de ANTES del 08/09 queda plano y NO se mueve: la limpieza de 3 años
+# lo borra solo, así que el bucket converge sin migrar 262 archivos en dos
+# bases. Eso vale mientras los cuatro tipos entren en esa limpieza —
+# `listar_fotos_para_limpiar` en app/db.py, que es lo que la hace posible.
+PREFIJO_COMANDA = "comanda"
+PREFIJO_PRECIOS = "precios"
+PREFIJO_PEDIDO = "pedido"
+PREFIJO_PESAJE = "pesaje"
 EXPIRACION_URL_FIRMADA_SEGUNDOS = 3600  # 1 hora
 TIMEOUT_HTTP_SEGUNDOS = 30
 
@@ -48,8 +68,8 @@ def _sanear_nombre(texto: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", sin_acentos.lower()).strip("-")
 
 
-def _armar_ruta_unica(nombre_archivo: str, extension: str = "jpg") -> str:
-    """Arma un path único dentro del bucket: "aaaa-mm-dd/base-timestampms-random.ext".
+def _armar_ruta_unica(nombre_archivo: str, prefijo: str, extension: str = "jpg") -> str:
+    """Arma un path único dentro del bucket: "prefijo/aaaa-mm-dd/base-timestampms-random.ext".
 
     "base" es nombre_archivo saneado (ej. "comanda" o el código de puesto
     del proveedor) — solo para que el path se pueda leer a simple vista, no
@@ -66,10 +86,12 @@ def _armar_ruta_unica(nombre_archivo: str, extension: str = "jpg") -> str:
     fecha = time.strftime("%Y-%m-%d")
     timestamp_ms = int(time.time() * 1000)
     sufijo_random = uuid.uuid4().hex[:8]
-    return f"{fecha}/{base}-{timestamp_ms}-{sufijo_random}.{extension}"
+    return f"{prefijo}/{fecha}/{base}-{timestamp_ms}-{sufijo_random}.{extension}"
 
 
-def subir_archivo_comanda(bytes_archivo: bytes, nombre_archivo: str, extension: str, content_type: str) -> str:
+def subir_archivo_comanda(
+    bytes_archivo: bytes, nombre_archivo: str, extension: str, content_type: str, prefijo: str = PREFIJO_COMANDA
+) -> str:
     """Sube un archivo cualquiera (foto ya comprimida, PDF o Excel tal cual) al bucket privado "comandas".
 
     Generalización de subir_foto_comanda para aceptar cualquier formato de
@@ -81,7 +103,7 @@ def subir_archivo_comanda(bytes_archivo: bytes, nombre_archivo: str, extension: 
     si faltan credenciales, no hay conexión, o Supabase rechaza la subida).
     """
     url_base, service_key = _obtener_credenciales()
-    ruta = _armar_ruta_unica(nombre_archivo, extension)
+    ruta = _armar_ruta_unica(nombre_archivo, prefijo, extension)
 
     try:
         respuesta = httpx.post(
@@ -103,7 +125,7 @@ def subir_archivo_comanda(bytes_archivo: bytes, nombre_archivo: str, extension: 
     return ruta
 
 
-def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str) -> str:
+def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str, prefijo: str = PREFIJO_COMANDA) -> str:
     """Sube una foto (ya comprimida a JPEG) al bucket privado "comandas" y devuelve la ruta con la que quedó guardada.
 
     nombre_archivo es una base descriptiva (ej. "comanda", o el código de
@@ -114,7 +136,9 @@ def subir_foto_comanda(bytes_jpeg: bytes, nombre_archivo: str) -> str:
     Caso particular de subir_archivo_comanda para JPEG — se mantiene aparte
     porque es el que usa todo el flujo de compras, sin tocarlo.
     """
-    return subir_archivo_comanda(bytes_jpeg, nombre_archivo, extension="jpg", content_type="image/jpeg")
+    return subir_archivo_comanda(
+        bytes_jpeg, nombre_archivo, extension="jpg", content_type="image/jpeg", prefijo=prefijo
+    )
 
 
 def borrar_foto_comanda(ruta: str) -> None:

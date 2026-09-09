@@ -3350,15 +3350,24 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
     candidato si TODAS las guías que lo usan son de antes de fecha_corte —
     MAX(fecha de guía) por ruta, una sola pasada.
 
-    Y las de BALANZA (fotos_recepcion) entran por la fecha de su compra,
-    con el MISMO corte: una sola perilla de retención para los dos tipos.
-    Que sean la misma es una decisión, no una herencia — si algún día
-    tienen que durar distinto, la razón va escrita acá.
+    Los CUATRO tipos del bucket entran acá, con el MISMO corte: una sola
+    perilla de retención. Que sea la misma es una decisión, no una
+    herencia — si alguno tiene que durar distinto, la razón va escrita acá.
 
-    Sin esta segunda mitad las fotos de balanza no se borrarían NUNCA: no
-    aparecerían siquiera como candidatas, y en dos años son miles de
-    archivos inmortales. Van con olvidar_foto_borrada, que limpia las dos
-    tablas — separarlas deja el archivo borrado del bucket y la fila viva.
+    - comandas (fotos_guia), por la fecha de la guía.
+    - balanza (fotos_recepcion), por la fecha de su compra.
+    - capturas del mail (fotos_pedido), por la fecha del pedido.
+    - archivos de precios (precios_venta_historial), por cuando se subieron.
+
+    Los dos últimos NO estaban, y sus archivos no se borraban nunca: ni
+    siquiera aparecían como candidatos. Entran ahora porque el bucket pasó
+    a tener prefijo por tipo SOLO para lo nuevo (ver core/storage.py), y
+    eso converge únicamente si lo viejo se va venciendo — con dos tipos
+    inmortales, la mitad plana no se iba nunca.
+
+    Van con olvidar_foto_borrada, que limpia las CUATRO tablas: separarlas
+    deja el archivo borrado del bucket y la fila viva, que es "Ver foto"
+    roto sin ningún síntoma.
     """
     conexion = obtener_conexion()
     try:
@@ -3379,8 +3388,21 @@ def listar_fotos_para_limpiar(fecha_corte) -> list[str]:
                 SELECT f.foto_ruta FROM fotos_recepcion f
                 JOIN compras c ON c.id = f.compra_id
                 WHERE c.fecha_operacion < %s
+                UNION
+                SELECT f.foto_ruta FROM fotos_pedido f
+                JOIN pedidos p ON p.id = f.pedido_id
+                GROUP BY f.foto_ruta
+                HAVING MAX(p.fecha_operacion) < %s
+                UNION
+                -- Acá la ruta es una columna, no una tabla de fotos: un
+                -- mismo archivo puede respaldar varios precios del mismo
+                -- día, así que va con MAX igual que las comandas.
+                SELECT h.foto_ruta FROM precios_venta_historial h
+                WHERE h.foto_ruta IS NOT NULL
+                GROUP BY h.foto_ruta
+                HAVING MAX(h.creado_en) < ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
                 """,
-                (fecha_corte, fecha_corte),
+                (fecha_corte, fecha_corte, fecha_corte, fecha_corte),
             )
             filas = cursor.fetchall()
         return [fila[0] for fila in filas]
@@ -3409,6 +3431,15 @@ def olvidar_foto_borrada(foto_ruta: str) -> None:
             cursor.execute("DELETE FROM fotos_guia WHERE foto_ruta = %s", (foto_ruta,))
             filas_tocadas = cursor.rowcount
             cursor.execute("DELETE FROM fotos_recepcion WHERE foto_ruta = %s", (foto_ruta,))
+            filas_tocadas += cursor.rowcount
+            cursor.execute("DELETE FROM fotos_pedido WHERE foto_ruta = %s", (foto_ruta,))
+            filas_tocadas += cursor.rowcount
+            # Acá NO se borra la fila: el precio es el dato y la foto era
+            # solo de dónde salió. Se le saca la ruta, que es lo que quedó
+            # apuntando a un archivo que ya no existe.
+            cursor.execute(
+                "UPDATE precios_venta_historial SET foto_ruta = NULL WHERE foto_ruta = %s", (foto_ruta,)
+            )
             filas_tocadas += cursor.rowcount
             if filas_tocadas == 0:
                 raise ValueError(

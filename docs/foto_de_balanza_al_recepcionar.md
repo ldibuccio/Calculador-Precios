@@ -173,3 +173,38 @@ Queda entonces, y es lo que estaba desde el principio:
   nuevo (el parámetro se mergeó y se revirtió el mismo día).
 - **Sin recorte del display.**
 - **Sin resolución especial** para `fotos_recepcion`.
+
+## El bucket: prefijo por tipo, solo para lo nuevo (opción A, 09/09)
+
+El bucket se llama `comandas` y hace rato que guarda **cuatro** cosas: la
+comanda del proveedor (`fotos_guia`), el archivo de precios de un cliente
+(`precios_venta_historial.foto_ruta`), la captura del mail de un pedido
+(`fotos_pedido`) y ahora la foto de balanza (`fotos_recepcion`). Todas
+caían planas en `AAAA-MM-DD/`, mezcladas: mirar el bucket a mano no servía
+de nada y contar o limpiar UN tipo obligaba a ir a la base.
+
+**Los cuatro prefijos se deciden juntos** —`comanda/`, `precios/`,
+`pedido/`, `pesaje/`— aunque hoy solo urgía uno. Bautizados de a uno, el
+quinto tipo vuelve a caer en la raíz y queda medio bucket prefijado y medio
+no, que es peor que ninguno (corolario 14).
+
+**Lo de antes NO se mueve.** Eran 148 archivos en Frutamax y 114 en Palmala,
+y moverlos es una migración de datos en dos bases que, a medio hacer, deja
+filas apuntando a la nada. En cambio **la retención de 3 años hace la
+migración sola**: los planos se vencen y para 2029 el bucket queda
+prefijado entero sin que nadie toque un archivo.
+
+**Y por eso `fotos_pedido` y `precios_venta_historial` entraron en la
+limpieza en el MISMO commit.** No es una mejora de yapa: los dos estaban
+fuera de `listar_fotos_para_limpiar`, o sea que sus archivos no se borraban
+nunca. Con dos tipos inmortales, la mitad plana del bucket no se vencía y
+**la opción A no converge jamás** — la decisión de no migrar se apoya
+entera en que los cuatro tipos caduquen.
+
+Detalle de los precios: ahí la ruta es una COLUMNA, no una tabla de fotos.
+Al limpiar se le pone `foto_ruta = NULL` y **la fila no se borra**: el
+precio es el dato, la foto era solo de dónde salió.
+
+La única foto de balanza que existía —la de la prueba del 08/09 en
+Palmala— se borra con `db/borrar_la_foto_de_prueba_de_balanza.sql`, así
+que `pesaje/` nace en cero en las dos bases.

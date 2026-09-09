@@ -1583,13 +1583,15 @@ def test_listar_fotos_para_limpiar_devuelve_los_foto_ruta_encontrados():
     assert "JOIN guias_compra" in consulta
     assert "GROUP BY f.foto_ruta" in consulta
     assert "HAVING MAX(g.fecha_operacion) < %s" in consulta
-    # Y LAS DE BALANZA EN LA MISMA PASADA. Sin esto no se borran nunca:
-    # no aparecen siquiera como candidatas, y el archivo queda para
-    # siempre. Con el MISMO corte que las comandas — una sola perilla.
+    # LOS CUATRO TIPOS DEL BUCKET EN LA MISMA PASADA. El que no esté acá
+    # no se borra NUNCA: no aparece siquiera como candidato. Y eso no es
+    # solo desperdicio — el bucket prefija por tipo solo lo NUEVO, así que
+    # converge únicamente si lo viejo se vence (ver core/storage.py).
     assert "FROM fotos_recepcion" in consulta
-    assert "JOIN compras" in consulta
-    assert parametros == (date(2023, 8, 15), date(2023, 8, 15)), (
-        "el corte va a las dos mitades del UNION, y es el mismo"
+    assert "FROM fotos_pedido" in consulta
+    assert "FROM precios_venta_historial" in consulta
+    assert parametros == (date(2023, 8, 15),) * 4, (
+        "el corte va a las CUATRO patas del UNION, y es el mismo: una sola perilla"
     )
 
 

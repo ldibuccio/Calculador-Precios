@@ -336,7 +336,16 @@ from core.lector_comandas import (
     recortar_bloque_de_empresa,
 )
 from core.matcheo_comanda import adivinar_articulo, adivinar_proveedor, agrupar_renglones_por_proveedor, normalizar_texto
-from core.storage import BUCKET_COMANDAS, borrar_foto_comanda, obtener_url_foto, subir_archivo_comanda, subir_foto_comanda
+from core.storage import (
+    BUCKET_COMANDAS,
+    PREFIJO_PEDIDO,
+    PREFIJO_PESAJE,
+    PREFIJO_PRECIOS,
+    borrar_foto_comanda,
+    obtener_url_foto,
+    subir_archivo_comanda,
+    subir_foto_comanda,
+)
 
 UNIDADES_VENTA_VALIDAS = {"kilo", "unidad", "cubeta"}
 GRUPOS_ARTICULO_VALIDOS = {"fruta", "hortaliza", "hoja", "pesada"}
@@ -5474,7 +5483,9 @@ def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
         extension = EXTENSION_POR_TIPO_ARCHIVO_PRECIOS.get(tipo_archivo, "jpg")
         content_type = MIME_POR_TIPO_ARCHIVO_PRECIOS.get(tipo_archivo, "image/jpeg")
         try:
-            foto_ruta = subir_archivo_comanda(bytes_archivo, cliente["nombre"], extension, content_type)
+            foto_ruta = subir_archivo_comanda(
+                bytes_archivo, cliente["nombre"], extension, content_type, prefijo=PREFIJO_PRECIOS
+            )
         except Exception:
             logger.exception(
                 "No se pudo subir el archivo de precios a Supabase Storage (cliente %s) "
@@ -6545,7 +6556,7 @@ async def subir_foto_de_balanza(request: Request, compra_id: int, archivo: Uploa
         )
 
     try:
-        foto_ruta = subir_foto_comanda(comprimida, f"balanza-{compra_id}")
+        foto_ruta = subir_foto_comanda(comprimida, f"balanza-{compra_id}", prefijo=PREFIJO_PESAJE)
     except Exception as error_storage:
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo subir la foto: {error_storage}", status_code=500
@@ -12828,7 +12839,7 @@ async def confirmar_pedido(request: Request):
         if not bytes_foto:
             continue
         try:
-            foto_ruta = subir_foto_comanda(bytes_foto, f"pedido-{pedido_id}")
+            foto_ruta = subir_foto_comanda(bytes_foto, f"pedido-{pedido_id}", prefijo=PREFIJO_PEDIDO)
             agregar_foto_pedido(pedido_id, foto_ruta)
         except Exception:
             logger.exception("No se pudo subir la captura del pedido %s — el pedido quedó guardado igual", pedido_id)
@@ -12892,12 +12903,14 @@ async def subir_foto_pedido_ruta(
     nombre = (archivo.filename or "").lower()
     try:
         if nombre.endswith(".pdf"):
-            foto_ruta = subir_archivo_comanda(comprimir_pdf(contenido), f"pedido-{pedido_id}", "pdf", "application/pdf")
+            foto_ruta = subir_archivo_comanda(
+                comprimir_pdf(contenido), f"pedido-{pedido_id}", "pdf", "application/pdf", prefijo=PREFIJO_PEDIDO
+            )
         else:
             comprimida = _comprimir_foto_jpeg(contenido)
             if comprimida is None:
                 raise HTTPException(status_code=400, detail="No se pudo leer la imagen. Probá con otra captura.")
-            foto_ruta = subir_foto_comanda(comprimida, f"pedido-{pedido_id}")
+            foto_ruta = subir_foto_comanda(comprimida, f"pedido-{pedido_id}", prefijo=PREFIJO_PEDIDO)
         agregar_foto_pedido(pedido_id, foto_ruta)
     except HTTPException:
         raise

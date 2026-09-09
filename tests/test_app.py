@@ -8234,7 +8234,7 @@ def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=1"
-    mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg")
+    mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg", prefijo="precios")
     mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
 
 
@@ -8311,7 +8311,7 @@ def test_confirmar_carga_foto_precios_pdf_sube_con_extension_y_content_type_corr
             follow_redirects=False,
         )
 
-    mock_subir.assert_called_once_with(b"ABC", "Día", "pdf", "application/pdf")
+    mock_subir.assert_called_once_with(b"ABC", "Día", "pdf", "application/pdf", prefijo="precios")
 
 
 def test_confirmar_carga_foto_precios_cliente_invalido_da_400():
@@ -8398,7 +8398,7 @@ def test_guardar_y_exportar_precios_cargar_foto_excel_sube_el_archivo_y_devuelve
     assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.headers["x-cantidad-guardada"] == "1"
-    mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg")
+    mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg", prefijo="precios")
     mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
 
 
@@ -13325,7 +13325,7 @@ def test_confirmar_pedido_sube_las_capturas_como_respaldo():
         )
 
     assert respuesta.status_code == 303
-    mock_subir.assert_called_once_with(b"jpeg-comprimido", "pedido-60")
+    mock_subir.assert_called_once_with(b"jpeg-comprimido", "pedido-60", prefijo="pedido")
     mock_foto.assert_called_once_with(60, "2026/pedido-60-abc.jpg")
 
 
