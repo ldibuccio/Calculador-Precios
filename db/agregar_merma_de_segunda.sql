@@ -1,19 +1,18 @@
--- Poder MERMAR del pool de segunda. Se corre en las DOS bases, bloque por
--- bloque.
+-- MERMA DEL POOL DE SEGUNDA + FOTO OBLIGATORIA EN TODA MERMA.
+-- Se corre en las DOS bases, bloque por bloque, de arriba abajo.
 --
--- Por qué acá y no en movimientos_stock: una merma guardada ahí bajaría el
+-- Por qué la merma de segunda NO va en movimientos_stock: ahí bajaría el
 -- stock NORMAL del artículo (la pata `ajustes` toma todo `tipo <>
 -- 'reingreso_rechazo'`) Y sería una salida del FIFO que consume lotes (la
 -- pata de `_SQL_SALIDAS_STOCK` toma todo movimiento con cantidad < 0). La
--- segunda no tiene lotes: su costo ya se fue a la primera. O sea que
--- restaría de dos pilas equivocadas a la vez.
+-- segunda no tiene lotes: su costo ya se fue a la primera. Restaría de dos
+-- pilas equivocadas a la vez.
 --
 -- `remitos_segunda` ya ES "salida del pool, por artículo, con fecha,
--- anulable", que es exactamente la forma de una merma de segunda. Con
--- `destino` la aritmética del pool NO cambia: las dos restan igual.
---
--- El nombre de la tabla se queda: renombrar por estética una tabla que
--- otros constraints referencian no vale la migración. Lo dice el comentario.
+-- anulable". Con `destino` la aritmética del pool NO cambia: las dos
+-- restan igual. Y el circuito de segunda queda entero afuera de
+-- movimientos_stock, que es lo que impide que algo que lee stock normal lo
+-- vea por accidente.
 
 -- BLOQUE 1 — el destino y la coherencia con el motivo.
 do $$
