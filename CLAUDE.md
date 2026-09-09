@@ -1590,14 +1590,40 @@ registro de la merma era negar el que más se usa.
 **Lo que hay que separar, y es la corrección de fondo: son DOS mermas
 distintas, no una mal registrada.**
 
-- **La del REPROCESO** — lo que se descarta al reenvasar. **Se registra**,
-  adentro del armado, desde siempre. Ver `db/mermas_4_la_de_las_guias_r.sql`.
+- **La del REPROCESO** — lo que se descarta al reenvasar. **Tiene dónde
+  anotarse**: `reprocesos.bultos_merma`, un campo del formulario de la guía R.
 - **La de GALPÓN** — la fruta que se pudre esperando, fuera de todo armado.
-  **Ésa no tiene registro**, y es la que la pantalla nueva viene a cubrir.
+  **No tiene dónde**, y es la que la pantalla nueva viene a cubrir.
 
-O sea que la pantalla no está creando la costumbre de cargar merma: la
-costumbre existe y vive adentro de la guía R. Lo que está creando es la
-puerta para el caso que hoy **no tiene ninguna**.
+**Y acá va la corrección de la corrección, porque la primera versión de este
+corolario decía "la costumbre existe y vive adentro de la guía R" — y eso
+también era una afirmación sin medir.** Medido después
+(`db/mermas_4_la_de_las_guias_r.sql`, Frutamax, corte 05/09, `> corte`):
+**1 de 72 guías R declaró merma, por 1 bulto en total.** La puerta existe,
+está abierta, y no se usa.
+
+Así que el orden real es: la de galpón no tiene puerta, y la del reproceso
+tiene una que nadie cruza. **Hay dos lugares para declarar merma y en los dos
+el número es cero o casi.**
+
+Sobre el tamaño de ese "casi", una advertencia para el que lo cite: **la
+tentación es dividir 1 sobre los 1225 bultos tomados y decir 0,08%, y esa
+división mezcla unidades.** Lo tomado son CAJONES y lo producido son CAJAS —
+el docstring de la ruta lo dice sin vueltas (*"sin correlación entre tomado y
+producido: un cajón de 16 puede dar tres cajas de 6"*) y el sistema acepta
+producir más bultos de los que tomó. El dato que se sostiene es el CONTEO —
+1 de 72 guías, 1 bulto— no un porcentaje de pérdida. Es el corolario 13 con
+otra ropa: una división exacta entre cosas comparables deja de serlo cuando
+las cosas dejan de ser comparables, y sigue devolviendo un número.
+
+**Y la lección de método, que es la cara de esto que más se repite:** el
+párrafo que corregía una afirmación negativa mal verificada metió, en la
+misma frase, una POSITIVA igual de mal verificada. Deduje que la costumbre
+existía de que existiera la columna. Es el corolario 18 al pie de la letra
+—*al corregir se escribe rápido y con la sensación de estar arreglando, que
+es cuando menos se verifica*— y esta vez pasó adentro de un corolario cuyo
+tema era exactamente ese cuidado. **Escribir la regla no protege del caso;
+lo único que protegió las dos veces fue medir antes de dejarlo escrito.**
 
 Tres cosas que se llevan:
 
@@ -1636,3 +1662,55 @@ veces es lo que va a quedar. Conviene que alguien mire lo que cargan la
 primera semana — con diez mermas encima se revisa también si la lista corta
 de motivos alcanza, que hoy es una apuesta que no se puede validar contra
 nada.
+
+Corolario 34, del 09/09, y contesta la pregunta correcta: **el cero de merma
+en las guías R no es descuido del operario — es que el campo no le pide nada
+ni le cambia nada.**
+
+La hipótesis razonable era la contraria, y valía la pena descartarla: si el
+sistema obligara a que `tomados = primera + segunda + merma`, un operario con
+descarte real y merma en cero **tendría que inflar primera o segunda para
+poder guardar**, y entonces el cero no sería descuido sino lo que el
+formulario le pide. Sería un bug de diseño grande.
+
+**No es así, y se midió corriendo la ruta real con cuatro cargas, no leyendo
+el `if`:**
+
+```
+A) cuadra exacto            tomados 20 · primera 18 · segunda 1 · merma 1  -> guarda
+B) falta 17 sin explicar    tomados 20 · primera  3 · segunda 0 · merma 0  -> GUARDA
+C) produce mas de lo tomado tomados 20 · primera 60 · segunda 0 · merma 0  -> GUARDA
+D) todo en cero             tomados 20 · primera  0 · segunda 0 · merma 0  -> rechaza
+```
+
+No hay identidad, ni en el CHECK de la base ni en la ruta. La única regla es
+la de D: *algo* tiene que haberse producido. **Y no puede haberla**: lo
+tomado son cajones y lo producido cajas, así que C no es un agujero sino el
+caso normal — un cajón de 16 da tres cajas de 6.
+
+Y la otra mitad, que es la que explica el cero de verdad: **`bultos_merma` no
+alimenta ninguna cuenta.** El stock sale de `− tomados + primera`, la segunda
+es un pool aparte, y las mermas de la Rentabilidad Real salen de
+`movimientos_stock` (`salida["tipo"] == "merma"`), no de esta columna. Se
+escribe, se muestra en el detalle de la guía, y no mueve un solo número.
+
+De ahí se siguen dos cosas, y la segunda es la que importa:
+
+1. **El descarte no se pierde de las cuentas.** Está adentro de
+   `tomados − primera`: los cajones se fueron y volvieron menos cajas. Lo que
+   se pierde es el **motivo** — el número existe y nadie sabe si fue merma,
+   kilaje, o un reparto distinto.
+2. **Un campo sin consecuencia se llena vacío, y eso no es culpa del que
+   carga.** Nada se traba, nada cambia de color, ningún total se mueve. Pedir
+   un dato que no hace nada es pedir un favor, y a la larga el favor no se
+   hace. Si algún día se quiere el motivo del descarte del reproceso, la
+   salida no es insistir con el campo: es **darle una consecuencia visible**
+   —que aparezca en la Rentabilidad Real al lado de las otras mermas, o que
+   la guía avise cuando `tomados − primera` es grande y la merma dice cero.
+
+**La forma general, para reconocerla en otro lado:** antes de leer un campo
+vacío como desidia, preguntarse **qué pasa si se llena**. Si la respuesta es
+"nada", el vacío es la respuesta correcta al incentivo que hay puesto, y el
+arreglo está del lado del sistema. Es la otra cara del corolario 26 —allá un
+cartel que se pasa con el mismo click no es una revisión; acá un campo que no
+mueve nada no es un registro.
