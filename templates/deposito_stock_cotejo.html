@@ -35,7 +35,7 @@
   .numeros .celda { flex: 1; }
   .numeros .etiqueta { display: block; color: #666; font-size: 0.78rem; }
   .numeros .valor { display: block; font-size: 1.25rem; font-weight: 800; }
-  .ojo-opuesto {
+  .aviso {
     margin: 0.6rem 0;
     padding: 0.6rem 0.7rem;
     background: #fffbeb;
@@ -123,12 +123,36 @@
           {% endif %}
         </div>
       </div>
-      {% if f.opuestas %}
+      {% if f.deficit %}
+      {# DÉFICIT: salieron cajas de una ficha sin una guía R que las produzca.
+         GANA sobre el aviso de signos opuestos, y no se muestran los dos: el
+         déficit explica la firma —una ficha en negativo infla los sueltos
+         exactamente en esa cantidad, así que los signos salen opuestos solos—
+         y las dos historias no son la misma. La de arriba dice "la guía R fue
+         a la otra ficha"; ésta dice que la guía R NO EXISTE, y mandar a
+         buscar una que no está es lo que hace perder la tarde. Las dos
+         terminan en Guías R, así que el consejo no se pierde. #}
+      <p class="aviso">⚠
+        {% if f.ficha_id %}
+        Esta ficha está en <strong>−{{ f.deficit|numero }}</strong>: salieron
+        {{ f.deficit|numero }} cajas sin una <strong>guía R que las produzca</strong>.
+        No es mercadería que falte —el total del artículo puede estar perfecto—:
+        falta el armado que las explique.
+        {% else %}
+        Este artículo tiene <strong>{{ f.deficit|numero }}</strong> bultos que salieron
+        de una ficha sin una <strong>guía R que los produzca</strong>. Los sueltos se
+        derivan por resta, así que mientras falte esa guía R el sistema los cuenta
+        acá: <strong>ajustar a lo contado borraría bultos que están en el galpón</strong>.
+        {% endif %}
+        <strong>No ajustes el stock</strong>: cargá la guía R que faltó, desde
+        Depósito → Stock → Reproceso, y el número se acomoda solo.</p>
+      <a class="boton-ajustar" href="/administracion/stock/guias-r">Revisar las Guías R</a>
+      {% elif f.opuestas %}
       {# SIGNOS OPUESTOS entre porciones del mismo artículo: la firma de una
          guía R que fue a la ficha equivocada. Va en LAS DOS tarjetas, no
          solo en la de sueltos — si saliera en una, la otra seguiría dando
          su consejo sin saber que tiene una hermana con el signo contrario. #}
-      <p class="ojo-opuesto">⚠ En este artículo,
+      <p class="aviso">⚠ En este artículo,
         {% for o in f.opuestas %}{% if not loop.first %} y {% endif %}{{ o.nombre }}
         {% if o.dif > 0 %}tienen <strong>+{{ o.dif|numero }}</strong>{% else %}tienen
         <strong>{{ o.dif|numero }}</strong>{% endif %}{% endfor %}.
@@ -143,12 +167,13 @@
       {% if f.query_ajuste %}
       {# La cantidad final se calcula en la pantalla de ajuste contra el
          stock ACTUAL (con aviso si cambió desde este conteo).
-         Con una hermana de signo opuesto el botón pasa a segundo plano pero
-         NO desaparece: puede haber una guía R mal atribuida Y mercadería
-         faltante de verdad encima. Más difícil de apretar, no imposible. #}
-      <a class="boton-ajustar {% if f.opuestas %}secundario{% endif %}"
+         Con una hermana de signo opuesto —o con una ficha del artículo en
+         déficit— el botón pasa a segundo plano pero NO desaparece: puede
+         haber una guía R faltante o mal atribuida Y mercadería faltante de
+         verdad encima. Más difícil de apretar, no imposible. #}
+      <a class="boton-ajustar {% if f.opuestas or f.deficit %}secundario{% endif %}"
          href="/administracion/stock/ajustar?{{ f.query_ajuste }}">Ajustar a lo contado</a>
-      {% elif f.dif_hoy not in (none, 0) and not f.opuestas %}
+      {% elif f.dif_hoy not in (none, 0) and not f.opuestas and not f.deficit %}
       {# Una diferencia en una FICHA no se arregla con un ajuste de stock:
          el ajuste mueve el total del artículo, y acá el total puede estar
          perfecto. Si sobran cajas de una ficha y faltan de otra, lo que

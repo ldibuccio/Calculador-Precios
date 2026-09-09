@@ -20092,12 +20092,21 @@ def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
     assert "/administracion/stock/guias-r" in cuerpo
 
 
-def _cotejo(conteos, porciones=None):
-    """El Cotejo con sus dos lecturas: los conteos y el sistema DE HOY.
+def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
+    """El Cotejo con sus TRES lecturas: los conteos, el sistema DE HOY y el déficit.
 
     Desde el 08/09 la tarjeta compara contra el estado actual y no contra la
     foto congelada, así que hay que darle las dos. Sin `porciones`, el
     sistema de hoy es el mismo de la foto: la tarjeta no se movió.
+
+    El déficit va aparte y no se deriva de `porciones`: en la pantalla sale
+    de `deficit_de_cajas_por_ficha`, que lo sabe de fichas que NUNCA se
+    contaron — que es justo el caso que importa.
+
+    `sueltas` son las porciones que el Remanente NO lista —las que están en
+    cero o en negativo— y que la pantalla va a buscar de a una con
+    `stock_de_porcion`. Una ficha en déficit cae siempre acá: el Remanente
+    lista "solo lo que tiene MÁS DE CERO".
     """
     if porciones is None:
         porciones = [
@@ -20105,10 +20114,15 @@ def _cotejo(conteos, porciones=None):
              "bultos": c["stock_sistema"], "contable": True}
             for c in conteos
         ]
-    with (
-        patch("app.main.listar_ultimos_conteos_stock", return_value=conteos),
-        patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}),
-    ):
+    with ExitStack() as pila:
+        pila.enter_context(patch("app.main.listar_ultimos_conteos_stock", return_value=conteos))
+        pila.enter_context(patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}))
+        pila.enter_context(patch("app.main.deficit_de_cajas_por_ficha", return_value=deficits or {}))
+        # Solo si se pidió: hay tests que parchean `stock_de_porcion` ellos
+        # mismos, y parcharla siempre acá les pisaría el suyo.
+        if sueltas is not None:
+            pila.enter_context(patch("app.main.stock_de_porcion",
+                                     side_effect=lambda a, f: sueltas[(a, f)]))
         return cliente.get("/administracion/stock/cotejo")
 
 
@@ -20167,6 +20181,99 @@ def test_la_firma_es_el_SIGNO_y_no_que_se_cancelen():
     assert "ficha equivocada" in _cotejo(*_articulo_partido(-9.0, 1.0)).text
     # Mismo signo en las dos: NO es la firma, no avisa.
     assert "ficha equivocada" not in _cotejo(*_articulo_partido(-2.0, -1.0)).text
+
+
+def _articulo_con_deficit(contado_sueltos=16.0):
+    """Un artículo con una ficha en DÉFICIT: salieron 10 cajas sin guía R.
+
+    Los números son los del Limón del 08/09, con nombres inventados: total
+    16, la ficha en −10 y los sueltos inflados en esos mismos 10 (26). En el
+    piso hay 16 bultos, todos sueltos: el desvío de la tarjeta de sueltos es
+    +10 y no falta un solo bulto.
+    """
+    conteos = [
+        {"id": 1, "articulo_id": 2, "cantidad": contado_sueltos, "stock_sistema": 26.0,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "EJEMPLO Deficit",
+         "ficha_id": None, "ficha_nombre": None, "ficha_cliente": None},
+        {"id": 2, "articulo_id": 2, "cantidad": 0.0, "stock_sistema": -10.0,
+         "creado_en": datetime(2026, 9, 8, 9, 0), "articulo_nombre": "EJEMPLO Deficit",
+         "ficha_id": 9, "ficha_nombre": "Caja de ejemplo", "ficha_cliente": "Cliente"},
+    ]
+    # La ficha en déficit NO está en las porciones: el Remanente lista "solo
+    # lo que tiene MÁS DE CERO" (_porciones_de_deposito), así que la pantalla
+    # va a buscar su número de a uno. Ponerla acá haría pasar a un déficit
+    # derivado de las porciones, que en producción no la vería nunca.
+    porciones = [
+        {"articulo_id": 2, "ficha_id": None, "bultos": 26.0, "contable": True},
+    ]
+    return conteos, porciones, {(2, 9): 10.0}, {(2, 9): -10.0}
+
+
+def test_una_ficha_en_DEFICIT_manda_a_cargar_la_guia_R_y_no_a_ajustar():
+    """Una ficha en negativo no es mercadería que falte: es un armado que no
+    se cargó. El consejo tiene que ser el de la tarjeta de cajas —"no
+    ajustes, cargá la guía R"— y no el de "a cuál ficha fueron las cajas",
+    que manda a buscar una guía R que no existe."""
+    cuerpo = _cotejo(*_articulo_con_deficit()).text.split("</style>")[-1]
+
+    assert "guía R que las produzca" in cuerpo
+    assert "cargá la guía R que faltó" in cuerpo
+    # El consejo de la MISATRIBUCIÓN no aparece: es la otra historia.
+    assert "lo que cambia entre fichas es a cuál" not in cuerpo
+
+
+def test_el_deficit_pone_en_SEGUNDO_PLANO_el_ajuste_de_los_SUELTOS():
+    """EL BOTÓN PELIGROSO. Con la ficha en −10 los sueltos del sistema están
+    10 de más, así que "Ajustar a lo contado" baja el total del artículo en
+    10 bultos que están en el galpón. Sigue estando —puede haber faltante de
+    verdad encima— pero en segundo plano y con el aviso arriba.
+
+    Y SE MIDE CON LOS SIGNOS DEL MISMO LADO (los sueltos contados de más,
+    −4, y la ficha en −10) a propósito: con signos opuestos el aviso viejo
+    ya bajaba el botón a segundo plano, así que el test pasaba con el
+    déficit sacado y no miraba nada. Probado sacándolo.
+    """
+    cuerpo = _cotejo(*_articulo_con_deficit(contado_sueltos=30.0)).text.split("</style>")[-1]
+
+    assert "ficha equivocada" not in cuerpo
+    assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
+    # Y el recomendado queda de primero.
+    assert '<a class="boton-ajustar" href="/administracion/stock/guias-r">' in cuerpo
+    assert "guía R que los produzca" in cuerpo
+
+
+def test_el_aviso_de_deficit_llega_a_los_SUELTOS_aunque_la_ficha_NO_se_haya_contado():
+    """EL CASO QUE IMPORTA, y el que no cubre ningún aviso anterior.
+
+    Una ficha que nunca se contó no genera tarjeta, así que no hay hermana
+    de signo opuesto que avise: la tarjeta de sueltos queda sola, con +10 y
+    el botón naranja de primero. El déficit sale de
+    `deficit_de_cajas_por_ficha` y no de las tarjetas, justamente para poder
+    avisar acá.
+    """
+    conteos, porciones, deficits, sueltas = _articulo_con_deficit()
+    cuerpo = _cotejo(conteos[:1], porciones, deficits, sueltas).text.split("</style>")[-1]
+
+    # No hay tarjeta de la ficha, así que no hay hermana ni aviso de signos.
+    assert "Caja de ejemplo" not in cuerpo
+    assert "ficha equivocada" not in cuerpo
+    # Y aun así avisa, y baja el botón.
+    assert "guía R que los produzca" in cuerpo
+    assert 'class="boton-ajustar secundario"\n         href="/administracion/stock/ajustar' in cuerpo
+
+
+def test_con_DEFICIT_el_aviso_es_el_del_deficit_y_NO_el_de_signos_opuestos():
+    """Los dos saltan sobre el mismo caso: una ficha en negativo infla los
+    sueltos en esa cantidad, así que los signos salen opuestos solos. Se
+    muestra uno solo, y es el del déficit: el otro dice que la guía R fue a
+    la ficha equivocada, y acá la guía R no existe."""
+    cuerpo = _cotejo(*_articulo_con_deficit()).text.split("</style>")[-1]
+
+    # Los signos SON opuestos (+10 en sueltos, −10 en la ficha)...
+    assert "+10" in cuerpo and "-10" in cuerpo
+    # ...y aun así el aviso que sale es el del déficit, una vez por tarjeta.
+    assert "ficha equivocada" not in cuerpo
+    assert cuerpo.count("cargá la guía R que faltó") == 2
 
 
 def test_el_cotejo_pone_los_desvios_ARRIBA_y_no_separa_las_porciones():
@@ -20306,6 +20413,7 @@ def test_cotejo_no_inventa_renglones_de_fichas_que_nunca_se_contaron():
     with (
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]) as mock_listar,
         patch("app.main._remanente_a_fecha", return_value={"porciones": []}),
+        patch("app.main.deficit_de_cajas_por_ficha", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/cotejo")
 
@@ -20320,6 +20428,7 @@ def test_las_pantallas_que_se_mudaron_vuelven_a_ADMINISTRACION():
     with (
         patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
         patch("app.main._remanente_a_fecha", return_value={"porciones": []}),
+        patch("app.main.deficit_de_cajas_por_ficha", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
     ):
         cotejo = cliente.get("/administracion/stock/cotejo")

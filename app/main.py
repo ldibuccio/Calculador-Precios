@@ -6990,20 +6990,27 @@ def _remanente_a_fecha(hasta) -> dict:
     }
 
 
-def _deficit_del_articulo(articulo_id: int, hasta) -> float:
+def _sumar_deficit_del_articulo(deficits: dict, articulo_id: int) -> float:
     """Cuánto salió sin caja armada detrás, sumando TODAS las fichas del artículo.
 
     Se suma porque los sueltos son del artículo entero: cada ficha con
     déficit le baja su parte a la misma pila.
+
+    Recibe el diccionario YA LEÍDO en vez de pedirlo: los dos que la usan
+    —el extracto y el Cotejo— ya lo tienen a mano, y así la suma está
+    escrita una sola vez. Si cada uno la hiciera por su cuenta, un día uno
+    de los dos sumaría distinto y las dos pantallas dirían otra cosa del
+    mismo artículo.
     """
     return round(
-        sum(
-            deficit
-            for (art, _ficha), deficit in deficit_de_cajas_por_ficha(hasta).items()
-            if art == articulo_id
-        ),
+        sum(deficit for (art, _ficha), deficit in deficits.items() if art == articulo_id),
         2,
     )
+
+
+def _deficit_del_articulo(articulo_id: int, hasta) -> float:
+    """La de arriba, leyendo el déficit de la base. Para el que no lo tiene."""
+    return _sumar_deficit_del_articulo(deficit_de_cajas_por_ficha(hasta), articulo_id)
 
 
 def _porcion_buscada(porciones: list[dict], articulo_id: int, ficha_id, es_segunda: bool):
@@ -8274,11 +8281,23 @@ def ver_cotejo_stock(request: Request):
         conteos = listar_ultimos_conteos_stock()
         # EL SISTEMA DE HOY, por porción. Sale del Remanente —la misma
         # función que dibuja esa pantalla— y no de una cuenta propia.
-        hoy = _remanente_a_fecha(_hoy_argentina())
+        fecha_hoy = _hoy_argentina()
+        hoy = _remanente_a_fecha(fecha_hoy)
         sistema_hoy = {
             (p["articulo_id"], p["ficha_id"]): float(p["bultos"])
             for p in hoy["porciones"] if p.get("contable", True)
         }
+        # EL DÉFICIT DE CADA FICHA, de la MISMA función que lo calcula para
+        # el Remanente y para el extracto. No se deriva acá de
+        # `sistema_hoy < 0`: sería la cuarta copia de la misma regla, y la
+        # que decide qué botón se muestra no puede separarse de la que
+        # dibuja el número.
+        #
+        # Y sale por FICHA aunque esa ficha no se haya contado nunca: la
+        # tarjeta de SUELTOS necesita saberlo igual, y es justo el caso
+        # peligroso — sin conteo de la ficha no hay tarjeta hermana, no hay
+        # aviso de signos opuestos, y el botón de ajustar queda de primero.
+        deficits = deficit_de_cajas_por_ficha(fecha_hoy)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -8311,6 +8330,22 @@ def ver_cotejo_stock(request: Request):
             None if fila["sistema_hoy"] is None
             else round(fila["sistema_hoy"] - float(conteo["cantidad"]), 2)
         )
+        # DÉFICIT: salieron cajas de esta ficha sin una guía R que las
+        # produzca. No es un desvío de conteo —el sistema no sabe menos de
+        # lo que hay, sabe que debe— y por eso no se arregla contando ni
+        # ajustando: se arregla cargando la guía R que faltó.
+        #
+        # En la tarjeta de la ficha, el déficit de ESA ficha. En la de
+        # sueltos, la SUMA de todas las fichas del artículo: los sueltos se
+        # derivan por resta, así que cada ficha en déficit los infla en su
+        # parte y el número que sobra en la pila suelta es la suma.
+        if conteo["ficha_id"] is None:
+            propio = _sumar_deficit_del_articulo(deficits, conteo["articulo_id"])
+        else:
+            propio = deficits.get((conteo["articulo_id"], conteo["ficha_id"]), 0.0)
+        if propio:
+            fila["deficit"] = propio
+
         # Con diferencia, botón directo a la pantalla de ajuste, precargada
         # con este conteo (la cantidad final se calcula ahí contra el stock
         # ACTUAL, no contra esta foto — ver ver_ajustar_stock_deposito).
