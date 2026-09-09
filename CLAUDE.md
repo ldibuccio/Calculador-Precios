@@ -1663,18 +1663,32 @@ primera semana — con diez mermas encima se revisa también si la lista corta
 de motivos alcanza, que hoy es una apuesta que no se puede validar contra
 nada.
 
-Corolario 34, del 09/09, y contesta la pregunta correcta: **el cero de merma
-en las guías R no es descuido del operario — es que el campo no le pide nada
-ni le cambia nada.**
+## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
 
-La hipótesis razonable era la contraria, y valía la pena descartarla: si el
-sistema obligara a que `tomados = primera + segunda + merma`, un operario con
-descarte real y merma en cero **tendría que inflar primera o segunda para
-poder guardar**, y entonces el cero no sería descuido sino lo que el
-formulario le pide. Sería un bug de diseño grande.
+Del 09/09, y va como regla y no como corolario porque **no es de la familia
+de las otras**: las demás son trampas del código, de una medición o de un
+comentario que envejece. Ésta es sobre la persona que carga, y sobre lo que
+el sistema le está pidiendo sin darse cuenta.
 
-**No es así, y se midió corriendo la ruta real con cuatro cargas, no leyendo
-el `if`:**
+**Si un dato no aparece en ninguna cuenta ni en ninguna decisión, el que lo
+carga lo aprende en dos semanas y lo saltea.** No hay capacitación que lo
+arregle, porque no hay nada que corregir: llenarlo o no llenarlo da el mismo
+resultado, y el que trabaja lo nota antes que nosotros. **El arreglo está del
+lado del sistema, no del lado del que carga.**
+
+### El caso que la produjo
+
+`reprocesos.bultos_merma` — el campo de merma de la guía R. Medido
+(`db/mermas_4_la_de_las_guias_r.sql`, Frutamax, corte 05/09, `> corte`):
+**1 de 72 guías R declaró merma, por 1 bulto.** En un negocio de fruta,
+reenvasar y descartar casi nada no pasa.
+
+La hipótesis razonable era que el formulario lo obligara: si el sistema
+exigiera `tomados = primera + segunda + merma`, un operario con descarte real
+y merma en cero **tendría que inflar primera o segunda para poder guardar**,
+y entonces el cero no sería descuido sino lo que la pantalla le pide. Sería
+un bug de diseño grande, así que se midió corriendo la ruta real con cuatro
+cargas, no leyendo el `if`:
 
 ```
 A) cuadra exacto            tomados 20 · primera 18 · segunda 1 · merma 1  -> guarda
@@ -1688,29 +1702,53 @@ la de D: *algo* tiene que haberse producido. **Y no puede haberla**: lo
 tomado son cajones y lo producido cajas, así que C no es un agujero sino el
 caso normal — un cajón de 16 da tres cajas de 6.
 
-Y la otra mitad, que es la que explica el cero de verdad: **`bultos_merma` no
+Descartada la hipótesis, quedó la causa de verdad: **`bultos_merma` no
 alimenta ninguna cuenta.** El stock sale de `− tomados + primera`, la segunda
 es un pool aparte, y las mermas de la Rentabilidad Real salen de
 `movimientos_stock` (`salida["tipo"] == "merma"`), no de esta columna. Se
 escribe, se muestra en el detalle de la guía, y no mueve un solo número.
 
-De ahí se siguen dos cosas, y la segunda es la que importa:
+Y de paso: **el descarte no se pierde de las cuentas.** Está adentro de
+`tomados − primera` — los cajones se fueron y volvieron menos cajas. Lo que
+se pierde es el **motivo**: el número existe y nadie sabe si fue merma,
+kilaje, o un reparto distinto.
 
-1. **El descarte no se pierde de las cuentas.** Está adentro de
-   `tomados − primera`: los cajones se fueron y volvieron menos cajas. Lo que
-   se pierde es el **motivo** — el número existe y nadie sabe si fue merma,
-   kilaje, o un reparto distinto.
-2. **Un campo sin consecuencia se llena vacío, y eso no es culpa del que
-   carga.** Nada se traba, nada cambia de color, ningún total se mueve. Pedir
-   un dato que no hace nada es pedir un favor, y a la larga el favor no se
-   hace. Si algún día se quiere el motivo del descarte del reproceso, la
-   salida no es insistir con el campo: es **darle una consecuencia visible**
-   —que aparezca en la Rentabilidad Real al lado de las otras mermas, o que
-   la guía avise cuando `tomados − primera` es grande y la merma dice cero.
+### La señal, y cómo se usa antes de sufrirla
 
-**La forma general, para reconocerla en otro lado:** antes de leer un campo
-vacío como desidia, preguntarse **qué pasa si se llena**. Si la respuesta es
-"nada", el vacío es la respuesta correcta al incentivo que hay puesto, y el
-arreglo está del lado del sistema. Es la otra cara del corolario 26 —allá un
-cartel que se pasa con el mismo click no es una revisión; acá un campo que no
-mueve nada no es un registro.
+Antes de leer un campo vacío como desidia, preguntarse **qué pasa si se
+llena**. Si la respuesta es "nada" —no se traba nada, no cambia ningún total,
+no aparece en ninguna pantalla que alguien mire—, el vacío es la respuesta
+correcta al incentivo que hay puesto.
+
+Es la otra cara del corolario 26: allá, un cartel que se pasa con el mismo
+click que ya se iba a hacer no es una revisión; **acá, un campo que no mueve
+nada no es un registro.** En los dos casos el sistema parece tener algo que
+en realidad no tiene.
+
+### Por qué la merma de galpón sí debería funcionar
+
+Es la razón para esperar distinto de la pantalla nueva, y conviene que esté
+escrita antes de verlo: **la merma de galpón TIENE consecuencia — baja el
+stock.** El motivo y la foto van pegados a esa consecuencia, no sueltos: el
+operario carga la merma porque necesita que el stock baje, y el motivo y la
+foto viajan en el mismo formulario.
+
+Ese es exactamente el enganche que a `bultos_merma` le falta. Si en la
+primera semana la de galpón se carga y la del reproceso sigue en cero, eso
+**no** dice que el operario sea prolijo en una y no en la otra: dice que una
+pantalla le pide algo que necesita hacer y la otra un dato que no hace nada.
+
+### Lo que queda ANOTADO Y NO CONSTRUIDO
+
+Si algún día se quiere el motivo del descarte del reproceso, **la salida no
+es insistir con el campo ni pedir que lo llenen mejor: es darle
+consecuencia.** Dos formas, ninguna construida:
+
+- que la merma de la guía R **aparezca en la Rentabilidad Real** al lado de
+  las otras mermas, o
+- que la guía **avise cuando `tomados − primera` es grande y la merma dice
+  cero** — el aviso es la consecuencia más barata, y no obliga a nada.
+
+Y antes de construir cualquiera de las dos, medir si el motivo se necesita:
+puede pasar como con el desglose del Remanente (corolario 23), que la
+consulta previa borró la pantalla entera.
