@@ -214,6 +214,12 @@
     </div>
     {% endif %}
 
+    {# LAS FOTOS VAN ARRIBA DEL FORMULARIO, por el mismo motivo que la lista
+       de dependencias: el que corrige tiene que decidir QUÉ número poner, y
+       eso se decide mirando la evidencia, no después de tipear. Debajo del
+       campo serían una comprobación que ya no cambia nada. #}
+    {% include "_fotos_evidencia.html" %}
+
     <form method="post" action="/gerencia/compras/{{ compra.id }}/corregir-recepcion">
       <label for="cajones-real">Cajones reales</label>
       {# La precarga gana sobre lo guardado: si el aviso lo hizo volver, abajo

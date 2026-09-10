@@ -231,7 +231,7 @@
       <input type="hidden" name="renglon_id" value="{{ renglon.id }}">
 
       <label for="cantidad">Bultos devueltos</label>
-      <input type="number" id="cantidad" name="cantidad" min="0.01" max="{{ tope }}" step="0.01" required
+      <input type="number" id="cantidad" name="cantidad" min="1" max="{{ tope }}" step="1" inputmode="numeric" required
              value="{{ precarga.cantidad if precarga.cantidad is defined and precarga.cantidad else tope|numero }}">
 
       {# La fecha que se pide acá es la de la VUELTA, no la del pedido: son

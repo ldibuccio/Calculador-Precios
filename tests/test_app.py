@@ -3061,6 +3061,7 @@ def test_ver_detalle_compra_muestra_toda_la_historia():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3081,6 +3082,7 @@ def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3094,6 +3096,7 @@ def test_ver_detalle_compra_marca_la_diferencia_de_recepcion():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3135,6 +3138,7 @@ def test_el_detalle_dice_que_NO_hay_foto_de_balanza_cuando_no_la_hay():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3151,6 +3155,7 @@ def test_ver_detalle_compra_con_fotos_muestra_la_galeria_de_la_guia():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3169,6 +3174,7 @@ def test_ver_detalle_compra_inexistente_da_404():
     with (
         patch("app.main.obtener_detalle_compra", return_value=None),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/999/detalle")
 
@@ -3190,6 +3196,7 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3202,6 +3209,7 @@ def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3215,6 +3223,7 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3228,6 +3237,7 @@ def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3241,6 +3251,7 @@ def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3253,6 +3264,7 @@ def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra.")
 
@@ -3432,6 +3444,8 @@ def _puerta_de_gerencia_abierta(request):
     with (
         patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=None),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
     ):
         cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
@@ -3463,6 +3477,7 @@ def test_una_compra_CARGADA_CON_FECHA_ANTERIOR_lo_dice_en_su_detalle():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         cuerpo = cliente.get("/compras/30/detalle").text
 
@@ -3480,6 +3495,7 @@ def test_una_compra_NORMAL_no_dice_nada_de_fecha_anterior():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         cuerpo = cliente.get("/compras/30/detalle").text
 
@@ -3931,6 +3947,7 @@ def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -3956,6 +3973,7 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -3972,6 +3990,7 @@ def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formula
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -3984,6 +4003,7 @@ def test_ver_corregir_recepcion_compra_inexistente_da_404():
     with (
         patch("app.main.obtener_detalle_compra", return_value=None),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/999/corregir-recepcion")
 
@@ -4015,6 +4035,7 @@ def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargado
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -5786,6 +5807,7 @@ def test_ver_foto_compra_sin_fotos_en_la_guia_da_404():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/foto")
 
@@ -5839,6 +5861,7 @@ def test_borrar_foto_de_guia_borra_el_archivo_solo_si_nadie_mas_lo_usa():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.borrar_foto_guia", return_value="2026/x.jpg") as mock_borrar,
         patch("app.main.borrar_foto_comanda") as mock_storage,
     ):
@@ -5860,6 +5883,7 @@ def test_borrar_foto_ajena_a_la_guia_da_404_y_no_borra_nada():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.borrar_foto_guia") as mock_borrar,
     ):
         respuesta = cliente.post("/compras/30/fotos/999/borrar", data={"volver": "editar"})
@@ -5873,6 +5897,7 @@ def test_ver_foto_de_guia_valida_que_la_foto_sea_de_esa_guia():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/fotos/999/ver")
 
@@ -5892,6 +5917,7 @@ def test_ver_foto_compra_error_de_storage_da_500():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_url_foto", side_effect=RuntimeError("Supabase Storage no pudo firmar la URL (404)")),
     ):
         respuesta = cliente.get("/compras/30/foto")
@@ -11780,6 +11806,7 @@ def test_editar_compra_muestra_las_fotos_de_la_guia_con_subir_y_borrar():
     with (
         patch("app.main.obtener_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
         respuesta = cliente.get("/compras/30/editar?fecha_desde=2026-08-01")
@@ -18906,6 +18933,52 @@ def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
     assert "sin+asignar" in respuesta.headers["location"]
 
 
+def test_los_BULTOS_son_ENTEROS_en_las_dos_puertas_que_los_validan():
+    """Un bulto es una cosa contable: no hay media caja ni medio cajón.
+
+    Se le pregunta a las DOS funciones y no a un formulario, porque es
+    donde vive la regla: `_validar_bultos_positivos` la usan siete
+    llamadores (stock inicial, cajas ya armadas, merma, rechazo devuelto,
+    cajones que salieron, tomados de la guía R, remitidos) y
+    `_numero_form_o_cero` los otros tres (primera, segunda, merma de la
+    guía R). Probando un formulario se probaría uno de diez.
+
+    Lo que entró por acá fue un `bultos_primera` con decimales, que el
+    compensatorio del corte después espejó —`cantidad = -st` copia la
+    parte decimal con el signo cambiado— y las dos mitades aparecieron en
+    la pantalla del artículo como +120,97 y 57,03.
+    """
+    from app.main import _validar_bultos_positivos, _numero_form_o_cero
+
+    for entero in ("1", "20", "0030"):
+        assert _validar_bultos_positivos(entero, "tomados")[0] is None, entero
+        assert _numero_form_o_cero(entero, "primera")[0] is None, entero
+    # El vacío sigue valiendo cero en la que lo permite: no es un decimal.
+    assert _numero_form_o_cero("", "primera") == (None, 0.0)
+
+    for roto in ("20.97", "0.5", "1.01"):
+        error, valor = _validar_bultos_positivos(roto, "tomados")
+        assert valor is None and "decimales" in error, roto
+        error, valor = _numero_form_o_cero(roto, "primera")
+        assert valor is None and "decimales" in error, roto
+
+
+def test_la_guia_R_rechaza_los_decimales_DESDE_EL_SERVIDOR():
+    """El `step="1"` del input es una sugerencia del navegador: un
+    formulario armado a mano entra igual. La guarda va donde se ESCRIBE
+    —corolario 26—, así que el POST tiene que rebotar sin llamar a la base.
+    """
+    with patch("app.main.crear_reproceso") as mock_crear:
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+             "bultos_primera": "20.97", "bultos_segunda": "0", "bultos_merma": "0",
+             "fecha": "2026-08-25", "ficha_id": "sin_asignar"},
+        )
+    assert respuesta.status_code == 400
+    assert "decimales" in respuesta.text
+    mock_crear.assert_not_called()
+
+
 def _pantalla_de_reproceso_con(datos, **parches):
     """El POST del reproceso con el cliente y el artículo ya resueltos."""
     contexto = {
@@ -22055,6 +22128,7 @@ def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave(
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -22092,6 +22166,8 @@ def test_corregir_recepcion_con_el_lote_SIN_USAR_lo_dice_en_una_linea_y_sin_cart
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.dependencias_del_lote_de_compra", return_value=SIN_USAR),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
@@ -22101,6 +22177,60 @@ def test_corregir_recepcion_con_el_lote_SIN_USAR_lo_dice_en_una_linea_y_sin_cart
     assert '<div class="advertencia">' not in respuesta.text
 
 
+def test_corregir_recepcion_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
+    """Es la pantalla donde se cambia el número de bultos de una compra ya
+    recepcionada, y la foto de la balanza es la evidencia de ese número.
+    Hasta el 10/09 no mostraba ninguna: había que salir al Detalle.
+
+    LOS CUATRO CASOS, no dos. Con solo "las dos" y "ninguna", una pantalla
+    que mostrara la comanda en el lugar del pesaje pasaría: se ven iguales.
+    """
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
+
+    def pantalla(guia, balanza):
+        with (
+            patch("app.main.obtener_detalle_compra", return_value=compra),
+            patch("app.main.listar_fotos_de_guia", return_value=guia),
+            patch("app.main.listar_fotos_de_recepcion", return_value=balanza),
+        ):
+            return cliente.get("/gerencia/compras/30/corregir-recepcion").text
+
+    comanda = [{"id": 9, "foto_ruta": "2026-09-10/comanda.jpg"}]
+    pesaje = [{"id": 4, "foto_ruta": "2026-09-10/balanza.jpg"}]
+
+    # Las dos: cada una con su ruta, que es lo único que las separa.
+    texto = pantalla(comanda, pesaje)
+    assert 'src="/compras/30/fotos/9/ver"' in texto
+    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in texto
+    assert "no tiene foto" not in texto
+
+    # Falta el pesaje: se dice, y se dice POR QUÉ importa acá.
+    texto = pantalla(comanda, [])
+    assert 'src="/compras/30/fotos/9/ver"' in texto
+    assert "Esta compra no tiene foto de la balanza" in texto
+    # En dos mitades porque la plantilla parte la frase: un assert que cruza
+    # el salto se rompe con cualquier reindentado y no dice nada del contenido.
+    assert "no tiene con qué cotejarse" in texto
+    assert "alguien tipeó" in texto
+
+    # Falta la comanda.
+    texto = pantalla([], pesaje)
+    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in texto
+    assert "Esta guía no tiene foto de la comanda" in texto
+
+    # Ninguna: las dos ausencias se nombran, no se queda muda.
+    texto = pantalla([], [])
+    assert "Esta guía no tiene foto de la comanda" in texto
+    assert "Esta compra no tiene foto de la balanza" in texto
+
+    # Y NO trae los botones de subir ni borrar: acá se corrige un número, no
+    # se administran fotos. Un "Borrar" al lado de la prueba, en la pantalla
+    # donde se está por cambiar el dato que la prueba respalda, es una puerta
+    # que nadie pidió.
+    assert "Agregar foto" not in texto
+    assert "/fotos/9/borrar" not in pantalla(comanda, pesaje)
+
+
 def test_corregir_recepcion_lista_las_guias_R_y_los_renglones_por_separado():
     """Son dos clases de dato distintas y la pantalla lo dice: las guías R
     están congeladas, los renglones los recalcula el FIFO cada vez."""
@@ -22108,6 +22238,8 @@ def test_corregir_recepcion_lista_las_guias_R_y_los_renglones_por_separado():
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Día"}]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
@@ -22127,6 +22259,8 @@ def test_corregir_recepcion_bajar_sin_romper_nada_guarda_DE_UNA():
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.corregir_recepcion_compra") as mock_guardar,
     ):
@@ -22145,6 +22279,8 @@ def test_corregir_recepcion_bajando_de_mas_pide_el_SEGUNDO_TOQUE():
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.corregir_recepcion_compra") as mock_guardar,
     ):
@@ -22171,6 +22307,8 @@ def test_corregir_recepcion_el_aviso_NOMBRA_la_guia_R_rota():
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.corregir_recepcion_compra"),
     ):
@@ -23002,8 +23140,20 @@ def test_el_remanente_muestra_los_armados_que_ESPERAN_la_guia_R():
     with patch("app.main.bultos_esperando_guia_r_por_articulo", return_value=esperando):
         cuerpo = _remanente().text.split("</style>")[-1]
 
-    assert "Armados esperando su guía R" in cuerpo
+    assert "Armados esperando una guía R del artículo" in cuerpo
     assert "No falta mercadería" in cuerpo
+    # DICE "DEL ARTÍCULO" Y AVISA QUE PUEDE NO SER LA FICHA QUE SE MIRA. Es
+    # la corrección del 10/09 y costó una tarde: decía "su guía R", se leyó
+    # como la de la ficha abierta, y mandó a revisar un papel ya cargado.
+    # Los lotes del FIFO no tienen ficha, así que lo que falta es del
+    # artículo. Se afirman las DOS mitades del aviso, no solo el título:
+    # el título solo ya lo dice a medias y el que perdió la tarde lo leyó.
+    assert "Puede no ser la ficha que estás mirando" in cuerpo
+    assert "todo el artículo" in cuerpo
+    # Y la fecha: una guía R cargada DESPUÉS del armado tampoco lo cubre
+    # (lote_posterior_a_la_salida compara fechas). Sin esto, el que la tiene
+    # cargada y mal fechada la busca sin encontrarla.
+    assert "fechada después del armado" in cuerpo
     # El link va al detalle del artículo, que es donde se ve de qué lotes salió.
     assert '/administracion/stock/sistema/41' in cuerpo
     # En dos mitades porque la plantilla parte la frase en dos líneas: un

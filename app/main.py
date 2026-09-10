@@ -4393,6 +4393,14 @@ def _renderizar_pantalla_corregir_recepcion(
         # llevó el lote.
         dependencias = dependencias_del_lote_de_compra(compra_id) if compra else None
         clientes = {c["id"]: c["nombre"] for c in listar_clientes()} if dependencias else {}
+        # LAS FOTOS, y ésta es la pantalla que más las necesita: acá se
+        # cambia el número de bultos de una compra YA recepcionada, y la
+        # foto de la balanza es la evidencia de ese número. Hasta el 10/09
+        # había que salir al Detalle a buscarla, que es al revés — el que
+        # decide el número tiene que tener la prueba a la vista, no a un
+        # click de distancia en otra pantalla.
+        fotos_guia = _fotos_de_la_guia_de(compra) if compra else []
+        fotos_balanza = listar_fotos_de_recepcion(compra_id) if compra else []
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -4407,6 +4415,7 @@ def _renderizar_pantalla_corregir_recepcion(
         request,
         "compra_corregir_recepcion.html",
         {"compra": compra, "error": error, "dependencias": dependencias,
+         "fotos_guia": fotos_guia, "fotos_balanza": fotos_balanza,
          "aviso": aviso, "precarga": precarga or {}},
         status_code=status_code,
     )
@@ -8055,8 +8064,45 @@ def anular_stock_inicial_ruta(
     return _volver_a_stock_inicial(articulo_id, aviso="Renglón anulado: no cuenta más en el total.")
 
 
+BULTOS_ENTEROS = (
+    "Los bultos se cuentan de a uno: no existe media caja ni medio cajón. "
+    "Poné un número entero."
+)
+
+
+def _entero_o_error(valor: float, que: str) -> str | None:
+    """None si `valor` es un número entero de bultos; el error si tiene decimales.
+
+    UN BULTO ES UNA COSA CONTABLE. Una caja, un cajón: no hay media. Lo que
+    SÍ es fraccionario es el CONTENIDO (16,5 kg por cajón) y la plata, y
+    esos campos no pasan por acá.
+
+    Existe porque el formulario de la guía R aceptaba `step="0.01"` y por
+    ahí entró un `bultos_primera` con decimales que después el
+    compensatorio del corte espejó —`cantidad = -st` copia la parte
+    decimal con el signo cambiado—, y las dos mitades aparecieron en la
+    pantalla del artículo como `+120,97` y `57,03`. Un decimal en una
+    cuenta de bultos no rompe nada ruidosamente: se propaga.
+
+    Y VA EN EL SERVIDOR, no solo en el `step` del input. `step` es una
+    sugerencia del navegador: un formulario armado a mano entra igual. Es
+    el mismo hallazgo del tilde de la fecha — la guarda va donde se
+    ESCRIBE, no donde se muestra (corolario 26).
+    """
+    if float(valor).is_integer():
+        return None
+    return f"La cantidad de {que} tiene decimales. {BULTOS_ENTEROS}"
+
+
 def _validar_bultos_positivos(cantidad: str, que: str) -> tuple[str | None, float | None]:
-    """Bultos de merma/reingreso: número positivo obligatorio (acá el signo lo pone el tipo, no la persona)."""
+    """Bultos de merma/reingreso: entero positivo obligatorio (acá el signo lo pone el tipo, no la persona).
+
+    LOS SIETE LLAMADORES CUENTAN BULTOS —stock inicial, cajas ya armadas,
+    merma tirada, rechazo devuelto, cajones que salieron, tomados de la
+    guía R, remitidos al Puesto— así que la regla del entero va acá y no
+    en cada uno: escrita siete veces se separa, y la que rechace deja de
+    ser la que el código cree que rechaza.
+    """
     texto = cantidad.strip()
     if not texto:
         return f"La cantidad de bultos {que} es obligatoria.", None
@@ -8066,6 +8112,9 @@ def _validar_bultos_positivos(cantidad: str, que: str) -> tuple[str | None, floa
         return "La cantidad de bultos tiene que ser un número.", None
     if valor <= 0:
         return "La cantidad de bultos tiene que ser mayor a cero.", None
+    error = _entero_o_error(valor, f"bultos {que}")
+    if error:
+        return error, None
     return None, valor
 
 
@@ -9324,7 +9373,13 @@ def _reparto_del_formulario(texto: str) -> tuple[str | None, list[dict] | None]:
 
 
 def _numero_form_o_cero(texto: str, que: str) -> tuple[str | None, float | None]:
-    """Bultos producidos del reproceso: vacío vale 0 (no armó de eso), negativo no existe."""
+    """Bultos producidos del reproceso: vacío vale 0 (no armó de eso), negativo no existe.
+
+    Los tres que la usan —primera, segunda y merma— son bultos, así que
+    valen enteros por la misma razón que arriba. La regla sale de
+    `_entero_o_error` y no se repite acá: son dos puertas de entrada al
+    mismo dato y tienen que rechazar lo mismo.
+    """
     if not texto.strip():
         return None, 0.0
     try:
@@ -9333,6 +9388,9 @@ def _numero_form_o_cero(texto: str, que: str) -> tuple[str | None, float | None]
         return f"La cantidad de {que} tiene que ser un número.", None
     if valor < 0:
         return f"La cantidad de {que} no puede ser negativa.", None
+    error = _entero_o_error(valor, que)
+    if error:
+        return error, None
     return None, valor
 
 
@@ -10109,7 +10167,7 @@ ALERTAS = [
         # el stock no se mueve (es un neto y el armado resta igual), y en la
         # Rentabilidad Real la salida sale del cálculo con su venta, en una
         # pantalla de Gerencia que no se mira todos los días.
-        titulo="Armados esperando la guía R que los explica",
+        titulo="Armados esperando una guía R del artículo",
         titulo_corto="Falta cargar guías R",
         url="/administracion/stock/remanente",
         texto_link="Ver en el Remanente",

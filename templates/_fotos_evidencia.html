@@ -1,0 +1,109 @@
+{# LAS DOS FOTOS DE UNA COMPRA, SOLO PARA MIRAR. Espera en el contexto:
+   compra (con id), fotos_guia (lista) y fotos_balanza (lista).
+
+   NO es `_fotos_guia.html`, y la diferencia es a propósito: ese trae los
+   botones de subir y borrar, y acá no van. Esta pantalla existe para
+   corregir un NÚMERO —los bultos de una compra ya recepcionada— y la foto
+   es la evidencia de ese número, no algo que se administre en el mismo
+   gesto. Un botón "Borrar" al lado de la prueba, en la pantalla donde se
+   está por cambiar el dato que la prueba respalda, es una puerta que nadie
+   pidió. Para gestionarlas está Editar y está el Detalle.
+
+   Las DOS con su etiqueta, y la que falta dicha con todas las letras: son
+   de cosas distintas —el papel del proveedor y la mercadería sobre la
+   balanza— y "no está" tiene que distinguirse de "no la busqué". Es el
+   mismo criterio del "sin foto" en gris de Movimientos y del "Sin pesaje"
+   de Buscar Compras. #}
+<style>
+  .evidencia { margin-top: 0.75rem; }
+  .evidencia h3 { font-size: 0.95rem; margin: 0 0 0.5rem; }
+  .evidencia-bloque + .evidencia-bloque {
+    margin-top: 0.9rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid #eee;
+  }
+  .evidencia-tira {
+    display: flex;
+    gap: 0.6rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+  .evidencia-item { flex: 0 0 auto; }
+  .evidencia-item img {
+    width: 6.5rem;
+    height: 6.5rem;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    display: block;
+  }
+  .evidencia-item .es-pdf {
+    width: 6.5rem;
+    height: 6.5rem;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    background: #f9fafb;
+    text-decoration: none;
+  }
+  /* La que falta NO es un renglón gris cualquiera: en esta pantalla se está
+     por cambiar un número y la ausencia de la prueba es parte de lo que hay
+     que decidir. Va con el mismo naranja de aviso del resto del sistema. */
+  .evidencia-falta {
+    margin: 0;
+    padding: 0.55rem 0.7rem;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 8px;
+    color: #9a3412;
+    font-size: 0.85rem;
+  }
+  .evidencia-nota { color: #888; font-size: 0.78rem; margin: 0.35rem 0 0; }
+</style>
+<div class="evidencia">
+  <div class="evidencia-bloque">
+    <h3>Comanda (el papel del proveedor)</h3>
+    {% if fotos_guia %}
+    <div class="evidencia-tira">
+      {% for f in fotos_guia %}
+      <div class="evidencia-item">
+        {% if f.foto_ruta.lower().endswith(".pdf") %}
+        <a class="es-pdf" href="/compras/{{ compra.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener" aria-label="Ver PDF de la comanda">📄</a>
+        {% else %}
+        <a href="/compras/{{ compra.id }}/fotos/{{ f.id }}/ver" target="_blank" rel="noopener">
+          <img src="/compras/{{ compra.id }}/fotos/{{ f.id }}/ver" alt="Foto de la comanda" loading="lazy">
+        </a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <p class="evidencia-nota">Es de la GUÍA: la comparten todos los artículos comprados ese día a ese proveedor.</p>
+    {% else %}
+    <p class="evidencia-falta">Esta guía no tiene foto de la comanda.</p>
+    {% endif %}
+  </div>
+
+  <div class="evidencia-bloque">
+    <h3>Pesaje (la mercadería en la balanza)</h3>
+    {% if fotos_balanza %}
+    <div class="evidencia-tira">
+      {% for f in fotos_balanza %}
+      <div class="evidencia-item">
+        <a href="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver" target="_blank" rel="noopener">
+          <img src="/deposito/recepcion/{{ compra.id }}/foto-balanza/ver"
+               alt="Mercadería sobre la balanza" loading="lazy">
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="evidencia-nota">Es de ESTE artículo, no de la guía. La saca Depósito al recepcionar.</p>
+    {% else %}
+    <p class="evidencia-falta"><strong>Esta compra no tiene foto de la balanza.</strong>
+      El número que estás por corregir no tiene con qué cotejarse: lo que hay es lo que
+      alguien tipeó.</p>
+    {% endif %}
+  </div>
+</div>
