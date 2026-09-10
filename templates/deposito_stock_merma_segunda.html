@@ -32,8 +32,26 @@
   }
   button.boton-guardar[disabled] { background: #cbd5e1; color: #64748b; }
   .ayuda { color: #777; font-size: 0.85rem; margin: 0.9rem 0 0; line-height: 1.45; }
+  /* CANCELAR: secundario, sin fondo, y del mismo tamaño tocable que Guardar.
+     La flecha de la barra ya vuelve, pero vive ARRIBA: con el formulario
+     cargado el operario está al final de la pantalla y la flecha le quedó
+     fuera de vista. La salida tiene que estar donde está la decisión, al
+     lado del botón que la toma. */
+  a.boton-cancelar {
+    display: block;
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 1rem;
+    background: none;
+    border: 0;
+    color: #64748b;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
   .vacio { color: #888; font-style: italic; margin: 0; }
-  .volver { display: block; margin-top: 0.75rem; text-align: center; color: #888; font-size: 0.85rem; text-decoration: none; }
   .foto {
     margin-top: 1rem;
     padding: 0.9rem;
@@ -140,6 +158,7 @@
 
       <button type="submit" id="guardar" class="boton-guardar">Dar de baja</button>
     </form>
+    <a class="boton-cancelar" href="/deposito/stock">Cancelar</a>
     <p class="ayuda">Sale del pool de segunda del artículo. <strong>No mueve plata</strong>: la
       segunda no lleva costo — el del reproceso ya viajó a la primera. Si te equivocaste, se
       anula desde Movimientos y se carga de nuevo.</p>
@@ -147,10 +166,11 @@
     <p class="vacio">No hay segunda de ningún artículo para tirar.</p>
     <p class="ayuda">La segunda aparece acá cuando una guía R la produce o cuando vuelve un
       rechazo que no entra al stock normal.</p>
+    {# Sin formulario no hay Cancelar, y sin Cancelar esta rama se quedaba
+       sin salida: la misma salida, con el texto que corresponde acá. #}
+    <a class="boton-cancelar" href="/deposito/stock">Volver a Stock</a>
     {% endif %}
   </div>
-
-  <a class="volver" href="/deposito/stock">Volver a Stock</a>
   <script>
     // El estado de la foto y el tilde se cuidan solos: sin foto y sin
     // tilde, Guardar no se puede apretar. El server NO depende de esto —

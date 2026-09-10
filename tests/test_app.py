@@ -3373,6 +3373,55 @@ def test_la_merma_de_segunda_exige_motivo_DE_LA_LISTA():
     mock_crear.assert_not_called()
 
 
+def test_LAS_DOS_mermas_tienen_salida_sin_cargar_nada():
+    """Entrar a mermar y arrepentirse tiene que costar un toque, no cargar algo.
+
+    La flecha de la barra ya vuelve, pero vive ARRIBA: con el formulario
+    lleno el operario está al final de la pantalla y la flecha le quedó
+    fuera de vista. La salida va donde está la decisión.
+
+    Se piden LAS DOS a la vez a propósito: un `href` a Stock solo en una de
+    las dos plantillas es la copia olvidada de siempre.
+    """
+    with (
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
+        patch("app.main._lotes_con_resto", return_value=[]),
+    ):
+        merma = cliente.get("/deposito/stock/merma?articulo_id=1").text
+    with patch("app.main.stock_deposito_por_articulo",
+               return_value=[{"articulo_id": 1, "nombre": "EJEMPLO Uno", "segunda": 5.0}]):
+        segunda = cliente.get("/deposito/stock/merma-segunda").text
+
+    for cuerpo, cual in ((merma, "merma de stock"), (segunda, "merma de segunda")):
+        assert 'class="boton-cancelar" href="/deposito/stock"' in cuerpo, cual
+        assert ">Cancelar<" in cuerpo, cual
+        # Y que se VEA como salida y no como un segundo Guardar: sin fondo.
+        # El atributo es la intención y el CSS es el efecto (corolario 32),
+        # así que lo que se fija acá es la regla que lo pinta.
+        assert "a.boton-cancelar" in cuerpo, cual
+        assert "background: none;" in cuerpo, cual
+        # UNA sola salida EN EL CUERPO y no dos: con el Cancelar puesto, el
+        # "Volver a Stock" del pie quedaba justo debajo, dos caminos al
+        # mismo lugar. Se pregunta por la CLASE del que sobraba y no por el
+        # href: la flecha de la barra apunta al mismo lado y contar el href
+        # a secas la cuenta a ella (es el assert que matchea de más).
+        assert 'class="volver"' not in cuerpo, cual
+
+
+def test_la_merma_de_segunda_VACIA_tampoco_queda_sin_salida():
+    """La rama sin formulario no tiene Cancelar, así que se quedaba sin
+    ninguna salida al sacar el "Volver a Stock" del pie. Es el `else` de
+    siempre: el día que se toca la condición, hay que leer qué dice la otra
+    rama."""
+    with patch("app.main.stock_deposito_por_articulo", return_value=[]):
+        cuerpo = cliente.get("/deposito/stock/merma-segunda").text
+
+    assert "No hay segunda de ningún artículo" in cuerpo
+    assert 'class="boton-cancelar" href="/deposito/stock"' in cuerpo
+    assert 'class="volver"' not in cuerpo
+
+
 def test_sin_foto_y_sin_el_TILDE_el_SERVER_no_guarda_ninguna_de_las_dos_mermas():
     """LA GUARDA VA DONDE SE ESCRIBE, no donde se muestra.
 
