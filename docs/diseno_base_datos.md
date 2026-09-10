@@ -4150,6 +4150,39 @@ problemas distintos y uno era urgente. Sin poder contar, no se puede verificar
 ningún arreglo — había 42 bultos de un artículo y 10 de otro que nadie
 comparaba contra el piso. Contar primero, corregir después.
 
+### El mismo agujero por un segundo camino: la merma de una caja con envase (10/09)
+
+**Es el mismo caso y hay que arreglarlos juntos**, no uno y después el otro.
+Cuando se merma una caja armada de una ficha CON envase, la fruta se tira y
+**el cartón se va con ella**: la merma baja bultos y no dice una palabra del
+envase, igual que el remito al Puesto. La fruta queda contada, el cartón no.
+
+**En qué se parece**: los dos son una salida de mercadería que estaba EN
+NUESTRA CAJA, y en los dos el envase deja de existir para el sistema en el
+momento en que la mercadería deja de ser stock.
+
+**En qué NO se parece, y por eso no se arregla copiando**: la caja del Puesto
+**sigue existiendo y podría volver** —está en otro lado, entera—, mientras que
+la que se tiró **dejó de existir**. Para el circuito de vacíos son dos hechos
+distintos: uno es un traslado sin registrar y el otro una baja definitiva. Un
+arreglo que los meta en la misma bolsa va a decir que hay cajas recuperables
+donde no las hay.
+
+**Y hay un tercer camino que conviene mirar antes de diseñar nada**: la merma
+puede tirar la fruta y **dejar el cartón** si la caja está sana. Hoy el sistema
+no puede distinguirlo porque no pregunta, y es una pregunta de galpón, no de
+software: si el cartón se recupera siempre, casi nunca, o depende. Sin esa
+respuesta, cualquier columna que se agregue codifica una hipótesis.
+
+**Lo que esto cambia respecto del pendiente de arriba**: deja de ser "al remito
+al Puesto le falta registrar envases" y pasa a ser **"el sistema no tiene el
+concepto de una salida de envase"** — y aparece por dos puertas distintas, que
+es la señal de que falta la pieza y no el parche. La segunda vez que el mismo
+hecho no tiene dónde anotarse ya no es un incidente: es un diagnóstico.
+
+**No está construido y no se va a construir sin decidir antes** las tres cosas
+de arriba. Queda acá para que en tres meses no se descubra de cero.
+
 **Y una advertencia para el que lo retome**: la segunda partida en dos pilas
 son DOS PORCIONES, no una con un atributo. El conteo que se hizo el 09/09 usa
 `conteos_stock.es_segunda`, un booleano, y eso es correcto hoy —"es segunda"
