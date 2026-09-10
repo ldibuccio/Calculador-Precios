@@ -3317,24 +3317,157 @@ def test_una_compra_NORMAL_no_dice_nada_de_fecha_anterior():
     assert "Cargada con fecha anterior" not in cuerpo
 
 
-def _merma_segunda(archivos=None, **datos):
-    """POST a la merma de segunda con lo mínimo, parcheando la base.
+# La ficha como la devuelve `_fichas_por_articulo`: clave TEXTO, que es como
+# la indexa la plantilla. Con envase, que es el caso que la regla del armado
+# hace especial — un fixture sin envase defiende lo contrario de producción.
+FICHAS_MERMA = {"1": [{"id": 9, "nombre": "Caja de ejemplo", "kilaje": "16 kg"}]}
 
-    Por default va SIN foto y CON el tilde puesto, que es el camino que el
-    server acepta sin archivo. Los tests de la foto pasan `archivos` y sacan
-    el tilde.
+
+def _merma(archivos=None, lotes=None, **datos):
+    """POST a la merma UNIFICADA. Devuelve (respuesta, mock_movimiento, mock_segunda).
+
+    Por default: los bultos SUELTOS, sin foto y CON el tilde puesto, que es
+    el camino que el server acepta sin archivo. Los tests de la foto pasan
+    `archivos` y sacan el tilde; los de las otras porciones pasan
+    `que_merma`.
+
+    Devuelve los DOS mocks porque el punto de la pantalla unificada es que
+    la porción decide en qué tabla se escribe: casi todos los tests miran
+    que se haya llamado uno Y NO el otro.
     """
-    campos = {"articulo_id": "1", "bultos": "7", "motivo": "podrido",
-              "fecha_operacion": "2026-09-09", "sin_foto_confirmado": "1"}
+    campos = {"articulo_id": "1", "que_merma": "sueltos", "cantidad": "3",
+              "motivo": "podrido", "fecha": "2026-09-09", "sin_foto_confirmado": "1"}
     campos.update(datos)
     with (
         patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
-        patch("app.main.stock_deposito_por_articulo", return_value=[]),
-        patch("app.main.crear_salida_de_segunda") as mock_crear,
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main._fichas_por_articulo", return_value=FICHAS_MERMA),
+        patch("app.main._lotes_con_resto", return_value=lotes or []),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+        patch("app.main.crear_movimiento_stock", return_value=0.0) as mock_mov,
+        patch("app.main.crear_salida_de_segunda") as mock_seg,
     ):
-        respuesta = cliente.post("/deposito/stock/merma-segunda", data=campos,
+        respuesta = cliente.post("/deposito/stock/merma", data=campos,
                                  files=archivos, follow_redirects=False)
-    return respuesta, mock_crear
+    return respuesta, mock_mov, mock_seg
+
+
+def _ver_merma(articulo_id="1", lotes=None):
+    """La pantalla de merma con un artículo elegido."""
+    with (
+        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main._fichas_por_articulo", return_value=FICHAS_MERMA),
+        patch("app.main._lotes_con_resto", return_value=lotes or []),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+    ):
+        return cliente.get(f"/deposito/stock/merma?articulo_id={articulo_id}")
+
+
+def _merma_segunda(archivos=None, **datos):
+    """La merma del POOL por la pantalla unificada: es una porción más."""
+    datos.setdefault("que_merma", "segunda")
+    datos.setdefault("cantidad", "7")
+    respuesta, _mov, mock_seg = _merma(archivos=archivos, **datos)
+    return respuesta, mock_seg
+
+
+def test_la_merma_ofrece_LAS_TRES_porciones_en_una_sola_pantalla():
+    """UN SOLO BOTÓN. Para el que merma es la misma acción —agarra algo que
+    se pudrió y lo tira—, y que una mercadería tenga lote y la otra no es un
+    detalle interno. Con dos botones tendría que acordarse de cuál usar según
+    qué está tirando.
+
+    Y en el MISMO ORDEN que el Stock Físico: sueltos, segunda, fichas. Dos
+    pantallas que preguntan lo mismo con distinto orden se aprenden dos veces.
+    """
+    cuerpo = _ver_merma().text
+
+    # Los RADIOS y no el nombre a secas: el JS también nombra `que_merma`
+    # y contarlo a secas lo cuenta a él (el assert que matchea de más).
+    assert cuerpo.count('type="radio" id="qm-') == 3
+    assert 'value="sueltos"' in cuerpo and 'value="segunda"' in cuerpo and 'value="9"' in cuerpo
+    assert "Bultos sueltos" in cuerpo and ">Segunda" in cuerpo and "Cajas de Caja de ejemplo" in cuerpo
+    orden = [cuerpo.index('value="sueltos"'), cuerpo.index('value="segunda"'), cuerpo.index('value="9"')]
+    assert orden == sorted(orden), "el orden tiene que ser el del Stock Físico"
+
+
+def test_la_merma_DE_UNA_FICHA_nombra_la_ficha_y_no_cae_en_los_sueltos():
+    """EL BUG QUE ESTO VIENE A CERRAR, y está medido: sin `ficha_id` la merma
+    bajaba el total del artículo sin bajar la ficha, y como los sueltos se
+    derivan por resta la baja caía entera sobre los sueltos. Tirando las 10
+    cajas de una ficha el sistema quedaba diciendo 10 cajas y 0 sueltos, con
+    el galpón exactamente al revés.
+    """
+    respuesta, mock_mov, mock_seg = _merma(que_merma="9")
+
+    assert respuesta.status_code == 303
+    assert mock_mov.call_args.kwargs["ficha_id"] == 9
+    mock_seg.assert_not_called()
+    assert "cajas+de+Caja+de+ejemplo" in respuesta.headers["location"]
+
+
+def test_cada_porcion_escribe_en_SU_tabla():
+    """Lo único de todo esto que el operario no ve. La segunda NO puede ir a
+    movimientos_stock: bajaría el stock normal del artículo Y sería una salida
+    del FIFO que consume lotes, restando de dos pilas a la vez."""
+    for que, espera_movimiento in (("sueltos", True), ("9", True), ("segunda", False)):
+        respuesta, mock_mov, mock_seg = _merma(que_merma=que)
+        assert respuesta.status_code == 303, que
+        assert mock_mov.called is espera_movimiento, que
+        assert mock_seg.called is (not espera_movimiento), que
+
+
+def test_la_merma_de_una_ficha_de_OTRO_articulo_no_entra():
+    """Una ficha de otro artículo no es un dato raro, es un dato roto: la
+    cuenta por ficha se ensuciaría en silencio. La base también lo rechaza
+    (FK compuesta); acá se ataja antes para dar un cartel entendible."""
+    respuesta, mock_mov, _seg = _merma(que_merma="404")
+    assert respuesta.status_code == 400
+    assert "no es de este artículo" in respuesta.text
+    mock_mov.assert_not_called()
+
+
+def test_el_LOTE_se_ofrece_solo_para_los_sueltos():
+    """Las cajas de una ficha y el pool no tienen lotes que elegir. Y la
+    pantalla no es la que decide: el POST ignora el lote de las otras dos
+    porciones aunque llegue — trabar por algo que la pantalla no ofreció
+    sería hacerle pagar al operario un detalle interno.
+    """
+    lotes = [{"tipo": "guia", "origen_id": 5, "etiqueta": "Compra de EJEMPLO",
+              "restante": 30.0, "fecha": date(2026, 9, 1)}]
+    cuerpo = _ver_merma(lotes=lotes).text
+    assert 'id="bloque-lote"' in cuerpo
+    assert "El más viejo (como siempre)" in cuerpo
+
+    respuesta, mock_mov, _seg = _merma(que_merma="9", lote="guia:5", lotes=lotes)
+    assert respuesta.status_code == 303
+    assert mock_mov.call_args.kwargs["lote_tipo"] is None, "la ficha no elige lote"
+
+    respuesta, mock_mov, _seg = _merma(que_merma="sueltos", lote="guia:5", lotes=lotes)
+    assert mock_mov.call_args.kwargs["lote_tipo"] == "guia"
+
+
+def test_la_ayuda_habla_de_LAS_TRES_porciones_y_no_solo_del_stock():
+    """El texto de abajo decía "sale del stock" y "si no elegís lote sale del
+    más viejo", y con las tres porciones eso pasó a ser cierto solo para los
+    sueltos: la segunda sale del POOL y las cajas de una ficha salen de esa
+    ficha. Es la rama que afirma algo, envejecida en el mismo commit que la
+    volvió falsa."""
+    cuerpo = _ver_merma().text
+    ayuda = cuerpo.split('class="ayuda"')[1].split("</p>")[0]
+    assert "pool" in ayuda, "la segunda no sale del stock del artículo"
+    assert "ficha" in ayuda, "las cajas de una ficha no salen de la pila suelta"
+    assert "más viejo" in ayuda
+
+
+def test_el_boton_de_mermar_segunda_YA_NO_ESTA():
+    """Una sola puerta: dos botones obligan a elegir cuál según qué se está
+    tirando, que es justo lo que la pantalla unificada saca del medio."""
+    cuerpo = cliente.get("/deposito/stock").text
+    assert "Mermar Segunda" not in cuerpo
+    assert 'href="/deposito/stock/merma"' in cuerpo
+    assert cliente.get("/deposito/stock/merma-segunda").status_code == 404
 
 
 def test_la_merma_de_segunda_sale_del_POOL_y_no_del_stock_normal():
@@ -3354,7 +3487,7 @@ def test_la_merma_de_segunda_NO_TRABA_contra_el_pool():
     """Mismo criterio que el remito, el conteo y el armado: si sale más de lo
     que el sistema cree tener, el pool queda negativo y se ve. Un negativo
     dice "acá pasó algo"; un freno diría "no pasó nada", que es mentira."""
-    respuesta, mock_crear = _merma_segunda(bultos="99999")
+    respuesta, mock_crear = _merma_segunda(cantidad="99999")
 
     assert respuesta.status_code == 303
     assert mock_crear.call_args.args[1] == 99999.0
@@ -3383,17 +3516,8 @@ def test_LAS_DOS_mermas_tienen_salida_sin_cargar_nada():
     Se piden LAS DOS a la vez a propósito: un `href` a Stock solo en una de
     las dos plantillas es la copia olvidada de siempre.
     """
-    with (
-        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
-        patch("app.main._lotes_con_resto", return_value=[]),
-    ):
-        merma = cliente.get("/deposito/stock/merma?articulo_id=1").text
-    with patch("app.main.stock_deposito_por_articulo",
-               return_value=[{"articulo_id": 1, "nombre": "EJEMPLO Uno", "segunda": 5.0}]):
-        segunda = cliente.get("/deposito/stock/merma-segunda").text
-
-    for cuerpo, cual in ((merma, "merma de stock"), (segunda, "merma de segunda")):
+    cuerpo = _ver_merma().text
+    for cuerpo, cual in ((cuerpo, "merma"),):
         assert 'class="boton-cancelar" href="/deposito/stock"' in cuerpo, cual
         assert ">Cancelar<" in cuerpo, cual
         # Y que se VEA como salida y no como un segundo Guardar: sin fondo.
@@ -3407,19 +3531,6 @@ def test_LAS_DOS_mermas_tienen_salida_sin_cargar_nada():
         # href: la flecha de la barra apunta al mismo lado y contar el href
         # a secas la cuenta a ella (es el assert que matchea de más).
         assert 'class="volver"' not in cuerpo, cual
-
-
-def test_la_merma_de_segunda_VACIA_tampoco_queda_sin_salida():
-    """La rama sin formulario no tiene Cancelar, así que se quedaba sin
-    ninguna salida al sacar el "Volver a Stock" del pie. Es el `else` de
-    siempre: el día que se toca la condición, hay que leer qué dice la otra
-    rama."""
-    with patch("app.main.stock_deposito_por_articulo", return_value=[]):
-        cuerpo = cliente.get("/deposito/stock/merma-segunda").text
-
-    assert "No hay segunda de ningún artículo" in cuerpo
-    assert 'class="boton-cancelar" href="/deposito/stock"' in cuerpo
-    assert 'class="volver"' not in cuerpo
 
 
 def test_sin_foto_y_sin_el_TILDE_el_SERVER_no_guarda_ninguna_de_las_dos_mermas():
@@ -3439,18 +3550,9 @@ def test_sin_foto_y_sin_el_TILDE_el_SERVER_no_guarda_ninguna_de_las_dos_mermas()
     assert "tildá" in respuesta.text
     mock_crear.assert_not_called()
 
-    with (
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
-        patch("app.main.listar_articulos", return_value=[]),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
-        patch("app.main.crear_movimiento_stock") as mock_movimiento,
-    ):
-        respuesta = cliente.post(
-            "/deposito/stock/merma",
-            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido"},
-        )
-
+    respuesta, mock_movimiento, _seg = _merma(sin_foto_confirmado="")
     assert respuesta.status_code == 400
+    assert "tildá" in respuesta.text
     mock_movimiento.assert_not_called()
 
 
@@ -3480,16 +3582,12 @@ def test_con_la_foto_puesta_el_tilde_NO_hace_falta_en_las_dos_mermas():
     assert mock_crear.call_args.kwargs["foto_ruta"] == "merma/2026-09-09/x.jpg"
 
     with (
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "EJEMPLO Uno"}),
         patch("app.main._comprimir_foto_jpeg", return_value=b"chica"),
         patch("app.main.subir_foto_comanda", return_value="merma/2026-09-09/y.jpg") as mock_subir,
-        patch("app.main.crear_movimiento_stock") as mock_movimiento,
     ):
-        respuesta = cliente.post(
-            "/deposito/stock/merma",
-            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido"},
-            files={"foto": ("tirado.jpg", _imagen_de_prueba(), "image/jpeg")},
-            follow_redirects=False,
+        respuesta, mock_movimiento, _seg = _merma(
+            sin_foto_confirmado="",
+            archivos={"foto": ("tirado.jpg", _imagen_de_prueba(), "image/jpeg")},
         )
 
     assert respuesta.status_code == 303
@@ -3526,7 +3624,7 @@ def test_los_motivos_salen_del_CHECK_del_esquema_y_no_de_una_copia():
     """Copiados envejecen en silencio: alguien agrega un motivo a la base y
     la pantalla sigue ofreciendo los viejos. Se leen del mismo archivo que
     define el constraint, igual que los siete orígenes de consumo."""
-    from app.main import MOTIVOS_MERMA_SEGUNDA
+    from app.main import MOTIVOS_MERMA
 
     esquema = open("db/esquema_completo.sql", encoding="utf-8").read()
     bloque = re.search(
@@ -3534,8 +3632,8 @@ def test_los_motivos_salen_del_CHECK_del_esquema_y_no_de_una_copia():
         esquema, re.S,
     )
     assert bloque is not None, "el CHECK de motivos cambió de forma: la pantalla se queda sin lista"
-    assert MOTIVOS_MERMA_SEGUNDA == tuple(re.findall(r"'([^']+)'", bloque.group(1)))
-    assert len(MOTIVOS_MERMA_SEGUNDA) >= 3
+    assert MOTIVOS_MERMA == tuple(re.findall(r"'([^']+)'", bloque.group(1)))
+    assert len(MOTIVOS_MERMA) >= 3
 
 
 def test_el_ingreso_retroactivo_pide_la_clave_de_GERENCIA():
@@ -17477,64 +17575,41 @@ def test_ajustar_stock_muestra_el_motivo_precargado():
 
 
 def test_merma_guarda_negativa_y_el_aviso_no_muestra_el_stock():
-    with (
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.crear_movimiento_stock", return_value=17.0) as mock_crear,
-        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
-    ):
-        respuesta = cliente.post(
-            "/deposito/stock/merma",
-            # Con el tilde puesto: sin foto y sin tilde el server ya no
-            # guarda (la guarda vive en el POST, no en el botón deshabilitado).
-            data={"articulo_id": "1", "cantidad": "3", "motivo": "podrido",
-                  "sin_foto_confirmado": "1"},
-            follow_redirects=False,
-        )
+    respuesta, mock_crear, mock_seg = _merma()
 
     assert respuesta.status_code == 303
     # Siempre negativa: el signo lo pone el tipo, no la persona.
-    # Sin lote elegido: el FIFO de siempre (lote en None).
+    # Sin lote elegido: el FIFO de siempre (lote en None). Y SIN FICHA:
+    # "sueltos" es la porción por default.
     mock_crear.assert_called_once_with(
-        1, "merma", -3.0, "podrido", date(2026, 8, 25), lote_tipo=None, lote_origen_id=None,
-        # Sin foto: el operario pudo pasar por el modal y elegir guardar igual.
-        foto_ruta=None,
+        1, "merma", -3.0, "podrido", date(2026, 9, 9), lote_tipo=None, lote_origen_id=None,
+        foto_ruta=None, ficha_id=None,
     )
-    # Pantalla de OPERARIO: el aviso repite lo cargado, JAMÁS el stock
-    # resultante (17 no puede aparecer).
+    mock_seg.assert_not_called()
+    # Pantalla de OPERARIO: el aviso repite lo cargado, JAMÁS el stock.
     destino = respuesta.headers["location"]
-    assert "Merma+guardada%3A+3+bultos+de+Banana" in destino
-    assert "17" not in destino
+    assert "3+bultos+sueltos+de+EJEMPLO+Uno" in destino
 
 
 def test_merma_sin_motivo_da_400():
-    with (
-        patch("app.main.crear_movimiento_stock") as mock_crear,
-        patch("app.main.listar_articulos", return_value=[]),
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
-    ):
-        respuesta = cliente.post(
-            "/deposito/stock/merma",
-            data={"articulo_id": "1", "cantidad": "3", "motivo": " "},
-        )
-
+    respuesta, mock_crear, _seg = _merma(motivo=" ")
     assert respuesta.status_code == 400
+    mock_crear.assert_not_called()
+
+
+def test_merma_con_motivo_FUERA_DE_LA_LISTA_da_400():
+    """El motivo es de lista para las TRES porciones desde el 10/09. Se pudo
+    unificar sin arrastrar nada porque nunca se había cargado una merma: no
+    había texto libre viejo que preservar."""
+    respuesta, mock_crear, _seg = _merma(motivo="se echó a perder")
+    assert respuesta.status_code == 400
+    assert "no está en la lista" in respuesta.text
     mock_crear.assert_not_called()
 
 
 def test_merma_cantidad_negativa_da_400():
     # El operario carga bultos tirados (positivo): el signo no es cosa suya.
-    with (
-        patch("app.main.crear_movimiento_stock") as mock_crear,
-        patch("app.main.listar_articulos", return_value=[]),
-        patch("app.main.obtener_articulo", return_value={"id": 1, "nombre": "Banana"}),
-        patch("app.main.entradas_y_salidas_stock_articulo", return_value=([], _salidas_fifo(0.0))),
-    ):
-        respuesta = cliente.post(
-            "/deposito/stock/merma",
-            data={"articulo_id": "1", "cantidad": "-3", "motivo": "podrido"},
-        )
-
+    respuesta, mock_crear, _seg = _merma(cantidad="-3")
     assert respuesta.status_code == 400
     mock_crear.assert_not_called()
 
@@ -17659,6 +17734,7 @@ def test_merma_ofrece_los_lotes_del_articulo_con_el_mas_viejo_por_default():
     with (
         patch("app.main.listar_articulos", return_value=[{"id": 2, "nombre": "Tomate Perita"}]),
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, _salidas_fifo(0.0))),
     ):
         respuesta = cliente.get("/deposito/stock/merma?articulo_id=2")
@@ -17680,6 +17756,7 @@ def test_merma_lista_un_lote_de_compra_sin_guia_con_la_fecha_del_hecho():
     with (
         patch("app.main.listar_articulos", return_value=[{"id": 2, "nombre": "Tomate Perita"}]),
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(sin_guia, _salidas_fifo(0.0))),
     ):
         respuesta = cliente.get("/deposito/stock/merma?articulo_id=2")
@@ -17691,21 +17768,23 @@ def test_merma_lista_un_lote_de_compra_sin_guia_con_la_fecha_del_hecho():
 def test_merma_dirigida_a_un_lote_guarda_el_lote_y_lo_dice_en_el_aviso():
     with (
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, _salidas_fifo(0.0))),
         patch("app.main.crear_movimiento_stock") as mock_crear,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 26)),
     ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
-            data={"articulo_id": "2", "cantidad": "10", "motivo": "se pudrió",
+            data={"articulo_id": "2", "que_merma": "sueltos", "cantidad": "10",
+                  "motivo": "podrido", "fecha": "2026-08-26",
                   "lote": "reproceso:9", "sin_foto_confirmado": "1"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
     mock_crear.assert_called_once_with(
-        2, "merma", -10.0, "se pudrió", date(2026, 8, 26),
-        lote_tipo="reproceso", lote_origen_id=9, foto_ruta=None,
+        2, "merma", -10.0, "podrido", date(2026, 8, 26),
+        lote_tipo="reproceso", lote_origen_id=9, foto_ruta=None, ficha_id=None,
     )
     assert "Salieron+de%3A+Gu%C3%ADa+R9+armada+para+D%C3%ADa" in respuesta.headers["location"]
 
@@ -17714,12 +17793,14 @@ def test_merma_a_un_lote_que_ya_no_tiene_bultos_da_400():
     with (
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.obtener_articulo", return_value={"id": 2, "nombre": "Tomate Perita"}),
+        patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.entradas_y_salidas_stock_articulo", return_value=(LOTES_MERMA_DE_PRUEBA, _salidas_fifo(200.0))),
         patch("app.main.crear_movimiento_stock") as mock_crear,
     ):
         respuesta = cliente.post(
             "/deposito/stock/merma",
-            data={"articulo_id": "2", "cantidad": "10", "motivo": "se pudrió", "lote": "reproceso:9"},
+            data={"articulo_id": "2", "que_merma": "sueltos", "cantidad": "10",
+                  "motivo": "podrido", "lote": "reproceso:9", "sin_foto_confirmado": "1"},
         )
 
     assert respuesta.status_code == 400

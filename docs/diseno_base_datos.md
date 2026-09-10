@@ -4168,11 +4168,20 @@ distintos: uno es un traslado sin registrar y el otro una baja definitiva. Un
 arreglo que los meta en la misma bolsa va a decir que hay cajas recuperables
 donde no las hay.
 
-**Y hay un tercer camino que conviene mirar antes de diseñar nada**: la merma
-puede tirar la fruta y **dejar el cartón** si la caja está sana. Hoy el sistema
-no puede distinguirlo porque no pregunta, y es una pregunta de galpón, no de
-software: si el cartón se recupera siempre, casi nunca, o depende. Sin esa
-respuesta, cualquier columna que se agregue codifica una hipótesis.
+**Y hay un tercer camino, CONFIRMADO por el dueño el 10/09**: la merma puede
+tirar la fruta y **dejar el cartón**, cuando la caja está sana. O sea que la
+merma de una caja con envase no es un hecho sino DOS, y hoy el sistema no
+puede distinguirlos porque no pregunta:
+
+- se tiró todo, fruta y cartón → el envase dejó de existir;
+- se tiró la fruta y la caja se recupera → el envase vuelve al circuito.
+
+Eso descarta de entrada la solución fácil —descontar un envase por cada bulto
+mermado de una ficha con envase—: acertaría en una parte y mentiría en la
+otra, sin decir en cuál. **La pregunta que falta no es de software**: es cuál
+de los dos casos es el común. Sin ese número, cualquier columna que se agregue
+codifica una hipótesis en vez de un hecho, que es exactamente lo que ya nos
+costó un tercio de error con el envase deducido (corolario 20).
 
 **Lo que esto cambia respecto del pendiente de arriba**: deja de ser "al remito
 al Puesto le falta registrar envases" y pasa a ser **"el sistema no tiene el

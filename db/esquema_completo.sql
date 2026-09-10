@@ -165,7 +165,12 @@ create table fichas_logistica (
     creado_en         timestamptz not null default now(),
     actualizado_en    timestamptz not null default now(),
     nombre_cliente    text,
-    codigo_cliente    text
+    codigo_cliente    text,
+    -- Redundante para Postgres (`id` ya es PK) y su única razón de existir
+    -- es habilitar la FK COMPUESTA de movimientos_stock.ficha_id: una merma
+    -- dice artículo Y ficha, y si la ficha fuera de otro artículo la cuenta
+    -- por ficha se ensuciaría en silencio. No borrar por "sobra".
+    constraint fichas_logistica_id_articulo_unico unique (id, articulo_id)
 );
 
 comment on table fichas_logistica is 'Ficha de logistica por articulo y cliente: unidad de venta, que envase usa (fijo o variable), contenido solicitado, y el alias con el que ese cliente conoce al articulo (nombre_cliente/codigo_cliente).';
@@ -792,6 +797,19 @@ create table movimientos_stock (
         check (lote_tipo is null
                or lote_tipo in ('guia', 'reproceso', 'reingreso_rechazo', 'ajuste', 'stock_inicial')),
     lote_origen_id bigint,
+    -- De qué PORCIÓN salió la merma: NULL son los bultos sueltos (el caso
+    -- común) y con ficha son cajas ya armadas de ese cliente. Sin esto, una
+    -- merma de cajas armadas bajaba el total y no bajaba la ficha, y como
+    -- los sueltos se derivan por resta la baja caía entera sobre ellos.
+    ficha_id bigint,
+    constraint movimientos_stock_ficha_del_articulo
+        foreign key (ficha_id, articulo_id) references fichas_logistica (id, articulo_id),
+    -- Solo la merma la lleva: el reingreso YA llega a su ficha por el
+    -- renglón que volvió, y dos caminos al mismo dato es la regla escrita
+    -- dos veces. De una sola dirección a propósito: una merma PUEDE no
+    -- tener ficha.
+    constraint movimientos_stock_ficha_solo_merma
+        check (tipo = 'merma' or ficha_id is null),
     constraint movimientos_stock_merma_negativa
         check (tipo <> 'merma' or cantidad < 0),
     constraint movimientos_stock_reingreso_positivo

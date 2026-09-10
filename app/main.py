@@ -7644,6 +7644,34 @@ def _fichas_por_articulo() -> dict[str, list[dict]]:
             for articulo_id, cajas in _cajas_para_elegir_por_articulo().items()}
 
 
+def _porcion_elegida(articulo_id: str, que_conto: str) -> tuple[dict | None, bool, str | None]:
+    """Traduce "sueltos" / "segunda" / id de ficha a (ficha, es_segunda, error).
+
+    UNA SOLA COPIA, y no es cosmético: la eligen el Stock Físico y la Merma,
+    y son la MISMA pregunta —de qué porción del artículo estamos hablando—.
+    Escrita dos veces, un día una acepta una ficha de otro artículo y la
+    otra no, y la que decide es la que el operario haya usado ese día.
+
+    Que la ficha sea DEL ARTÍCULO se valida siempre: una ficha de otro
+    artículo no es un dato raro, es un dato roto. En la merma además lo
+    rechaza la base (FK compuesta `movimientos_stock_ficha_del_articulo`),
+    así que acá el chequeo es para dar un cartel entendible, no para
+    sostener la regla — la regla vive donde se escribe.
+    """
+    elegido = que_conto.strip()
+    if not elegido:
+        return None, False, "Elegí de qué se trata: los bultos sueltos, la segunda o las cajas de una ficha."
+    if elegido == "segunda":
+        return None, True, None
+    if elegido == "sueltos":
+        return None, False, None
+    fichas = _fichas_por_articulo().get(str(articulo_id).strip(), [])
+    ficha = next((f for f in fichas if str(f["id"]) == elegido), None)
+    if ficha is None:
+        return None, False, "Esa ficha no es de este artículo."
+    return ficha, False, None
+
+
 def _renderizar_stock_inicial(
     request: Request, *, articulo_id=None, precarga=None, aviso=None, error=None, status_code: int = 200
 ):
@@ -7860,11 +7888,24 @@ TIPOS_LOTE_STOCK = ("guia", "reproceso", "reingreso_rechazo", "ajuste", "stock_i
 def _renderizar_pantalla_merma(
     request: Request, *, precarga=None, aviso=None, error=None, articulo_id=None, status_code: int = 200
 ):
-    """La pantalla de merma. Con artículo elegido trae sus lotes con resto, para poder dirigir la merma a uno."""
+    """La pantalla de merma, con LAS TRES PORCIONES en un solo formulario.
+
+    Un solo botón "Mermar" y no uno por porción, y el criterio es la cabeza
+    del operario y no la forma del código: **para el que merma es la misma
+    acción** —agarra algo que se pudrió y lo tira—, y que una mercadería
+    tenga lote y la otra no es un detalle interno. Con dos botones tendría
+    que acordarse de cuál usar según qué está tirando, y la mitad de las
+    veces usaría el equivocado o no cargaría nada.
+
+    Lo único que cambia según la porción es el selector de LOTE, que existe
+    solo para los sueltos: las cajas de una ficha y el pool de segunda no
+    tienen lotes que elegir. Es una condición, no media pantalla.
+    """
     articulo_elegido = None
     lotes: list[dict] = []
     try:
         articulos = listar_articulos()
+        fichas = _fichas_por_articulo()
         if articulo_id is not None and str(articulo_id).strip().isdigit():
             articulo_elegido = obtener_articulo(int(articulo_id))
             if articulo_elegido is not None:
@@ -7879,6 +7920,9 @@ def _renderizar_pantalla_merma(
             "articulos": articulos,
             "articulo_elegido": articulo_elegido,
             "lotes": lotes,
+            "fichas_por_articulo": fichas,
+            "motivos": MOTIVOS_MERMA,
+            "hoy": _hoy_argentina().isoformat(),
             "precarga": precarga or {},
             "aviso": aviso,
             "error": error,
@@ -7996,40 +8040,69 @@ async def _foto_de_merma_subida(archivo, nombre: str) -> tuple[str | None, str |
 async def cargar_merma_stock_ruta(
     request: Request,
     articulo_id: str = Form(""),
+    que_merma: str = Form(""),
     cantidad: str = Form(""),
     motivo: str = Form(""),
+    fecha: str = Form(""),
     lote: str = Form(""),
     foto: UploadFile | None = File(None),
     sin_foto_confirmado: str = Form(""),
 ):
-    """El operario da de baja cajones que se tiraron: siempre negativa, con motivo obligatorio.
+    """El operario da de baja lo que se tiró, de CUALQUIERA de las tres porciones.
 
-    lote es opcional ("tipo:id"): con el default vacío la merma sale del
-    lote más viejo, como siempre — el operario no tiene que pensar salvo
-    que sepa exactamente cuál se pudrió. Elegido, la merma se descuenta
-    de ESE lote (y se cuesta al costo de ese lote en la Rentabilidad
-    Real); lo que el lote no cubra cae al FIFO: registra y delata, jamás
-    traba.
+    `que_merma` es "sueltos", "segunda" o el id de una ficha — la misma
+    traducción que el Stock Físico, en `_porcion_elegida`, para que las dos
+    pantallas no puedan entender distinto la misma pregunta.
+
+    Y ESCRIBE EN DOS TABLAS SEGÚN LA PORCIÓN, que es lo único de todo esto
+    que el operario no ve: sueltos y cajas de ficha son `movimientos_stock`
+    (con `ficha_id` o sin él); la segunda es una salida de `remitos_segunda`
+    con destino 'merma', porque el pool de segunda no está en el stock
+    normal — meterla ahí restaría de dos pilas a la vez.
+
+    El LOTE solo se ofrece para los sueltos: las cajas de una ficha y el
+    pool no tienen lotes que elegir. Si llega igual para otra porción se
+    ignora en vez de rebotar — no cambia lo que se guarda y trabar por algo
+    que la pantalla no ofreció es hacerle pagar al operario un detalle
+    interno.
 
     Pantalla de OPERARIO: el aviso repite solo lo que cargó — jamás el
     stock resultante (mismo criterio que el Stock Físico de Vacíos).
     """
-    motivo_limpio = re.sub(r"\s+", " ", motivo).strip()
+    motivo_limpio = motivo.strip()
     error, cantidad_valor = _validar_bultos_positivos(cantidad, "tirados")
     if not error and not motivo_limpio:
-        error = "El motivo es obligatorio: sin motivo no se guarda la merma."
+        error = "Elegí el motivo: sin motivo no se guarda la merma."
+    elif not error and motivo_limpio not in MOTIVOS_MERMA:
+        error = "Ese motivo no está en la lista."
 
-    articulo = None
+    fecha_valor = _hoy_argentina()
+    if not error and fecha.strip():
+        try:
+            fecha_valor = date.fromisoformat(fecha.strip())
+        except ValueError:
+            error = "La fecha de la merma no es válida."
+        else:
+            if fecha_valor > _hoy_argentina():
+                error = "La fecha de la merma no puede ser futura."
+
+    articulo = ficha = None
+    es_segunda = False
     if not error:
         try:
             articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
+            if articulo is not None:
+                ficha, es_segunda, error = _porcion_elegida(articulo_id, que_merma)
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         if articulo is None:
             error = "Elegí un artículo válido."
 
+    # El lote es SOLO de los sueltos: para las otras dos porciones ni se
+    # ofrece ni se mira.
     lote_tipo, lote_origen_id, lote_etiqueta = None, None, None
-    if not error and lote.strip():
+    de_los_sueltos = ficha is None and not es_segunda
+    if not error and de_los_sueltos and lote.strip():
         tipo, _, origen = lote.partition(":")
         if tipo not in TIPOS_LOTE_STOCK or not origen.isdigit():
             error = "Ese lote no es válido: elegí uno de la lista o dejá el más viejo."
@@ -8056,24 +8129,36 @@ async def cargar_merma_stock_ruta(
 
     if error:
         precarga = {
-            "articulo_id": articulo_id, "cantidad": cantidad, "motivo": motivo_limpio, "lote": lote,
+            "articulo_id": articulo_id, "que_merma": que_merma.strip(), "cantidad": cantidad,
+            "motivo": motivo_limpio, "fecha": fecha, "lote": lote,
         }
         return _renderizar_pantalla_merma(
             request, precarga=precarga, articulo_id=articulo_id, error=error, status_code=400
         )
 
     try:
-        crear_movimiento_stock(
-            articulo["id"], "merma", -cantidad_valor, motivo_limpio, _hoy_argentina(),
-            lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
-            foto_ruta=foto_ruta,
-        )
+        if es_segunda:
+            crear_salida_de_segunda(articulo["id"], cantidad_valor, fecha_valor,
+                                    destino="merma", motivo=motivo_limpio, foto_ruta=foto_ruta)
+        else:
+            crear_movimiento_stock(
+                articulo["id"], "merma", -cantidad_valor, motivo_limpio, fecha_valor,
+                lote_tipo=lote_tipo, lote_origen_id=lote_origen_id,
+                foto_ruta=foto_ruta, ficha_id=ficha["id"] if ficha else None,
+            )
     except Exception as error_db:
         return _renderizar_pantalla_merma(
             request, articulo_id=articulo_id, error=f"No se pudo guardar la merma: {error_db}", status_code=500
         )
 
-    aviso = f"Merma guardada: {_formatear_numero(cantidad_valor)} bultos de {articulo['nombre']} tirados ({motivo_limpio})."
+    if ficha:
+        que = f"cajas de {ficha['nombre']}"
+    elif es_segunda:
+        que = "bultos de segunda"
+    else:
+        que = "bultos sueltos"
+    aviso = (f"Merma guardada: {_formatear_numero(cantidad_valor)} {que} de "
+             f"{articulo['nombre']} tirados ({motivo_limpio}).")
     if lote_etiqueta:
         aviso += f" Salieron de: {lote_etiqueta}."
     # Que el que la cargó lea que quedó sin foto, no que se entere el que
@@ -8498,22 +8583,17 @@ def cargar_stock_fisico_deposito_ruta(
 
     articulo = None
     ficha = None
-    elegido = que_conto.strip()
-    es_segunda = elegido == "segunda"
+    es_segunda = False
     if not error:
         try:
             articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
-            if articulo is not None and elegido and elegido not in ("sueltos", "segunda"):
-                fichas = _fichas_por_articulo().get(str(articulo_id).strip(), [])
-                ficha = next((f for f in fichas if str(f["id"]) == elegido), None)
+            if articulo is not None:
+                # La MISMA traducción que usa la Merma: una sola copia.
+                ficha, es_segunda, error = _porcion_elegida(articulo_id, que_conto)
         except Exception as error_db:
             raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
         if articulo is None:
             error = "Elegí un artículo válido."
-        elif not elegido:
-            error = "Elegí qué contaste: los bultos sueltos, la segunda o las cajas de una ficha."
-        elif elegido not in ("sueltos", "segunda") and ficha is None:
-            error = "Esa ficha no es de este artículo."
 
     if error:
         return _renderizar_pantalla_stock_fisico_deposito(
@@ -9418,8 +9498,16 @@ def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
     return RedirectResponse(url=f"/administracion/stock/guias-r?{urlencode(parametros)}", status_code=303)
 
 
-def _motivos_de_merma_de_segunda() -> tuple[str, ...]:
-    """Los motivos permitidos, LEÍDOS del CHECK de db/esquema_completo.sql.
+def _motivos_de_merma() -> tuple[str, ...]:
+    """Los motivos permitidos para CUALQUIER merma, leídos del CHECK del esquema.
+
+    La lista nació para la merma de segunda y desde el 10/09 vale para las
+    tres porciones. El CHECK del que sale sigue siendo el de
+    `remitos_segunda` porque es la única de las dos tablas que lo tiene: la
+    merma de stock guarda el motivo como texto y la pantalla es la que lo
+    limita a la lista. NO se copia la lista acá por eso — se lee del mismo
+    lugar, así las tres porciones ofrecen exactamente lo mismo y el día que
+    la lista cambie cambian las tres juntas.
 
     No copiados: una lista copiada envejece en silencio el día que alguien
     agrega un motivo a la base y la pantalla sigue ofreciendo los viejos —
@@ -9440,142 +9528,23 @@ def _motivos_de_merma_de_segunda() -> tuple[str, ...]:
             re.S,
         )
         if bloque is None:
-            logger.warning("No se encontró el CHECK de motivos de merma de segunda en el esquema")
+            logger.warning("No se encontró el CHECK de motivos de merma en el esquema")
             return ()
         return tuple(re.findall(r"'([^']+)'", bloque.group(1)))
     except Exception:
-        logger.exception("No se pudieron leer los motivos de merma de segunda")
+        logger.exception("No se pudieron leer los motivos de merma")
         return ()
 
 
-# LOS MOTIVOS DE LA MERMA DE SEGUNDA, leídos del CHECK de la migración y no
-# copiados acá: copiados envejecen en silencio el día que alguien agrega uno
-# a la base y la pantalla sigue ofreciendo los viejos. Mismo criterio que los
-# siete orígenes de reprocesos_consumos.
+# LOS MOTIVOS DE TODA MERMA, leídos del CHECK de la migración y no copiados
+# acá: copiados envejecen en silencio el día que alguien agrega uno a la base
+# y la pantalla sigue ofreciendo los viejos. Mismo criterio que los siete
+# orígenes de reprocesos_consumos.
 #
-# La base es la que rechaza (remitos_segunda_motivo_de_la_lista); esto solo
-# arma el selector para que el operario no tenga que adivinar.
-MOTIVOS_MERMA_SEGUNDA = _motivos_de_merma_de_segunda()
-
-
-def _renderizar_pantalla_merma_segunda(request: Request, *, precarga=None, aviso=None,
-                                       error=None, status_code: int = 200):
-    """La merma del pool: al lado del remito y NO adentro de la pantalla de merma normal.
-
-    Esa tiene selector de lote —"de qué lote se pudrió"— y el pool de
-    segunda no tiene lotes: su costo ya se fue a la primera. Meterla ahí
-    sería un formulario que esconde media pantalla según una opción.
-    """
-    try:
-        con_segunda = [
-            {"id": f["articulo_id"], "nombre": f["nombre"]}
-            for f in stock_deposito_por_articulo(_hoy_argentina())
-            if f["segunda"] > 0
-        ]
-    except Exception as error_db:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-
-    contexto = {
-        "articulos": con_segunda,
-        "motivos": MOTIVOS_MERMA_SEGUNDA,
-        "precarga": precarga or {},
-        "hoy": _hoy_argentina().isoformat(),
-        "aviso": aviso,
-        "error": error,
-    }
-    return templates.TemplateResponse(
-        request, "deposito_stock_merma_segunda.html", contexto, status_code=status_code
-    )
-
-
-@app.get("/deposito/stock/merma-segunda")
-def ver_merma_segunda(request: Request, aviso: str | None = None):
-    return _renderizar_pantalla_merma_segunda(request, aviso=aviso)
-
-
-@app.post("/deposito/stock/merma-segunda")
-async def cargar_merma_segunda_ruta(
-    request: Request,
-    articulo_id: str = Form(""),
-    bultos: str = Form(""),
-    motivo: str = Form(""),
-    fecha_operacion: str = Form(""),
-    foto: UploadFile | None = File(None),
-    sin_foto_confirmado: str = Form(""),
-):
-    """Saca del pool de segunda lo que se tiró. NO TRABA contra el pool.
-
-    Mismo criterio que el remito, el conteo y el armado: si sale más de lo
-    que el sistema cree tener, el pool queda negativo y se ve. Un número
-    negativo dice "acá pasó algo", que es información; un freno diría "no
-    pasó nada", que es mentira.
-
-    El motivo es obligatorio y de lista — al revés que la merma de stock
-    normal, que es texto libre. Lo decide la base; acá se ofrece el
-    selector y se traduce el rechazo.
-
-    No mueve plata: la segunda no lleva costo (el del reproceso viaja a la
-    primera, el de un rechazo a segunda ya se imputó como pérdida al
-    entrar). Imputarla nombraría la misma pérdida dos veces.
-    """
-    motivo_limpio = motivo.strip()
-    error, cantidad_valor = _validar_bultos_positivos(bultos, "tirados")
-    if not error and not motivo_limpio:
-        error = "Elegí el motivo: sin motivo no se guarda la merma."
-    elif not error and motivo_limpio not in MOTIVOS_MERMA_SEGUNDA:
-        error = "Ese motivo no está en la lista."
-
-    fecha_valor = _hoy_argentina()
-    if not error and fecha_operacion.strip():
-        try:
-            fecha_valor = date.fromisoformat(fecha_operacion.strip())
-        except ValueError:
-            error = "La fecha de la merma no es válida."
-        else:
-            if fecha_valor > _hoy_argentina():
-                error = "La fecha de la merma no puede ser futura."
-
-    articulo = None
-    if not error:
-        try:
-            articulo = obtener_articulo(int(articulo_id)) if articulo_id.strip().isdigit() else None
-        except Exception as error_db:
-            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
-        if articulo is None:
-            error = "Elegí un artículo válido."
-
-    if not error:
-        error = _falta_el_tilde_de_sin_foto(foto, sin_foto_confirmado)
-
-    # Después de validar todo lo demás: un formulario mal no tiene por qué
-    # dejar un archivo huérfano en el bucket.
-    foto_ruta = None
-    if not error:
-        foto_ruta, error = await _foto_de_merma_subida(foto, f"merma-segunda-{articulo_id}")
-
-    if error:
-        precarga = {"articulo_id": articulo_id, "bultos": bultos, "motivo": motivo_limpio,
-                    "fecha_operacion": fecha_operacion}
-        return _renderizar_pantalla_merma_segunda(
-            request, precarga=precarga, error=error, status_code=400
-        )
-
-    try:
-        crear_salida_de_segunda(articulo["id"], cantidad_valor, fecha_valor,
-                                destino="merma", motivo=motivo_limpio, foto_ruta=foto_ruta)
-    except Exception as error_db:
-        return _renderizar_pantalla_merma_segunda(
-            request, error=f"No se pudo guardar la merma: {error_db}", status_code=500
-        )
-
-    # Pantalla de OPERARIO: repite SOLO lo que cargó, nunca el pool.
-    aviso = (f"Merma de segunda guardada: {_formatear_numero(cantidad_valor)} bultos de "
-             f"{articulo['nombre']} tirados ({motivo_limpio}).")
-    if foto_ruta is None:
-        aviso += " SIN FOTO."
-    return RedirectResponse(
-        url=f"/deposito/stock/merma-segunda?{urlencode({'aviso': aviso})}", status_code=303
-    )
+# Valen para las tres porciones desde el 10/09. Se pudo unificar sin arrastrar
+# nada porque NUNCA se cargó una merma (medido el 09/09: cero en toda la
+# historia), así que no había texto libre viejo que preservar.
+MOTIVOS_MERMA = _motivos_de_merma()
 
 
 def _renderizar_pantalla_remito_segunda(request: Request, *, precarga=None, aviso=None, error=None, status_code: int = 200):

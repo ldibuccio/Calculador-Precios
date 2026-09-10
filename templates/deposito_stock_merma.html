@@ -70,6 +70,47 @@
      pantalla de segunda ya lo tenía; ésta no, y era la misma regla escrita
      en un solo lado. Lo encontró la captura a 390px. */
   button.boton-guardar[disabled] { background: #cbd5e1; color: #64748b; cursor: default; }
+  /* QUÉ MERMÁS, en botones y no en un select. LA MISMA PINTA que el "Qué
+     contaste" del Stock Físico, y a propósito: es la misma pregunta sobre
+     el mismo artículo, y dos formas distintas de hacerla obligan a
+     aprenderla dos veces. Todas las opciones a la vista y un toque. */
+  .grupo-porcion { border: 0; padding: 0; margin: 0.9rem 0 0; }
+  .grupo-porcion legend { padding: 0; font-size: 0.95rem; color: #444; }
+  .opciones { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.35rem; }
+  .opciones input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+  .opciones label {
+    /* Que entre cómodo en 390px: dos por fila cuando son cortos, y una fila
+       entera cuando el nombre de la ficha es largo. Nunca desborda. */
+    flex: 1 1 45%;
+    min-width: 8rem;
+    margin: 0;
+    padding: 0.9rem 0.7rem;
+    border: 2px solid #d4d4d8;
+    border-radius: 10px;
+    background: #fff;
+    color: #333;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: center;
+    box-sizing: border-box;
+  }
+  .opciones input[type="radio"]:checked + label {
+    border-color: #dc2626;
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+  .opciones input[type="radio"]:focus-visible + label {
+    outline: 3px solid #fca5a5;
+    outline-offset: 2px;
+  }
+  .opciones .detalle { display: block; font-size: 0.8rem; font-weight: 400; color: #666; margin-top: 0.15rem; }
+  .opciones input[type="radio"]:checked + label .detalle { color: #b91c1c; }
+  /* El bloque del lote se esconde entero cuando la porción no tiene lotes.
+     Con `display: block` de por medio el `[hidden]` del navegador alcanza,
+     pero se escribe igual: es la misma trampa del tilde (corolario 32) y no
+     depende de que hoy el display no le gane. */
+  .bloque-lote[hidden] { display: none; }
   /* CANCELAR: secundario, sin fondo, y del mismo tamaño tocable que Guardar.
      La flecha de la barra ya vuelve, pero vive ARRIBA: con el formulario
      cargado el operario está al final de la pantalla y la flecha le quedó
@@ -161,26 +202,69 @@
     <form method="post" action="/deposito/stock/merma" enctype="multipart/form-data">
       <input type="hidden" name="articulo_id" value="{{ articulo_elegido.id }}">
 
+      {# LAS TRES PORCIONES, en el mismo orden que el Stock Físico: los
+         sueltos primero porque es lo más común, la segunda arriba de las
+         fichas porque es propiedad del ARTÍCULO y está siempre, y las
+         fichas al final porque son una lista que puede ser larga.
+
+         La segunda se ofrece SIEMPRE, aunque el sistema no tenga: si se
+         filtrara por "tiene segunda", la pantalla le estaría contando al
+         operario algo del sistema — y acá eso no se hace. #}
+      <fieldset class="grupo-porcion">
+        <legend>Qué se tiró</legend>
+        <div class="opciones">
+          <input type="radio" id="qm-sueltos" name="que_merma" value="sueltos" required
+                 {% if precarga.que_merma == "sueltos" or not precarga.que_merma %}checked{% endif %}>
+          <label for="qm-sueltos">Bultos sueltos<span class="detalle">sin procesar</span></label>
+
+          <input type="radio" id="qm-segunda" name="que_merma" value="segunda"
+                 {% if precarga.que_merma == "segunda" %}checked{% endif %}>
+          <label for="qm-segunda">Segunda<span class="detalle">del pool</span></label>
+
+          {% for ficha in fichas_por_articulo.get(articulo_elegido.id|string, []) %}
+          <input type="radio" id="qm-{{ ficha.id }}" name="que_merma" value="{{ ficha.id }}"
+                 {% if precarga.que_merma == ficha.id|string %}checked{% endif %}>
+          <label for="qm-{{ ficha.id }}">Cajas de {{ ficha.nombre }}{% if ficha.kilaje %}<span class="detalle">{{ ficha.kilaje }}</span>{% endif %}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+
       <label for="cantidad">Bultos tirados</label>
       <input type="number" id="cantidad" name="cantidad" min="0.01" step="0.01" required
              placeholder="¿Cuántos se tiraron?" value="{{ precarga.cantidad or "" }}">
 
+      {# DE LISTA y no texto libre, para las tres. Se pudo unificar sin
+         arrastrar nada porque nunca se cargó una merma: no había texto
+         libre viejo que preservar. Los motivos salen del CHECK de la base,
+         así que la pantalla no puede ofrecer uno que el constraint rechace. #}
       <label for="motivo">Motivo (obligatorio)</label>
-      <input type="text" id="motivo" name="motivo" required placeholder="Ej: podrido, se rompió el cajón"
-             value="{{ precarga.motivo or "" }}">
-
-      {# El lote es OPCIONAL y arranca en el más viejo: el operario no
-         tiene que pensar salvo que sepa exactamente cuál se pudrió. #}
-      <label for="lote">¿De qué lote?</label>
-      <select id="lote" name="lote">
-        <option value="" {% if not precarga.lote %}selected{% endif %}>El más viejo (como siempre)</option>
-        {% for l in lotes %}
-        {% set valor = l.tipo ~ ":" ~ l.origen_id %}
-        <option value="{{ valor }}" {% if precarga.lote == valor %}selected{% endif %}>
-          {{ l.etiqueta }} — {{ l.fecha.strftime("%d/%m") }} · quedan {{ l.restante|numero }}
-        </option>
+      <select id="motivo" name="motivo" required>
+        <option value="" {% if not precarga.motivo %}selected{% endif %} disabled>Elegí el motivo...</option>
+        {% for m in motivos %}
+        <option value="{{ m }}" {% if precarga.motivo == m %}selected{% endif %}>{{ m }}</option>
         {% endfor %}
       </select>
+
+      <label for="fecha">Día en que se tiró</label>
+      <input type="date" id="fecha" name="fecha" max="{{ hoy }}"
+             value="{{ precarga.fecha or hoy }}">
+
+      {# EL LOTE, y SOLO para los sueltos: las cajas de una ficha y el pool
+         de segunda no tienen lotes que elegir. Es OPCIONAL y arranca en el
+         más viejo — el operario no tiene que pensar salvo que sepa
+         exactamente cuál se pudrió. #}
+      <div class="bloque-lote" id="bloque-lote">
+        <label for="lote">¿De qué lote?</label>
+        <select id="lote" name="lote">
+          <option value="" {% if not precarga.lote %}selected{% endif %}>El más viejo (como siempre)</option>
+          {% for l in lotes %}
+          {% set valor = l.tipo ~ ":" ~ l.origen_id %}
+          <option value="{{ valor }}" {% if precarga.lote == valor %}selected{% endif %}>
+            {{ l.etiqueta }} — {{ l.fecha.strftime("%d/%m") }} · quedan {{ l.restante|numero }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
 
       {# LA FOTO. El botón grande y azul arriba del submit, con la cámara
          directa. No sube sola como la de balanza porque acá la merma
@@ -209,7 +293,15 @@
       <button type="submit" id="guardar" class="boton-guardar">Dar de baja</button>
     </form>
     <a class="boton-cancelar" href="/deposito/stock">Cancelar</a>
-    <p class="ayuda">La merma queda registrada y sale del stock. Si no elegís lote sale del más viejo, como siempre; si elegís uno sale de ese. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
+    {# ESTE TEXTO ENVEJECIÓ EN EL MISMO COMMIT que agregó las porciones:
+       decía "sale del stock" y "si no elegís lote sale del más viejo", que
+       desde el 10/09 es cierto SOLO para los sueltos. Es la rama que afirma
+       algo — el día que se agrega un camino que puede caer en ella, hay que
+       releer lo que dice. Ahora habla de cada porción por su nombre. #}
+    <p class="ayuda"><strong>Bultos sueltos</strong>: salen del stock del artículo, y del lote
+      que elijas o del más viejo si no elegís. <strong>Cajas de una ficha</strong>: salen de esa
+      ficha, no de la pila suelta. <strong>Segunda</strong>: sale del pool y no mueve plata — la
+      segunda no lleva costo. Si te equivocaste, se anula desde Movimientos y se carga de nuevo.</p>
     {% else %}
     <p class="ayuda">Elegí el artículo y después cargás cuántos bultos se tiraron.</p>
     {% endif %}
@@ -239,6 +331,19 @@
       foto.addEventListener("change", actualizar);
       sinFoto.addEventListener("change", actualizar);
       actualizar();
+
+      // EL LOTE SOLO PARA LOS SUELTOS. Es comodidad, no la regla: el POST
+      // ignora el lote de las otras dos porciones aunque llegue. Si esto no
+      // corriera, lo peor que pasa es que se vea un selector de más.
+      const bloqueLote = document.getElementById("bloque-lote");
+      function ajustarLote() {
+        const elegida = document.querySelector('input[name="que_merma"]:checked');
+        bloqueLote.hidden = !elegida || elegida.value !== "sueltos";
+      }
+      for (const r of document.querySelectorAll('input[name="que_merma"]')) {
+        r.addEventListener("change", ajustarLote);
+      }
+      ajustarLote();
     })();
   </script>
 {% include "_pie_version.html" %}
