@@ -257,7 +257,8 @@ def test_la_cuenta_por_ficha_SUMA_los_reingresos_de_esa_ficha():
     # Por el renglón del que volvió: la ficha no es columna de movimientos_stock.
     assert "pedidos_renglones pr ON pr.id = m.pedido_renglon_id" in _SQL_STOCK_PARTIDO
     # Y SUMA, no resta: es mercadería que vuelve.
-    assert "COALESCE(a.total, 0) + COALESCE(re.total, 0) - COALESCE(s.total, 0)" in _SQL_STOCK_PARTIDO
+    assert "COALESCE(a.total, 0) + COALESCE(re.total, 0)" in _SQL_STOCK_PARTIDO
+    assert "- COALESCE(s.total, 0) - COALESCE(me.total, 0) AS stock" in _SQL_STOCK_PARTIDO
 
 
 def test_el_reingreso_a_SEGUNDA_no_entra_en_la_ficha():
@@ -4302,7 +4303,8 @@ def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resulta
     # La foto del stock SIN este movimiento, como en ajustes_vacios:
     # sin ese rastro cualquier faltante se tapa con un ajuste.
     assert insert.args[1] == (
-        7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None, None, None, None, None
+        7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None, None, None, None, None,
+        None,
     )
     assert resultado == 9.0
     conexion.commit.assert_called_once()
@@ -4316,7 +4318,8 @@ def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
 
     insert = cursor.execute.call_args_list[-1]
     assert insert.args[1] == (
-        7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None, None, None, None, None
+        7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None, None, None, None, None,
+        None,
     )
 
 
@@ -4334,7 +4337,7 @@ def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congel
     # con esto el lote de reingreso deja de ser "sin costo" para la Real.
     assert insert.args[1] == (
         7, "reingreso_rechazo", 4.0, "rechazo por calidad", 1, date(2026, 8, 24), 0.0, 77, 2000.0,
-        None, None, None, None,
+        None, None, None, None, None,
     )
 
 
@@ -4353,7 +4356,7 @@ def test_crear_movimiento_stock_rechazo_a_segunda_no_toca_el_stock_normal():
     insert = cursor.execute.call_args_list[-1]
     assert insert.args[1] == (
         7, "reingreso_rechazo", 40.0, "rechazado por calidad", 1, date(2026, 8, 24), 30.0, 77, 2000.0,
-        "reproceso", 12.0, None, None,
+        "reproceso", 12.0, None, None, None,
     )
     assert resultado == 30.0
 
@@ -4370,8 +4373,67 @@ def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
     insert = cursor.execute.call_args_list[-1]
     assert insert.args[1] == (
         7, "merma", -3.0, "se pudrió", None, date(2026, 8, 26), 30.0, None, None,
-        None, None, "reproceso", 9,
+        None, None, "reproceso", 9, None,
     )
+
+
+def test_la_ficha_que_SOLO_TIENE_MERMA_no_se_cae_de_la_cuenta():
+    """LA PATA FÁCIL DE OLVIDAR. La merma nueva resta en el SELECT final,
+    pero si `mermas_ficha` no está también en el UNION de `fichas_con_algo`,
+    una ficha cuyo ÚNICO movimiento sea una merma no existe para la consulta:
+    la resta estaría bien escrita y no se haría nunca.
+
+    Se mira el UNION y no el resultado porque los otros tres términos ya
+    están: un fixture con armados encima taparía el agujero sin querer.
+    """
+    from app.db import _SQL_STOCK_PARTIDO
+
+    union = _SQL_STOCK_PARTIDO.split("fichas_con_algo AS (")[1].split(")")[0]
+    for pata in ("armadas", "salidas_ficha", "reingresos_ficha", "mermas_ficha"):
+        assert f"FROM {pata}" in union, pata
+    # Y LAS PATAS ENTERAS, no solo el nombre a la vista: cuatro SELECT unidos
+    # por tres UNION. Sin esto el test pasa con el `UNION` borrado —el nombre
+    # sigue estando en el texto— que es exactamente como se descubrió que no
+    # miraba lo que decía mirar.
+    assert union.count("SELECT") == 4
+    assert union.count("UNION") == 3
+
+
+def test_la_merma_por_ficha_usa_LA_MISMA_VENTANA_que_los_otros_terminos():
+    """Si ésta mirara toda la historia y las otras solo lo posterior al corte,
+    la resta mezclaría dos eras. Medido con el canario: corrida con `>=` el
+    número se mueve (7 cajas contra 3), así que el recorte hace trabajo real.
+
+    Se recorta el trozo de la CTE para no matchear el `> corte.fecha` de los
+    otros tres — el assert de substring tiene que calificar de quién habla.
+    """
+    from app.db import _SQL_STOCK_PARTIDO
+
+    trozo = _SQL_STOCK_PARTIDO.split("mermas_ficha AS (")[1].split("), fichas_con_algo")[0]
+    assert "m.tipo = 'merma'" in trozo
+    assert "m.ficha_id IS NOT NULL" in trozo
+    assert "m.fecha_operacion > corte.fecha" in trozo
+    assert "m.fecha_operacion >= corte.fecha" not in trozo, (
+        "con >= el día del corte se cuenta dos veces: la foto del stock inicial "
+        "se toma a la tarde y ya viene neta del trabajo de ese día"
+    )
+    assert "m.fecha_operacion <= tope.fecha" in trozo
+    # Y RESTA, como cualquier salida: son cajas que se fueron.
+    assert "- COALESCE(me.total, 0) AS stock" in _SQL_STOCK_PARTIDO
+
+
+def test_la_merma_puede_nombrar_su_ficha_y_por_default_no_la_tiene():
+    """Los sueltos son el caso común, así que `ficha_id` es opcional y viaja
+    en None sin que nadie lo pida."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(7, "merma", -3.0, "podrido", date(2026, 9, 10), ficha_id=9)
+    assert cursor.execute.call_args_list[-1].args[1][-1] == 9
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(7, "merma", -3.0, "podrido", date(2026, 9, 10))
+    assert cursor.execute.call_args_list[-1].args[1][-1] is None
 
 
 def test_la_foto_de_la_merma_entra_en_LA_MISMA_TRANSACCION_que_la_merma():

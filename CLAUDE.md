@@ -1752,3 +1752,51 @@ consecuencia.** Dos formas, ninguna construida:
 Y antes de construir cualquiera de las dos, medir si el motivo se necesita:
 puede pasar como con el desglose del Remanente (corolario 23), que la
 consulta previa borró la pantalla entera.
+
+(No hay corolario 34: lo que llevaba ese número el 09/09 creció y quedó como
+la sección **"Un campo sin consecuencia se llena vacío"**, más arriba. El
+número se saltea a propósito en vez de reusarse — dos cosas con el mismo
+nombre solo se cobran en la próxima lectura, cuando ya nadie se acuerda de
+que hubo dos.)
+
+Corolario 35, del 10/09, y es sobre la herramienta de verificar, no sobre el
+código: **un canario que no muerde puede significar dos cosas opuestas —que
+el test es flojo o que el canario está mal— y las dos se ven idénticas.**
+
+El caso. La cuenta por ficha ganó un cuarto término y la pata nueva tenía que
+entrar también en el `UNION` de `fichas_con_algo`: sin eso, una ficha cuyo
+único movimiento sea una merma no existe para la consulta y la resta estaría
+bien escrita y no se haría nunca. Se le puso test, y el canario dio **0**.
+
+Los dos estaban flojos, y cada uno tapaba al otro:
+
+- **El canario no rompía lo que decía romper.** Sacaba la palabra `UNION` y
+  **dejaba el `SELECT`**. Eso no es "la pata no está": es SQL inválido, otra
+  cosa.
+- **El test no miraba lo que decía mirar.** Preguntaba si el texto
+  `FROM mermas_ficha` estaba en el `UNION`, y con el `SELECT` intacto seguía
+  estando. Habría pasado igual con la pata rota de la forma que importa.
+
+**Y por eso el 0 no se podía leer.** Un canario en 0 se lee siempre como "el
+test es débil" —así está escrito en el corolario 16— y esta vez esa lectura
+era la mitad de la verdad. Arreglar solo el test habría dejado el canario
+mintiendo para la próxima.
+
+De acá en adelante, cuando un canario dé 0: **verificar las dos cosas antes
+de tocar nada.** La pregunta barata que las separa es *"¿el código quedó
+roto de la forma que me importa, o quedó roto de otra?"* — y se contesta
+mirando qué quedó escrito, no la cantidad de tests que cayeron. Acá alcanzaba
+con leer el fragmento parcheado: un `SELECT` colgado sin su `UNION` no es la
+avería que se quería simular.
+
+**Cómo quedaron los dos**, porque el arreglo es de los dos o no sirve:
+
+- El canario borra **la pata entera** (`UNION` + `SELECT`).
+- Y el test cuenta la ESTRUCTURA además de los nombres: cuatro `SELECT` y
+  tres `UNION`. Así cae con las dos formas de romperlo — sacando la palabra o
+  sacando la pata—, y se verificó corriendo las dos.
+
+Es pariente del corolario 16 —*probar el test con la duplicación puesta*— pero
+un escalón más atrás: **allá se duda del test y se confía en la prueba; acá la
+prueba también es código que puede estar mal.** Lo que verifica no queda
+verificado por ser lo que verifica.

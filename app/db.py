@@ -7173,6 +7173,7 @@ def crear_movimiento_stock(
     lote_tipo: str | None = None,
     lote_origen_id: int | None = None,
     foto_ruta: str | None = None,
+    ficha_id: int | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -7193,6 +7194,17 @@ def crear_movimiento_stock(
     el operario sabe cuál se pudrió y esa merma sale de ese lote, no del
     más viejo. Sin lote, todo sigue como siempre.
 
+    Y `ficha_id` dice de QUÉ PORCIÓN salió: None son los bultos sueltos (el
+    caso común) y con ficha son cajas ya armadas de ese cliente. Hasta el
+    10/09 no existía, y sin él mermar cajas armadas bajaba el total del
+    artículo sin bajar la ficha: como los sueltos se derivan por resta, la
+    baja caía entera sobre los sueltos y las dos porciones quedaban dadas
+    vuelta. La base lo limita a las mermas con
+    `movimientos_stock_ficha_solo_merma` —un reingreso ya llega a su ficha
+    por el renglón, y dos caminos al mismo dato es la regla escrita dos
+    veces— y a las fichas DEL ARTÍCULO con la FK compuesta
+    `movimientos_stock_ficha_del_articulo`.
+
     `foto_ruta` (la foto de lo que se tiró, ya subida al Storage) entra en
     LA MISMA TRANSACCIÓN que el movimiento, y eso es lo que importa: una
     merma guardada y su foto perdida porque el segundo commit falló sería
@@ -7212,13 +7224,13 @@ def crear_movimiento_stock(
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                      pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                     lote_tipo, lote_origen_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     lote_tipo, lote_origen_id, ficha_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                 lote_tipo, lote_origen_id),
+                 lote_tipo, lote_origen_id, ficha_id),
             )
             if foto_ruta:
                 # RETURNING y no currval(pg_get_serial_sequence(...)): el
@@ -7867,15 +7879,42 @@ _SQL_STOCK_PARTIDO = """
           AND m.fecha_operacion > corte.fecha
           AND m.fecha_operacion <= tope.fecha
         GROUP BY pr.articulo_id, pr.ficha_id
+    ), mermas_ficha AS (
+        -- LO QUE SE TIRÓ DE ESA FICHA. Resta igual que una salida, porque es
+        -- una: son cajas que se fueron. Hasta el 10/09 la merma no podía
+        -- decir de qué ficha salía, así que bajaba el TOTAL del artículo y
+        -- no bajaba la ficha — y como los sueltos se derivan por resta, la
+        -- baja caía ENTERA sobre los sueltos. Medido antes de arreglarlo:
+        -- tirando las 10 cajas de una ficha, el sistema quedaba diciendo 10
+        -- cajas y 0 sueltos, con el galpón exactamente al revés.
+        --
+        -- LA MISMA VENTANA que los otros tres términos (> corte, <= tope), y
+        -- por la misma razón que dice `reingresos_ficha`: si éste mirara toda
+        -- la historia y los otros solo lo posterior, la resta mezclaría dos
+        -- eras. Verificado con el canario de siempre — corrida con `>=` el
+        -- número SE MUEVE (7 cajas contra 3), así que el piso está puesto.
+        SELECT m.articulo_id, m.ficha_id, SUM(-m.cantidad) AS total
+        FROM movimientos_stock m, corte, tope
+        WHERE m.anulado_el IS NULL AND m.tipo = 'merma' AND m.ficha_id IS NOT NULL
+          AND m.fecha_operacion > corte.fecha
+          AND m.fecha_operacion <= tope.fecha
+        GROUP BY m.articulo_id, m.ficha_id
     ), fichas_con_algo AS (
         SELECT articulo_id, ficha_id FROM armadas
         UNION
         SELECT articulo_id, ficha_id FROM salidas_ficha
         UNION
         SELECT articulo_id, ficha_id FROM reingresos_ficha
+        UNION
+        -- Y ACÁ TAMBIÉN, que es lo fácil de olvidar: sin esta pata, una
+        -- ficha cuyo ÚNICO movimiento sea una merma no existe para la
+        -- consulta y no aparece en ningún lado. La resta la haría bien y no
+        -- la haría nunca.
+        SELECT articulo_id, ficha_id FROM mermas_ficha
     )
     SELECT f.articulo_id, f.ficha_id,
-           COALESCE(a.total, 0) + COALESCE(re.total, 0) - COALESCE(s.total, 0) AS stock,
+           COALESCE(a.total, 0) + COALESCE(re.total, 0)
+               - COALESCE(s.total, 0) - COALESCE(me.total, 0) AS stock,
            -- MISMA CONDICIÓN QUE LA PARED DEL FIFO (`ficha_con_envase` en
            -- _SQL_SALIDAS_STOCK): la ficha que declara envase se reenvasa, y
            -- un armado suyo NO puede salir de un cajón. Viaja acá para que
@@ -7885,6 +7924,7 @@ _SQL_STOCK_PARTIDO = """
     LEFT JOIN armadas a ON a.articulo_id = f.articulo_id AND a.ficha_id = f.ficha_id
     LEFT JOIN salidas_ficha s ON s.articulo_id = f.articulo_id AND s.ficha_id = f.ficha_id
     LEFT JOIN reingresos_ficha re ON re.articulo_id = f.articulo_id AND re.ficha_id = f.ficha_id
+    LEFT JOIN mermas_ficha me ON me.articulo_id = f.articulo_id AND me.ficha_id = f.ficha_id
     LEFT JOIN fichas_logistica fl ON fl.id = f.ficha_id
 """
 
