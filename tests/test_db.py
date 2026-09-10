@@ -4735,6 +4735,54 @@ def test_total_reingresos_rechazo_excluye_anulados():
     assert total == 11.0
 
 
+def test_listar_reprocesos_por_rango_filtra_por_articulo_solo_si_se_lo_piden():
+    """El filtro va en el WHERE y con parámetro, no interpolado.
+
+    Y calificado con el alias `rp.`: la consulta une `articulos` dos veces
+    (la del reproceso y la de la ficha), así que un `articulo_id = %s`
+    pelado no dice cuál de las dos — corolario 4.
+    """
+    from app.db import listar_reprocesos_por_rango
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_reprocesos_por_rango(date(2026, 9, 1), date(2026, 9, 10), 7)
+    consulta, parametros = cursor.execute.call_args.args
+    assert "AND rp.articulo_id = %s" in consulta
+    assert parametros == (date(2026, 9, 1), date(2026, 9, 10), 7)
+
+    # Sin artículo, la condición NO está: un `articulo_id = NULL` no matchea
+    # nada y la pantalla saldría vacía sin decir por qué.
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_reprocesos_por_rango(date(2026, 9, 1), date(2026, 9, 10))
+    consulta, parametros = cursor.execute.call_args.args
+    assert "articulo_id = %s" not in consulta
+    assert parametros == (date(2026, 9, 1), date(2026, 9, 10))
+
+
+def test_buscar_compras_pregunta_por_LAS_DOS_fotos_con_claves_distintas():
+    """La comanda cuelga de la GUÍA y el pesaje de la COMPRA. Dos EXISTS con
+    dos claves: con una sola, una compra sin pesaje mostraría el de otra
+    compra de la misma guía."""
+    from app.db import buscar_compras
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_compras(date(2026, 9, 1), date(2026, 9, 10), None, None)
+    consulta = cursor.execute.call_args.args[0]
+    assert "FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_comanda" in consulta
+    assert "FROM fotos_recepcion fr WHERE fr.compra_id = c.id) AS tiene_pesaje" in consulta
+
+
 def test_listar_movimientos_stock_trae_anulados_marcados_por_fecha_real():
     from app.db import listar_movimientos_stock_por_rango
 

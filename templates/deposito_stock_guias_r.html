@@ -46,7 +46,12 @@
     color: #444;
     margin-bottom: 0.25rem;
   }
-  form.filtros input {
+  /* El `select` del artículo va con la MISMA regla que los inputs y no con
+     una propia: escrito aparte, el día que cambie el alto de los campos uno
+     de los tres queda distinto. En 390px un select angosto además corta los
+     nombres largos, que es justo lo que este filtro viene a hacer legible. */
+  form.filtros input,
+  form.filtros select {
     width: 100%;
     padding: 0.65rem;
     margin-bottom: 0.6rem;
@@ -222,6 +227,20 @@
           <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
         </div>
       </div>
+      {# EL FILTRO POR ARTÍCULO, y va DEBAJO de las fechas y a todo el ancho:
+         es el nombre más largo de los tres campos y en 390px al lado de una
+         fecha queda ilegible. Un `select` y no un campo de texto porque el
+         catálogo es corto y cerrado — escribir "limon" y no encontrar "Limón"
+         por la tilde es exactamente el problema que ya nos costó caro. #}
+      <div>
+        <label for="articulo_id">Artículo</label>
+        <select id="articulo_id" name="articulo_id">
+          <option value="">Todos los artículos</option>
+          {% for a in articulos %}
+          <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
       <button type="submit" class="boton-buscar">Buscar</button>
     </form>
     <p class="ayuda">El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero. Corregir una guía es anularla y cargarla de nuevo.</p>
@@ -283,6 +302,7 @@
     <form class="asignar" method="post" action="/administracion/stock/guias-r/{{ g.id }}/asignar-ficha">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
       {# "Sin asignar" en su propio grupo, no al lado de las cajas: al
          mismo nivel se vuelve el default de hecho. Sigue siempre
          disponible — el que no sabe tiene que poder decirlo. #}
@@ -375,6 +395,7 @@
     <form method="post" action="/administracion/stock/guias-r/{{ g.id }}/completar-costo" style="display: inline;">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
       <button type="submit" class="boton-completar">Completar costo</button>
     </form>
     {% endif %}
@@ -383,6 +404,7 @@
           onsubmit="return confirm('¿Anular la guía R{{ g.id }}? Lo tomado vuelve a sus lotes y la primera sale del stock. Queda registrada como anulada.');">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
       <button type="submit" class="boton-anular">Anular guía</button>
     </form>
     {% endif %}

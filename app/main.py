@@ -9599,6 +9599,7 @@ def _cruces_primera_reproceso() -> list[dict]:
 
 @app.get("/administracion/stock/guias-r")
 def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
+                articulo_id: str | None = None,
                 aviso: str | None = None, error: str | None = None):
     """Guías R (control): la trazabilidad hacia atrás y el costo del reproceso. Acá SÍ se ven costos.
 
@@ -9609,8 +9610,20 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     de OTRO cliente, lo canta acá con los bultos.
     """
     desde, hasta = _rango_fechas_movimientos(fecha_desde, fecha_hasta)
+    # El filtro por artículo, que es lo que vuelve leíble la lista: con 72
+    # guías desde el corte, buscar las de un artículo era scrollear todo.
+    # Se lee con el MISMO helper que Buscar Compras (`_id_opcional_desde_query`)
+    # y no con un `int()` propio: un id basura tiene que caer a "todos" y no
+    # reventar la pantalla, y esa decisión ya está tomada en un solo lugar.
+    articulo_id_valor = _id_opcional_desde_query(articulo_id)
+    # Un id <= 0 es "todos", DICHO y no heredado de que 0 sea falsy. Sin esto
+    # `articulo_id=0` dejaba la consulta sin filtrar (0 es falsy allá abajo)
+    # y el valor 0 viajando igual a la plantilla: dos lugares decidiendo lo
+    # mismo por caminos distintos, que es como se separan.
+    if articulo_id_valor is not None and articulo_id_valor <= 0:
+        articulo_id_valor = None
     try:
-        guias = listar_reprocesos_por_rango(desde, hasta)
+        guias = listar_reprocesos_por_rango(desde, hasta, articulo_id_valor)
         # Las que no se van a poder cerrar NUNCA. Van acá y no en el banner:
         # no hay nada que hacer con ellas, y una alerta que no baja enseña a
         # ignorar las que sí bajan. El número igual se mira, y es del total
@@ -9651,6 +9664,7 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     # caja, no el código con el que el cliente nombra su producto.
     try:
         fichas_por_articulo = _cajas_para_elegir_por_articulo()
+        articulos = listar_articulos()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -9689,23 +9703,50 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             "fichas_por_articulo": fichas_por_articulo,
             "fecha_desde": desde.isoformat(),
             "fecha_hasta": hasta.isoformat(),
+            # El selector se arma con TODOS los artículos y no con los que
+            # aparecen en el rango: si se armara con los del rango, elegir
+            # uno y después correr las fechas lo dejaría filtrando por un
+            # artículo que ya no está en la lista, y el filtro se vería
+            # vacío mientras filtra igual. Es el mismo motivo por el que
+            # Buscar Compras lista los proveedores dados de baja.
+            "articulos": articulos,
+            "articulo_id": articulo_id_valor,
             "aviso": aviso,
             "error": error,
         },
     )
 
 
+def _filtros_de_guias_r(fecha_desde: str, fecha_hasta: str, articulo_id: str) -> dict:
+    """Los filtros de Guías R para rearmar la URL después de un POST.
+
+    Escrito UNA vez porque lo usan los tres POST de la pantalla (asignar
+    ficha, completar costo, anular) y ya se separaron una vez: el artículo
+    se agregó el 10/09 y los tres lo tenían que sumar. El vacío se saltea
+    para no dejar `articulo_id=` colgando en la URL, que después se lee como
+    un filtro puesto.
+    """
+    filtros = {"fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
+    if articulo_id.strip():
+        filtros["articulo_id"] = articulo_id
+    return filtros
+
+
 @app.post("/administracion/stock/guias-r/{reproceso_id}/asignar-ficha")
 def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
                                    ficha_id: str = Form(""),
-                                   fecha_desde: str = Form(""), fecha_hasta: str = Form("")):
+                                   fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
+                                   articulo_id: str = Form("")):
     """Completa (o corrige) a qué ficha fueron las cajas de una guía R ya cargada.
 
     No recalcula nada: los consumos y el costo se congelaron al cargar la
     guía. Asignar la ficha es decir a qué producto de venta fueron esas
     cajas, no rehacer el FIFO.
     """
-    parametros = {"fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
+    # LOS TRES FILTROS VUELVEN, no dos. Volver a la lista sin el artículo
+    # deja al que estaba completando fichas de Limón mirando las 72 guías de
+    # nuevo, una por cada guía que asigna.
+    parametros = _filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id)
     ficha_valor = int(ficha_id) if ficha_id.strip().isdigit() else None
     try:
         asignar_ficha_a_reproceso(reproceso_id, ficha_valor)
@@ -9862,6 +9903,7 @@ def completar_costo_reproceso_ruta(
     reproceso_id: int,
     fecha_desde: str = Form(""),
     fecha_hasta: str = Form(""),
+    articulo_id: str = Form(""),
 ):
     """Rellena SOLO los costos que faltaban (compras que ya tienen precio) — jamás pisa un costo congelado."""
     try:
@@ -9878,7 +9920,8 @@ def completar_costo_reproceso_ruta(
             f"(compra sin precio aún, stock inicial, reingreso, el compensatorio del corte, o sin lote)."
         )
     return RedirectResponse(
-        url=f"/administracion/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta, 'aviso': aviso})}",
+        url=f"/administracion/stock/guias-r?"
+            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id) | {'aviso': aviso})}",
         status_code=303,
     )
 
@@ -9888,6 +9931,7 @@ def anular_reproceso_ruta(
     reproceso_id: int,
     fecha_desde: str = Form(""),
     fecha_hasta: str = Form(""),
+    articulo_id: str = Form(""),
 ):
     try:
         anular_reproceso(reproceso_id)
@@ -9895,7 +9939,8 @@ def anular_reproceso_ruta(
         raise HTTPException(status_code=500, detail=f"No se pudo anular la guía: {error_db}") from error_db
 
     return RedirectResponse(
-        url=f"/administracion/stock/guias-r?{urlencode({'fecha_desde': fecha_desde, 'fecha_hasta': fecha_hasta})}",
+        url=f"/administracion/stock/guias-r?"
+            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id))}",
         status_code=303,
     )
 

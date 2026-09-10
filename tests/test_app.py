@@ -2207,28 +2207,45 @@ def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
     assert 'class="boton boton-eliminar" id="boton-borrar-seleccionadas"' in respuesta.text
 
 
-def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
+def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
+    """Comanda y pesaje son de cosas distintas y hasta el 10/09 había un solo
+    "Ver foto" que abría la comanda: la de la balanza no aparecía acá.
+
+    LAS CUATRO COMBINACIONES, no dos. Con solo "tiene las dos" y "no tiene
+    ninguna", una pantalla que mostrara la comanda en el lugar del pesaje
+    pasaría: los dos casos se ven iguales. Las cruzadas —una sí y la otra
+    no— son las únicas que separan un botón del otro.
+    """
     compras = [
-        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], tiene_fotos=True),
-        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], tiene_fotos=False),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], id=1, tiene_comanda=True, tiene_pesaje=True),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], id=2, tiene_comanda=True, tiene_pesaje=False),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], id=3, tiene_comanda=False, tiene_pesaje=True),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], id=4, tiene_comanda=False, tiene_pesaje=False),
     ]
     with (
         patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=compras),
     ):
-        respuesta = cliente.get("/compras/buscar")
+        texto = cliente.get("/compras/buscar").text
 
-    assert respuesta.text.count(">Editar<") == 2
-    assert respuesta.text.count("Ver foto") == 1
-    assert 'href="/compras/1/foto"' in respuesta.text
-    assert 'href="/compras/2/foto"' not in respuesta.text
-    assert 'href="/compras/1/editar?' in respuesta.text
-    assert 'href="/compras/2/editar?' in respuesta.text
-    # El botón Detalle aparece siempre, al lado de Editar, sin importar la foto.
-    assert respuesta.text.count(">Detalle<") == 2
-    assert 'href="/compras/1/detalle"' in respuesta.text
-    assert 'href="/compras/2/detalle"' in respuesta.text
+    # La comanda cuelga de la GUÍA; el pesaje, de la COMPRA. Dos rutas
+    # distintas, y por eso el assert pide la URL entera y no el texto: con
+    # el texto solo, las dos etiquetas apuntando a la misma ruta pasarían.
+    assert 'href="/compras/1/foto" target="_blank" rel="noopener">Comanda<' in texto
+    assert 'href="/deposito/recepcion/1/foto-balanza/ver" target="_blank" rel="noopener">Pesaje<' in texto
+    # La que falta SE VE, en gris y sin link.
+    assert 'href="/compras/2/foto"' in texto and ">Sin pesaje<" in texto
+    assert 'href="/deposito/recepcion/3/foto-balanza/ver"' in texto and ">Sin comanda<" in texto
+    # Y la que no tiene ninguna dice las dos cosas, no se queda muda.
+    assert texto.count(">Sin comanda<") == 2
+    assert texto.count(">Sin pesaje<") == 2
+    assert 'href="/compras/4/foto"' not in texto
+    assert 'href="/deposito/recepcion/4/foto-balanza/ver"' not in texto
+
+    # Lo de siempre, que no se movió.
+    assert texto.count(">Editar<") == 4
+    assert texto.count(">Detalle<") == 4
 
 
 def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
@@ -10803,6 +10820,8 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         candado.return_value.__enter__.return_value = True
         resumen = recalcular(ALERTAS)
@@ -19310,6 +19329,9 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -19343,6 +19365,8 @@ def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19367,6 +19391,8 @@ def test_guias_r_una_guia_SIN_COSTO_POSIBLE_no_ofrece_el_boton_que_no_puede_hace
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19391,6 +19417,8 @@ def test_guias_r_el_consumo_del_compensatorio_no_se_puede_completar():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19410,6 +19438,8 @@ def test_guias_r_muestra_el_total_de_las_que_no_se_pueden_cerrar_nunca():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19431,6 +19461,9 @@ def test_guias_r_una_guia_ANULADA_no_grita_nada():
     cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -19690,6 +19723,9 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -19706,6 +19742,9 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -20323,6 +20362,8 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20355,6 +20396,8 @@ def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20383,6 +20426,8 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20412,6 +20457,8 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20461,15 +20508,83 @@ def test_borrar_una_ficha_con_guias_R_lo_dice_en_la_pantalla_y_NO_da_500():
     assert "cliente_id=1" in destino
 
 
-def _guias_r(guias, conteos=None):
+def _guias_r(guias, conteos=None, articulo_id=None):
+    """La pantalla de Guías R. `articulo_id` va a la URL, como lo manda el filtro.
+
+    `listar_articulos` arma el selector del filtro por artículo y por eso se
+    parchea acá: sin él la pantalla entera cae, y lo que estos tests miran
+    son las guías.
+    """
+    url = "/administracion/stock/guias-r"
+    if articulo_id is not None:
+        url += f"?articulo_id={articulo_id}"
     with (
-        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]) as mock_listar,
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 2, "nombre": "EJEMPLO Dos"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value=0),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
         patch("app.main._cajas_para_elegir_por_articulo", return_value={1: [{"id": 5, "nombre": "Caja Chica"}]}),
         patch("app.main.listar_ultimos_conteos_stock", return_value=conteos or []),
     ):
-        return cliente.get("/administracion/stock/guias-r")
+        respuesta = cliente.get(url)
+    respuesta.mock_listar = mock_listar
+    return respuesta
+
+
+def test_guias_r_filtra_por_ARTICULO_y_el_filtro_llega_a_la_consulta():
+    """El filtro no se aplica en Python sobre lo que ya vino: viaja a la
+    consulta. Filtrar acá arriba traería igual las 72 guías del rango y
+    dejaría el tope y el costo de la lectura como estaban.
+    """
+    respuesta = _guias_r([GUIA_CON_FICHA], articulo_id=2)
+
+    assert respuesta.status_code == 200
+    # Tercer posicional: (desde, hasta, articulo_id).
+    assert respuesta.mock_listar.call_args.args[2] == 2
+    # Y el selector vuelve con el artículo elegido puesto, no en blanco: si
+    # se viera vacío mientras filtra, el que mira cree estar viendo todo.
+    assert '<option value="2" selected>EJEMPLO Dos</option>' in respuesta.text
+
+
+def test_guias_r_sin_articulo_en_la_url_no_filtra_nada():
+    """Y un id basura cae a "todos" en vez de reventar la pantalla: es un
+    filtro de búsqueda, no un dato que alguien cargó."""
+    for pedido in (None, "", "todos", "0"):
+        respuesta = _guias_r([GUIA_CON_FICHA], articulo_id=pedido)
+        assert respuesta.status_code == 200, pedido
+        assert respuesta.mock_listar.call_args.args[2] is None, pedido
+
+
+def test_los_TRES_POST_de_guias_r_devuelven_el_filtro_de_articulo():
+    """Volver a la lista sin el artículo deja al que estaba completando las
+    fichas de un artículo mirando las 72 guías de nuevo, una por cada guía
+    que asigna. Y son los TRES, no uno: el filtro se agregó el 10/09 y los
+    tres tenían que sumarlo — es la forma de la copia olvidada.
+    """
+    campos = {"fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-10", "articulo_id": "7"}
+    casos = [
+        ("asignar-ficha", "app.main.asignar_ficha_a_reproceso", dict(campos, ficha_id="5")),
+        ("completar-costo", "app.main.completar_costo_reproceso", campos),
+        ("anular", "app.main.anular_reproceso", campos),
+    ]
+    for ruta, funcion, datos in casos:
+        with patch(funcion, return_value={"completado": True, "sin_precio": 0}):
+            respuesta = cliente.post(
+                f"/administracion/stock/guias-r/12/{ruta}", data=datos, follow_redirects=False
+            )
+        assert respuesta.status_code == 303, ruta
+        assert "articulo_id=7" in respuesta.headers["location"], ruta
+
+    # Y sin artículo elegido NO queda un `articulo_id=` colgando: una URL con
+    # el parámetro vacío se lee después como un filtro puesto.
+    with patch("app.main.anular_reproceso"):
+        respuesta = cliente.post(
+            "/administracion/stock/guias-r/12/anular",
+            data={"fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-10", "articulo_id": ""},
+            follow_redirects=False,
+        )
+    assert "articulo_id" not in respuesta.headers["location"]
 
 
 GUIA_CON_FICHA = {
@@ -20554,6 +20669,8 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulos",
               return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], _salidas_fifo(4.0))}),
