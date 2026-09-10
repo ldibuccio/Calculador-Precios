@@ -9081,7 +9081,8 @@ def anular_renglon_stock_inicial(clase: str, renglon_id: int) -> None:
         conexion.close()
 
 
-def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None) -> list[dict]:
+def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
+                                guia_id=None) -> list[dict]:
     """Las guías R del rango (por fecha_operacion), anuladas incluidas y marcadas, con sus consumos adentro.
 
     Cada guía trae "consumos": de qué lote salió cada bulto, con la guía
@@ -9098,6 +9099,17 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None) -> l
     guía entera, no las guías de otros artículos que tocaron un lote suyo.
     Los dos criterios son defendibles y hacen falta los dos algún día; el
     que contesta "mostrame las de Limón" es éste.
+
+    `guia_id` PISA A LOS OTROS DOS, y eso se decide acá y no en la pantalla.
+    El que escribe "R251" ya sabe qué guía quiere: el rango de fechas y el
+    artículo son ayudas para BUSCAR, y una vez que hay un id no hay nada que
+    buscar. Que el default de 7 días dejara afuera la guía pedida es la peor
+    forma de fallar que tiene un filtro por id — devuelve vacío, y el vacío
+    se lee como "esa guía no existe".
+
+    Va en el WHERE y no como un filtro más al lado: con los tres `AND`, la
+    guía R251 del 02/09 buscada dentro del rango de esta semana daría cero
+    filas y las dos condiciones estarían "bien" por separado.
     """
     conexion = obtener_conexion()
     try:
@@ -9124,10 +9136,14 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None) -> l
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id
                 LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
                 LEFT JOIN articulos fa ON fa.id = f.articulo_id
-                WHERE rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s
-                  {filtro_articulo_guia}
+                WHERE {recorte}
                 ORDER BY rp.fecha_operacion DESC, rp.id DESC
-                """.format(filtro_articulo_guia="AND rp.articulo_id = %s" if articulo_id else ""),
+                """.format(recorte=(
+                    "rp.id = %s" if guia_id else
+                    "rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s"
+                    + (" AND rp.articulo_id = %s" if articulo_id else "")
+                )),
+                (guia_id,) if guia_id else
                 (fecha_desde, fecha_hasta) + ((articulo_id,) if articulo_id else ()),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]

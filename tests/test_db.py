@@ -4766,6 +4766,36 @@ def test_listar_reprocesos_por_rango_filtra_por_articulo_solo_si_se_lo_piden():
     assert parametros == (date(2026, 9, 1), date(2026, 9, 10))
 
 
+def test_el_numero_de_guia_PISA_la_fecha_y_el_articulo_EN_LA_CONSULTA():
+    """Con `guia_id`, el recorte es SOLO `rp.id`: ni la fecha ni el artículo
+    entran en el WHERE.
+
+    Se afirma sobre el SQL y no sobre la pantalla porque es donde vive la
+    regla — la ruta mockeada no ve la consulta. Y se afirma que las otras
+    condiciones NO ESTÁN, no solo que `rp.id` sí: con los tres `AND`, la
+    guía R251 del 02/09 buscada dentro del rango de esta semana daría cero
+    filas y las dos condiciones estarían "bien" por separado. Ese vacío se
+    lee como "esa guía no existe", que es la peor forma de fallar que tiene
+    un filtro por id.
+    """
+    from app.db import listar_reprocesos_por_rango
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_reprocesos_por_rango(date(2026, 9, 1), date(2026, 9, 10), 7, 251)
+    consulta, parametros = cursor.execute.call_args.args
+    assert "WHERE rp.id = %s" in consulta
+    assert "fecha_operacion >=" not in consulta
+    assert "rp.articulo_id = %s" not in consulta
+    # Los parámetros ACOMPAÑAN al recorte: una consulta de un placeholder con
+    # tres parámetros no falla en el test (el cursor es falso) pero revienta
+    # en producción.
+    assert parametros == (251,)
+
+
 def test_buscar_compras_pregunta_por_LAS_DOS_fotos_con_claves_distintas():
     """La comanda cuelga de la GUÍA y el pesaje de la COMPRA. Dos EXISTS con
     dos claves: con una sola, una compra sin pesaje mostraría el de otra

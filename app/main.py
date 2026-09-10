@@ -9655,9 +9655,37 @@ def _cruces_primera_reproceso() -> list[dict]:
     return cruces
 
 
+def _id_de_guia_r(texto: str | None) -> int | None:
+    """El número de una guía R escrito como lo escribe una persona: "R251" o "251".
+
+    LA "R" NO ES PARTE DEL NÚMERO: es cómo la pantalla lo muestra
+    (`Guía R{{ g.id }}`). Nadie se acuerda de eso, y va a copiar lo que ve
+    en el extracto o en el movimiento — que dice "R251". Exigirle que la
+    saque sería pedirle que sepa un detalle de nuestra plantilla.
+
+    Se aceptan también el `#` y los espacios sueltos porque salen gratis del
+    mismo patrón, y no se acepta nada más: `_id_opcional_desde_query` no
+    sirve acá (un `int("R251")` explota), y limpiar a mano "todo lo que no
+    sea dígito" convertiría "251 cajones" en la guía 251, que es adivinar.
+
+    None = no se pidió ninguna, o lo escrito no tiene forma de número de
+    guía. Cae a "no filtres por guía" y no a un error: es un buscador, y un
+    id basura tiene que dejar la pantalla como estaba.
+    """
+    if not texto:
+        return None
+    # El `-` y el `#` valen SOLO detrás de la R (o el `#` solo): sueltos
+    # convertían "-3" en la guía 3, que es leer un negativo como positivo.
+    encontrado = re.fullmatch(r"\s*(?:[rR]\s*[#-]?|#)?\s*(\d+)\s*", texto)
+    if encontrado is None:
+        return None
+    numero = int(encontrado.group(1))
+    return numero if numero > 0 else None
+
+
 @app.get("/administracion/stock/guias-r")
 def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: str | None = None,
-                articulo_id: str | None = None,
+                articulo_id: str | None = None, guia: str | None = None,
                 aviso: str | None = None, error: str | None = None):
     """Guías R (control): la trazabilidad hacia atrás y el costo del reproceso. Acá SÍ se ven costos.
 
@@ -9680,8 +9708,14 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     # mismo por caminos distintos, que es como se separan.
     if articulo_id_valor is not None and articulo_id_valor <= 0:
         articulo_id_valor = None
+    # EL NÚMERO DE GUÍA GANA, y la pantalla lo dice. El recorte lo decide la
+    # consulta (ver `listar_reprocesos_por_rango`); acá solo hace falta que
+    # la pantalla NO muestre un rango de fechas y un artículo que no se
+    # están aplicando: dos cosas diciendo lo contrario en la misma vista es
+    # cómo se pierde la confianza en las dos.
+    guia_id = _id_de_guia_r(guia)
     try:
-        guias = listar_reprocesos_por_rango(desde, hasta, articulo_id_valor)
+        guias = listar_reprocesos_por_rango(desde, hasta, articulo_id_valor, guia_id)
         # Las que no se van a poder cerrar NUNCA. Van acá y no en el banner:
         # no hay nada que hacer con ellas, y una alerta que no baja enseña a
         # ignorar las que sí bajan. El número igual se mira, y es del total
@@ -9696,14 +9730,14 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     # después. Es la misma partición que separa las dos consultas de arriba,
     # y se calcula acá sobre los consumos que la pantalla ya trajo — no vale
     # una tercera consulta, ni una tercera versión de la regla.
-    for guia in guias:
-        faltantes = [c for c in guia["consumos"] if c["costo_por_bulto"] is None]
-        guia["costo_completable"] = (
-            guia["costo_total"] is None
+    for guia_r in guias:
+        faltantes = [c for c in guia_r["consumos"] if c["costo_por_bulto"] is None]
+        guia_r["costo_completable"] = (
+            guia_r["costo_total"] is None
             and bool(faltantes)
             and all(c["origen"] == "compra" for c in faltantes)
         )
-        guia["origenes_sin_costo_posible"] = sorted(
+        guia_r["origenes_sin_costo_posible"] = sorted(
             {c["origen"] for c in faltantes if c["origen"] != "compra"}
         )
 
@@ -9720,6 +9754,23 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
     # Físico y Stock Inicial —`_cajas_para_elegir_por_articulo`— y no de una
     # copia: las tres eligen por artículo y las tres necesitan leer en qué
     # caja, no el código con el que el cliente nombra su producto.
+    # EL TÍTULO DE CADA GUÍA ES EL DE LA PILA A LA QUE FUE, y sale del mismo
+    # namer que el Remanente, "Contado hoy", el Cotejo y Movimientos. Sin
+    # esto dos guías R del mismo artículo para fichas distintas se titulaban
+    # las dos "Tomate Redondo" y no había forma de distinguirlas en la lista.
+    #
+    # Las SIN FICHA se corrigen abajo y no se dejan como las devuelve el
+    # namer: para él, ficha en None son "los sueltos", y ése es su nombre
+    # correcto en el Remanente. Acá significa otra cosa —falta asignarla— y
+    # el artículo pelado las haría indistinguibles de las asignadas, que es
+    # justo lo que este cambio viene a arreglar.
+    _ponerle_titulo_de_porcion(guias)
+    for guia_r in guias:
+        if guia_r["ficha_id"] is None:
+            guia_r["porcion_nombre"] = (
+                f"{guia_r['articulo_nombre']} — FALTA LA FICHA"
+            )
+
     try:
         fichas_por_articulo = _cajas_para_elegir_por_articulo()
         articulos = listar_articulos()
@@ -9745,10 +9796,10 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             contado_despues[(conteo["articulo_id"], conteo["ficha_id"])] = conteo["creado_en"].date()
     except Exception:
         logger.exception("No se pudieron leer los conteos para avisar del cambio de ficha")
-    for guia in guias:
-        fecha_conteo = contado_despues.get((guia["articulo_id"], guia["ficha_id"]))
-        guia["contada_despues_el"] = (
-            fecha_conteo if fecha_conteo is not None and fecha_conteo >= guia["fecha_operacion"] else None
+    for guia_r in guias:
+        fecha_conteo = contado_despues.get((guia_r["articulo_id"], guia_r["ficha_id"]))
+        guia_r["contada_despues_el"] = (
+            fecha_conteo if fecha_conteo is not None and fecha_conteo >= guia_r["fecha_operacion"] else None
         )
 
     return templates.TemplateResponse(
@@ -9769,13 +9820,25 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             # Buscar Compras lista los proveedores dados de baja.
             "articulos": articulos,
             "articulo_id": articulo_id_valor,
+            # Lo TIPEADO vuelve al campo, no el número parseado: si alguien
+            # escribió "R251" tiene que ver "R251" ahí, no "251". Ver otra
+            # cosa de la que se escribió se lee como que el buscador no
+            # entendió, justo cuando sí entendió.
+            "guia": guia or "",
+            "guia_id": guia_id,
+            # NO EXISTE es distinto de NO HAY NINGUNA EN EL RANGO, y la
+            # pantalla tiene que decir cuál de las dos: una lista vacía se
+            # lee igual en los dos casos, y en el primero manda a dudar del
+            # dato cuando lo que falla es el número tipeado.
+            "guia_no_existe": bool(guia_id) and not guias,
             "aviso": aviso,
             "error": error,
         },
     )
 
 
-def _filtros_de_guias_r(fecha_desde: str, fecha_hasta: str, articulo_id: str) -> dict:
+def _filtros_de_guias_r(fecha_desde: str, fecha_hasta: str, articulo_id: str,
+                        guia: str = "") -> dict:
     """Los filtros de Guías R para rearmar la URL después de un POST.
 
     Escrito UNA vez porque lo usan los tres POST de la pantalla (asignar
@@ -9787,6 +9850,8 @@ def _filtros_de_guias_r(fecha_desde: str, fecha_hasta: str, articulo_id: str) ->
     filtros = {"fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
     if articulo_id.strip():
         filtros["articulo_id"] = articulo_id
+    if guia.strip():
+        filtros["guia"] = guia
     return filtros
 
 
@@ -9794,7 +9859,7 @@ def _filtros_de_guias_r(fecha_desde: str, fecha_hasta: str, articulo_id: str) ->
 def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
                                    ficha_id: str = Form(""),
                                    fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
-                                   articulo_id: str = Form("")):
+                                   articulo_id: str = Form(""), guia: str = Form("")):
     """Completa (o corrige) a qué ficha fueron las cajas de una guía R ya cargada.
 
     No recalcula nada: los consumos y el costo se congelaron al cargar la
@@ -9804,7 +9869,7 @@ def asignar_ficha_a_reproceso_ruta(request: Request, reproceso_id: int,
     # LOS TRES FILTROS VUELVEN, no dos. Volver a la lista sin el artículo
     # deja al que estaba completando fichas de Limón mirando las 72 guías de
     # nuevo, una por cada guía que asigna.
-    parametros = _filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id)
+    parametros = _filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia)
     ficha_valor = int(ficha_id) if ficha_id.strip().isdigit() else None
     try:
         asignar_ficha_a_reproceso(reproceso_id, ficha_valor)
@@ -9962,6 +10027,7 @@ def completar_costo_reproceso_ruta(
     fecha_desde: str = Form(""),
     fecha_hasta: str = Form(""),
     articulo_id: str = Form(""),
+    guia: str = Form(""),
 ):
     """Rellena SOLO los costos que faltaban (compras que ya tienen precio) — jamás pisa un costo congelado."""
     try:
@@ -9979,7 +10045,7 @@ def completar_costo_reproceso_ruta(
         )
     return RedirectResponse(
         url=f"/administracion/stock/guias-r?"
-            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id) | {'aviso': aviso})}",
+            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia) | {'aviso': aviso})}",
         status_code=303,
     )
 
@@ -9990,6 +10056,7 @@ def anular_reproceso_ruta(
     fecha_desde: str = Form(""),
     fecha_hasta: str = Form(""),
     articulo_id: str = Form(""),
+    guia: str = Form(""),
 ):
     try:
         anular_reproceso(reproceso_id)
@@ -9998,7 +10065,7 @@ def anular_reproceso_ruta(
 
     return RedirectResponse(
         url=f"/administracion/stock/guias-r?"
-            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id))}",
+            f"{urlencode(_filtros_de_guias_r(fecha_desde, fecha_hasta, articulo_id, guia))}",
         status_code=303,
     )
 

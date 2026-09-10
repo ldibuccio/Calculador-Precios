@@ -2,6 +2,7 @@ import base64
 import io
 import os
 import re
+import urllib.parse
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -20437,6 +20438,7 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
         patch("app.main._cruces_primera_reproceso", return_value=[]),
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(5, 901): 1.0}),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20581,20 +20583,34 @@ def test_borrar_una_ficha_con_guias_R_lo_dice_en_la_pantalla_y_NO_da_500():
     assert "cliente_id=1" in destino
 
 
-def _guias_r(guias, conteos=None, articulo_id=None):
+def _guias_r(guias, conteos=None, articulo_id=None, guia=None):
     """La pantalla de Guías R. `articulo_id` va a la URL, como lo manda el filtro.
 
     `listar_articulos` arma el selector del filtro por artículo y por eso se
     parchea acá: sin él la pantalla entera cae, y lo que estos tests miran
     son las guías.
     """
-    url = "/administracion/stock/guias-r"
+    partes = {}
     if articulo_id is not None:
-        url += f"?articulo_id={articulo_id}"
+        partes["articulo_id"] = articulo_id
+    if guia is not None:
+        partes["guia"] = guia
+    url = "/administracion/stock/guias-r"
+    if partes:
+        url += "?" + urllib.parse.urlencode(partes)
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]) as mock_listar,
         patch("app.main.listar_articulos",
               return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 2, "nombre": "EJEMPLO Dos"}]),
+        # El título de cada guía es el de la PILA a la que fue, y lo arma el
+        # mismo namer que el Remanente: necesita las fichas, los clientes y
+        # las cajas por ficha. Se parchean las fuentes, no el namer.
+        patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=[{"id": 5, "cliente_id": 3, "articulo_id": 1,
+                             "contenido_caja": None, "unidad_venta": "kilo",
+                             "nombre_cliente": "M.ROJO GRA", "envase_id": 1}]),
+        patch("app.main.listar_clientes", return_value=[{"id": 3, "nombre": "Cliente"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 5): 1.0}),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value=0),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
         patch("app.main._cajas_para_elegir_por_articulo", return_value={1: [{"id": 5, "nombre": "Caja Chica"}]}),
@@ -20658,6 +20674,97 @@ def test_los_TRES_POST_de_guias_r_devuelven_el_filtro_de_articulo():
             follow_redirects=False,
         )
     assert "articulo_id" not in respuesta.headers["location"]
+
+
+def test_el_numero_de_guia_se_acepta_CON_y_SIN_la_R():
+    """La "R" no es parte del número: es cómo la pantalla lo muestra
+    (`Guía R{{ g.id }}`). El que busca copia lo que ve en el extracto o en
+    el movimiento, que dice "R251". Exigirle que la saque sería pedirle que
+    sepa un detalle de nuestra plantilla.
+    """
+    from app.main import _id_de_guia_r
+
+    for escrito in ("251", "R251", "r251", " R251 ", "R 251", "R#251", "#251", "R-251"):
+        assert _id_de_guia_r(escrito) == 251, escrito
+
+    # Lo que NO tiene forma de número de guía cae a "no filtres", no a un
+    # error: es un buscador. Y no se limpia "todo lo que no sea dígito",
+    # que convertiría "251 cajones" en la guía 251 — eso es adivinar.
+    for basura in (None, "", "   ", "abc", "251 cajones", "R25.1", "0", "-3", "12R"):
+        assert _id_de_guia_r(basura) is None, basura
+
+
+def test_el_NUMERO_DE_GUIA_PISA_al_rango_de_fechas_y_al_articulo():
+    """Es lo que decide si el filtro sirve.
+
+    Buscar por id y que no aparezca porque el default son 7 días es la peor
+    forma de fallar: devuelve vacío, y el vacío se lee como que la guía no
+    existe. Se verifica que la CONSULTA reciba el id y que los otros dos
+    queden en None/ignorados — no que la pantalla los filtre después.
+    """
+    respuesta = _guias_r([GUIA_CON_FICHA], articulo_id=2, guia="R176")
+
+    assert respuesta.status_code == 200
+    # (desde, hasta, articulo_id, guia_id) — el cuarto posicional.
+    assert respuesta.mock_listar.call_args.args[3] == 176
+    # Y la pantalla DICE que no está aplicando los otros: con el rango y el
+    # artículo a la vista sin usarse, son dos cosas diciendo lo contrario.
+    assert "la guía R176" in respuesta.text
+    assert "no se están aplicando" in respuesta.text
+    # Lo TIPEADO vuelve al campo, no el número parseado.
+    assert 'value="R176"' in respuesta.text
+
+
+def test_un_numero_de_guia_que_NO_EXISTE_lo_dice_y_no_deja_la_lista_vacia():
+    """La lista vacía se ve IGUAL en los dos casos y significan cosas
+    opuestas: "ese número no existe" manda a revisar lo tipeado, y "no hay
+    ninguna en el rango" manda a ampliar la fecha. Sin separarlos, un dígito
+    de más se lee como que la guía no está cargada.
+    """
+    respuesta = _guias_r([], guia="999")
+
+    assert respuesta.status_code == 200
+    assert "No existe ninguna guía R999" in respuesta.text
+    # Y aclara que NO es el rango: si no, se amplía la fecha al pedo.
+    assert "se buscó en todas" in respuesta.text
+    # El cartel de "estoy pisando los filtros" NO sale acá: no hay ninguna
+    # guía que mostrar, y decir las dos cosas a la vez confunde.
+    assert "no se están aplicando" not in respuesta.text
+
+
+def test_la_lista_de_guias_R_titula_con_el_ARTICULO_MAS_LA_CAJA():
+    """Dos guías del mismo artículo para fichas distintas se veían idénticas.
+
+    El nombre sale de `_titulo_de_porcion`, el mismo del Remanente, "Contado
+    hoy", el Cotejo y Movimientos: es la misma pregunta —cómo se llama la
+    pila a la que fue esa guía— y escribirlo acá aparte serían CINCO
+    lugares nombrando lo mismo.
+    """
+    respuesta = _guias_r([dict(GUIA_CON_FICHA, id=176, ficha_id=5)])
+
+    assert respuesta.status_code == 200
+    assert "Guía R176 — Morron Rojo Caja Cliente" in respuesta.text
+    # Y NO el artículo pelado, que es lo que decía antes.
+    assert "Guía R176 — Morron Rojo<" not in respuesta.text
+
+
+def test_una_guia_R_SIN_FICHA_lo_dice_EN_EL_TITULO_y_no_queda_el_articulo_pelado():
+    """Con el artículo pelado se confunde con las asignadas, y ésta es la
+    pantalla donde se asignan: el título tiene que ser la señal.
+
+    Para `_titulo_de_porcion` una ficha en None son "los sueltos", y ése es
+    su nombre correcto en el Remanente. Acá significa otra cosa —falta
+    asignarla— así que la ruta lo corrige después de llamarlo.
+    """
+    respuesta = _guias_r([dict(GUIA_CON_FICHA, id=180, ficha_id=None, ficha_nombre=None)])
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Guía R180 — Morron Rojo — FALTA LA FICHA" in cuerpo
+    # La clase que lo pinta distinto: el título ES la señal, no solo el
+    # renglón de abajo (el atributo es la intención, el CSS es el efecto).
+    assert 'class="numero-guia sin-ficha"' in cuerpo
+    # Y sigue ofreciendo asignarla, que es la acción que el título anuncia.
+    assert 'action="/administracion/stock/guias-r/180/asignar-ficha"' in cuerpo
 
 
 GUIA_CON_FICHA = {
