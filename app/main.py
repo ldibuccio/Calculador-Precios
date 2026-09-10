@@ -7049,6 +7049,95 @@ def _nombre_de_caja(articulo: str, ficha: dict, clientes: dict, cuantas_del_clie
     return f"{base} ({propio})" if propio else f"{base} (ficha #{ficha['id']})"
 
 
+def _titulo_de_porcion(articulo: str, ficha: dict | None, clientes: dict,
+                       cuantas_del_cliente: int, es_segunda: bool) -> str:
+    """El TÍTULO de una porción — el de las TRES, no solo el de las cajas.
+
+    NO CONFUNDIR con `_nombre_de_porcion`, que está más abajo y contesta
+    otra pregunta: cómo nombrar a la porción HERMANA desde otra tarjeta
+    ("los bultos sueltos", "las cajas de X"). Ése va adentro de una frase;
+    éste es el título de la pila. El nombre de acá se estrenó el 10/09 y
+    chocó con el que ya existía — corolario 14, y lo agarró la suite, no el
+    grep que la regla manda hacer antes de bautizar.
+
+    Existe porque el nombre de una porción se escribía en cuatro lugares:
+    acá (el Remanente), la lista de "Contado hoy", las tarjetas del Cotejo y
+    los renglones de Movimientos. Las cuatro decían cosas distintas de la
+    misma pila —"Palta Caja Día %" en una, "cajas de PALTA (Día %)" en otra,
+    "Palta" a secas en la tercera— y eso es la regla escrita cuatro veces:
+    el día que una cambie, las otras tres siguen diciendo lo de antes.
+
+    Es además lo que hace legible una LISTA MEZCLADA. En el Remanente las
+    tres porciones de un artículo caen juntas por el orden, así que un
+    "Palta" pelado se entiende por contraste con las dos de al lado. En
+    "Contado hoy" el orden es la HORA: las mismas tres filas quedan
+    salteadas entre otros quince artículos y "Palta / Palta" no se distingue
+    sin bajar a la letra chica. El nombre tiene que bastarse solo.
+
+    Los sueltos van con el nombre PELADO y sin la palabra "suelto", igual
+    que en el Remanente y por la misma razón que está escrita allá: es la
+    mercadería como viene del puesto, y las que necesitan aclaración son las
+    otras dos. Que las tres pantallas digan lo mismo vale más que la palabra.
+    """
+    if es_segunda:
+        return f"{articulo} Segunda"
+    if ficha is None:
+        return articulo
+    return _nombre_de_caja(articulo, ficha, clientes, cuantas_del_cliente)
+
+
+def _ponerle_titulo_de_porcion(filas: list[dict], hasta=None) -> list[dict]:
+    """Le agrega `porcion_nombre` a filas que ya traen ficha_id y es_segunda.
+
+    LAS FILAS SE MODIFICAN EN EL LUGAR y se devuelven, para que el llamador
+    pueda encadenar. Cada fila necesita `articulo_nombre`, `ficha_id` y
+    `es_segunda`; el `articulo_id` NO hace falta porque, cuando hay ficha,
+    sale de la ficha misma.
+
+    `cuantas_del_cliente` se cuenta contra `cajas_armadas_por_ficha`, que es
+    de donde lo saca el Remanente. Contarlo de otra fuente —por ejemplo
+    todas las fichas del cliente— daría un nombre distinto justo en el caso
+    para el que existe el desempate, y volveríamos a tener dos nombres para
+    la misma pila por otro camino.
+
+    Una fila cuya ficha ya no existe no se queda sin nombre: cae al mismo
+    "(ficha #N)" que usa el Remanente. Un conteo viejo tiene que seguir
+    diciendo de qué era.
+    """
+    if not filas:
+        return filas
+    # SIN FICHAS NO SE PREGUNTA NADA. Los sueltos y la segunda se titulan con
+    # el nombre del artículo, que ya viene en la fila: leer las fichas, los
+    # clientes y las cajas por ficha para nombrarlos son tres consultas que no
+    # cambian una letra del resultado. Y es el caso normal —la mayoría de los
+    # movimientos y de los conteos son de la pila suelta.
+    if not any(f.get("ficha_id") for f in filas):
+        for fila in filas:
+            fila["porcion_nombre"] = _titulo_de_porcion(
+                fila.get("articulo_nombre") or "?", None, {}, 0, bool(fila.get("es_segunda"))
+            )
+        return filas
+    fichas = {f["id"]: f for f in listar_fichas_de_todos_los_clientes()}
+    clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+    cuantas = Counter(
+        (articulo_id, fichas[ficha_id]["cliente_id"])
+        for (articulo_id, ficha_id) in cajas_armadas_por_ficha(hasta)
+        if ficha_id in fichas
+    )
+    for fila in filas:
+        ficha = fichas.get(fila.get("ficha_id"))
+        articulo = fila.get("articulo_nombre") or "?"
+        if fila.get("ficha_id") and ficha is None:
+            fila["porcion_nombre"] = f"{articulo} Caja (ficha #{fila['ficha_id']})"
+            continue
+        fila["porcion_nombre"] = _titulo_de_porcion(
+            articulo, ficha, clientes,
+            cuantas[(ficha["articulo_id"], ficha["cliente_id"])] if ficha else 0,
+            bool(fila.get("es_segunda")),
+        )
+    return filas
+
+
 def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[dict]:
     """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
 
@@ -7094,7 +7183,8 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
         sueltos = round(float(fila["stock"]) - sum(de_este.values()), 2)
         grupo = fila.get("grupo")
         if sueltos > 0:
-            porciones.append({"articulo": articulo, "orden": 0, "nombre": articulo,
+            porciones.append({"articulo": articulo, "orden": 0,
+                              "nombre": _titulo_de_porcion(articulo, None, clientes, 0, False),
                               "bultos": sueltos, "grupo": grupo, "procesada": False,
                               # La CLAVE DE LA PORCIÓN, igual que en conteos_stock:
                               # (articulo_id, ficha_id) con ficha_id None = los
@@ -7114,7 +7204,8 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
                 "articulo": articulo,
                 "orden": 1,
                 "nombre": (
-                    _nombre_de_caja(articulo, ficha, clientes, cuantas[ficha["cliente_id"]])
+                    _titulo_de_porcion(articulo, ficha, clientes,
+                                       cuantas[ficha["cliente_id"]], False)
                     if ficha else f"{articulo} Caja (ficha #{ficha_id})"
                 ),
                 "bultos": round(float(bultos), 2),
@@ -7137,7 +7228,8 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
             # guardarlo, y había 42 bultos de un artículo sin que nadie los
             # verificara contra el piso.
             porciones.append({"articulo": articulo, "orden": 2, "grupo": grupo, "procesada": False,
-                              "nombre": f"{articulo} Segunda", "bultos": round(float(fila["segunda"]), 2),
+                              "nombre": _titulo_de_porcion(articulo, None, clientes, 0, True),
+                              "bultos": round(float(fila["segunda"]), 2),
                               "articulo_id": fila["articulo_id"], "ficha_id": None,
                               "es_segunda": True})
 
@@ -8530,6 +8622,11 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
         # mermas son DOS tipos —la de stock y la del pool de segunda— y una
         # condicion escrita alla se separa el dia que aparezca la tercera.
         m["es_merma"] = m["tipo"] == "merma"
+        # Ningún movimiento de stock es del pool de segunda: los de segunda
+        # son los remitos, que se marcan abajo. Va explícito y no por
+        # ausencia porque `_ponerle_nombre_de_porcion` lo lee en las dos
+        # listas y una clave que falta en una sola es como se separan.
+        m["es_segunda"] = False
     # Las salidas del pool de segunda entran al mismo listado, con su propia
     # pill y su propio anular: un solo lugar de control para todo lo cargado
     # a mano.
@@ -8549,11 +8646,17 @@ def ver_movimientos_stock(request: Request, fecha_desde: str | None = None, fech
             cliente_nombre=None,
             stock_sistema=None,
             es_merma=es_merma,
+            # El pool de segunda es UNA porción del artículo, y con nombre
+            # propio en el Remanente ("Palta Segunda"). Sin esto el renglón
+            # se titulaba "Palta" y no se distinguía de una merma de los
+            # sueltos del mismo artículo el mismo día.
+            es_segunda=True,
+            ficha_id=None,
             url_anular=f"/administracion/stock/movimientos/remitos/{r['id']}/anular",
         )
-    movimientos = sorted(
+    movimientos = _ponerle_titulo_de_porcion(sorted(
         movimientos + remitos, key=lambda m: (m["fecha_operacion"], m["creado_en"]), reverse=True
-    )
+    ))
     return templates.TemplateResponse(
         request,
         "deposito_stock_movimientos.html",
@@ -8612,7 +8715,7 @@ def _renderizar_pantalla_stock_fisico_deposito(
             # listar_conteos_stock_de_fecha NO trae stock_sistema, a propósito:
             # esta pantalla la ve el operario y el número del sistema no puede
             # viajar ni escondido en su HTML (control cruzado).
-            "contados_hoy": listar_conteos_stock_de_fecha(dia),
+            "contados_hoy": _ponerle_titulo_de_porcion(listar_conteos_stock_de_fecha(dia)),
             "articulo_id": str(articulo_id) if articulo_id is not None else "",
             "error": error,
             "aviso": aviso,
@@ -8743,6 +8846,10 @@ def cargar_stock_fisico_deposito_ruta(
 
 def _nombre_de_porcion(fila) -> str:
     """Cómo se llama una porción cuando se la nombra DESDE OTRA tarjeta.
+
+    NO es `_titulo_de_porcion`, que es el TÍTULO de la pila ("Palta Caja
+    Día %") y sale del mismo namer que el Remanente. Éste va adentro de una
+    frase y por eso lleva el artículo de por medio.
 
     En su propia tarjeta la porción ya tiene título; acá hay que decir cuál
     es la hermana, así que va con artículo de por medio ("los bultos
@@ -8928,7 +9035,10 @@ def ver_cotejo_stock(request: Request):
         f["ficha_nombre"] or "",
     ))
 
-    return templates.TemplateResponse(request, "deposito_stock_cotejo.html", {"filas": filas})
+    return templates.TemplateResponse(
+        request, "deposito_stock_cotejo.html",
+        {"filas": _ponerle_titulo_de_porcion(filas)},
+    )
 
 
 # --- Reproceso (Guías R) ---

@@ -7712,6 +7712,14 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        m.stock_sistema, m.creado_en, m.anulado_el,
                        a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre,
                        m.pedido_renglon_id, m.destino_rechazo, m.bultos_segunda, m.lote_tipo,
+                       -- LA FICHA, y faltaba: `movimientos_stock` la ganó con
+                       -- la merma de cajas armadas y este lector —que es el
+                       -- que ARMA el renglón de la pantalla— se quedó sin
+                       -- ella, así que una merma de la caja de un cliente se
+                       -- listaba igual que una de los sueltos. Es el
+                       -- corolario 3: al agregar un campo hay que grepear
+                       -- quién CONSTRUYE la estructura, no quién la nombra.
+                       m.ficha_id,
                        p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido,
                        -- CUÁNTAS FOTOS TIENE, no si tiene: el listado lo
                        -- muestra como "sin foto" en gris cuando da 0, y eso

@@ -18179,6 +18179,11 @@ def test_movimientos_stock_muestra_los_tipos_con_pill_y_la_foto_del_sistema():
         patch("app.main.listar_movimientos_stock_por_rango",
               return_value=[dict(m) for m in MOVIMIENTOS_STOCK_DE_PRUEBA]) as mock_listar,
         patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/movimientos")
 
@@ -18271,6 +18276,7 @@ def test_la_SEGUNDA_se_ofrece_ARRIBA_de_las_fichas_y_no_al_final():
         patch("app.main._fichas_por_articulo",
               return_value={"1": [{"id": 11, "nombre": "Caja de ejemplo", "kilaje": None}]}),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
     ):
         cuerpo = cliente.get("/deposito/stock/fisico?articulo_id=1").text
@@ -18310,6 +18316,7 @@ def test_stock_fisico_no_deja_contar_una_ficha_de_OTRO_articulo():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -18332,6 +18339,7 @@ def test_stock_fisico_sin_decir_que_conto_da_400():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -18358,6 +18366,7 @@ def test_stock_fisico_los_sueltos_van_PRIMEROS_y_al_mismo_nivel_que_las_fichas()
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18403,6 +18412,7 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
     ):
         respuesta = cliente.post(
@@ -18423,6 +18433,7 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -18437,6 +18448,93 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
     assert "Sistema" not in respuesta.text
 
 
+def test_contado_hoy_titula_cada_renglon_con_LA_PORCION_y_no_con_el_articulo():
+    """El título tiene que bastarse solo, sin bajar a la letra chica.
+
+    Tres conteos del MISMO artículo, que es el caso que lo rompía: con el
+    artículo pelado arriba los tres renglones se leían "Palta / Palta /
+    Palta" y la porción iba abajo en gris. Ordenados por HORA —no agrupados
+    por artículo como el Remanente— eso no se distingue.
+
+    Se comparan los TRES títulos enteros y no se busca uno: la segunda tiene
+    `ficha_id` None igual que los sueltos, así que un `in` sobre el nombre
+    pelado pasaría con las dos ramas mezcladas. Es el mismo defecto del
+    assert de substring del 07/09.
+    """
+    contados = [
+        {"id": 1, "cantidad": 1.0, "creado_en": datetime(2026, 8, 25, 15, 46),
+         "articulo_nombre": "EJEMPLO Uno", "ficha_id": 7,
+         "ficha_nombre": "EJEMPLO Uno", "ficha_cliente": "Cliente", "es_segunda": False},
+        {"id": 2, "cantidad": 6.0, "creado_en": datetime(2026, 8, 25, 15, 46),
+         "articulo_nombre": "EJEMPLO Uno", "ficha_id": None,
+         "ficha_nombre": None, "ficha_cliente": None, "es_segunda": False},
+        {"id": 3, "cantidad": 5.0, "creado_en": datetime(2026, 8, 25, 15, 51),
+         "articulo_nombre": "EJEMPLO Uno", "ficha_id": None,
+         "ficha_nombre": None, "ficha_cliente": None, "es_segunda": True},
+    ]
+    fichas = [{"id": 7, "cliente_id": 3, "articulo_id": 1, "contenido_caja": None,
+               "unidad_venta": "kilo", "nombre_cliente": "EJEMPLO Uno", "envase_id": 1}]
+    with (
+        patch("app.main._fichas_por_articulo", return_value={}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=[{"id": 3, "nombre": "Cliente"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 7): 1.0}),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico")
+
+    assert respuesta.status_code == 200
+    titulos = re.findall(r'<span><strong>(.*?)</strong>:', respuesta.text)
+    assert titulos == ["EJEMPLO Uno Caja Cliente", "EJEMPLO Uno", "EJEMPLO Uno Segunda"]
+    # Y son los del REMANENTE, no unos propios: el que decía "cajas de X (Cliente)"
+    # era el segundo nombre de la misma pila.
+    assert "cajas de" not in respuesta.text
+
+
+def test_movimientos_titula_cada_renglon_con_LA_PORCION_y_no_con_el_articulo():
+    """Una merma de las cajas de un cliente y una de los sueltos del mismo
+    artículo el mismo día se veían las dos "EJEMPLO Uno".
+
+    Y el renglón de la ficha exige que `listar_movimientos_stock_por_rango`
+    traiga `ficha_id`: la columna existe desde la merma por porción y este
+    lector no la leía. Sin ella este test cae, que es su otra mitad.
+    """
+    movimientos = [
+        {"id": 1, "tipo": "merma", "cantidad": -2.0, "motivo": "podrido",
+         "fecha_operacion": date(2026, 9, 9), "stock_sistema": 10.0,
+         "creado_en": datetime(2026, 9, 9, 9, 0), "anulado_el": None,
+         "articulo_nombre": "EJEMPLO Uno", "cliente_nombre": None,
+         "pedido_renglon_id": None, "destino_rechazo": None, "bultos_segunda": None,
+         "lote_tipo": None, "ficha_id": 7, "fecha_pedido": None,
+         "sucursal_pedido": None, "fotos": 1},
+        {"id": 2, "tipo": "merma", "cantidad": -3.0, "motivo": "golpeado",
+         "fecha_operacion": date(2026, 9, 9), "stock_sistema": 8.0,
+         "creado_en": datetime(2026, 9, 9, 8, 0), "anulado_el": None,
+         "articulo_nombre": "EJEMPLO Uno", "cliente_nombre": None,
+         "pedido_renglon_id": None, "destino_rechazo": None, "bultos_segunda": None,
+         "lote_tipo": None, "ficha_id": None, "fecha_pedido": None,
+         "sucursal_pedido": None, "fotos": 1},
+    ]
+    fichas = [{"id": 7, "cliente_id": 3, "articulo_id": 1, "contenido_caja": None,
+               "unidad_venta": "kilo", "nombre_cliente": "EJEMPLO Uno", "envase_id": 1}]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=movimientos),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=[{"id": 3, "nombre": "Cliente"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 7): 1.0}),
+    ):
+        respuesta = cliente.get("/administracion/stock/movimientos")
+
+    assert respuesta.status_code == 200
+    titulos = re.findall(r'<strong>(.*?)</strong> ·', respuesta.text)
+    assert titulos == ["EJEMPLO Uno Caja Cliente", "EJEMPLO Uno"]
+
+
 def test_stock_fisico_deja_buscar_un_dia_y_muestra_ESE_dia():
     contados = [{"id": 5, "cantidad": 12.0, "creado_en": datetime(2026, 8, 20, 10, 30),
                  "articulo_nombre": "Banana"}]
@@ -18444,6 +18542,7 @@ def test_stock_fisico_deja_buscar_un_dia_y_muestra_ESE_dia():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=contados) as mock_listar,
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana") as mock_cercana,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18468,6 +18567,7 @@ def test_un_dia_sin_conteos_ofrece_el_mas_cercano_con_el_link_puesto():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=date(2026, 8, 24)),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18485,6 +18585,7 @@ def test_sin_ningun_conteo_en_la_tabla_no_ofrece_nada_y_no_rompe():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18503,6 +18604,7 @@ def test_el_dia_vacio_que_es_su_propio_mas_cercano_no_se_ofrece_a_si_mismo():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=date(2026, 8, 25)),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18517,6 +18619,7 @@ def test_una_fecha_mal_escrita_en_la_url_cae_a_hoy_y_no_rompe():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]) as mock_listar,
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -19439,6 +19542,11 @@ def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=remitos),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/movimientos")
 
@@ -19472,6 +19580,11 @@ def test_la_merma_de_segunda_NO_se_muestra_como_remitida_al_Puesto():
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         cuerpo = cliente.get("/administracion/stock/movimientos").text
 
@@ -19508,6 +19621,11 @@ def test_el_SIN_FOTO_llega_a_LAS_DOS_mermas_y_a_ninguna_otra_cosa():
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=movimientos),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         cuerpo = cliente.get("/administracion/stock/movimientos").text
 
@@ -19523,6 +19641,11 @@ def test_el_SIN_FOTO_llega_a_LAS_DOS_mermas_y_a_ninguna_otra_cosa():
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         cuerpo = cliente.get("/administracion/stock/movimientos").text
     assert ">con foto<" in cuerpo
@@ -20853,9 +20976,15 @@ def test_cotejo_dice_de_que_porcion_es_cada_tarjeta():
     respuesta = _cotejo(conteos)
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    assert "Bultos sueltos" in cuerpo
-    assert "Cajas de Banana Bolivia" in cuerpo
-    assert "Día" in cuerpo
+    # EN EL TÍTULO, no abajo en gris. Antes el encabezado era "Banana" en las
+    # dos tarjetas y la porción iba en la línea chica: dos tarjetas seguidas
+    # se leían "Banana / Banana". El título tiene que bastarse solo.
+    titulos = [t.strip() for t in re.findall(r'class="encabezado">(.*?)</p>', cuerpo, re.S)]
+    assert titulos == ["Banana", "Banana Caja Cliente"]
+    # Y el nombre de las cajas es el del REMANENTE, no uno propio: el artículo
+    # adelante y el cliente atrás. Si esta pantalla armara el suyo, serían dos
+    # nombres para la misma pila.
+    assert "Cajas de Banana Bolivia" not in cuerpo
 
 
 def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
@@ -20903,10 +21032,33 @@ def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
              "bultos": c["stock_sistema"], "contable": True}
             for c in conteos
         ]
+    # LAS TRES LECTURAS DEL TÍTULO. La tarjeta se titula con el nombre de la
+    # PORCIÓN, y ese nombre lo arma el mismo namer que el Remanente
+    # (`_titulo_de_porcion`), que necesita las fichas, los clientes y las
+    # cajas por ficha. Se parchean LAS FUENTES y no el namer: parchear el
+    # namer taparía justo la línea que estos tests miran (corolario 9).
+    #
+    # Las fichas se derivan de los conteos y salen COMO EN PRODUCCIÓN: con
+    # cliente_id, articulo_id y envase. Una ficha sin esos campos haría que
+    # el título saliera por la rama del "(ficha #N)" y los tests defenderían
+    # el caso equivocado (corolario 22).
+    fichas_de_los_conteos = [
+        {"id": c["ficha_id"], "cliente_id": 1, "articulo_id": c["articulo_id"],
+         "contenido_caja": None, "unidad_venta": "kilo",
+         "nombre_cliente": c.get("ficha_nombre"), "envase_id": 1}
+        for c in conteos if c.get("ficha_id")
+    ]
     with ExitStack() as pila:
         pila.enter_context(patch("app.main.listar_ultimos_conteos_stock", return_value=conteos))
         pila.enter_context(patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}))
         pila.enter_context(patch("app.main.deficit_de_cajas_por_ficha", return_value=deficits or {}))
+        pila.enter_context(patch("app.main.listar_fichas_de_todos_los_clientes",
+                                 return_value=fichas_de_los_conteos))
+        pila.enter_context(patch("app.main.listar_clientes",
+                                 return_value=[{"id": 1, "nombre": "Cliente"}]))
+        pila.enter_context(patch("app.main.cajas_armadas_por_ficha",
+                                 return_value={(f["articulo_id"], f["id"]): 1.0
+                                               for f in fichas_de_los_conteos}))
         # Solo si se pidió: hay tests que parchean `stock_de_porcion` ellos
         # mismos, y parcharla siempre acá les pisaría el suyo.
         if sueltas is not None:
@@ -21122,12 +21274,19 @@ def test_el_cotejo_le_da_a_la_SEGUNDA_su_propio_numero_y_no_el_de_los_sueltos():
     cuerpo = _cotejo(*_articulo_con_segunda()).text.split("</style>")[-1]
 
     # LOS TÍTULOS DE LAS TRES TARJETAS, leídos del HTML y comparados enteros.
-    # Un `assert "Bultos sueltos" in cuerpo` pasaba con el bug puesto: lo
-    # ponía la tarjeta de los sueltos, y la de la segunda se titulaba así
-    # TAMBIÉN —tiene ficha_id None— así que el assert miraba algo que se
-    # parecía a lo que importaba. Se comparan los tres, no se busca uno.
-    titulos = [t.strip() for t in re.findall(r'class="que-conto">(.*?)</p>', cuerpo, re.S)]
-    assert titulos == ["Bultos sueltos", "Cajas de Caja de ejemplo · Cliente", "Segunda"]
+    # Buscar UNO pasaba con el bug puesto: la segunda tiene `ficha_id` None
+    # igual que los sueltos, así que con la clave de dos las dos tarjetas se
+    # titulaban igual y el assert miraba algo que se parecía a lo que
+    # importaba. Se comparan los tres, no se busca uno.
+    #
+    # Desde el 10/09 el título es el nombre COMPLETO de la porción y sale del
+    # mismo namer que el Remanente, así que este assert además fija que las
+    # dos pantallas digan lo mismo: si el Remanente cambia el nombre y esta
+    # pantalla no, cae acá.
+    titulos = [t.strip() for t in re.findall(r'class="encabezado">(.*?)</p>', cuerpo, re.S)]
+    assert titulos == ["EJEMPLO Tres",
+                       "EJEMPLO Tres Caja Cliente",
+                       "EJEMPLO Tres Segunda"]
     # Segunda: contó 40 sobre 42 → faltan 2, que es SU desvío y no el de nadie.
     assert "+2" in cuerpo
     assert "42" in cuerpo

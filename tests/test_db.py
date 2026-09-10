@@ -4752,6 +4752,14 @@ def test_listar_movimientos_stock_trae_anulados_marcados_por_fecha_real():
     assert "anulado_el IS NULL" not in consulta
     assert "m.anulado_el" in consulta
     assert "cl.nombre AS cliente_nombre" in consulta
+    # LA FICHA, que es lo que le pone nombre a la porción en la pantalla. Va
+    # calificada con el alias y no como `ficha_id` pelado: la consulta une
+    # `pedidos_renglones`, que TAMBIÉN tiene esa columna, así que un assert
+    # de substring sin alias matchearía la tabla equivocada — corolario 4.
+    #
+    # Este test es la mitad que el de la pantalla no puede cubrir: aquél
+    # mockea este lector, así que sacar la columna de acá no lo hace caer.
+    assert "m.ficha_id" in consulta
 
 
 def test_anular_movimiento_stock_es_baja_logica_e_idempotente():

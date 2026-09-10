@@ -285,13 +285,18 @@
     {% if contados_hoy %}
       {% for c in contados_hoy %}
       <div class="fila-conteo">
-        <span><strong>{{ c.articulo_nombre }}</strong>: {{ c.cantidad|numero }} bultos<br>
-          {# La segunda tiene ficha_id NULL igual que los sueltos: si esto
-             preguntara solo por la ficha, un conteo de segunda se leería
-             como uno de sueltos y el operario creería haber cargado otra
-             cosa. Se pregunta primero por es_segunda. #}
-          <span class="que">{% if c.es_segunda %}segunda{% elif c.ficha_id %}cajas de {{ c.ficha_nombre }}{% if c.ficha_cliente %} ({{ c.ficha_cliente }}){% endif %}{% else %}bultos sueltos{% endif %}</span>
-        </span>
+        {# EL NOMBRE COMPLETO DE LA PORCIÓN, EN EL TÍTULO. Antes el título
+           era el artículo pelado y la porción iba abajo en gris, así que
+           dos conteos del mismo artículo se leían "Palta / Palta" y había
+           que bajar a la letra chica para saber cuál era cuál. Con quince
+           renglones ordenados por HORA —no agrupados por artículo como el
+           Remanente— eso no se lee.
+
+           Y sale de `_ponerle_nombre_de_porcion`, el mismo namer que titula
+           el Remanente: si acá dijera otra cosa serían dos nombres para la
+           misma pila. La segunda ya viene resuelta ahí (tiene ficha_id NULL
+           igual que los sueltos, y el namer pregunta primero por es_segunda). #}
+        <span><strong>{{ c.porcion_nombre }}</strong>: {{ c.cantidad|numero }} bultos</span>
         <span class="hora">{{ c.creado_en|hora }}</span>
       </div>
       {% endfor %}

@@ -1,5 +1,9 @@
 # El déficit de la ficha y el "sin lote" del FIFO NO son el mismo número
 
+> **CINCO mecanismos, no cuatro.** El 5 —la pared del armado— se agregó el
+> 10/09 y es el más común hoy. Si llegaste acá porque una ficha CIERRA y el
+> FIFO igual marca `sin_lote`, andá directo al 5.
+
 Del 09/09, y se escribe porque **parecen** el mismo número. Los dos dicen
 "salieron cajas que no tienen una guía R detrás", los dos se calculan solos,
 y el día que alguien los compare y no coincidan va a "arreglar" uno para que
@@ -16,9 +20,9 @@ DEFICIT de la ficha (cuenta por ficha, SQL)   ->  25
 SIN LOTE del FIFO   (reparto, Python)         ->  15
 ```
 
-## Los cuatro mecanismos que los separan
+## Los mecanismos que los separan (1 a 4 — el 5 va abajo)
 
-Están medidos, no razonados. Cualquiera de los cuatro alcanza para que den
+Están medidos, no razonados. Cualquiera de los cinco alcanza para que den
 distinto:
 
 1. **El FIFO cuenta el reingreso como lote trabajado y la cuenta por ficha no
@@ -27,8 +31,8 @@ distinto:
    `movimientos_stock` en absoluto**. En el caso de arriba el FIFO cubrió 15
    bultos con el reingreso; la ficha no vio ninguno.
 
-   **Éste es el único de los cuatro que es un BUG**, y es el que hay que
-   cerrar. Los otros tres son diferencias legítimas de diseño.
+   **Éste es el único de los cinco que es un BUG**, y es el que hay que
+   cerrar. Los otros cuatro son diferencias legítimas de diseño.
 
 2. **El FIFO respeta la cronología; la cuenta por ficha es un neto de la
    ventana.** `lote_posterior_a_la_salida` impide que un lote del 08/09 cubra
@@ -46,6 +50,60 @@ distinto:
    `restante` por lote y lo agota; el neto no. En el caso de arriba quedaron
    5 bultos de reproceso sin usar que el neto igual computó.
 
+## 5. LA PARED DEL ARMADO (agregado el 10/09, y faltaba)
+
+**El más común de los cinco hoy, y el único que el sistema ya sabe nombrar.**
+
+Con `ficha_con_envase`, `pasadas_de_lotes` NO le ofrece el cajón a la salida:
+devuelve una sola pasada, la de los lotes trabajados, sin pasada de respaldo.
+Si esa pasada no alcanza, el bulto queda **sin lote con el cajón entero al
+lado** — a propósito, porque el cajón lo va a consumir la guía R que todavía
+no está.
+
+Y por eso da un caso que ninguno de los otros cuatro produce: **la cuenta por
+ficha cierra exacta, el stock del artículo es POSITIVO, y aun así hay
+`sin_lote`.** Medido con `repartir_fifo` y `salidas_para_reparto` reales sobre
+un fixture de dos fichas con envase (EJEMPLO inventado, no producción):
+
+```
+cajon (guia) 3 · cajas de ayer 6 · R251 de hoy 5 · salen 2 + 5 + 5
+  CON envase   -> stock 2 · sin_lote 1 · el cajon queda con restante 3
+  SIN envase   -> stock 2 · sin_lote 0   (la pasada de respaldo lo cubre)
+```
+
+El control de abajo es la mitad que importa: **la misma escena sin envase da
+cero.** Lo que convierte esto en `sin_lote` es la pared, no un faltante.
+
+**Casi siempre viaja con el 3**, y hacen falta los dos: el 3 pone el pool de
+cajas corto (los lotes no tienen ficha, así que una ficha se lleva las cajas
+producidas para otra) y el 5 impide que el cajón lo tape. Con el 3 solo, el
+cajón cubría y no se veía nada.
+
+**No se confunde con el `sin_lote` de verdad, y el sistema ya los separa**:
+`atribuir_costos_fifo` etiqueta `falta_cargar_guia_r` cuando
+`salida["ficha_con_envase"]` y `sin_lote` cuando no, con la MISMA condición
+que arma la pared. El primero es el que alimenta el bloque azul del Remanente
+("Armados esperando su guía R"), que además filtra `f.envase_id IS NOT NULL`
+en su consulta de candidatos. **Que una porción aparezca en ese bloque azul es
+por sí solo el diagnóstico: es este mecanismo y no otro.**
+
+### Lo que el nombre de la etiqueta promete de más
+
+`falta_cargar_guia_r` se decide **solo por `ficha_con_envase`**, no por
+haber verificado que falte una guía R. Y el texto que llega a la pantalla
+afirma que el papel no está.
+
+Casi siempre es verdad. Pero como los lotes no tienen ficha (mecanismo 3), lo
+que falta es una guía R **del artículo**, no de la ficha que se está mirando —
+y el que llega desde el extracto de una ficha cuya guía R está cargada lee
+"cargá la guía R" sobre un papel que ya cargó. Es la familia del corolario 5:
+una rama que AFIRMA algo sobre por qué llegó ahí. El aviso acierta en el
+QUÉ HACER y miente en el DÓNDE.
+
+Queda anotado y no resuelto. El arreglo barato no es cambiar la condición
+—está bien— sino el texto: decir que falta una guía R **de ese artículo**, y
+no dar por sentado que es la de la ficha que el que mira tiene abierta.
+
 ## Qué se puede testear y qué no
 
 **El test de igualdad no se puede escribir**, y forzarlo a pasar sería
@@ -60,8 +118,20 @@ dos mecanismos actuando a la vez y en sentidos opuestos.
 Lo que sí se podía era **un testigo del mecanismo 1**, el único que era un
 bug. Ya cumplió y se borró: ver abajo.
 
-Cerrado el 1, **siguen el 2, el 3 y el 4**. Los números van a seguir sin
-coincidir, y va a seguir estando bien.
+Cerrado el 1, **siguen el 2, el 3, el 4 y el 5**. Los números van a seguir
+sin coincidir, y va a seguir estando bien.
+
+**El 5 no estaba en esta lista hasta el 10/09, y no es que envejeció:** la
+pared se mergeó el 08/09 (`b1fafa0`) y este documento se escribió el 09/09,
+o sea que ya existía cuando se enumeraron los cuatro. Se enumeraron los
+mecanismos que se habían MEDIDO en el caso de Limón, y la pared no jugaba en
+ese caso. Es el corolario 20 con otra ropa: enumerar lo que se tenía a mano
+en vez del universo, y dejar la lista escrita como si fuera el universo.
+
+La señal para la próxima: **una lista cerrada ("los cuatro mecanismos") es
+una afirmación negativa sobre todo lo que no está en ella**, y por eso
+necesita más verificación que cada uno de sus ítems. Acá alcanzaba con
+grepear `sin_lote` en `core/` el día que se escribió.
 
 ## El mecanismo 1 quedó CERRADO (09/09)
 

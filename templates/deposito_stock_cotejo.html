@@ -97,17 +97,18 @@
   {% if filas %}
     {% for f in filas %}
     <div class="tarjeta {% if f.dif_hoy not in (none, 0) %}con-diferencia{% endif %}">
-      <p class="encabezado">{{ f.articulo_nombre }}</p>
-      {# LA SEGUNDA VA PRIMERO en el if, y no es cosmético: tiene `ficha_id`
-         None igual que los sueltos, así que preguntando solo por la ficha su
-         tarjeta se titula "Bultos sueltos" y el operario lee el desvío de la
-         segunda como si fuera el de la pila suelta. Es el mismo choque de la
-         clave, servido en la presentación. #}
-      <p class="que-conto">
-        {% if f.es_segunda %}Segunda
-        {% elif f.ficha_id %}Cajas de {{ f.ficha_nombre }}{% if f.ficha_cliente %} · {{ f.ficha_cliente }}{% endif %}
-        {% else %}Bultos sueltos{% endif %}
-      </p>
+      {# EL NOMBRE COMPLETO DE LA PORCIÓN EN EL ENCABEZADO, y sale del mismo
+         namer que el Remanente y que "Contado hoy". Antes el encabezado era
+         el artículo pelado y la porción iba abajo en gris: dos tarjetas del
+         mismo artículo se titulaban igual y había que leer la línea chica
+         para distinguirlas.
+
+         La segunda ya viene resuelta en el namer, que pregunta por
+         `es_segunda` ANTES que por la ficha: tiene `ficha_id` None igual que
+         los sueltos, así que preguntando solo por la ficha su tarjeta se
+         titularía como la de la pila suelta y el operario leería el desvío
+         de una como el de la otra. #}
+      <p class="encabezado">{{ f.porcion_nombre }}</p>
       <p class="fecha-conteo">Contado el {{ f.creado_en|fecha_hora }}</p>
       <div class="numeros">
         <div class="celda">
