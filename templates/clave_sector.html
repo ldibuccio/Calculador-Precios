@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Zona de Control</title>
+<title>{{ puerta.titulo }}</title>
 <style>
   :root { font-family: -apple-system, system-ui, sans-serif; }
   body {
@@ -64,9 +64,9 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "puesto" %}
-  {% set barra_titulo = "Zona de Control" %}
-  {% set barra_atras = "/puesto/envases" %}
+  {% set barra_sector = puerta.sector %}
+  {% set barra_titulo = puerta.titulo %}
+  {% set barra_atras = puerta.volver_a %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -75,12 +75,12 @@
 
   <div class="tarjeta">
     <p class="candado">🔒</p>
-    <h1>Esta pantalla pide clave</h1>
-    <p class="ayuda">Se pide una vez y vale para toda la zona de control durante la jornada. Con "Bloquear" se corta antes.</p>
+    <h1>{{ puerta.titulo }} pide clave</h1>
+    <p class="ayuda">{{ puerta.ayuda }}</p>
     <!-- autocomplete="one-time-code" a propósito: el navegador la trata como
          un código de un solo uso y NO ofrece guardarla ni autocompletarla —
          si el celular la recuerda solo, la traba desaparece. -->
-    <form method="post" action="/puesto/envases/clave" autocomplete="off">
+    <form method="post" action="{{ puerta.prefijo }}/clave" autocomplete="off">
       <input type="hidden" name="volver" value="{{ volver }}">
       <input type="password" name="clave" required autocomplete="one-time-code"
              autofocus placeholder="Clave">
@@ -88,7 +88,7 @@
     </form>
   </div>
 
-  <a class="volver" href="/puesto/envases">Volver a Envases Puesto</a>
+  <a class="volver" href="{{ puerta.volver_a }}">{{ puerta.volver_texto }}</a>
 {% include "_pie_version.html" %}
 </body>
 </html>

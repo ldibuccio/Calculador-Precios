@@ -1,5 +1,6 @@
 import base64
 import io
+import os
 import re
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
@@ -3242,6 +3243,157 @@ def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
     assert '<div class="aviso">Se corrigió la recepción de esta compra.</div>' in respuesta.text
 
 
+def test_deposito_no_manda_a_ADMINISTRACION_sin_avisar():
+    """Un control de acceso se vuelve peor que no tenerlo el día que traba al
+    operario en algo cotidiano: la clave termina pegada en la pared.
+
+    Dos cosas se sacaron por eso: el botón "Buscar Pedidos" de la pantalla de
+    pedidos de Depósito, y el `barra_sector` de las dos pantallas de CARGA de
+    pedido —que las sirve `/deposito/...` pero declaraban sector
+    "administracion", así que su barra llevaba a una clave en medio de la
+    carga.
+    """
+    for plantilla in ("templates/deposito_pedido_cargar.html",
+                      "templates/deposito_pedido_revision.html"):
+        cuerpo = open(plantilla, encoding="utf-8").read()
+        assert '{% set barra_sector = "deposito" %}' in cuerpo, plantilla
+        assert "administracion" not in cuerpo, plantilla
+
+    cargar = open("templates/deposito_pedido.html", encoding="utf-8").read()
+    assert "/administracion" not in cargar, "Depósito no linkea a Administración"
+
+
+def test_la_puerta_de_administracion_cierra_TODO_el_prefijo():
+    """NO una lista de rutas: el PREFIJO. Son 24 rutas hoy, y una lista de 24
+    escrita a mano envejece — la ruta 25 se agrega en tres meses sin guarda y
+    NO HAY SÍNTOMA, porque la pantalla anda igual, solo que abierta.
+
+    Este test recorre la tabla de rutas de la app de verdad, así que una ruta
+    nueva entra sola. Copiarle acá la lista sería el mismo error que la
+    guarda enumerada.
+    """
+    from app.main import app as aplicacion, PUERTA_ADMINISTRACION, RUTAS_ADMINISTRACION_SIN_CLAVE
+
+    cliente.cookies.clear()
+    rutas = sorted({
+        r.path for r in aplicacion.routes
+        if getattr(r, "path", "").startswith(PUERTA_ADMINISTRACION.prefijo)
+        and "{" not in r.path
+        and r.path not in RUTAS_ADMINISTRACION_SIN_CLAVE
+    })
+    assert len(rutas) >= 15, "se perdieron rutas: el barrido no está mirando lo que cree"
+
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        for ruta in rutas:
+            respuesta = cliente.get(ruta)
+            assert respuesta.status_code == 401, ruta
+            assert "pide clave" in respuesta.text, ruta
+
+
+def test_la_puerta_de_administracion_SIN_VARIABLE_deja_ver_pero_no_escribir():
+    """La asimetría de siempre, y el método la decide en vez de una lista:
+    todo POST bajo /administracion escribe, así que sin la variable cargada
+    NO PASA —503 diciendo qué falta—; un GET se abre igual para que un deploy
+    no trabe la consulta."""
+    cliente.cookies.clear()
+    with (
+        patch.dict(os.environ, {"CLAVE_ADMINISTRACION": ""}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.crear_movimiento_stock") as mock_escribir,
+    ):
+        assert cliente.get("/administracion/stock/ajustar").status_code == 200
+        respuesta = cliente.post("/administracion/stock/ajustar",
+                                 data={"articulo_id": "1", "cantidad": "5", "motivo": "x"})
+
+    assert respuesta.status_code == 503
+    assert "CLAVE_ADMINISTRACION" in respuesta.text, "tiene que decir QUÉ variable falta"
+    mock_escribir.assert_not_called()
+
+
+def test_la_puerta_de_administracion_NO_la_abre_la_cookie_de_gerencia():
+    """Cada zona firma con un MENSAJE propio, así que la cookie de una jamás
+    valida en otra — aunque algún día las dos claves coincidieran por
+    descuido. Es la razón por la que el mensaje es parte de la puerta y no
+    una constante compartida."""
+    from app.main import PUERTA_ADMINISTRACION, PUERTA_GERENCIA
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "misma", "CLAVE_GERENCIA": "misma"}):
+        # La MISMA clave en las dos, que es el caso peor.
+        cliente.cookies.set(PUERTA_GERENCIA.cookie, PUERTA_GERENCIA.firma("misma"))
+        respuesta = cliente.get("/administracion")
+        cliente.cookies.clear()
+    assert respuesta.status_code == 401
+    assert PUERTA_ADMINISTRACION.firma("misma") != PUERTA_GERENCIA.firma("misma")
+
+
+def test_la_puerta_de_administracion_vuelve_A_DONDE_IBA_y_no_a_cualquier_lado():
+    """El `volver` post-clave solo puede ser una pantalla de la zona. Sin eso
+    la puerta sirve de redirector abierto: un link con `?volver=` a cualquier
+    lado, firmado por la confianza de nuestro dominio."""
+    from app.main import PUERTA_ADMINISTRACION
+
+    assert PUERTA_ADMINISTRACION.destino_seguro("/administracion/ingresos") == "/administracion/ingresos"
+    assert PUERTA_ADMINISTRACION.destino_seguro("https://otra-cosa.com") == "/administracion"
+    assert PUERTA_ADMINISTRACION.destino_seguro("/gerencia/rentabilidad") == "/administracion"
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        respuesta = cliente.get("/administracion/stock/cotejo")
+        assert 'value="/administracion/stock/cotejo"' in respuesta.text
+
+
+def test_la_puerta_de_administracion_y_la_de_gerencia_son_LA_MISMA_mecanica():
+    """Tres zonas con clave, UNA implementación. Escrito tres veces, el día
+    que se arregle algo del HMAC dos quedan viejas y las dos siguen dejando
+    pasar — no hay síntoma.
+
+    Se compara la función, no el resultado: dos copias idénticas hoy dan el
+    mismo hash y este test pasaría igual (es el corolario 16: una copia y una
+    referencia se ven iguales hasta que se mira el objeto).
+    """
+    from app.main import PUERTA_ADMINISTRACION, PUERTA_CONTROL, PUERTA_GERENCIA, Puerta
+
+    for puerta in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION):
+        assert type(puerta) is Puerta
+        assert puerta.firma.__func__ is Puerta.firma
+        assert puerta.abierta.__func__ is Puerta.abierta
+    # Y los mensajes son DISTINTOS entre sí, que es lo que las separa.
+    mensajes = {p.mensaje for p in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)}
+    assert len(mensajes) == 3
+    claves = {p.env_var for p in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)}
+    assert len(claves) == 3, "tres zonas, tres variables: una sola clave las junta a todas"
+
+
+@pytest.fixture(autouse=True)
+def _puerta_de_administracion_abierta(request):
+    """La suite corre Administración como la cruza una persona: con la clave.
+
+    Desde el 10/09 todo `/administracion` está detrás de clave, y los POST
+    además tienen default duro: sin la variable cargada devuelven 503. Estos
+    tests prueban LAS PANTALLAS, así que entran con la clave puesta y su
+    cookie — igual que la fixture de Gerencia de acá abajo, que es el mismo
+    caso y el molde del que sale ésta.
+
+    EL RIESGO DE UNA FIXTURE ASÍ, dicho para que no muerda: abre la puerta
+    para toda la suite, así que si la puerta se rompiera, estos tests no se
+    enterarían. Por eso los tests DE LA PUERTA se excluyen por nombre y se la
+    cruzan solos: son los únicos que prueban el control, y con la cookie
+    puesta estarían probando la pantalla.
+    """
+    if "puerta_de_administracion" in request.node.name.lower():
+        yield
+        return
+    from app.main import PUERTA_ADMINISTRACION
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        cliente.cookies.set(PUERTA_ADMINISTRACION.cookie,
+                            PUERTA_ADMINISTRACION.firma("admin-secreta"))
+        try:
+            yield
+        finally:
+            cliente.cookies.delete(PUERTA_ADMINISTRACION.cookie)
+
+
 @pytest.fixture(autouse=True)
 def _puerta_de_gerencia_abierta(request):
     """Los tests de Corregir Recepción entran con la clave puesta.
@@ -3261,7 +3413,7 @@ def _puerta_de_gerencia_abierta(request):
     # La lista de dependencias sale de la base: por default, lote sin usar.
     # Los tests que la miran la parchean ellos con lo que necesitan.
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=None),
         patch("app.main.listar_clientes", return_value=[]),
     ):
@@ -3641,7 +3793,7 @@ def test_el_ingreso_retroactivo_pide_la_clave_de_GERENCIA():
     fechado para atrás puede cambiar a qué lote se atribuyeron armados
     posteriores, o sea el costo de días ya mirados."""
     cliente.cookies.clear()
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         respuesta = cliente.post(
             "/gerencia/compras/ingreso-retroactivo",
             data={"proveedor_id": "1", "articulo_id": "1", "cantidad_cajones": "10",
@@ -3656,7 +3808,7 @@ def test_el_ingreso_retroactivo_crea_la_compra_con_la_FECHA_ELEGIDA_y_importe_CE
     """El caso real del 09/09: 10 bultos de Limón que entraron el 07/09 sin
     cargo y nunca se cargaron."""
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
                                                          "unidad_compra": "kilo"}),
         patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
@@ -3700,7 +3852,7 @@ def test_el_ingreso_retroactivo_NO_INVENTA_la_guarda_del_corte_la_traduce():
     assert "fecha_corte(" not in codigo
 
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
                                                          "unidad_compra": "kilo"}),
         patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
@@ -3729,7 +3881,7 @@ def test_el_importe_VACIO_sigue_siendo_sin_precio_y_no_cero():
     """Los dos significados del vacío no se pueden juntar: NULL va a la lista
     de pendientes de precio, 0 dice que vino sin cargo."""
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
                                                          "unidad_compra": "kilo"}),
         patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
@@ -10201,12 +10353,12 @@ def test_auditoria_tiene_sector_propio_y_la_url_vieja_redirige():
 def test_gerencia_sin_clave_configurada_no_tiene_puerta():
     # Sin CLAVE_GERENCIA cargada en Railway no hay puerta: el deploy no
     # traba nada hasta que la variable exista.
-    with patch("app.main._clave_gerencia", return_value=None):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": ""}):
         assert cliente.get("/gerencia").status_code == 200
 
 
 def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         for url in (
             "/gerencia",
             "/gerencia/rentabilidad",
@@ -10232,7 +10384,7 @@ def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
 
 def test_clave_gerencia_correcta_deja_cookie_y_bloquear_la_corta():
     try:
-        with patch("app.main._clave_gerencia", return_value="secreta"):
+        with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
             respuesta = cliente.post(
                 "/gerencia/clave",
                 data={"clave": "secreta", "volver": "/gerencia/rentabilidad-real"},
@@ -10256,7 +10408,7 @@ def test_clave_gerencia_correcta_deja_cookie_y_bloquear_la_corta():
 
 
 def test_clave_gerencia_incorrecta_no_entra_y_el_destino_es_solo_gerencia():
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         respuesta = cliente.post("/gerencia/clave", data={"clave": "nope", "volver": "/gerencia"})
         assert respuesta.status_code == 401
         assert "Clave incorrecta" in respuesta.text
@@ -13131,8 +13283,15 @@ def test_hub_envases_puesto_tiene_el_boton_de_ajustar_stock():
 
 
 def _con_clave_control(valor="1234"):
-    """La clave se lee SIEMPRE por _clave_control_puesto (un solo lugar): patchear ahí es patchear el origen."""
-    return patch("app.main._clave_control_puesto", return_value=valor)
+    """La clave sale de la VARIABLE de entorno, así que se parchea ahí.
+
+    Antes parcheaba `_clave_control_puesto`, que también era "el origen"
+    pero del lado de adentro: el día que las tres puertas se unificaron en
+    una sola mecánica, la función quedó siendo un envoltorio y el parche
+    dejó de tener efecto sin que cambiara ninguna regla. La variable es el
+    origen que no depende de cómo esté escrito el código.
+    """
+    return patch.dict(os.environ, {"CLAVE_CONTROL_PUESTO": valor or ""})
 
 
 def _cliente_destrabado(clave="1234"):
@@ -13579,15 +13738,18 @@ def test_administracion_tiene_cargar_pedido_en_la_tarjeta_de_pedidos():
     assert "Buscar Pedidos" in pedidos
 
 
-def test_la_pantalla_de_cargar_pedido_vuelve_a_ADMINISTRACION():
-    # Si el botón se muda pero la barra no, el atrás devuelve a un Depósito
-    # donde ese botón ya no está — el mismo resto que dejó la fase 2.
+def test_la_pantalla_de_cargar_pedido_vuelve_a_DEPOSITO():
+    """CAMBIÓ EL 10/09 y este test cambió con él: antes su barra volvía a
+    Administración —la pantalla la sirve `/deposito/...` pero declaraba ese
+    sector— y desde que Administración pide clave, eso ponía un pedido de
+    clave en medio de la carga de un pedido. Esa es la forma exacta en que un
+    control de acceso termina con la clave pegada en la pared."""
     with patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR):
         respuesta = cliente.get("/deposito/pedido/cargar")
 
     assert respuesta.status_code == 200
-    assert 'href="/deposito"' not in respuesta.text
-    assert "/administracion" in respuesta.text
+    assert "/administracion" not in respuesta.text
+    assert 'href="/deposito/pedido"' in respuesta.text
 
 
 def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
@@ -17347,7 +17509,7 @@ def test_armar_esconde_los_terminados_en_una_seccion_plegada():
     assert "Ver terminados (1)" in respuesta.text
 
 
-def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
+def test_ver_pedido_NO_lleva_a_administracion_y_muestra_el_badge_terminado():
     listado = [{
         "id": 50, "fecha_operacion": date(2026, 8, 21), "origen": "texto",
         "creado_en": datetime(2026, 8, 21, 12, 10), "armado_cerrado_el": datetime(2026, 8, 21, 18, 0),
@@ -17364,7 +17526,11 @@ def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
         respuesta = cliente.get("/deposito/pedido?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert 'href="/administracion/pedidos/buscar?cliente_id=1"' in respuesta.text
+    # "Buscar Pedidos" SE FUE el 10/09: vive en Administración, que ahora pide
+    # clave, y esta pantalla la usa el operario todos los días. Un botón que
+    # lleva a una clave desde la pantalla cotidiana es cómo la clave termina
+    # pegada en la pared.
+    assert "/administracion" not in respuesta.text
     # Cerrado explícitamente y a 2 de 3: TERMINADO, pero SIN tilde y diciendo
     # qué falta. "Terminado" es que alguien tocó el botón, no que salió
     # completo.
@@ -21536,7 +21702,7 @@ def test_corregir_recepcion_SIN_CLAVE_CONFIGURADA_no_deja_pasar():
     la dirección en la empresa a la que le falte la variable, y nadie se
     enteraría: se vería normal.
     """
-    with patch("app.main._clave_gerencia", return_value=None):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": ""}):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 503
@@ -21549,7 +21715,7 @@ def test_corregir_recepcion_SIN_CLAVE_CONFIGURADA_no_deja_pasar():
 def test_corregir_recepcion_SIN_CLAVE_tampoco_deja_GUARDAR():
     """La puerta va en las dos rutas. Solo en el GET, cualquiera podría
     guardar mandando el POST directo."""
-    with patch("app.main._clave_gerencia", return_value=None), \
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": ""}), \
          patch("app.main.corregir_recepcion_compra") as mock_guardar:
         respuesta = cliente.post(
             "/gerencia/compras/30/corregir-recepcion",
@@ -21561,7 +21727,7 @@ def test_corregir_recepcion_SIN_CLAVE_tampoco_deja_GUARDAR():
 
 
 def test_corregir_recepcion_con_clave_pero_sin_cookie_pide_la_clave():
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 401
@@ -21585,7 +21751,7 @@ def test_desde_el_detalle_se_llega_a_corregir_y_la_clave_devuelve_A_ESA_COMPRA()
     Gerencia, tendría que volver a buscar la compra — y con el número mal
     ya adentro de la cabeza, que es justo cuando se busca otra.
     """
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         # 1. Sin cookie, la pantalla de la compra pide la clave...
         puerta = cliente.get("/gerencia/compras/30/corregir-recepcion")
         assert puerta.status_code == 401

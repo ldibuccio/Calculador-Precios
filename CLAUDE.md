@@ -1800,3 +1800,18 @@ Es pariente del corolario 16 —*probar el test con la duplicación puesta*— p
 un escalón más atrás: **allá se duda del test y se confía en la prueba; acá la
 prueba también es código que puede estar mal.** Lo que verifica no queda
 verificado por ser lo que verifica.
+
+**Volvió al día siguiente (10/09), y la forma se repite tan igual que ya es
+un patrón reconocible: el canario RENOMBRA y deja la cosa intacta al lado.**
+Ahí fue sobre las puertas con clave: el canario cambiaba `def firma` por
+`def firma_vieja`, agregaba un cuerpo vacío, y volvía a escribir `def firma`
+con el cuerpo original abajo. Resultado: un método muerto de más y **nada
+roto**. Cayó 0, y el test estaba perfecto —comprueba
+`puerta.firma.__func__ is Puerta.firma`, que es lo único que distingue una
+copia de una referencia—. El canario bien puesto (una puerta con su PROPIA
+firma, idéntica en resultado) lo hace caer.
+
+**La señal, ahora que apareció dos veces**: si el parche del canario
+AGREGA algo en vez de sacar el camino, sospechar. Un canario que rompe de
+verdad casi siempre **borra** —la pata entera, la condición, la línea— y deja
+el archivo con menos, no con más.

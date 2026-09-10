@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import unicodedata
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -439,142 +440,255 @@ TIPO_RETIRO_DEFAULT = _tipo_retiro_default_desde_env()
 # silencio sería peor que uno pesado.
 TOPE_FILAS_BUSQUEDA = 500
 
-CLAVE_CONTROL_PUESTO_ENV_VAR = "CLAVE_CONTROL_PUESTO"
-COOKIE_ACCESO_CONTROL = "acceso_control_puesto"
-# Una clave por jornada: ni en cada pantalla (no la usarían) ni para
-# siempre (pantalla desbloqueada eterna). El botón Bloquear la corta antes.
+# --- LAS PUERTAS DEL SISTEMA, en UNA sola mecánica ---
+#
+# Hay tres zonas con clave y son TRES PERSONAS distintas:
+#
+#   - Zona de control del Puesto  → el que maneja los vacíos del puesto.
+#   - Gerencia                    → el dueño: lo que se GANA.
+#   - Administración              → quien carga facturación y paga: lo que
+#                                   se PAGA.
+#
+# Las dos primeras nacieron copiadas uno del otro —mismo HMAC, misma cookie,
+# misma pantalla de 94 líneas— y la tercera iba a ser la tercera copia. Por
+# eso la mecánica vive UNA VEZ acá y cada zona es solo un puñado de datos:
+# tres copias del mismo HMAC es exactamente donde una queda vieja y nadie se
+# entera, porque las tres siguen dejando pasar.
+#
+# Lo que NO se unifica es la CLAVE: son distintas a propósito. Con una sola,
+# quien carga la facturación entra a ver la rentabilidad.
+#
+# Una clave por jornada: ni en cada pantalla (no la usarían) ni para siempre
+# (pantalla desbloqueada eterna). El botón Bloquear la corta antes.
 DURACION_ACCESO_CONTROL = 12 * 60 * 60
 
 
-def _clave_control_puesto() -> str | None:
-    """ÚNICA fuente de la clave de la zona de control del Puesto — todo el resto del código pasa por acá.
+@dataclass(frozen=True)
+class Puerta:
+    """Una zona con clave. Los datos cambian; la mecánica es la de todos.
 
-    Hoy sale de Railway (variable de entorno, una por empresa). Cuando
-    exista el módulo de Contraseñas en Sistema, el origen se cambia SOLO
-    en esta función y nada más se toca. Se lee en cada request (no al
-    importar) a propósito: así un cambio de origen o de valor aplica sin
-    reiniciar nada más que lo que corresponda.
-
-    None = no hay clave configurada = no hay puerta (todo como siempre).
+    `mensaje` es lo que se firma con la clave, y es PROPIO de cada zona: así
+    la cookie de una jamás valida en otra, aunque algún día dos zonas
+    compartieran la misma clave por descuido.
     """
-    clave = os.environ.get(CLAVE_CONTROL_PUESTO_ENV_VAR, "").strip()
-    return clave or None
+
+    env_var: str
+    cookie: str
+    mensaje: bytes
+    prefijo: str
+    # El sector de la barra de navegación. Explícito y no derivado del
+    # prefijo: `/puesto/envases` da "puesto" por casualidad, y una casualidad
+    # en una clave de diccionario revienta el día que un prefijo no la cumpla.
+    sector: str
+    titulo: str
+    ayuda: str
+    volver_a: str
+    volver_texto: str
+
+    def clave(self) -> str | None:
+        """ÚNICA fuente de la clave de esta zona — todo el resto pasa por acá.
+
+        Hoy sale de Railway (variable de entorno, una por empresa). Cuando
+        exista el módulo de Contraseñas en Sistema, el origen se cambia SOLO
+        acá y nada más se toca. Se lee en cada request (no al importar) a
+        propósito: así un cambio de origen o de valor aplica sin reiniciar.
+
+        None = no hay clave configurada = no hay puerta (todo como siempre),
+        así el deploy no traba nada hasta que la variable se cargue.
+        """
+        valor = os.environ.get(self.env_var, "").strip()
+        return valor or None
+
+    def firma(self, clave: str) -> str:
+        """Lo que viaja en la cookie: una firma derivada de la clave, NUNCA la clave.
+
+        Sin estado en el server ni en la base: la firma solo se puede
+        fabricar conociendo la clave, y si la clave se cambia en el origen,
+        todas las cookies viejas dejan de validar al instante (bloqueo
+        remoto gratis).
+        """
+        return hmac.new(clave.encode(), self.mensaje, hashlib.sha256).hexdigest()
+
+    def abierta(self, request: Request) -> bool:
+        clave = self.clave()
+        if clave is None:
+            return True
+        return hmac.compare_digest(request.cookies.get(self.cookie, ""), self.firma(clave))
+
+    def destino_seguro(self, volver: str) -> str:
+        """El destino post-clave solo puede ser una pantalla de ESTA zona.
+
+        Sin esto la puerta sirve de redirector abierto: un link con
+        `?volver=` a cualquier lado, firmado por la confianza de nuestro
+        dominio.
+        """
+        return volver if volver.startswith(self.prefijo) else self.prefijo
 
 
-def _firma_acceso_control(clave: str) -> str:
-    """Lo que viaja en la cookie: una firma derivada de la clave, nunca la clave.
+PUERTA_CONTROL = Puerta(
+    env_var="CLAVE_CONTROL_PUESTO",
+    cookie="acceso_control_puesto",
+    mensaje=b"acceso-control-puesto",
+    prefijo="/puesto/envases",
+    sector="puesto",
+    titulo="Zona de Control",
+    ayuda=("Se pide una vez y vale para toda la zona de control durante la jornada. "
+           'Con "Bloquear" se corta antes.'),
+    volver_a="/puesto/envases",
+    volver_texto="Volver a Envases Puesto",
+)
 
-    Sin estado en el server ni en la base: la firma solo se puede fabricar
-    conociendo la clave, y si la clave se cambia en el origen, todas las
-    cookies viejas dejan de validar al instante (bloqueo remoto gratis).
+PUERTA_GERENCIA = Puerta(
+    env_var="CLAVE_GERENCIA",
+    cookie="acceso_gerencia",
+    mensaje=b"acceso-gerencia",
+    prefijo="/gerencia",
+    sector="gerencia",
+    titulo="Gerencia",
+    ayuda=("Acá está el manejo del dinero. La clave se pide una vez y vale para toda "
+           'Gerencia durante la jornada; con "Bloquear" se corta antes.'),
+    volver_a="/inicio",
+    volver_texto="Volver a Inicio",
+)
+
+# ADMINISTRACIÓN, del 10/09. Clave PROPIA y no la de Gerencia: Administración
+# es OTRA PERSONA — la que carga la facturación y le paga a los proveedores—
+# y con la clave de Gerencia entraría a ver márgenes y rentabilidad.
+#
+# La línea entre las dos zonas quedó limpia y conviene que siga así:
+# **Administración ve lo que se PAGA, Gerencia ve lo que se GANA.** Ninguna
+# pantalla de Administración muestra precio de venta ni margen (verificado
+# grepeando el concepto el 10/09), así que le falta la mitad de la cuenta.
+PUERTA_ADMINISTRACION = Puerta(
+    env_var="CLAVE_ADMINISTRACION",
+    cookie="acceso_administracion",
+    mensaje=b"acceso-administracion",
+    prefijo="/administracion",
+    sector="administracion",
+    titulo="Administración",
+    ayuda=("Acá se ajusta stock, se anulan pedidos y movimientos, y se ve lo que se le "
+           'paga a cada proveedor. La clave vale para toda la jornada; con "Bloquear" se '
+           "corta antes."),
+    volver_a="/inicio",
+    volver_texto="Volver a Inicio",
+)
+
+CLAVE_CONTROL_PUESTO_ENV_VAR = PUERTA_CONTROL.env_var
+COOKIE_ACCESO_CONTROL = PUERTA_CONTROL.cookie
+CLAVE_GERENCIA_ENV_VAR = PUERTA_GERENCIA.env_var
+COOKIE_ACCESO_GERENCIA = PUERTA_GERENCIA.cookie
+CLAVE_ADMINISTRACION_ENV_VAR = PUERTA_ADMINISTRACION.env_var
+COOKIE_ACCESO_ADMINISTRACION = PUERTA_ADMINISTRACION.cookie
+
+
+def _pantalla_clave(puerta: Puerta, request: Request, *, volver: str | None = None,
+                    error: str | None = None):
+    """La puerta: pide la clave y vuelve a la pantalla que se quería ver.
+
+    UNA plantilla para las tres. Eran dos archivos de 94 líneas que diferían
+    solo en los textos, y la tercera zona iba a ser la tercera copia.
     """
-    return hmac.new(clave.encode(), b"acceso-control-puesto", hashlib.sha256).hexdigest()
-
-
-def _acceso_control_valido(request: Request) -> bool:
-    clave = _clave_control_puesto()
-    if clave is None:
-        return True
-    cookie = request.cookies.get(COOKIE_ACCESO_CONTROL, "")
-    return hmac.compare_digest(cookie, _firma_acceso_control(clave))
-
-
-def _destino_control_seguro(volver: str) -> str:
-    """El destino post-clave solo puede ser una pantalla de Envases Puesto (nada de redirigir a cualquier lado)."""
-    return volver if volver.startswith("/puesto/envases") else "/puesto/envases"
-
-
-# --- Clave de Gerencia: la zona del manejo del dinero (rentabilidades) ---
-# Clave PROPIA, aparte de la del control del Puesto: el que maneja los
-# vacíos del puesto no tiene por qué ver la rentabilidad. Mismo diseño
-# (cookie firmada por jornada, Bloquear, sin estado en server ni base).
-
-CLAVE_GERENCIA_ENV_VAR = "CLAVE_GERENCIA"
-COOKIE_ACCESO_GERENCIA = "acceso_gerencia"
-
-
-def _clave_gerencia() -> str | None:
-    """ÚNICA fuente de la clave de Gerencia — todo el resto del código pasa por acá.
-
-    Hoy sale de Railway (variable de entorno, una por empresa). Cuando
-    exista el módulo de Contraseñas en Sistema, el origen se cambia SOLO
-    en esta función (igual que _clave_control_puesto) y nada más se toca.
-    Se lee en cada request a propósito.
-
-    None = no hay clave configurada = no hay puerta (todo como siempre) —
-    así el deploy no traba nada hasta que la variable se cargue.
-    """
-    clave = os.environ.get(CLAVE_GERENCIA_ENV_VAR, "").strip()
-    return clave or None
-
-
-def _firma_acceso_gerencia(clave: str) -> str:
-    """La firma de la cookie de Gerencia (nunca la clave). Mensaje propio: una cookie del Puesto jamás valida acá."""
-    return hmac.new(clave.encode(), b"acceso-gerencia", hashlib.sha256).hexdigest()
-
-
-def _acceso_gerencia_valido(request: Request) -> bool:
-    clave = _clave_gerencia()
-    if clave is None:
-        return True
-    cookie = request.cookies.get(COOKIE_ACCESO_GERENCIA, "")
-    return hmac.compare_digest(cookie, _firma_acceso_gerencia(clave))
-
-
-def _destino_gerencia_seguro(volver: str) -> str:
-    """El destino post-clave solo puede ser una pantalla de Gerencia."""
-    return volver if volver.startswith("/gerencia") else "/gerencia"
-
-
-def _pantalla_clave_gerencia(request: Request, *, volver: str | None = None, error: str | None = None):
-    """La puerta de Gerencia: pide la clave y vuelve a la pantalla que se quería ver."""
     if volver is None:
         volver = request.url.path + (f"?{request.url.query}" if request.url.query else "")
     return templates.TemplateResponse(
         request,
-        "clave_gerencia.html",
-        {"volver": _destino_gerencia_seguro(volver), "error": error},
+        "clave_sector.html",
+        {"puerta": puerta, "volver": puerta.destino_seguro(volver), "error": error},
         status_code=401,
     )
 
 
-def _puerta_de_gerencia_para_escribir(request: Request):
-    """La puerta de Gerencia para una pantalla que ESCRIBE. Devuelve None si puede pasar.
+def _responder_clave(puerta: Puerta, request: Request, clave: str, volver: str):
+    """El POST de la clave, igual para las tres: valida, y si entra deja la cookie firmada."""
+    destino = puerta.destino_seguro(volver)
+    clave_real = puerta.clave()
+    if clave_real is None:
+        # Sin clave configurada no hay puerta: nada que validar.
+        return RedirectResponse(url=destino, status_code=303)
+    if not hmac.compare_digest(clave.strip(), clave_real):
+        return _pantalla_clave(puerta, request, volver=destino, error="Clave incorrecta.")
 
-    Se diferencia del resto de Gerencia en una sola cosa, y es a propósito:
-    **sin clave configurada NO deja pasar**. Las pantallas de consulta
-    (rentabilidades, costos fijos) se abren igual mientras la variable no
-    esté cargada, para que un deploy no trabe nada; acá el default se da
-    vuelta. Una rentabilidad que se ve de más es un problema; una pantalla
-    que corrige una recepción —y que puede dejar sin explicación el costo
-    congelado de una guía R— abierta a cualquiera que sepa la URL es otro.
+    respuesta = RedirectResponse(url=destino, status_code=303)
+    respuesta.set_cookie(
+        puerta.cookie,
+        puerta.firma(clave_real),
+        max_age=DURACION_ACCESO_CONTROL,
+        httponly=True,
+        samesite="lax",
+        path=puerta.prefijo,
+    )
+    return respuesta
 
-    Y lo dice con nombre y apellido: qué variable falta y dónde cargarla.
-    Un "no autorizado" sin explicación manda a buscar un permiso que no
-    existe.
+
+def _puerta_para_escribir(puerta: Puerta, request: Request):
+    """La puerta de una pantalla que ESCRIBE. Devuelve None si puede pasar.
+
+    Se diferencia del resto en una sola cosa, y es a propósito: **sin clave
+    configurada NO deja pasar**. Las pantallas de consulta se abren igual
+    mientras la variable no esté cargada, para que un deploy no trabe nada;
+    acá el default se da vuelta. Una rentabilidad que se ve de más es un
+    problema; una pantalla que ajusta stock o anula un pedido abierta a
+    cualquiera que sepa la URL es otro.
+
+    Y lo dice con nombre y apellido: qué variable falta y dónde cargarla. Un
+    "no autorizado" sin explicación manda a buscar un permiso que no existe.
     """
-    if _clave_gerencia() is None:
+    if puerta.clave() is None:
         return templates.TemplateResponse(
             request,
             "gerencia_sin_clave.html",
-            {"variable": CLAVE_GERENCIA_ENV_VAR},
+            {"variable": puerta.env_var, "puerta": puerta},
             status_code=503,
         )
-    if not _acceso_gerencia_valido(request):
-        return _pantalla_clave_gerencia(request)
+    if not puerta.abierta(request):
+        return _pantalla_clave(puerta, request)
     return None
 
 
+# Los nombres de siempre, ahora delegando: las ochenta y pico de llamadas
+# repartidas por el archivo no tienen por qué saber que abajo hay un objeto.
+def _clave_control_puesto() -> str | None:
+    return PUERTA_CONTROL.clave()
+
+
+def _firma_acceso_control(clave: str) -> str:
+    return PUERTA_CONTROL.firma(clave)
+
+
+def _acceso_control_valido(request: Request) -> bool:
+    return PUERTA_CONTROL.abierta(request)
+
+
+def _destino_control_seguro(volver: str) -> str:
+    return PUERTA_CONTROL.destino_seguro(volver)
+
+
 def _pantalla_clave_control(request: Request, *, volver: str | None = None, error: str | None = None):
-    """La puerta de la zona de control: pide la clave y vuelve a la pantalla que se quería ver."""
-    if volver is None:
-        volver = request.url.path + (f"?{request.url.query}" if request.url.query else "")
-    return templates.TemplateResponse(
-        request,
-        "clave_control_puesto.html",
-        {"volver": _destino_control_seguro(volver), "error": error},
-        status_code=401,
-    )
+    return _pantalla_clave(PUERTA_CONTROL, request, volver=volver, error=error)
+
+
+def _clave_gerencia() -> str | None:
+    return PUERTA_GERENCIA.clave()
+
+
+def _firma_acceso_gerencia(clave: str) -> str:
+    return PUERTA_GERENCIA.firma(clave)
+
+
+def _acceso_gerencia_valido(request: Request) -> bool:
+    return PUERTA_GERENCIA.abierta(request)
+
+
+def _destino_gerencia_seguro(volver: str) -> str:
+    return PUERTA_GERENCIA.destino_seguro(volver)
+
+
+def _pantalla_clave_gerencia(request: Request, *, volver: str | None = None, error: str | None = None):
+    return _pantalla_clave(PUERTA_GERENCIA, request, volver=volver, error=error)
+
+
+def _puerta_de_gerencia_para_escribir(request: Request):
+    return _puerta_para_escribir(PUERTA_GERENCIA, request)
 
 
 def _nombre_empresa_para_archivo() -> str:
@@ -937,6 +1051,9 @@ templates.env.globals["TIPO_RETIRO_DEFAULT"] = TIPO_RETIRO_DEFAULT
 # botón Bloquear solo aparece si la clave de esa zona está configurada.
 templates.env.globals["clave_control_activa"] = lambda: _clave_control_puesto() is not None
 templates.env.globals["clave_gerencia_activa"] = lambda: _clave_gerencia() is not None
+templates.env.globals["clave_administracion_activa"] = (
+    lambda: PUERTA_ADMINISTRACION.clave() is not None
+)
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -10745,6 +10862,65 @@ def cargar_importe_costos_fijos_ruta(
         url=f"/gerencia/costos-fijos?{urlencode({'mes': mes_valor.strftime('%Y-%m'), 'aviso': aviso})}",
         status_code=303,
     )
+
+
+# --- LA PUERTA DE ADMINISTRACIÓN, en el PREFIJO y no ruta por ruta ---
+#
+# Gerencia pone su guarda adentro de cada función, y funciona. Acá no se
+# copió eso a propósito: son 24 rutas hoy, y una lista de 24 escrita a mano
+# es una lista que envejece — la ruta 25 se agrega dentro de tres meses, sin
+# guarda, y NO HAY SÍNTOMA: la pantalla anda igual, solo que abierta. Es la
+# familia del `else` que afirma algo, pero al revés: lo que falta no dice
+# nada.
+#
+# Con el prefijo, una ruta nueva bajo /administracion nace cerrada por
+# construcción y hay que sacarla a mano para abrirla. El costo es que la
+# excepción (la propia pantalla de clave) queda explícita acá abajo, que es
+# donde se puede leer.
+#
+# EL MÉTODO DECIDE LA DUREZA, y no una lista de rutas por la misma razón:
+# todo POST bajo /administracion escribe (ajustar stock, anular un pedido,
+# anular un movimiento, cargar el stock inicial), así que sin la variable
+# cargada un POST NO PASA —503 diciendo qué falta— mientras que un GET se
+# abre igual para que un deploy no trabe la consulta. Es la misma asimetría
+# que ya tiene Gerencia, expresada sin enumerar nada.
+RUTAS_ADMINISTRACION_SIN_CLAVE = ("/administracion/clave",)
+
+
+@app.middleware("http")
+async def puerta_de_administracion(request: Request, call_next):
+    ruta = request.url.path
+    if not ruta.startswith(PUERTA_ADMINISTRACION.prefijo):
+        return await call_next(request)
+    if ruta in RUTAS_ADMINISTRACION_SIN_CLAVE:
+        return await call_next(request)
+
+    if request.method == "POST":
+        rechazo = _puerta_para_escribir(PUERTA_ADMINISTRACION, request)
+        if rechazo is not None:
+            return rechazo
+    elif not PUERTA_ADMINISTRACION.abierta(request):
+        return _pantalla_clave(PUERTA_ADMINISTRACION, request)
+    return await call_next(request)
+
+
+@app.get("/administracion/clave")
+def ver_clave_administracion(request: Request, volver: str = "/administracion"):
+    return _pantalla_clave(PUERTA_ADMINISTRACION, request, volver=volver)
+
+
+@app.post("/administracion/clave")
+def ingresar_clave_administracion_ruta(request: Request, clave: str = Form(""),
+                                       volver: str = Form("/administracion")):
+    return _responder_clave(PUERTA_ADMINISTRACION, request, clave, volver)
+
+
+@app.post("/administracion/bloquear")
+def bloquear_administracion_ruta(request: Request):
+    """Borra la cookie en el momento: para no dejar Administración abierta en un celular suelto."""
+    respuesta = RedirectResponse(url="/inicio", status_code=303)
+    respuesta.delete_cookie(PUERTA_ADMINISTRACION.cookie, path=PUERTA_ADMINISTRACION.prefijo)
+    return respuesta
 
 
 @app.get("/administracion")
