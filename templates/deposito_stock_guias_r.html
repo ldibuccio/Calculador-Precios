@@ -46,7 +46,12 @@
     color: #444;
     margin-bottom: 0.25rem;
   }
-  form.filtros input {
+  /* El `select` del artículo va con la MISMA regla que los inputs y no con
+     una propia: escrito aparte, el día que cambie el alto de los campos uno
+     de los tres queda distinto. En 390px un select angosto además corta los
+     nombres largos, que es justo lo que este filtro viene a hacer legible. */
+  form.filtros input,
+  form.filtros select {
     width: 100%;
     padding: 0.65rem;
     margin-bottom: 0.6rem;
@@ -76,6 +81,10 @@
     gap: 0.75rem;
   }
   .numero-guia { font-size: 1.1rem; font-weight: 800; color: #7c3aed; }
+  /* La guía sin ficha se titula en naranja, no en el violeta de las demás:
+     el título ES la señal de que falta asignarla, y acá es donde se asigna.
+     Con el mismo color había que leer el renglón de abajo para verlo. */
+  .numero-guia.sin-ficha { color: #c2410c; }
   .fecha-guia { color: #888; font-size: 0.85rem; white-space: nowrap; }
   .transformacion { font-size: 0.95rem; margin: 0.35rem 0 0; }
   .costo {
@@ -194,6 +203,33 @@
     cursor: pointer;
   }
   .vacio { color: #888; font-style: italic; margin: 0; }
+  /* "No existe ese número" NO es la lista vacía de siempre: es un dato mal
+     tipeado y hay algo que hacer. Va con el naranja de aviso y sin itálica,
+     que acá es la tipografía del "no hay nada, seguí". */
+  .vacio-guia {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 1rem;
+    color: #9a3412;
+    font-size: 0.95rem;
+  }
+  .vacio-guia p { margin: 0 0 0.4rem; }
+  .vacio-guia p:last-child { margin-bottom: 0; }
+  /* El cartel de que el número pisa a los otros filtros. Azul de
+     información: no hay nada mal, se está mostrando otra cosa de la que el
+     formulario de arriba sugiere. */
+  .pisando {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 0.7rem 0.85rem;
+    margin: 0.75rem 0 0;
+    color: #1e40af;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
 </style>
 </head>
 <body>
@@ -212,6 +248,15 @@
 
   <div class="tarjeta">
     <form class="filtros" method="get" action="/administracion/stock/guias-r">
+      {# EL NÚMERO VA PRIMERO porque es la búsqueda más común: se ve "R251"
+         en un extracto o en un movimiento y se quiere ir a esa guía. Los
+         otros dos son para BUSCAR cuando no se sabe el número. #}
+      <div>
+        <label for="guia">Número de guía</label>
+        <input type="text" id="guia" name="guia" value="{{ guia }}"
+               inputmode="numeric" autocomplete="off"
+               placeholder="R251 o 251 — pisa los otros filtros">
+      </div>
       <div class="fila-fechas">
         <div>
           <label for="fecha_desde">Desde</label>
@@ -222,8 +267,32 @@
           <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fecha_hasta }}">
         </div>
       </div>
+      {# EL FILTRO POR ARTÍCULO, y va DEBAJO de las fechas y a todo el ancho:
+         es el nombre más largo de los tres campos y en 390px al lado de una
+         fecha queda ilegible. Un `select` y no un campo de texto porque el
+         catálogo es corto y cerrado — escribir "limon" y no encontrar "Limón"
+         por la tilde es exactamente el problema que ya nos costó caro. #}
+      <div>
+        <label for="articulo_id">Artículo</label>
+        <select id="articulo_id" name="articulo_id">
+          <option value="">Todos los artículos</option>
+          {% for a in articulos %}
+          <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
       <button type="submit" class="boton-buscar">Buscar</button>
     </form>
+
+    {# LO QUE NO SE ESTÁ APLICANDO, DICHO. Con el número puesto, la fecha y
+       el artículo del formulario siguen a la vista y NO se usan: sin este
+       cartel son dos cosas diciendo lo contrario en la misma pantalla, y se
+       pierde la confianza en las dos. #}
+    {% if guia_id and not guia_no_existe %}
+    <p class="pisando">Mostrando <strong>la guía R{{ guia_id }}</strong>, venga de la fecha que venga.
+      El rango y el artículo no se están aplicando.
+      <a href="/administracion/stock/guias-r">Volver a la lista</a></p>
+    {% endif %}
     <p class="ayuda">El costo del reproceso vive acá y <strong>no toca la cotización</strong> (que usa el costo de compra de la mañana). Todo el costo va a la primera; segunda y merma valen cero. Corregir una guía es anularla y cargarla de nuevo.</p>
   </div>
 
@@ -239,11 +308,35 @@
   </div>
   {% endif %}
 
-  {% if guias %}
+  {% if guia_no_existe %}
+  {# La lista vacía se ve IGUAL en los dos casos, y significan cosas
+     opuestas: "ese número no existe" manda a revisar lo que se tipeó, y
+     "no hay ninguna en el rango" manda a ampliar la fecha. Sin separarlos,
+     un dígito de más se lee como que la guía no está cargada. #}
+  <div class="vacio-guia">
+    <p><strong>No existe ninguna guía R{{ guia_id }}.</strong> Revisá el número — no es que
+      esté fuera del rango de fechas: se buscó en todas.</p>
+    <p><a href="/administracion/stock/guias-r">Volver a la lista</a></p>
+  </div>
+  {% elif guias %}
   {% for g in guias %}
   <div class="tarjeta {% if g.anulado_el %}anulada{% endif %}">
     <div class="encabezado-guia">
-      <span class="numero-guia">Guía R{{ g.id }} — {{ g.articulo_nombre }}</span>
+      {# EL ARTÍCULO MÁS LA CAJA, del mismo namer que el Remanente y las
+         otras tres pantallas (`_titulo_de_porcion`). Antes decía el
+         artículo pelado y dos guías R del mismo artículo para fichas
+         distintas se veían idénticas en la lista.
+
+         Las sin ficha dicen "FALTA LA FICHA" y no el artículo solo: el
+         artículo solo las confunde con las asignadas, y acá es donde se
+         asignan — el título tiene que ser la señal, no solo el renglón de
+         abajo.
+
+         EL TEXTO LO ARMA LA RUTA, no este `if`. Escrito acá serían dos
+         lugares diciendo lo mismo y el día que cambie uno el otro se
+         queda — que es la regla que este mismo cambio viene a cumplir.
+         Acá solo se lo pinta. #}
+      <span class="numero-guia {% if not g.ficha_id %}sin-ficha{% endif %}">Guía R{{ g.id }} — {{ g.porcion_nombre }}</span>
       <span class="fecha-guia">{{ g.fecha_operacion|fecha_corta }}{% if g.anulado_el %} <span class="marca-anulado">ANULADA</span>{% endif %}</span>
     </div>
     <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
@@ -283,6 +376,8 @@
     <form class="asignar" method="post" action="/administracion/stock/guias-r/{{ g.id }}/asignar-ficha">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+      <input type="hidden" name="guia" value="{{ guia }}">
       {# "Sin asignar" en su propio grupo, no al lado de las cajas: al
          mismo nivel se vuelve el default de hecho. Sigue siempre
          disponible — el que no sabe tiene que poder decirlo. #}
@@ -375,6 +470,8 @@
     <form method="post" action="/administracion/stock/guias-r/{{ g.id }}/completar-costo" style="display: inline;">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+      <input type="hidden" name="guia" value="{{ guia }}">
       <button type="submit" class="boton-completar">Completar costo</button>
     </form>
     {% endif %}
@@ -383,6 +480,8 @@
           onsubmit="return confirm('¿Anular la guía R{{ g.id }}? Lo tomado vuelve a sus lotes y la primera sale del stock. Queda registrada como anulada.');">
       <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
       <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+      <input type="hidden" name="guia" value="{{ guia }}">
       <button type="submit" class="boton-anular">Anular guía</button>
     </form>
     {% endif %}

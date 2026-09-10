@@ -192,6 +192,9 @@
   }
   .espera:first-of-type { border-top: none; }
   .espera .nombre { font-size: 1.05rem; font-weight: 700; display: block; }
+  /* El alcance va con el nombre y en chico: es una aclaración, no un
+     segundo título. Sin peso propio se lee como parte del renglón. */
+  .espera .alcance { font-size: 0.85rem; font-weight: 500; opacity: 0.75; }
   .espera .cuantos { font-size: 0.95rem; }
   .espera .ir { color: #1e40af; font-weight: 700; text-decoration: underline; }
   .totales {
@@ -297,13 +300,32 @@
      sin ella), así que nada diría que falta cargar un papel. #}
   {% if esperando_guia_r %}
   <div class="bloque-espera">
-    <h2>Armados esperando su guía R</h2>
-    <p class="intro">Se armaron cajas y salieron, pero la guía R que las explica todavía no está
-      cargada. <strong>No falta mercadería:</strong> el cajón sigue entero en el galpón y estos
+    <h2>Armados esperando una guía R del artículo</h2>
+    {# DICE "DEL ARTÍCULO" Y EL RENGLÓN LO REPITE, y las dos cosas son la
+       corrección del 10/09: decía "su guía R", se leyó como "la guía R de
+       esa ficha", y mandó a revisar un papel que ya estaba cargado.
+
+       Las cajas que produce una guía R NO quedan atadas a la ficha para la
+       que se armaron: entran a un pool del ARTÍCULO y las consume cualquier
+       ficha (mecanismo 3 del doc). Así que una ficha puede cerrar exacta,
+       con su guía R cargada, y aparecer igual acá porque el pool del
+       artículo quedó corto por OTRA. Lo que falta es una guía R del
+       artículo — puede ser de cualquier ficha, y puede ser una que ya está
+       cargada con la fecha equivocada. #}
+    <p class="intro">Se armaron cajas y salieron, pero al artículo le falta una guía R que las
+      produzca. <strong>No falta mercadería:</strong> el cajón sigue entero en el galpón y estos
       bultos se acomodan solos apenas entre el papel — con la fecha del día en que se armaron.</p>
+    <p class="intro"><strong>Puede no ser la ficha que estás mirando.</strong> Las cajas que arma
+      una guía R no quedan atadas a la ficha para la que se armaron: sirven para cualquier ficha
+      del artículo. Una ficha puede cerrar exacta y aparecer acá porque falta la guía R de otra.
+      Y si la guía R está cargada, mirale la fecha: <strong>una guía R fechada después del armado
+      tampoco lo cubre</strong>.</p>
     {% for p in porciones_esperando %}
     <a class="espera" href="/administracion/stock/sistema/{{ p.articulo_id }}">
-      <span class="nombre">{{ p.nombre }}</span>
+      {# El nombre es el del ARTÍCULO (sale de `articulos.nombre`), no el de
+         una porción: en esta pantalla todo lo demás está nombrado por
+         porción, y sin decirlo este renglón se lee como una pila. #}
+      <span class="nombre">{{ p.nombre }} <span class="alcance">(todo el artículo)</span></span>
       <span class="cuantos">{{ p.bultos|numero }} bultos esperando desde el
         {{ p.mas_viejo.strftime('%d/%m') }} · <span class="ir">ver de qué lotes salió</span></span>
     </a>

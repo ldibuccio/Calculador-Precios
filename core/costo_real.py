@@ -85,7 +85,25 @@ ETIQUETAS_MOTIVO_REAL = {
     # un cajón sin pasar por una guía R. El nombre dice QUÉ HACER y no
     # describe un estado: el que lo lee tiene que ir a cargar el papel, no a
     # buscar mercadería que no falta.
-    "falta_cargar_guia_r": "Falta cargar la guía R que arma estas cajas (la mercadería salió, el papel no está)",
+    #
+    # Y DICE "DE ESTE ARTÍCULO", que es la corrección del 10/09 y costó una
+    # tarde. Los lotes del FIFO NO tienen ficha (mecanismo 3 de
+    # docs/el_deficit_de_la_ficha_y_el_sin_lote_del_fifo.md): las cajas que
+    # produce una guía R entran a un pool del ARTÍCULO y las consume
+    # cualquier ficha. Así que lo que falta es una guía R del artículo, no
+    # de la ficha que el que mira tiene abierta — y esa ficha puede tener
+    # la suya cargada y cerrar exacta. Decir "la guía R que arma estas
+    # cajas" mandaba a revisar un papel que ya estaba.
+    #
+    # "CON FECHA DE ESE DÍA O ANTERIOR" es la otra mitad, y no sobra:
+    # `lote_posterior_a_la_salida` compara FECHAS, así que una guía R
+    # cargada con fecha posterior al armado tampoco lo cubre. Ahí no falta
+    # cargar nada — falta corregir la fecha—, y sin esta frase el que la
+    # tiene cargada y fechada mal la busca sin encontrarla.
+    "falta_cargar_guia_r": (
+        "Falta una guía R DE ESTE ARTÍCULO con fecha de ese día o anterior "
+        "(la mercadería salió y el papel que la arma no está, o está fechado después)"
+    ),
     "devolucion_sin_valor": "Devolución vinculada que no se pudo valuar (renglón sin kilaje o sin precio a la fecha del pedido)",
     "rechazo_sin_costo": "Rechazo mandado a segunda sin costo congelado (no se puede valuar la pérdida)",
 }

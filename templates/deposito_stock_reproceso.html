@@ -254,20 +254,20 @@
       <p class="ayuda-ficha" id="ayuda-sin-asignar"></p>
 
       <label for="bultos_tomados">Bultos que tomé</label>
-      <input type="number" id="bultos_tomados" name="bultos_tomados" min="0.01" step="0.01" required
+      <input type="number" id="bultos_tomados" name="bultos_tomados" min="1" step="1" inputmode="numeric" required
              placeholder="¿Cuántos saqué del stock?" value="{{ precarga.bultos_tomados or "" }}">
 
       <label for="bultos_primera">Cajas armadas (primera)</label>
-      <input type="number" id="bultos_primera" name="bultos_primera" min="0" step="0.01"
+      <input type="number" id="bultos_primera" name="bultos_primera" min="0" step="1" inputmode="numeric"
              placeholder="¿Cuántas cajas armé?" value="{{ precarga.bultos_primera or "" }}">
       <p class="ayuda-ficha" id="ayuda-ficha"></p>
 
       <label for="bultos_segunda">Bultos de segunda</label>
-      <input type="number" id="bultos_segunda" name="bultos_segunda" min="0" step="0.01"
+      <input type="number" id="bultos_segunda" name="bultos_segunda" min="0" step="1" inputmode="numeric"
              placeholder="0 si no hubo" value="{{ precarga.bultos_segunda or "" }}">
 
       <label for="bultos_merma">Bultos de merma</label>
-      <input type="number" id="bultos_merma" name="bultos_merma" min="0" step="0.01"
+      <input type="number" id="bultos_merma" name="bultos_merma" min="0" step="1" inputmode="numeric"
              placeholder="0 si no se tiró nada" value="{{ precarga.bultos_merma or "" }}">
 
       <label for="fecha">Fecha del reproceso</label>

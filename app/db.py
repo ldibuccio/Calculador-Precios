@@ -1243,7 +1243,14 @@ def buscar_compras(
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
                        COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
                        c.importe, c.sena, c.tipo_retiro,
-                       EXISTS (SELECT 1 FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_fotos
+                       EXISTS (SELECT 1 FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_comanda,
+                       -- LA SEGUNDA FOTO, y cuelga de la COMPRA y no de la
+                       -- guía: la comanda es el papel del proveedor y es una
+                       -- por guía (varios artículos comparten el archivo); el
+                       -- pesaje es de ESTE artículo sobre la balanza y no se
+                       -- comparte nunca. Por eso son dos EXISTS con dos
+                       -- claves distintas y no un `or`.
+                       EXISTS (SELECT 1 FROM fotos_recepcion fr WHERE fr.compra_id = c.id) AS tiene_pesaje
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
@@ -7712,6 +7719,14 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        m.stock_sistema, m.creado_en, m.anulado_el,
                        a.nombre AS articulo_nombre, cl.nombre AS cliente_nombre,
                        m.pedido_renglon_id, m.destino_rechazo, m.bultos_segunda, m.lote_tipo,
+                       -- LA FICHA, y faltaba: `movimientos_stock` la ganó con
+                       -- la merma de cajas armadas y este lector —que es el
+                       -- que ARMA el renglón de la pantalla— se quedó sin
+                       -- ella, así que una merma de la caja de un cliente se
+                       -- listaba igual que una de los sueltos. Es el
+                       -- corolario 3: al agregar un campo hay que grepear
+                       -- quién CONSTRUYE la estructura, no quién la nombra.
+                       m.ficha_id,
                        p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido,
                        -- CUÁNTAS FOTOS TIENE, no si tiene: el listado lo
                        -- muestra como "sin foto" en gris cuando da 0, y eso
@@ -9066,7 +9081,8 @@ def anular_renglon_stock_inicial(clase: str, renglon_id: int) -> None:
         conexion.close()
 
 
-def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
+def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
+                                guia_id=None) -> list[dict]:
     """Las guías R del rango (por fecha_operacion), anuladas incluidas y marcadas, con sus consumos adentro.
 
     Cada guía trae "consumos": de qué lote salió cada bulto, con la guía
@@ -9076,6 +9092,24 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
     Y trae la FICHA a la que fueron las cajas de primera, con su nombre
     para mostrar. ficha_id en NULL = sin asignar: esta pantalla es donde
     se completa, así que esas guías tienen que aparecer, no esconderse.
+
+    `articulo_id` opcional acota a UN artículo. Filtra sobre `rp.articulo_id`
+    —el artículo de la guía— y NO sobre los consumos: una guía de Limón que
+    tomó cajones de Limón es de Limón, y buscar "Limón" tiene que traer esa
+    guía entera, no las guías de otros artículos que tocaron un lote suyo.
+    Los dos criterios son defendibles y hacen falta los dos algún día; el
+    que contesta "mostrame las de Limón" es éste.
+
+    `guia_id` PISA A LOS OTROS DOS, y eso se decide acá y no en la pantalla.
+    El que escribe "R251" ya sabe qué guía quiere: el rango de fechas y el
+    artículo son ayudas para BUSCAR, y una vez que hay un id no hay nada que
+    buscar. Que el default de 7 días dejara afuera la guía pedida es la peor
+    forma de fallar que tiene un filtro por id — devuelve vacío, y el vacío
+    se lee como "esa guía no existe".
+
+    Va en el WHERE y no como un filtro más al lado: con los tres `AND`, la
+    guía R251 del 02/09 buscada dentro del rango de esta semana daría cero
+    filas y las dos condiciones estarían "bien" por separado.
     """
     conexion = obtener_conexion()
     try:
@@ -9102,10 +9136,15 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id
                 LEFT JOIN fichas_logistica f ON f.id = rp.ficha_id
                 LEFT JOIN articulos fa ON fa.id = f.articulo_id
-                WHERE rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s
+                WHERE {recorte}
                 ORDER BY rp.fecha_operacion DESC, rp.id DESC
-                """,
-                (fecha_desde, fecha_hasta),
+                """.format(recorte=(
+                    "rp.id = %s" if guia_id else
+                    "rp.fecha_operacion >= %s AND rp.fecha_operacion <= %s"
+                    + (" AND rp.articulo_id = %s" if articulo_id else "")
+                )),
+                (guia_id,) if guia_id else
+                (fecha_desde, fecha_hasta) + ((articulo_id,) if articulo_id else ()),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             guias = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]

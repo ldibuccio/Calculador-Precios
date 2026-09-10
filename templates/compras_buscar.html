@@ -142,6 +142,14 @@
   .boton-detalle { background: #0891b2; }
   .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; cursor: pointer; }
   .boton-ver-foto { background: #6b7280; }
+  /* La foto que falta: se ve, no se puede tocar, y no compite con las que sí
+     están. Gris claro y borde punteado — un botón lleno diría "apretame". */
+  .boton-sin-foto {
+    background: #f3f4f6;
+    color: #9ca3af;
+    border: 1px dashed #d1d5db;
+    cursor: default;
+  }
   .form-eliminar { display: inline; }
   #boton-borrar-seleccionadas {
     margin-top: 0;
@@ -260,8 +268,28 @@
                 {# Los filtros viajan en la URL de editar para que Guardar/Volver vuelvan a ESTA búsqueda. #}
                 <a class="boton boton-editar" href="/compras/{{ c.id }}/editar?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Editar</a>
                 <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle">Detalle</a>
-                {% if c.tiene_fotos %}
-                <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver foto</a>
+                {# LAS DOS FOTOS, CADA UNA CON SU NOMBRE. Son de cosas
+                   distintas —la comanda es el papel del proveedor, el pesaje
+                   es la mercadería sobre la balanza— y hasta el 10/09 acá
+                   había un solo "Ver foto" que abría la comanda: la de la
+                   balanza se cargaba y no aparecía por ningún lado en esta
+                   pantalla. La cuenta ganó un término y el que lo lee no se
+                   enteró.
+
+                   Y LA QUE FALTA SE VE, en gris y sin link, mismo criterio
+                   que el "sin foto" de Movimientos: con un solo botón, "no
+                   está la del pesaje" y "nunca hubo pesaje" se veían igual
+                   —las dos, un botón—, y esta es la pantalla desde donde se
+                   audita. Un hueco que no se ve no se llena nunca. #}
+                {% if c.tiene_comanda %}
+                <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Comanda</a>
+                {% else %}
+                <span class="boton boton-sin-foto">Sin comanda</span>
+                {% endif %}
+                {% if c.tiene_pesaje %}
+                <a class="boton boton-ver-foto" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank" rel="noopener">Pesaje</a>
+                {% else %}
+                <span class="boton boton-sin-foto">Sin pesaje</span>
                 {% endif %}
                 <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
                       onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">

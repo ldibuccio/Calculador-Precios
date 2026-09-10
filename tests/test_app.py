@@ -1,6 +1,8 @@
 import base64
 import io
+import os
 import re
+import urllib.parse
 from contextlib import ExitStack
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -2206,28 +2208,45 @@ def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
     assert 'class="boton boton-eliminar" id="boton-borrar-seleccionadas"' in respuesta.text
 
 
-def test_ver_buscar_compras_muestra_editar_y_ver_foto_solo_con_foto():
+def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
+    """Comanda y pesaje son de cosas distintas y hasta el 10/09 había un solo
+    "Ver foto" que abría la comanda: la de la balanza no aparecía acá.
+
+    LAS CUATRO COMBINACIONES, no dos. Con solo "tiene las dos" y "no tiene
+    ninguna", una pantalla que mostrara la comanda en el lugar del pesaje
+    pasaría: los dos casos se ven iguales. Las cruzadas —una sí y la otra
+    no— son las únicas que separan un botón del otro.
+    """
     compras = [
-        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], tiene_fotos=True),
-        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], tiene_fotos=False),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], id=1, tiene_comanda=True, tiene_pesaje=True),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], id=2, tiene_comanda=True, tiene_pesaje=False),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0], id=3, tiene_comanda=False, tiene_pesaje=True),
+        dict(COMPRAS_BUSQUEDA_DE_PRUEBA[1], id=4, tiene_comanda=False, tiene_pesaje=False),
     ]
     with (
         patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
         patch("app.main.buscar_compras", return_value=compras),
     ):
-        respuesta = cliente.get("/compras/buscar")
+        texto = cliente.get("/compras/buscar").text
 
-    assert respuesta.text.count(">Editar<") == 2
-    assert respuesta.text.count("Ver foto") == 1
-    assert 'href="/compras/1/foto"' in respuesta.text
-    assert 'href="/compras/2/foto"' not in respuesta.text
-    assert 'href="/compras/1/editar?' in respuesta.text
-    assert 'href="/compras/2/editar?' in respuesta.text
-    # El botón Detalle aparece siempre, al lado de Editar, sin importar la foto.
-    assert respuesta.text.count(">Detalle<") == 2
-    assert 'href="/compras/1/detalle"' in respuesta.text
-    assert 'href="/compras/2/detalle"' in respuesta.text
+    # La comanda cuelga de la GUÍA; el pesaje, de la COMPRA. Dos rutas
+    # distintas, y por eso el assert pide la URL entera y no el texto: con
+    # el texto solo, las dos etiquetas apuntando a la misma ruta pasarían.
+    assert 'href="/compras/1/foto" target="_blank" rel="noopener">Comanda<' in texto
+    assert 'href="/deposito/recepcion/1/foto-balanza/ver" target="_blank" rel="noopener">Pesaje<' in texto
+    # La que falta SE VE, en gris y sin link.
+    assert 'href="/compras/2/foto"' in texto and ">Sin pesaje<" in texto
+    assert 'href="/deposito/recepcion/3/foto-balanza/ver"' in texto and ">Sin comanda<" in texto
+    # Y la que no tiene ninguna dice las dos cosas, no se queda muda.
+    assert texto.count(">Sin comanda<") == 2
+    assert texto.count(">Sin pesaje<") == 2
+    assert 'href="/compras/4/foto"' not in texto
+    assert 'href="/deposito/recepcion/4/foto-balanza/ver"' not in texto
+
+    # Lo de siempre, que no se movió.
+    assert texto.count(">Editar<") == 4
+    assert texto.count(">Detalle<") == 4
 
 
 def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
@@ -3043,6 +3062,7 @@ def test_ver_detalle_compra_muestra_toda_la_historia():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3063,6 +3083,7 @@ def test_ver_detalle_compra_marca_la_diferencia_de_cajones_retirados():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3076,6 +3097,7 @@ def test_ver_detalle_compra_marca_la_diferencia_de_recepcion():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3117,6 +3139,7 @@ def test_el_detalle_dice_que_NO_hay_foto_de_balanza_cuando_no_la_hay():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3133,6 +3156,7 @@ def test_ver_detalle_compra_con_fotos_muestra_la_galeria_de_la_guia():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3151,6 +3175,7 @@ def test_ver_detalle_compra_inexistente_da_404():
     with (
         patch("app.main.obtener_detalle_compra", return_value=None),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/999/detalle")
 
@@ -3172,6 +3197,7 @@ def test_ver_detalle_compra_ingreso_directo_muestra_etiqueta_propia():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3184,6 +3210,7 @@ def test_ver_detalle_compra_recepcionada_muestra_boton_corregir_recepcion():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3197,6 +3224,7 @@ def test_ver_detalle_compra_no_recepcionada_no_muestra_boton_corregir_recepcion(
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3210,6 +3238,7 @@ def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3223,6 +3252,7 @@ def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -3235,11 +3265,163 @@ def test_ver_detalle_compra_muestra_el_aviso_cuando_viene_en_la_url():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle?aviso=Se+corrigi%C3%B3+la+recepci%C3%B3n+de+esta+compra.")
 
     assert respuesta.status_code == 200
     assert '<div class="aviso">Se corrigió la recepción de esta compra.</div>' in respuesta.text
+
+
+def test_deposito_no_manda_a_ADMINISTRACION_sin_avisar():
+    """Un control de acceso se vuelve peor que no tenerlo el día que traba al
+    operario en algo cotidiano: la clave termina pegada en la pared.
+
+    Dos cosas se sacaron por eso: el botón "Buscar Pedidos" de la pantalla de
+    pedidos de Depósito, y el `barra_sector` de las dos pantallas de CARGA de
+    pedido —que las sirve `/deposito/...` pero declaraban sector
+    "administracion", así que su barra llevaba a una clave en medio de la
+    carga.
+    """
+    for plantilla in ("templates/deposito_pedido_cargar.html",
+                      "templates/deposito_pedido_revision.html"):
+        cuerpo = open(plantilla, encoding="utf-8").read()
+        assert '{% set barra_sector = "deposito" %}' in cuerpo, plantilla
+        assert "administracion" not in cuerpo, plantilla
+
+    cargar = open("templates/deposito_pedido.html", encoding="utf-8").read()
+    assert "/administracion" not in cargar, "Depósito no linkea a Administración"
+
+
+def test_la_puerta_de_administracion_cierra_TODO_el_prefijo():
+    """NO una lista de rutas: el PREFIJO. Son 24 rutas hoy, y una lista de 24
+    escrita a mano envejece — la ruta 25 se agrega en tres meses sin guarda y
+    NO HAY SÍNTOMA, porque la pantalla anda igual, solo que abierta.
+
+    Este test recorre la tabla de rutas de la app de verdad, así que una ruta
+    nueva entra sola. Copiarle acá la lista sería el mismo error que la
+    guarda enumerada.
+    """
+    from app.main import app as aplicacion, PUERTA_ADMINISTRACION, RUTAS_ADMINISTRACION_SIN_CLAVE
+
+    cliente.cookies.clear()
+    rutas = sorted({
+        r.path for r in aplicacion.routes
+        if getattr(r, "path", "").startswith(PUERTA_ADMINISTRACION.prefijo)
+        and "{" not in r.path
+        and r.path not in RUTAS_ADMINISTRACION_SIN_CLAVE
+    })
+    assert len(rutas) >= 15, "se perdieron rutas: el barrido no está mirando lo que cree"
+
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        for ruta in rutas:
+            respuesta = cliente.get(ruta)
+            assert respuesta.status_code == 401, ruta
+            assert "pide clave" in respuesta.text, ruta
+
+
+def test_la_puerta_de_administracion_SIN_VARIABLE_deja_ver_pero_no_escribir():
+    """La asimetría de siempre, y el método la decide en vez de una lista:
+    todo POST bajo /administracion escribe, así que sin la variable cargada
+    NO PASA —503 diciendo qué falta—; un GET se abre igual para que un deploy
+    no trabe la consulta."""
+    cliente.cookies.clear()
+    with (
+        patch.dict(os.environ, {"CLAVE_ADMINISTRACION": ""}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.crear_movimiento_stock") as mock_escribir,
+    ):
+        assert cliente.get("/administracion/stock/ajustar").status_code == 200
+        respuesta = cliente.post("/administracion/stock/ajustar",
+                                 data={"articulo_id": "1", "cantidad": "5", "motivo": "x"})
+
+    assert respuesta.status_code == 503
+    assert "CLAVE_ADMINISTRACION" in respuesta.text, "tiene que decir QUÉ variable falta"
+    mock_escribir.assert_not_called()
+
+
+def test_la_puerta_de_administracion_NO_la_abre_la_cookie_de_gerencia():
+    """Cada zona firma con un MENSAJE propio, así que la cookie de una jamás
+    valida en otra — aunque algún día las dos claves coincidieran por
+    descuido. Es la razón por la que el mensaje es parte de la puerta y no
+    una constante compartida."""
+    from app.main import PUERTA_ADMINISTRACION, PUERTA_GERENCIA
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "misma", "CLAVE_GERENCIA": "misma"}):
+        # La MISMA clave en las dos, que es el caso peor.
+        cliente.cookies.set(PUERTA_GERENCIA.cookie, PUERTA_GERENCIA.firma("misma"))
+        respuesta = cliente.get("/administracion")
+        cliente.cookies.clear()
+    assert respuesta.status_code == 401
+    assert PUERTA_ADMINISTRACION.firma("misma") != PUERTA_GERENCIA.firma("misma")
+
+
+def test_la_puerta_de_administracion_vuelve_A_DONDE_IBA_y_no_a_cualquier_lado():
+    """El `volver` post-clave solo puede ser una pantalla de la zona. Sin eso
+    la puerta sirve de redirector abierto: un link con `?volver=` a cualquier
+    lado, firmado por la confianza de nuestro dominio."""
+    from app.main import PUERTA_ADMINISTRACION
+
+    assert PUERTA_ADMINISTRACION.destino_seguro("/administracion/ingresos") == "/administracion/ingresos"
+    assert PUERTA_ADMINISTRACION.destino_seguro("https://otra-cosa.com") == "/administracion"
+    assert PUERTA_ADMINISTRACION.destino_seguro("/gerencia/rentabilidad") == "/administracion"
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        respuesta = cliente.get("/administracion/stock/cotejo")
+        assert 'value="/administracion/stock/cotejo"' in respuesta.text
+
+
+def test_la_puerta_de_administracion_y_la_de_gerencia_son_LA_MISMA_mecanica():
+    """Tres zonas con clave, UNA implementación. Escrito tres veces, el día
+    que se arregle algo del HMAC dos quedan viejas y las dos siguen dejando
+    pasar — no hay síntoma.
+
+    Se compara la función, no el resultado: dos copias idénticas hoy dan el
+    mismo hash y este test pasaría igual (es el corolario 16: una copia y una
+    referencia se ven iguales hasta que se mira el objeto).
+    """
+    from app.main import PUERTA_ADMINISTRACION, PUERTA_CONTROL, PUERTA_GERENCIA, Puerta
+
+    for puerta in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION):
+        assert type(puerta) is Puerta
+        assert puerta.firma.__func__ is Puerta.firma
+        assert puerta.abierta.__func__ is Puerta.abierta
+    # Y los mensajes son DISTINTOS entre sí, que es lo que las separa.
+    mensajes = {p.mensaje for p in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)}
+    assert len(mensajes) == 3
+    claves = {p.env_var for p in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)}
+    assert len(claves) == 3, "tres zonas, tres variables: una sola clave las junta a todas"
+
+
+@pytest.fixture(autouse=True)
+def _puerta_de_administracion_abierta(request):
+    """La suite corre Administración como la cruza una persona: con la clave.
+
+    Desde el 10/09 todo `/administracion` está detrás de clave, y los POST
+    además tienen default duro: sin la variable cargada devuelven 503. Estos
+    tests prueban LAS PANTALLAS, así que entran con la clave puesta y su
+    cookie — igual que la fixture de Gerencia de acá abajo, que es el mismo
+    caso y el molde del que sale ésta.
+
+    EL RIESGO DE UNA FIXTURE ASÍ, dicho para que no muerda: abre la puerta
+    para toda la suite, así que si la puerta se rompiera, estos tests no se
+    enterarían. Por eso los tests DE LA PUERTA se excluyen por nombre y se la
+    cruzan solos: son los únicos que prueban el control, y con la cookie
+    puesta estarían probando la pantalla.
+    """
+    if "puerta_de_administracion" in request.node.name.lower():
+        yield
+        return
+    from app.main import PUERTA_ADMINISTRACION
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        cliente.cookies.set(PUERTA_ADMINISTRACION.cookie,
+                            PUERTA_ADMINISTRACION.firma("admin-secreta"))
+        try:
+            yield
+        finally:
+            cliente.cookies.delete(PUERTA_ADMINISTRACION.cookie)
 
 
 @pytest.fixture(autouse=True)
@@ -3261,8 +3443,10 @@ def _puerta_de_gerencia_abierta(request):
     # La lista de dependencias sale de la base: por default, lote sin usar.
     # Los tests que la miran la parchean ellos con lo que necesitan.
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.dependencias_del_lote_de_compra", return_value=None),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
     ):
         cliente.cookies.set("acceso_gerencia", _firma_acceso_gerencia("secreta"))
@@ -3294,6 +3478,7 @@ def test_una_compra_CARGADA_CON_FECHA_ANTERIOR_lo_dice_en_su_detalle():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         cuerpo = cliente.get("/compras/30/detalle").text
 
@@ -3311,6 +3496,7 @@ def test_una_compra_NORMAL_no_dice_nada_de_fecha_anterior():
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         cuerpo = cliente.get("/compras/30/detalle").text
 
@@ -3641,7 +3827,7 @@ def test_el_ingreso_retroactivo_pide_la_clave_de_GERENCIA():
     fechado para atrás puede cambiar a qué lote se atribuyeron armados
     posteriores, o sea el costo de días ya mirados."""
     cliente.cookies.clear()
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         respuesta = cliente.post(
             "/gerencia/compras/ingreso-retroactivo",
             data={"proveedor_id": "1", "articulo_id": "1", "cantidad_cajones": "10",
@@ -3656,7 +3842,7 @@ def test_el_ingreso_retroactivo_crea_la_compra_con_la_FECHA_ELEGIDA_y_importe_CE
     """El caso real del 09/09: 10 bultos de Limón que entraron el 07/09 sin
     cargo y nunca se cargaron."""
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
                                                          "unidad_compra": "kilo"}),
         patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
@@ -3700,7 +3886,7 @@ def test_el_ingreso_retroactivo_NO_INVENTA_la_guarda_del_corte_la_traduce():
     assert "fecha_corte(" not in codigo
 
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
                                                          "unidad_compra": "kilo"}),
         patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
@@ -3729,7 +3915,7 @@ def test_el_importe_VACIO_sigue_siendo_sin_precio_y_no_cero():
     """Los dos significados del vacío no se pueden juntar: NULL va a la lista
     de pendientes de precio, 0 dice que vino sin cargo."""
     with (
-        patch("app.main._clave_gerencia", return_value="secreta"),
+        patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}),
         patch("app.main.obtener_articulo", return_value={"id": 7, "nombre": "EJEMPLO Uno",
                                                          "unidad_compra": "kilo"}),
         patch("app.main.obtener_proveedor", return_value={"id": 3, "nombre": "PROV EJEMPLO"}),
@@ -3762,6 +3948,7 @@ def test_ver_corregir_recepcion_compra_muestra_formulario_precargado():
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -3787,6 +3974,7 @@ def test_ver_corregir_recepcion_compra_por_unidad_precarga_por_cajon_no_el_total
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -3803,6 +3991,7 @@ def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formula
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -3815,6 +4004,7 @@ def test_ver_corregir_recepcion_compra_inexistente_da_404():
     with (
         patch("app.main.obtener_detalle_compra", return_value=None),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/999/corregir-recepcion")
 
@@ -3846,6 +4036,7 @@ def test_ver_corregir_recepcion_muestra_los_campos_de_rechazo_parcial_precargado
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
@@ -5617,6 +5808,7 @@ def test_ver_foto_compra_sin_fotos_en_la_guia_da_404():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/foto")
 
@@ -5670,6 +5862,7 @@ def test_borrar_foto_de_guia_borra_el_archivo_solo_si_nadie_mas_lo_usa():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.borrar_foto_guia", return_value="2026/x.jpg") as mock_borrar,
         patch("app.main.borrar_foto_comanda") as mock_storage,
     ):
@@ -5691,6 +5884,7 @@ def test_borrar_foto_ajena_a_la_guia_da_404_y_no_borra_nada():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.borrar_foto_guia") as mock_borrar,
     ):
         respuesta = cliente.post("/compras/30/fotos/999/borrar", data={"volver": "editar"})
@@ -5704,6 +5898,7 @@ def test_ver_foto_de_guia_valida_que_la_foto_sea_de_esa_guia():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/fotos/999/ver")
 
@@ -5723,6 +5918,7 @@ def test_ver_foto_compra_error_de_storage_da_500():
     with (
         patch("app.main.obtener_compra", return_value=compra_con_guia),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_url_foto", side_effect=RuntimeError("Supabase Storage no pudo firmar la URL (404)")),
     ):
         respuesta = cliente.get("/compras/30/foto")
@@ -10201,12 +10397,12 @@ def test_auditoria_tiene_sector_propio_y_la_url_vieja_redirige():
 def test_gerencia_sin_clave_configurada_no_tiene_puerta():
     # Sin CLAVE_GERENCIA cargada en Railway no hay puerta: el deploy no
     # traba nada hasta que la variable exista.
-    with patch("app.main._clave_gerencia", return_value=None):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": ""}):
         assert cliente.get("/gerencia").status_code == 200
 
 
 def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         for url in (
             "/gerencia",
             "/gerencia/rentabilidad",
@@ -10232,7 +10428,7 @@ def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
 
 def test_clave_gerencia_correcta_deja_cookie_y_bloquear_la_corta():
     try:
-        with patch("app.main._clave_gerencia", return_value="secreta"):
+        with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
             respuesta = cliente.post(
                 "/gerencia/clave",
                 data={"clave": "secreta", "volver": "/gerencia/rentabilidad-real"},
@@ -10256,7 +10452,7 @@ def test_clave_gerencia_correcta_deja_cookie_y_bloquear_la_corta():
 
 
 def test_clave_gerencia_incorrecta_no_entra_y_el_destino_es_solo_gerencia():
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         respuesta = cliente.post("/gerencia/clave", data={"clave": "nope", "volver": "/gerencia"})
         assert respuesta.status_code == 401
         assert "Clave incorrecta" in respuesta.text
@@ -10651,6 +10847,8 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         candado.return_value.__enter__.return_value = True
         resumen = recalcular(ALERTAS)
@@ -11609,6 +11807,7 @@ def test_editar_compra_muestra_las_fotos_de_la_guia_con_subir_y_borrar():
     with (
         patch("app.main.obtener_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=fotos),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
     ):
         respuesta = cliente.get("/compras/30/editar?fecha_desde=2026-08-01")
@@ -13131,8 +13330,15 @@ def test_hub_envases_puesto_tiene_el_boton_de_ajustar_stock():
 
 
 def _con_clave_control(valor="1234"):
-    """La clave se lee SIEMPRE por _clave_control_puesto (un solo lugar): patchear ahí es patchear el origen."""
-    return patch("app.main._clave_control_puesto", return_value=valor)
+    """La clave sale de la VARIABLE de entorno, así que se parchea ahí.
+
+    Antes parcheaba `_clave_control_puesto`, que también era "el origen"
+    pero del lado de adentro: el día que las tres puertas se unificaron en
+    una sola mecánica, la función quedó siendo un envoltorio y el parche
+    dejó de tener efecto sin que cambiara ninguna regla. La variable es el
+    origen que no depende de cómo esté escrito el código.
+    """
+    return patch.dict(os.environ, {"CLAVE_CONTROL_PUESTO": valor or ""})
 
 
 def _cliente_destrabado(clave="1234"):
@@ -13579,15 +13785,18 @@ def test_administracion_tiene_cargar_pedido_en_la_tarjeta_de_pedidos():
     assert "Buscar Pedidos" in pedidos
 
 
-def test_la_pantalla_de_cargar_pedido_vuelve_a_ADMINISTRACION():
-    # Si el botón se muda pero la barra no, el atrás devuelve a un Depósito
-    # donde ese botón ya no está — el mismo resto que dejó la fase 2.
+def test_la_pantalla_de_cargar_pedido_vuelve_a_DEPOSITO():
+    """CAMBIÓ EL 10/09 y este test cambió con él: antes su barra volvía a
+    Administración —la pantalla la sirve `/deposito/...` pero declaraba ese
+    sector— y desde que Administración pide clave, eso ponía un pedido de
+    clave en medio de la carga de un pedido. Esa es la forma exacta en que un
+    control de acceso termina con la clave pegada en la pared."""
     with patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR):
         respuesta = cliente.get("/deposito/pedido/cargar")
 
     assert respuesta.status_code == 200
-    assert 'href="/deposito"' not in respuesta.text
-    assert "/administracion" in respuesta.text
+    assert "/administracion" not in respuesta.text
+    assert 'href="/deposito/pedido"' in respuesta.text
 
 
 def test_ver_pedido_sin_cliente_muestra_solo_el_selector():
@@ -17347,7 +17556,7 @@ def test_armar_esconde_los_terminados_en_una_seccion_plegada():
     assert "Ver terminados (1)" in respuesta.text
 
 
-def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
+def test_ver_pedido_NO_lleva_a_administracion_y_muestra_el_badge_terminado():
     listado = [{
         "id": 50, "fecha_operacion": date(2026, 8, 21), "origen": "texto",
         "creado_en": datetime(2026, 8, 21, 12, 10), "armado_cerrado_el": datetime(2026, 8, 21, 18, 0),
@@ -17364,7 +17573,11 @@ def test_ver_pedido_tiene_el_boton_buscar_pedidos_y_el_badge_terminado():
         respuesta = cliente.get("/deposito/pedido?cliente_id=1")
 
     assert respuesta.status_code == 200
-    assert 'href="/administracion/pedidos/buscar?cliente_id=1"' in respuesta.text
+    # "Buscar Pedidos" SE FUE el 10/09: vive en Administración, que ahora pide
+    # clave, y esta pantalla la usa el operario todos los días. Un botón que
+    # lleva a una clave desde la pantalla cotidiana es cómo la clave termina
+    # pegada en la pared.
+    assert "/administracion" not in respuesta.text
     # Cerrado explícitamente y a 2 de 3: TERMINADO, pero SIN tilde y diciendo
     # qué falta. "Terminado" es que alguien tocó el botón, no que salió
     # completo.
@@ -18013,6 +18226,11 @@ def test_movimientos_stock_muestra_los_tipos_con_pill_y_la_foto_del_sistema():
         patch("app.main.listar_movimientos_stock_por_rango",
               return_value=[dict(m) for m in MOVIMIENTOS_STOCK_DE_PRUEBA]) as mock_listar,
         patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/movimientos")
 
@@ -18105,6 +18323,7 @@ def test_la_SEGUNDA_se_ofrece_ARRIBA_de_las_fichas_y_no_al_final():
         patch("app.main._fichas_por_articulo",
               return_value={"1": [{"id": 11, "nombre": "Caja de ejemplo", "kilaje": None}]}),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
     ):
         cuerpo = cliente.get("/deposito/stock/fisico?articulo_id=1").text
@@ -18144,6 +18363,7 @@ def test_stock_fisico_no_deja_contar_una_ficha_de_OTRO_articulo():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -18166,6 +18386,7 @@ def test_stock_fisico_sin_decir_que_conto_da_400():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.crear_conteo_stock") as mock_crear,
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -18192,6 +18413,7 @@ def test_stock_fisico_los_sueltos_van_PRIMEROS_y_al_mismo_nivel_que_las_fichas()
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=FICHAS_STOCK_INICIAL),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18237,6 +18459,7 @@ def test_stock_fisico_acepta_cero_pero_no_negativos():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
     ):
         respuesta = cliente.post(
@@ -18257,6 +18480,7 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
@@ -18271,6 +18495,93 @@ def test_stock_fisico_muestra_lo_contado_hoy_sin_numeros_del_sistema():
     assert "Sistema" not in respuesta.text
 
 
+def test_contado_hoy_titula_cada_renglon_con_LA_PORCION_y_no_con_el_articulo():
+    """El título tiene que bastarse solo, sin bajar a la letra chica.
+
+    Tres conteos del MISMO artículo, que es el caso que lo rompía: con el
+    artículo pelado arriba los tres renglones se leían "Palta / Palta /
+    Palta" y la porción iba abajo en gris. Ordenados por HORA —no agrupados
+    por artículo como el Remanente— eso no se distingue.
+
+    Se comparan los TRES títulos enteros y no se busca uno: la segunda tiene
+    `ficha_id` None igual que los sueltos, así que un `in` sobre el nombre
+    pelado pasaría con las dos ramas mezcladas. Es el mismo defecto del
+    assert de substring del 07/09.
+    """
+    contados = [
+        {"id": 1, "cantidad": 1.0, "creado_en": datetime(2026, 8, 25, 15, 46),
+         "articulo_nombre": "EJEMPLO Uno", "ficha_id": 7,
+         "ficha_nombre": "EJEMPLO Uno", "ficha_cliente": "Cliente", "es_segunda": False},
+        {"id": 2, "cantidad": 6.0, "creado_en": datetime(2026, 8, 25, 15, 46),
+         "articulo_nombre": "EJEMPLO Uno", "ficha_id": None,
+         "ficha_nombre": None, "ficha_cliente": None, "es_segunda": False},
+        {"id": 3, "cantidad": 5.0, "creado_en": datetime(2026, 8, 25, 15, 51),
+         "articulo_nombre": "EJEMPLO Uno", "ficha_id": None,
+         "ficha_nombre": None, "ficha_cliente": None, "es_segunda": True},
+    ]
+    fichas = [{"id": 7, "cliente_id": 3, "articulo_id": 1, "contenido_caja": None,
+               "unidad_venta": "kilo", "nombre_cliente": "EJEMPLO Uno", "envase_id": 1}]
+    with (
+        patch("app.main._fichas_por_articulo", return_value={}),
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=contados),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=[{"id": 3, "nombre": "Cliente"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 7): 1.0}),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.get("/deposito/stock/fisico")
+
+    assert respuesta.status_code == 200
+    titulos = re.findall(r'<span><strong>(.*?)</strong>:', respuesta.text)
+    assert titulos == ["EJEMPLO Uno Caja Cliente", "EJEMPLO Uno", "EJEMPLO Uno Segunda"]
+    # Y son los del REMANENTE, no unos propios: el que decía "cajas de X (Cliente)"
+    # era el segundo nombre de la misma pila.
+    assert "cajas de" not in respuesta.text
+
+
+def test_movimientos_titula_cada_renglon_con_LA_PORCION_y_no_con_el_articulo():
+    """Una merma de las cajas de un cliente y una de los sueltos del mismo
+    artículo el mismo día se veían las dos "EJEMPLO Uno".
+
+    Y el renglón de la ficha exige que `listar_movimientos_stock_por_rango`
+    traiga `ficha_id`: la columna existe desde la merma por porción y este
+    lector no la leía. Sin ella este test cae, que es su otra mitad.
+    """
+    movimientos = [
+        {"id": 1, "tipo": "merma", "cantidad": -2.0, "motivo": "podrido",
+         "fecha_operacion": date(2026, 9, 9), "stock_sistema": 10.0,
+         "creado_en": datetime(2026, 9, 9, 9, 0), "anulado_el": None,
+         "articulo_nombre": "EJEMPLO Uno", "cliente_nombre": None,
+         "pedido_renglon_id": None, "destino_rechazo": None, "bultos_segunda": None,
+         "lote_tipo": None, "ficha_id": 7, "fecha_pedido": None,
+         "sucursal_pedido": None, "fotos": 1},
+        {"id": 2, "tipo": "merma", "cantidad": -3.0, "motivo": "golpeado",
+         "fecha_operacion": date(2026, 9, 9), "stock_sistema": 8.0,
+         "creado_en": datetime(2026, 9, 9, 8, 0), "anulado_el": None,
+         "articulo_nombre": "EJEMPLO Uno", "cliente_nombre": None,
+         "pedido_renglon_id": None, "destino_rechazo": None, "bultos_segunda": None,
+         "lote_tipo": None, "ficha_id": None, "fecha_pedido": None,
+         "sucursal_pedido": None, "fotos": 1},
+    ]
+    fichas = [{"id": 7, "cliente_id": 3, "articulo_id": 1, "contenido_caja": None,
+               "unidad_venta": "kilo", "nombre_cliente": "EJEMPLO Uno", "envase_id": 1}]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=movimientos),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=[{"id": 3, "nombre": "Cliente"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 7): 1.0}),
+    ):
+        respuesta = cliente.get("/administracion/stock/movimientos")
+
+    assert respuesta.status_code == 200
+    titulos = re.findall(r'<strong>(.*?)</strong> ·', respuesta.text)
+    assert titulos == ["EJEMPLO Uno Caja Cliente", "EJEMPLO Uno"]
+
+
 def test_stock_fisico_deja_buscar_un_dia_y_muestra_ESE_dia():
     contados = [{"id": 5, "cantidad": 12.0, "creado_en": datetime(2026, 8, 20, 10, 30),
                  "articulo_nombre": "Banana"}]
@@ -18278,6 +18589,7 @@ def test_stock_fisico_deja_buscar_un_dia_y_muestra_ESE_dia():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=contados) as mock_listar,
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana") as mock_cercana,
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18302,6 +18614,7 @@ def test_un_dia_sin_conteos_ofrece_el_mas_cercano_con_el_link_puesto():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=date(2026, 8, 24)),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18319,6 +18632,7 @@ def test_sin_ningun_conteo_en_la_tabla_no_ofrece_nada_y_no_rompe():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18337,6 +18651,7 @@ def test_el_dia_vacio_que_es_su_propio_mas_cercano_no_se_ofrece_a_si_mismo():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=date(2026, 8, 25)),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18351,6 +18666,7 @@ def test_una_fecha_mal_escrita_en_la_url_cae_a_hoy_y_no_rompe():
         patch("app.main._fichas_por_articulo", return_value={}),
         patch("app.main.listar_articulos", return_value=[]),
         patch("app.main.listar_conteos_stock_de_fecha", return_value=[]) as mock_listar,
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
         patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
@@ -18616,6 +18932,52 @@ def test_SIN_ASIGNAR_es_una_eleccion_y_el_aviso_lo_dice():
         1, 30.0, 20.0, 0.0, 0.0, date(2026, 8, 25), cliente_id=1, ficha_id=None, reparto=None
     )
     assert "sin+asignar" in respuesta.headers["location"]
+
+
+def test_los_BULTOS_son_ENTEROS_en_las_dos_puertas_que_los_validan():
+    """Un bulto es una cosa contable: no hay media caja ni medio cajón.
+
+    Se le pregunta a las DOS funciones y no a un formulario, porque es
+    donde vive la regla: `_validar_bultos_positivos` la usan siete
+    llamadores (stock inicial, cajas ya armadas, merma, rechazo devuelto,
+    cajones que salieron, tomados de la guía R, remitidos) y
+    `_numero_form_o_cero` los otros tres (primera, segunda, merma de la
+    guía R). Probando un formulario se probaría uno de diez.
+
+    Lo que entró por acá fue un `bultos_primera` con decimales, que el
+    compensatorio del corte después espejó —`cantidad = -st` copia la
+    parte decimal con el signo cambiado— y las dos mitades aparecieron en
+    la pantalla del artículo como +120,97 y 57,03.
+    """
+    from app.main import _validar_bultos_positivos, _numero_form_o_cero
+
+    for entero in ("1", "20", "0030"):
+        assert _validar_bultos_positivos(entero, "tomados")[0] is None, entero
+        assert _numero_form_o_cero(entero, "primera")[0] is None, entero
+    # El vacío sigue valiendo cero en la que lo permite: no es un decimal.
+    assert _numero_form_o_cero("", "primera") == (None, 0.0)
+
+    for roto in ("20.97", "0.5", "1.01"):
+        error, valor = _validar_bultos_positivos(roto, "tomados")
+        assert valor is None and "decimales" in error, roto
+        error, valor = _numero_form_o_cero(roto, "primera")
+        assert valor is None and "decimales" in error, roto
+
+
+def test_la_guia_R_rechaza_los_decimales_DESDE_EL_SERVIDOR():
+    """El `step="1"` del input es una sugerencia del navegador: un
+    formulario armado a mano entra igual. La guarda va donde se ESCRIBE
+    —corolario 26—, así que el POST tiene que rebotar sin llamar a la base.
+    """
+    with patch("app.main.crear_reproceso") as mock_crear:
+        respuesta = _pantalla_de_reproceso_con(
+            {"cliente_id": "1", "articulo_id": "1", "bultos_tomados": "30",
+             "bultos_primera": "20.97", "bultos_segunda": "0", "bultos_merma": "0",
+             "fecha": "2026-08-25", "ficha_id": "sin_asignar"},
+        )
+    assert respuesta.status_code == 400
+    assert "decimales" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def _pantalla_de_reproceso_con(datos, **parches):
@@ -19041,6 +19403,9 @@ def test_guias_r_muestra_trazabilidad_costo_y_marca_incompleto():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -19074,6 +19439,8 @@ def test_guias_r_una_guia_VIGENTE_sin_costo_si_muestra_el_cartel_y_el_detalle():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19098,6 +19465,8 @@ def test_guias_r_una_guia_SIN_COSTO_POSIBLE_no_ofrece_el_boton_que_no_puede_hace
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19122,6 +19491,8 @@ def test_guias_r_el_consumo_del_compensatorio_no_se_puede_completar():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19141,6 +19512,8 @@ def test_guias_r_muestra_el_total_de_las_que_no_se_pueden_cerrar_nunca():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -19162,6 +19535,9 @@ def test_guias_r_una_guia_ANULADA_no_grita_nada():
     cruces = [{"reproceso_id": 21, "cliente_salida_nombre": "Vea", "bultos": 3.0}]
     with (
         patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -19273,6 +19649,11 @@ def test_movimientos_incluye_los_remitos_de_segunda_con_su_anular():
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=remitos),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         respuesta = cliente.get("/administracion/stock/movimientos")
 
@@ -19306,6 +19687,11 @@ def test_la_merma_de_segunda_NO_se_muestra_como_remitida_al_Puesto():
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         cuerpo = cliente.get("/administracion/stock/movimientos").text
 
@@ -19342,6 +19728,11 @@ def test_el_SIN_FOTO_llega_a_LAS_DOS_mermas_y_a_ninguna_otra_cosa():
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=movimientos),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         cuerpo = cliente.get("/administracion/stock/movimientos").text
 
@@ -19357,6 +19748,11 @@ def test_el_SIN_FOTO_llega_a_LAS_DOS_mermas_y_a_ninguna_otra_cosa():
         patch("app.main._hoy_argentina", return_value=date(2026, 9, 9)),
         patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
         patch("app.main.listar_remitos_segunda_por_rango", return_value=salidas),
+        # Las tres fuentes del TÍTULO de la porción: el renglón se titula con
+        # el nombre de la pila y lo arma el mismo namer que el Remanente.
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
     ):
         cuerpo = cliente.get("/administracion/stock/movimientos").text
     assert ">con foto<" in cuerpo
@@ -19401,6 +19797,9 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in GUIAS_R_DE_PRUEBA]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -19417,6 +19816,9 @@ def test_guias_r_muestra_el_boton_completar_solo_en_incompletas():
     with (
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
         patch("app.main.listar_reprocesos_por_rango", return_value=con_incompleta),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"},
+                            {"id": 5, "nombre": "EJEMPLO Cinco"}]),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
@@ -20034,6 +20436,9 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(5, 901): 1.0}),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20066,6 +20471,8 @@ def test_guias_r_marca_las_guias_donde_el_reparto_lo_eligio_el_OPERARIO():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20094,6 +20501,8 @@ def test_SIN_ASIGNAR_va_en_su_propio_grupo_no_al_lado_de_las_cajas():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20123,6 +20532,8 @@ def test_una_guia_anulada_no_ofrece_asignar_ficha():
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
     ):
         respuesta = cliente.get("/administracion/stock/guias-r")
 
@@ -20172,15 +20583,188 @@ def test_borrar_una_ficha_con_guias_R_lo_dice_en_la_pantalla_y_NO_da_500():
     assert "cliente_id=1" in destino
 
 
-def _guias_r(guias, conteos=None):
+def _guias_r(guias, conteos=None, articulo_id=None, guia=None):
+    """La pantalla de Guías R. `articulo_id` va a la URL, como lo manda el filtro.
+
+    `listar_articulos` arma el selector del filtro por artículo y por eso se
+    parchea acá: sin él la pantalla entera cae, y lo que estos tests miran
+    son las guías.
+    """
+    partes = {}
+    if articulo_id is not None:
+        partes["articulo_id"] = articulo_id
+    if guia is not None:
+        partes["guia"] = guia
+    url = "/administracion/stock/guias-r"
+    if partes:
+        url += "?" + urllib.parse.urlencode(partes)
     with (
-        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[dict(g) for g in guias]) as mock_listar,
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 2, "nombre": "EJEMPLO Dos"}]),
+        # El título de cada guía es el de la PILA a la que fue, y lo arma el
+        # mismo namer que el Remanente: necesita las fichas, los clientes y
+        # las cajas por ficha. Se parchean las fuentes, no el namer.
+        patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=[{"id": 5, "cliente_id": 3, "articulo_id": 1,
+                             "contenido_caja": None, "unidad_venta": "kilo",
+                             "nombre_cliente": "M.ROJO GRA", "envase_id": 1}]),
+        patch("app.main.listar_clientes", return_value=[{"id": 3, "nombre": "Cliente"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 5): 1.0}),
         patch("app.main.contar_reprocesos_sin_costo_posible", return_value=0),
         patch("app.main._cruces_primera_reproceso", return_value=[]),
         patch("app.main._cajas_para_elegir_por_articulo", return_value={1: [{"id": 5, "nombre": "Caja Chica"}]}),
         patch("app.main.listar_ultimos_conteos_stock", return_value=conteos or []),
     ):
-        return cliente.get("/administracion/stock/guias-r")
+        respuesta = cliente.get(url)
+    respuesta.mock_listar = mock_listar
+    return respuesta
+
+
+def test_guias_r_filtra_por_ARTICULO_y_el_filtro_llega_a_la_consulta():
+    """El filtro no se aplica en Python sobre lo que ya vino: viaja a la
+    consulta. Filtrar acá arriba traería igual las 72 guías del rango y
+    dejaría el tope y el costo de la lectura como estaban.
+    """
+    respuesta = _guias_r([GUIA_CON_FICHA], articulo_id=2)
+
+    assert respuesta.status_code == 200
+    # Tercer posicional: (desde, hasta, articulo_id).
+    assert respuesta.mock_listar.call_args.args[2] == 2
+    # Y el selector vuelve con el artículo elegido puesto, no en blanco: si
+    # se viera vacío mientras filtra, el que mira cree estar viendo todo.
+    assert '<option value="2" selected>EJEMPLO Dos</option>' in respuesta.text
+
+
+def test_guias_r_sin_articulo_en_la_url_no_filtra_nada():
+    """Y un id basura cae a "todos" en vez de reventar la pantalla: es un
+    filtro de búsqueda, no un dato que alguien cargó."""
+    for pedido in (None, "", "todos", "0"):
+        respuesta = _guias_r([GUIA_CON_FICHA], articulo_id=pedido)
+        assert respuesta.status_code == 200, pedido
+        assert respuesta.mock_listar.call_args.args[2] is None, pedido
+
+
+def test_los_TRES_POST_de_guias_r_devuelven_el_filtro_de_articulo():
+    """Volver a la lista sin el artículo deja al que estaba completando las
+    fichas de un artículo mirando las 72 guías de nuevo, una por cada guía
+    que asigna. Y son los TRES, no uno: el filtro se agregó el 10/09 y los
+    tres tenían que sumarlo — es la forma de la copia olvidada.
+    """
+    campos = {"fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-10", "articulo_id": "7"}
+    casos = [
+        ("asignar-ficha", "app.main.asignar_ficha_a_reproceso", dict(campos, ficha_id="5")),
+        ("completar-costo", "app.main.completar_costo_reproceso", campos),
+        ("anular", "app.main.anular_reproceso", campos),
+    ]
+    for ruta, funcion, datos in casos:
+        with patch(funcion, return_value={"completado": True, "sin_precio": 0}):
+            respuesta = cliente.post(
+                f"/administracion/stock/guias-r/12/{ruta}", data=datos, follow_redirects=False
+            )
+        assert respuesta.status_code == 303, ruta
+        assert "articulo_id=7" in respuesta.headers["location"], ruta
+
+    # Y sin artículo elegido NO queda un `articulo_id=` colgando: una URL con
+    # el parámetro vacío se lee después como un filtro puesto.
+    with patch("app.main.anular_reproceso"):
+        respuesta = cliente.post(
+            "/administracion/stock/guias-r/12/anular",
+            data={"fecha_desde": "2026-09-01", "fecha_hasta": "2026-09-10", "articulo_id": ""},
+            follow_redirects=False,
+        )
+    assert "articulo_id" not in respuesta.headers["location"]
+
+
+def test_el_numero_de_guia_se_acepta_CON_y_SIN_la_R():
+    """La "R" no es parte del número: es cómo la pantalla lo muestra
+    (`Guía R{{ g.id }}`). El que busca copia lo que ve en el extracto o en
+    el movimiento, que dice "R251". Exigirle que la saque sería pedirle que
+    sepa un detalle de nuestra plantilla.
+    """
+    from app.main import _id_de_guia_r
+
+    for escrito in ("251", "R251", "r251", " R251 ", "R 251", "R#251", "#251", "R-251"):
+        assert _id_de_guia_r(escrito) == 251, escrito
+
+    # Lo que NO tiene forma de número de guía cae a "no filtres", no a un
+    # error: es un buscador. Y no se limpia "todo lo que no sea dígito",
+    # que convertiría "251 cajones" en la guía 251 — eso es adivinar.
+    for basura in (None, "", "   ", "abc", "251 cajones", "R25.1", "0", "-3", "12R"):
+        assert _id_de_guia_r(basura) is None, basura
+
+
+def test_el_NUMERO_DE_GUIA_PISA_al_rango_de_fechas_y_al_articulo():
+    """Es lo que decide si el filtro sirve.
+
+    Buscar por id y que no aparezca porque el default son 7 días es la peor
+    forma de fallar: devuelve vacío, y el vacío se lee como que la guía no
+    existe. Se verifica que la CONSULTA reciba el id y que los otros dos
+    queden en None/ignorados — no que la pantalla los filtre después.
+    """
+    respuesta = _guias_r([GUIA_CON_FICHA], articulo_id=2, guia="R176")
+
+    assert respuesta.status_code == 200
+    # (desde, hasta, articulo_id, guia_id) — el cuarto posicional.
+    assert respuesta.mock_listar.call_args.args[3] == 176
+    # Y la pantalla DICE que no está aplicando los otros: con el rango y el
+    # artículo a la vista sin usarse, son dos cosas diciendo lo contrario.
+    assert "la guía R176" in respuesta.text
+    assert "no se están aplicando" in respuesta.text
+    # Lo TIPEADO vuelve al campo, no el número parseado.
+    assert 'value="R176"' in respuesta.text
+
+
+def test_un_numero_de_guia_que_NO_EXISTE_lo_dice_y_no_deja_la_lista_vacia():
+    """La lista vacía se ve IGUAL en los dos casos y significan cosas
+    opuestas: "ese número no existe" manda a revisar lo tipeado, y "no hay
+    ninguna en el rango" manda a ampliar la fecha. Sin separarlos, un dígito
+    de más se lee como que la guía no está cargada.
+    """
+    respuesta = _guias_r([], guia="999")
+
+    assert respuesta.status_code == 200
+    assert "No existe ninguna guía R999" in respuesta.text
+    # Y aclara que NO es el rango: si no, se amplía la fecha al pedo.
+    assert "se buscó en todas" in respuesta.text
+    # El cartel de "estoy pisando los filtros" NO sale acá: no hay ninguna
+    # guía que mostrar, y decir las dos cosas a la vez confunde.
+    assert "no se están aplicando" not in respuesta.text
+
+
+def test_la_lista_de_guias_R_titula_con_el_ARTICULO_MAS_LA_CAJA():
+    """Dos guías del mismo artículo para fichas distintas se veían idénticas.
+
+    El nombre sale de `_titulo_de_porcion`, el mismo del Remanente, "Contado
+    hoy", el Cotejo y Movimientos: es la misma pregunta —cómo se llama la
+    pila a la que fue esa guía— y escribirlo acá aparte serían CINCO
+    lugares nombrando lo mismo.
+    """
+    respuesta = _guias_r([dict(GUIA_CON_FICHA, id=176, ficha_id=5)])
+
+    assert respuesta.status_code == 200
+    assert "Guía R176 — Morron Rojo Caja Cliente" in respuesta.text
+    # Y NO el artículo pelado, que es lo que decía antes.
+    assert "Guía R176 — Morron Rojo<" not in respuesta.text
+
+
+def test_una_guia_R_SIN_FICHA_lo_dice_EN_EL_TITULO_y_no_queda_el_articulo_pelado():
+    """Con el artículo pelado se confunde con las asignadas, y ésta es la
+    pantalla donde se asignan: el título tiene que ser la señal.
+
+    Para `_titulo_de_porcion` una ficha en None son "los sueltos", y ése es
+    su nombre correcto en el Remanente. Acá significa otra cosa —falta
+    asignarla— así que la ruta lo corrige después de llamarlo.
+    """
+    respuesta = _guias_r([dict(GUIA_CON_FICHA, id=180, ficha_id=None, ficha_nombre=None)])
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    assert "Guía R180 — Morron Rojo — FALTA LA FICHA" in cuerpo
+    # La clase que lo pinta distinto: el título ES la señal, no solo el
+    # renglón de abajo (el atributo es la intención, el CSS es el efecto).
+    assert 'class="numero-guia sin-ficha"' in cuerpo
+    # Y sigue ofreciendo asignarla, que es la acción que el título anuncia.
+    assert 'action="/administracion/stock/guias-r/180/asignar-ficha"' in cuerpo
 
 
 GUIA_CON_FICHA = {
@@ -20265,6 +20849,8 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.listar_articulos_con_primera_de_cliente",
               return_value=[{"articulo_id": 1, "articulo_nombre": "Tomate Perita"}]),
+        patch("app.main.listar_articulos",
+              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
         patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
         patch("app.main.entradas_y_salidas_stock_articulos",
               return_value={1: ([_entrada_reproceso_cruce(12, 1, "Día", 10.0)], _salidas_fifo(4.0))}),
@@ -20687,9 +21273,15 @@ def test_cotejo_dice_de_que_porcion_es_cada_tarjeta():
     respuesta = _cotejo(conteos)
 
     cuerpo = respuesta.text.split("</style>")[-1]
-    assert "Bultos sueltos" in cuerpo
-    assert "Cajas de Banana Bolivia" in cuerpo
-    assert "Día" in cuerpo
+    # EN EL TÍTULO, no abajo en gris. Antes el encabezado era "Banana" en las
+    # dos tarjetas y la porción iba en la línea chica: dos tarjetas seguidas
+    # se leían "Banana / Banana". El título tiene que bastarse solo.
+    titulos = [t.strip() for t in re.findall(r'class="encabezado">(.*?)</p>', cuerpo, re.S)]
+    assert titulos == ["Banana", "Banana Caja Cliente"]
+    # Y el nombre de las cajas es el del REMANENTE, no uno propio: el artículo
+    # adelante y el cliente atrás. Si esta pantalla armara el suyo, serían dos
+    # nombres para la misma pila.
+    assert "Cajas de Banana Bolivia" not in cuerpo
 
 
 def test_cotejo_no_ofrece_ajustar_stock_en_una_diferencia_de_FICHA():
@@ -20737,10 +21329,33 @@ def _cotejo(conteos, porciones=None, deficits=None, sueltas=None):
              "bultos": c["stock_sistema"], "contable": True}
             for c in conteos
         ]
+    # LAS TRES LECTURAS DEL TÍTULO. La tarjeta se titula con el nombre de la
+    # PORCIÓN, y ese nombre lo arma el mismo namer que el Remanente
+    # (`_titulo_de_porcion`), que necesita las fichas, los clientes y las
+    # cajas por ficha. Se parchean LAS FUENTES y no el namer: parchear el
+    # namer taparía justo la línea que estos tests miran (corolario 9).
+    #
+    # Las fichas se derivan de los conteos y salen COMO EN PRODUCCIÓN: con
+    # cliente_id, articulo_id y envase. Una ficha sin esos campos haría que
+    # el título saliera por la rama del "(ficha #N)" y los tests defenderían
+    # el caso equivocado (corolario 22).
+    fichas_de_los_conteos = [
+        {"id": c["ficha_id"], "cliente_id": 1, "articulo_id": c["articulo_id"],
+         "contenido_caja": None, "unidad_venta": "kilo",
+         "nombre_cliente": c.get("ficha_nombre"), "envase_id": 1}
+        for c in conteos if c.get("ficha_id")
+    ]
     with ExitStack() as pila:
         pila.enter_context(patch("app.main.listar_ultimos_conteos_stock", return_value=conteos))
         pila.enter_context(patch("app.main._remanente_a_fecha", return_value={"porciones": porciones}))
         pila.enter_context(patch("app.main.deficit_de_cajas_por_ficha", return_value=deficits or {}))
+        pila.enter_context(patch("app.main.listar_fichas_de_todos_los_clientes",
+                                 return_value=fichas_de_los_conteos))
+        pila.enter_context(patch("app.main.listar_clientes",
+                                 return_value=[{"id": 1, "nombre": "Cliente"}]))
+        pila.enter_context(patch("app.main.cajas_armadas_por_ficha",
+                                 return_value={(f["articulo_id"], f["id"]): 1.0
+                                               for f in fichas_de_los_conteos}))
         # Solo si se pidió: hay tests que parchean `stock_de_porcion` ellos
         # mismos, y parcharla siempre acá les pisaría el suyo.
         if sueltas is not None:
@@ -20956,12 +21571,19 @@ def test_el_cotejo_le_da_a_la_SEGUNDA_su_propio_numero_y_no_el_de_los_sueltos():
     cuerpo = _cotejo(*_articulo_con_segunda()).text.split("</style>")[-1]
 
     # LOS TÍTULOS DE LAS TRES TARJETAS, leídos del HTML y comparados enteros.
-    # Un `assert "Bultos sueltos" in cuerpo` pasaba con el bug puesto: lo
-    # ponía la tarjeta de los sueltos, y la de la segunda se titulaba así
-    # TAMBIÉN —tiene ficha_id None— así que el assert miraba algo que se
-    # parecía a lo que importaba. Se comparan los tres, no se busca uno.
-    titulos = [t.strip() for t in re.findall(r'class="que-conto">(.*?)</p>', cuerpo, re.S)]
-    assert titulos == ["Bultos sueltos", "Cajas de Caja de ejemplo · Cliente", "Segunda"]
+    # Buscar UNO pasaba con el bug puesto: la segunda tiene `ficha_id` None
+    # igual que los sueltos, así que con la clave de dos las dos tarjetas se
+    # titulaban igual y el assert miraba algo que se parecía a lo que
+    # importaba. Se comparan los tres, no se busca uno.
+    #
+    # Desde el 10/09 el título es el nombre COMPLETO de la porción y sale del
+    # mismo namer que el Remanente, así que este assert además fija que las
+    # dos pantallas digan lo mismo: si el Remanente cambia el nombre y esta
+    # pantalla no, cae acá.
+    titulos = [t.strip() for t in re.findall(r'class="encabezado">(.*?)</p>', cuerpo, re.S)]
+    assert titulos == ["EJEMPLO Tres",
+                       "EJEMPLO Tres Caja Cliente",
+                       "EJEMPLO Tres Segunda"]
     # Segunda: contó 40 sobre 42 → faltan 2, que es SU desvío y no el de nadie.
     assert "+2" in cuerpo
     assert "42" in cuerpo
@@ -21536,7 +22158,7 @@ def test_corregir_recepcion_SIN_CLAVE_CONFIGURADA_no_deja_pasar():
     la dirección en la empresa a la que le falte la variable, y nadie se
     enteraría: se vería normal.
     """
-    with patch("app.main._clave_gerencia", return_value=None):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": ""}):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 503
@@ -21549,7 +22171,7 @@ def test_corregir_recepcion_SIN_CLAVE_CONFIGURADA_no_deja_pasar():
 def test_corregir_recepcion_SIN_CLAVE_tampoco_deja_GUARDAR():
     """La puerta va en las dos rutas. Solo en el GET, cualquiera podría
     guardar mandando el POST directo."""
-    with patch("app.main._clave_gerencia", return_value=None), \
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": ""}), \
          patch("app.main.corregir_recepcion_compra") as mock_guardar:
         respuesta = cliente.post(
             "/gerencia/compras/30/corregir-recepcion",
@@ -21561,7 +22183,7 @@ def test_corregir_recepcion_SIN_CLAVE_tampoco_deja_GUARDAR():
 
 
 def test_corregir_recepcion_con_clave_pero_sin_cookie_pide_la_clave():
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
 
     assert respuesta.status_code == 401
@@ -21585,7 +22207,7 @@ def test_desde_el_detalle_se_llega_a_corregir_y_la_clave_devuelve_A_ESA_COMPRA()
     Gerencia, tendría que volver a buscar la compra — y con el número mal
     ya adentro de la cabeza, que es justo cuando se busca otra.
     """
-    with patch("app.main._clave_gerencia", return_value="secreta"):
+    with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
         # 1. Sin cookie, la pantalla de la compra pide la clave...
         puerta = cliente.get("/gerencia/compras/30/corregir-recepcion")
         assert puerta.status_code == 401
@@ -21613,6 +22235,7 @@ def test_el_detalle_de_la_compra_sigue_teniendo_el_boton_y_avisa_que_pide_clave(
         patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
     ):
         respuesta = cliente.get("/compras/30/detalle")
 
@@ -21650,6 +22273,8 @@ def test_corregir_recepcion_con_el_lote_SIN_USAR_lo_dice_en_una_linea_y_sin_cart
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.dependencias_del_lote_de_compra", return_value=SIN_USAR),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
@@ -21659,6 +22284,60 @@ def test_corregir_recepcion_con_el_lote_SIN_USAR_lo_dice_en_una_linea_y_sin_cart
     assert '<div class="advertencia">' not in respuesta.text
 
 
+def test_corregir_recepcion_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
+    """Es la pantalla donde se cambia el número de bultos de una compra ya
+    recepcionada, y la foto de la balanza es la evidencia de ese número.
+    Hasta el 10/09 no mostraba ninguna: había que salir al Detalle.
+
+    LOS CUATRO CASOS, no dos. Con solo "las dos" y "ninguna", una pantalla
+    que mostrara la comanda en el lugar del pesaje pasaría: se ven iguales.
+    """
+    compra = dict(COMPRA_DETALLE_DE_PRUEBA, unidad_compra="kilo")
+
+    def pantalla(guia, balanza):
+        with (
+            patch("app.main.obtener_detalle_compra", return_value=compra),
+            patch("app.main.listar_fotos_de_guia", return_value=guia),
+            patch("app.main.listar_fotos_de_recepcion", return_value=balanza),
+        ):
+            return cliente.get("/gerencia/compras/30/corregir-recepcion").text
+
+    comanda = [{"id": 9, "foto_ruta": "2026-09-10/comanda.jpg"}]
+    pesaje = [{"id": 4, "foto_ruta": "2026-09-10/balanza.jpg"}]
+
+    # Las dos: cada una con su ruta, que es lo único que las separa.
+    texto = pantalla(comanda, pesaje)
+    assert 'src="/compras/30/fotos/9/ver"' in texto
+    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in texto
+    assert "no tiene foto" not in texto
+
+    # Falta el pesaje: se dice, y se dice POR QUÉ importa acá.
+    texto = pantalla(comanda, [])
+    assert 'src="/compras/30/fotos/9/ver"' in texto
+    assert "Esta compra no tiene foto de la balanza" in texto
+    # En dos mitades porque la plantilla parte la frase: un assert que cruza
+    # el salto se rompe con cualquier reindentado y no dice nada del contenido.
+    assert "no tiene con qué cotejarse" in texto
+    assert "alguien tipeó" in texto
+
+    # Falta la comanda.
+    texto = pantalla([], pesaje)
+    assert 'src="/deposito/recepcion/30/foto-balanza/ver"' in texto
+    assert "Esta guía no tiene foto de la comanda" in texto
+
+    # Ninguna: las dos ausencias se nombran, no se queda muda.
+    texto = pantalla([], [])
+    assert "Esta guía no tiene foto de la comanda" in texto
+    assert "Esta compra no tiene foto de la balanza" in texto
+
+    # Y NO trae los botones de subir ni borrar: acá se corrige un número, no
+    # se administran fotos. Un "Borrar" al lado de la prueba, en la pantalla
+    # donde se está por cambiar el dato que la prueba respalda, es una puerta
+    # que nadie pidió.
+    assert "Agregar foto" not in texto
+    assert "/fotos/9/borrar" not in pantalla(comanda, pesaje)
+
+
 def test_corregir_recepcion_lista_las_guias_R_y_los_renglones_por_separado():
     """Son dos clases de dato distintas y la pantalla lo dice: las guías R
     están congeladas, los renglones los recalcula el FIFO cada vez."""
@@ -21666,6 +22345,8 @@ def test_corregir_recepcion_lista_las_guias_R_y_los_renglones_por_separado():
     with (
         patch("app.main.obtener_detalle_compra", return_value=compra),
         patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "Día"}]),
     ):
         respuesta = cliente.get("/gerencia/compras/30/corregir-recepcion")
@@ -21685,6 +22366,8 @@ def test_corregir_recepcion_bajar_sin_romper_nada_guarda_DE_UNA():
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.dependencias_del_lote_de_compra", return_value=_dependencias_usadas()),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.corregir_recepcion_compra") as mock_guardar,
     ):
@@ -21703,6 +22386,8 @@ def test_corregir_recepcion_bajando_de_mas_pide_el_SEGUNDO_TOQUE():
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.corregir_recepcion_compra") as mock_guardar,
     ):
@@ -21729,6 +22414,8 @@ def test_corregir_recepcion_el_aviso_NOMBRA_la_guia_R_rota():
     with (
         patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
         patch("app.main.dependencias_del_lote_de_compra", return_value=impacto),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
         patch("app.main.listar_clientes", return_value=[]),
         patch("app.main.corregir_recepcion_compra"),
     ):
@@ -22560,8 +23247,20 @@ def test_el_remanente_muestra_los_armados_que_ESPERAN_la_guia_R():
     with patch("app.main.bultos_esperando_guia_r_por_articulo", return_value=esperando):
         cuerpo = _remanente().text.split("</style>")[-1]
 
-    assert "Armados esperando su guía R" in cuerpo
+    assert "Armados esperando una guía R del artículo" in cuerpo
     assert "No falta mercadería" in cuerpo
+    # DICE "DEL ARTÍCULO" Y AVISA QUE PUEDE NO SER LA FICHA QUE SE MIRA. Es
+    # la corrección del 10/09 y costó una tarde: decía "su guía R", se leyó
+    # como la de la ficha abierta, y mandó a revisar un papel ya cargado.
+    # Los lotes del FIFO no tienen ficha, así que lo que falta es del
+    # artículo. Se afirman las DOS mitades del aviso, no solo el título:
+    # el título solo ya lo dice a medias y el que perdió la tarde lo leyó.
+    assert "Puede no ser la ficha que estás mirando" in cuerpo
+    assert "todo el artículo" in cuerpo
+    # Y la fecha: una guía R cargada DESPUÉS del armado tampoco lo cubre
+    # (lote_posterior_a_la_salida compara fechas). Sin esto, el que la tiene
+    # cargada y mal fechada la busca sin encontrarla.
+    assert "fechada después del armado" in cuerpo
     # El link va al detalle del artículo, que es donde se ve de qué lotes salió.
     assert '/administracion/stock/sistema/41' in cuerpo
     # En dos mitades porque la plantilla parte la frase en dos líneas: un

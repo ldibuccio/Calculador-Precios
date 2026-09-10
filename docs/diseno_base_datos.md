@@ -4518,3 +4518,46 @@ la rama huérfana `origin/claude/retenido-stock-fisico`.
    puede colar. Se acepta porque es muchísimo menos malo que lo de
    antes, donde el pedido descontaba de cualquier bulto del artículo sin
    mirar nada.
+
+
+## Administración pide clave, y dónde quedó la línea con Gerencia (10/09)
+
+**Administración es OTRA PERSONA**: la que carga la facturación y le paga a
+los proveedores. Gerencia es el dueño. Por eso son dos claves distintas
+(`CLAVE_ADMINISTRACION` y `CLAVE_GERENCIA`) y no una reusada: con una sola,
+quien carga la facturación entra a ver márgenes y rentabilidad.
+
+**La línea que quedó, y conviene que siga así: Administración ve lo que se
+PAGA, Gerencia ve lo que se GANA.**
+
+Verificado el 10/09 grepeando el CONCEPTO y no la columna: **ninguna pantalla
+de Administración muestra precio de venta, margen ni rentabilidad.** Eso vive
+entero en `/gerencia/rentabilidad`, `/rentabilidad-real` y `/costos-fijos`.
+Le falta la mitad de la cuenta, así que no puede derivar un margen.
+
+De las 24 rutas de Administración, **tres muestran plata y las tres son del
+lado del COSTO**, y se decidió que se quedan:
+
+- `/administracion/ingresos` (+ PDF y Excel) — importe por renglón, señas y
+  total a depositar por proveedor. Es **cuentas a pagar**, y es exactamente
+  su trabajo: sacarle el importe deja la pantalla sin servir para lo único
+  que hace, y entonces la carga la termina haciendo el dueño.
+- `/administracion/stock/inicial` — costo por bulto y total en pesos del
+  stock del corte.
+- `/administracion/stock/guias-r` — costo total de cada guía R y costo por
+  bulto de primera.
+
+### Lo que queda ANOTADO para no re-derivarlo
+
+**Si algún día hay que separar una, es `guias-r`**, y el razonamiento es
+éste: muestra **el costo por bulto de la primera**, o sea cuánto cuesta
+producir una caja. No es un precio de venta —así que no da un margen— pero
+es el número que más se le acerca de todo lo que hay del lado de
+Administración. Las otras dos son costo de compra, que ya está adentro del
+importe de las compras que ella carga igual.
+
+Y el otro que se decidió a favor y conviene tener escrito: **los exportables
+de ingresos se quedan.** El Excel es justamente lo que usa para cargar en
+facturación. Que un archivo salga del sistema es un riesgo real, pero es el
+mismo que tiene cualquiera que trabaje con esos datos, y ella ya los ve en
+pantalla.

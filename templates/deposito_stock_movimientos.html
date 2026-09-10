@@ -125,7 +125,13 @@
       <div class="renglon {% if m.anulado_el %}anulado{% endif %}">
         <div class="detalle">
           <span class="pill pill-{{ m.tipo }}">{{ m.etiqueta_tipo }}</span>
-          <strong>{{ m.articulo_nombre }}</strong> · {{ m.fecha_operacion|fecha_corta }}
+          {# LA PORCIÓN Y NO EL ARTÍCULO, con el mismo nombre que el
+             Remanente. Este renglón decía el artículo pelado, así que una
+             merma de las cajas de un cliente, una de los sueltos y una del
+             pool de segunda del mismo artículo el mismo día se veían las
+             tres iguales — y desde que la merma se carga por porción eso es
+             el caso normal, no el borde. #}
+          <strong>{{ m.porcion_nombre }}</strong> · {{ m.fecha_operacion|fecha_corta }}
           {% if m.anulado_el %}<span class="marca-anulado">ANULADO</span>{% endif %}
           <span class="extra">
             {% if m.cliente_nombre %}Devolvió {{ m.cliente_nombre }} · {% endif %}<span class="motivo">{{ m.motivo }}</span>
@@ -154,7 +160,7 @@
         <div class="cantidad-mov">{% if m.cantidad > 0 %}+{% endif %}{{ m.cantidad|numero }}</div>
         {% if not m.anulado_el %}
         <form method="post" action="{{ m.url_anular }}"
-              onsubmit="return confirm('¿Anular este movimiento de {{ m.articulo_nombre }}? Queda registrado como anulado y el stock se reacomoda solo.');">
+              onsubmit="return confirm('¿Anular este movimiento de {{ m.porcion_nombre }}? Queda registrado como anulado y el stock se reacomoda solo.');">
           <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
           <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
           <button type="submit" class="boton-anular">Anular</button>
