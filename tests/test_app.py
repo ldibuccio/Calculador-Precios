@@ -4995,22 +4995,25 @@ def test_eliminar_varias_compras_todas_fallan_informa_las_dos():
     assert "Mango (Frutamax)" in respuesta.text
 
 
+# `articulo_id` va porque la consulta real lo trae: un fixture que no se
+# parece a produccion en el campo que importa hace que los tests defiendan
+# lo contrario de lo que hay que hacer (corolario 22).
 COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
     {
-        "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
+        "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_id": 11, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
         "fotos_balanza": 1,
     },
     {
-        "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+        "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_id": 22, "articulo_nombre": "Mango", "unidad_compra": "unidad",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
         "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
         "fotos_balanza": 0,
     },
     {
-        "id": 3, "guia_id": 106, "guia_punto": 1, "articulo_nombre": "Frutilla", "unidad_compra": "cubeta",
+        "id": 3, "guia_id": 106, "guia_punto": 1, "articulo_id": 33, "articulo_nombre": "Frutilla", "unidad_compra": "cubeta",
         "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
         "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 60,
         "fotos_balanza": 0,
@@ -10721,7 +10724,11 @@ def test_el_candado_de_ADMINISTRACION_esta_donde_ella_trabaja_y_no_solo_en_el_hu
                          follow_redirects=False)
             with (
                 patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
-                patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+                patch("app.main.listar_fichas_de_todos_los_clientes",
+              return_value=[{"id": 3, "cliente_id": 7, "articulo_id": 1, "articulo_nombre": "EJEMPLO Uno",
+                 "envase_id": 1, "envase_nombre": "Caja de EJEMPLO", "contenido_caja": 16,
+                 "unidad_venta": "kilo", "envase_variable": False, "nombre_cliente": None,
+                 "codigo_cliente": None, "articulo_grupo": None}]),
                 patch("app.main.listar_clientes", return_value=[]),
                 patch("app.main.cajas_armadas_por_ficha", return_value={}),
                 patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
@@ -17520,13 +17527,15 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
     # Retirar Mercadería). La guía es por proveedor y día: una fecha por tarjeta.
     pendientes = [
         {
-            "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_nombre": "Tomate", "unidad_compra": "kilo",
+            "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_id": 11, "articulo_nombre": "Tomate",
+            "unidad_compra": "kilo",
             "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
             "fecha_operacion": date(2026, 8, 22),
             "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
         },
         {
-            "id": 2, "guia_id": 106, "guia_punto": 1, "articulo_nombre": "Mango", "unidad_compra": "unidad",
+            "id": 2, "guia_id": 106, "guia_punto": 1, "articulo_id": 22, "articulo_nombre": "Mango",
+            "unidad_compra": "unidad",
             "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
             "fecha_operacion": date(2026, 8, 20),
             "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
@@ -19914,6 +19923,7 @@ GUIAS_R_DE_PRUEBA = [
      "bultos_primera": 20.0, "bultos_segunda": 5.0, "bultos_merma": 5.0,
      "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
      "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
+     "tipo": "normal", "compra_origen_id": None,
      "articulo_nombre": "Tomate Perita",
      "consumos": [
          {"origen": "compra", "origen_id": 101, "bultos": 20.0, "costo_por_bulto": 1000.0,
@@ -19925,6 +19935,7 @@ GUIAS_R_DE_PRUEBA = [
      "bultos_primera": 6.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
      "costo_total": None, "costo_por_bulto_primera": None,
      "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
+     "tipo": "normal", "compra_origen_id": None,
      "articulo_nombre": "Anco",
      "consumos": [
          {"origen": "ajuste", "origen_id": 1, "bultos": 4.0, "costo_por_bulto": None,
@@ -19941,7 +19952,8 @@ GUIA_R_ESPERANDO_PRECIO = {
     "bultos_primera": 8.0, "bultos_segunda": 2.0, "bultos_merma": 0.0,
     "costo_total": None, "costo_por_bulto_primera": None,
     "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
-    "articulo_nombre": "Tomate Perita",
+    "tipo": "normal", "compra_origen_id": None,
+     "articulo_nombre": "Tomate Perita",
     "consumos": [
         {"origen": "compra", "origen_id": 103, "bultos": 10.0, "costo_por_bulto": None,
          "guia_fecha": date(2026, 8, 24), "proveedor_nombre": "Norte 15"},
@@ -21560,6 +21572,7 @@ def test_guias_r_muestran_para_quien_y_el_cruce_con_datos():
         "bultos_tomados": 12.0, "bultos_primera": 10.0, "bultos_segunda": 1.0,
         "bultos_merma": 1.0, "costo_total": 12000.0, "costo_por_bulto_primera": 1200.0,
         "creado_en": datetime(2026, 8, 24, 10, 0), "anulado_el": None,
+        "tipo": "normal", "compra_origen_id": None,
         "articulo_nombre": "Tomate Perita", "cliente_id": 1, "cliente_nombre": "Día",
         "ficha_id": None, "consumos": [],
     }
@@ -23754,8 +23767,11 @@ def test_los_TRES_que_miran_los_lotes_de_una_guia_R_aplican_la_pared():
     db_py = open("app/db.py", encoding="utf-8").read()
     main_py = open("app/main.py", encoding="utf-8").read()
 
-    # 1 y 3) el freno y la escritura, en crear_reproceso.
-    cuerpo = db_py[db_py.index("def crear_reproceso("):]
+    # 1 y 3) el freno y la escritura, en `_crear_reproceso` — que es donde
+    # viven desde que la compra que llega ya armada en caja nuestra necesitó
+    # cargar su guía R en la MISMA transacción que la recepción. Los dos
+    # caminos pasan por acá, así que la pared sigue siendo UNA.
+    cuerpo = db_py[db_py.index("def _crear_reproceso("):]
     cuerpo = cuerpo[: cuerpo.index("\ndef ")]
     assert "lotes_permitidos(a_la_fecha[\"lotes\"], SALIDA_REPROCESO)" in cuerpo
     assert "bultos_en_los_lotes(lotes)" in cuerpo
@@ -24168,3 +24184,133 @@ def test_anular_un_pedido_NO_se_puede_desde_Deposito():
     rutas = [r.path for r in app.routes if "anular" in getattr(r, "path", "")]
     de_pedidos = [r for r in rutas if "pedido" in r and "renglon" not in r]
     assert de_pedidos == ["/administracion/pedidos/{pedido_id}/anular"], de_pedidos
+
+
+# ── La compra que ya viene armada en caja nuestra ──────────────────────────
+#
+# El puesto reenvasó en NUESTRA caja antes de entregar. Al recepcionar se
+# marca, se elige la ficha, y el sistema carga la guía R solo — cargarla a
+# mano sería documentar un trabajo que nadie hizo.
+
+
+def _fichas_de_un_articulo(articulo_id=11):
+    return {articulo_id: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
+
+
+def test_recepcion_ofrece_ya_viene_armada_SOLO_en_los_articulos_que_TIENEN_ficha():
+    """Sin ficha el camino no existe, así que el botón tampoco.
+
+    Es la misma decisión que la del cajón con envase en el armado: lo que no
+    se puede elegir NO SE LISTA. Un botón que abre un selector vacío se lee
+    como "este artículo no tiene cajas" —que es falso— e invita a cargar una
+    ficha que ya existe en otro lado.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        # Solo el artículo 11 (Tomate Cherry, compra 1) tiene ficha.
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_fichas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    # Por la ACCIÓN del form y no por el texto visible: un comentario que
+    # explique el camino nombra su nombre, y el test tiene que mirar marcado.
+    assert marcado.count('/deposito/recepcion/1/en-caja-propia') == 1
+    assert '/deposito/recepcion/2/en-caja-propia' not in marcado
+    assert '/deposito/recepcion/3/en-caja-propia' not in marcado
+
+
+def test_el_POST_en_caja_propia_SIN_FICHA_no_escribe_nada():
+    with (
+        patch("app.main.recepcionar_compra_en_caja_propia") as guardar,
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_fichas_de_un_articulo()),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/en-caja-propia",
+            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16", "ficha_id": ""},
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí a qué ficha" in respuesta.text
+    guardar.assert_not_called()
+
+
+def test_el_POST_en_caja_propia_MUESTRA_el_motivo_cuando_la_base_rechaza():
+    """El ValueError de la regla llega como 400 CON el motivo adentro.
+
+    Si la compra ya generó su guía, el que está recepcionando tiene que leer
+    qué hacer —anular esa guía— y no un 500 mudo.
+    """
+    with (
+        patch("app.main.recepcionar_compra_en_caja_propia",
+              side_effect=ValueError("Esta compra ya generó su guía R en origen.")),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_fichas_de_un_articulo()),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/en-caja-propia",
+            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16", "ficha_id": "3"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "ya generó su guía R en origen" in respuesta.text
+
+
+def test_el_POST_en_caja_propia_avisa_QUE_GUIA_cargó():
+    with patch("app.main.recepcionar_compra_en_caja_propia", return_value=(214, None)) as guardar:
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/en-caja-propia",
+            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16", "ficha_id": "3"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    guardar.assert_called_once_with(1, 10.0, 16.0, 3)
+    assert "R214" in urllib.parse.unquote_plus(respuesta.headers["location"])
+
+
+def test_la_guia_EN_ORIGEN_se_ve_como_tal_en_Guias_R():
+    """Los números son los mismos que los de un armado del galpón (toma 10,
+    produce 10), así que sin rótulo las dos son indistinguibles.
+
+    Y el renglón de la transformación AFIRMABA un reproceso que acá no
+    ocurrió: "Tomó 10 bultos → 10 cajas · 0 de segunda · 0 de merma" describe
+    un trabajo que hicimos nosotros. Es el corolario 28 — el día que se agrega
+    un camino que cae en una rama, el texto de esa rama hay que releerlo.
+    """
+    # CON FICHA, porque una guía en origen no puede existir sin ella: el CHECK
+    # de la base la exige. Un fixture con `ficha_id` en None haría que el
+    # título dijera "FALTA LA FICHA" en un caso que no ocurre, y el test
+    # defendería una pantalla que nadie va a ver (corolario 22).
+    guia = dict(
+        GUIAS_R_DE_PRUEBA[0], id=214, tipo="en_origen", compra_origen_id=777,
+        ficha_id=3, ficha_nombre="Caja de EJEMPLO", ficha_cliente_id=7,
+        cliente_id=7, cliente_nombre="Cliente de EJEMPLO",
+        bultos_tomados=10.0, bultos_primera=10.0, bultos_segunda=0.0, bultos_merma=0.0,
+    )
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        # Con cliente, la pantalla corre además la alerta de cruce.
+        patch("app.main.listar_articulos_con_primera_de_cliente", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 3): 10.0}),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    # Por la CLASE: el texto visible lo puede nombrar un comentario del
+    # `<style>` explicando por qué esa guía se pinta distinto (corolario 38).
+    assert 'class="chip-en-origen"' in marcado
+    assert "Tomó 10 bultos" not in marcado
+    assert "ya armada en caja nuestra" in marcado

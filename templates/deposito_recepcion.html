@@ -128,6 +128,27 @@
   .boton-advertencia { background: #fff; color: #b45309; border: 1px solid #d97706; }
   .boton-neutro { background: #fff; color: #6b7280; border: 1px solid #9ca3af; }
   .boton-secundario { background: #fff; color: #444; border: 1px solid #ccc; }
+  /* La compra que ya viene armada: ni verde (no es el camino normal) ni rojo
+     (no salió nada mal). Ancho completo y alto de dedo como los demás. */
+  .boton-en-origen {
+    width: 100%;
+    background: #fff;
+    color: #1d4ed8;
+    border: 1px solid #2563eb;
+    margin-top: 0.6rem;
+  }
+  .rotulo-ficha { display: block; margin: 0.6rem 0 0.25rem; font-weight: 600; }
+  /* min-width: 0 para que el select no empuje nada fuera de la pantalla a
+     390px: un control de formulario adentro de un contenedor no baja de su
+     ancho intrinseco sin esto, y lo que cede es lo de al lado. */
+  .select-ficha {
+    width: 100%;
+    min-width: 0;
+    padding: 0.7rem;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+  }
   .sin-foto-balanza { margin: 0.35rem 0 0.15rem; font-size: 0.8rem; color: #9ca3af; }
   .modal-sin-foto {
     border: none;
@@ -396,6 +417,16 @@
           <button type="button" class="boton-exito boton-recibir boton-sin-foto"
                   onclick="abrirModalSinFoto('{{ c.id }}')">Recibir sin foto de balanza</button>
           {% endif %}
+          {# LA COMPRA QUE YA VIENE ARMADA EN CAJA NUESTRA. Va acá arriba y no
+             entre "si algo salió mal": no salió nada mal — es otra forma de
+             recibir. Solo se ofrece si el artículo TIENE fichas: sin ficha el
+             camino no existe, y un botón que lleva a un selector vacío se lee
+             como "este artículo no tiene cajas", que es falso. #}
+          {% if c.fichas_elegibles %}
+          <button type="button" class="boton-en-origen" onclick="mostrarConfirmacion('{{ c.id }}', 'en-caja-propia')">
+            Ya viene armada en caja nuestra
+          </button>
+          {% endif %}
           <p class="titulo-problemas">Si algo salió mal:</p>
           <div class="acciones-renglon">
             <button type="button" class="boton-peligro" onclick="mostrarConfirmacion('{{ c.id }}', 'rechazar')">Rechazo total</button>
@@ -456,6 +487,31 @@
             <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'rechazar')">No</button>
           </div>
         </div>
+
+        {# El SELECT vive fuera del form y se ata con el atributo `form`, y
+           el botón manda ESE MISMO form a otra acción con `formaction`: así
+           los cajones y el contenido que ya tipeó arriba viajan tal cual, sin
+           una segunda copia de los inputs que se pueda desincronizar.
+           `ficha_id` viaja también en el submit normal de "Recibir" y esa
+           ruta no lo lee — es inofensivo y queda dicho para que no sorprenda. #}
+        {% if c.fichas_elegibles %}
+        <div class="confirmacion" id="confirmacion-en-caja-propia-{{ c.id }}">
+          <p class="texto-confirmacion">Llegó <strong>ya reenvasada en nuestra caja</strong>: el sistema carga solo la guía R, uno a uno.</p>
+          <label class="rotulo-ficha" for="ficha-en-origen-{{ c.id }}">¿A qué ficha van?</label>
+          <select id="ficha-en-origen-{{ c.id }}" name="ficha_id" form="form-recepcionar-{{ c.id }}" class="select-ficha">
+            <option value="">Elegí la ficha</option>
+            {% for f in c.fichas_elegibles %}
+            <option value="{{ f.id }}">{{ f.nombre }}{% if f.kilaje %} — {{ f.kilaje }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <div class="acciones-renglon">
+            <button type="submit" form="form-recepcionar-{{ c.id }}"
+                    formaction="/deposito/recepcion/{{ c.id }}/en-caja-propia"
+                    class="boton-en-origen boton-ancho">Recibir y cargar la guía R</button>
+            <button type="button" class="boton-secundario" onclick="ocultarConfirmacion('{{ c.id }}', 'en-caja-propia')">Cancelar</button>
+          </div>
+        </div>
+        {% endif %}
 
         <div class="confirmacion" id="confirmacion-rechazo-parcial-{{ c.id }}">
           <p class="texto-confirmacion">Rechazo parcial de {{ c.articulo_nombre }}: los bultos rechazados se devuelven al proveedor, y se recibe el resto. No se puede deshacer.</p>

@@ -2204,6 +2204,11 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.guia_id, c.guia_punto, c.fecha_operacion,
+                       -- El id y no solo el nombre: la pantalla busca por
+                       -- ARTICULO las fichas de "ya viene armada en caja
+                       -- nuestra", y matchear por nombre seria inventar una
+                       -- clave donde ya hay una.
+                       c.articulo_id,
                        a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion,
@@ -2298,49 +2303,191 @@ def recepcionar_compra(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT a.unidad_compra
-                FROM compras c
-                JOIN articulos a ON a.id = c.articulo_id
-                WHERE c.id = %s
-                """,
-                (compra_id,),
+            aviso = _recepcionar_compra(
+                cursor, compra_id, cantidad_cajones_real, valor_real,
+                cantidad_cajones_rechazada, motivo_rechazo,
             )
-            fila = cursor.fetchone()
-            unidad_compra = fila[0] if fila else None
-
-            contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
-                unidad_compra, cantidad_cajones_real, valor_real
-            )
-
-            cursor.execute(
-                """
-                UPDATE compras
-                SET estado = 'recepcionado',
-                    cantidad_cajones_real = %s,
-                    contenido_por_cajon_real = %s,
-                    cantidad_kilos_real = %s,
-                    cantidad_fraccion_real = %s,
-                    cantidad_cajones_rechazada = %s,
-                    motivo_rechazo = %s,
-                    procesada_el = now()
-                WHERE id = %s
-                """,
-                (
-                    cantidad_cajones_real,
-                    contenido_por_cajon_real,
-                    cantidad_kilos_real,
-                    cantidad_fraccion_real,
-                    cantidad_cajones_rechazada,
-                    motivo_rechazo,
-                    compra_id,
-                ),
-            )
-
-            aviso = _auto_retirar_si_corresponde(cursor, compra_id)
         conexion.commit()
         return aviso
+    finally:
+        conexion.close()
+
+
+def _recepcionar_compra(
+    cursor,
+    compra_id: int,
+    cantidad_cajones_real: float,
+    valor_real: float,
+    cantidad_cajones_rechazada: float | None = None,
+    motivo_rechazo: str | None = None,
+) -> str | None:
+    """La escritura de la recepción, con el cursor abierto. Ver recepcionar_compra.
+
+    Existe por la misma razón que `_crear_reproceso`: la compra que llega ya
+    armada en caja nuestra tiene que recepcionarse Y cargar su guía R en la
+    MISMA transacción, y si el cuerpo estuviera copiado las dos recepciones
+    se separarían sin que nadie lo note.
+    """
+    cursor.execute(
+        """
+        SELECT a.unidad_compra
+        FROM compras c
+        JOIN articulos a ON a.id = c.articulo_id
+        WHERE c.id = %s
+        """,
+        (compra_id,),
+    )
+    fila = cursor.fetchone()
+    unidad_compra = fila[0] if fila else None
+
+    contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
+        unidad_compra, cantidad_cajones_real, valor_real
+    )
+
+    cursor.execute(
+        """
+        UPDATE compras
+        SET estado = 'recepcionado',
+            cantidad_cajones_real = %s,
+            contenido_por_cajon_real = %s,
+            cantidad_kilos_real = %s,
+            cantidad_fraccion_real = %s,
+            cantidad_cajones_rechazada = %s,
+            motivo_rechazo = %s,
+            procesada_el = now()
+        WHERE id = %s
+        """,
+        (
+            cantidad_cajones_real,
+            contenido_por_cajon_real,
+            cantidad_kilos_real,
+            cantidad_fraccion_real,
+            cantidad_cajones_rechazada,
+            motivo_rechazo,
+            compra_id,
+        ),
+    )
+
+    return _auto_retirar_si_corresponde(cursor, compra_id)
+
+
+# La fecha del lote de una compra, tal como la arma la consulta de lotes de
+# `_entradas_y_salidas_stock_varios` (su columna `fecha_orden`). Va escrita UNA
+# vez y no copiada en cada llamador: la guía R en origen tiene que quedar
+# fechada EXACTAMENTE el día que el FIFO le pone a su compra, o el lote no
+# existe todavía cuando el freno lo busca y la guía rebota por un stock que
+# está ahí. Lo cuida
+# `test_la_fecha_de_la_guia_en_origen_sale_de_la_MISMA_expresion_que_el_lote`.
+_SQL_FECHA_DEL_LOTE_DE_COMPRA = "({col} AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
+
+
+def recepcionar_compra_en_caja_propia(
+    compra_id: int,
+    cantidad_cajones_real: float,
+    valor_real: float,
+    ficha_id: int,
+) -> tuple[int, str | None]:
+    """La compra llegó YA ARMADA en caja nuestra: se recepciona y se carga su guía R sola.
+
+    Devuelve (numero_de_guia, aviso_de_retiro).
+
+    El puesto reenvasó en NUESTRA caja antes de entregar. Esa transformación
+    ocurrió en origen, no en el galpón, así que pedirle al operario que cargue
+    la guía R a mano sería pedirle que documente un trabajo que no hizo — y
+    que además se acuerde de hacer dos cosas en orden.
+
+    LAS DOS COSAS VAN EN UNA SOLA TRANSACCIÓN, y no es prolijidad: partidas,
+    una falla en el medio deja la compra recepcionada SIN su guía, o sea el
+    lote crudo y la ficha sin sus cajas. Y nada avisaría, porque la compra
+    quedaría perfecta.
+
+    LA GUÍA CONSUME SU PROPIA COMPRA, y esto es lo más delicado de todo el
+    camino. Sin dirigir el consumo decide el FIFO, que toma el lote MÁS VIEJO:
+    con un cajón viejo del mismo artículo en el depósito, la guía se comería
+    el cajón y dejaría como lote crudo la caja que llegó armada — el resultado
+    OPUESTO al del mundo, y sin descuadrar ningún total. Medido antes de
+    escribir esto (propuesta_fifo real, tres escenarios). Con un artículo sin
+    stock previo anda igual de bien de las dos formas, así que el caso que lo
+    distingue lleva stock viejo a propósito.
+
+    Por qué CONSUME en vez de producir y listo: la compra recepcionada ya sumó
+    +N al stock. Una guía que produjera sin consumir (como las 'inicial' del
+    corte) dejaría el artículo con 2N. Toma N y produce N —neto cero— y lo
+    único que cambia es que el lote pasa de crudo a trabajado, que es lo que
+    la pared del armado necesita para que esas cajas salgan de su ficha.
+
+    El freno de `_crear_reproceso` corre igual que siempre y no puede saltar:
+    la compra es del día, entera, y las salidas del mismo día no cuentan. Esa
+    misma asimetría es la que hace que el freno NO pueda atajar dos guías
+    sobre la misma compra —la segunda ve el lote entero— y por eso el candado
+    es el índice único de la base, no una guarda de acá.
+
+    El cliente sale de la FICHA: una compra tiene proveedor, no cliente.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es
+            # None y no distinguiría "no existe" de "existe" (corolario 27).
+            cursor.execute("SELECT articulo_id, estado FROM compras WHERE id = %s", (compra_id,))
+            compra = cursor.fetchone()
+            if compra is None:
+                raise ValueError("Esa compra no existe.")
+            articulo_id, estado = compra
+            if estado == "recepcionado":
+                raise ValueError("Esa compra ya está recepcionada.")
+
+            cursor.execute(
+                "SELECT articulo_id, cliente_id FROM fichas_logistica WHERE id = %s",
+                (ficha_id,),
+            )
+            ficha = cursor.fetchone()
+            if ficha is None:
+                raise ValueError("Esa ficha no existe.")
+            if ficha[0] != articulo_id:
+                raise ValueError("Esa ficha es de otro artículo: no puede ser la de esta compra.")
+            cliente_id = ficha[1]
+
+            aviso = _recepcionar_compra(cursor, compra_id, cantidad_cajones_real, valor_real)
+
+            # La fecha se LEE de la compra recién escrita, no se calcula acá:
+            # tiene que ser la misma que el FIFO le pone a su lote.
+            cursor.execute(
+                f"SELECT {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='procesada_el')}"
+                " FROM compras WHERE id = %s",
+                (compra_id,),
+            )
+            fecha_operacion = cursor.fetchone()[0]
+
+            bultos = float(cantidad_cajones_real)
+            try:
+                reproceso_id = _crear_reproceso(
+                    cursor,
+                    articulo_id=articulo_id,
+                    bultos_tomados=bultos,
+                    bultos_primera=bultos,
+                    bultos_segunda=0,
+                    bultos_merma=0,
+                    fecha_operacion=fecha_operacion,
+                    cliente_id=cliente_id,
+                    ficha_id=ficha_id,
+                    # DIRIGIDO a su propia compra. Ver el docstring: sin esto
+                    # el FIFO se lleva el cajón más viejo.
+                    reparto=[{"tipo_lote": "guia", "origen_id": compra_id, "bultos": bultos}],
+                    tipo="en_origen",
+                    compra_origen_id=compra_id,
+                )
+            except psycopg2.errors.UniqueViolation as error:
+                # Decide la base y el código traduce. Si el constraint que
+                # rechazó no es el que conocemos, eso SE DICE en vez de
+                # tragarse: es la señal de que las dos reglas se separaron.
+                if error.diag.constraint_name != "reprocesos_una_guia_por_compra":
+                    raise
+                raise ValueError(
+                    "Esta compra ya generó su guía R en origen. Si está mal, anulá esa guía primero."
+                ) from error
+        conexion.commit()
+        return reproceso_id, aviso
     finally:
         conexion.close()
 
@@ -2482,6 +2629,28 @@ def corregir_recepcion_compra(
 
             if estado != "recepcionado":
                 raise ValueError("Esta compra no está recepcionada, no hay valores reales para corregir.")
+
+            # Si esta compra llegó ya armada en caja nuestra, su guía R dice
+            # EXACTAMENTE lo que dice la compra (uno a uno). Corregir los
+            # cajones acá dejaría la compra en 12 y la guía en 10, sin que
+            # nada avise: un descuadre silencioso entre el lote y lo que se
+            # armó de él. Se bloquea y se nombra la guía, porque un error que
+            # no dice qué lo retiene manda a adivinar.
+            cursor.execute(
+                """
+                SELECT id FROM reprocesos
+                WHERE compra_origen_id = %s AND anulado_el IS NULL
+                ORDER BY id
+                """,
+                (compra_id,),
+            )
+            guias = [f[0] for f in cursor.fetchall()]
+            if guias:
+                raise ValueError(
+                    "Esta compra llegó armada en caja nuestra y generó la guía R "
+                    + ", ".join(f"R{g}" for g in guias)
+                    + ". Anulá esa guía y volvé a recepcionar la compra."
+                )
 
             contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
                 unidad_compra, cantidad_cajones_real, valor_real
@@ -8956,6 +9125,54 @@ def crear_reproceso(
     recibe Banana Ecuador — así que esa derivación es ambigua por diseño
     y lo va a ser siempre.
     """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            reproceso_id = _crear_reproceso(
+                cursor,
+                articulo_id=articulo_id,
+                bultos_tomados=bultos_tomados,
+                bultos_primera=bultos_primera,
+                bultos_segunda=bultos_segunda,
+                bultos_merma=bultos_merma,
+                fecha_operacion=fecha_operacion,
+                cliente_id=cliente_id,
+                ficha_id=ficha_id,
+                reparto=reparto,
+            )
+        conexion.commit()
+        return reproceso_id
+    finally:
+        conexion.close()
+
+
+def _crear_reproceso(
+    cursor,
+    articulo_id: int,
+    bultos_tomados: float,
+    bultos_primera: float,
+    bultos_segunda: float,
+    bultos_merma: float,
+    fecha_operacion,
+    cliente_id: int | None = None,
+    ficha_id: int | None = None,
+    reparto: list[dict] | None = None,
+    tipo: str = "normal",
+    compra_origen_id: int | None = None,
+) -> int:
+    """El NUCLEO de la guia R, con el cursor abierto. Los dos frenos viven aca.
+
+    Existe porque hay DOS caminos que cargan una guia R normal y los dos
+    tienen que frenar igual: `crear_reproceso`, que abre su propia conexion,
+    y `recepcionar_compra_en_caja_propia`, que necesita recepcionar y cargar
+    la guia en la MISMA transaccion. Copiar el cuerpo seria la regla escrita
+    dos veces, con los dos frenos adentro — y las dos copias se separan sin
+    que nadie lo note.
+
+    `tipo` y `compra_origen_id` los usa SOLO el camino en origen. El CHECK
+    de la base (db/compra_en_caja_nuestra_2c_uno_a_uno.sql) es el que exige
+    que esa guia sea uno a uno; aca no se repite.
+    """
     from core.stock import (
         SALIDA_REPROCESO,
         bultos_en_los_lotes,
@@ -8966,104 +9183,106 @@ def crear_reproceso(
         validar_reparto_declarado,
     )
 
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            # EL PISO DE LA FECHA, y va antes que nada porque es lo más
-            # barato de descartar. Antes del corte los datos están
-            # declarados no confiables y fuera del alcance del FIFO nuevo
-            # (Decisiones confirmadas, punto 7): una guía R fechada ahí
-            # metería el FIFO nuevo adentro de lo que el corte cerró, que
-            # es exactamente lo que el corte vino a evitar.
-            #
-            # Sale de corte_modelo y NO de una constante escrita acá: la
-            # fecha de corte se mueve cada vez que se hace un corte nuevo,
-            # y un 31/08 clavado en el código quedaría mintiendo el lunes
-            # siguiente sin que nada avise.
-            corte = _fecha_corte(cursor)
-            if fecha_operacion < corte:
-                raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
+    # EL PISO DE LA FECHA, y va antes que nada porque es lo más
+    # barato de descartar. Antes del corte los datos están
+    # declarados no confiables y fuera del alcance del FIFO nuevo
+    # (Decisiones confirmadas, punto 7): una guía R fechada ahí
+    # metería el FIFO nuevo adentro de lo que el corte cerró, que
+    # es exactamente lo que el corte vino a evitar.
+    #
+    # Sale de corte_modelo y NO de una constante escrita acá: la
+    # fecha de corte se mueve cada vez que se hace un corte nuevo,
+    # y un 31/08 clavado en el código quedaría mintiendo el lunes
+    # siguiente sin que nada avise.
+    corte = _fecha_corte(cursor)
+    if fecha_operacion < corte:
+        raise ReprocesoAnteriorAlCorte(fecha_operacion, corte)
 
-            entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
-            # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
-            # de reparto_para_reproceso. El freno, el desglose que vio el
-            # operario y esta escritura miran la MISMA lista: si midieran
-            # contra listas distintas, la pantalla aprobaría un reparto que
-            # acá no se puede cumplir.
-            a_la_fecha = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha_operacion)
-            # LA PARED (pieza 2 de E5): una guía R no puede costearse contra
-            # una caja ya armada. El reparto de arriba sigue siendo la foto
-            # completa —los armados tienen que poder haberse comido esas
-            # cajas— y lo que se recorta es lo que ESTA salida puede tomar.
-            # Filtrar antes del reparto sería otra cosa: le devolvería a los
-            # cajones las salidas que en realidad comieron cajas.
-            lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
+    entradas, salidas = _entradas_y_salidas_stock(cursor, articulo_id, corte)
+    # Los lotes A LA FECHA DEL REPROCESO, con el recorte asimétrico
+    # de reparto_para_reproceso. El freno, el desglose que vio el
+    # operario y esta escritura miran la MISMA lista: si midieran
+    # contra listas distintas, la pantalla aprobaría un reparto que
+    # acá no se puede cumplir.
+    a_la_fecha = reparto_para_reproceso(entradas, salidas_para_reparto(salidas), fecha_operacion)
+    # LA PARED (pieza 2 de E5): una guía R no puede costearse contra
+    # una caja ya armada. El reparto de arriba sigue siendo la foto
+    # completa —los armados tienen que poder haberse comido esas
+    # cajas— y lo que se recorta es lo que ESTA salida puede tomar.
+    # Filtrar antes del reparto sería otra cosa: le devolvería a los
+    # cajones las salidas que en realidad comieron cajas.
+    lotes = lotes_permitidos(a_la_fecha["lotes"], SALIDA_REPROCESO)
 
-            disponible = bultos_en_los_lotes(lotes)
-            if round(float(bultos_tomados) - disponible, 2) > 0:
-                raise StockInsuficienteParaReproceso(float(bultos_tomados), disponible, lotes)
+    disponible = bultos_en_los_lotes(lotes)
+    if round(float(bultos_tomados) - disponible, 2) > 0:
+        raise StockInsuficienteParaReproceso(float(bultos_tomados), disponible, lotes)
 
-            editados = False
-            if reparto is None:
-                declarado = propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
-            else:
-                motivo = validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)
-                if motivo is not None:
-                    raise RepartoDesactualizado(motivo)
-                declarado = [fila for fila in reparto if float(fila.get("bultos") or 0) > 0]
-                editados = declarado != propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
+    editados = False
+    if reparto is None:
+        declarado = propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
+    else:
+        motivo = validar_reparto_declarado(lotes, bultos_tomados, reparto, SALIDA_REPROCESO)
+        if motivo is not None:
+            raise RepartoDesactualizado(motivo)
+        declarado = [fila for fila in reparto if float(fila.get("bultos") or 0) > 0]
+        # `consumos_editados` contesta "¿el reparto lo eligió una PERSONA en
+        # vez del sistema?", y la pantalla lo muestra para que un costo que no
+        # eligió el sistema se pueda distinguir. En la guía EN ORIGEN el
+        # reparto lo arma el server —dirigido a la compra que la generó— así
+        # que difiere del FIFO SIEMPRE y por construcción: marcarla como
+        # editada le diría al que la lee que alguien la tocó a mano, que es
+        # falso. No es una excepción al cálculo: es que la pregunta no aplica
+        # cuando no hubo operario.
+        editados = tipo == "normal" and declarado != propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
 
-            por_lote = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in lotes}
-            consumos = []
-            for fila in declarado:
-                lote = por_lote[(fila["tipo_lote"], fila["origen_id"])]
-                origen = "compra" if lote["tipo_lote"] == "guia" else lote["tipo_lote"]
-                consumos.append(
-                    {
-                        "origen": origen,
-                        "compra_id": lote["origen_id"] if origen == "compra" else None,
-                        "origen_id": lote["origen_id"],
-                        "bultos": float(fila["bultos"]),
-                        "costo_por_bulto": float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None,
-                    }
-                )
+    por_lote = {(lote["tipo_lote"], lote["origen_id"]): lote for lote in lotes}
+    consumos = []
+    for fila in declarado:
+        lote = por_lote[(fila["tipo_lote"], fila["origen_id"])]
+        origen = "compra" if lote["tipo_lote"] == "guia" else lote["tipo_lote"]
+        consumos.append(
+            {
+                "origen": origen,
+                "compra_id": lote["origen_id"] if origen == "compra" else None,
+                "origen_id": lote["origen_id"],
+                "bultos": float(fila["bultos"]),
+                "costo_por_bulto": float(lote["costo_bulto"]) if lote["costo_bulto"] is not None else None,
+            }
+        )
 
-            costo_total = None
-            costo_por_bulto_primera = None
-            if all(c["costo_por_bulto"] is not None for c in consumos):
-                costo_total = round(sum(c["bultos"] * c["costo_por_bulto"] for c in consumos), 2)
-                if float(bultos_primera) > 0:
-                    # TODO el costo va a la primera: segunda y merma valen cero.
-                    costo_por_bulto_primera = round(costo_total / float(bultos_primera), 2)
+    costo_total = None
+    costo_por_bulto_primera = None
+    if all(c["costo_por_bulto"] is not None for c in consumos):
+        costo_total = round(sum(c["bultos"] * c["costo_por_bulto"] for c in consumos), 2)
+        if float(bultos_primera) > 0:
+            # TODO el costo va a la primera: segunda y merma valen cero.
+            costo_por_bulto_primera = round(costo_total / float(bultos_primera), 2)
 
-            cursor.execute(
-                """
-                INSERT INTO reprocesos
-                    (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
-                     bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-                     cliente_id, ficha_id, consumos_editados)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
-                 bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
-                 cliente_id, ficha_id, editados),
-            )
-            reproceso_id = cursor.fetchone()[0]
-            for c in consumos:
-                cursor.execute(
-                    """
-                    INSERT INTO reprocesos_consumos
-                        (reproceso_id, origen, compra_id, origen_id, bultos, costo_por_bulto)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (reproceso_id, c["origen"], c["compra_id"], c["origen_id"],
-                     c["bultos"], c["costo_por_bulto"]),
-                )
-        conexion.commit()
-        return reproceso_id
-    finally:
-        conexion.close()
+    cursor.execute(
+        """
+        INSERT INTO reprocesos
+            (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+             bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
+             cliente_id, ficha_id, consumos_editados, tipo, compra_origen_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (articulo_id, fecha_operacion, bultos_tomados, bultos_primera,
+         bultos_segunda, bultos_merma, costo_total, costo_por_bulto_primera,
+         cliente_id, ficha_id, editados, tipo, compra_origen_id),
+    )
+    reproceso_id = cursor.fetchone()[0]
+    for c in consumos:
+        cursor.execute(
+            """
+            INSERT INTO reprocesos_consumos
+                (reproceso_id, origen, compra_id, origen_id, bultos, costo_por_bulto)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (reproceso_id, c["origen"], c["compra_id"], c["origen_id"],
+             c["bultos"], c["costo_por_bulto"]),
+        )
+    return reproceso_id
 
 
 def crear_reproceso_inicial(
@@ -9272,6 +9491,12 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
                        -- le propuso el FIFO. Se muestra: un costo que no
                        -- eligió el sistema tiene que poder distinguirse.
                        rp.consumos_editados,
+                       -- 'normal' / 'inicial' / 'en_origen'. La pantalla lo
+                       -- necesita para poder decir que una guía NO es un
+                       -- armado del galpón: la de origen se ve igual que
+                       -- cualquier otra (toma 10, produce 10) y sin el rótulo
+                       -- nadie podría distinguirlas.
+                       rp.tipo, rp.compra_origen_id,
                        COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
                        -- El cliente DE LA FICHA, que NO es `rp.cliente_id`:
                        -- son dos columnas sueltas y nada las ata. El selector

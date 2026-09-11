@@ -941,7 +941,11 @@ create table reprocesos (
     -- nulear en silencio al borrar una ficha volvería un reproceso
     -- asignado indistinguible de uno sin asignar.
     ficha_id bigint references fichas_logistica (id),
-    tipo text not null default 'normal' check (tipo in ('normal', 'inicial')),
+    tipo text not null default 'normal'
+        constraint reprocesos_tipo_check check (tipo in ('normal', 'inicial', 'en_origen')),
+    -- La compra que llego YA ARMADA en caja nuestra y genero esta guia sola.
+    -- NULL en todas las demas. Ver db/compra_en_caja_nuestra_2a_*.sql.
+    compra_origen_id bigint references compras (id),
     -- El operario corrigió el reparto por lote que propuso el server.
     consumos_editados boolean not null default false,
     -- El reproceso inicial PRODUCE SIN CONSUMIR: las cajas armadas que había
@@ -950,8 +954,28 @@ create table reprocesos (
     -- en el código, porque el cálculo de stock ya resta SUM(bultos_tomados).
     constraint reprocesos_bultos_tomados_check
         check ((tipo = 'inicial' and bultos_tomados = 0)
-               or (tipo = 'normal' and bultos_tomados > 0))
+               or (tipo = 'normal' and bultos_tomados > 0)
+               -- 'en_origen' es UNO A UNO: lo que entro es lo que hay. El
+               -- reenvasado no paso en el galpon, asi que no hay segunda ni
+               -- merma de reproceso que declarar, y la ficha es obligatoria
+               -- porque una caja que llego armada ya es de alguien.
+               or (tipo = 'en_origen' and bultos_tomados > 0
+                   and bultos_primera = bultos_tomados
+                   and bultos_segunda = 0 and bultos_merma = 0
+                   and ficha_id is not null)),
+    -- En las DOS direcciones: un CHECK que cubre un solo lado deja pasar el
+    -- espejo en silencio.
+    constraint reprocesos_compra_origen_coherente
+        check ((tipo = 'en_origen') = (compra_origen_id is not null))
 );
+
+-- Una compra, UNA guia en origen. PARCIAL a proposito: anular la guia libera
+-- la compra para rehacerla. Es lo UNICO que impide la doble carga — el freno
+-- de stock no puede, porque las salidas del mismo dia no cuentan en
+-- reparto_para_reproceso y la segunda guia ve el lote entero.
+create unique index reprocesos_una_guia_por_compra
+    on reprocesos (compra_origen_id)
+    where compra_origen_id is not null and anulado_el is null;
 
 comment on table reprocesos is
     'Guías R: transformaciones del depósito (tomo bultos del stock, armo cajas de primera + segunda + merma, mismo artículo). El id es el número de guía. El stock se deriva de acá (− tomados, + primera); la segunda es un pool aparte.';

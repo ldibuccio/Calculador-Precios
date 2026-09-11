@@ -287,6 +287,7 @@ from app.db import (
     deficit_de_cajas_por_ficha,
     obtener_uso_storage_bucket,
     recepcionar_compra,
+    recepcionar_compra_en_caja_propia,
     rechazar_compra,
     registrar_costo_envase,
     stock_de_porcion,
@@ -6898,6 +6899,21 @@ def _renderizar_pantalla_recepcion(
         recien_procesado = next((p for p in procesados_hoy if p["id"] == recien_procesado_id), None)
 
     guias = _agrupar_pendientes_por_guia(compras_pendientes)
+
+    # LAS FICHAS PARA "ya viene armada en caja nuestra", POR ARTICULO y no por
+    # cliente: una compra tiene proveedor, no cliente. Es el mismo caso que
+    # describe el docstring de esa función — el que carga está mirando la caja
+    # en el piso y ya sabe de quién es.
+    try:
+        fichas_por_articulo = _cajas_para_elegir_por_articulo()
+    except Exception:
+        # Que no se pueda leer el catálogo de fichas NO puede dejar sin
+        # recepcionar: el camión está esperando. Sin fichas el camino en
+        # origen no se ofrece y los otros cuatro siguen andando.
+        fichas_por_articulo = {}
+    for guia in guias:
+        for compra in guia["compras"]:
+            compra["fichas_elegibles"] = fichas_por_articulo.get(compra["articulo_id"], [])
     # La fecha de cada guía con marca cuando tiene más de un día (mismo
     # criterio que Retirar Mercadería): el que recepciona tiene que ver de
     # cuándo es la partida — si es de anteayer, que salte a la vista.
@@ -7019,6 +7035,59 @@ def recepcionar_compra_ruta(
         )
 
     return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)
+
+
+@app.post("/deposito/recepcion/{compra_id}/en-caja-propia")
+def recepcionar_en_caja_propia_ruta(
+    request: Request,
+    compra_id: int,
+    cantidad_cajones_real: str = Form(""),
+    cantidad_total_real: str = Form(""),
+    ficha_id: str = Form(""),
+):
+    """La mercadería llegó YA ARMADA en caja nuestra: recepción + guía R, juntas.
+
+    El puesto reenvasó en origen. Cargar la guía R a mano sería pedirle al
+    operario que documente un trabajo que no hizo, y que se acuerde de hacer
+    dos cosas en orden — que es como se pierden.
+
+    La ficha se valida acá lo mínimo (que venga un número) y de verdad ABAJO,
+    en `recepcionar_compra_en_caja_propia`: la guarda va donde se ESCRIBE, no
+    donde se muestra. Un formulario armado a mano no ve ningún `<select>`.
+    """
+    error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
+    if not error:
+        error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
+    if not error and not (ficha_id or "").strip().isdigit():
+        error = "Elegí a qué ficha van las cajas que llegaron armadas."
+
+    if error:
+        return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
+
+    try:
+        numero_guia, aviso_retiro = recepcionar_compra_en_caja_propia(
+            compra_id, cajones_valor, valor_real, int(ficha_id)
+        )
+    except ValueError as error_regla:
+        return _renderizar_pantalla_recepcion(request, error=str(error_regla), status_code=400)
+    except StockInsuficienteParaReproceso as error_freno:
+        # No debería pasar —la compra es del día y está entera— pero si pasa,
+        # el motivo se muestra en vez de tragarse: sería la señal de que el
+        # lote de la compra no quedó donde el FIFO lo busca.
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo armar la guía R de esta compra: {error_freno}", status_code=400
+        )
+    except Exception as error_db:
+        return _renderizar_pantalla_recepcion(
+            request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
+        )
+
+    aviso = f"Recepcionada en caja nuestra. Se cargó sola la guía R{numero_guia}."
+    if aviso_retiro:
+        aviso = f"{aviso} {aviso_retiro}"
+    return RedirectResponse(
+        url=_url_recepcion_con_procesado(compra_id, aviso), status_code=303
+    )
 
 
 @app.post("/deposito/recepcion/{compra_id}/rechazar")

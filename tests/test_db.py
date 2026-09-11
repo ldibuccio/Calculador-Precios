@@ -138,6 +138,7 @@ from app.db import (
     obtener_ultimo_disponible_cliente,
     obtener_uso_storage_bucket,
     recepcionar_compra,
+    recepcionar_compra_en_caja_propia,
     rechazar_compra,
 )
 
@@ -810,7 +811,7 @@ def test_actualizar_cantidad_compra_pisa_los_valores():
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_cantidad_compra(30, 5, 10, 20, 200, None, "Clark")
 
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "UPDATE compras" in consulta_update
     assert "importe" not in consulta_update
     assert "sena" not in consulta_update
@@ -883,7 +884,7 @@ def test_actualizar_precio_compra_pisa_importe_y_sena():
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_precio_compra(30, 55000.0, 1000.0)
 
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "UPDATE compras SET importe = %s, sena = %s" in consulta_update
     assert parametros_update == (55000.0, 1000.0, 30)
     conexion.commit.assert_called_once()
@@ -1044,7 +1045,7 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     with patch("app.db.obtener_conexion", return_value=conexion):
         aviso = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
 
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "estado = 'recepcionado'" in consulta_update
     assert "procesada_el = now()" in consulta_update
     cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
@@ -1106,14 +1107,17 @@ def test_recepcionar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
 
 
 def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
-    # 2 fetchone: SELECT estado + unidad_compra, y el UPDATE.
     conexion, cursor = _conexion_falsa([("recepcionado", "kilo")])
+    # Sin guías R en origen colgadas de esta compra: el camino normal.
+    cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=25)
 
-    assert cursor.execute.call_count == 2
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    # Por FRAGMENTO y no por posición: contar las sentencias hacía que
+    # cualquier consulta nueva rompiera este test, que no habla de eso. Es
+    # para lo que existe el helper.
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "cantidad_cajones_real = %s" in consulta_update
     assert "contenido_por_cajon_real = %s" in consulta_update
     # A diferencia de recepcionar_compra, NO toca estado ni procesada_el.
@@ -1134,11 +1138,12 @@ def test_corregir_recepcion_compra_articulo_por_unidad_toma_unidades_por_cajon_y
     # Ej. la Palta con "3u" mal cargado: la corrección es 80 por cajón
     # (lo que Depósito mira), no 2400 en total.
     conexion, cursor = _conexion_falsa([("recepcionado", "unidad")])
+    cursor.fetchall.return_value = []   # sin guía R en origen: el camino normal
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         corregir_recepcion_compra(30, cantidad_cajones_real=30, valor_real=80)
 
-    _, parametros_update = cursor.execute.call_args_list[1].args
+    _, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
     assert contenido == 80  # tomado directo, sin dividir
     assert kilos is None
@@ -1172,7 +1177,7 @@ def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
             cantidad_cajones_rechazada=2, motivo_rechazo="podrido",
         )
 
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "cantidad_cajones_rechazada = %s" in consulta_update
     assert "motivo_rechazo = %s" in consulta_update
     cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
@@ -1185,6 +1190,7 @@ def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
 
 def test_corregir_recepcion_compra_corrige_el_rechazo_parcial():
     conexion, cursor = _conexion_falsa([("recepcionado", "kilo")])
+    cursor.fetchall.return_value = []   # sin guía R en origen: el camino normal
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         corregir_recepcion_compra(
@@ -1192,7 +1198,7 @@ def test_corregir_recepcion_compra_corrige_el_rechazo_parcial():
             cantidad_cajones_rechazada=3, motivo_rechazo="golpeado",
         )
 
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
     assert "cantidad_cajones_rechazada = %s" in consulta_update
     assert "motivo_rechazo = %s" in consulta_update
     cajones, contenido, kilos, fraccion, rechazada, motivo, compra_id = parametros_update
@@ -2428,8 +2434,8 @@ def test_obtener_o_crear_cliente_puesto_reactiva_al_dado_de_baja():
         cliente_id = obtener_o_crear_cliente_puesto("Juan", "juan")
 
     assert cliente_id == 10
-    consulta_update, parametros_update = cursor.execute.call_args_list[1].args
-    assert "SET activo = true" in consulta_update
+    consulta_update, parametros_update = _sql_y_parametros_que_contienen(cursor, "SET activo = true")
+    assert "clientes_puesto" in consulta_update
     assert parametros_update == (10,)
 
 
@@ -4475,7 +4481,7 @@ def test_la_merma_por_ficha_usa_LA_MISMA_VENTANA_que_los_otros_terminos():
     assert "- COALESCE(me.total, 0) AS stock" in _SQL_STOCK_PARTIDO
 
 
-def _valor_insertado(cursor, columna):
+def _valor_insertado(cursor, columna, fragmento=None):
     """El valor que el INSERT le puso a una columna, buscada POR NOMBRE.
 
     Indexar desde el final (`args[1][-1]`) parece equivalente y no lo es:
@@ -4483,8 +4489,15 @@ def _valor_insertado(cursor, columna):
     `proveedor_devolucion_id` al final, y el test pasó a mirar la columna
     nueva sin que nada dijera que estaba mirando otra cosa. La lista de
     columnas está en el propio INSERT: se lee de ahí y no envejece.
+
+    `fragmento` elige CUÁL insert mirar cuando hay más de uno (crear_reproceso
+    escribe la cabecera y después los consumos, y el último es un consumo).
+    Sin él se mira el último, que es lo que ya hacían veinte llamadores.
     """
-    consulta, parametros = cursor.execute.call_args_list[-1].args
+    llamadas = cursor.execute.call_args_list
+    if fragmento is not None:
+        llamadas = [ll for ll in llamadas if fragmento in ll.args[0]]
+    consulta, parametros = llamadas[-1].args
     columnas = consulta.split("(", 1)[1].split(")", 1)[0]
     nombres = [c.strip() for c in columnas.split(",")]
     return parametros[nombres.index(columna)]
@@ -5359,7 +5372,13 @@ def test_crear_reproceso_congela_consumos_fifo_y_todo_el_costo_a_la_primera():
     # significa SIN ASIGNAR, que en la pantalla se elige a propósito.
     # El False del final es consumos_editados: el operario no tocó el
     # desglose, así que va la propuesta FIFO tal cual.
-    assert inserts[0].args[1] == (1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False)
+    # La estructura ENTERA, no tres campos de doce: que caiga el día que
+    # alguien agrega una columna es la función del test. Las dos últimas son
+    # `tipo` y la compra que originó la guía — 'normal' y None acá, porque
+    # ésta es un armado del galpón como cualquier otro.
+    assert inserts[0].args[1] == (
+        1, date(2026, 8, 25), 6, 4, 1, 1, 6600.0, 1650.0, 7, None, False, "normal", None
+    )
     # Consumos congelados, del lote más viejo primero, con su costo.
     assert inserts[1].args[1] == (12, "compra", 101, 101, 3.0, 1000.0)
     assert inserts[2].args[1] == (12, "compra", 102, 102, 3.0, 1200.0)
@@ -5509,7 +5528,10 @@ def test_el_reparto_editado_por_el_operario_se_escribe_y_queda_MARCADO():
         crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=reparto)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
-    assert inserts[0].args[1][-1] is True
+    # POR NOMBRE y no `[-1]`: la última columna dejó de ser ésta el día que
+    # el INSERT ganó `tipo` y `compra_origen_id`, y un test que indexa desde
+    # el final pasa a mirar otra cosa sin decirlo.
+    assert _valor_insertado(cursor, "consumos_editados", "INSERT INTO reprocesos\n") is True
     assert inserts[1].args[1] == (18, "compra", 101, 101, 3.0, 1000.0)
     assert inserts[2].args[1] == (18, "compra", 102, 102, 7.0, 1200.0)
     # 3×1000 + 7×1200 = 11400, y no los 9800 del FIFO.
@@ -5536,7 +5558,7 @@ def test_confirmar_el_desglose_sin_tocarlo_NO_lo_marca_como_editado():
         crear_reproceso(1, 10, 9, 0, 1, date(2026, 8, 25), reparto=igual_al_fifo)
 
     inserts = [c for c in cursor.execute.call_args_list if "INSERT INTO" in c.args[0]]
-    assert inserts[0].args[1][-1] is False
+    assert _valor_insertado(cursor, "consumos_editados", "INSERT INTO reprocesos\n") is False
 
 
 def test_un_reparto_que_pide_mas_de_lo_que_hay_en_un_lote_no_se_guarda():
@@ -7156,3 +7178,207 @@ def test_el_desglose_dice_si_la_ficha_tiene_ENVASE():
     # Y la pared se ve en la propuesta: el cajón está listado pero no se ofrece.
     assert desglose["propuesta"] == {}, "con envase y sin caja no se propone nada"
     assert desglose["lotes"] == [], "el cajón no se lista: no es una opción peor, es la que la regla prohíbe"
+
+
+# ---------------------------------------------------------------------------
+# LA COMPRA QUE YA VIENE ARMADA EN CAJA NUESTRA (guía R tipo 'en_origen')
+# ---------------------------------------------------------------------------
+#
+# El fixture de estos tests lleva DOS lotes a propósito y el segundo es el
+# RIVAL: un cajón viejo del mismo artículo, que es el que el FIFO elegiría si
+# el consumo no fuera dirigido. Con un solo lote —el fixture mínimo, que es el
+# que uno escribe sin pensarlo— la implementación correcta y la equivocada dan
+# exactamente el mismo resultado, porque "el más viejo" y "el correcto" pasan a
+# ser el mismo lote. Ver CLAUDE.md, "Un caso que anda con el sistema VACÍO".
+
+_COMPRA_EN_ORIGEN = 777
+_CAJON_VIEJO = 555
+
+
+def _lotes_con_rival():
+    """El cajón viejo (rival) y la compra que llegó armada, en ese orden de fecha."""
+    return [
+        _lote_compra(_CAJON_VIEJO, date(2026, 8, 20), 40.0, 1000.0),
+        _lote_compra(_COMPRA_EN_ORIGEN, date(2026, 8, 25), 10.0, 1200.0),
+    ]
+
+
+def _conexion_para_en_origen(numero_guia=99, estado_compra="pendiente"):
+    """La cola de fetchone del camino entero, en orden de ejecución."""
+    conexion, cursor = _conexion_falsa(
+        filas_fetchone=[
+            (1, estado_compra),          # SELECT articulo_id, estado FROM compras
+            (1, 7),                      # SELECT articulo_id, cliente_id FROM fichas_logistica
+            ("kilo",),                   # SELECT a.unidad_compra (dentro de _recepcionar_compra)
+            ("retirado",),               # SELECT estado_retiro (auto-retirar: ya estaba)
+            (date(2026, 8, 25),),        # la fecha del lote de la compra recién escrita
+            _CORTE,                      # el piso de fecha de _crear_reproceso
+            (numero_guia,),              # INSERT INTO reprocesos RETURNING id
+        ]
+    )
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [_lotes_con_rival(), []]
+    return conexion, cursor
+
+
+def test_el_fixture_de_la_guia_en_origen_TIENE_un_rival_que_el_FIFO_ELEGIRIA():
+    """El test que cuida al test: sin rival, el de abajo no distingue nada.
+
+    Corre el FIFO real sobre los mismos lotes del fixture y exige que la
+    propuesta por defecto caiga en el CAJÓN VIEJO. Si algún día alguien
+    "simplifica" el fixture dejando un solo lote, este test cae y avisa que
+    el de abajo dejó de poder fallar — que es exactamente la forma de bug
+    que no deja rastro.
+    """
+    from core.stock import (
+        SALIDA_REPROCESO,
+        lotes_permitidos,
+        propuesta_fifo,
+        reparto_para_reproceso,
+        salidas_para_reparto,
+    )
+
+    entradas = [dict(zip([c[0] for c in COLUMNAS_LOTES], fila)) for fila in _lotes_con_rival()]
+    for entrada in entradas:
+        entrada["orden"] = (entrada["fecha_orden"], entrada["momento_orden"])
+
+    reparto = reparto_para_reproceso(entradas, salidas_para_reparto([]), date(2026, 8, 25))
+    propuesta = propuesta_fifo(lotes_permitidos(reparto["lotes"], SALIDA_REPROCESO), 10.0, SALIDA_REPROCESO)
+
+    assert propuesta == [{"tipo_lote": "guia", "origen_id": _CAJON_VIEJO, "bultos": 10.0}]
+
+
+def test_la_guia_en_origen_consume_SU_COMPRA_y_no_el_cajon_mas_viejo():
+    """EL test del camino. Con stock viejo del mismo artículo en el depósito.
+
+    Sin el reparto dirigido el FIFO se lleva el cajón viejo y deja la caja que
+    llegó armada como lote CRUDO: el cajón que sigue en el piso figuraría
+    convertido y las cajas que llegaron figurarían como cajón. Ningún total se
+    descuadra, así que no habría síntoma — lo único que cambia es cuál lote
+    quedó trabajado, que es justo lo que la pared del armado mira al despachar.
+    """
+    conexion, cursor = _conexion_para_en_origen()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        numero, aviso = recepcionar_compra_en_caja_propia(_COMPRA_EN_ORIGEN, 10, 16, ficha_id=3)
+
+    assert (numero, aviso) == (99, None)
+    consumos = [c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos_consumos" in c.args[0]]
+    # UNO solo, y de SU compra. El cajón viejo queda intacto.
+    assert len(consumos) == 1
+    assert consumos[0].args[1] == (99, "compra", _COMPRA_EN_ORIGEN, _COMPRA_EN_ORIGEN, 10.0, 1200.0)
+
+
+def test_la_guia_en_origen_es_UNO_A_UNO_y_se_marca_como_tal():
+    """La estructura ENTERA del INSERT, no tres campos de doce.
+
+    Un test que compara un subconjunto no protege los que no mira, y acá lo
+    que importa está justo en las dos últimas columnas: `tipo` y la compra de
+    la que salió. Sin ellas la guía se vería como un armado del galpón.
+    """
+    conexion, cursor = _conexion_para_en_origen()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra_en_caja_propia(_COMPRA_EN_ORIGEN, 10, 16, ficha_id=3)
+
+    cabecera = next(c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos\n" in c.args[0])
+    assert cabecera.args[1] == (
+        1, date(2026, 8, 25), 10.0, 10.0,   # artículo, fecha, tomados, primera: UNO A UNO
+        0, 0,                              # segunda y merma: el reenvasado no pasó acá
+        12000.0, 1200.0,                   # costo del lote de SU compra, todo a la primera
+        7, 3,                              # cliente (sale de la ficha) y ficha
+        False, "en_origen", _COMPRA_EN_ORIGEN,
+    )
+
+
+def test_la_guia_en_origen_y_su_recepcion_van_en_UNA_SOLA_transaccion():
+    """Partidas, una falla en el medio deja la compra recepcionada SIN su guía.
+
+    El stock quedaría crudo y la ficha sin sus cajas, y nada avisaría: la
+    compra se vería perfecta. Un solo commit, y el UPDATE de la recepción y el
+    INSERT de la guía sobre el MISMO cursor.
+    """
+    conexion, cursor = _conexion_para_en_origen()
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra_en_caja_propia(_COMPRA_EN_ORIGEN, 10, 16, ficha_id=3)
+
+    conexion.commit.assert_called_once()
+    conexion.cursor.assert_called_once()
+    hechos = [c.args[0] for c in cursor.execute.call_args_list]
+    assert any("UPDATE compras" in sql and "estado = 'recepcionado'" in sql for sql in hechos)
+    assert any("INSERT INTO reprocesos\n" in sql for sql in hechos)
+
+
+def test_la_guia_en_origen_NO_se_carga_si_la_ficha_es_de_otro_articulo():
+    """La guarda va donde se ESCRIBE: un formulario armado a mano no ve el `<select>`."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, "pendiente"), (2, 7)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="otro artículo"):
+            recepcionar_compra_en_caja_propia(_COMPRA_EN_ORIGEN, 10, 16, ficha_id=3)
+
+    assert not [c for c in cursor.execute.call_args_list if "UPDATE compras" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_la_guia_en_origen_NO_se_carga_sobre_una_compra_YA_recepcionada():
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1, "recepcionado")])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="ya está recepcionada"):
+            recepcionar_compra_en_caja_propia(_COMPRA_EN_ORIGEN, 10, 16, ficha_id=3)
+
+    conexion.commit.assert_not_called()
+
+
+def test_la_fecha_de_la_guia_en_origen_sale_de_la_MISMA_expresion_que_su_lote():
+    """Una guía fechada otro día no ve su propio lote y rebota por un stock que ESTÁ.
+
+    El lote de una compra se ordena por `procesada_el` en hora argentina. Si la
+    guía se fechara con otra expresión —`fecha_operacion` de la compra, o el
+    `date.today()` del server— el freno buscaría el lote un día antes de que
+    exista. Por eso la expresión está escrita UNA vez y este test la compara
+    contra la consulta de lotes de verdad, en vez de copiarla acá (copiada
+    envejece en silencio).
+    """
+    # Se LEE la consulta de lotes de verdad, no se copia la expresión acá:
+    # copiada envejece en silencio el día que una de las dos cambie.
+    consulta_de_lotes = inspect.getsource(db._entradas_y_salidas_stock_varios)
+    assert db._SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="c.procesada_el") in consulta_de_lotes
+    assert "_SQL_FECHA_DEL_LOTE_DE_COMPRA" in inspect.getsource(db.recepcionar_compra_en_caja_propia)
+
+
+def test_corregir_recepcion_SE_BLOQUEA_si_la_compra_tiene_una_guia_en_origen_viva():
+    """Corregir los cajones dejaría la compra en 12 y su guía en 10, sin que nada avise.
+
+    Y el error NOMBRA la guía: un bloqueo que no dice qué lo retiene manda a
+    adivinar, y el que está corrigiendo no tiene cómo saber que existe.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", "kilo")])
+    cursor.fetchall.return_value = [(214,)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="R214"):
+            corregir_recepcion_compra(_COMPRA_EN_ORIGEN, 12, 16)
+
+    assert not [c for c in cursor.execute.call_args_list if "UPDATE compras" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_corregir_recepcion_SIGUE_ANDANDO_si_la_guia_en_origen_esta_ANULADA():
+    """El caso FELIZ, que es el único que distingue una guarda que funciona de una que siempre frena.
+
+    La consulta filtra `anulado_el IS NULL`: anulada la guía, la compra vuelve
+    a ser corregible — que es justo lo que el bloqueo le pide al que llega.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", "kilo")])
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        corregir_recepcion_compra(_COMPRA_EN_ORIGEN, 12, 16)
+
+    assert [c for c in cursor.execute.call_args_list if "UPDATE compras" in c.args[0]]
+    conexion.commit.assert_called_once()
+    consulta = _sql_que_contiene(cursor, "FROM reprocesos")
+    assert "compra_origen_id = %s" in consulta and "anulado_el IS NULL" in consulta

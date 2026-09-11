@@ -134,6 +134,17 @@
   .editado { margin: 0.55rem 0 0; font-size: 0.85rem; color: #6d28d9; font-weight: 700; }
   .tarjeta.anulada { opacity: 0.6; }
   .tarjeta.anulada .numero-guia { text-decoration: line-through; }
+  /* La guía que no armó nadie acá: la mercadería vino reenvasada del puesto.
+     Sin esto se ve igual que un armado del galpón, porque los números son los
+     mismos (toma 10, produce 10). */
+  .chip-en-origen {
+    background: #dbeafe;
+    color: #1d4ed8;
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
   .marca-anulado { color: #dc2626; font-size: 0.8rem; font-weight: 700; }
   /* La ficha a la que fueron las cajas. Sin asignar NO se pinta de rojo:
      no es un error, es un dato que falta y que se completa acá mismo. */
@@ -337,9 +348,22 @@
          queda — que es la regla que este mismo cambio viene a cumplir.
          Acá solo se lo pinta. #}
       <span class="numero-guia {% if not g.ficha_id %}sin-ficha{% endif %}">Guía R{{ g.id }} — {{ g.porcion_nombre }}</span>
-      <span class="fecha-guia">{{ g.fecha_operacion|fecha_corta }}{% if g.anulado_el %} <span class="marca-anulado">ANULADA</span>{% endif %}</span>
+      <span class="fecha-guia">{{ g.fecha_operacion|fecha_corta }}{% if g.tipo == "en_origen" %} <span class="chip-en-origen">EN ORIGEN</span>{% endif %}{% if g.anulado_el %} <span class="marca-anulado">ANULADA</span>{% endif %}</span>
     </div>
+    {# LA GUÍA EN ORIGEN NO ES UN ARMADO DEL GALPÓN, y este renglón afirmaba
+       que sí: "Tomó 10 bultos → 10 cajas · 0 de segunda · 0 de merma" describe
+       un reproceso que acá no ocurrió — la mercadería llegó ya reenvasada del
+       puesto. Y los dos ceros son ruido: no puede haber segunda ni merma de un
+       reenvasado que no hicimos.
+
+       Es el corolario 28: el día que se agrega un camino que puede caer en una
+       rama, el texto de esa rama hay que releerlo. Esta rama llegó con el
+       camino nuevo. #}
+    {% if g.tipo == "en_origen" %}
+    <p class="transformacion">Llegó <strong>ya armada en caja nuestra</strong>: {{ g.bultos_primera|numero }} cajas, uno a uno con la compra.</p>
+    {% else %}
     <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
+    {% endif %}
     {# EL CLIENTE SOLO CUANDO EL TÍTULO NO LO DICE. Con ficha, el título ya
        es "<artículo> Caja <cliente>" y repetirlo abajo eran dos renglones
        diciendo lo mismo con otras palabras.
