@@ -17959,16 +17959,29 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
 # grupo lo lleva para poder ofrecer "Anular" sin una segunda consulta.
 # El del 21/08 tiene un renglón armado; el del 20/08 no (su único renglón
 # está anulado), así que sirven para los dos estados del botón.
+# DOS sucursales armadas con órdenes de compra DISTINTAS, a propósito: con
+# una sola, o con la misma OC en las dos, una pantalla que mostrara una sola
+# OC para todo el pedido pasaría igual. Es el rival plantado.
 RENGLONES_BUSCAR_DE_PRUEBA = [
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 11, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 15.0, "cantidad_armada": 12.0,
-     "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None},
+     "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None,
+     "orden_compra": "4417", "controlado_el": None},
+    {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 14, "sucursal": "BZ", "articulo_id": 3,
+     "articulo_nombre": "Zapallo", "cantidad": 10.0, "cantidad_armada": 10.0,
+     "kilos_enviados": 95.0, "armado_el": datetime(2026, 8, 21, 13, 30), "anulado_el": None,
+     "orden_compra": "9902", "controlado_el": None},
+    # Sin armar: no se entregó, así que no se lista ni suma.
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 12, "sucursal": "BZ", "articulo_id": 2,
      "articulo_nombre": "Batata", "cantidad": 40.0, "cantidad_armada": None,
-     "kilos_enviados": None, "armado_el": None, "anulado_el": None},
+     "kilos_enviados": None, "armado_el": None, "anulado_el": None,
+     "orden_compra": "9902", "controlado_el": None},
+    # El pedido del 20/08 queda con CERO armados: su tarjeta igual tiene que
+    # aparecer, porque es justo donde "Anular" está permitido.
     {"fecha_operacion": date(2026, 8, 20), "pedido_id": 72, "id": 13, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 10.0, "cantidad_armada": None,
-     "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0)},
+     "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0),
+     "orden_compra": None, "controlado_el": None},
 ]
 
 
@@ -17982,18 +17995,70 @@ def test_buscar_pedidos_muestra_los_kilos_enviados_nunca_los_de_ficha():
 
     assert respuesta.status_code == 200
     texto = respuesta.text
-    assert "Pedido del 21/08/2026" in texto
-    # Los kilos REALES del depósito (240, de 12 bultos armados) — y el sin
-    # armar dice "sin kilaje", jamás un cálculo de ficha.
-    assert "240 kg" in texto
-    assert "sin kilaje" in texto
-    assert "sin armar" in texto
-    # El anulado, visible como anulado (registrado, no borrado) y sin sumar.
-    assert "anulado" in texto
-    assert "1 anulado" in texto
+    marcado = texto.split("</style>")[-1]
+    assert "Pedido del 21/08/2026" in marcado
+    # Los kilos REALES del depósito (240, de 12 bultos armados), jamás un
+    # cálculo de ficha. Y los kilos POR BULTO salen de dividir: 240/12 = 20.
+    assert "240 kg" in marcado
+    assert "12 bultos × 20 kg" in marcado
+    # Total: 240 + 95, solo lo armado.
+    assert "335 kg" in marcado
     # Export con los mismos filtros.
-    assert "/administracion/pedidos/buscar/exportar-pdf?cliente_id=1" in texto
-    assert "/administracion/pedidos/buscar/exportar-excel?cliente_id=1" in texto
+    assert "/administracion/pedidos/buscar/exportar-pdf?cliente_id=1" in marcado
+    assert "/administracion/pedidos/buscar/exportar-excel?cliente_id=1" in marcado
+
+
+def test_buscar_pedidos_agrupa_por_sucursal_con_SU_orden_de_compra():
+    """Cada sucursal es su grupo, con la OC que le corresponde a ELLA.
+
+    Las dos del fixture tienen OC distintas: con la misma en las dos, una
+    pantalla que mostrara una sola OC para todo el pedido pasaría igual.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    # Por la CLASE y no por el texto suelto: "VL" y "OC" aparecen en prosa.
+    assert '<span class="sigla">VL</span>' in marcado
+    assert '<span class="sigla">BZ</span>' in marcado
+    assert '<span class="oc">OC 4417</span>' in marcado
+    assert '<span class="oc">OC 9902</span>' in marcado
+    # El pedido del 20/08 no tiene fila en pedidos_sucursales: se dice.
+    assert "sin orden de compra" not in marcado  # ninguna sucursal LISTADA queda sin OC
+
+
+def test_buscar_pedidos_NO_lista_los_sin_armar_ni_los_suma_pero_los_CUENTA():
+    """Lo sin armar no se entregó: fuera de la lista y del total, dicho en el pie.
+
+    El fixture tiene una Batata sin armar (40 bultos) y una Banana anulada.
+    Si alguna de las dos entrara al total, el número de arriba dejaría de
+    cerrar contra lo que se ve.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    # No están listados.
+    assert "Batata" not in marcado
+    # Los bultos del total son SOLO los armados: 12 + 10 = 22. Con la Batata
+    # adentro darían 62, y con la Banana anulada, 72.
+    assert "22 bultos en 2 pedidos" in marcado
+    # Pero se cuentan, y a la vista: 2 sin armar (la Batata y la anulada).
+    assert "2 sin armar, fuera de la lista y del total." in marcado
+    assert "De ésos, 1 anulado." in marcado
+    # Y el pedido del 20/08, que quedó sin un solo renglón listado, sigue
+    # teniendo su tarjeta — es donde vive el botón de Anular.
+    assert "Pedido del 20/08/2026" in marcado
 
 
 def test_buscar_pedidos_sin_cliente_muestra_solo_el_selector():
@@ -18023,6 +18088,52 @@ def test_exportar_buscar_pedidos_pdf_y_excel():
     assert 'filename="Pedidos_2026-08-15_a_2026-08-22.pdf"' in pdf.headers["content-disposition"]
     assert excel.status_code == 200
     assert "spreadsheetml" in excel.headers["content-type"]
+
+
+def test_el_Excel_de_pedidos_tiene_LAS_SEIS_COLUMNAS_y_Armado_va_VACIA():
+    """Fecha · Artículo · Cantidad · Kilos por bulto · Kilos totales · Armado.
+
+    La última va vacía a propósito: es la que se tilda a mano sobre el
+    papel. Y se verifica que la fila CIERRE — por bulto × cantidad =
+    totales — que es la razón por la que "kilos por bulto" se divide en vez
+    de salir del contenido nominal de la ficha.
+    """
+    from openpyxl import load_workbook
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        excel = cliente.get(
+            "/administracion/pedidos/buscar/exportar-excel?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        )
+
+    hoja = load_workbook(io.BytesIO(excel.content)).active
+    filas = [[c.value for c in fila] for fila in hoja.iter_rows(max_col=6)]
+
+    encabezados = [f for f in filas if f[0] == "Fecha"]
+    assert encabezados, filas
+    for encabezado in encabezados:
+        assert encabezado == ["Fecha", "Artículo", "Cantidad", "Kilos por bulto",
+                              "Kilos totales", "Armado"]
+
+    # El título de cada sección lleva la sucursal Y su orden de compra.
+    titulos = [f[0] for f in filas if isinstance(f[0], str) and f[0].startswith("Pedido del")]
+    assert "Pedido del 21/08/2026 — VL · OC 4417" in titulos
+    assert "Pedido del 21/08/2026 — BZ · OC 9902" in titulos
+
+    banana = next(f for f in filas if f[1] == "Banana")
+    assert banana[0] == "21/08/2026"
+    assert banana[2] == 12.0          # Cantidad
+    assert banana[3] == 20.0          # Kilos por bulto: 240 / 12
+    assert banana[4] == 240.0         # Kilos totales
+    assert banana[5] is None          # Armado: VACÍA
+    # La fila cierra: por bulto × cantidad = totales.
+    assert banana[3] * banana[2] == banana[4]
+
+    # Lo sin armar no está: no se entregó, así que no se factura.
+    assert not [f for f in filas if f[1] == "Batata"]
 
 
 def test_armar_esconde_los_terminados_en_una_seccion_plegada():
@@ -24226,7 +24337,7 @@ def test_buscar_pedidos_ofrece_anular_y_lo_BLOQUEA_con_el_motivo_a_la_vista():
     # El del 21/08 sí: bloqueado, y el motivo se lee.
     assert 'action="/administracion/pedidos/71/anular"' not in cuerpo
     assert "disabled" in cuerpo
-    assert "1 renglón ya armado" in cuerpo
+    assert "2 renglones ya armados" in cuerpo
 
 
 def test_anular_un_pedido_con_armados_no_escribe_y_lo_dice():

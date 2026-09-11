@@ -6196,6 +6196,17 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
     el kilaje de la ficha en el listado. Los anulados vienen marcados
     (anulado_el), nunca desaparecen. Una fila por renglón, del pedido
     vigente de cada fecha (los reemplazados no cuentan doble).
+
+    Trae la ORDEN DE COMPRA de la sucursal del renglón, para el encabezado
+    del grupo. LEFT JOIN y no JOIN: `pedidos_sucursales` se llena al leer el
+    mail, así que un pedido cargado a mano puede no tener fila — y ahí el
+    encabezado dice "sin orden de compra", que es un dato y no un error. El
+    `unique (pedido_id, sucursal)` de esa tabla es lo que hace que el join
+    no pueda duplicar renglones.
+
+    ORDENADO POR SUCURSAL primero: la pantalla agrupa por sucursal adentro
+    de cada fecha, y el agrupador arma los grupos en el orden en que vienen
+    las filas.
     """
     conexion = obtener_conexion()
     try:
@@ -6211,12 +6222,16 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                 )
                 SELECT v.fecha_operacion, v.id AS pedido_id, r.id, r.sucursal, r.articulo_id,
                        COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
-                       r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el
+                       r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el,
+                       ps.orden_compra
                 FROM vigentes v
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
-                ORDER BY v.fecha_operacion DESC, (r.anulado_el IS NOT NULL),
-                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo), r.sucursal
+                LEFT JOIN pedidos_sucursales ps
+                       ON ps.pedido_id = v.id AND ps.sucursal = r.sucursal
+                ORDER BY v.fecha_operacion DESC, r.sucursal,
+                         (r.anulado_el IS NOT NULL),
+                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
                 """,
                 (cliente_id, fecha_desde, fecha_hasta),
             )

@@ -13853,11 +13853,32 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
 
 
 def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
-    """Agrupa los renglones de Buscar Pedidos por fecha, con los totales que se facturan.
+    """Agrupa los renglones de Buscar Pedidos por FECHA y, adentro, por SUCURSAL.
 
     Los kilos son SIEMPRE los kilos_enviados que grabó el depósito al
     armar — un renglón sin kilaje se cuenta aparte, jamás se calcula el
-    de la ficha acá. Los anulados se muestran (registrados) pero no suman.
+    de la ficha acá.
+
+    SOLO SE LISTA LO ARMADO, y eso sale también de los totales: un renglón
+    sin armar no se entregó, así que no es facturable y sumarlo al total
+    dejaría el número de arriba sin cerrar contra lo que se ve. No se
+    esconden en silencio: `sin_armar` viaja a la pantalla para el pie.
+
+    Los ANULADOS caen adentro de los sin armar y no hay que filtrarlos
+    aparte: anular un renglón le borra el armado_el (ver anular_renglon),
+    así que ninguno puede estar armado. Se cuentan igual para el pie.
+
+    EL GRUPO DE FECHA SE CREA AUNQUE QUEDE VACÍO. Si un pedido no tiene un
+    solo renglón armado, la tarjeta igual aparece: es exactamente el caso
+    en el que "Anular este pedido" está permitido, y sin la tarjeta el
+    botón no existiría. Es el corolario 31 — una operación sin puerta en la
+    pantalla termina en el editor de la base.
+
+    KILOS POR BULTO SE DIVIDE, no sale de la ficha: así
+    `kilos_por_bulto × bultos = kilos` cierra exacto en cada fila. El
+    contenido nominal de la ficha da números redondos y puede no coincidir
+    con el total de al lado — dos columnas que no multiplican bien son
+    peores que una columna de menos.
     """
     grupos: list[dict] = []
     grupos_por_fecha: dict = {}
@@ -13865,6 +13886,7 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
     total_bultos = 0.0
     sin_kilaje = 0
     anulados = 0
+    sin_armar = 0
 
     for renglon in renglones:
         fecha = renglon["fecha_operacion"]
@@ -13873,10 +13895,11 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
             grupo = {
                 "fecha": fecha,
                 "fecha_mostrar": fecha.strftime("%d/%m/%Y"),
-                "filas": [],
+                "sucursales": [],
                 "kilos": 0.0,
                 "bultos": 0.0,
                 "sin_kilaje": 0,
+                "sin_armar": 0,
                 # El pedido VIGENTE de esa fecha: un grupo es exactamente un
                 # pedido, porque la consulta sale del DISTINCT ON de siempre.
                 # Va acá para poder ofrecer "Anular" sin una segunda consulta
@@ -13887,34 +13910,40 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
             grupos_por_fecha[fecha] = grupo
             grupos.append(grupo)
 
-        # Los bultos que se mandaron: la cantidad armada real si existe,
-        # si no lo pedido (el renglón sin armar muestra lo pedido).
-        bultos = float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None else float(renglon["cantidad"])
-        anulado = renglon["anulado_el"] is not None
-        armado = renglon["armado_el"] is not None
-        if armado and not anulado:
-            grupo["armados"] += 1
+        if renglon["anulado_el"] is not None:
+            anulados += 1
+        if renglon["armado_el"] is None:
+            sin_armar += 1
+            grupo["sin_armar"] += 1
+            continue
+
+        grupo["armados"] += 1
+        # Los bultos que se mandaron: la cantidad armada real si existe, si
+        # no lo pedido (se armó completo y no se grabó un número aparte).
+        bultos = (float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None
+                  else float(renglon["cantidad"]))
         kilos = float(renglon["kilos_enviados"]) if renglon["kilos_enviados"] is not None else None
 
-        fila = {
+        sucursal = _sucursal_del_grupo(grupo, renglon)
+        sucursal["filas"].append({
+            "renglon_id": renglon["id"],
             "articulo_nombre": renglon["articulo_nombre"] or "(sin identificar)",
             "sucursal": renglon["sucursal"],
             "bultos": bultos,
             "kilos": kilos,
-            "anulado": anulado,
-            "armado": armado,
-        }
-        grupo["filas"].append(fila)
+            "kilos_por_bulto": (kilos / bultos) if (kilos is not None and bultos) else None,
+            "controlado": renglon.get("controlado_el") is not None,
+        })
 
-        if anulado:
-            anulados += 1
-            continue
+        sucursal["bultos"] += bultos
         grupo["bultos"] += bultos
         total_bultos += bultos
         if kilos is not None:
+            sucursal["kilos"] += kilos
             grupo["kilos"] += kilos
             total_kilos += kilos
         else:
+            sucursal["sin_kilaje"] += 1
             grupo["sin_kilaje"] += 1
             sin_kilaje += 1
 
@@ -13923,9 +13952,38 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
         "bultos": total_bultos,
         "sin_kilaje": sin_kilaje,
         "anulados": anulados,
+        "sin_armar": sin_armar,
         "renglones": len(renglones),
     }
     return grupos, totales
+
+
+def _sucursal_del_grupo(grupo: dict, renglon: dict) -> dict:
+    """El sub-grupo de sucursal de un renglón, creado la primera vez que aparece.
+
+    La orden de compra se toma del PRIMER renglón de cada sucursal y no se
+    vuelve a mirar: `pedidos_sucursales` tiene `unique (pedido_id,
+    sucursal)`, así que todos los renglones de una sucursal traen la misma.
+
+    Una sucursal en NULL (renglón sin sucursal) es su propio grupo, con el
+    rótulo dicho como lo que es. Meterla en el primero que hubiera sería
+    contar bultos de una sucursal en otra.
+    """
+    nombre = renglon["sucursal"]
+    for sucursal in grupo["sucursales"]:
+        if sucursal["sucursal"] == nombre:
+            return sucursal
+    sucursal = {
+        "sucursal": nombre,
+        "sucursal_mostrar": nombre or "Sin sucursal",
+        "orden_compra": renglon.get("orden_compra"),
+        "filas": [],
+        "kilos": 0.0,
+        "bultos": 0.0,
+        "sin_kilaje": 0,
+    }
+    grupo["sucursales"].append(sucursal)
+    return sucursal
 
 
 def _leer_filtros_buscar_pedidos(cliente_id_texto, fecha_desde_texto, fecha_hasta_texto):
