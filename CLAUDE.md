@@ -1959,3 +1959,74 @@ mal". En los tres casos el test tenía razón en fallar **y el equivocado era
 él**: miraba texto que no era el que quería mirar. Antes de aflojar el
 assert, mirar QUÉ fragmento matcheó — si cae adentro de un comentario o de
 una regla de CSS, el arreglo es el ancla, no la aserción.
+
+## Esconder un contenedor esconde TODO lo que vive adentro
+
+Del 11/09, y va como regla y no como corolario porque no es la trampa de un
+día: es una pregunta que hay que hacerse cada vez que una pantalla nueva
+pase a tarjetas en el celular.
+
+Cuando una tabla se convierte en tarjeta, el `<thead>` sobra: los rótulos de
+columna no tienen dónde ir. La línea que sale sola es `thead { display:
+none; }`, y **esconde la fila entera, no los rótulos**. Si adentro vivía
+algo más, se va con ellos.
+
+**Dos veces el mismo día, con respuestas OPUESTAS**, y por eso la regla es
+mirar y no prohibir:
+
+| pantalla | qué había en el `<thead>` | qué pasó |
+|---|---|---|
+| Buscar Compras | 7 rótulos **+ `#check-todas`** | apagó el "seleccionar todas" |
+| Compras Pendientes | 6 rótulos, nada más | seguro |
+| Ingresos a Depósito | 8 rótulos, nada más | seguro |
+| Fichas | 8 rótulos, nada más | seguro |
+
+En Buscar Compras el "seleccionar todas" del borrado múltiple vive en la
+primera celda de la cabecera. Medido: **visible en 1200px, invisible en
+390px** — una función que andaba, perdida en la presentación que más se usa.
+Se arregló escondiendo los RÓTULOS (`thead th { display: none }`) y dejando
+la primera celda, con su texto puesto por CSS.
+
+En las otras tres se contaron los elementos interactivos adentro del
+`<thead>` antes de tocar nada: **cero**. Ahí esconderlo entero es correcto.
+
+**LA SEÑAL, y es la parte que hay que llevarse**: el desborde medía **0 de
+las dos formas.** Ese era el número que se estaba mirando —era el objetivo
+del cambio, bajar el desborde a cero— y el cero llegó igual con la función
+apagada. La captura tampoco avisaba: una cabecera que no está no se ve.
+Nada en la medición que uno eligió puede delatar algo que quedó afuera de
+esa medición.
+
+Es la misma familia del corolario 38 —el marcado, el CSS y los comentarios
+comparten el texto y hay que anclar afuera de lo que no se quiere mirar— y
+del 19 —la salvaguarda funcionó y el dato estaba a la vista, pero no se
+leyó—. Acá el dato **no estaba a la vista en ningún lado**: había que ir a
+buscarlo.
+
+**Cómo se hace, y cuesta un comando**: antes de escribir un `display: none`
+sobre un contenedor, listar qué hay adentro. Para un `<thead>`:
+
+```
+python3 -c "
+import io, re
+h = io.open('templates/X.html', encoding='utf-8').read().split('</style>')[-1]
+c = re.search(r'<thead>(.*?)</thead>', h, re.S).group(1)
+print(len(re.findall(r'<(input|button|select|a)\b', c)), 'interactivos')
+"
+```
+
+Cero es vía libre. Más que cero es un caso, y hay que decidirlo.
+
+**Y el anclado del `split("</style>")` no es un adorno del ejemplo**: la
+primera versión de ese conteo, escrita el mismo día, barría desde el
+`<thead>` que nombra el COMENTARIO del `@media` y devolvía 7/6/9/9 y
+"23 interactivos" en Buscar Compras. Los números eran plausibles y estaban
+mal. Es el corolario 38 mordiendo adentro del comando escrito para aplicar
+esta regla.
+
+**Alcance**: vale para cualquier contenedor, no solo el `<thead>`. Un
+`<fieldset>`, un `<tfoot>`, una fila de totales, un `<details>`, un `div`
+que se apaga por media query. La pregunta es siempre la misma: *¿esto que
+escondo tiene adentro algo que se toca?* Y la respuesta se cuenta, no se
+recuerda — en las cuatro pantallas de arriba la intuición decía "son
+rótulos" y en una de las cuatro era falso.
