@@ -1815,3 +1815,36 @@ firma, idéntica en resultado) lo hace caer.
 AGREGA algo en vez de sacar el camino, sospechar. Un canario que rompe de
 verdad casi siempre **borra** —la pata entera, la condición, la línea— y deja
 el archivo con menos, no con más.
+
+Corolario 36, del 11/09: **una consulta de diagnóstico que da CERO sobre
+datos que no tienen el caso no demuestra que detecte nada.** Y el cero es
+justo lo que uno se va a llevar como respuesta.
+
+La consulta de los decimales (`db/decimales_1_de_donde_salen.sql`) corrió
+contra el esquema real y devolvió todo en cero. Se veía como la buena
+noticia — "no hay decimales en ningún lado"—, y no significaba eso: el
+fixture no tenía un solo decimal, así que una consulta con el `% 1 <> 0`
+escrito al revés, o apuntando a la columna equivocada, habría devuelto
+exactamente el mismo cero.
+
+Lo único que lo separa es **plantar el caso y ver aparecer el número**: se
+metió un `bultos_primera` de 20,97, un conteo de 3,5 y un
+`cantidad_cajones_real` de 18,5, y los contadores se movieron de 0 a 1 cada
+uno. Recién ahí el cero de producción vale.
+
+**Es la otra mitad del corolario 12, y la maniobra es la CONTRARIA.** Allá
+se rompe la CONSULTA —correrla con la regla vieja y exigir que el número se
+mueva— y sirve cuando la consulta recorta por algo. Acá se ensucian los
+DATOS —plantar el caso que se está buscando— y sirve cuando la consulta
+BUSCA algo. Una no reemplaza a la otra: un canario sobre el recorte no dice
+nada de si el `where` sabe reconocer el caso.
+
+**Cuándo aplica**, que es lo que la vuelve usable: toda consulta de
+diagnóstico cuyo resultado esperado sea cero. Si la respuesta que se
+busca es "¿cuántos hay de esto malo?", el cero es indistinguible de una
+consulta rota, y la diferencia hay que fabricarla.
+
+Y engancha con el corolario 6 —**la consulta de diagnóstico es la que decide
+qué se arregla después**— por el lado que más cuesta: allá un número falso
+mandó a perseguir 212 cajas que no existían; acá un cero falso manda a **no
+buscar nada**, que no deja rastro y por eso nadie lo descubre.
