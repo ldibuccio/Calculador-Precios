@@ -37,7 +37,11 @@ from app.main import (
     templates,
 )
 
-cliente = TestClient(app)
+# POR HTTPS, y no es decorativo: las cookies de acceso llevan `Secure`, así
+# que un cliente sobre http las descarta en silencio y toda la suite de las
+# puertas daría 401 sin que nada explique por qué. Es el mismo efecto que
+# tendría el sistema servido en claro — la diferencia es que acá se ve.
+cliente = TestClient(app, base_url="https://testserver")
 
 
 def test_formatear_numero_saca_decimales_de_sobra():
@@ -10426,6 +10430,144 @@ def test_gerencia_con_clave_configurada_pide_clave_en_toda_la_zona():
             assert respuesta.status_code == 303, url
 
 
+def _atributos_de_cookie(cabecera: str) -> dict:
+    """El Set-Cookie desarmado, para afirmar sobre los atributos y no sobre
+    el texto crudo (que cambia de orden según la versión de Starlette)."""
+    partes = [p.strip() for p in cabecera.split(";")]
+    salida = {"_nombre": partes[0].split("=")[0]}
+    for parte in partes[1:]:
+        clave, _, valor = parte.partition("=")
+        salida[clave.lower()] = valor or True
+    return salida
+
+
+def test_CADA_ZONA_tiene_su_duracion_y_las_tres_cookies_son_Secure():
+    """Las tres no duran lo mismo y eso es una DECISIÓN, no una copia.
+
+    Administración y el Puesto vencen por jornada (12h): los usa todo el día
+    quien trabaja ahí, y pedir la clave cada media hora termina con la clave
+    pegada al monitor. Gerencia dura 2h porque ve la plata y se abre desde
+    un teléfono.
+
+    Se lee el Set-Cookie REAL y no la constante: la constante en verde con
+    la ruta escribiendo otra cosa es exactamente el no-op silencioso que
+    tenían las dos copias de `_responder_clave` hasta el 11/09.
+    """
+    esperado = {
+        ("/gerencia/clave", "CLAVE_GERENCIA"): ("acceso_gerencia", "7200", "/gerencia"),
+        ("/administracion/clave", "CLAVE_ADMINISTRACION"): (
+            "acceso_administracion", "43200", "/administracion"),
+        ("/puesto/envases/clave", "CLAVE_CONTROL_PUESTO"): (
+            "acceso_control_puesto", "43200", "/puesto/envases"),
+    }
+    try:
+        for (ruta, variable), (cookie, edad, camino) in esperado.items():
+            with patch.dict(os.environ, {variable: "secreta"}):
+                respuesta = cliente.post(ruta, data={"clave": "secreta"}, follow_redirects=False)
+            atributos = _atributos_de_cookie(respuesta.headers["set-cookie"])
+            assert atributos["_nombre"] == cookie, ruta
+            assert atributos["max-age"] == edad, ruta
+            assert atributos["path"] == camino, ruta
+            # Secure en las TRES: sin él la cookie de acceso viaja en claro
+            # el día que alguien abra el sistema por http.
+            assert atributos.get("secure") is True, ruta
+            assert atributos.get("httponly") is True, ruta
+            cliente.cookies.clear()
+    finally:
+        cliente.cookies.clear()
+
+
+def test_GERENCIA_desliza_y_las_otras_dos_NO():
+    """Gerencia vence por INACTIVIDAD: cada request reemite la cookie, así
+    que las 2 horas cuentan desde el último uso.
+
+    Es lo que hace tolerable el plazo corto: sin renovación, a las 2 horas
+    te echa a la pantalla de clave en el medio de corregir una recepción y
+    lo tipeado se pierde. Administración y el Puesto NO deslizan a
+    propósito — su plazo es una jornada y correrlo lo volvería eterno.
+    """
+    try:
+        cliente.cookies.clear()
+        with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
+            cliente.post("/gerencia/clave", data={"clave": "secreta"}, follow_redirects=False)
+            adentro = cliente.get("/gerencia")
+            assert adentro.status_code == 200
+            # Cada visita corre el reloj: la cookie vuelve, con su plazo entero.
+            assert "acceso_gerencia" in adentro.headers.get("set-cookie", "")
+            assert _atributos_de_cookie(adentro.headers["set-cookie"])["max-age"] == "7200"
+        cliente.cookies.clear()
+
+        # Administración NO: entra y la pantalla no reemite nada.
+        with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "secreta"}):
+            cliente.post("/administracion/clave", data={"clave": "secreta"},
+                         follow_redirects=False)
+            adentro = cliente.get("/administracion")
+            assert adentro.status_code == 200
+            assert "acceso_administracion" not in adentro.headers.get("set-cookie", "")
+    finally:
+        cliente.cookies.clear()
+
+
+def test_la_renovacion_NO_reabre_la_zona_que_Bloquear_acaba_de_cerrar():
+    """El POST de Bloquear BORRA la cookie, y corre bajo /gerencia — o sea
+    que pasa por el mismo middleware que renueva.
+
+    Sin la guarda, la renovación escribiría la cookie encima del
+    `delete_cookie` y el botón saldría bien sin hacer nada: el peor modo de
+    falla de un candado es que parezca que cerró.
+    """
+    try:
+        with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
+            cliente.post("/gerencia/clave", data={"clave": "secreta"}, follow_redirects=False)
+            assert cliente.get("/gerencia").status_code == 200
+            cliente.post("/gerencia/bloquear", follow_redirects=False)
+            # Cerrada de verdad, no solo en la respuesta del botón.
+            assert cliente.get("/gerencia").status_code == 401
+    finally:
+        cliente.cookies.clear()
+
+
+def test_el_candado_de_ADMINISTRACION_esta_donde_ella_trabaja_y_no_solo_en_el_hub():
+    """Un botón que obliga a volver al hub para usarlo no se usa.
+
+    Vive en la barra de navegación —que todas las pantallas ya incluyen— y
+    no repartido plantilla por plantilla: así llega también a las que
+    vengan, sin que nadie tenga que acordarse.
+    """
+    try:
+        # La fixture autouse deja su propia cookie, firmada con OTRA clave.
+        # Este test pone la suya, así que el jar arranca limpio o las dos
+        # conviven y gana la que no corresponde.
+        cliente.cookies.clear()
+        with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "secreta"}):
+            cliente.post("/administracion/clave", data={"clave": "secreta"},
+                         follow_redirects=False)
+            with (
+                patch("app.main.listar_movimientos_stock_por_rango", return_value=[]),
+                patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+                patch("app.main.listar_clientes", return_value=[]),
+                patch("app.main.cajas_armadas_por_ficha", return_value={}),
+                patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
+                patch("app.main._hoy_argentina", return_value=date(2026, 9, 10)),
+            ):
+                pantalla = cliente.get("/administracion/stock/movimientos")
+            assert pantalla.status_code == 200
+            assert 'action="/administracion/bloquear"' in pantalla.text
+            # Y postea al de SU zona, no al de otra: la cookie es por path.
+            assert 'action="/gerencia/bloquear"' not in pantalla.text
+    finally:
+        cliente.cookies.clear()
+
+
+def test_una_zona_SIN_clave_configurada_no_muestra_candado():
+    """Sin clave no hay puerta, y un candado que no cierra nada es peor que
+    ninguno: promete algo que no pasa."""
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": ""}):
+        pantalla = cliente.get("/administracion")
+        assert pantalla.status_code == 200
+        assert "/administracion/bloquear" not in pantalla.text
+
+
 def test_clave_gerencia_correcta_deja_cookie_y_bloquear_la_corta():
     try:
         with patch.dict(os.environ, {"CLAVE_GERENCIA": "secreta"}):
@@ -13343,7 +13485,7 @@ def _con_clave_control(valor="1234"):
 
 def _cliente_destrabado(clave="1234"):
     """Un TestClient propio (la cookie no puede contaminar al cliente compartido) ya con la clave puesta."""
-    cliente_propio = TestClient(app)
+    cliente_propio = TestClient(app, base_url="https://testserver")
     respuesta = cliente_propio.post(
         "/puesto/envases/clave", data={"clave": clave, "volver": "/puesto/envases"}, follow_redirects=False
     )
@@ -13431,7 +13573,7 @@ def test_el_volver_de_la_puerta_conserva_la_query():
 
 def test_clave_correcta_desbloquea_toda_la_zona_una_sola_vez():
     with _con_clave_control():
-        cliente_propio = TestClient(app)
+        cliente_propio = TestClient(app, base_url="https://testserver")
         respuesta = cliente_propio.post(
             "/puesto/envases/clave",
             data={"clave": "1234", "volver": "/puesto/envases/cotejo"},
@@ -13455,7 +13597,7 @@ def test_clave_correcta_desbloquea_toda_la_zona_una_sola_vez():
 
 def test_clave_incorrecta_no_deja_cookie_y_avisa():
     with _con_clave_control():
-        cliente_propio = TestClient(app)
+        cliente_propio = TestClient(app, base_url="https://testserver")
         respuesta = cliente_propio.post(
             "/puesto/envases/clave", data={"clave": "9999", "volver": "/puesto/envases/stock"}
         )
@@ -22008,9 +22150,19 @@ def test_deposito_ordena_los_botones_como_pasan_las_cosas():
     respuesta = cliente.get("/deposito")
     cuerpo = respuesta.text.split("</style>")[-1]
 
-    orden = ["Retirar Mercadería", "Recepción Compras", "Ingresar Mercadería",
-             "Armar Pedido", "Stock"]
-    posiciones = [cuerpo.index(t) for t in orden]
+    # Se buscan los BOTONES y no las palabras sueltas: "Stock" a secas
+    # matchea cualquier comentario o texto de la barra que lo nombre, y el
+    # test rompe por algo que no es el orden. Pasó el 11/09 con un comentario
+    # de `_barra_navegacion.html` que decía "Movimientos de Stock".
+    orden = [
+        ('/logistica/retiro/Pases?origen=deposito', "Retirar Mercadería"),
+        ('/deposito/recepcion', "Recepción Compras"),
+        ('/deposito/ingresar', "Ingresar Mercadería"),
+        ('/deposito/pedido/armar', "Armar Pedido"),
+        ('/deposito/stock', "Stock"),
+    ]
+    posiciones = [cuerpo.index(f'href="{url}">{texto}</a>') for url, texto in orden]
+    orden = [texto for _url, texto in orden]
     assert posiciones == sorted(posiciones), dict(zip(orden, posiciones))
 
 

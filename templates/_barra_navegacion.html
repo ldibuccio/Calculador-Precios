@@ -27,6 +27,20 @@
     {% endif %}
   </div>
   <div class="barra-titulo">{{ barra_titulo }}</div>
+  {# EL CANDADO VIVE ACÁ, en la barra que todas las pantallas ya incluyen, y
+     no repartido pantalla por pantalla. Hasta el 11/09 se incluía a mano en
+     doce plantillas: Gerencia lo tenía en cuatro, el Puesto en siete y
+     Administración en UNA sola —el hub—, así que ella tenía que volver al
+     hub para bloquear. Un botón que obliga a navegar para usarlo no se usa.
+
+     Puesto acá aparece en TODA pantalla de una zona con clave, incluidas
+     las que vengan, y no hay que acordarse de agregarlo. #}
+  {% set _bloqueo = bloqueo_del_sector(barra_sector) %}
+  {% if _bloqueo %}
+  <form class="barra-bloquear" method="post" action="{{ _bloqueo }}">
+    <button class="barra-boton" type="submit" aria-label="Bloquear {{ _sector.nombre }}" title="Bloquear {{ _sector.nombre }}">🔒</button>
+  </form>
+  {% endif %}
   <span class="barra-empresa">{{ NOMBRE_EMPRESA }}</span>
 </header>
 <style>
@@ -49,6 +63,22 @@
     display: flex;
     gap: 0.4rem;
     flex-shrink: 0;
+  }
+  /* El candado no se encoge ni empuja al nombre de la empresa: en 390px la
+     barra ya está llena, y un botón que se achica deja de ser tocable. */
+  .barra-navegacion .barra-bloquear {
+    margin: 0 0.4rem 0 0;
+    padding: 0;
+    flex-shrink: 0;
+    display: flex;
+  }
+  /* MÁS ANGOSTO que los botones de la izquierda, a propósito: es un emoji y
+     no un SVG, así que llena el cuadrado con menos caja. Los 2.5rem de los
+     otros le comían el ancho al título y "Movimientos de Stock" se partía en
+     dos líneas en 390px. Sigue arriba del mínimo cómodo para el pulgar. */
+  .barra-navegacion .barra-bloquear .barra-boton {
+    width: 2.1rem;
+    font-size: 1rem;
   }
   /* Selector con la barra adelante a propósito: varias pantallas tienen
      reglas globales para "button" (margin-top, width 100%…) que pisarían
@@ -115,6 +145,21 @@
   // corta los largos. Acá se busca el tamaño MÁS GRANDE (hasta 2rem) al
   // que el título entra en una línea; si ni al mínimo entra, baja a dos
   // líneas pero nunca se recorta. Sin JS queda el 1.2rem del CSS.
+  //
+  // EL PISO BAJÓ DE 1.05 A 0.9 EL 11/09, y por una causa medida: el candado
+  // de la barra le come ~40px al título en las zonas con clave, y con el
+  // piso viejo "Movimientos de Stock" se partía en dos líneas en 390px
+  // (verificado con y sin el candado, misma pantalla). A 0.9rem son ~14px:
+  // entra en una línea y se lee sin zoom, que es lo que la regla pide.
+  // Las pantallas sin candado no se enteran — el bucle sale antes.
+  //
+  // MEDIDO en 390px, con candado y sin candado, sobre los títulos más largos
+  // del sistema: las de Administración y Gerencia siguen en UNA línea, más
+  // chicas (24,8→20,8px; 19,2→16; 20→16;
+  // 17,6→14,4). La ÚNICA que pasa a dos es la de ingreso retroactivo, de
+  // Gerencia, y se deja así: bajar más el piso achicaría todos los títulos
+  // largos del sistema para ganar una pantalla que se abre cada tanto, y dos
+  // líneas es el fallback previsto — gasta vertical, que es lo que sobra.
   (function () {
     const titulo = document.querySelector(".barra-titulo");
     if (!titulo) return;
@@ -122,7 +167,7 @@
       titulo.classList.add("ajustado-nowrap");
       let tam = 2.0;
       titulo.style.fontSize = tam + "rem";
-      while (tam > 1.05 && titulo.scrollWidth > titulo.clientWidth) {
+      while (tam > 0.9 && titulo.scrollWidth > titulo.clientWidth) {
         tam -= 0.05;
         titulo.style.fontSize = tam + "rem";
       }
