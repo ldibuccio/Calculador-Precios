@@ -1919,7 +1919,7 @@ Corolario 38, del 11/09, y es de los tests: **el CSS, los comentarios y el
 marcado viven todos en el mismo texto, así que un test que lee HTML con
 regex tiene que anclarse afuera de los dos primeros.**
 
-Tres veces, y las tres con la misma forma —**un comentario que yo mismo
+CUATRO veces, y las cuatro con la misma forma —**un comentario que yo mismo
 acababa de escribir rompió un test que yo mismo acababa de escribir**—:
 
 1. **La barra de Depósito.** El test verificaba el ORDEN de los botones
@@ -1935,6 +1935,33 @@ acababa de escribir rompió un test que yo mismo acababa de escribir**—:
    **matchea `<thead>` también**, y el comentario del `@media` nombra al
    `<thead>` para explicar que se esconde. El test leyó ese texto como si
    fueran columnas y comparó rótulos contra prosa.
+4. **El chip de la devolución al proveedor** (11/09), y es el caso extremo.
+   El comentario del `<style>` de Rentabilidad Real existe para explicar por
+   qué esa devolución **NO** va en "Afuera del cálculo"… y rompió el test
+   que verifica que no vaya: `assert "Afuera del cálculo" not in
+   respuesta.text`.
+
+### Por qué pasa siempre, que es lo que le faltaba a este corolario
+
+Las cuatro veces el comentario nombraba **exactamente** el texto que el test
+buscaba, y eso no es mala suerte: es el mecanismo. **Un comentario explica
+por qué algo es así, así que NOMBRA la cosa.** El test busca la cosa. La
+colisión está garantizada por construcción, no por descuido.
+
+Y el incentivo queda dado vuelta, que es lo peor: **cuanto mejor escrito el
+comentario, más probable que rompa el test.** Un comentario vago —"acá se
+esconde algo"— no choca con nada. El que dice qué, por qué y contra qué
+alternativa, choca seguro. Los cuatro casos de arriba son de los buenos.
+
+**El arreglo NO es escribir peor los comentarios.** Es que el test pregunte
+por la **clase** o el atributo, no por el texto visible:
+
+> **El texto es para el que lee; la clase es para el que verifica.**
+
+Por eso el cuarto quedó como `assert 'class="tarjeta-afuera"' not in
+respuesta.text`. Una clase no aparece en prosa explicativa nunca, y si
+alguien la nombra en un comentario es porque está hablando del marcado —
+que es justo lo que el test quiere mirar.
 
 **Lo que esto NO es**: un descubrimiento. `split("</style>")` aparece
 **63 veces** en la suite — la costumbre ya existía y era la correcta. Lo que
