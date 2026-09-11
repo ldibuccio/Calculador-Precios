@@ -181,8 +181,10 @@ from app.db import (
     listar_pedidos_vigentes_con_armado,
     PedidoConArmado,
     PedidoInexistente,
+    PedidoInexistenteParaControl,
     PedidoYaAnulado,
     anular_pedido,
+    contar_pedidos_sin_controlar,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
     buscar_renglones_pedidos,
@@ -217,6 +219,7 @@ from app.db import (
     lotes_para_reproceso,
     dependencias_del_lote_de_compra,
     desglose_de_renglon_armado,
+    guardar_control_de_pedido,
     guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
@@ -10854,6 +10857,34 @@ ALERTAS = [
         ),
     ),
     DefinicionAlerta(
+        codigo="pedidos_sin_controlar",
+        titulo="Pedidos entregados que Administración no controló",
+        titulo_corto="Pedidos sin controlar",
+        url="/administracion/pedidos/buscar",
+        texto_link="Ver en Buscar Pedidos",
+        # Solo Administración: el control es suyo. Depósito ya tiene seis
+        # alertas y ésta no la puede resolver.
+        modulos=("administracion",),
+        # ES LA CONSECUENCIA DEL TILDE, y por eso existe. Un campo que no
+        # aparece en ninguna cuenta ni en ninguna decisión se llena vacío en
+        # dos semanas, y eso no es indisciplina: es la respuesta correcta al
+        # incentivo que hay puesto. Acá la pregunta que contesta es
+        # "¿facturamos algo que nadie miró?", que es para lo que se pidió.
+        #
+        # HASTA AYER Y NO HASTA HOY: el pedido de hoy se controla hoy a la
+        # tarde. Prendida a la mañana con lo que todavía se está por hacer,
+        # se aprende a ignorar.
+        #
+        # La ventana sale de DIAS_PASADOS_LISTADO_PEDIDOS y no de un 7
+        # escrito acá: contar pedidos que Buscar Pedidos no lista por
+        # defecto dejaría el banner diciendo un número y la pantalla
+        # mostrando otro.
+        contar=lambda: contar_pedidos_sin_controlar(
+            _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS),
+            _hoy_argentina() - timedelta(days=1),
+        ),
+    ),
+    DefinicionAlerta(
         codigo="mails_sin_confirmar",
         # Pendientes Y con error de lectura: un mail que falló a las 12:00
         # corriendo solo se tiene que ver acá, no perderse.
@@ -13874,6 +13905,12 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
     botón no existiría. Es el corolario 31 — una operación sin puerta en la
     pantalla termina en el editor de la base.
 
+    "CONTROLADO" ES UNA CUENTA, NO UNA COLUMNA: el pedido está controlado
+    cuando `controlados == armados`. Guardado como estado, un renglón nuevo
+    lo dejaría en verde hasta que alguien se acordara de destildarlo; como
+    cuenta, se vuelve incompleto solo. Es la misma razón por la que el
+    reparto del FIFO se rejuega en cada lectura en vez de guardarse.
+
     KILOS POR BULTO SE DIVIDE, no sale de la ficha: así
     `kilos_por_bulto × bultos = kilos` cierra exacto en cada fila. El
     contenido nominal de la ficha da números redondos y puede no coincidir
@@ -13906,6 +13943,7 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
                 # que podría elegir otro.
                 "pedido_id": renglon["pedido_id"],
                 "armados": 0,
+                "controlados": 0,
             }
             grupos_por_fecha[fecha] = grupo
             grupos.append(grupo)
@@ -13918,6 +13956,8 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
             continue
 
         grupo["armados"] += 1
+        if renglon.get("controlado_el") is not None:
+            grupo["controlados"] += 1
         # Los bultos que se mandaron: la cantidad armada real si existe, si
         # no lo pedido (se armó completo y no se grabó un número aparte).
         bultos = (float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None
@@ -14100,6 +14140,39 @@ def anular_pedido_ruta(pedido_id: int, cliente_id: str = Form(""),
         raise HTTPException(status_code=500, detail=f"No se pudo anular el pedido: {error_db}") from error_db
     else:
         aviso = f"Pedido {pedido_id} anulado. Queda de registro; no lo cuenta ninguna pantalla."
+    return RedirectResponse(
+        url="/administracion/pedidos/buscar?" + urlencode({**filtros, "aviso": aviso}),
+        status_code=303,
+    )
+
+
+@app.post("/administracion/pedidos/{pedido_id}/control")
+def guardar_control_de_pedido_ruta(pedido_id: int, cliente_id: str = Form(""),
+                                   fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
+                                   renglon_id: list[int] = Form(default=[])):
+    """Guarda el control de Administración de un pedido: los tildados, y destilda el resto.
+
+    La lista llega como los checkboxes que VINIERON: un checkbox apagado no
+    manda nada, así que destildar es "no estar en la lista". Por eso se
+    manda el pedido entero de una y no renglón por renglón — con un POST
+    por tilde no habría forma de distinguir "lo saqué" de "no lo toqué".
+
+    Las guardas viven en `guardar_control_de_pedido` (app/db.py) y no acá:
+    si estuvieran en la ruta, el día que otro llamador guarde un control se
+    las saltearía. Acá solo se traduce la excepción a un aviso.
+
+    Vuelve a la búsqueda con los MISMOS filtros: lo que hay que ver después
+    de controlar es la lista con los tildes puestos.
+    """
+    filtros = {"cliente_id": cliente_id, "fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
+    try:
+        tildados = guardar_control_de_pedido(pedido_id, renglon_id)
+    except PedidoInexistenteParaControl:
+        aviso = "Ese pedido no existe."
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el control: {error_db}") from error_db
+    else:
+        aviso = f"Control guardado: {tildados} renglón(es) controlados en el pedido {pedido_id}."
     return RedirectResponse(
         url="/administracion/pedidos/buscar?" + urlencode({**filtros, "aviso": aviso}),
         status_code=303,
@@ -15006,13 +15079,26 @@ def desarmar_renglon_pedido_ruta(
     fecha: str = Form(""),
     sucursal: str = Form(""),
 ):
-    """Destilda un renglón (toque por error, o apareció el stock que faltaba)."""
+    """Destilda un renglón (toque por error, o apareció el stock que faltaba).
+
+    SI TENÍA EL CONTROL DE ADMINISTRACIÓN, SE AVISA. El control se cae solo
+    —lo obliga el CHECK de la base, no una cortesía de acá— pero caerse en
+    silencio sería peor que no tenerlo: el que desarma tiene que saber que
+    tiró abajo un control que alguien ya había hecho, porque después hay
+    que volver a hacerlo.
+    """
     try:
-        desmarcar_renglon_armado(renglon_id)
+        estaba_controlado = desmarcar_renglon_armado(renglon_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo destildar el renglón: {error_db}") from error_db
 
-    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+    destino = _url_vuelta_armado(cliente_id, fecha, sucursal)
+    if estaba_controlado:
+        destino += "&" + urlencode({
+            "aviso": "Ojo: ese renglón ya estaba controlado por Administración. "
+                     "Al destildarlo se borró el control, así que hay que volver a controlarlo.",
+        })
+    return RedirectResponse(url=destino, status_code=303)
 
 
 @app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/anular")

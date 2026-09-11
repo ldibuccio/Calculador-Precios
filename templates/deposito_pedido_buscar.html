@@ -117,6 +117,38 @@
      compra y eso no es un error, es un dato. */
   .encabezado-sucursal .sin-oc { color: #6b7280; font-weight: 400; font-style: italic; }
   .subtotal-sucursal { border-top-width: 1px; font-size: 0.9rem; }
+  /* El tilde del control: área grande para el pulgar, no un cuadradito.
+     El label envuelve al input y se estira, así que se puede errar el
+     centro y entra igual. */
+  .tilde-control {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    margin: -0.5rem 0 -0.5rem -0.4rem;
+    cursor: pointer;
+  }
+  .tilde-control input { width: 1.4rem; height: 1.4rem; }
+  .estado-control {
+    margin: 0.6rem 0 0;
+    color: #6b7280;
+    font-size: 0.88rem;
+    font-weight: 700;
+  }
+  .estado-control.completo { color: #166534; }
+  .boton-control {
+    width: 100%;
+    padding: 0.95rem 1rem;
+    margin-top: 0.5rem;
+    background: #166534;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
   .sin-armar-pie {
     margin: 0.5rem 0 0;
     color: #6b7280;
@@ -236,6 +268,18 @@
   {% for g in grupos %}
   <div class="tarjeta">
     <h2>Pedido del {{ g.fecha_mostrar }}</h2>
+    {# EL CONTROL DE ADMINISTRACIÓN. Un tilde por renglón y UN solo POST por
+       pedido: un checkbox apagado no manda nada, así que "destildar" es no
+       estar en la lista — con un POST por tilde no habría forma de
+       distinguir "lo saqué" de "no lo toqué".
+
+       "Controlado" es una CUENTA (controlados == armados), no una columna:
+       un renglón nuevo lo vuelve incompleto solo, sin que nadie tenga que
+       acordarse de destildar el pedido. #}
+    <form method="post" action="/administracion/pedidos/{{ g.pedido_id }}/control">
+    <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+    <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+    <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
     {% for s in g.sucursales %}
     <div class="grupo-sucursal">
       <div class="encabezado-sucursal">
@@ -248,6 +292,11 @@
       </div>
       {% for f in s.filas %}
       <div class="fila-renglon">
+        {# Grande y tocable con el pulgar: el que controla baja la lista
+           tildando de a uno, en el celular. #}
+        <label class="tilde-control">
+          <input type="checkbox" name="renglon_id" value="{{ f.renglon_id }}" {% if f.controlado %}checked{% endif %}>
+        </label>
         <div class="nombre">
           {{ f.articulo_nombre }}
           <span class="detalle">{{ f.bultos|numero }} bultos{% if f.kilos_por_bulto is not none %} × {{ f.kilos_por_bulto|numero }} kg{% endif %}</span>
@@ -269,6 +318,14 @@
       <span>Subtotal del pedido</span>
       <span>{{ g.kilos|numero }} kg{% if g.sin_kilaje %} ({{ g.sin_kilaje }} sin kilaje){% endif %} · {{ g.bultos|numero }} bultos</span>
     </div>
+    {% if g.armados %}
+    <p class="estado-control {% if g.controlados == g.armados %}completo{% endif %}">
+      {% if g.controlados == g.armados %}Controlado: los {{ g.armados }} renglones.
+      {% else %}Control: {{ g.controlados }} de {{ g.armados }} renglones.{% endif %}
+    </p>
+    <button type="submit" class="boton-control">Confirmar el control</button>
+    {% endif %}
+    </form>
     {% if g.sin_armar %}
     <p class="sin-armar-pie">{{ g.sin_armar }} {{ 'renglón' if g.sin_armar == 1 else 'renglones' }} sin armar, no listado{{ 's' if g.sin_armar != 1 }}: no se entregaron, así que no suman.</p>
     {% endif %}

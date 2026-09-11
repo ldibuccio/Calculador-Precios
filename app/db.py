@@ -6111,23 +6111,42 @@ def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
         conexion.close()
 
 
-def desmarcar_renglon_armado(renglon_id: int) -> None:
+def desmarcar_renglon_armado(renglon_id: int) -> bool:
     """Destilda un renglón (toque por error, o apareció el stock): vuelve arriba, sin cantidad parcial.
 
     Y BORRA LA CORRECCIÓN de lotes, en la misma transacción: el tilde se fue,
     así que ya no hay salida de la que decir de dónde salió. Dejarla sería una
     corrección apuntando a una cantidad que ya no existe, esperando a que
     alguien vuelva a tildar con otro número.
+
+    Y BORRA EL CONTROL DE ADMINISTRACIÓN, por lo mismo y un escalón más
+    fuerte: lo que se controló fue ESTE renglón con estos bultos y estos
+    kilos, así que un tilde de control sobre un renglón desarmado estaría
+    afirmando algo sobre números que ya no existen. No es una cortesía del
+    código: sin el `controlado_el = NULL` el CHECK
+    pedidos_renglones_controlado_solo_armado RECHAZA este UPDATE.
+
+    Devuelve True si había un control puesto, para que la pantalla pueda
+    decir que se tiró abajo — el que desarma tiene que enterarse.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE pedidos_renglones SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL WHERE id = %s",
+                """
+                UPDATE pedidos_renglones
+                SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL,
+                    controlado_el = NULL
+                WHERE id = %s
+                RETURNING (controlado_el IS NOT NULL)
+                """,
                 (renglon_id,),
             )
+            fila = cursor.fetchone()
+            estaba_controlado = bool(fila and fila[0])
             _borrar_lotes_elegidos(cursor, renglon_id)
         conexion.commit()
+        return estaba_controlado
     finally:
         conexion.close()
 
@@ -6136,7 +6155,9 @@ def anular_renglon_pedido(renglon_id: int) -> None:
     """La CRUZ del armado: este renglón directamente no se va a armar. Anulado, nunca borrado.
 
     Si estaba tildado, el tilde y sus números se limpian: anulado y armado
-    son estados excluyentes — un renglón anulado no manda nada.
+    son estados excluyentes — un renglón anulado no manda nada. Y con ellos
+    el control de Administración, que sin el armado no puede quedar: lo
+    obliga el CHECK pedidos_renglones_controlado_solo_armado.
     """
     conexion = obtener_conexion()
     try:
@@ -6144,7 +6165,8 @@ def anular_renglon_pedido(renglon_id: int) -> None:
             cursor.execute(
                 """
                 UPDATE pedidos_renglones
-                SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL
+                SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL,
+                    kilos_enviados = NULL, controlado_el = NULL
                 WHERE id = %s
                 """,
                 (renglon_id,),
@@ -6223,7 +6245,7 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                 SELECT v.fecha_operacion, v.id AS pedido_id, r.id, r.sucursal, r.articulo_id,
                        COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
                        r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el,
-                       ps.orden_compra
+                       r.controlado_el, ps.orden_compra
                 FROM vigentes v
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
@@ -6237,6 +6259,105 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+class PedidoInexistenteParaControl(Exception):
+    """El pedido que se quiso controlar no existe."""
+
+
+def guardar_control_de_pedido(pedido_id: int, renglones_tildados: list[int]) -> int:
+    """Guarda el control de Administración de un pedido: tilda los que vienen y DESTILDA el resto.
+
+    Destildar los que no vienen y no solo tildar los que sí es lo que hace
+    que el destildado exista: un checkbox que se apaga no manda nada, así
+    que "los que no llegaron" es la única forma de saber cuáles se sacaron.
+
+    SOLO LOS ARMADOS Y NO ANULADOS: la lista puede llegar armada a mano por
+    un POST. La guarda va acá, donde se ESCRIBE, y no en la pantalla —
+    aunque el CHECK de la base ya rechazaría el caso del sin armar, el del
+    anulado no lo cubre y no tiene por qué: anulado y armado ya son
+    excluyentes por otro lado.
+
+    LA EXISTENCIA SE PREGUNTA SIN AGREGADO. Un `select count(*)` devuelve
+    (0,) para un pedido que no existe, así que `fetchone() is None` no se
+    cumple nunca y la guarda no distinguiría "no hay" de "hay cero"
+    (corolario 27).
+
+    Devuelve cuántos quedaron tildados, que es lo que la pantalla avisa.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id FROM pedidos WHERE id = %s", (pedido_id,))
+            if cursor.fetchone() is None:
+                raise PedidoInexistenteParaControl(f"El pedido {pedido_id} no existe.")
+
+            cursor.execute(
+                """
+                UPDATE pedidos_renglones
+                SET controlado_el = CASE WHEN id = ANY(%s) THEN now() ELSE NULL END
+                WHERE pedido_id = %s
+                  AND armado_el IS NOT NULL
+                  AND anulado_el IS NULL
+                """,
+                (list(renglones_tildados), pedido_id),
+            )
+            cursor.execute(
+                """
+                SELECT count(*) FROM pedidos_renglones
+                WHERE pedido_id = %s AND controlado_el IS NOT NULL
+                """,
+                (pedido_id,),
+            )
+            (tildados,) = cursor.fetchone()
+        conexion.commit()
+        return tildados
+    finally:
+        conexion.close()
+
+
+def contar_pedidos_sin_controlar(desde, hasta) -> dict:
+    """Pedidos ENTREGADOS en el rango con algún renglón armado que nadie controló.
+
+    "Entregado" es tener al menos un renglón armado: la mercadería salió del
+    galpón, así que ya se factura y el control llega tarde o no llega.
+
+    HASTA EXCLUYE HOY, y lo decide el que llama: el pedido de hoy se
+    controla hoy a la tarde, y una alerta que se prende a la mañana con lo
+    que todavía se está por hacer se aprende a ignorar en una semana.
+
+    Con VENTANA, como los pedidos incompletos y por la misma razón: un
+    pedido viejo sin controlar ya no se puede controlar —los números que
+    había que mirar contra el remito son de hace un mes— así que sin
+    ventana quedaría prendida para siempre, sin forma de resolverla ni de
+    limpiarla.
+
+    Cuenta PEDIDOS y no renglones: el que abre la pantalla abre un pedido.
+    Solo los VIGENTES (anulado_el IS NULL): un pedido anulado no se factura.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*), min(fecha_operacion)
+                FROM (
+                    SELECT p.id, p.fecha_operacion
+                    FROM pedidos p
+                    JOIN pedidos_renglones r ON r.pedido_id = p.id
+                    WHERE p.anulado_el IS NULL
+                      AND p.fecha_operacion >= %s AND p.fecha_operacion <= %s
+                      AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                    GROUP BY p.id, p.fecha_operacion
+                    HAVING count(*) FILTER (WHERE r.controlado_el IS NULL) > 0
+                ) sin_controlar
+                """,
+                (desde, hasta),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": casos, "mas_viejo": mas_viejo}
     finally:
         conexion.close()
 

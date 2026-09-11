@@ -3713,7 +3713,16 @@ def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
         desmarcar_renglon_armado(12)
 
     consulta, parametros = cursor.execute.call_args_list[0].args
-    assert "SET armado_el = NULL, cantidad_armada = NULL" in consulta
+    # Columna por columna: el assert de una línea entera se cae con un salto
+    # de línea y no dice cuál falta.
+    for columna in ("armado_el = NULL", "cantidad_armada = NULL", "kilos_enviados = NULL"):
+        assert columna in consulta, columna
+    # Y EL CONTROL DE ADMINISTRACIÓN. No es una cortesía: sin esta columna,
+    # el CHECK pedidos_renglones_controlado_solo_armado RECHAZA el UPDATE, y
+    # destildar un renglón controlado explota en la cara del que arma.
+    assert "controlado_el = NULL" in consulta
+    # Y devuelve si HABÍA un control, para que la pantalla pueda avisar.
+    assert "RETURNING (controlado_el IS NOT NULL)" in consulta
     assert parametros == (12,)
     # El tilde se fue: ya no hay salida de la que decir de dónde salió.
     assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
@@ -4175,10 +4184,108 @@ def test_anular_renglon_pedido_limpia_el_tilde_y_sus_numeros():
         anular_renglon_pedido(11)
 
     consulta = cursor.execute.call_args_list[0].args[0]
-    assert "SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL" in consulta
+    # Columna por columna y no la línea entera: el assert de una línea se cae
+    # con un salto de línea y no dice cuál columna falta.
+    assert "SET anulado_el = now()" in consulta
+    for columna in ("armado_el = NULL", "cantidad_armada = NULL", "kilos_enviados = NULL"):
+        assert columna in consulta, columna
+    # Y el control de Administración, que sin el armado no puede quedar: lo
+    # obliga el CHECK pedidos_renglones_controlado_solo_armado, así que sin
+    # esta columna el UPDATE lo RECHAZA la base.
+    assert "controlado_el = NULL" in consulta
     # Un renglón anulado no manda nada: su corrección de lotes tampoco.
     assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
     conexion.commit.assert_called_once()
+
+
+def test_guardar_control_pregunta_la_EXISTENCIA_sin_agregado():
+    """`count(*)` devuelve (0,) para un pedido que no existe: la guarda no serviría.
+
+    Es el corolario 27: un agregado sin group by SIEMPRE produce una fila,
+    así que `fetchone() is None` no se cumple nunca. La existencia se
+    pregunta con un SELECT sin agregado, y el conteo va después.
+    """
+    from app.db import guardar_control_de_pedido
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.side_effect = [(71,), (2,)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        tildados = guardar_control_de_pedido(71, [11, 14])
+
+    existencia = cursor.execute.call_args_list[0].args[0]
+    assert "count(" not in existencia.lower(), existencia
+    assert "SELECT id FROM pedidos WHERE id = %s" in existencia
+    assert tildados == 2
+
+
+def test_guardar_control_de_pedido_INEXISTENTE_no_escribe_y_lo_dice():
+    from app.db import PedidoInexistenteParaControl, guardar_control_de_pedido
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = None
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            guardar_control_de_pedido(999, [11])
+        except PedidoInexistenteParaControl:
+            pass
+        else:
+            raise AssertionError("tenía que levantar PedidoInexistenteParaControl")
+
+    # Una sola consulta: la de existencia. No se escribió nada.
+    assert len(cursor.execute.call_args_list) == 1
+    conexion.commit.assert_not_called()
+
+
+def test_guardar_control_TILDA_los_que_vienen_y_DESTILDA_el_resto():
+    """Destildar es "no estar en la lista": un checkbox apagado no manda nada.
+
+    Sin el ELSE NULL, sacar un tilde sería imposible desde la pantalla — se
+    podría tildar y nunca destildar, y nadie lo notaría hasta querer sacar
+    uno.
+    """
+    from app.db import guardar_control_de_pedido
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.side_effect = [(71,), (2,)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_control_de_pedido(71, [11, 14])
+
+    llamada = cursor.execute.call_args_list[1]
+    consulta, parametros = llamada.args[0], llamada.args[1]
+    assert "controlado_el = CASE WHEN id = ANY(%s) THEN now() ELSE NULL END" in consulta
+    # La guarda va donde se ESCRIBE: la lista puede llegar por un POST a
+    # mano. El CHECK de la base cubre el sin armar; el anulado no, y por eso
+    # los dos están acá.
+    assert "armado_el IS NOT NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "pedido_id = %s" in consulta
+    assert parametros == ([11, 14], 71)
+    conexion.commit.assert_called_once()
+
+
+def test_contar_pedidos_sin_controlar_cuenta_PEDIDOS_vigentes_con_algun_armado():
+    from app.db import contar_pedidos_sin_controlar
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (3, date(2026, 9, 5))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_pedidos_sin_controlar(date(2026, 9, 4), date(2026, 9, 10))
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    # "Entregado" = con algún renglón armado: la mercadería salió y ya se
+    # factura. Un pedido sin armar nada no es un control que falta.
+    assert "r.armado_el IS NOT NULL" in consulta
+    # Los anulados no se facturan: ni el pedido ni el renglón.
+    assert "p.anulado_el IS NULL" in consulta
+    assert "r.anulado_el IS NULL" in consulta
+    # Lo que la vuelve un caso: que le FALTE alguno.
+    assert "HAVING count(*) FILTER (WHERE r.controlado_el IS NULL) > 0" in consulta
+    assert cursor.execute.call_args_list[0].args[1] == (date(2026, 9, 4), date(2026, 9, 10))
+    assert resultado == {"casos": 3, "mas_viejo": date(2026, 9, 5)}
 
 
 def test_desanular_renglon_pedido_vuelve_a_pendientes():

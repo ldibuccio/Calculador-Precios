@@ -11180,31 +11180,55 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     """
     from app.main import ALERTAS, recalcular
 
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.alertas.candado_alertas") as candado,
-        patch("app.alertas.guardar_estado_alerta"),
-        patch("app.main.contar_compras_sin_precio", return_value={"casos": 0, "mas_viejo": None}) as sin_precio,
-        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}) as retiros,
-        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as recepciones,
-        patch("app.main.contar_articulos_comprados_incotizables", return_value=0) as incotizables,
-        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as senas,
-        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}) as leidos_ia,
-        patch("app.main.contar_stock_vacios_negativos", return_value=0),
-        patch("app.main.contar_stock_deposito_negativo", return_value=0),
-        patch("app.main.contar_bultos_esperando_guia_r", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_incompletos", return_value={"casos": 0, "mas_viejo": None}) as incompletos,
-        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main._cruces_primera_reproceso", return_value=[]),
-        patch("app.main.listar_articulos",
-              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
-    ):
+    # Con ExitStack y no con un `with (...)` de veintipico: CPython no
+    # acepta más de 20 bloques anidados estáticos, y la alerta número
+    # dieciocho lo rompió con un SyntaxError que no dice una palabra de las
+    # alertas. Cada contador nuevo entra en la lista y listo.
+    from contextlib import ExitStack
+
+    VACIO = {"casos": 0, "mas_viejo": None}
+    contadores = {
+        "contar_compras_sin_precio": VACIO,
+        "contar_retiros_pendientes_viejos": VACIO,
+        "contar_recepciones_pendientes_viejas": VACIO,
+        "contar_articulos_comprados_incotizables": 0,
+        "contar_senas_pendientes_viejas": VACIO,
+        "contar_mails_pedido_leidos_con_ia": VACIO,
+        "contar_stock_vacios_negativos": 0,
+        "contar_stock_deposito_negativo": 0,
+        "contar_bultos_esperando_guia_r": VACIO,
+        "contar_reprocesos_costo_incompleto": VACIO,
+        "contar_pedidos_con_renglones_sin_identificar": VACIO,
+        "contar_pedidos_incompletos": VACIO,
+        "contar_pedidos_sin_controlar": VACIO,
+        "contar_mails_pedido_sin_procesar": VACIO,
+        "contar_pedidos_faltantes": VACIO,
+        "contar_casillas_sin_revisar": VACIO,
+    }
+    with ExitStack() as pila:
+        pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))
+        candado = pila.enter_context(patch("app.alertas.candado_alertas"))
+        pila.enter_context(patch("app.alertas.guardar_estado_alerta"))
+        pila.enter_context(patch("app.main._cruces_primera_reproceso", return_value=[]))
+        pila.enter_context(patch(
+            "app.main.listar_articulos",
+            return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}],
+        ))
+        mocks = {
+            nombre: pila.enter_context(patch(f"app.main.{nombre}", return_value=valor))
+            for nombre, valor in contadores.items()
+        }
         candado.return_value.__enter__.return_value = True
         resumen = recalcular(ALERTAS)
+
+    sin_precio = mocks["contar_compras_sin_precio"]
+    retiros = mocks["contar_retiros_pendientes_viejos"]
+    recepciones = mocks["contar_recepciones_pendientes_viejas"]
+    incotizables = mocks["contar_articulos_comprados_incotizables"]
+    senas = mocks["contar_senas_pendientes_viejas"]
+    leidos_ia = mocks["contar_mails_pedido_leidos_con_ia"]
+    incompletos = mocks["contar_pedidos_incompletos"]
+    sin_controlar = mocks["contar_pedidos_sin_controlar"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -15585,7 +15609,10 @@ def test_el_total_del_excel_dice_renglon_en_singular_con_uno_solo():
 
 
 def test_desarmar_renglon_destilda():
-    with patch("app.main.desmarcar_renglon_armado") as mock_desmarcar:
+    # return_value=False a propósito y no un Mock pelado: un Mock es
+    # truthy, así que la rama del aviso se tomaría siempre y el test no
+    # podría distinguir las dos.
+    with patch("app.main.desmarcar_renglon_armado", return_value=False) as mock_desmarcar:
         respuesta = cliente.post(
             "/deposito/pedido/50/renglones/12/desarmar",
             data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
@@ -15594,6 +15621,29 @@ def test_desarmar_renglon_destilda():
 
     assert respuesta.status_code == 303
     mock_desmarcar.assert_called_once_with(12)
+    # Sin control puesto no hay nada que avisar.
+    assert "aviso" not in respuesta.headers["location"]
+
+
+def test_desarmar_un_renglon_CONTROLADO_avisa_que_se_tiro_el_control_abajo():
+    """El control se cae solo (lo obliga el CHECK), pero no en silencio.
+
+    El que desarma tiene que saber que tiró abajo un control que alguien ya
+    había hecho, porque después hay que volver a hacerlo. Un campo que se
+    borra sin avisar es la forma de que nadie confíe en el tilde.
+    """
+    with patch("app.main.desmarcar_renglon_armado", return_value=True):
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/12/desarmar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    destino = respuesta.headers["location"]
+    assert "aviso=" in destino
+    assert "controlado" in urllib.parse.unquote_plus(destino)
+    assert "volver a controlarlo" in urllib.parse.unquote_plus(destino)
 
 
 def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
@@ -24311,6 +24361,86 @@ def test_la_regla_de_la_fecha_DUDOSA_esta_escrita_UNA_vez():
     assert "motivo_fecha_dudosa(" in fuente
     sueltos = re.findall(r"fecha_llegada\)\.days\)\s*>\s*\d+", fuente)
     assert not sueltos, f"el umbral volvió a escribirse a mano en app/main.py: {sueltos}"
+
+
+def test_buscar_pedidos_muestra_el_tilde_de_control_con_lo_que_YA_estaba():
+    """Al volver a abrir la lista, lo controlado tiene que verse controlado.
+
+    El fixture trae UNO controlado y UNO sin controlar a propósito: con los
+    dos iguales, una plantilla que pusiera `checked` siempre —o nunca—
+    pasaría igual.
+    """
+    renglones = [dict(r) for r in RENGLONES_BUSCAR_DE_PRUEBA]
+    renglones[0]["controlado_el"] = datetime(2026, 8, 22, 9, 0)   # Banana, VL
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=renglones),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    assert '<input type="checkbox" name="renglon_id" value="11" checked>' in marcado
+    assert '<input type="checkbox" name="renglon_id" value="14" >' in marcado
+    # El estado del pedido es una CUENTA: 1 de 2, no una columna guardada.
+    assert "Control: 1 de 2 renglones." in marcado
+    assert 'action="/administracion/pedidos/71/control"' in marcado
+
+
+def test_buscar_pedidos_dice_CONTROLADO_solo_cuando_estan_TODOS():
+    """La cuenta es la que decide, así que un renglón nuevo lo vuelve incompleto solo."""
+    renglones = [dict(r) for r in RENGLONES_BUSCAR_DE_PRUEBA]
+    for renglon in renglones:
+        if renglon["armado_el"] is not None:
+            renglon["controlado_el"] = datetime(2026, 8, 22, 9, 0)
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=renglones),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    assert "Controlado: los 2 renglones." in marcado
+    assert 'class="estado-control completo"' in marcado
+
+
+def test_guardar_el_control_manda_los_TILDADOS_y_vuelve_con_los_filtros():
+    with patch("app.main.guardar_control_de_pedido", return_value=2) as mock_guardar:
+        respuesta = cliente.post(
+            "/administracion/pedidos/71/control",
+            data={"cliente_id": "1", "fecha_desde": "2026-08-15", "fecha_hasta": "2026-08-22",
+                  "renglon_id": ["11", "14"]},
+            follow_redirects=False,
+        )
+
+    mock_guardar.assert_called_once_with(71, [11, 14])
+    assert respuesta.status_code == 303
+    destino = respuesta.headers["location"]
+    assert "cliente_id=1" in destino and "fecha_desde=2026-08-15" in destino
+
+
+def test_guardar_el_control_SIN_NINGUN_TILDE_manda_la_lista_VACIA():
+    """Destildar todo tiene que llegar como [], no como "no se mandó nada".
+
+    Un checkbox apagado no manda nada, así que sacar el último tilde y no
+    tocar la pantalla se ven iguales del lado del navegador. Si la ruta
+    tratara la lista vacía como "no hagas nada", el último tilde no se
+    podría sacar nunca.
+    """
+    with patch("app.main.guardar_control_de_pedido", return_value=0) as mock_guardar:
+        respuesta = cliente.post(
+            "/administracion/pedidos/71/control",
+            data={"cliente_id": "1", "fecha_desde": "2026-08-15", "fecha_hasta": "2026-08-22"},
+            follow_redirects=False,
+        )
+
+    mock_guardar.assert_called_once_with(71, [])
+    assert respuesta.status_code == 303
 
 
 def test_buscar_pedidos_ofrece_anular_y_lo_BLOQUEA_con_el_motivo_a_la_vista():
