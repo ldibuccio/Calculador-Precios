@@ -4348,6 +4348,8 @@ def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resulta
     assert insert.args[1] == (
         7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None, None, None, None, None,
         None,
+        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
+        None,
     )
     assert resultado == 9.0
     conexion.commit.assert_called_once()
@@ -4362,6 +4364,8 @@ def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
     insert = cursor.execute.call_args_list[-1]
     assert insert.args[1] == (
         7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None, None, None, None, None,
+        None,
+        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
         None,
     )
 
@@ -4381,6 +4385,8 @@ def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congel
     assert insert.args[1] == (
         7, "reingreso_rechazo", 4.0, "rechazo por calidad", 1, date(2026, 8, 24), 0.0, 77, 2000.0,
         None, None, None, None, None,
+        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
+        None,
     )
 
 
@@ -4400,6 +4406,8 @@ def test_crear_movimiento_stock_rechazo_a_segunda_no_toca_el_stock_normal():
     assert insert.args[1] == (
         7, "reingreso_rechazo", 40.0, "rechazado por calidad", 1, date(2026, 8, 24), 30.0, 77, 2000.0,
         "reproceso", 12.0, None, None, None,
+        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
+        None,
     )
     assert resultado == 30.0
 
@@ -4417,6 +4425,8 @@ def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
     assert insert.args[1] == (
         7, "merma", -3.0, "se pudrió", None, date(2026, 8, 26), 30.0, None, None,
         None, None, "reproceso", 9, None,
+        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
+        None,
     )
 
 
@@ -4465,18 +4475,33 @@ def test_la_merma_por_ficha_usa_LA_MISMA_VENTANA_que_los_otros_terminos():
     assert "- COALESCE(me.total, 0) AS stock" in _SQL_STOCK_PARTIDO
 
 
+def _valor_insertado(cursor, columna):
+    """El valor que el INSERT le puso a una columna, buscada POR NOMBRE.
+
+    Indexar desde el final (`args[1][-1]`) parece equivalente y no lo es:
+    `ficha_id` era la última hasta que el 11/09 se agregó
+    `proveedor_devolucion_id` al final, y el test pasó a mirar la columna
+    nueva sin que nada dijera que estaba mirando otra cosa. La lista de
+    columnas está en el propio INSERT: se lee de ahí y no envejece.
+    """
+    consulta, parametros = cursor.execute.call_args_list[-1].args
+    columnas = consulta.split("(", 1)[1].split(")", 1)[0]
+    nombres = [c.strip() for c in columnas.split(",")]
+    return parametros[nombres.index(columna)]
+
+
 def test_la_merma_puede_nombrar_su_ficha_y_por_default_no_la_tiene():
     """Los sueltos son el caso común, así que `ficha_id` es opcional y viaja
     en None sin que nadie lo pida."""
     conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_movimiento_stock(7, "merma", -3.0, "podrido", date(2026, 9, 10), ficha_id=9)
-    assert cursor.execute.call_args_list[-1].args[1][-1] == 9
+    assert _valor_insertado(cursor, "ficha_id") == 9
 
     conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_movimiento_stock(7, "merma", -3.0, "podrido", date(2026, 9, 10))
-    assert cursor.execute.call_args_list[-1].args[1][-1] is None
+    assert _valor_insertado(cursor, "ficha_id") is None
 
 
 def test_la_foto_de_la_merma_entra_en_LA_MISMA_TRANSACCION_que_la_merma():

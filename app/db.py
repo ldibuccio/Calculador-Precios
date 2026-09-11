@@ -5733,6 +5733,70 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     }
 
 
+def proveedor_sugerido_para_devolucion(renglon_id: int) -> dict | None:
+    """Qué proveedor trajo la mercadería de este renglón, SEGÚN EL FIFO.
+
+    Es una SUGERENCIA y nada más: la pantalla la propone y el operario la
+    cambia. No puede ser una regla porque el FIFO no siempre contesta una
+    sola cosa —un renglón puede haberse servido de lotes de VARIAS compras,
+    de proveedores distintos— y porque una parte puede haber salido SIN
+    LOTE, que es información verdadera y no un dato que falte.
+
+    Se devuelve el proveedor de la compra que puso MÁS bultos, con cuántos
+    de cuántos puso, para que la pantalla pueda decir de dónde salió la
+    propuesta en vez de afirmarla. None si no hay ningún lote de compra
+    —todo sin lote, o todo de guías R— y ahí el operario elige de cero.
+
+    Solo mira los lotes de tipo 'guia', que son los únicos que apuntan a
+    una compra (`origen_id` = compras.id). Un lote de reproceso es una caja
+    armada acá: su proveedor está un escalón más atrás y no se sigue.
+    """
+    desglose = desglose_de_renglon_armado(renglon_id)
+    if not desglose:
+        return None
+
+    # Lo REPARTIDO, no lo ofrecido: lo que se ofreció es lo que había, y lo
+    # que interesa es de dónde salió de verdad.
+    bultos_por_compra: dict[int, float] = {}
+    for clave, bultos in (desglose.get("propuestos") or {}).items():
+        tipo, _, origen = clave.partition(":")
+        if tipo != "guia" or not origen.isdigit():
+            continue
+        bultos_por_compra[int(origen)] = bultos_por_compra.get(int(origen), 0.0) + float(bultos)
+
+    if not bultos_por_compra:
+        return None
+
+    compra_id = max(bultos_por_compra, key=lambda c: bultos_por_compra[c])
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca
+            # es None y no distinguiría "no está" de "hay cero".
+            cursor.execute(
+                """
+                SELECT p.id, p.nombre, p.codigo_puesto
+                FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+    finally:
+        conexion.close()
+
+    if fila is None:
+        return None
+    return {
+        "id": fila[0],
+        "nombre": fila[1],
+        "codigo_puesto": fila[2],
+        "bultos": bultos_por_compra[compra_id],
+        "bultos_totales": sum(bultos_por_compra.values()),
+        "cuantas_compras": len(bultos_por_compra),
+    }
+
+
 def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
     """De qué lote dijo el que arma que sacó este renglón. Reemplaza lo anterior.
 
@@ -7198,6 +7262,7 @@ def crear_movimiento_stock(
     lote_origen_id: int | None = None,
     foto_ruta: str | None = None,
     ficha_id: int | None = None,
+    proveedor_devolucion_id: int | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -7248,13 +7313,13 @@ def crear_movimiento_stock(
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                      pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                     lote_tipo, lote_origen_id, ficha_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                 lote_tipo, lote_origen_id, ficha_id),
+                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id),
             )
             if foto_ruta:
                 # RETURNING y no currval(pg_get_serial_sequence(...)): el

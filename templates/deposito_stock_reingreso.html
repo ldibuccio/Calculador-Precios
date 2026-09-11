@@ -137,6 +137,18 @@
   .destino.elegido { border-color: #2563eb; background: #eff6ff; }
   .destino input { width: auto; margin: 0 0.5rem 0 0; transform: scale(1.3); }
   .destino .titulo { font-size: 1rem; font-weight: 700; color: #222; }
+  /* La sugerencia del FIFO se ve como lo que es —una propuesta— y no como
+     un aviso: en gris, no en naranja. Un naranja acá diría "hay algo mal"
+     y no hay nada mal. */
+  .ayuda-sugerencia {
+    color: #475569;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    margin: 0 0 0.5rem;
+    padding: 0.55rem 0.7rem;
+    background: #f1f5f9;
+    border-radius: 8px;
+  }
   .destino .detalle {
     display: block;
     margin-top: 0.25rem;
@@ -269,6 +281,41 @@
           <span class="titulo">Vuelve a cajón grande</span>
           <span class="detalle">Las cajas chicas se pasan a cajón: cargá cuántos cajones salieron y esos van al pool de segunda.</span>
         </label>
+        <label class="destino {% if destino_elegido == 'devolucion_proveedor' %}elegido{% endif %}">
+          <input type="radio" name="destino" value="devolucion_proveedor"
+                 {% if destino_elegido == "devolucion_proveedor" %}checked{% endif %}
+                 onchange="mostrarCajones()">
+          <span class="titulo">Se le devuelve al proveedor</span>
+          <span class="detalle">Se va del depósito: no queda en stock ni va al pool de segunda. No cuenta como venta ni como pérdida — el descuento del pago lo hacés vos.</span>
+        </label>
+      </div>
+
+      {# EL PROVEEDOR ES OBLIGATORIO y es lo único que esta operación deja
+         asentado: sin él, el registro no sirve para lo que existe. El
+         `required` acá es comodidad; la guarda que decide está en el POST.
+
+         LA SUGERENCIA DEL FIFO NO VIENE PRESELECCIONADA, a propósito. Se
+         muestra al lado, con de dónde salió, y el operario elige igual. El
+         FIFO acá no manda: un renglón puede haberse servido de compras de
+         varios proveedores, o haber salido sin lote. Preseleccionar
+         convertiría una propuesta en un default — un toque menos que
+         pensar— y el que carga dejaría de mirarla. #}
+      <div id="campo-proveedor" style="display: {% if destino_elegido == 'devolucion_proveedor' %}block{% else %}none{% endif %};">
+        <label for="proveedor_id">¿A qué proveedor se le devolvió?</label>
+        {% if proveedor_sugerido %}
+        <p class="ayuda-sugerencia">Por el FIFO, esta mercadería salió de
+          <strong>{{ proveedor_sugerido.nombre }}</strong> ({{ proveedor_sugerido.codigo_puesto }}):
+          puso {{ proveedor_sugerido.bultos|numero }} de {{ proveedor_sugerido.bultos_totales|numero }} bultos{% if proveedor_sugerido.cuantas_compras == 2 %},
+          repartidos con otra compra{% elif proveedor_sugerido.cuantas_compras > 2 %},
+          repartidos con otras {{ proveedor_sugerido.cuantas_compras - 1 }} compras{% endif %}.
+          Confirmalo o elegí otro.</p>
+        {% endif %}
+        <select id="proveedor_id" name="proveedor_id">
+          <option value="">Elegí el proveedor...</option>
+          {% for p in proveedores %}
+          <option value="{{ p.id }}" {% if precarga.proveedor_id|string == p.id|string %}selected{% endif %}>{{ p.nombre }} ({{ p.codigo_puesto }})</option>
+          {% endfor %}
+        </select>
       </div>
 
       <div id="campo-cajones" style="display: {% if destino_elegido == 'reproceso' %}block{% else %}none{% endif %};">
@@ -285,12 +332,15 @@
   </div>
 
   <script>
-    // El campo de cajones solo aparece con "Vuelve a cajón grande": el
-    // resto de los destinos no tiene nada que contar.
+    // El campo de cajones solo aparece con "Vuelve a cajón grande" y el de
+    // proveedor solo con la devolución: el resto de los destinos no tiene
+    // nada que preguntar.
     function mostrarCajones() {
       var elegido = document.querySelector('input[name="destino"]:checked');
       var campo = document.getElementById("campo-cajones");
       campo.style.display = elegido && elegido.value === "reproceso" ? "block" : "none";
+      var prov = document.getElementById("campo-proveedor");
+      prov.style.display = elegido && elegido.value === "devolucion_proveedor" ? "block" : "none";
       document.querySelectorAll(".destino").forEach(function (tarjeta) {
         var radio = tarjeta.querySelector('input[name="destino"]');
         tarjeta.classList.toggle("elegido", radio.checked);

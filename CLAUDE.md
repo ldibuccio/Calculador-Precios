@@ -2030,3 +2030,37 @@ que se apaga por media query. La pregunta es siempre la misma: *¿esto que
 escondo tiene adentro algo que se toca?* Y la respuesta se cuenta, no se
 recuerda — en las cuatro pantallas de arriba la intuición decía "son
 rótulos" y en una de las cuatro era falso.
+
+## La caja nuestra que se va y no vuelve: TRES puertas del mismo agujero
+
+Del 11/09, y va acá porque es un hecho del negocio que el sistema no
+registra, no un bug. **Anotado y NO construido** — por pedido, y a la
+espera de que el hecho se mida antes de tocar nada.
+
+Cuando la mercadería sale en NUESTRA caja y después se va del circuito, esa
+caja no vuelve. El sistema no lleva cuenta de eso por ninguna de las tres
+puertas por las que pasa:
+
+1. **El envase perdido de origen** — manzana, pera, arándano: salen en el
+   cajón del proveedor y no se reprocesan nunca. Ahí no hay caja nuestra que
+   perder, y por eso está bien que no se cuente (ver más arriba).
+2. **La segunda que se remite al Puesto** — sale en la caja en la que está.
+3. **La devolución al proveedor** (la que estrenó el cuarto destino): si la
+   mercadería vuelve en el cajón del proveedor, ese cajón sale por el
+   circuito de vacíos como cualquier otro y no hay nada que hacer. **Si
+   vuelve en caja de Día, la caja se va con ella.**
+
+Las tres son el mismo hecho —una caja nuestra deja el depósito sin pasar por
+vacíos— y ninguna de las tres lo anota.
+
+**Por qué no se construyó**, y es la parte que importa para el día que
+alguien lo retome: el dueño dijo que hoy *"se acomoda solo"* por el circuito
+de vacíos, y **eso no se midió**. Antes de agregar un campo hay que
+contestar si la pérdida de cajas que se ve en los conteos de vacíos se
+explica ENTERA por otra cosa, como pasó con el 15,6% "sin dato" del
+Remanente (corolario 23): un número que se explica entero por un origen
+conocido no es deuda.
+
+Y la señal de que ya es hora está escrita en el corolario 31: **la segunda
+vez que haya que escribir un `.sql` a mano para contar cajas que faltan, eso
+deja de ser un incidente y es una función que falta.**

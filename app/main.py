@@ -260,6 +260,7 @@ from app.db import (
     cargar_valor_sena,
     listar_tipos_envase_puesto,
     listar_todos_los_proveedores,
+    proveedor_sugerido_para_devolucion,
     listar_todas_las_conversiones,
     listar_ultimos_conteos_vacios,
     listar_vacios_devueltos_de_fecha,
@@ -8731,17 +8732,45 @@ def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
         return None
 
 
-DESTINOS_REINGRESO = ("stock", "segunda", "reproceso")
+# EL CUARTO ES DEVOLUCIÓN AL PROVEEDOR (11/09): la mercadería que el cliente
+# rechazó vuelve al proveedor que la trajo y NO se le paga. Sale del stock,
+# no entra al pool de segunda, y su costo no es ni venta ni pérdida — la
+# operación no ocurrió. El descuento al proveedor se arregla fuera del
+# sistema: acá no hay cuenta corriente, solo queda asentado a quién se le
+# devolvió. Medido antes de construirlo: 15 reingresos en 16 días, uno cada
+# dos días, así que esto se va a usar.
+DESTINOS_REINGRESO = ("stock", "segunda", "reproceso", "devolucion_proveedor")
 
 
 def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None, error=None, status_code: int = 200):
     """El paso 3 (la carga en sí) con el tope calculado por el server: armado − ya devuelto."""
+    # La lista completa y, aparte, la SUGERENCIA del FIFO. La sugerencia no
+    # preselecciona sola: se muestra con de dónde salió ("el FIFO dice que
+    # X puso 8 de 10 bultos") y el operario confirma o cambia. Preseleccionar
+    # convertiría una propuesta en un default, y el FIFO acá no manda — puede
+    # haber varios proveedores o bultos sin lote.
+    #
+    # Si falla, la pantalla sale igual sin sugerencia: es una comodidad, no
+    # la regla. La regla es que el operario elija.
+    try:
+        proveedores = listar_todos_los_proveedores()
+    except Exception:
+        logger.exception("No se pudieron leer los proveedores para la devolución")
+        proveedores = []
+    try:
+        sugerido = proveedor_sugerido_para_devolucion(renglon["id"])
+    except Exception:
+        logger.exception("No se pudo sugerir el proveedor del renglón %s", renglon["id"])
+        sugerido = None
+
     contexto = {
         "paso": "form",
         "renglon": renglon,
         "tope": float(renglon["bultos_armados"]) - float(renglon["ya_devuelto"]),
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
+        "proveedores": proveedores,
+        "proveedor_sugerido": sugerido,
         "aviso": None,
         "error": error,
     }
@@ -8808,6 +8837,7 @@ def cargar_reingreso_stock_ruta(
     motivo: str = Form(""),
     fecha: str = Form(""),
     destino: str = Form("stock"),
+    proveedor_id: str = Form(""),
     cajones: str = Form(""),
 ):
     """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo y VINCULADA a su renglón de pedido.
@@ -8862,15 +8892,26 @@ def cargar_reingreso_stock_ruta(
     # vuelve a cajón grande y esos cajones van a segunda.
     destino_valor = destino if destino in DESTINOS_REINGRESO else "stock"
     bultos_segunda = None
+    proveedor_valor = None
     if not error and destino_valor == "segunda":
         bultos_segunda = cantidad_valor  # la misma caja, sin tocar
     elif not error and destino_valor == "reproceso":
         error, bultos_segunda = _validar_bultos_positivos(cajones, "cajones que salieron")
+    elif not error and destino_valor == "devolucion_proveedor":
+        # EL PROVEEDOR ES OBLIGATORIO ACÁ, y la guarda va en el server y no
+        # en el `required` del HTML: un formulario armado a mano entra sin
+        # ver el atributo. Sin proveedor, la devolución no dice a quién se
+        # le devolvió y el registro no sirve para lo único que existe.
+        if proveedor_id.strip().isdigit():
+            proveedor_valor = int(proveedor_id)
+        else:
+            error = "Elegí a qué proveedor se le devolvió la mercadería." 
 
     if error:
         precarga = {
             "cantidad": cantidad, "motivo": motivo_limpio, "fecha": fecha,
             "destino": destino_valor, "cajones": cajones,
+            "proveedor_id": proveedor_id,
         }
         return _renderizar_form_reingreso(request, renglon, precarga=precarga, error=error, status_code=400)
 
@@ -8883,6 +8924,7 @@ def cargar_reingreso_stock_ruta(
             costo_por_bulto=costo_por_bulto,
             destino_rechazo=destino_valor,
             bultos_segunda=bultos_segunda,
+            proveedor_devolucion_id=proveedor_valor,
         )
     except Exception as error_db:
         return _renderizar_form_reingreso(
@@ -8891,12 +8933,31 @@ def cargar_reingreso_stock_ruta(
 
     # El aviso repite lo que cargó y QUÉ SE HIZO con la mercadería, con
     # las palabras de la pantalla — nunca el stock resultante ni el costo.
+    nombre_proveedor = "el proveedor"
+    if proveedor_valor is not None:
+        try:
+            proveedor = obtener_proveedor(proveedor_valor)
+            if proveedor:
+                nombre_proveedor = proveedor["nombre"]
+        except Exception:
+            # El movimiento YA se guardó: que no se pueda leer el nombre no
+            # puede romper la pantalla ni hacer dudar de si quedó cargado.
+            logger.exception("No se pudo leer el nombre del proveedor %s", proveedor_valor)
     cierres = {
         "stock": "Queda en stock para volver a mandarla.",
         "segunda": f"Pasó a segunda tal cual: {_formatear_numero(bultos_segunda or 0)} bultos al pool, para remitir al Puesto.",
         "reproceso": (
             f"Volvió a cajón grande: salieron {_formatear_numero(bultos_segunda or 0)} cajones, "
             "que entran al pool de segunda para remitir al Puesto."
+        ),
+        # Dice A QUIÉN, que es lo único que esta operación deja asentado, y
+        # dice que no se le paga — porque eso lo tiene que hacer una persona
+        # afuera del sistema y el aviso es el único lugar donde se lo
+        # recuerda en el momento.
+        "devolucion_proveedor": (
+            f"Se le devolvió a {nombre_proveedor}: sale del stock y no va al pool de "
+            "segunda. No cuenta como venta ni como pérdida — acordate de "
+            "descontárselo del pago."
         ),
     }
     aviso = (

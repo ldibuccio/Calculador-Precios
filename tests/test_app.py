@@ -18265,6 +18265,74 @@ RENGLON_REINGRESO_DE_PRUEBA = {
 }
 
 
+def test_devolucion_al_proveedor_guarda_a_quien_y_no_toca_el_pool_de_segunda():
+    """El cuarto destino (11/09): sale del depósito y se le devuelve al que
+    la trajo. Lo único que queda asentado es A QUIÉN — el descuento del pago
+    lo hace una persona, afuera del sistema.
+
+    `bultos_segunda` en None no es un detalle: si viajara con número, esos
+    bultos entrarían al pool de segunda y la mercadería estaría en dos
+    lugares a la vez. El CHECK de la base también lo rechaza.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.obtener_proveedor", return_value={"id": 200, "nombre": "Saturno"}),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "devolucion_proveedor",
+                  "proveedor_id": "200"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(
+        2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
+        cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+        destino_rechazo="devolucion_proveedor", bultos_segunda=None,
+        proveedor_devolucion_id=200,
+    )
+    # El aviso dice a quién y recuerda lo que el sistema NO hace.
+    destino = respuesta.headers["location"]
+    legible = urllib.parse.unquote_plus(destino)
+    assert "Saturno" in legible
+    assert "descont" in legible
+
+
+def test_la_devolucion_al_proveedor_SIN_proveedor_no_se_guarda():
+    """La guarda va en el server y no en el `required` del HTML: un
+    formulario armado a mano entra sin ver el atributo — es el mismo
+    hallazgo del cajón con envase.
+
+    Sin proveedor la devolución no dice a quién se le devolvió, que es lo
+    ÚNICO que esta operación deja asentado: el registro no serviría para
+    nada de lo que existe.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.proveedor_sugerido_para_devolucion", return_value=None),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "devolucion_proveedor",
+                  "proveedor_id": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí a qué proveedor" in respuesta.text
+    mock_crear.assert_not_called()
+
+
 def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
     # El destino se elige al cargar: "pasa a segunda tal cual" manda los
     # mismos bultos al pool, con su caja y su kilaje.
@@ -18286,6 +18354,7 @@ def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
         2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="segunda", bultos_segunda=4.0,
+        proveedor_devolucion_id=None,
     )
     destino = respuesta.headers["location"]
     assert "Pas%C3%B3+a+segunda+tal+cual" in destino
@@ -18515,9 +18584,13 @@ def test_reingreso_paso_3_precarga_el_tope_y_hoy_con_cliente_y_articulo_del_pedi
     assert respuesta.status_code == 200
     texto = respuesta.text
     # El cliente y el artículo salen del pedido: son texto fijo, no selects.
+    # Se nombran los CAMPOS y no se pide "ningún <select> en la página": desde
+    # el 11/09 hay uno, el del proveedor de la devolución, y un assert tan
+    # ancho frenaba por algo que no es lo que quiere proteger (corolario 4).
     assert "Anco — pedido del 24/08/2026 (VL)" in texto
     assert "<strong>Día</strong>" in texto
-    assert "<select" not in texto
+    assert 'name="cliente_id"' not in texto
+    assert 'name="articulo_id"' not in texto
     # Default = lo que queda por devolver (armado − ya devuelto), editable
     # con el tope a la vista; fecha hoy por default y nunca futura.
     assert "podés devolver hasta <strong>20</strong>" in texto
@@ -18553,6 +18626,7 @@ def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
         2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="stock", bultos_segunda=None,
+        proveedor_devolucion_id=None,
     )
     destino = respuesta.headers["location"]
     # El aviso repite lo cargado (fecha REAL del hecho incluida) y JAMÁS
@@ -18603,6 +18677,7 @@ def test_reingreso_sin_fecha_usa_hoy_y_sin_costo_posible_guarda_sin_costo():
         2, "reingreso_rechazo", 4.0, "rechazo", date(2026, 8, 25),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=None,
         destino_rechazo="stock", bultos_segunda=None,
+        proveedor_devolucion_id=None,
     )
 
 
@@ -20334,7 +20409,11 @@ def test_rentabilidad_real_sin_cliente_muestra_solo_los_filtros():
 
     assert respuesta.status_code == 200
     assert "Elegí un cliente..." in respuesta.text
-    assert "Afuera del cálculo" not in respuesta.text
+    # Por la CLASE y no por el texto: el `<style>` de esa pantalla nombra
+    # "Afuera del cálculo" en un comentario que explica por qué la devolución
+    # al proveedor NO va ahí, y con el texto pelado este test fallaba por el
+    # comentario (corolario 38). Una clase solo puede ser marcado.
+    assert 'class="tarjeta-afuera"' not in respuesta.text
 
 
 RESULTADO_REAL_DE_PRUEBA = {

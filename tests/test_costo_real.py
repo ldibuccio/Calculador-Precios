@@ -642,6 +642,79 @@ def test_devolucion_ancla_el_precio_a_la_fecha_del_pedido_de_origen():
 # --- Destino del rechazo: la línea "− rechazos perdidos" ---
 
 
+def test_devolucion_al_proveedor_no_es_venta_NI_perdida():
+    """El cuarto destino: la mercadería vuelve al proveedor y no se le paga.
+
+    Ni venta ni costo — la operación no ocurrió. Por eso el costo se acredita
+    (sale de `costo_mercaderia`) pero NO entra en `rechazos_perdidos`, que es
+    la línea de la pérdida: ahí adentro diría que perdimos plata que no
+    perdimos.
+
+    Es la diferencia con 'segunda', que sí es pérdida entera, y con 'stock',
+    que también acredita pero porque la mercadería VUELVE y se va a cobrar
+    cuando salga de nuevo. Acá no vuelve nada: queda en cero para siempre.
+    """
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="devolucion_proveedor")],
+    )
+
+    fila = resultado["grupos"][0]["filas"][0]
+    # El costo se acredita: esos bultos no costaron nada.
+    assert fila["costo_mercaderia"] == 25 * 500.0 - 5 * 2000.0
+    # Y NO son pérdida: la línea de la pérdida queda intacta.
+    assert fila["rechazos_perdidos"] == 0.0
+    assert fila["rechazos_bultos"] == 0.0
+    # La venta se revierte, como en cualquier devolución: no se vendió.
+    assert fila["devoluciones_bultos"] == 5.0
+    assert fila["devoluciones_venta"] > 0
+    # Y se cuenta aparte, solo para que se vea en el chip.
+    assert fila["devueltos_proveedor_bultos"] == 5.0
+
+
+def test_la_devolucion_al_proveedor_NO_va_a_afuera_del_calculo():
+    """"Afuera del cálculo" es la lista de cosas a ARREGLAR, y una devolución
+    bien cargada no es una de ellas.
+
+    Llenar esa tarjeta de renglones que no piden acción es cómo un cartel
+    deja de mirarse — el aviso de "no hay cajas de esta ficha" saltando en
+    135 de 765 bultos todos los días es la medida de eso.
+    """
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([_armado(fecha, 25, 500.0)]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="devolucion_proveedor")],
+    )
+
+    assert resultado["afuera_por_motivo"] == []
+    assert resultado["totales"]["afuera_bultos"] == 0
+
+
+def test_un_articulo_que_SOLO_tuvo_una_devolucion_al_proveedor_no_desaparece():
+    """Sin armados, mermas ni segunda, la fila igual aparece: el chip tiene
+    que verse.
+
+    Lo que la sostiene es `devoluciones_bultos`, que toda devolución suma
+    antes de llegar a la rama del proveedor. Se le había agregado una
+    condición propia al filtro por las dudas y ERA CÓDIGO MUERTO: el canario
+    que la borraba no hacía caer este test. Se sacó — una condición que no
+    puede cambiar el resultado no protege nada, solo hace creer que sí.
+
+    Este test se queda igual, y ahora cuida lo que de verdad la sostiene: si
+    alguien mueve el conteo de `devoluciones_bultos` debajo de un `continue`,
+    la fila se cae y el chip desaparece."""
+    fecha = date(2026, 8, 25)
+    resultado = calcular_rentabilidad_real(
+        _datos([]), {fecha: {901: dict(MARGEN)}}, 1, fecha, fecha,
+        devoluciones=[_devolucion(5.0, fecha, destino="devolucion_proveedor")],
+    )
+
+    filas = [f for g in resultado["grupos"] for f in g["filas"]]
+    assert len(filas) == 1
+    assert filas[0]["devueltos_proveedor_bultos"] == 5.0
+
+
 def test_rechazo_a_segunda_es_perdida_entera_de_mercaderia_mas_envase():
     # No vuelve al stock: no queda primera que absorba el costo (a
     # diferencia del reproceso normal). Mercadería congelada + envase.

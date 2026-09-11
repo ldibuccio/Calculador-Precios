@@ -110,6 +110,12 @@ ETIQUETAS_MOTIVO_REAL = {
 
 # Destinos del rechazo que NO vuelven al stock: su costo entero es
 # pérdida (no queda primera que lo absorba, a diferencia del reproceso).
+#
+# `devolucion_proveedor` NO ESTÁ ACÁ Y ES EL PUNTO: esa mercadería tampoco
+# vuelve al stock, pero no se perdió — se le devolvió al proveedor y no se
+# le paga. Ni venta ni costo: la operación no ocurrió. Se acredita el costo
+# igual que en 'stock' (así no queda adentro del costo de mercadería) y NO
+# se suma a `rechazos_perdidos`, que es la línea de la pérdida.
 DESTINOS_RECHAZO_PERDIDO = ("segunda", "reproceso")
 
 
@@ -359,6 +365,8 @@ def calcular_rentabilidad_real(
                 "devoluciones_venta": 0.0,
                 "rechazos_perdidos": 0.0,
                 "rechazos_bultos": 0.0,
+                # Devueltos al proveedor: se muestran, no suman a ninguna cuenta.
+                "devueltos_proveedor_bultos": 0.0,
             }
             acumulado[articulo["articulo_id"]] = fila
         return fila
@@ -449,6 +457,7 @@ def calcular_rentabilidad_real(
         costo = _numero(devolucion.get("costo_por_bulto"))
         envase_unidad = _numero(margen.get("costo_envase_unidad_venta")) or 0.0
         perdido = devolucion.get("destino_rechazo") in DESTINOS_RECHAZO_PERDIDO
+        al_proveedor = devolucion.get("destino_rechazo") == "devolucion_proveedor"
 
         if perdido and costo is None:
             # Se sabe que se perdió pero no cuánto: número chico y cierto.
@@ -473,7 +482,22 @@ def calcular_rentabilidad_real(
             # Queda en stock con su costo congelado: se acredita acá y se
             # vuelve a cargar recién cuando salga de nuevo — sin doble
             # conteo. Solo se perdió la venta de ese día.
+            #
+            # LA DEVOLUCIÓN AL PROVEEDOR cae en esta misma rama a propósito:
+            # el costo se acredita y no vuelve nunca, porque la mercadería
+            # se fue. La diferencia con 'stock' no es la cuenta —es la
+            # misma— sino que acá no hay nada que vuelva a salir. Queda en
+            # cero de los dos lados, que es lo que se pidió.
             fila["costo_mercaderia"] -= bultos * costo
+        if al_proveedor:
+            # Se cuenta aparte SOLO para que se vea. No entra en ninguna
+            # suma de la cuenta: es un chip al lado del artículo, no un
+            # renglón de "afuera del cálculo" — esa tarjeta es la lista de
+            # cosas a ARREGLAR, y una devolución bien cargada no es una de
+            # ellas. Llenarla de renglones que no piden acción es cómo un
+            # cartel deja de mirarse.
+            fila = _fila(articulo)
+            fila["devueltos_proveedor_bultos"] += bultos
 
     def _cerrar_cuenta(fila):
         fila["costo_total"] = (
@@ -488,6 +512,11 @@ def calcular_rentabilidad_real(
         f for f in acumulado.values()
         if f["bultos"] or f["costo_mermas"] or f["bultos_mermados"] or f["segunda_bultos"]
         or f["devoluciones_bultos"] or f["rechazos_bultos"]
+        # NO hace falta `or f["devueltos_proveedor_bultos"]`, y se probó: el
+        # canario que lo borraba no hizo caer ningún test. Toda devolución
+        # al proveedor pasa antes por `devoluciones_bultos += bultos`, así
+        # que la fila ya está viva por ahí. Una condición que no puede
+        # cambiar el resultado no protege nada — solo hace creer que sí.
     ]
     for fila in filas_con_algo:
         _cerrar_cuenta(fila)

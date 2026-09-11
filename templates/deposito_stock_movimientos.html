@@ -139,7 +139,12 @@
               {%- if m.pedido_renglon_id %} · del pedido del {{ m.fecha_pedido|fecha_corta }}{% if m.sucursal_pedido %} ({{ m.sucursal_pedido }}){% endif %}
               {%- else %} · <strong>sin vínculo a pedido</strong> (viejo — corregir es anular y recargar){% endif %}
               {%- if m.destino_rechazo == "segunda" %} · <strong>pasó a segunda</strong> ({{ m.bultos_segunda|numero }} bultos al pool)
-              {%- elif m.destino_rechazo == "reproceso" %} · <strong>volvió a cajón grande</strong> ({{ m.bultos_segunda|numero }} cajones al pool de segunda){% endif %}
+              {%- elif m.destino_rechazo == "reproceso" %} · <strong>volvió a cajón grande</strong> ({{ m.bultos_segunda|numero }} cajones al pool de segunda)
+              {#- El cuarto destino tiene que decirse acá o el renglón se lee
+                 como un reingreso normal: entró al depósito y se quedó. Sin
+                 esta rama el `if/elif` no afirma nada falso —no hay `else`—
+                 pero calla justo lo que pasó. -#}
+              {%- elif m.destino_rechazo == "devolucion_proveedor" %} · <strong>se le devolvió al proveedor</strong> (no cuenta como venta ni como pérdida){% endif %}
             {%- endif %}
             {%- if m.lote_tipo %} · mermado de un lote elegido a mano{% endif %}
             {# SIN FOTO A LA VISTA. Una merma legítima y una que tapa un
