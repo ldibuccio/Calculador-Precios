@@ -141,6 +141,85 @@
     border-top: 1px solid #bfdbfe;
   }
   .vacio { color: #888; font-style: italic; margin: 0; }
+
+  /* EN CELULAR LA TABLA DEJA DE SER TABLA. Medido a 390px el 11/09: pedía
+     744px dentro de 326 —se salía por 418, más del doble que Buscar
+     Compras— y sin comprimir pedía 819. Ocho columnas no entran de ninguna
+     forma en un celular.
+
+     VA AL FINAL DE LA HOJA, después de las reglas base: puesto arriba tiene
+     la misma especificidad que `th, td` y pierde en silencio.
+
+     EL `<thead>` SE ESCONDE ENTERO Y ACÁ SE PUEDE: se enumeró qué vive
+     adentro y son ocho `<th>` de texto, sin input, botón ni link. La regla
+     no es "nunca esconder el thead" —en Buscar Compras eso apagó el
+     "seleccionar todas"— es mirar qué hay adentro antes.
+
+     ACÁ SÍ VAN RÓTULOS, y es la diferencia con Buscar Compras: allá cada
+     dato se explicaba solo, pero acá quedan TRES IMPORTES SEGUIDOS —Precio,
+     Seña y Total a depositar— y `$5.000 · $500 · $44.000` sin cabecera no
+     dice cuál es cuál. En una pantalla para cargar facturación, confundir el
+     total con la seña es el error caro. Se rotulan SOLO esos tres; el resto
+     (fecha, guía, artículo, cantidad, estado) se sigue identificando solo.
+
+     El rótulo sale del CSS, así que el texto queda escrito DOS veces: acá y
+     en el `<th>`. Eso es lo que esta casa sabe que se separa en silencio, y
+     por eso lo cuida `test_los_rotulos_de_celular_dicen_lo_MISMO_que_el_
+     thead`, que los compara y falla el día que alguien renombre uno solo. */
+  @media (max-width: 700px) {
+    .tabla-scroll { overflow-x: visible; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-areas:
+        "articulo articulo"
+        "guia     estado"
+        "recep    cant"
+        "precio   sena"
+        "total    total";
+      gap: 0.2rem 0.7rem;
+      align-items: baseline;
+      padding: 0.85rem 0;
+      border-top: 1px solid #eee;
+    }
+    tbody tr:first-child { border-top: none; }
+    td { border-bottom: none; padding: 0; }
+    /* Por posición y no por una clase en cada celda: la clase habría que
+       escribirla ocho veces y acordarse de moverla el día que una columna
+       cambie de lugar. El orden del `<thead>` manda. */
+    td:nth-child(1) { grid-area: recep; color: #64748b; }
+    td:nth-child(2) { grid-area: guia; color: #64748b; }
+    /* EL ARTÍCULO ES EL TÍTULO. */
+    td:nth-child(3) { grid-area: articulo; font-weight: 800; font-size: 1.05rem; }
+    td:nth-child(4) { grid-area: cant; color: #475569; }
+    td:nth-child(5) { grid-area: precio; }
+    td:nth-child(6) { grid-area: sena; }
+    td:nth-child(7) { grid-area: total; margin-top: 0.35rem; font-weight: 800; }
+    td:nth-child(8) { grid-area: estado; justify-self: end; }
+    /* LOS TRES QUE NO SE EXPLICAN SOLOS. */
+    td:nth-child(5)::before { content: "Precio "; }
+    td:nth-child(6)::before { content: "Seña "; }
+    td:nth-child(7)::before { content: "Total a depositar "; }
+    td:nth-child(5)::before,
+    td:nth-child(6)::before,
+    td:nth-child(7)::before {
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+    td.numero { text-align: left; }
+    /* EL AMARILLO DEL "SIN PRECIO" PASA AL `tr`. En la tabla el fondo vive en
+       cada `td` y eso alcanza, porque las celdas cubren la fila entera. En
+       grid NO: quedan los gaps entre celdas, y el estado con `justify-self:
+       end` deja libre lo que le sobra. Las ocho celdas estaban amarillas y
+       la tarjeta se veía a parches —verificado leyendo el fondo de cada una,
+       no mirando— porque lo blanco era lo que NINGUNA celda cubría.
+       El contenedor es el `tr`, así que el fondo va ahí. */
+    tr.sin-precio { background: #fef9c3; border-radius: 8px; padding-inline: 0.5rem; }
+    tr.sin-precio td { background: none; }
+  }
 </style>
 </head>
 <body>

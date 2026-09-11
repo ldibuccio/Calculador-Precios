@@ -83,6 +83,78 @@
     border-radius: 8px;
     font-weight: 600;
   }
+
+  /* EN CELULAR LA TABLA DEJA DE SER TABLA. Medido a 390px el 11/09: pedía
+     492px dentro de 326 —se salía por 166— y sin comprimir pedía 537. La
+     columna gorda era `$` con 184px, que NO es texto: es el input del
+     importe con su botón Guardar. O sea que lo que quedaba fuera de la
+     pantalla era justo lo que hay que tocar, con el dedo y parado en el
+     galpón. Es la que más se usa de las que se desbordaban.
+
+     VA AL FINAL DE LA HOJA, después de las reglas base. Puesto arriba tiene
+     la misma especificidad que `th, td` y pierde: los `border-bottom: none`
+     no se aplicarían y cada dato quedaría con una rayita debajo, sin que el
+     desborde lo delate. Si alguien agrega reglas de tabla, van ARRIBA de esto.
+
+     EL `<thead>` SE ESCONDE ENTERO Y ACÁ SÍ SE PUEDE: se enumeró qué vive
+     adentro y son seis `<th>` de texto, sin un input, un botón ni un link.
+     (En Buscar Compras la misma línea apagó el "seleccionar todas", que
+     vivía ahí. La regla no es "nunca esconder el thead": es mirar qué hay
+     adentro antes.) */
+  @media (max-width: 700px) {
+    /* El scroll se apaga: si quedara, una tarjeta ancha volvería a correr la
+       pantalla al costado y el arreglo sería invisible. */
+    .tabla-scroll { overflow-x: visible; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr {
+      display: grid;
+      grid-template-columns: auto auto 1fr;
+      grid-template-areas:
+        "articulo articulo articulo"
+        "prov     prov     prov"
+        "fecha    cant     ku"
+        "importe  importe  importe";
+      gap: 0.15rem 0.7rem;
+      align-items: baseline;
+      padding: 0.85rem 0;
+      border-top: 1px solid #eee;
+    }
+    tbody tr:first-child { border-top: none; }
+    td { border-bottom: none; padding: 0; }
+    /* Por posición y no por una clase en cada celda: la clase habría que
+       escribirla seis veces y acordarse de moverla el día que una columna
+       cambie de lugar. El orden del `<thead>` manda. */
+    td:nth-child(1) { grid-area: fecha; color: #64748b; }
+    td:nth-child(2) { grid-area: prov; color: #475569; }
+    /* EL ARTÍCULO ES EL TÍTULO: se busca por QUÉ se compró, no por a quién. */
+    td:nth-child(3) { grid-area: articulo; font-weight: 800; font-size: 1.05rem; }
+    /* SIN LA CABECERA, `10` NO SE EXPLICA SOLO. En la tabla lo explica el
+       `<th>Cant</th>` de arriba; suelto en la tarjeta es un número sin
+       unidad al lado de una fecha. Se le pone la UNIDAD, no el rótulo de la
+       columna: "10 cajones × 18k" es como ya se lee el mismo dato en Buscar
+       Compras, donde viene armado desde el template. No es `data-label` —no
+       repite el nombre de ninguna columna— y solo existe en celular. */
+    td:nth-child(4) { grid-area: cant; color: #475569; }
+    td:nth-child(4)::after { content: " cajones ×"; }
+    td:nth-child(5) { grid-area: ku; color: #475569; }
+    td:nth-child(6) { grid-area: importe; margin-top: 0.55rem; }
+    /* EL INPUT ES LO QUE SE TOCA, así que se lleva el ancho entero en vez de
+       los 6rem del escritorio, y el botón crece a algo agarrable con el
+       pulgar. Es el renglón por el que esta pantalla estaba primera. */
+    .form-importe { gap: 0.5rem; }
+    .form-importe input {
+      width: auto;
+      /* `min-width: 0` NO es de más: un <input> en flex no baja de su ancho
+         intrínseco (el `size` por defecto) por más que le pongan `1 1 auto`,
+         así que empujaba al botón 4px afuera de la pantalla. Medido. */
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.7rem;
+      font-size: 1rem;
+    }
+    .form-importe button { flex: 0 0 auto; padding: 0.7rem 1rem; font-size: 0.95rem; }
+  }
 </style>
 </head>
 <body>

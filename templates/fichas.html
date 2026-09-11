@@ -98,6 +98,74 @@
   .boton-editar { background: #2563eb; }
   .boton-eliminar { background: #dc2626; }
   .form-eliminar { display: inline; }
+
+  /* EN CELULAR LA TABLA DEJA DE SER TABLA. Medido a 390px el 11/09: pedía
+     668px dentro de 326 —se salía por 342— y sin comprimir pedía 996, tres
+     veces lo disponible. Ocho columnas no entran de ninguna forma.
+
+     VA AL FINAL DE LA HOJA, después de las reglas base: puesto arriba tiene
+     la misma especificidad que `th, td` y pierde en silencio.
+
+     EL `<thead>` SE ESCONDE ENTERO Y ACÁ SE PUEDE: se enumeró qué vive
+     adentro y son ocho `<th>` de texto, sin input, botón ni link.
+
+     RÓTULOS EN CUATRO, y son los que solos no dicen nada: `Fijo` sin el
+     `<th>Envase variable</th>` arriba no significa absolutamente nada, y
+     `18k` podría ser cualquier cosa. El artículo es el título y el cliente
+     se lee solo, así que esos no llevan. El rótulo sale del CSS, o sea que
+     el texto queda escrito dos veces —acá y en el `<th>`— y eso es lo que
+     se separa en silencio: lo cuida
+     `test_los_rotulos_de_celular_dicen_lo_MISMO_que_el_thead`. */
+  @media (max-width: 700px) {
+    .tabla-scroll { overflow-x: visible; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-areas:
+        "articulo articulo"
+        "cliente  codigo"
+        "envase   envase"
+        "contenido unidad"
+        "variable variable"
+        "acciones acciones";
+      gap: 0.2rem 0.7rem;
+      align-items: baseline;
+      padding: 0.85rem 0;
+      border-top: 1px solid #eee;
+    }
+    tbody tr:first-child { border-top: none; }
+    td { border-bottom: none; padding: 0; }
+    /* Por posición y no por una clase en cada celda: la clase habría que
+       escribirla ocho veces y acordarse de moverla el día que una columna
+       cambie de lugar. El orden del `<thead>` manda. */
+    td:nth-child(1) { grid-area: articulo; font-weight: 800; font-size: 1.05rem; }
+    td:nth-child(2) { grid-area: cliente; color: #475569; }
+    td:nth-child(3) { grid-area: codigo; color: #64748b; }
+    td:nth-child(4) { grid-area: envase; }
+    td:nth-child(5) { grid-area: contenido; }
+    td:nth-child(6) { grid-area: unidad; }
+    td:nth-child(7) { grid-area: variable; }
+    td:nth-child(8) { grid-area: acciones; margin-top: 0.6rem; }
+    /* LOS CUATRO QUE NO SE EXPLICAN SOLOS. */
+    td:nth-child(4)::before { content: "Envase "; }
+    td:nth-child(5)::before { content: "Contenido caja "; }
+    td:nth-child(6)::before { content: "Unidad "; }
+    td:nth-child(7)::before { content: "Envase variable "; }
+    td:nth-child(4)::before,
+    td:nth-child(5)::before,
+    td:nth-child(6)::before,
+    td:nth-child(7)::before {
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+    /* Los dos botones agarrables con el pulgar y en fila, envolviendo si no
+       entran — nunca desbordando al costado. */
+    .acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .acciones .boton, .acciones .boton-eliminar { padding: 0.6rem 1rem; font-size: 0.95rem; }
+  }
 </style>
 </head>
 <body>

@@ -2037,6 +2037,90 @@ def test_ver_buscar_compras_con_resultados_muestra_boton_exportar():
     assert "/compras/buscar/exportar-excel?fecha_desde=2026-08-01&fecha_hasta=2026-08-06" in respuesta.text
 
 
+# --- los rótulos que el CSS de celular le pone a las columnas ---
+
+PANTALLAS_CON_ROTULOS_DE_CELULAR = ["administracion_ingresos.html", "fichas.html"]
+
+
+def _rotulos_y_cabeceras(nombre):
+    """Devuelve (rótulos del CSS, textos del <thead>) de una plantilla.
+
+    Se LEE el archivo en vez de copiar las listas acá: una copia envejece en
+    silencio, que es justo lo que este test viene a impedir.
+    """
+    import re
+
+    html = io.open(f"templates/{nombre}", encoding="utf-8").read()
+    hoja = html.split("</style>")[0]
+    celular = hoja[hoja.index("@media (max-width: 700px)") :]
+
+    rotulos = {
+        int(n): texto.strip()
+        for n, texto in re.findall(
+            r'td:nth-child\((\d+)\)::before\s*\{\s*content:\s*"([^"]*)"', celular
+        )
+    }
+    # La cabecera se busca en el MARCADO, después del `</style>`: los
+    # comentarios del CSS nombran al `<thead>` para explicar que se esconde, y
+    # buscándolo en el archivo entero se matcheaba ESE. Y `<th(?:\s...)?>` en
+    # vez de `<th[^>]*>`, que matchea `<thead>` también. Las dos las encontró
+    # este mismo test fallando, no la lectura.
+    marcado = html.split("</style>")[-1]
+    cabecera = re.search(r"<thead>(.*?)</thead>", marcado, re.S)
+    assert cabecera, f"{nombre}: no se encontró el <thead>"
+    cabeceras = [
+        re.sub(r"<[^>]+>", "", c).strip()
+        for c in re.findall(r"<th(?:\s[^>]*)?>(.*?)</th>", cabecera.group(1), re.S)
+    ]
+    return rotulos, cabeceras
+
+
+def test_los_rotulos_de_celular_dicen_lo_MISMO_que_el_thead():
+    """En celular la tabla pasa a tarjetas y el `<thead>` se esconde, así que
+    las columnas que no se explican solas llevan su rótulo puesto por CSS
+    (`td:nth-child(N)::before`). Eso deja el texto escrito DOS veces: en el
+    `<th>` y en la hoja de estilos.
+
+    Es exactamente lo que esta casa sabe que se separa sin que nadie lo note:
+    alguien renombra el `<th>`, el CSS queda con el nombre viejo, y en el
+    celular —que es donde más se usa— la columna dice otra cosa que en el
+    escritorio. Nadie se entera, porque las dos presentaciones no se miran
+    juntas nunca.
+
+    El test las hace chocar. No copia las listas: las LEE de la plantilla, en
+    los dos sentidos, y falla si un rótulo no es el `<th>` de su posición.
+    """
+    assert PANTALLAS_CON_ROTULOS_DE_CELULAR, "sin pantallas que revisar"
+    for nombre in PANTALLAS_CON_ROTULOS_DE_CELULAR:
+        rotulos, cabeceras = _rotulos_y_cabeceras(nombre)
+        assert rotulos, f"{nombre}: no se encontró ningún rótulo de celular"
+        for posicion, rotulo in sorted(rotulos.items()):
+            assert posicion <= len(cabeceras), (
+                f"{nombre}: el rótulo {posicion} apunta a una columna que no existe"
+            )
+            esperado = cabeceras[posicion - 1]
+            assert rotulo == esperado, (
+                f"{nombre}: la columna {posicion} dice '{esperado}' en el <thead> "
+                f"y '{rotulo}' en el celular"
+            )
+
+
+def test_toda_columna_rotulada_en_celular_tiene_su_grid_area():
+    """Un rótulo sobre una celda que el grid no ubica queda flotando donde
+    caiga. Barato de verificar y agarra el copiar-pegar de un `::before` sin
+    su `grid-area`.
+    """
+    import re
+
+    for nombre in PANTALLAS_CON_ROTULOS_DE_CELULAR:
+        rotulos, _ = _rotulos_y_cabeceras(nombre)
+        hoja = io.open(f"templates/{nombre}", encoding="utf-8").read().split("</style>")[0]
+        celular = hoja[hoja.index("@media (max-width: 700px)") :]
+        ubicadas = {int(n) for n in re.findall(r"td:nth-child\((\d+)\)\s*\{[^}]*grid-area", celular)}
+        faltan = set(rotulos) - ubicadas
+        assert not faltan, f"{nombre}: columnas rotuladas sin grid-area: {sorted(faltan)}"
+
+
 def test_el_borrado_multiple_anda_en_LAS_DOS_presentaciones():
     """En celular Buscar Compras deja de ser tabla y pasa a tarjetas, pero es
     UNA sola plantilla: el mismo marcado con otro CSS. Por eso el tildado no
