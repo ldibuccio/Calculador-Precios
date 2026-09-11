@@ -811,6 +811,14 @@ def eliminar_ficha(ficha_id: int) -> None:
     asignado quedaría indistinguible de uno que el operario dejó SIN
     ASIGNAR, y el stock de cajas de esa ficha cambiaría sin que nadie lo
     haya pedido. Borrar una ficha no puede mover el stock.
+
+    Y DESDE QUE `compras` tiene `ficha_en_origen_id` hay un SEGUNDO caso: una
+    compra que viene ya armada en caja nuestra y todavía no se recepcionó
+    apunta a su ficha desde ahí. Sin esta guarda el DELETE reventaría con el
+    error crudo de la foreign key —que no dice qué compra lo retiene— en vez
+    del mensaje. Las dos guardas se enumeran juntas a propósito: son la misma
+    pregunta ("¿quién apunta a esta ficha?") y separarlas es cómo se olvida
+    la tercera.
     """
     conexion = obtener_conexion()
     try:
@@ -827,6 +835,25 @@ def eliminar_ficha(ficha_id: int) -> None:
                     f"no se puede borrar. {'Reasignala' if una else 'Reasignalas'} a otra ficha "
                     "desde Guías R si hace falta."
                 )
+
+            cursor.execute(
+                """
+                SELECT count(*) FROM compras
+                WHERE ficha_en_origen_id = %s AND estado IS DISTINCT FROM 'rechazado'
+                """,
+                (ficha_id,),
+            )
+            compras = cursor.fetchone()[0]
+            if compras:
+                una = compras == 1
+                raise ValueError(
+                    f"Esa ficha está marcada en {compras} "
+                    f"{'compra que viene armada' if una else 'compras que vienen armadas'} "
+                    "en caja nuestra: no se puede borrar. "
+                    f"{'Sacale la marca' if una else 'Sacales la marca'} a "
+                    f"{'esa compra' if una else 'esas compras'} primero."
+                )
+
             cursor.execute(
                 """
                 DELETE FROM fichas_logistica WHERE id = %s
@@ -1686,6 +1713,7 @@ def crear_compra(
     foto_ruta: str | None = None,
     ingreso_directo_deposito: bool = False,
     recepcionada_el=None,
+    ficha_en_origen_id: int | None = None,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
 
@@ -1763,6 +1791,7 @@ def crear_compra(
                 foto_ruta,
                 ingreso_directo_deposito=ingreso_directo_deposito,
                 recepcionada_el=recepcionada_el,
+                ficha_en_origen_id=ficha_en_origen_id,
             )
         conexion.commit()
     finally:
@@ -1823,8 +1852,9 @@ def _insertar_compra_con_guia(
     ingreso_directo_deposito: bool = False,
     carga_token: str | None = None,
     recepcionada_el=None,
-) -> None:
-    """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear.
+    ficha_en_origen_id: int | None = None,
+) -> int:
+    """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear. Devuelve su id.
 
     Es el cuerpo de crear_compra (ver su docstring para el significado de
     cada campo y de las tres ramas), separado para que
@@ -1847,6 +1877,20 @@ def _insertar_compra_con_guia(
     dice que esta compra se cargó con fecha retroactiva. Sin eso, dentro de
     tres meses la fila se ve igual que una normal fechada un día en que
     nadie cargó nada.
+
+    ficha_en_origen_id: la compra viene YA ARMADA en caja nuestra y estas son
+    las cajas de esa ficha. Lo marca el COMPRADOR, que es el único que lo
+    sabe. Se escribe con un UPDATE aparte y no adentro de los tres INSERT: son
+    tres listas de columnas distintas, y una columna repetida en las tres es
+    tres lugares de los que una rama nueva se puede olvidar. El `RETURNING id`
+    sí va en las tres, pero es un sufijo — no se pierde en el medio de una
+    lista.
+
+    Y EN EL INGRESO DIRECTO LA GUÍA R SALE ACÁ MISMO, porque esa compra nace
+    'recepcionado' y NO PASA POR RECEPCIÓN: si el disparo viviera solo allá,
+    estos dos caminos —el de Depósito y el retroactivo de Gerencia— serían dos
+    puertas por las que este caso no se puede registrar, y el operario volvería
+    a la guía R a mano. Va en la misma transacción que el insert.
     """
     cursor.execute(
         """
@@ -1886,6 +1930,7 @@ def _insertar_compra_con_guia(
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     'recepcionado', 'retirado', %s, %s, %s, %s,
                     COALESCE(%s, now()), COALESCE(%s, now()), 'ingreso_directo')
+            RETURNING id
             """,
             (
                 fecha_operacion,
@@ -1916,6 +1961,7 @@ def _insertar_compra_con_guia(
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, carga_token, estado, estado_retiro, retiro_procesado_el, retiro_origen)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
+            RETURNING id
             """,
             (
                 fecha_operacion,
@@ -1942,6 +1988,7 @@ def _insertar_compra_con_guia(
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, carga_token, estado, estado_retiro)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
+            RETURNING id
             """,
             (
                 fecha_operacion,
@@ -1959,6 +2006,18 @@ def _insertar_compra_con_guia(
                 carga_token,
             ),
         )
+
+    (compra_id,) = cursor.fetchone()
+
+    if ficha_en_origen_id is not None:
+        cursor.execute(
+            "UPDATE compras SET ficha_en_origen_id = %s WHERE id = %s",
+            (ficha_en_origen_id, compra_id),
+        )
+        if ingreso_directo_deposito:
+            _guia_en_origen_si_corresponde(cursor, compra_id)
+
+    return compra_id
 
 
 def comanda_ya_guardada(carga_token: str) -> bool:
@@ -2031,6 +2090,9 @@ def crear_compras_de_comanda(
                     renglon["tipo_retiro"],
                     foto_ruta,
                     carga_token=carga_token,
+                    # POR RENGLÓN y no por comanda: al mismo puesto se le
+                    # pueden comprar dos cosas y que solo una venga armada.
+                    ficha_en_origen_id=renglon.get("ficha_en_origen_id"),
                 )
         conexion.commit()
         return True

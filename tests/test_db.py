@@ -494,6 +494,7 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
         [
             (105,),  # SELECT id de guias_compra (ya existía o se acaba de crear)
             (0,),  # SELECT COUNT(*) de compras con esa guía: ninguna todavía
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -525,6 +526,7 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
         [
             (105,),  # SELECT id de guias_compra
             (2,),  # ya hay 2 compras con esa guía
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -544,8 +546,8 @@ def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit()
     conexion, cursor = _conexion_falsa(
         [
             None,  # SELECT 1 por carga_token: no existe, se guarda normal
-            (105,), (0,),  # guía y punto del renglón 1
-            (105,), (1,),  # guía y punto del renglón 2
+            (105,), (0,), (900,),  # guía, punto e id del renglón 1
+            (105,), (1,), (901,),  # guía, punto e id del renglón 2
         ]
     )
     renglones = [
@@ -608,7 +610,7 @@ def test_crear_compras_de_comanda_con_token_ya_usado_no_inserta_nada():
 def test_crear_compras_de_comanda_sin_token_guarda_sin_chequear():
     # Forms viejos que quedaron abiertos de antes del cambio: sin token no
     # hay chequeo anti-duplicado, se guarda directo (como siempre).
-    conexion, cursor = _conexion_falsa([(105,), (0,)])
+    conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         guardo = crear_compras_de_comanda(
@@ -651,6 +653,7 @@ def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
         [
             (105,),  # SELECT id de guias_compra
             (0,),  # SELECT COUNT(*) de compras con esa guía
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -701,7 +704,7 @@ def test_el_ingreso_retroactivo_fecha_las_DOS_columnas_por_las_que_entra_al_stoc
     """
     from app.db import crear_compra
 
-    conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,)])
+    conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,), (900,)])
     momento = datetime(2026, 9, 7, 12, 0)
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -735,7 +738,7 @@ def test_el_ingreso_retroactivo_RECHAZA_una_fecha_del_dia_del_corte_o_anterior()
     for dia, tiene_que_entrar in ((date(2026, 9, 6), True),
                                   (date(2026, 9, 5), False),
                                   (date(2026, 9, 4), False)):
-        conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,)])
+        conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,), (900,)])
         with patch("app.db.obtener_conexion", return_value=conexion):
             if tiene_que_entrar:
                 crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
@@ -756,7 +759,7 @@ def test_la_fecha_de_recepcion_NO_se_puede_elegir_en_una_carga_normal():
     dejarla elegir ahí sería fechar una recepción que todavía no pasó."""
     from app.db import crear_compra
 
-    conexion, _ = _conexion_falsa([(105,), (0,)])
+    conexion, _ = _conexion_falsa([(105,), (0,), (900,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError) as rechazo:
             crear_compra(date(2026, 9, 7), 5, 200, 10, 16, 160, None, None, None, "Clark",
@@ -772,6 +775,7 @@ def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():
         [
             (105,),
             (0,),
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -2284,7 +2288,7 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
     # La Cooperativa es un tercero: se asume que retira. La compra nace con
     # estado_retiro 'retirado' y retiro_origen 'cooperativa', pero la
     # recepción en Depósito sigue pendiente y sin valores reales.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])  # guia_id, punto
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])  # guia_id, punto
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa")
@@ -2339,7 +2343,7 @@ def test_actualizar_cantidad_de_cooperativa_a_tipo_real_vuelve_el_retiro_a_pendi
 def test_crear_compra_carro_nace_retirada_con_origen_automatico():
     # Carro lo maneja un tercero que nunca entra al sistema: nadie tilda
     # nunca esas compras — nacen con el retiro hecho, igual que Cooperativa.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro")
@@ -2351,7 +2355,7 @@ def test_crear_compra_carro_nace_retirada_con_origen_automatico():
 
 
 def test_crear_compra_clark_sigue_naciendo_pendiente_de_retiro():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark")
@@ -3030,7 +3034,10 @@ def test_una_ficha_con_guias_R_NO_se_borra_y_lo_dice_con_el_numero():
 
 
 def test_una_ficha_sin_guias_R_se_borra_como_siempre():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), None])
+    # Dos conteos: guías R y compras que la marcan como "viene armada".
+    # Los dos en cero es el caso feliz, y es el único que distingue una
+    # guarda que funciona de una que siempre frena.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(901)
@@ -3415,16 +3422,22 @@ def test_actualizar_ficha_inexistente_no_escribe_bitacora():
 def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
     # El primer fetchone es el conteo de guías R: sin guías, sigue de largo
     # y borra como siempre.
-    conexion, cursor = _conexion_falsa([(0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)])
+    conexion, cursor = _conexion_falsa(
+        [(0,), (0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)]
+    )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(10)
 
-    consulta_delete = cursor.execute.call_args_list[1].args[0]
+    # Por FRAGMENTO y no por posición: la guarda de las compras que vienen
+    # armadas entró en el medio, y correr los índices rompe tests que no
+    # hablan de eso.
+    consulta_delete = _sql_que_contiene(cursor, "DELETE FROM fichas_logistica")
     assert "DELETE FROM fichas_logistica WHERE id = %s" in consulta_delete
     assert "RETURNING" in consulta_delete
-    consulta_foto, parametros_foto = cursor.execute.call_args_list[2].args
-    assert "INSERT INTO fichas_logistica_historial" in consulta_foto
+    consulta_foto, parametros_foto = _sql_y_parametros_que_contienen(
+        cursor, "INSERT INTO fichas_logistica_historial"
+    )
     assert parametros_foto == (10, 1, 5, 100, 6, "kilo", False, "BERENJENA", None, "borrado")
     conexion.commit.assert_called_once()
 
@@ -7422,3 +7435,35 @@ def test_corregir_recepcion_SIGUE_ANDANDO_si_la_guia_en_origen_esta_ANULADA():
     conexion.commit.assert_called_once()
     consulta = _sql_que_contiene(cursor, "FROM reprocesos")
     assert "compra_origen_id = %s" in consulta and "anulado_el IS NULL" in consulta
+
+
+def test_una_ficha_MARCADA_en_una_compra_que_viene_armada_NO_se_borra():
+    """Sin esta guarda el DELETE revienta con el error crudo de la foreign key.
+
+    Y el error crudo no dice QUÉ compra lo retiene, así que el que llega no
+    tiene cómo destrabarlo. Es la misma forma que la guarda de las guías R que
+    ya estaba al lado: las dos contestan "¿quién apunta a esta ficha?".
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="2 compras que vienen armadas"):
+            eliminar_ficha(901)
+
+    assert not [c for c in cursor.execute.call_args_list if "DELETE FROM fichas_logistica" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_la_guarda_de_la_ficha_NO_cuenta_las_compras_RECHAZADAS():
+    """Una compra rechazada ya no va a recepcionarse nunca: su marca no retiene nada.
+
+    El filtro va en la consulta y no en Python — la regla la decide la base.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_ficha(901)
+
+    consulta = _sql_que_contiene(cursor, "FROM compras")
+    assert "ficha_en_origen_id = %s" in consulta
+    assert "estado IS DISTINCT FROM 'rechazado'" in consulta
