@@ -105,6 +105,7 @@
     font-size: 0.85rem;
   }
   .tabla-scroll { overflow-x: auto; }
+
   table {
     width: 100%;
     border-collapse: collapse;
@@ -154,6 +155,100 @@
   #boton-borrar-seleccionadas {
     margin-top: 0;
     margin-bottom: 0.75rem;
+  }
+  /* ESTE BLOQUE VA AL FINAL DE LA HOJA, y no es cosmético: estuvo arriba,
+     ANTES de `th, td` y de `thead tr`. Misma especificidad, así que ganaba
+     la de abajo y los `border-bottom: none` NO se aplicaban — cada dato de
+     la tarjeta quedaba con una rayita debajo. La medición no lo vio (el
+     desborde daba 0 igual); lo agarró la captura. Si alguien agrega reglas
+     de tabla, van ARRIBA de esto. */
+  /* EN CELULAR LA TABLA DEJA DE SER TABLA, y es UNA sola plantilla: el mismo
+     marcado, dos presentaciones. Medido a 390px el 11/09: la tabla pedía
+     549px dentro de 326 —se salía por 223— y sin comprimir pedía 1261, casi
+     cuatro veces lo disponible. Las dos gordas eran Acciones (438px, cinco
+     botones) y Proveedor (253). Ninguna media tirita cerraba esa diferencia:
+     sacar Acciones a su propio renglón dejaba ~450 contra 326, y achicar la
+     letra pedía un 40% menos, o sea zoom para leer.
+
+     SIN `data-label`. El patrón de siempre pone el nombre de la columna en un
+     atributo y lo pinta con `::before` — y eso es el nombre de la columna
+     escrito DOS veces, en el `<th>` y en el atributo, que es exactamente
+     como se separan. No hace falta: se miró celda por celda y los contenidos
+     se identifican solos (la fecha parece fecha, `20 cajones × 16k` es obvio,
+     el importe lleva $ o dice SIN PRECIO).
+
+     El corte va en 700px y no es "tarjeta siempre": esta pantalla llega a
+     500 filas, y 500 tarjetas en un monitor se escanean peor que una tabla.
+     En desktop no cambia nada.
+
+     EL CHECKBOX SIGUE ANDANDO EN LAS DOS, y no por suerte: se asocia al form
+     con `form="form-borrado-multiple"` (HTML5), que es una relación del
+     DOCUMENTO y no del árbol. El CSS mueve cajas; no toca a qué form
+     pertenece un input ni qué se manda. Lo cuida un test. */
+  @media (max-width: 700px) {
+    /* El scroll se apaga: si quedara, una tarjeta ancha volvería a correr
+       la pantalla al costado y el arreglo sería invisible. */
+    .tabla-scroll { overflow-x: visible; }
+    table, tbody, tr, td { display: block; }
+    /* De la cabecera se van los RÓTULOS, porque cada dato ya se explica
+       solo. Pero NO la fila entera: adentro vive `#check-todas`, el
+       "seleccionar todas" del borrado múltiple. Esconder el `<thead>`
+       completo lo apagaba en el celular —medido: visible en 1200 y no en
+       390— y eso es perder una función que hoy anda, en silencio y en la
+       presentación que más se usa. Queda la primera celda, con el rótulo
+       puesto por CSS: en desktop la columna ya se entiende por la cabecera
+       de al lado, en celular no hay cabecera y sin texto sería un cuadradito
+       suelto arriba de todo. */
+    thead { display: block; }
+    thead tr { display: block; padding: 0.2rem 0 0.7rem; background: none; }
+    thead th { display: none; }
+    thead th:first-child {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      border-bottom: none;
+      padding: 0;
+      font-weight: 600;
+      color: #475569;
+    }
+    thead th:first-child::after { content: "Seleccionar todas"; font-size: 0.9rem; }
+    thead th:first-child input { width: 1.15rem; height: 1.15rem; }
+    tr {
+      display: grid;
+      /* TRES COLUMNAS Y LA PRIMERA FIJA. Con `auto 1fr` la columna 1 la
+         sizeaba la FECHA —que también cae ahí— y no el checkbox: el título
+         arrancaba 90px adentro y la tarjeta se leía centrada. Medido. */
+      grid-template-columns: 1.35rem auto 1fr;
+      grid-template-areas:
+        "check    articulo articulo"
+        "prov     prov     prov"
+        "fecha    fecha    cantidad"
+        "importe  importe  importe"
+        "acciones acciones acciones";
+      gap: 0.15rem 0.6rem;
+      align-items: baseline;
+      /* Separadas por una línea y no como tarjetas propias: ya están adentro
+         de una .tarjeta blanca, y una tarjeta dentro de otra se lee como dos
+         niveles que no existen. Es el mismo renglón de Movimientos. */
+      padding: 0.8rem 0;
+      border-top: 1px solid #eee;
+    }
+    tbody tr:first-child { border-top: none; }
+    td { border-bottom: none; padding: 0; }
+    /* Por posición y no por una clase en cada celda: la clase habría que
+       escribirla siete veces en el `<td>` y acordarse de moverla el día que
+       una columna cambie de lugar. El orden del `<thead>` manda. */
+    td:nth-child(1) { grid-area: check; }
+    td:nth-child(2) { grid-area: fecha; color: #64748b; }
+    td:nth-child(3) { grid-area: prov; color: #475569; }
+    /* EL ARTÍCULO ES EL TÍTULO: cuando se busca una compra vieja se arranca
+       por QUÉ se compró, no por a quién. */
+    td:nth-child(4) { grid-area: articulo; font-weight: 800; font-size: 1.05rem; }
+    td:nth-child(5) { grid-area: cantidad; color: #475569; }
+    td:nth-child(6) { grid-area: importe; font-weight: 700; margin-top: 0.2rem; }
+    td:nth-child(7) { grid-area: acciones; margin-top: 0.5rem; }
+    /* El checkbox más grande y alineado con el título: es el que se toca. */
+    td:nth-child(1) input { width: 1.15rem; height: 1.15rem; }
   }
 </style>
 </head>
