@@ -2092,6 +2092,30 @@ Y la señal de que ya es hora está escrita en el corolario 31: **la segunda
 vez que haya que escribir un `.sql` a mano para contar cajas que faltan, eso
 deja de ser un incidente y es una función que falta.**
 
+### La CUARTA puerta es de otra clase: es un PRÉSTAMO, no una pérdida
+
+Del 11/09, y va aparte de las tres de arriba a propósito.
+
+Cuando el puesto entrega la mercadería **ya armada en caja nuestra**, las
+cajas vacías se le mandan el día anterior. Eso hoy **no se registra en
+ningún lado**: `envases` es un catálogo —nombre, activo, costo con
+vigencia— **sin stock y sin movimientos**, y el circuito de vacíos es de los
+cajones DEL PROVEEDOR (`proveedores_puesto`), separado a propósito.
+
+**La diferencia con las tres de arriba, y es la que importa:** en aquéllas
+la caja se va CON mercadería y no vuelve — es una pérdida. Acá se va
+**vacía y vuelve llena**: es un préstamo, y solo se vuelve pérdida el día
+que no vuelve.
+
+Eso cambia qué habría que medir, y por eso conviene que esté escrito antes
+de que alguien lo retome: **no "cuántas se fueron" sino "cuántas no
+volvieron".** Contar salidas de un préstamo da un número grande y
+tranquilizadoramente inútil — la mayoría vuelve. El número que significa
+algo es el que no cierra.
+
+**No se construyó, por pedido**: hoy son pocas cajas y se llevan de memoria.
+Queda anotado para el día que deje de alcanzar.
+
 ## El dato de uso decide qué MEJORAR, no qué SACAR
 
 Del 11/09, y es un error de criterio mío, no del código.
