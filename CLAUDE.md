@@ -2267,3 +2267,58 @@ contando.
 **Cuándo se mira**: antes de abrir la lista de casos, siempre. Es el único
 control de esta familia que se paga con una división y se cobra antes de
 gastar media hora descartando falsos positivos de a uno.
+
+## Un caso que anda con el sistema VACÍO y falla cuando tiene historia
+
+Del 11/09, y es la forma de bug que ninguna prueba nueva encuentra — no por
+descuido, sino porque **el fixture más chico que ejercita la función es
+exactamente el que la aprueba mal.**
+
+El caso. La compra que llega ya armada en caja nuestra genera su guía R sola,
+y esa guía tiene que consumir **su propia compra**. Si no se dirige el
+consumo, decide el FIFO, que toma el más viejo. Medido:
+
+```
+A) sola la compra de hoy                  propone  compra 777  ← la que llegó armada
+B) con un CAJÓN VIEJO del mismo artículo   propone  compra 555  ← el cajón viejo
+C) control: el cajón viejo solo            propone  compra 555
+```
+
+En B el resultado es **el opuesto al del mundo**: el cajón que sigue en el
+piso figuraría convertido en cajas, y las cajas que llegaron figurarían como
+cajón. Ninguna cuenta se descuadra —los totales dan igual— y por eso no hay
+síntoma: lo único que cambia es cuál lote quedó trabajado, que es justo lo que
+la pared del armado va a mirar mañana.
+
+**Y en A anda perfecto.** Un artículo sin stock previo tiene un solo lote, así
+que "el más viejo" y "el correcto" son el mismo, y la respuesta buena llega
+por coincidencia.
+
+### Por qué ninguna prueba nueva lo encuentra
+
+Porque el fixture de una función nueva se escribe **mínimo**: un artículo, una
+compra, la cosa que se está probando. Eso no es pereza — es la forma correcta
+de escribir un fixture, y es la que todos usamos. **La minimalidad es
+justamente la condición bajo la cual el bug es invisible.**
+
+O sea que acá el que prueba no se equivoca en lo que afirma: se equivoca en lo
+que NO puso. Es distinto del corolario 22 —allá el fixture fijaba el caso
+equivocado y el test defendía el bug— porque acá el test afirma lo correcto y
+pasa por la razón equivocada.
+
+### La maniobra: plantar el RIVAL
+
+Es el corolario 36 corrido un paso. Allá, para que un cero signifique algo,
+hay que **plantar el caso**; acá, para que un acierto signifique algo, hay que
+**plantar el rival** — el candidato que ganaría por default y no tiene que
+ganar.
+
+**Cómo se reconoce, y es una sola pregunta**: cuando el código ELIGE uno entre
+varios —el más viejo, el primero, el más barato, el único que hay, el
+default—, preguntarse **qué pasa si hay DOS**. Si el fixture tiene uno de algo
+que en producción viene de a muchos, le falta el segundo, y el segundo se
+escribe para que sea el que NO tiene que salir elegido.
+
+Y la señal de que el rival está bien puesto es la misma de siempre: **con el
+código roto a propósito, el test tiene que caer.** Un fixture con dos lotes
+donde el equivocado no gana nunca es un fixture con un lote y ruido al lado.
