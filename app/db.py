@@ -8697,31 +8697,52 @@ def asignar_ficha_a_reproceso(reproceso_id: int, ficha_id: int | None) -> None:
     ficha de otro artículo inventaría cajas que no existen y el Cotejo
     mostraría un rojo imposible de explicar.
 
+    Y TIENE QUE SER DEL MISMO CLIENTE, salvo que la guía no tenga cliente
+    (las viejas, anteriores al dato: ahí no hay contra qué comparar y se
+    acepta cualquiera del artículo, o quedarían trabadas para siempre).
+
+    Esa guarda va ACÁ, donde se ESCRIBE, y no alcanza con que la pantalla
+    no lo ofrezca: es el mismo hallazgo del cajón con envase, donde un
+    formulario armado a mano entraba sin ver el cartel. Medido el 11/09
+    sobre Frutamax antes de cerrarla: 0 cruces en 198 guías comparables
+    (`sin_cliente_no_se_juzga` en 0, así que las 198 se compararon de
+    verdad). El caso no existe, y la pantalla de armar nunca lo permitió
+    —ahí el selector es por cliente Y artículo—: era la misma regla en
+    dos pantallas con dos durezas, y la floja era la de corregir.
+
     Una guía anulada no se asigna: ya no cuenta para nada.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT articulo_id, anulado_el IS NOT NULL FROM reprocesos WHERE id = %s",
+                "SELECT articulo_id, cliente_id, anulado_el IS NOT NULL FROM reprocesos WHERE id = %s",
                 (reproceso_id,),
             )
+            # SIN agregado a propósito: `fetchone() is None` sobre un
+            # `count(*)` nunca es None y la guarda no distinguiría "no hay"
+            # de "hay cero" (corolario 27).
             fila = cursor.fetchone()
             if fila is None:
                 raise ValueError("Esa guía R no existe.")
-            articulo_id, anulada = fila
+            articulo_id, cliente_id, anulada = fila
             if anulada:
                 raise ValueError("Esa guía R está anulada: no se le asigna ficha.")
 
             if ficha_id is not None:
                 cursor.execute(
-                    "SELECT articulo_id FROM fichas_logistica WHERE id = %s", (ficha_id,)
+                    "SELECT articulo_id, cliente_id FROM fichas_logistica WHERE id = %s",
+                    (ficha_id,),
                 )
                 ficha = cursor.fetchone()
                 if ficha is None:
                     raise ValueError("Esa ficha no existe.")
                 if ficha[0] != articulo_id:
                     raise ValueError("Esa ficha es de otro artículo: no puede ser la de esta guía R.")
+                if cliente_id is not None and ficha[1] != cliente_id:
+                    raise ValueError(
+                        "Esa ficha es de otro cliente: esta guía R se armó para otro."
+                    )
 
             cursor.execute("UPDATE reprocesos SET ficha_id = %s WHERE id = %s", (ficha_id, reproceso_id))
         conexion.commit()

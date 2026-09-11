@@ -397,9 +397,17 @@
          mismo nivel se vuelve el default de hecho. Sigue siempre
          disponible — el que no sabe tiene que poder decirlo. #}
       <select name="ficha_id" aria-label="Ficha de la guía R{{ g.id }}">
-        {% if fichas_por_articulo.get(g.articulo_id) %}
-        <optgroup label="Cajas de este artículo">
-          {% for f in fichas_por_articulo.get(g.articulo_id, []) %}
+        {# LAS CAJAS DE SU CLIENTE, no las del artículo entero. Una guía
+           armada para un cliente no puede ir a la ficha de otro: la
+           pantalla de armar nunca lo permitió y acá se ofrecía igual.
+           Medido antes de cerrarlo: 0 cruces en 198 guías comparables.
+           La lista la arma la ruta; acá solo se pinta.
+
+           Sin cliente (las guías viejas) se ofrecen TODAS las del
+           artículo, o quedarían sin poder asignarse nunca. #}
+        {% if g.fichas_elegibles %}
+        <optgroup label="{% if g.fichas_son_del_cliente %}Cajas de este cliente{% else %}Cajas de este artículo{% endif %}">
+          {% for f in g.fichas_elegibles %}
           <option value="{{ f.id }}" {% if g.ficha_id == f.id %}selected{% endif %}>{{ f.nombre }}</option>
           {% endfor %}
         </optgroup>

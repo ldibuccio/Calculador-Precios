@@ -2895,7 +2895,7 @@ def test_asignar_ficha_a_reproceso_solo_toca_la_ficha():
     # Los consumos y el costo se congelaron al cargar la guía: asignar la
     # ficha es decir a qué producto de venta fueron esas cajas, no rehacer
     # el FIFO.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False), (7,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False), (7, 1)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         asignar_ficha_a_reproceso(12, 901)
@@ -2915,7 +2915,7 @@ def test_no_se_puede_asignar_una_ficha_de_OTRO_articulo():
     Cotejo mostraría un rojo imposible de explicar.
     """
     # La guía es del artículo 7; la ficha, del 9.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False), (9,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False), (9, 1)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError) as error:
@@ -2926,8 +2926,51 @@ def test_no_se_puede_asignar_una_ficha_de_OTRO_articulo():
     conexion.commit.assert_not_called()
 
 
+def test_no_se_puede_asignar_una_ficha_de_OTRO_CLIENTE():
+    """La pared va donde se ESCRIBE, no donde se muestra.
+
+    Que el selector deje de ofrecer las fichas de otros clientes no alcanza:
+    un formulario armado a mano entra igual. Es el mismo hallazgo del cajón
+    con envase.
+
+    Medido antes de cerrarla (Frutamax, 11/09): 0 cruces en 198 guías
+    comparables, con `sin_cliente_no_se_juzga` en 0 — o sea que las 198 se
+    compararon de verdad. El caso nunca pasó, y la pantalla de armar nunca
+    lo permitió: era la misma regla en dos pantallas con dos durezas.
+    """
+    # La guía se armó para el cliente 1; la ficha es del 2. MISMO artículo,
+    # así que la guarda vieja no alcanza para frenarla.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False), (7, 2)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            asignar_ficha_a_reproceso(12, 901)
+
+    assert "otro cliente" in str(error.value)
+    assert not any("UPDATE" in c.args[0] for c in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_una_guia_SIN_cliente_acepta_cualquier_ficha_del_articulo():
+    """Las guías viejas no tienen cliente: no hay contra qué comparar.
+
+    Si la guarda las frenara quedarían sin poder asignarse NUNCA, que es
+    peor que el cruce que viene a evitar. Hoy son cero; este test existe
+    para el día que aparezca una.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, None, False), (7, 2)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        asignar_ficha_a_reproceso(12, 901)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert consulta == "UPDATE reprocesos SET ficha_id = %s WHERE id = %s"
+    assert parametros == (901, 12)
+    conexion.commit.assert_called_once()
+
+
 def test_una_guia_anulada_no_se_asigna():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, True)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, True)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError) as error:
@@ -2940,7 +2983,7 @@ def test_una_guia_anulada_no_se_asigna():
 def test_desasignar_una_guia_se_permite_y_no_valida_ficha():
     # Volver a "sin asignar" es legítimo: el que se equivocó de ficha
     # tiene que poder sacarla sin inventar otra.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, False)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(7, 1, False)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         asignar_ficha_a_reproceso(12, None)

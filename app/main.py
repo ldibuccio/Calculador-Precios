@@ -10021,11 +10021,27 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
             por_cliente.get(cruce["cliente_salida_nombre"], 0.0) + cruce["bultos"]
         )
 
-    # Para completar la ficha de una guía sin asignar: las fichas de ESE
-    # artículo, cualquiera sea el cliente. Sale del MISMO armador que Stock
-    # Físico y Stock Inicial —`_cajas_para_elegir_por_articulo`— y no de una
-    # copia: las tres eligen por artículo y las tres necesitan leer en qué
-    # caja, no el código con el que el cliente nombra su producto.
+    # Para completar la ficha de una guía sin asignar: las fichas DE SU
+    # CLIENTE, no las del artículo entero. Sale del MISMO armador que la
+    # pantalla de armar —`_fichas_por_cliente_y_articulo`— y no de una
+    # copia, porque es la misma pregunta: qué cajas puede haber armado
+    # este cliente de este artículo.
+    #
+    # HASTA EL 11/09 OFRECÍA LAS DE TODOS LOS CLIENTES y se podía asignar
+    # una guía armada para Día a una ficha de Vea. Medido antes de
+    # cerrarlo: 0 cruces en 198 guías comparables, con
+    # `sin_cliente_no_se_juzga` en 0 —o sea que las 198 se compararon de
+    # verdad—. El caso no existe, y la pantalla de armar nunca lo permitió:
+    # era la misma regla en dos pantallas con dos durezas, y la floja era
+    # la de corregir errores. Ver db/cruce_1_guia_en_ficha_de_otro_cliente.sql.
+    #
+    # LAS SIN CLIENTE SIGUEN VIENDO TODAS las del artículo: son las guías
+    # viejas, anteriores al dato, y sin eso quedarían trabadas para siempre
+    # sin poder asignarse. Hoy son cero; el día que aparezca una, tiene que
+    # poder completarse. Por eso `_cajas_para_elegir_por_articulo` no se va.
+    #
+    # Y la pared de verdad está en `asignar_ficha_a_reproceso`, que es
+    # donde se ESCRIBE: que la pantalla no lo ofrezca no alcanza.
     # EL TÍTULO DE CADA GUÍA ES EL DE LA PILA A LA QUE FUE, y sale del mismo
     # namer que el Remanente, "Contado hoy", el Cotejo y Movimientos. Sin
     # esto dos guías R del mismo artículo para fichas distintas se titulaban
@@ -10045,9 +10061,24 @@ def ver_guias_r(request: Request, fecha_desde: str | None = None, fecha_hasta: s
 
     try:
         fichas_por_articulo = _cajas_para_elegir_por_articulo()
+        fichas_por_cliente = _fichas_por_cliente_y_articulo()
         articulos = listar_articulos()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # La clave se arma ACÁ y no en la plantilla: con `cliente_id:articulo_id`
+    # escrito en el HTML, el día que el armador cambie de forma la pantalla
+    # se queda con la clave vieja y el selector sale vacío sin que nada
+    # avise — un `<select>` sin opciones se lee como "este artículo no tiene
+    # cajas", que es falso y manda a cargar una ficha que ya existe.
+    for guia_r in guias:
+        if guia_r["cliente_id"] is not None:
+            clave = f"{guia_r['cliente_id']}:{guia_r['articulo_id']}"
+            guia_r["fichas_elegibles"] = fichas_por_cliente.get(clave, [])
+            guia_r["fichas_son_del_cliente"] = True
+        else:
+            guia_r["fichas_elegibles"] = fichas_por_articulo.get(guia_r["articulo_id"], [])
+            guia_r["fichas_son_del_cliente"] = False
 
     # QUÉ FICHAS SE CONTARON DESPUÉS DE SU GUÍA. Cambiarle la ficha a una guía
     # mueve sus cajas de una pila a otra, y si esa pila ya se contó, la foto

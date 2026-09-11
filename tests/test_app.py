@@ -19830,8 +19830,12 @@ def test_el_selector_de_fecha_tiene_el_piso_del_corte_puesto():
     assert 'min="2026-08-20"' in respuesta.text
 
 
+# `cliente_id` en TODAS: la consulta real devuelve `rp.cliente_id` para cada
+# fila —a veces NULL, en las guías viejas anteriores al dato— así que la clave
+# existe siempre. Sin ella el fixture no tiene la forma de producción y el
+# código que la lee explota con un KeyError que en la pantalla real no pasa.
 GUIAS_R_DE_PRUEBA = [
-    {"id": 12, "articulo_id": 1, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 30.0,
+    {"id": 12, "articulo_id": 1, "cliente_id": None, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 30.0,
      "bultos_primera": 20.0, "bultos_segunda": 5.0, "bultos_merma": 5.0,
      "costo_total": 33000.0, "costo_por_bulto_primera": 1650.0,
      "creado_en": datetime(2026, 8, 25, 15, 0), "anulado_el": None,
@@ -19842,7 +19846,7 @@ GUIAS_R_DE_PRUEBA = [
          {"origen": "compra", "origen_id": 102, "bultos": 10.0, "costo_por_bulto": 1300.0,
           "guia_fecha": date(2026, 8, 25), "proveedor_nombre": "Sur 3"},
      ]},
-    {"id": 13, "articulo_id": 2, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 4.0,
+    {"id": 13, "articulo_id": 2, "cliente_id": None, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 4.0,
      "bultos_primera": 6.0, "bultos_segunda": 0.0, "bultos_merma": 0.0,
      "costo_total": None, "costo_por_bulto_primera": None,
      "creado_en": datetime(2026, 8, 25, 16, 0), "anulado_el": datetime(2026, 8, 25, 17, 0),
@@ -19858,7 +19862,7 @@ GUIAS_R_DE_PRUEBA = [
 # COMPRA, que es lo que alguien puede ir a cargar. La R13 de arriba es el otro
 # caso —consumió un ajuste— y ésa no se puede cerrar nunca.
 GUIA_R_ESPERANDO_PRECIO = {
-    "id": 30, "articulo_id": 1, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 10.0,
+    "id": 30, "articulo_id": 1, "cliente_id": None, "ficha_id": None, "fecha_operacion": date(2026, 8, 25), "bultos_tomados": 10.0,
     "bultos_primera": 8.0, "bultos_segunda": 2.0, "bultos_merma": 0.0,
     "costo_total": None, "costo_por_bulto_primera": None,
     "creado_en": datetime(2026, 8, 25, 18, 0), "anulado_el": None,
@@ -20882,6 +20886,89 @@ def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
     ):
         cruces = __import__("app.main", fromlist=["x"])._cruces_primera_reproceso()
     assert cruces == []
+
+
+def test_guias_r_solo_ofrece_las_fichas_DEL_CLIENTE_de_la_guia():
+    """Una guía armada para un cliente no puede ir a la ficha de otro, y la
+    pantalla dejó de ofrecerlo el 11/09.
+
+    Medido antes de cerrarlo (Frutamax): 0 cruces en 198 guías comparables,
+    con `sin_cliente_no_se_juzga` en 0 — o sea que las 198 se compararon de
+    verdad. El caso no existe y la pantalla de ARMAR nunca lo permitió (ahí
+    el selector es por cliente Y artículo): era la misma regla en dos
+    pantallas con dos durezas, y la floja era la de corregir errores.
+    """
+    guias = [
+        dict(GUIAS_R_DE_PRUEBA[0], id=1, articulo_id=5, ficha_id=None,
+             ficha_nombre=None, ficha_cliente_id=None,
+             cliente_id=1, cliente_nombre="Día", anulado_el=None),
+    ]
+    fichas = [
+        {"id": 901, "articulo_id": 5, "cliente_id": 1, "nombre_cliente": "Banana Bolivia",
+         "articulo_nombre": "Banana"},
+        {"id": 902, "articulo_id": 5, "cliente_id": 2, "nombre_cliente": "Banana de Otro",
+         "articulo_nombre": "Banana"},
+    ]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos", return_value=[{"id": 5, "nombre": "EJEMPLO Cinco"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(5, 901): 1.0}),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    # Se leen los <option>, no el texto de la página: hay VARIOS bloques
+    # <style> (la barra y el pie), así que `split("</style>")[-1]` deja solo
+    # el footer — con eso este test fallaba por mirar donde no era. Y un
+    # nombre suelto podría aparecer en un comentario (corolario 38).
+    # Por ID y no por la etiqueta: el texto lo arma `_caja_para_elegir` (y
+    # para una ficha sin envase dice "Envase perdido", no el nombre del
+    # cliente). Lo que esta regla decide es QUÉ FICHAS se ofrecen, y eso es
+    # el id — acoplarse al texto probaría otra cosa.
+    ofrecidas = re.findall(r'<option value="(\d+)"', respuesta.text)
+    assert "901" in ofrecidas, "no ofrece la ficha de su propio cliente"
+    assert "902" not in ofrecidas, "ofrece la ficha de OTRO cliente"
+    assert "Cajas de este cliente" in respuesta.text
+
+
+def test_guias_r_SIN_cliente_sigue_viendo_todas_las_del_articulo():
+    """Las guías viejas, anteriores a que se guardara el cliente, no tienen
+    contra qué filtrar. Si se les aplicara el filtro quedarían con el
+    selector vacío y sin poder asignarse NUNCA — y un `<select>` vacío se
+    lee como "este artículo no tiene cajas", que es falso.
+
+    Hoy son cero, y por eso este test: el día que aparezca una, nadie se va
+    a acordar de este caso.
+    """
+    guias = [
+        dict(GUIAS_R_DE_PRUEBA[0], id=1, articulo_id=5, ficha_id=None,
+             ficha_nombre=None, ficha_cliente_id=None,
+             cliente_id=None, cliente_nombre=None, anulado_el=None),
+    ]
+    fichas = [
+        {"id": 901, "articulo_id": 5, "cliente_id": 1, "nombre_cliente": "Banana Bolivia",
+         "articulo_nombre": "Banana"},
+        {"id": 902, "articulo_id": 5, "cliente_id": 2, "nombre_cliente": "Banana de Otro",
+         "articulo_nombre": "Banana"},
+    ]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos", return_value=[{"id": 5, "nombre": "EJEMPLO Cinco"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(5, 901): 1.0}),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    # Sin cliente se ofrecen LAS DOS, o quedaría trabada para siempre.
+    ofrecidas = re.findall(r'<option value="(\d+)"', respuesta.text)
+    assert "901" in ofrecidas and "902" in ofrecidas, "una guía sin cliente quedó sin opciones"
+    assert "Cajas de este artículo" in respuesta.text
 
 
 def test_guias_r_muestra_el_cliente_cuando_la_ficha_es_de_OTRO():
