@@ -2091,3 +2091,61 @@ conocido no es deuda.
 Y la señal de que ya es hora está escrita en el corolario 31: **la segunda
 vez que haya que escribir un `.sql` a mano para contar cajas que faltan, eso
 deja de ser un incidente y es una función que falta.**
+
+## El dato de uso decide qué MEJORAR, no qué SACAR
+
+Del 11/09, y es un error de criterio mío, no del código.
+
+Midiendo el rechazo para dimensionar el cuarto destino salió que
+`a_reproceso` —"vuelve a cajón grande"— estaba en **0 sobre 15 casos**. Y
+propuse: *"si sigue en cero en un mes, es una opción que solo sirve para
+equivocarse"*.
+
+**Está mal, y la corrección es de Lionel: las opciones que él define son
+casos reales del negocio, aunque pasen una vez al año.** Quince casos en
+dieciséis días **no tienen ningún poder** para hablar de algo que pasa una
+vez al año — eso no es una cuestión de criterio, es aritmética: en dos
+semanas, un caso anual aparece con probabilidad de centésimas. El cero
+medido era exactamente lo que se esperaría si la opción fuera necesaria.
+
+### La distinción, que es lo único que evita repetirlo
+
+Las dos cosas que comparé se veían iguales —un cero en una medición— y no
+lo son:
+
+| de dónde salió | qué dice el cero |
+|---|---|
+| **El dueño la puso porque conoce el caso** | **nada.** Se queda. |
+| **El código abrió la puerta y nadie la pidió** | **vale**, y más si otra pantalla del mismo sistema no la permite |
+
+- `a_reproceso` en 0 sobre 15: **la puso él.** Se queda.
+- El selector que ofrecía fichas de OTRO cliente, 0 sobre 198: **lo abrió el
+  código**, nadie lo pidió, y la pantalla de armar nunca lo permitió. Se
+  cerró, y estuvo bien cerrarlo.
+
+**Lo que los distingue no está en el número.** Los dos ceros son igual de
+prolijos. Lo que cambia es el ORIGEN, y eso hay que ir a preguntarlo: *¿esta
+opción la pidió alguien, o apareció sola?*
+
+### La regla
+
+**No proponer dar de baja opciones funcionales por frecuencia medida.** El
+dato de uso sirve para decidir **qué mejorar** —dónde poner el esfuerzo, qué
+pantalla ordenar, qué aviso agregar— no **qué sacar**.
+
+Sacar algo necesita otra evidencia: que nadie lo haya pedido, que otra parte
+del sistema demuestre que el caso no puede ocurrir, o que el dueño diga que
+ya no va. Ninguna de las tres es un conteo.
+
+### Con qué engancha
+
+Es **el corolario 29 dado vuelta**. Allá construí sobre un requisito que
+nadie enunció; acá propuse destruir uno que alguien sí había enunciado. Las
+dos fallas son la misma: **perder de vista quién pidió qué.** Y las dos se
+arreglan con la misma pregunta, hecha antes y no después — *¿de quién salió
+esto?*
+
+Y con la sección del campo sin consecuencia, por contraste: allá un campo
+vacío era la respuesta correcta al incentivo, y el arreglo estaba del lado
+del sistema. **Acá el vacío no es un síntoma de nada**: es una opción
+esperando su caso.
