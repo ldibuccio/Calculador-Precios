@@ -20884,12 +20884,88 @@ def test_cruce_de_primera_no_avisa_si_sale_al_mismo_cliente():
     assert cruces == []
 
 
-def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
+def test_guias_r_muestra_el_cliente_cuando_la_ficha_es_de_OTRO():
+    """El título de la tarjeta sale de la FICHA y el renglón de la GUÍA, y no
+    son el mismo dato: `reprocesos.cliente_id` y `fichas_logistica.cliente_id`
+    son dos columnas sueltas que nada ata. El selector de la pantalla ofrece
+    las fichas POR ARTÍCULO —de todos los clientes— y el POST solo valida que
+    la ficha exista y que la guía no esté anulada.
+
+    Así que una guía armada para un cliente puede terminar en la ficha de
+    otro. Cuando pasa, este renglón es lo ÚNICO que lo muestra: el título
+    diría el cliente de la ficha y taparía la diferencia. Por eso el renglón
+    se esconde cuando coinciden y NO cuando difieren.
+    """
     guias = [
         dict(GUIAS_R_DE_PRUEBA[0], id=1, articulo_id=5, ficha_id=901,
-             ficha_nombre="Banana Bolivia", anulado_el=None),
+             ficha_nombre="Banana Bolivia", ficha_cliente_id=2,
+             cliente_id=1, cliente_nombre="Día", anulado_el=None),
+    ]
+    fichas = [
+        {"id": 901, "articulo_id": 5, "cliente_id": 2, "nombre_cliente": "Banana Bolivia",
+         "articulo_nombre": "Banana"},
+    ]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos", return_value=[{"id": 5, "nombre": "EJEMPLO Cinco"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(5, 901): 1.0}),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # La guía se armó para Día; la ficha es de otro cliente. Los dos se ven.
+    assert "Primera armada para <strong>Día</strong>" in cuerpo
+
+
+def test_guias_r_NO_repite_el_cliente_cuando_el_titulo_ya_lo_dice():
+    """El caso común y el que motivó el cambio: con la ficha del mismo
+    cliente, el título ya es "<artículo> Caja <cliente>" y el renglón de
+    abajo era la misma información con otras palabras.
+    """
+    guias = [
+        dict(GUIAS_R_DE_PRUEBA[0], id=1, articulo_id=5, ficha_id=901,
+             ficha_nombre="Banana Bolivia", ficha_cliente_id=1,
+             cliente_id=1, cliente_nombre="Día", anulado_el=None),
+    ]
+    fichas = [
+        {"id": 901, "articulo_id": 5, "cliente_id": 1, "nombre_cliente": "Banana Bolivia",
+         "articulo_nombre": "Banana"},
+    ]
+    with (
+        patch("app.main.listar_reprocesos_por_rango", return_value=guias),
+        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=fichas),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main._cruces_primera_reproceso", return_value=[]),
+        patch("app.main.listar_articulos", return_value=[{"id": 5, "nombre": "EJEMPLO Cinco"}]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={(5, 901): 1.0}),
+    ):
+        respuesta = cliente.get("/administracion/stock/guias-r")
+
+    cuerpo = respuesta.text.split("</style>")[-1]
+    # El cliente está UNA vez, en el título, y no repetido abajo.
+    assert "Primera armada para" not in cuerpo
+    assert "Día" in cuerpo
+
+
+def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
+    # LAS DOS CON CLIENTE, como en producción: una guía se arma PARA alguien,
+    # así que `cliente_id`/`cliente_nombre` vienen cargados. Sin esto el
+    # fixture caía en la rama "Sin cliente (guía vieja)" y el assert de abajo
+    # —que el cliente no se repite cuando el título ya lo dice— pasaba por el
+    # motivo equivocado: no había cliente que repetir.
+    guias = [
+        dict(GUIAS_R_DE_PRUEBA[0], id=1, articulo_id=5, ficha_id=901,
+             ficha_nombre="Banana Bolivia", ficha_cliente_id=1,
+             cliente_id=1, cliente_nombre="Día", anulado_el=None),
         dict(GUIAS_R_DE_PRUEBA[0], id=2, articulo_id=5, ficha_id=None,
-             ficha_nombre=None, anulado_el=None),
+             ficha_nombre=None, ficha_cliente_id=None,
+             cliente_id=1, cliente_nombre="Día", anulado_el=None),
     ]
     # Las mismas claves que devuelve listar_fichas_de_todos_los_clientes:
     # cliente_id, no cliente_nombre. La fixture vieja inventaba una columna
@@ -20915,9 +20991,19 @@ def test_guias_r_muestra_la_ficha_y_deja_completar_la_que_no_tiene():
 
     assert respuesta.status_code == 200
     cuerpo = respuesta.text.split("</style>")[-1]
-    # La asignada muestra su ficha; la otra dice que le falta.
+    # La asignada muestra su ficha EN EL TÍTULO; la otra dice que le falta,
+    # también en el título. El renglón "Caja: <código>" que decía esto se
+    # fue el 11/09: el título ya trae artículo + caja + cliente, así que
+    # eran dos renglones diciendo lo mismo con otras palabras.
     assert "Banana Bolivia" in cuerpo
-    assert "Sin asignar a una ficha" in cuerpo
+    assert "FALTA LA FICHA" in cuerpo
+    assert "Sin asignar a una ficha" not in cuerpo
+    # EL CLIENTE APARECE UNA SOLA VEZ, y es la SIN ficha. La que ya la tiene
+    # no lo repite porque su título es "<artículo> Caja <cliente>"; la que no,
+    # cae al artículo pelado y sin este renglón quedaría muda.
+    assert cuerpo.count("Primera armada para") == 1
+    sin_ficha = cuerpo[cuerpo.index("Guía R2 "):]
+    assert "Primera armada para" in sin_ficha
     # Y la que falta se completa desde acá, con LAS DOS fichas del artículo.
     assert 'action="/administracion/stock/guias-r/2/asignar-ficha"' in cuerpo
     assert "Banana Ecuador" in cuerpo

@@ -340,14 +340,29 @@
       <span class="fecha-guia">{{ g.fecha_operacion|fecha_corta }}{% if g.anulado_el %} <span class="marca-anulado">ANULADA</span>{% endif %}</span>
     </div>
     <p class="transformacion">Tomó {{ g.bultos_tomados|numero }} bultos → {{ g.bultos_primera|numero }} cajas de primera · {{ g.bultos_segunda|numero }} de segunda · {{ g.bultos_merma|numero }} de merma</p>
-    <p class="transformacion">{% if g.cliente_nombre %}Primera armada para <strong>{{ g.cliente_nombre }}</strong>{% else %}<em>Sin cliente (guía vieja, anterior al dato)</em>{% endif %}</p>
+    {# EL CLIENTE SOLO CUANDO EL TÍTULO NO LO DICE. Con ficha, el título ya
+       es "<artículo> Caja <cliente>" y repetirlo abajo eran dos renglones
+       diciendo lo mismo con otras palabras.
 
-    {# A qué ficha fueron las cajas. Se puede completar o corregir acá:
-       los consumos y el costo NO se tocan, ya se congelaron al cargar. #}
-    <p class="ficha">
-      {% if g.ficha_nombre %}Caja: <strong>{{ g.ficha_nombre }}</strong>
-      {% else %}<span class="sin-asignar">Sin asignar a una ficha</span>{% endif %}
-    </p>
+       Las DOS condiciones son necesarias, y la segunda no es teórica:
+
+       - SIN FICHA el título cae al artículo pelado (`_titulo_de_porcion`
+         devuelve el nombre solo cuando `ficha is None`), así que el cliente
+         no está en ningún otro lado de la tarjeta. Medido: una guía sin
+         ficha y con cliente quedaba muda al sacar este renglón.
+       - CON FICHA DE OTRO CLIENTE el título dice el de la FICHA y éste el
+         de la GUÍA. Son dos columnas sueltas de `reprocesos` y nada las
+         ata: el selector de acá abajo ofrece las fichas por ARTÍCULO —de
+         todos los clientes— y el POST solo valida que la ficha exista. Si
+         difieren, este renglón es lo único que lo muestra.
+
+       Lo que se fue del todo es el "Caja: <código>": con ficha el título ya
+       trae la caja, sin ficha el título ya dice "— FALTA LA FICHA", y el
+       código del cliente vive donde se usa, en el `<select>` de "Corregir
+       la ficha". #}
+    {% if not g.ficha_id or g.ficha_cliente_id != g.cliente_id %}
+    <p class="transformacion">{% if g.cliente_nombre %}Primera armada para <strong>{{ g.cliente_nombre }}</strong>{% else %}<em>Sin cliente (guía vieja, anterior al dato)</em>{% endif %}</p>
+    {% endif %}
     {% if not g.anulado_el %}
     {# CON FICHA YA PUESTA, el selector NO arranca abierto. El botón se queda
        —corregir una ficha mal asignada es el único camino que hay— pero deja

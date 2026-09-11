@@ -9186,7 +9186,17 @@ def listar_reprocesos_por_rango(fecha_desde, fecha_hasta, articulo_id=None,
                        -- le propuso el FIFO. Se muestra: un costo que no
                        -- eligió el sistema tiene que poder distinguirse.
                        rp.consumos_editados,
-                       COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre
+                       COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
+                       -- El cliente DE LA FICHA, que NO es `rp.cliente_id`:
+                       -- son dos columnas sueltas y nada las ata. El selector
+                       -- de esta pantalla ofrece las fichas POR ARTÍCULO —de
+                       -- todos los clientes— y `asignar_ficha_a_reproceso`
+                       -- solo valida que la ficha exista y que la guía no
+                       -- esté anulada. Así que una guía armada para un
+                       -- cliente PUEDE terminar en la ficha de otro, y la
+                       -- pantalla lo necesita para poder mostrarlo: el
+                       -- título sale de la FICHA y taparía la diferencia.
+                       f.cliente_id AS ficha_cliente_id
                 FROM reprocesos rp
                 JOIN articulos a ON a.id = rp.articulo_id
                 LEFT JOIN clientes cl ON cl.id = rp.cliente_id
