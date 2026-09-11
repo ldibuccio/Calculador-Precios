@@ -2369,3 +2369,42 @@ dicho de cuatro formas: **algo que AFIRMA se quedó afirmando lo que valía
 antes del camino nuevo.** Y la diferencia con los otros tres es dónde se
 mira: allá se relee un texto, acá se relee una CUENTA — un valor derivado
 también afirma, y encima no se lee como afirmación.
+
+## Corolario 40: un mock entrega lo que le pidieron, no lo que la consulta pidió
+
+Del 11/09, y es una forma de test ciego que no teníamos escrita.
+
+La guía R de una compra que viene armada se arma por los bultos **aceptados**
+(`cantidad_cajones_real`), no por los estimados. El test estaba puesto, con su
+caso de rechazo parcial —llegan 10, se devuelven 2, la guía tiene que salir
+por 8— y verificaba el número insertado. Parecía cubierto.
+
+El canario dice que no: cambiar la consulta para que pida
+`c.cantidad_cajones` en vez de `c.cantidad_cajones_real` **no hace caer
+nada**. Con un cursor falso la fila la entrega el mock —`(1, 3, 8.0, ...)`—
+sin mirar una letra del SQL, así que el 8 llega igual con la columna
+equivocada. El canario rompía exactamente lo que decía romper; **el test era
+ciego a eso.**
+
+**La regla**: cuando lo que cambia es **QUÉ COLUMNA pide la consulta**, el
+test tiene que mirar el TEXTO del SQL. El valor no alcanza, porque el valor no
+viene de la consulta: viene del fixture.
+
+**Cómo se reconoce, y es una sola pregunta**: *¿esto que estoy afirmando
+depende de lo que el mock me devuelve, o de lo que el código le pidió?* Si
+depende de lo primero, el assert está midiendo el fixture. Vale para la
+columna, para el `where`, para el `order by`, para el `join` — todo lo que
+cambia QUÉ trae la consulta y no qué se hace con lo traído.
+
+**Con qué engancha, y es por el lado opuesto**: el corolario 9 dice que un
+test que PARCHEA la función que quiere verificar no verifica nada, porque el
+parche **tapa** la línea rota. Acá el mock no la tapa: **simplemente no la
+mira.** Son los dos modos de lo mismo —el test afirma algo que su propio
+andamio ya decidió— y por eso la salvaguarda es la misma: romper el código a
+propósito y exigir que caiga.
+
+Y la parte incómoda: el assert del valor **no está de más**. Cuida el cableado
+—que lo que la consulta trajo sea lo que entra al INSERT— que es otra cosa y
+también se puede romper. Los dos asserts miran mitades distintas y hacen falta
+los dos. Sacar el del valor porque "el del texto ya cubre" sería cambiar un
+test ciego por otro.
