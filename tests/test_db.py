@@ -4766,6 +4766,98 @@ def test_listar_reprocesos_por_rango_filtra_por_articulo_solo_si_se_lo_piden():
     assert parametros == (date(2026, 9, 1), date(2026, 9, 10))
 
 
+def test_contado_hoy_trae_UN_renglon_por_porcion_el_mas_nuevo_del_dia():
+    """Un conteo corregido aparecía dos veces y se leía como contado dos veces.
+
+    No se contó dos veces: se corrigió. Corregir un conteo es cargarlo de
+    nuevo —no hay UPDATE ni anulación de conteos— así que el viejo queda
+    tapado, y mostrarlo es mostrar algo que ya no vale.
+
+    Se afirma sobre el SQL porque la regla vive ahí: el DISTINCT ON con las
+    TRES claves de la porción y el desempate por `creado_en DESC`. Con dos
+    claves, la segunda y los sueltos se pisan (los dos tienen ficha_id nulo).
+    """
+    from app.db import listar_conteos_stock_de_fecha
+
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",)]
+    cursor.fetchall.return_value = []
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_conteos_stock_de_fecha(date(2026, 9, 11))
+    consulta = cursor.execute.call_args.args[0]
+    assert "DISTINCT ON (c.articulo_id, c.ficha_id, c.es_segunda)" in consulta
+    assert "ORDER BY c.articulo_id, c.ficha_id, c.es_segunda, c.creado_en DESC" in consulta
+    # Y sigue recortando al DÍA: el Cotejo toma el último de la historia,
+    # esta lista el último de la jornada. Son ventanas distintas a propósito.
+    assert "c.creado_en >= ((%s::date)::timestamp" in consulta
+
+
+def test_contado_hoy_DEVUELVE_las_filas_ya_ordenadas_por_articulo():
+    """Que la función ORDENE, no solo que el ordenador exista.
+
+    El cursor devuelve las filas en el orden de la base y este test las da
+    a propósito revueltas: si `listar_conteos_stock_de_fecha` dejara de
+    llamar al ordenador, las devolvería tal cual y la pantalla volvería a
+    mostrar "Lima Caja Día %" arriba y "Lima" quince renglones abajo.
+
+    NO se prueba desde la pantalla: parchear el lector para probar que el
+    lector ordena es pedirle al parche que haga el trabajo que se quiere
+    verificar, y el test pasaría con la función rota.
+    """
+    from app.db import listar_conteos_stock_de_fecha
+
+    revueltas = [
+        (1, 1.0, datetime(2026, 9, 11, 16, 0), "Palta", 7, False, "Palta", "Cliente"),
+        (2, 5.0, datetime(2026, 9, 11, 15, 0), "Lima", None, True, None, None),
+        (3, 6.0, datetime(2026, 9, 11, 14, 0), "Lima", None, False, None, None),
+    ]
+    conexion, cursor = _conexion_falsa()
+    cursor.description = [("id",), ("cantidad",), ("creado_en",), ("articulo_nombre",),
+                          ("ficha_id",), ("es_segunda",), ("ficha_nombre",), ("ficha_cliente",)]
+    cursor.fetchall.return_value = revueltas
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        filas = listar_conteos_stock_de_fecha(date(2026, 9, 11))
+
+    assert [(f["articulo_nombre"], f["es_segunda"], f["ficha_id"]) for f in filas] == [
+        ("Lima", False, None),      # sueltos
+        ("Lima", True, None),       # segunda
+        ("Palta", False, 7),        # las cajas de la ficha
+    ]
+
+
+def test_el_Cotejo_y_Contado_hoy_ordenan_con_LA_MISMA_funcion():
+    """Dos pantallas que muestran las mismas porciones tienen que ponerlas en
+    el mismo lugar; si no, el mismo conteo parece dos conteos distintos.
+
+    Se prueba el ORDENADOR, que es donde vive la regla, con las tres
+    porciones de dos artículos mezcladas a propósito.
+    """
+    from app.db import _ordenar_porciones_contadas
+
+    revuelto = [
+        {"articulo_nombre": "Lima", "ficha_id": None, "es_segunda": True, "ficha_nombre": None},
+        {"articulo_nombre": "Palta", "ficha_id": None, "es_segunda": False, "ficha_nombre": None},
+        {"articulo_nombre": "Lima", "ficha_id": 9, "es_segunda": False, "ficha_nombre": "B"},
+        {"articulo_nombre": "Lima", "ficha_id": None, "es_segunda": False, "ficha_nombre": None},
+        {"articulo_nombre": "Lima", "ficha_id": 7, "es_segunda": False, "ficha_nombre": "A"},
+    ]
+    ordenado = [
+        (f["articulo_nombre"], f["ficha_nombre"], f["es_segunda"])
+        for f in _ordenar_porciones_contadas(revuelto)
+    ]
+    # Cada artículo junto; adentro sueltos, después las fichas (alfabéticas)
+    # y la segunda al final — el mismo `orden` (0, 1, 2) del Remanente.
+    assert ordenado == [
+        ("Lima", None, False),
+        ("Lima", "A", False),
+        ("Lima", "B", False),
+        ("Lima", None, True),
+        ("Palta", None, False),
+    ]
+
+
 def test_el_numero_de_guia_PISA_la_fecha_y_el_articulo_EN_LA_CONSULTA():
     """Con `guia_id`, el recorte es SOLO `rp.id`: ni la fecha ni el artículo
     entran en el WHERE.

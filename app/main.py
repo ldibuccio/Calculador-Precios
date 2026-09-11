@@ -318,7 +318,7 @@ from core.casilla_pedidos import (
     texto_del_mail_guardado,
 )
 from core.pedido_estructura import parsear_pedido_estructurado
-from core.extracto_porcion import ETIQUETAS_MOVIMIENTO, armar_extracto
+from core.extracto_porcion import ETIQUETAS_MOVIMIENTO, SIN_EXPLICAR, armar_extracto
 from core.rentabilidad import ETIQUETAS_GRUPO, calcular_rentabilidad_de_pedidos
 from core.costo_real import atribuir_costos_fifo, calcular_rentabilidad_real
 from core.costos_fijos import calcular_costos_fijos
@@ -1139,6 +1139,12 @@ def _bloqueo_del_sector(sector: str) -> str | None:
 
 
 templates.env.globals["bloqueo_del_sector"] = _bloqueo_del_sector
+
+# El nombre del renglón que la pantalla tiene que pintar distinto, leído de
+# core/ y no copiado: una plantilla que compara contra el literal
+# "Sin explicar" deja de pintarlo el día que la constante cambie, y no falla
+# — solo deja de avisar, que es peor.
+templates.env.globals["SIN_EXPLICAR"] = SIN_EXPLICAR
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -4720,6 +4726,8 @@ def corregir_recepcion_compra_ruta(
         else:
             if cajones_rechazados <= 0:
                 error = "La cantidad de bultos rechazados tiene que ser mayor a cero (o dejala vacía si no hubo rechazo)."
+            else:
+                error = _entero_o_error(cajones_rechazados, "bultos rechazados")
 
     if error:
         return _renderizar_pantalla_corregir_recepcion(request, compra_id, error=error, status_code=400)
@@ -6761,6 +6769,13 @@ def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None
         return "La cantidad de cajones real tiene que ser un número.", None
     if valor <= 0:
         return "La cantidad de cajones real tiene que ser mayor a cero.", None
+    # Cajones: bultos, y un bulto no se parte. El CONTENIDO de un cajón sí es
+    # fraccionario (16,5 kg) y se valida aparte, en
+    # `_validar_valor_real_recepcion` — dos cosas distintas en la misma
+    # pantalla, y por eso una lleva la regla y la otra no.
+    error = _entero_o_error(valor, "cajones real")
+    if error:
+        return error, None
     return None, valor
 
 
@@ -6816,6 +6831,10 @@ def _validar_rechazo_parcial(
         return "La cantidad de bultos rechazados tiene que ser mayor a cero. Si no rechazás nada, usá Recibir.", None, None
     if rechazados >= llegados:
         return "Los bultos rechazados tienen que ser menos que los llegados. Si rechazás todo, usá Rechazo total.", None, None
+    for valor, que in ((llegados, "bultos llegados"), (rechazados, "bultos rechazados")):
+        error = _entero_o_error(valor, que)
+        if error:
+            return error, None, None
 
     return None, llegados - rechazados, rechazados
 
@@ -7232,7 +7251,8 @@ def _ponerle_titulo_de_porcion(filas: list[dict], hasta=None) -> list[dict]:
     return filas
 
 
-def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[dict]:
+def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None,
+                           articulo_id=None) -> list[dict]:
     """Cada porción del depósito como un renglón propio, alfabético. La vista del que trabaja.
 
     En el piso NO hay "un artículo con un total": hay pilas distintas, en
@@ -7261,7 +7281,7 @@ def _porciones_de_deposito(filas: list[dict] | None = None, hasta=None) -> list[
     aunque la ficha se llame de otra forma.
     """
     if filas is None:
-        filas = stock_deposito_por_articulo(hasta)
+        filas = stock_deposito_por_articulo(hasta, articulo_id)
     # La MISMA fecha que las filas: si las cajas por ficha se pidieran sin
     # tope, los sueltos —que salen por resta— darían cualquier cosa.
     cajas = cajas_armadas_por_ficha(hasta)
@@ -7448,7 +7468,7 @@ def _pegar_conteos_a_porciones(porciones: list[dict], conteos: list[dict]) -> No
         porcion["diferencia"] = round(float(porcion["bultos"]) - float(conteo["cantidad"]), 2)
 
 
-def _remanente_a_fecha(hasta) -> dict:
+def _remanente_a_fecha(hasta, articulo_id=None) -> dict:
     """Todo lo que la pantalla y el Excel necesitan, a una fecha. UNA sola vez.
 
     Los dos salen de acá y no cada uno por su cuenta: si el Excel armara
@@ -7458,9 +7478,21 @@ def _remanente_a_fecha(hasta) -> dict:
     Los conteos van topeados con LA MISMA fecha que el resto: sin eso, el
     Remanente del 03/09 traería el último conteo de hoy, y el archivo
     tendría físico del futuro contra sistema del pasado sin decirlo.
+
+    `articulo_id` opcional acota a UN artículo, y existe para la evolución
+    día por día: esa pantalla llama a esta función UNA VEZ POR DÍA, y sin
+    filtro cada llamada arma las porciones de todo el catálogo para tirar
+    todas menos las de un artículo.
+
+    LO QUE NO CAMBIA, Y ES EL PUNTO: el saldo de cada día sigue saliendo de
+    ACÁ, la misma función que dibuja el Remanente. Por eso la evolución
+    CIERRA POR CONSTRUCCIÓN y no por coincidencia — el cierre de un día es
+    exactamente la apertura del siguiente porque son la misma llamada. Una
+    consulta propia "que sume lo mismo" sería la quinta versión de la cuenta
+    de stock, y las cuatro que hay ya se separaron entre sí una vez cada una.
     """
-    filas = stock_deposito_por_articulo(hasta)
-    porciones = _porciones_de_deposito(filas, hasta)
+    filas = stock_deposito_por_articulo(hasta, articulo_id)
+    porciones = _porciones_de_deposito(filas, hasta, articulo_id)
     try:
         _pegar_conteos_a_porciones(porciones, listar_ultimos_conteos_stock(hasta))
     except Exception:
@@ -7603,6 +7635,144 @@ def ver_extracto_de_porcion(request: Request, articulo_id: int, fecha: str | Non
             "extracto": extracto,
             "aviso": aviso,
             "volver": f"/administracion/stock/remanente?fecha={hasta.isoformat()}",
+        },
+    )
+
+
+# El tope de la evolución, y ES EL DISEÑO y no una limitación a disculpar.
+# La pantalla llama a `_remanente_a_fecha` UNA VEZ POR DÍA más uno —el cierre
+# de un día es la apertura del siguiente, así que son N+1 llamadas y no 2N— y
+# cada llamada son 6 consultas. Medido el 10/09 en Postgres local con un
+# fixture de 490 porciones: 31 llamadas = 186 consultas = 1,0 s. Ahí el
+# round-trip es 0,07 ms; contra una base remota hay que sumarle 186 × RTT,
+# que es el término que manda y el que este tope acota.
+TOPE_DIAS_EVOLUCION = 15
+
+
+@app.get("/administracion/stock/evolucion")
+def ver_evolucion_de_porcion(request: Request, articulo_id: str | None = None,
+                             ficha_id: str | None = None, segunda: int = 0,
+                             hasta: str | None = None, dias: str | None = None):
+    """Cómo se movió UNA porción, día por día: de qué venía, qué pasó, en qué quedó.
+
+    ES EL EXTRACTO DE UN DÍA, REPETIDO, y esa es toda la idea: cada fila sale
+    de `armar_extracto`, la misma función que dibuja el extracto de un día,
+    con sus dos puntas sacadas de `_remanente_a_fecha`. Por eso CIERRA POR
+    CONSTRUCCIÓN — el "quedó" de un día es el "venía" del siguiente porque
+    son la MISMA llamada, no dos cuentas que tienen que dar igual.
+
+    Una consulta propia que sumara los movimientos por día sería la quinta
+    versión de la cuenta de stock. Las cuatro que existen ya se separaron
+    entre sí una vez cada una, y cada separación costó un día de buscar
+    dónde estaba el bug.
+
+    EL SALDO DE CADA DÍA ES AL CIERRE. Las N+1 fechas se piden una sola vez
+    cada una y se encadenan: nada se pide dos veces.
+    """
+    articulo_id_valor = _id_opcional_desde_query(articulo_id)
+    ficha_id_valor = _id_opcional_desde_query(ficha_id)
+    es_segunda = bool(segunda)
+    # EL TOPE ES DURO Y `dias` ENTRA COMO TEXTO. Declarado `int`, FastAPI
+    # rechaza "abc" con un 422 crudo ANTES de llegar acá, y un parámetro de
+    # la URL mal escrito no puede dar una pantalla de error de framework:
+    # es un filtro, y cae al default. Mismo criterio que
+    # `_id_opcional_desde_query`, que existe por esto mismo.
+    pedidos = int(dias) if dias and dias.strip().isdigit() else TOPE_DIAS_EVOLUCION
+    dias = max(1, min(pedidos, TOPE_DIAS_EVOLUCION))
+    fin, aviso = _fecha_del_remanente(hasta)
+
+    try:
+        articulos = listar_articulos()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    if articulo_id_valor is None:
+        # Sin artículo no hay nada que calcular: la pantalla es el buscador.
+        return templates.TemplateResponse(
+            request, "administracion_stock_evolucion.html",
+            {"articulos": articulos, "articulo_id": None, "filas": [], "porciones": [],
+             "fin": fin, "dias": dias, "aviso": aviso, "tope": TOPE_DIAS_EVOLUCION,
+             "nombre": None, "ficha_id": ficha_id_valor, "es_segunda": es_segunda},
+        )
+
+    inicio = fin - timedelta(days=dias - 1)
+    try:
+        # N+1 FECHAS, UNA VEZ CADA UNA. El cierre de un día es la apertura
+        # del siguiente: pedir las dos puntas de cada día sería pedir cada
+        # fecha dos veces y duplicar el costo de la pantalla.
+        remanentes = {}
+        dia = inicio - timedelta(days=1)
+        while dia <= fin:
+            remanentes[dia] = _remanente_a_fecha(dia, articulo_id_valor)
+            dia += timedelta(days=1)
+        deficits = {
+            dia: _deficit_del_articulo(articulo_id_valor, dia) for dia in remanentes
+        }
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    # LAS PORCIONES QUE EXISTIERON EN EL RANGO, no solo las de hoy: una que
+    # se vació ayer tiene que poder mirarse — es justo el día que interesa.
+    porciones = {}
+    for remanente in remanentes.values():
+        for porcion in remanente["porciones"]:
+            porciones.setdefault(
+                (porcion["articulo_id"], porcion["ficha_id"], bool(porcion.get("es_segunda"))),
+                porcion["nombre"],
+            )
+    elegida = (articulo_id_valor, ficha_id_valor, es_segunda)
+    if elegida not in porciones and porciones:
+        # La primera del artículo, que por el orden del Remanente son los
+        # sueltos: entrar sin elegir porción tiene que mostrar algo.
+        elegida = sorted(porciones)[0]
+        ficha_id_valor, es_segunda = elegida[1], elegida[2]
+
+    filas = []
+    dia = inicio
+    while dia <= fin:
+        try:
+            eventos = eventos_de_stock_del_dia(articulo_id_valor, dia)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        anterior = _porcion_buscada(remanentes[dia - timedelta(days=1)]["porciones"],
+                                    *elegida)
+        actual = _porcion_buscada(remanentes[dia]["porciones"], *elegida)
+        # EL DELTA DEL DÍA, igual que en el extracto: el déficit es un saldo
+        # y esto es un flujo. Poner el saldo entero haría aparecer todos los
+        # días el mismo faltante ya explicado el primero.
+        deficit_nuevo = (
+            round(deficits[dia] - deficits[dia - timedelta(days=1)], 2)
+            if elegida[1] is None and not elegida[2] else 0.0
+        )
+        extracto = armar_extracto(
+            eventos,
+            float(anterior["bultos"]) if anterior else 0.0,
+            float(actual["bultos"]) if actual else 0.0,
+            ficha_id=elegida[1], es_segunda=elegida[2], deficit_nuevo=deficit_nuevo,
+        )
+        filas.append({"fecha": dia, **extracto})
+        dia += timedelta(days=1)
+
+    return templates.TemplateResponse(
+        request,
+        "administracion_stock_evolucion.html",
+        {
+            "articulos": articulos,
+            "articulo_id": articulo_id_valor,
+            "ficha_id": elegida[1],
+            "es_segunda": elegida[2],
+            "nombre": porciones.get(elegida),
+            # Del más nuevo al más viejo: lo de hoy es lo que se viene a ver.
+            "filas": list(reversed(filas)),
+            "porciones": [
+                {"ficha_id": clave[1], "es_segunda": clave[2], "nombre": nombre,
+                 "elegida": clave == elegida}
+                for clave, nombre in sorted(porciones.items(), key=lambda par: par[1])
+            ],
+            "fin": fin,
+            "dias": dias,
+            "tope": TOPE_DIAS_EVOLUCION,
+            "aviso": aviso,
         },
     )
 
@@ -8934,6 +9104,11 @@ def cargar_stock_fisico_deposito_ruta(
         else:
             if cantidad_valor < 0:
                 error = "La cantidad contada no puede ser negativa."
+            else:
+                # Se cuentan bultos con el dedo: no hay media caja contada.
+                # Los vacíos ya lo exigían ("tiene que ser un número entero");
+                # esta pantalla era la que faltaba.
+                error = _entero_o_error(cantidad_valor, "contada")
 
     articulo = None
     ficha = None
