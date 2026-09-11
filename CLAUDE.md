@@ -1848,3 +1848,32 @@ Y engancha con el corolario 6 —**la consulta de diagnóstico es la que decide
 qué se arregla después**— por el lado que más cuesta: allá un número falso
 mandó a perseguir 212 cajas que no existían; acá un cero falso manda a **no
 buscar nada**, que no deja rastro y por eso nadie lo descubre.
+
+**El desenlace, del 11/09, y cierra el caso**: corrida en Frutamax (corte
+05/09, `ultima_guia_r` 10/09) dio `guias_pre 6 · guias_post 0 · compras_pre
+0 · compras_post 0 · compensatorio_espejo 4 · movimientos_post 0 ·
+conteos_decimal 0`. **Es un FÓSIL**: los decimales viven en 6 guías R
+anteriores al corte, ya canceladas, y desde el corte no entró ni uno por
+ninguna de las cuatro puertas.
+
+O sea que **el `step` cerró una puerta que ya nadie cruzaba**, y no hay
+filas escritas que revisar. Y la lectura que corrige lo que se creía: el
+`+120,97` de Lima **no era un decimal que siguiera entrando** — era el
+compensatorio (`-st`) reflejando los de antes del corte con el signo
+cambiado. La causa y el reflejo se veían iguales en la pantalla, y por eso
+la consulta los separó en dos columnas.
+
+Dos detalles que valen para leerla de nuevo:
+
+- **4 espejos contra 6 guías no es una discrepancia.** El compensatorio es
+  uno por ARTÍCULO con neto distinto de cero, no uno por guía: varias guías
+  del mismo artículo, o dos fracciones que se cancelan entre sí, dan menos
+  espejos que guías. Un `4 < 6` acá es lo esperado, y confundirlo con un
+  faltante habría mandado a buscar dos espejos que no tienen por qué
+  existir.
+- **El cero de `guias_post` significa algo porque la base está VIVA**:
+  `ultima_guia_r` del 10/09, al lado, en la misma fila. Es el testigo del
+  corolario 24 haciendo exactamente su trabajo — sin él, ese cero era
+  indistinguible del de una base parada. Y en Palmala la cosa se parte: el
+  `*_pre` vota (cuenta filas cargadas, no actividad, igual que `tildes_1`)
+  y el `*_post` no vota.

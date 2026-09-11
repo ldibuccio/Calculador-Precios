@@ -8339,6 +8339,18 @@ def _entero_o_error(valor: float, que: str) -> str | None:
     pantalla del artículo como `+120,97` y `57,03`. Un decimal en una
     cuenta de bultos no rompe nada ruidosamente: se propaga.
 
+    MEDIDO DESPUÉS, Y ERA UN FÓSIL (Frutamax, corte 05/09,
+    `db/decimales_1_de_donde_salen.sql`): 6 guías R con decimales, TODAS
+    anteriores al corte, con 4 espejos del compensatorio cancelándolas. Ni
+    una posterior — ni en guías, ni en compras, ni en movimientos, ni en
+    conteos. Así que el `+120,97` de Lima NO era un decimal que siguiera
+    entrando: era el compensatorio reflejando los de antes del corte.
+
+    Dicho de otra forma, y conviene que esté acá: **esta guarda cerró una
+    puerta que ya nadie cruzaba.** No hay filas escritas que revisar, y si
+    algún día aparece un decimal nuevo es que entró por una puerta que esta
+    función no cubre — hay cuatro validadores de bultos, no uno.
+
     Y VA EN EL SERVIDOR, no solo en el `step` del input. `step` es una
     sugerencia del navegador: un formulario armado a mano entra igual. Es
     el mismo hallazgo del tilde de la fecha — la guarda va donde se
