@@ -1,17 +1,28 @@
--- ¿HAY DOS PROVEEDORES QUE SEAN EL MISMO PUESTO MAL TIPEADO?
--- NO está construida: esto mide si hace falta. El porqué, en su commit.
+-- ¿HAY DOS PROVEEDORES QUE SEAN EL MISMO, CARGADOS DOS VECES?
 --
--- SQL PURO: levenshtein y similarity son extensiones, y una regla que se
--- pierde al crear la base de la empresa siguiente no es una regla.
---   a_un_caracter: difieren en UNA posición. Firma del fantasma: lo que se
---     tipea mal es el CÓDIGO, no el nombre.
---   transpuestos: dos pegados dados vuelta (N07P41/N07P14), que el de
---     arriba NO ve porque difieren en DOS.
---   nombres: los plegados se igualan al colapsar letras repetidas.
+-- CONTESTADA EL 11/09: NO, ni en Frutamax ni en Palmala. `nombres` dio 0 en
+-- las dos. No hay fusiones para hacer y la fusión no se construyó.
 --
--- `cuales` trae SOLO los pares que algún contador marcó. Ninguna prueba
--- nada sola: dos puestos vecinos del mismo dueño difieren en un carácter.
--- Probada con el caso plantado (c36).
+-- ESTA CONSULTA PERDIÓ DOS CRITERIOS, y por qué se fueron importa más que
+-- lo que quedó. Tenía además `a_un_caracter` y `transpuestos` sobre el
+-- codigo_puesto, buscando el fantasma por código mal tipeado. Dieron 49
+-- pares en Frutamax y 39 en Palmala, y TODOS eran falsos positivos:
+--
+--   N09P37/N09P36  kleppe | almana s.r.l.
+--   N07P41/N08P41  herederos n7 | don ismael
+--
+-- Nombres sin ninguna relación con códigos vecinos. **Los puestos del
+-- mercado son contiguos por diseño**, así que "difieren en un carácter"
+-- describe a medio mercado. La heurística no medía parecido: medía
+-- vecindad, que acá es la norma y no la excepción.
+--
+-- Se sacaron en vez de dejarlas: una consulta corrible con criterios que
+-- sabemos que no aplican es peor que no tenerlos — la próxima vez que
+-- alguien la corra no se va a acordar de que eran ruido.
+--
+-- Queda el único que apuntaba a la pregunta: dos nombres que se vuelven
+-- IGUALES al plegar y colapsar letras repetidas (Dimimax/Dimmimax). El
+-- plegado es el del índice de codigo_cliente. Probada con el caso plantado.
 
 with p as (
   select id, codigo_puesto as c,
@@ -21,25 +32,14 @@ with p as (
   from proveedores
 ), q as (
   select id, c, np, regexp_replace(np, '(.)\1+', '\1', 'g') as nc from p
-), pares as (
-  select a.c as ca, b.c as cb, a.np as na, b.np as nb,
-         (a.nc = b.nc and a.np <> b.np) as nombre_igual,
-         (select count(*) from generate_series(1, 6) i
-           where substr(a.c, i, 1) <> substr(b.c, i, 1)) as difieren,
-         exists (select 1 from generate_series(1, 5) i
-                  where substr(a.c, i, 1) = substr(b.c, i + 1, 1)
-                    and substr(a.c, i + 1, 1) = substr(b.c, i, 1)
-                    and substr(a.c, i, 1) <> substr(a.c, i + 1, 1)) as transpuesto
-  from q a join q b on a.id < b.id
 ), m as (
-  select * from pares
-   where difieren = 1 or (difieren = 2 and transpuesto) or nombre_igual
+  select a.c as ca, b.c as cb, a.np as na, b.np as nb
+  from q a join q b on a.id < b.id
+  where a.nc = b.nc and a.np <> b.np
 )
 select
   (select count(*) from proveedores) as proveedores,
-  (select count(*) from m where difieren = 1) as a_un_caracter,
-  (select count(*) from m where difieren = 2 and transpuesto) as transpuestos,
-  (select count(*) from m where nombre_igual) as nombres,
+  (select count(*) from m) as nombres_casi_iguales,
   (select string_agg(ca || '/' || cb || ' ' || na || '|' || nb, ' · ')
      from (select * from m limit 10) d) as cuales,
   (select max(fecha_operacion) from compras) as ultima_compra;

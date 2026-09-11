@@ -2149,3 +2149,64 @@ Y con la sección del campo sin consecuencia, por contraste: allá un campo
 vacío era la respuesta correcta al incentivo, y el arreglo estaba del lado
 del sistema. **Acá el vacío no es un síntoma de nada**: es una opción
 esperando su caso.
+
+## Medir "parecido" solo sirve cuando lo parecido es raro
+
+Del 11/09. Para ver si dos proveedores eran el mismo puesto mal tipeado
+escribí tres heurísticas. Dos miraban el `codigo_puesto`: pares que difieren
+en **una** posición (N07P41/N07P51) y pares **transpuestos** (N07P41/N07P14).
+La idea: un código mal tipeado se parece al bueno.
+
+Dieron **49 pares en Frutamax y 39 en Palmala**, y **todos falsos
+positivos**:
+
+```
+N09P37/N09P36  kleppe | almana s.r.l.
+N07P41/N08P41  herederos n7 | don ismael
+```
+
+Nombres sin ninguna relación, con códigos vecinos. **Los puestos del mercado
+son contiguos por diseño**: N09P36 y N09P37 están uno al lado del otro
+porque así está armado el mercado. La heurística no medía parecido — medía
+**vecindad**, y acá la vecindad es la norma, no la excepción.
+
+El tercer criterio, el único que apuntaba a la pregunta —dos NOMBRES que se
+igualan al plegar y colapsar letras repetidas— dio **0 en las dos bases**. Esa
+era la respuesta: no hay fusiones para hacer.
+
+### La regla
+
+**Antes de medir parecido, preguntarse qué GENERA los valores.**
+
+- Si salen de un **sistema de coordenadas** —códigos de puesto, fechas,
+  posiciones, ids correlativos— la cercanía es **estructural** y no dice
+  nada. Dos valores contiguos son vecinos legítimos, no un error de tipeo.
+- Si salen de **escribir a mano** —un nombre, un alias, un código que alguien
+  teclea— la cercanía **sí es evidencia**, porque escribir dos cosas casi
+  iguales sin querer es raro.
+
+Es la familia del corolario 20: busqué la FORMA que esperaba (un typo se
+parece al original) en vez del HECHO (esos códigos son una grilla). Y como
+allá, el `grep` del concepto lo habría dicho: el comentario de la columna
+dice "codigo_puesto (ej. N07P41)", y un ejemplo con formato de coordenada
+es la pista de que eso es una grilla.
+
+### La señal barata, y estaba antes de leer un solo par
+
+**49 pares sobre 43 proveedores: más hallazgos que población.** Eso ya lo
+decía todo. Una heurística de anomalías que encuentra más casos que
+individuos no está encontrando anomalías: **está describiendo la
+estructura.** El número estaba a la vista antes de abrir `cuales`.
+
+Vale como control general: al escribir una búsqueda de "parecidos", mirar
+cuántos salen contra cuántos hay. Si es del mismo orden, el criterio está
+midiendo cómo están construidos los datos.
+
+### Qué se hizo con la consulta
+
+No se borró entera: se le **sacaron los dos criterios del código** y quedó
+el de nombres, con el resultado y el porqué anotados. Dejarlos corribles
+habría sido peor que no tenerlos —la próxima vez que alguien los corra no se
+va a acordar de que eran ruido—, y borrar todo habría tirado el único
+criterio que sí contesta la pregunta. Verificada después con los vecinos
+REALES cargados (Kleppe/Almana en N09P37/N09P36): ahora ve solo el duplicado.
