@@ -5865,6 +5865,29 @@ def test_ver_recepcion_panel_procesados_hoy_muestra_hora_y_deshacer_solo_no_ingr
     assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
 
 
+def test_ver_recepcion_panel_procesados_hoy_muestra_el_proveedor_de_CADA_renglon():
+    # El que revisa lo que ya se recibió necesita saber de QUIÉN vino cada
+    # cosa, no solo qué. Y los dos renglones llevan proveedores DISTINTOS a
+    # propósito: con el mismo en los dos, un renglón que mostrara el
+    # proveedor del otro —o uno solo para toda la lista— pasaría igual.
+    uno = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[0],
+               proveedor_nombre="EJEMPLO Uno", proveedor_codigo_puesto="N01P01")
+    dos = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1],
+               proveedor_nombre="EJEMPLO Dos", proveedor_codigo_puesto="N02P02")
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[uno, dos]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    # Por la CLASE y no por el texto suelto: el nombre del proveedor también
+    # aparece en las guías pendientes y en la tarjeta efímera (corolario 38).
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<p class="proveedor-procesado">EJEMPLO Uno (N01P01)</p>' in marcado
+    assert '<p class="proveedor-procesado">EJEMPLO Dos (N02P02)</p>' in marcado
+
+
 def test_ver_recepcion_panel_procesados_hoy_muestra_cantidad_y_kilos_recibidos():
     # Lo recepcionado muestra con qué números reales se recibió: cajones,
     # contenido por cajón y el total. Lo no ingresado (o sin contenido real
