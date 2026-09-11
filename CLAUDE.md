@@ -2217,14 +2217,10 @@ es la pista de que eso es una grilla.
 
 ### La señal barata, y estaba antes de leer un solo par
 
-**49 pares sobre 43 proveedores: más hallazgos que población.** Eso ya lo
-decía todo. Una heurística de anomalías que encuentra más casos que
-individuos no está encontrando anomalías: **está describiendo la
-estructura.** El número estaba a la vista antes de abrir `cuales`.
-
-Vale como control general: al escribir una búsqueda de "parecidos", mirar
-cuántos salen contra cuántos hay. Si es del mismo orden, el criterio está
-midiendo cómo están construidos los datos.
+**49 pares sobre 43 proveedores**, y eso ya la condenaba sin abrir `cuales`.
+No es una observación de este caso: es un control que vale para cualquier
+búsqueda de anomalías, y por eso está escrito una sola vez, abajo, en
+**"Más hallazgos que población condena la heurística sin mirar un caso"**.
 
 ### Qué se hizo con la consulta
 
@@ -2234,3 +2230,40 @@ habría sido peor que no tenerlos —la próxima vez que alguien los corra no se
 va a acordar de que eran ruido—, y borrar todo habría tirado el único
 criterio que sí contesta la pregunta. Verificada después con los vecinos
 REALES cargados (Kleppe/Almana en N09P37/N09P36): ahora ve solo el duplicado.
+
+## Más hallazgos que población condena la heurística sin mirar un caso
+
+Del 11/09. Salió del caso de los proveedores parecidos —el de acá arriba—
+pero no es de ese caso: vale para **cualquier búsqueda de anomalías**.
+Duplicados, ofensores, desvíos, outliers, avisos, "parecidos", descuadres.
+
+La heurística de códigos vecinos dio **49 pares sobre 43 proveedores**. Ese
+cociente ya la condenaba, y estaba disponible **antes de leer un solo par**.
+Los 49 resultaron todos falsos positivos, y para saberlo no hacía falta
+abrir ninguno.
+
+**Por qué funciona, y es aritmética, no olfato**: una anomalía es por
+definición lo raro. Si la cuenta de hallazgos es del mismo orden que la
+población, lo que se está contando **es la norma**. Y ninguna lectura de
+casos puede salvar eso: aunque algunos de los 49 fueran duplicados de
+verdad, el criterio igual está midiendo otra cosa — acá, cómo está armado
+el mercado.
+
+**CONDENA, NUNCA ABSUELVE**, y ésta es la mitad que hay que escribir porque
+la tentación es leerla dada vuelta. **Pocos hallazgos no dicen que la
+heurística sirva**: pueden ser pocos porque el criterio no sabe ver el caso,
+que es exactamente el corolario 36. El cociente decide en una sola
+dirección, igual que el techo de la compra en caja nuestra: grande cierra la
+discusión, chico no prueba nada.
+
+**La forma operativa, y cuesta una columna**: toda consulta que busque
+anomalías devuelve **la población al lado del conteo, en la misma fila**.
+`pares 49 · proveedores 43` se lee solo; `pares 49` necesita que alguien se
+acuerde de ir a buscar el denominador, y nadie se acuerda —es el corolario
+19, la salvaguarda que existe y no se lee—. Es el testigo del corolario 24
+con otro trabajo: allá dice si la base está viva, acá contra cuánto se está
+contando.
+
+**Cuándo se mira**: antes de abrir la lista de casos, siempre. Es el único
+control de esta familia que se paga con una división y se cobra antes de
+gastar media hora descartando falsos positivos de a uno.
