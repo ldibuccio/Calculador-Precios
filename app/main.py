@@ -2236,7 +2236,8 @@ def cambiar_articulo_de_ficha_ruta(
 
 
 def _validar_compra_nueva_form(
-    articulo_id: str, cantidad_cajones: str, contenido_por_cajon: str, importe: str, sena: str, tipo_retiro: str
+    articulo_id: str, cantidad_cajones: str, contenido_por_cajon: str, importe: str, sena: str,
+    tipo_retiro: str, ficha_en_origen_id: str,
 ) -> tuple[str | None, dict]:
     """Valida los campos del alta de una compra (cajones × contenido por cajón).
 
@@ -2244,6 +2245,17 @@ def _validar_compra_nueva_form(
     y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo). No
     valida acá si el artículo tiene unidad_compra configurada: eso requiere leerlo de la base, y lo
     hace la ruta después de esta validación.
+
+    ficha_en_origen_id es la marca de "viene YA ARMADA en caja nuestra": vacío
+    = compra normal, llega el cajón del proveedor. Acá se valida SOLO LA FORMA
+    (que sea un número); que la ficha exista y sea del MISMO ARTÍCULO lo decide
+    la base, en `_insertar_compra_con_guia`, que es donde se ESCRIBE — un
+    formulario armado a mano no ve ningún `<select>`.
+
+    VA SIN DEFAULT a propósito, aunque cinco llamadores tengan que cambiar: con
+    un default, la pantalla de carga que alguien agregue mañana y se olvide de
+    pasarlo queda como una puerta por la que este caso no se puede registrar, y
+    nadie se entera. Sin default, Python avisa.
     """
     error = None
     valores = {
@@ -2253,6 +2265,7 @@ def _validar_compra_nueva_form(
         "importe": None,
         "sena": None,
         "tipo_retiro": tipo_retiro,
+        "ficha_en_origen_id": None,
     }
 
     articulo_id = articulo_id.strip()
@@ -2278,6 +2291,14 @@ def _validar_compra_nueva_form(
 
     if not error:
         error = _validar_tipo_retiro(tipo_retiro)
+
+    if not error:
+        ficha = (ficha_en_origen_id or "").strip()
+        if ficha:
+            if not ficha.isdigit():
+                error = "La caja elegida para la mercadería que viene armada no es válida."
+            else:
+                valores["ficha_en_origen_id"] = int(ficha)
 
     return error, valores
 
@@ -2867,6 +2888,7 @@ async def agregar_compra_manual(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
     comanda_foto: UploadFile | None = File(None),
 ):
     """Guarda proveedor Y primer artículo en UN solo paso (la pantalla combinada de carga manual).
@@ -2912,7 +2934,8 @@ async def agregar_compra_manual(
         error, nombre_valor = _validar_nombre(nombre)
     if not error:
         error, valores = _validar_compra_nueva_form(
-            articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+            articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
+            ficha_en_origen_id,
         )
 
     comprimida = None
@@ -2964,6 +2987,7 @@ async def agregar_compra_manual(
             valores["sena"],
             valores["tipo_retiro"],
             foto_ruta,
+            ficha_en_origen_id=valores["ficha_en_origen_id"],
         )
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar la compra: {error_db}", 500)
@@ -2985,6 +3009,7 @@ async def agregar_compra(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
     comanda_foto: UploadFile | None = File(None),
 ):
     bytes_foto = await comanda_foto.read() if comanda_foto is not None else b""
@@ -3045,7 +3070,8 @@ async def agregar_compra(
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
     error, valores = _validar_compra_nueva_form(
-        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
+        ficha_en_origen_id,
     )
     if error and bytes_foto:
         error += AVISO_READJUNTAR_COMANDA
@@ -3132,6 +3158,7 @@ async def agregar_compra(
             valores["sena"],
             valores["tipo_retiro"],
             foto_ruta,
+            ficha_en_origen_id=valores["ficha_en_origen_id"],
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -3614,6 +3641,9 @@ async def confirmar_compra_foto(request: Request):
         importe_texto = str(form.get(prefijo + "importe", ""))
         sena_texto = str(form.get(prefijo + "sena", ""))
         tipo_retiro_texto = str(form.get(prefijo + "tipo_retiro", ""))
+        # POR RENGLÓN y no por comanda: al mismo puesto se le pueden comprar
+        # dos cosas y que solo una venga armada en caja nuestra.
+        ficha_en_origen_texto = str(form.get(prefijo + "ficha_en_origen_id", ""))
 
         renglones_para_mostrar.append(
             {
@@ -3624,6 +3654,7 @@ async def confirmar_compra_foto(request: Request):
                 "importe": importe_texto,
                 "sena": sena_texto,
                 "tipo_retiro": tipo_retiro_texto,
+                "ficha_en_origen_id": ficha_en_origen_texto,
                 "nota_margen": "",
                 "advertencia": False,
                 "descartado": descartado,
@@ -3637,7 +3668,8 @@ async def confirmar_compra_foto(request: Request):
             continue
 
         error_renglon, valores_renglon = _validar_compra_nueva_form(
-            articulo_id_texto, cantidad_cajones_texto, contenido_por_cajon_texto, importe_texto, sena_texto, tipo_retiro_texto
+            articulo_id_texto, cantidad_cajones_texto, contenido_por_cajon_texto,
+            importe_texto, sena_texto, tipo_retiro_texto, ficha_en_origen_texto,
         )
 
         articulo = None
@@ -3730,6 +3762,7 @@ async def confirmar_compra_foto(request: Request):
                         "importe": valores["importe"],
                         "sena": valores["sena"],
                         "tipo_retiro": valores["tipo_retiro"],
+                        "ficha_en_origen_id": valores["ficha_en_origen_id"],
                     }
                 )
 
@@ -3955,6 +3988,7 @@ def editar_compra(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
 ):
     """"Guardar" actualiza el renglón que se está editando (bloqueado si ya está recepcionado/retirado).
 
@@ -3977,7 +4011,8 @@ def editar_compra(
         raise HTTPException(status_code=404, detail="Compra no encontrada")
 
     error, valores = _validar_compra_nueva_form(
-        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
+        ficha_en_origen_id,
     )
 
     articulo = None
@@ -4053,6 +4088,7 @@ def editar_compra(
                 valores["importe"],
                 valores["sena"],
                 valores["tipo_retiro"],
+                ficha_en_origen_id=valores["ficha_en_origen_id"],
             )
         except Exception as error_db:
             articulos = listar_articulos()
@@ -4587,6 +4623,7 @@ def cargar_ingreso_retroactivo(
     contenido_por_cajon: str = Form(""),
     importe: str = Form(""),
     fecha_recepcion: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
 ):
     """Crea la compra YA RECEPCIONADA Y RETIRADA, fechada el día que entró.
 
@@ -4642,6 +4679,20 @@ def cargar_ingreso_retroactivo(
         elif proveedor is None:
             error = "Elegí un proveedor válido."
 
+    # La marca "viene armada en caja nuestra". Acá se valida la FORMA nomás:
+    # que la ficha exista y sea del mismo artículo lo decide la base, donde se
+    # escribe. Este camino no pasa por `_validar_compra_nueva_form` —valida
+    # campo por campo— así que el parseo va acá, y por eso hay un test que
+    # exige que los DOS caminos entiendan lo mismo.
+    ficha_marcada = None
+    if error is None:
+        ficha_texto = (ficha_en_origen_id or "").strip()
+        if ficha_texto:
+            if not ficha_texto.isdigit():
+                error = "La caja elegida para la mercadería que viene armada no es válida."
+            else:
+                ficha_marcada = int(ficha_texto)
+
     if error:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=error, status_code=400)
 
@@ -4658,6 +4709,7 @@ def cargar_ingreso_retroactivo(
             cantidad_kilos, cantidad_fraccion, importe_valor, None, "Clark",
             ingreso_directo_deposito=True,
             recepcionada_el=momento,
+            ficha_en_origen_id=ficha_marcada,
         )
     except ValueError as rechazo:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=str(rechazo), status_code=400)
@@ -6631,6 +6683,7 @@ def ingresar_mercaderia(
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
     tipo_retiro: str = Form("Clark"),
+    ficha_en_origen_id: str = Form(""),
 ):
     """Agrega un artículo ya recibido en Depósito, sin pasar por Logística ni por Recepción.
 
@@ -6652,7 +6705,9 @@ def ingresar_mercaderia(
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
 
-    error, valores = _validar_compra_nueva_form(articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro)
+    error, valores = _validar_compra_nueva_form(
+        articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro, ficha_en_origen_id
+    )
 
     articulo = None
     if not error:

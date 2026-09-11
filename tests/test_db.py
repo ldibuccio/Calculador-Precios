@@ -7467,3 +7467,56 @@ def test_la_guarda_de_la_ficha_NO_cuenta_las_compras_RECHAZADAS():
     consulta = _sql_que_contiene(cursor, "FROM compras")
     assert "ficha_en_origen_id = %s" in consulta
     assert "estado IS DISTINCT FROM 'rechazado'" in consulta
+
+
+def test_marcar_una_compra_con_una_caja_de_OTRO_ARTICULO_no_la_guarda():
+    """La guarda va donde se ESCRIBE la marca, y eso es la CARGA, no la recepción.
+
+    Puesta al recepcionar, la recepción se caería por un error cometido días
+    antes —con el camión en la puerta— y el que lo cometió no es el que lo
+    sufre. Acá rebota en el momento, contra el que se equivocó.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="otro artículo"):
+            crear_compra(
+                date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+                ficha_en_origen_id=3,
+            )
+
+    assert not [c for c in cursor.execute.call_args_list
+                if "UPDATE compras SET ficha_en_origen_id" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_una_compra_marcada_con_la_caja_de_SU_articulo_se_guarda():
+    """El caso FELIZ, el único que distingue una guarda que funciona de una que siempre frena."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+            ficha_en_origen_id=3,
+        )
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "SET ficha_en_origen_id")
+    assert parametros == (3, 900)
+    conexion.commit.assert_called_once()
+
+
+def test_una_compra_PENDIENTE_marcada_NO_carga_la_guia_R_todavia():
+    """La guía sale al RECEPCIONAR, no al cargar: la mercadería no llegó.
+
+    Solo el ingreso directo la carga en el mismo insert, porque esa compra
+    nace 'recepcionado' y no pasa por Recepción nunca.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+            ficha_en_origen_id=3,
+        )
+
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos" in c.args[0]]

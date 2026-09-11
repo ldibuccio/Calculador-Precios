@@ -2010,6 +2010,26 @@ def _insertar_compra_con_guia(
     (compra_id,) = cursor.fetchone()
 
     if ficha_en_origen_id is not None:
+        # LA GUARDA VA ACÁ, donde se escribe la marca, y no al recepcionar:
+        # allá sería tarde —la recepción se caería por un error que se cometió
+        # días antes, con el camión en la puerta— y el que la cometió no es el
+        # que lo sufriría. Una ficha de otro artículo inventaría cajas que no
+        # existen y el Cotejo mostraría un rojo imposible de explicar.
+        #
+        # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None
+        # y no distinguiría "no existe" de "existe" (corolario 27).
+        cursor.execute(
+            "SELECT articulo_id FROM fichas_logistica WHERE id = %s",
+            (ficha_en_origen_id,),
+        )
+        ficha = cursor.fetchone()
+        if ficha is None:
+            raise ValueError("Esa caja no existe.")
+        if ficha[0] != articulo_id:
+            raise ValueError(
+                "Esa caja es de otro artículo: no puede ser la de esta compra."
+            )
+
         cursor.execute(
             "UPDATE compras SET ficha_en_origen_id = %s WHERE id = %s",
             (ficha_en_origen_id, compra_id),

@@ -2472,7 +2472,7 @@ def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
     # siguientes artículos no lo repiten.
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_manual_con_guardar_termina_en_buscar():
@@ -2687,7 +2687,7 @@ def test_agregar_compra_exitosa_redirige_al_mismo_proveedor_calcula_kilos():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     # 10 cajones × 18 kg = 180 kg (unidad_compra del artículo = kilo)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
@@ -2713,7 +2713,7 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
 
     assert respuesta.status_code == 303
     # 5 cajones × 10 unidades = 50 unidades (unidad_compra del artículo = unidad)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_proveedor_inexistente_da_404():
@@ -2784,7 +2784,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_terminar_con_renglon_invalido_muestra_error_y_no_pierde_datos():
@@ -2910,7 +2910,7 @@ def test_agregar_compra_sin_importe_queda_pendiente():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_importe_negativo_muestra_error():
@@ -2987,7 +2987,7 @@ def test_agregar_compra_tipo_retiro_pases_se_acepta():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None, ficha_en_origen_id=None)
 
 
 def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
@@ -4483,7 +4483,8 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
     mock_actualizar_cantidad.assert_not_called()
     mock_actualizar_precio.assert_not_called()
     mock_crear.assert_called_once_with(
-        COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0, None, 20000.0, None, "Pases"
+        COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0,
+        None, 20000.0, None, "Pases", ficha_en_origen_id=None,
     )
 
 
@@ -6502,6 +6503,9 @@ RENGLON_KIWI_ESPERADO = {
     "importe": 5000.0,
     "sena": None,
     "tipo_retiro": "Clark",
+    # El renglón se compara ENTERO, así que este campo tiene que estar aunque
+    # sea None: que el test caiga el día que alguien agrega uno es su función.
+    "ficha_en_origen_id": None,
 }
 
 
@@ -17442,7 +17446,7 @@ def test_agregar_compra_clasica_con_comanda_adjunta_la_cuelga_de_la_guia():
         respuesta = cliente.post(
             "/compras/nueva",
             data={"proveedor_id": "200", "accion": "agregar", "articulo_id": "5", "cantidad_cajones": "10",
-                  "contenido_por_cajon": "18", "importe": "50000", "sena": "", "tipo_retiro": "Clark"},
+                  "contenido_por_cajon": "18", "importe": "50000", "sena": "", "tipo_retiro": "Clark", "ficha_en_origen_id": None},
             files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
             follow_redirects=False,
         )
