@@ -1,16 +1,17 @@
--- ¿Los decimales en bultos son FÓSIL del modelo viejo o seguían entrando?
--- Del 11/09, por el `+120,97` y el `57,03` de Lima. El compensatorio del
--- corte es `-st` sobre las seis patas: COPIA el decimal ajeno con el signo
--- cambiado. Es un reflejo, no una causa, y por eso va en su propia columna.
+-- ¿Los decimales en bultos son FÓSIL del modelo viejo o siguen entrando?
 --
--- Correr en LAS DOS. El corte sale de corte_modelo, nunca se asume. Palmala
--- está parada: ahí un cero no vota — mirar `ultima_guia_r` primero.
---   algún *_post > 0    -> seguía entrando; el step cerró una puerta viva.
---   *_post 0, *_pre > 0 -> fósil ya cancelado. Nada que revisar.
+-- CONTESTADA EL 11/09. Frutamax, corte 05/09, ultima_guia_r 10/09:
+--   guias_pre 6 · guias_post 0 · compras_pre 0 · compras_post 0
+--   compensatorio_espejo 4 · movimientos_post 0 · conteos_decimal 0
 --
--- Escalares y no joins (cuatro `left join` multiplican los conteos entre sí).
--- Probada contra db/esquema_completo.sql, con un decimal plantado para ver
--- que lo detecta.
+-- FÓSIL: 6 guías R ANTERIORES al corte, ya canceladas. 4 espejos y no 6 es
+-- lo esperado: el compensatorio es uno por ARTÍCULO con neto <> 0, no uno
+-- por guía. El `+120,97` de Lima no era un decimal que siguiera entrando:
+-- era el compensatorio (`-st`) reflejando los de antes del corte.
+--
+-- Al reusarla: algún *_post > 0 -> entró algo nuevo. En PALMALA el
+-- `*_pre` vota (son filas cargadas) y el `*_post` no: base parada.
+-- Probada con un decimal plantado (corolario 36).
 
 with c0 as (select fecha as f0 from corte_modelo where id = 1)
 select
