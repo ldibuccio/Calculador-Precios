@@ -1877,3 +1877,85 @@ Dos detalles que valen para leerla de nuevo:
   indistinguible del de una base parada. Y en Palmala la cosa se parte: el
   `*_pre` vota (cuenta filas cargadas, no actividad, igual que `tildes_1`)
   y el `*_post` no vota.
+
+Corolario 37, del 11/09: **un residuo chico en una medición que debería dar
+cero tiene una causa, y encontrarla cuesta menos que convivir con ella.**
+
+Arreglando el desborde horizontal de Compras Pendientes a 390px, el número
+pasó de 166px a **4**. Cuatro píxeles es exactamente el tamaño que se
+redondea a cero: entra en el error de redondeo de cualquier medición, no se
+ve en la captura, y "prácticamente cero" es una frase que nadie discute.
+
+No era ruido. Era el botón **Guardar** saliéndose de la pantalla, y la causa
+es una regla de CSS que hay que saber: **un `<input>` adentro de un flex no
+baja de su ancho intrínseco** —el del atributo `size` por defecto— por más
+que se le ponga `flex: 1 1 auto`. Le falta `min-width: 0`. Sin eso el input
+no cede, y lo que cede es lo que está al lado.
+
+O sea que el residuo no era una imprecisión de la medición: era **el borde
+de la cosa que se estaba arreglando**, asomando apenas. En esa pantalla el
+botón Guardar es lo que el operario aprieta, así que 4px de un elemento de
+91px es el 4% de un botón — pero del botón equivocado.
+
+**Por qué es barato buscarlo, que es el argumento de verdad**: el elemento
+culpable se encuentra con una consulta al DOM de diez líneas —recorrer los
+hijos y quedarse con los que pasan el borde derecho del contenedor— y
+contesta en un segundo. Convivir con el residuo cuesta la próxima vez que
+alguien lo mire y tenga que decidir de nuevo si importa.
+
+**Cómo se reconoce**: la medición tiene un valor esperado EXACTO y no lo da.
+No aplica a un promedio ni a una estimación; aplica a los ceros de
+construcción —un desborde, un descuadre, un saldo que tiene que cerrar, una
+diferencia entre dos cuentas que tienen que dar lo mismo—. Ahí el cero no es
+una aproximación: o cierra o hay algo. Es pariente del corolario 6 —una
+medición floja decide mal qué se arregla después— con la vuelta de que acá
+la medición estaba bien y lo flojo iba a ser la lectura.
+
+Y engancha con el 36 por el otro lado: allá un cero podía ser falso porque
+la consulta no sabía ver el caso; **acá el que miente es el casi-cero, y
+miente porque invita a redondearlo.**
+
+Corolario 38, del 11/09, y es de los tests: **el CSS, los comentarios y el
+marcado viven todos en el mismo texto, así que un test que lee HTML con
+regex tiene que anclarse afuera de los dos primeros.**
+
+Tres veces, y las tres con la misma forma —**un comentario que yo mismo
+acababa de escribir rompió un test que yo mismo acababa de escribir**—:
+
+1. **La barra de Depósito.** El test verificaba el ORDEN de los botones
+   buscando la palabra `"Stock"` con `index()`. Puse un comentario que decía
+   "Movimientos de Stock" y el test empezó a fallar por una palabra que no
+   era ningún botón.
+2. **La pantalla de Evolución.** El test contaba las apariciones de
+   `"Sin explicar"` para verificar que el renglón saliera solo cuando
+   correspondía. Mi comentario en el `<style>` explicando por qué ese
+   renglón se pinta distinto **también dice "Sin explicar"**, y entró en la
+   cuenta.
+3. **Los rótulos de celular** (el mismo día). Dos seguidas: `<th[^>]*>`
+   **matchea `<thead>` también**, y el comentario del `@media` nombra al
+   `<thead>` para explicar que se esconde. El test leyó ese texto como si
+   fueran columnas y comparó rótulos contra prosa.
+
+**Lo que esto NO es**: un descubrimiento. `split("</style>")` aparece
+**63 veces** en la suite — la costumbre ya existía y era la correcta. Lo que
+no existía era la REGLA escrita, así que cada test nuevo la redescubre
+rompiéndose. Es el caso más limpio de algo que esta casa ya sabía hacer y
+volvía a aprender: una costumbre no se hereda por estar en 63 lugares, se
+hereda por estar dicha en uno.
+
+**Cómo se escribe, y la dirección importa**:
+
+- Para afirmar sobre el **marcado**: `respuesta.text.split("</style>")[-1]`.
+- Para afirmar sobre el **CSS**: `.split("</style>")[0]`.
+- Y si el fragmento igual puede aparecer en un comentario, se busca algo que
+  solo pueda ser marcado: `href="..."`, un atributo entero, una etiqueta
+  cerrada — no una palabra suelta. Es el corolario 4 (calificar el assert
+  para que solo matchee lo que se quiso probar) aplicado al HTML en vez de
+  al SQL.
+
+**Y la señal de que está pasando es contraintuitiva**: el test falla apenas
+se escribe, lo cual se lee como "me equivoqué en el test" o "el código está
+mal". En los tres casos el test tenía razón en fallar **y el equivocado era
+él**: miraba texto que no era el que quería mirar. Antes de aflojar el
+assert, mirar QUÉ fragmento matcheó — si cae adentro de un comentario o de
+una regla de CSS, el arreglo es el ancla, no la aserción.
