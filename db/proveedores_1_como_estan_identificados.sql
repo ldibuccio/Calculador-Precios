@@ -1,22 +1,23 @@
 -- ¿CÓMO ESTÁ IDENTIFICADO UN PROVEEDOR, Y HAY DUPLICADOS?
 --
--- La identidad de un proveedor de compras es `codigo_puesto`, no el nombre:
--- está UNIQUE en el esquema y `obtener_o_crear_proveedor_por_codigo` busca
--- por ahí y PISA el nombre con el último cargado. El nombre es una etiqueta.
+-- La identidad es `codigo_puesto`, no el nombre: está UNIQUE y
+-- `obtener_o_crear_proveedor_por_codigo` busca por ahí y PISA el nombre con
+-- el último cargado. Por eso las dos preguntas no son la misma: repetir un
+-- CÓDIGO lo impide la base (0, o la guarda no está en ESA base); repetir un
+-- NOMBRE no lo impide nadie, y no siempre es error — dos puestos del mismo
+-- dueño son dos proveedores de verdad.
 --
--- Por eso las dos preguntas no son la misma:
---   * repetir un CÓDIGO lo impide la base -> `codigos_repetidos` tiene que
---     dar 0, y si no da 0 es que la guarda no está en ESTA base.
---   * repetir un NOMBRE no lo impide nadie -> `nombres_repetidos` puede dar
---     cualquier cosa, y no es necesariamente un error: dos puestos distintos
---     del mismo dueño son dos proveedores de verdad.
+-- El plegado es el del índice de `codigo_cliente`, copiado de
+-- db/plegar_tildes_en_codigo_cliente.sql. Probada con el caso plantado (c36).
 --
--- El plegado es EL MISMO del índice de `codigo_cliente` (copiado de
--- db/plegar_tildes_en_codigo_cliente.sql, no reescrito): si algún día se
--- indexa el nombre va a plegar así, y medir con otro daría otro número.
+-- CONTESTADA EL 11/09, bases VIVAS (ultima_compra 11/09 en las dos):
+-- FRUTAMAX 43/43/0 · PALMALA 32/32/0 · guarda 1 · cod 0 · nom 0.
+-- El modelo se sostiene: no hace falta código interno.
 --
--- CONTEOS, con `cuales` de muestra (hasta 10) para poder accionar sin una
--- segunda consulta. Probada con el caso plantado (corolario 36).
+-- Queda UN agujero: el fantasma por código bien formado pero equivocado
+-- (N07P14 por N07P41) — el CHECK valida la forma, no que el puesto exista.
+-- Y NO se detecta con `de_baja`: `activo=false` es la salida del fantasma Y
+-- la baja normal. Lo que sí los separa: un fantasma no tiene NI UNA COMPRA.
 
 with p as (
   select id, activo, codigo_puesto,
