@@ -14658,6 +14658,59 @@ def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
 
 # --- El Remanente: la vista del depósito, una porción por renglón (06/09) ---
 
+# La pantalla se llama STOCK DEL DEPÓSITO desde el 11/09. Antes fue
+# "Remanente" (06/09 al 11/09), y antes de eso el nombre "Stock del Sistema"
+# era de OTRA pantalla de mercadería que se borró — hoy ese nombre es el de
+# la de VACÍOS en Puesto, que nunca se tocó. La ruta sigue diciendo
+# /administracion/stock/remanente: es el slug, no el nombre.
+NOMBRE_STOCK_DEPOSITO = "Stock del Depósito"
+
+
+def test_el_nombre_de_la_pantalla_dice_LO_MISMO_en_el_boton_el_titulo_y_el_Excel():
+    """El botón, el título de la pantalla y el Excel son UN nombre, no tres.
+
+    Si el botón dice una cosa y la pantalla otra, son dos nombres para la
+    misma pantalla — que es exactamente lo que este renombre vino a cerrar.
+    Los cuatro se leen de los archivos, no de una copia escrita acá.
+    """
+    boton = io.open("templates/administracion.html", encoding="utf-8").read()
+    pantalla = io.open("templates/administracion_stock_remanente.html", encoding="utf-8").read()
+    ruta_excel = io.open("app/main.py", encoding="utf-8").read()
+    excel = io.open("core/exportar_remanente.py", encoding="utf-8").read()
+
+    # Por el atributo entero y no por la palabra suelta: el nombre también
+    # aparece en los comentarios que explican el renombre (corolario 38).
+    assert f'href="/administracion/stock/remanente">{NOMBRE_STOCK_DEPOSITO}</a>' in boton
+    assert f"<title>{NOMBRE_STOCK_DEPOSITO}</title>" in pantalla
+    assert f'{{% set barra_titulo = "{NOMBRE_STOCK_DEPOSITO}" %}}' in pantalla
+    assert f'hoja.title = "{NOMBRE_STOCK_DEPOSITO}"' in excel
+    assert f'hoja["A1"] = "{NOMBRE_STOCK_DEPOSITO}"' in excel
+    # El archivo que se baja, sin tildes ni espacios pero el mismo nombre.
+    assert 'filename="Stock_del_Deposito_{hasta.strftime' in ruta_excel
+
+
+def test_no_queda_NINGUN_texto_visible_diciendo_Remanente():
+    """Un solo lugar que siga diciendo "Remanente" son dos nombres para una pantalla.
+
+    Mira SOLO texto visible: saca el <style>, los comentarios de Jinja y de
+    HTML (que nombran el nombre viejo a propósito, para explicar el cambio)
+    y la ruta /stock/remanente, que es el slug y se queda.
+    """
+    import glob
+    ofensores = []
+    for archivo in sorted(glob.glob("templates/*.html")):
+        h = io.open(archivo, encoding="utf-8").read()
+        if "</style>" in h:
+            h = h.split("</style>")[-1]
+        h = re.sub(r"\{#.*?#\}", "", h, flags=re.S)
+        h = re.sub(r"<!--.*?-->", "", h, flags=re.S)
+        h = h.replace("/administracion/stock/remanente", "")
+        for linea in h.splitlines():
+            if "emanente" in linea:
+                ofensores.append(f"{archivo}: {linea.strip()[:90]}")
+    assert ofensores == [], ofensores
+
+
 REMANENTE_FILAS = [
     {"articulo_id": 1, "nombre": "Mandarina", "stock": 35.0, "segunda": 3.0, "grupo": "fruta"},
     {"articulo_id": 2, "nombre": "Pomelo", "stock": 31.0, "segunda": 0.0, "grupo": "fruta"},
@@ -15134,7 +15187,7 @@ def test_el_excel_se_baja_a_la_fecha_pedida_y_el_archivo_la_lleva_en_el_nombre()
         respuesta = cliente.get(
             "/administracion/stock/remanente/exportar-excel?fecha=2026-09-08")
 
-    assert 'filename="Remanente_08_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    assert 'filename="Stock_del_Deposito_08_09_2026.xlsx"' in respuesta.headers["content-disposition"]
     hoja = load_workbook(BytesIO(respuesta.content)).active
     assert hoja["A2"].value == "Al 08/09/2026"
 
@@ -15272,8 +15325,8 @@ def test_el_excel_del_remanente_trae_el_fisico_y_la_diferencia():
     el que cuenta no entra ahí. En su lugar va el conteo que YA existe."""
     respuesta, hoja = _hoja_remanente()
 
-    assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
-    assert hoja.title == "Remanente"
+    assert 'filename="Stock_del_Deposito_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    assert hoja.title == "Stock del Depósito"
     assert [c.value for c in hoja[4]] == [
         "Producto", "Sistema", "Físico", "Contado el", "Diferencia",
     ]

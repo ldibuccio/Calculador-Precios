@@ -7782,7 +7782,8 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
 
     Son las MISMAS tres consultas de siempre con "= ANY(%s)" en vez de "= %s".
     Antes se corrían una vez por artículo, con su conexión cada vez: el listado
-    de Stock del Sistema abría una por artículo con guía R, y la Rentabilidad
+    de Stock del Sistema —la pantalla que se borró el 06/09— abría una por
+    artículo con guía R, y la Rentabilidad
     Real dos por artículo del rango. Con el reproceso funcionando eso crece con
     el catálogo.
 
@@ -7966,7 +7967,7 @@ def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
     """Los lotes y las salidas fechadas de VARIOS artículos, en UNA conexión.
 
     Devuelve {articulo_id: (entradas, salidas)}. Es la que
-    usan las pantallas que miran muchos artículos de una (Stock del Sistema,
+    usan las pantallas que miran muchos artículos de una (Stock del Depósito,
     Guías R, Rentabilidad Real): antes abrían una conexión por artículo.
     """
     if not articulo_ids:

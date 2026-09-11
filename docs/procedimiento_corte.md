@@ -41,7 +41,7 @@ ficha.** Los cuatro lugares que la usan:
 
 O sea que el piso puede estar perfecto y **no mover nada de lo que se mira**:
 
-- **El "sin procesar" de Stock del Sistema es la CUENTA 3**, no la 2
+- **El "sin procesar" de Stock del Depósito es la CUENTA 3**, no la 2
   (`fila["stock"] − Σ armados`, con `_desglose_stock_articulo`, el FIFO
   rejugado). El piso no lo toca y no tiene por qué tocarlo.
 - **El Cotejo muestra fotos congeladas.** Solo un conteo NUEVO nace con el

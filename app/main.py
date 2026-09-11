@@ -7999,7 +7999,7 @@ def exportar_remanente_deposito_excel(fecha: str | None = None):
         content=generar_excel_remanente(hasta, porciones),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition":
-                 f'attachment; filename="Remanente_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
+                 f'attachment; filename="Stock_del_Deposito_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
     )
 
 
@@ -10719,10 +10719,15 @@ ALERTAS = [
         # ajuste tienen que explicar — o alguien sacó de más.
         titulo="Stock de depósito en negativo (salidas sin explicar)",
         url="/administracion/stock/remanente",
-        texto_link="Ver en el Remanente",
+        texto_link="Ver en Stock del Depósito",
         # Apuntaba a Stock del Sistema, que se borró el 06/09. Va al
-        # Remanente, que es donde quedaron los negativos, en su sección
-        # aparte. NO va al Cotejo: ahí solo aparece lo que se contó, así que
+        # Stock del Depósito, que es donde quedaron los negativos, en su
+        # sección aparte. OJO CON LOS TRES NOMBRES, que se parecen y son
+        # tres cosas: "Stock del Sistema" era ESTA pantalla hasta el 06/09
+        # y hoy es la de VACÍOS en Puesto (/puesto/envases/stock); esta se
+        # llamó "Remanente" entre el 06/09 y el 11/09; y "Stock del
+        # Depósito" es su nombre de hoy. La ruta sigue diciendo
+        # /stock/remanente: es el slug, no el nombre. NO va al Cotejo: ahí solo aparece lo que se contó, así que
         # un artículo en negativo que nadie contó no se ve — y mandar a
         # mirar donde el problema no está ya nos costó una vez.
         #
@@ -10743,7 +10748,7 @@ ALERTAS = [
         titulo="Armados esperando una guía R del artículo",
         titulo_corto="Falta cargar guías R",
         url="/administracion/stock/remanente",
-        texto_link="Ver en el Remanente",
+        texto_link="Ver en Stock del Depósito",
         # Administración y no Depósito: el que carga la guía R es Depósito,
         # pero el que ve que falta es quien mira los números. Y el operario
         # ya lo tiene en su propia pantalla, en el desglose de lotes del
@@ -12278,7 +12283,7 @@ def devolver_vacios_ruta(
 
     Si la cantidad supera lo que el sistema decía, la diferencia queda
     GRABADA en el movimiento (stock_sistema) y el aviso lo dice — el
-    negativo después se ve en Stock del Sistema y en el Cotejo.
+    negativo después se ve en Stock del Depósito y en el Cotejo.
     """
     error, cantidad_valor = _validar_cantidad_vacios(cantidad)
 
