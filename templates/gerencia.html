@@ -51,9 +51,6 @@
   {% set barra_atras = "/inicio" %}
   {% include "_barra_navegacion.html" %}
 
-  {% set bloquear_visible = clave_gerencia_activa() %}
-  {% set bloquear_action = "/gerencia/bloquear" %}
-  {% include "_boton_bloquear.html" %}
 
   {# El manejo del dinero, con su clave. La Auditoría vive en su propio
      sector (/auditoria), sin clave: es control operativo, no plata. #}

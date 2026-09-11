@@ -458,9 +458,32 @@ TOPE_FILAS_BUSQUEDA = 500
 # Lo que NO se unifica es la CLAVE: son distintas a propósito. Con una sola,
 # quien carga la facturación entra a ver la rentabilidad.
 #
-# Una clave por jornada: ni en cada pantalla (no la usarían) ni para siempre
-# (pantalla desbloqueada eterna). El botón Bloquear la corta antes.
+# CUÁNTO DURA, y NO es lo mismo para las tres. Hasta el 11/09 era una sola
+# constante de 12 horas para todas, y esa cifra estaba pensada para UNA
+# jornada: el que trabaja entra a la mañana y le dura el día. Eso es lo
+# correcto para el Puesto y para Administración —lo usan todo el día, y
+# pedirles la clave cada media hora termina con la clave pegada al monitor—
+# y es demasiado para Gerencia, que se abre desde un teléfono y es la zona
+# que ve la plata.
 DURACION_ACCESO_CONTROL = 12 * 60 * 60
+
+# Gerencia vence por INACTIVIDAD y no por reloj de pared: la cookie se
+# reemite en cada request de la zona, así que las 2 horas cuentan desde la
+# última vez que se la usó.
+#
+# EL PLAZO CORTO SOLO SE BANCA CON RENOVACIÓN, y por eso las dos cosas van
+# juntas. Sin deslizar, un vencimiento de 2 horas te echa a la pantalla de
+# clave en el minuto 119 estando en el medio de corregir una recepción, y lo
+# tipeado se pierde. Con renovación, el que dejó el teléfono tirado queda
+# afuera igual y al que está trabajando no lo interrumpe nunca.
+#
+# VERIFICADO ANTES DE ESCRIBIRLO (11/09) que no hay nada que recargue solo:
+# cero `setInterval`, cero `meta http-equiv="refresh"`, cero `fetch`/XHR/
+# EventSource bajo /gerencia y ningún recurso servido desde ese prefijo. Si
+# algún día una pantalla se auto-refresca, la sesión no vencería nunca y el
+# deslizante dejaría de servir — es la comprobación que hay que rehacer
+# antes de agregar una pantalla que se actualice sola.
+DURACION_ACCESO_GERENCIA = 2 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -484,6 +507,14 @@ class Puerta:
     ayuda: str
     volver_a: str
     volver_texto: str
+    # Cuánto vive la cookie, en segundos. Por zona y no global: ver arriba.
+    duracion: int = DURACION_ACCESO_CONTROL
+    # True = el plazo cuenta desde el ÚLTIMO uso (la cookie se reemite en
+    # cada request de la zona). False = reloj de pared desde que se tipeó la
+    # clave. Va como dato de la puerta y no como un `if` en el middleware:
+    # el día que otra zona lo necesite se prende acá y no se toca la
+    # mecánica.
+    desliza: bool = False
 
     def clave(self) -> str | None:
         """ÚNICA fuente de la clave de esta zona — todo el resto pasa por acá.
@@ -545,10 +576,14 @@ PUERTA_GERENCIA = Puerta(
     prefijo="/gerencia",
     sector="gerencia",
     titulo="Gerencia",
-    ayuda=("Acá está el manejo del dinero. La clave se pide una vez y vale para toda "
-           'Gerencia durante la jornada; con "Bloquear" se corta antes.'),
+    ayuda=("Acá está el manejo del dinero. La clave vale para toda Gerencia y se "
+           "vuelve a pedir después de 2 horas SIN USARLA; mientras trabajás no te "
+           'interrumpe. Con "Bloquear" se corta en el momento.'),
     volver_a="/inicio",
     volver_texto="Volver a Inicio",
+    # Corta y deslizante: es la zona de la plata y se abre desde un teléfono.
+    duracion=DURACION_ACCESO_GERENCIA,
+    desliza=True,
 )
 
 # ADMINISTRACIÓN, del 10/09. Clave PROPIA y no la de Gerencia: Administración
@@ -598,6 +633,33 @@ def _pantalla_clave(puerta: Puerta, request: Request, *, volver: str | None = No
     )
 
 
+def _sellar_acceso(puerta: Puerta, clave: str, respuesta):
+    """Escribe la cookie de acceso de una puerta. UN SOLO LUGAR.
+
+    Lo usan los dos que la emiten: el POST de la clave y la renovación
+    deslizante. Escritos por separado se separan, y el modo de falla es
+    feo — una cookie renovada con otros atributos que la original no falla
+    ruidosamente: cambia cuánto dura o por dónde viaja, y nadie lo ve.
+
+    `secure` va SIEMPRE y no condicionado al esquema del request: detrás de
+    un proxy que termina TLS, `request.url.scheme` puede decir "http" con el
+    cliente hablando https, y la guarda quedaría apagada justo en
+    producción. El costo es que por http la cookie no se guarda —una prueba
+    local con clave puesta no deja entrar— y es un costo que se paga a la
+    vista, no una protección que se apaga sola.
+    """
+    respuesta.set_cookie(
+        puerta.cookie,
+        puerta.firma(clave),
+        max_age=puerta.duracion,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path=puerta.prefijo,
+    )
+    return respuesta
+
+
 def _responder_clave(puerta: Puerta, request: Request, clave: str, volver: str):
     """El POST de la clave, igual para las tres: valida, y si entra deja la cookie firmada."""
     destino = puerta.destino_seguro(volver)
@@ -609,14 +671,7 @@ def _responder_clave(puerta: Puerta, request: Request, clave: str, volver: str):
         return _pantalla_clave(puerta, request, volver=destino, error="Clave incorrecta.")
 
     respuesta = RedirectResponse(url=destino, status_code=303)
-    respuesta.set_cookie(
-        puerta.cookie,
-        puerta.firma(clave_real),
-        max_age=DURACION_ACCESO_CONTROL,
-        httponly=True,
-        samesite="lax",
-        path=puerta.prefijo,
-    )
+    _sellar_acceso(puerta, clave_real, respuesta)
     return respuesta
 
 
@@ -1054,6 +1109,36 @@ templates.env.globals["clave_gerencia_activa"] = lambda: _clave_gerencia() is no
 templates.env.globals["clave_administracion_activa"] = (
     lambda: PUERTA_ADMINISTRACION.clave() is not None
 )
+
+# LAS PUERTAS POR SECTOR, para que la barra de navegación sepa si la
+# pantalla que está dibujando pertenece a una zona con clave. Sale de las
+# mismas instancias y no de un diccionario escrito a mano: una cuarta zona
+# se suma sola el día que exista.
+PUERTAS_POR_SECTOR = {
+    puerta.sector: puerta
+    for puerta in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)
+}
+
+
+def _bloqueo_del_sector(sector: str) -> str | None:
+    """A dónde postea el candado de ESTE sector, o None si no va.
+
+    None cuando el sector no tiene clave (la mayoría: Compras, Depósito,
+    Comercial) o cuando la tiene pero no está configurada — sin clave no
+    hay nada que bloquear, y un candado que no cierra nada es peor que
+    ninguno.
+
+    No pregunta si la puerta está ABIERTA: para estar viendo una pantalla
+    de la zona hay que haber pasado, y en las zonas sin clave configurada
+    ya devolvió None arriba.
+    """
+    puerta = PUERTAS_POR_SECTOR.get(sector)
+    if puerta is None or puerta.clave() is None:
+        return None
+    return f"{puerta.prefijo}/bloquear"
+
+
+templates.env.globals["bloqueo_del_sector"] = _bloqueo_del_sector
 
 
 def _validar_nombre(nombre: str) -> tuple[str | None, str]:
@@ -10084,25 +10169,19 @@ def ver_gerencia(request: Request):
 
 @app.post("/gerencia/clave")
 def ingresar_clave_gerencia_ruta(request: Request, clave: str = Form(""), volver: str = Form("/gerencia")):
-    """Valida la clave de Gerencia y deja la cookie firmada: una vez por jornada, para toda la zona."""
-    destino = _destino_gerencia_seguro(volver)
-    clave_real = _clave_gerencia()
-    if clave_real is None:
-        # Sin clave configurada no hay puerta: nada que validar.
-        return RedirectResponse(url=destino, status_code=303)
-    if not hmac.compare_digest(clave.strip(), clave_real):
-        return _pantalla_clave_gerencia(request, volver=destino, error="Clave incorrecta.")
+    """Valida la clave de Gerencia y deja la cookie firmada.
 
-    respuesta = RedirectResponse(url=destino, status_code=303)
-    respuesta.set_cookie(
-        COOKIE_ACCESO_GERENCIA,
-        _firma_acceso_gerencia(clave_real),
-        max_age=DURACION_ACCESO_CONTROL,
-        httponly=True,
-        samesite="lax",
-        path="/gerencia",
-    )
-    return respuesta
+    DELEGA, y hasta el 11/09 no lo hacía: era una copia entera de
+    `_responder_clave` —mismo HMAC, mismo `set_cookie`, misma redirección—
+    que la unificación de las puertas dejó atrás. Se veía inofensiva porque
+    hacía exactamente lo mismo.
+
+    Dejó de hacer lo mismo el día que la duración pasó a ser por zona: esta
+    copia escribía `DURACION_ACCESO_CONTROL` fija, así que Gerencia habría
+    seguido durando 12 horas y el cambio habría sido un NO-OP silencioso —
+    la constante nueva existiendo, el test de la constante en verde, y la
+    cookie de producción igual que antes."""
+    return _responder_clave(PUERTA_GERENCIA, request, clave, volver)
 
 
 @app.post("/gerencia/bloquear")
@@ -11167,6 +11246,54 @@ def cargar_importe_costos_fijos_ruta(
 RUTAS_ADMINISTRACION_SIN_CLAVE = ("/administracion/clave",)
 
 
+def _renovar_si_desliza(puerta: Puerta, request: Request, respuesta):
+    """Reemite la cookie de una puerta deslizante, para que el plazo cuente
+    desde el ÚLTIMO uso y no desde que se tipeó la clave.
+
+    Solo si la puerta ya estaba abierta: si no lo estaba, renovar sería
+    emitir un acceso que nadie autorizó. Y solo si `desliza`, que es un dato
+    de la puerta — Administración y el Puesto vencen por reloj de pared a
+    propósito.
+
+    NO se renueva sobre una respuesta que ya escribió esta misma cookie (el
+    POST de la clave y el de Bloquear): ahí la respuesta ya dice lo que
+    tiene que decir, y encima Bloquear la está BORRANDO. Reemitirla arriba
+    de un `delete_cookie` volvería a abrir la zona que alguien acaba de
+    cerrar a mano — el botón saldría bien y no haría nada.
+    """
+    if not puerta.desliza or not puerta.abierta(request):
+        return respuesta
+    clave = puerta.clave()
+    if clave is None:
+        return respuesta
+    ya_escrita = any(
+        cabecera.decode("latin-1").startswith(f"{puerta.cookie}=")
+        for nombre, cabecera in respuesta.raw_headers
+        if nombre == b"set-cookie"
+    )
+    if ya_escrita:
+        return respuesta
+    return _sellar_acceso(puerta, clave, respuesta)
+
+
+@app.middleware("http")
+async def deslizar_acceso_de_gerencia(request: Request, call_next):
+    """Cada request a /gerencia corre el reloj de su cookie.
+
+    En un middleware y no en cada ruta: hay catorce pantallas bajo /gerencia
+    y las que vengan. Una renovación escrita ruta por ruta se olvida en la
+    próxima, y el síntoma sería que ESA pantalla te echa y las otras no —
+    que se lee como un bug del navegador, no como una ruta que falta.
+
+    Se verificó (11/09) que nada bajo /gerencia se recarga solo: si algún
+    día una pantalla se auto-refresca, la sesión no vencería nunca.
+    """
+    respuesta = await call_next(request)
+    if request.url.path.startswith(PUERTA_GERENCIA.prefijo):
+        return _renovar_si_desliza(PUERTA_GERENCIA, request, respuesta)
+    return respuesta
+
+
 @app.middleware("http")
 async def puerta_de_administracion(request: Request, call_next):
     ruta = request.url.path
@@ -11509,25 +11636,13 @@ def ver_envases_puesto(request: Request):
 
 @app.post("/puesto/envases/clave")
 def ingresar_clave_control_ruta(request: Request, clave: str = Form(""), volver: str = Form("/puesto/envases")):
-    """Valida la clave de la zona de control y deja la cookie firmada: una vez por jornada, para toda la zona."""
-    destino = _destino_control_seguro(volver)
-    clave_real = _clave_control_puesto()
-    if clave_real is None:
-        # Sin clave configurada no hay puerta: nada que validar.
-        return RedirectResponse(url=destino, status_code=303)
-    if not hmac.compare_digest(clave.strip(), clave_real):
-        return _pantalla_clave_control(request, volver=destino, error="Clave incorrecta.")
+    """Valida la clave de la zona de control y deja la cookie firmada: una vez por jornada, para toda la zona.
 
-    respuesta = RedirectResponse(url=destino, status_code=303)
-    respuesta.set_cookie(
-        COOKIE_ACCESO_CONTROL,
-        _firma_acceso_control(clave_real),
-        max_age=DURACION_ACCESO_CONTROL,
-        httponly=True,
-        samesite="lax",
-        path="/puesto/envases",
-    )
-    return respuesta
+    DELEGA por el mismo motivo que la de Gerencia: era la otra copia de
+    `_responder_clave`. El Puesto sigue con 12 horas fijas —es lo correcto
+    para el que trabaja su jornada ahí— pero eso ahora sale del default de
+    `Puerta`, no de una constante escrita a mano en esta función."""
+    return _responder_clave(PUERTA_CONTROL, request, clave, volver)
 
 
 @app.post("/puesto/envases/bloquear")

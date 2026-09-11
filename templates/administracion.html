@@ -57,9 +57,6 @@
 
   {# Para no dejar Administración abierta en un celular suelto. Solo aparece
      si hay clave configurada: sin ella no hay nada que bloquear. #}
-  {% set bloquear_visible = clave_administracion_activa() %}
-  {% set bloquear_action = "/administracion/bloquear" %}
-  {% include "_boton_bloquear.html" %}
   {% include "_banner_alertas.html" %}
 
   <div class="tarjeta">
