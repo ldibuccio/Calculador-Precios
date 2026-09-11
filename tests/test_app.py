@@ -24322,3 +24322,121 @@ def test_si_la_guia_en_origen_no_se_puede_cargar_la_pantalla_dice_POR_QUE():
     assert respuesta.status_code == 400
     assert "anterior al corte" in respuesta.text
     assert "No se recepcionó" in respuesta.text
+
+
+# ── El comprador marca "viene armada" al CARGAR la compra ──────────────────
+#
+# La pantalla de carga se dibuja desde ocho lugares (el alta, la manual, la
+# edición y sus re-renders por error), así que el catálogo de cajas va como
+# global del entorno: pasarlo en el contexto de cada uno son ocho lugares de
+# los que uno se puede olvidar, y el que se olvide deja el selector vacío.
+
+
+def _cajas_de_un_articulo():
+    """Solo el artículo 5 tiene cajas; el otro de ARTICULOS_CON_UNIDAD_COMPRA no."""
+    return {5: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
+
+
+def test_la_carga_de_compras_OFRECE_marcar_que_viene_armada():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    # Por el ATRIBUTO entero y no por el texto: un comentario que explique el
+    # campo nombra su propio rótulo y entraría en la cuenta (corolario 38).
+    assert 'name="ficha_en_origen_id"' in marcado
+    # La opción lleva su artículo, que es lo que el JS usa para filtrar.
+    assert 'data-articulo="5"' in marcado
+    # UN SOLO CONTROL: elegir la caja ES marcarla. Una casilla aparte serían
+    # dos cosas que tienen que coincidir.
+    assert 'name="viene_armada"' not in marcado
+
+
+def test_la_carga_NO_ofrece_el_selector_si_NINGUN_articulo_tiene_caja():
+    """Sin cajas el camino no existe, y un selector vacío se lee como "este
+    artículo no tiene cajas", que es falso."""
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value={}),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert 'name="ficha_en_origen_id"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_la_carga_de_compras_ANDA_IGUAL_si_no_se_puede_leer_el_catalogo_de_cajas():
+    """Que no se pueda leer una tabla de nombres no puede dejar sin CARGAR.
+
+    El global se traga el error a propósito: sin catálogo no se ofrece el
+    selector y el resto del formulario funciona igual.
+    """
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", side_effect=Exception("no se pudo leer")),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert 'name="cantidad_cajones"' in respuesta.text
+    assert 'name="ficha_en_origen_id"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_cargar_una_compra_MARCADA_le_pasa_la_caja_al_guardado():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "articulo_id": "5",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+                "ficha_en_origen_id": "3",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["ficha_en_origen_id"] == 3
+
+
+def test_una_caja_que_no_es_un_numero_NO_llega_al_guardado():
+    """La guarda de la FORMA, acá; la de que exista y sea del mismo artículo,
+    en la base, que es donde se escribe."""
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200", "articulo_id": "5", "cantidad_cajones": "10",
+                "contenido_por_cajon": "18", "importe": "50000", "sena": "",
+                "tipo_retiro": "Clark", "ficha_en_origen_id": "la de siempre",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "no es válida" in respuesta.text
+    mock_crear.assert_not_called()

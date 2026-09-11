@@ -906,6 +906,29 @@ templates.env.filters["porcentaje"] = _formatear_porcentaje
 templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
+
+
+def _cajas_en_origen_por_articulo() -> dict:
+    """El catálogo de cajas por artículo para el selector de "viene armada".
+
+    VA COMO GLOBAL DEL ENTORNO y no en el contexto de cada render: la pantalla
+    de carga de compras se dibuja desde OCHO lugares distintos —el alta, la
+    manual, la edición y sus cinco re-renders por error— y pasar el catálogo en
+    cada uno son ocho lugares de los que uno se puede olvidar. El que se
+    olvide deja el selector vacío, que se lee como "este artículo no tiene
+    cajas" y es falso.
+
+    Se traga el error a propósito: que no se pueda leer el catálogo no puede
+    dejar sin CARGAR una compra. Sin catálogo el selector no se ofrece y el
+    resto de la pantalla anda igual.
+    """
+    try:
+        return _cajas_para_elegir_por_articulo()
+    except Exception:
+        return {}
+
+
+templates.env.globals["cajas_en_origen_por_articulo"] = _cajas_en_origen_por_articulo
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 
 

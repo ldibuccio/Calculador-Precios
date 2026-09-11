@@ -7520,3 +7520,43 @@ def test_una_compra_PENDIENTE_marcada_NO_carga_la_guia_R_todavia():
         )
 
     assert not [c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos" in c.args[0]]
+
+
+def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
+    """Esa compra nace 'recepcionado' y NO PASA POR RECEPCIÓN nunca.
+
+    Si el disparo viviera solo en `_recepcionar_compra`, `/deposito/ingresar`
+    y el ingreso retroactivo de Gerencia serían dos puertas por las que este
+    caso no se puede registrar — y el operario volvería a la guía R a mano,
+    que es exactamente lo que todo esto vino a evitar.
+    """
+    conexion, cursor = _conexion_falsa(
+        filas_fetchone=[
+            (105,), (0,), (900,),          # guía, punto e id de la compra
+            (1,),                          # el artículo de la ficha marcada
+            (1, 3, 10.0, date(2026, 8, 25), 1, 7),  # la compra recién escrita
+            _CORTE,
+            (99,),                         # INSERT INTO reprocesos RETURNING id
+        ]
+    )
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(900, date(2026, 8, 25), 10.0, 1200.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 8, 25), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+            ingreso_directo_deposito=True,
+            ficha_en_origen_id=3,
+        )
+
+    cabecera = next(c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos\n" in c.args[0])
+    assert _valor_insertado(cursor, "tipo", "INSERT INTO reprocesos\n") == "en_origen"
+    assert _valor_insertado(cursor, "compra_origen_id", "INSERT INTO reprocesos\n") == 900
+    # UNA sola transacción: el insert de la compra y el de la guía sobre el
+    # mismo cursor, con un solo commit.
+    conexion.cursor.assert_called_once()
+    conexion.commit.assert_called_once()
+    assert cabecera is not None
