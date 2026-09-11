@@ -2322,3 +2322,50 @@ escribe para que sea el que NO tiene que salir elegido.
 Y la señal de que el rival está bien puesto es la misma de siempre: **con el
 código roto a propósito, el test tiene que caer.** Un fixture con dos lotes
 donde el equivocado no gana nunca es un fixture con un lote y ruido al lado.
+
+## Corolario 39: un flag que dice "¿esto lo tocó una persona?" no se deriva de la diferencia
+
+Del 11/09. `reprocesos.consumos_editados` contesta una sola cosa —*el
+operario cambió el reparto por lote que le propuso el FIFO*— y la pantalla
+lo muestra porque **un costo que no eligió el sistema tiene que poder
+distinguirse**. Se calculaba así:
+
+```python
+editados = declarado != propuesta_fifo(lotes, bultos_tomados, SALIDA_REPROCESO)
+```
+
+Mientras el único camino que pasaba un reparto fuera un formulario, eso era
+exacto: si difiere del FIFO, lo movió alguien. La guía R **en origen** agregó
+un segundo camino —el server arma el reparto solo, dirigido a la compra que
+la generó— y ese reparto **difiere del FIFO SIEMPRE y por construcción**,
+porque el FIFO elegiría el lote más viejo. Así que cada guía en origen
+entraba marcada como editada, y la pantalla le decía al que la lee que
+alguien la tocó a mano. Nadie la tocó.
+
+**La regla**: un flag que afirma una INTENCIÓN HUMANA no puede derivarse de
+comparar el resultado contra el default calculado. La comparación mide *"¿es
+distinto de lo que el sistema habría propuesto?"*, que es otra pregunta — y
+son la misma solo mientras el sistema sea incapaz de producir la diferencia
+por su cuenta.
+
+**La señal, y se hace en el momento de agregar el camino**: si un flag sale
+de comparar el resultado contra la propuesta del sistema, preguntarse **si
+existe un caso donde la diferencia la produce el SISTEMA MISMO.** Si existe,
+el flag dejó de significar lo que dice su nombre, y el arreglo no es
+corregir la comparación: es que el camino que no tiene operario no conteste
+esa pregunta (acá, `tipo == "normal" and ...`).
+
+**Lo que lo agarró fue el test que compara la estructura ENTERA del INSERT**,
+no una lectura del código. Un test de tres campos de doce no lo habría
+tocado: `consumos_editados` no era el campo que el cambio venía a mover, y
+por eso nadie lo iba a mirar. Es exactamente para lo que existe la regla de
+comparar la estructura completa — que falle el día que una columna cambia de
+valor sin que nadie lo pidiera es su función, no una molestia.
+
+**Con qué engancha, y es la familia entera**: el `{% else %}` que afirma
+"esto no existe", el comentario que envejece en el mismo commit que lo
+volvió falso (corolario 28), el campo sin consecuencia. Todos son lo mismo
+dicho de cuatro formas: **algo que AFIRMA se quedó afirmando lo que valía
+antes del camino nuevo.** Y la diferencia con los otros tres es dónde se
+mira: allá se relee un texto, acá se relee una CUENTA — un valor derivado
+también afirma, y encima no se lee como afirmación.
