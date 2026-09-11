@@ -283,6 +283,11 @@ create table compras (
     cantidad_cajones_rechazada numeric,
     motivo_rechazo             text,
     carga_token                text,
+    -- NO NULO = esta compra viene YA ARMADA en caja nuestra, y esta es la ficha
+    -- a la que van esas cajas. La marca el COMPRADOR al cargarla, que es el
+    -- unico que lo sabe. Al recepcionar, el sistema genera solo la guia R tipo
+    -- en_origen. Ver db/compra_en_caja_nuestra_3_la_marca_en_la_compra.sql.
+    ficha_en_origen_id         bigint references fichas_logistica (id),
     constraint compras_tipo_retiro_check check (tipo_retiro in ('Clark', 'Carro', 'Pases', 'Cooperativa')),
     constraint compras_cantidad_cargada_check check (cantidad_kilos is not null or cantidad_fraccion is not null)
 );
@@ -300,6 +305,10 @@ comment on column compras.motivo_rechazo is 'Motivo del rechazo parcial (texto l
 comment on column compras.carga_token is 'Token único por comanda leída por foto, generado por el server al armar la pantalla de revisión. Todos los renglones de una misma comanda comparten el token: si el teléfono reintenta un guardado cuya respuesta se perdió (corte de internet), el server lo reconoce y no duplica nada. NULL en compras cargadas a mano o anteriores a este cambio.';
 
 create index compras_carga_token_idx on compras (carga_token);
+-- Para que eliminar_ficha enumere las compras que apuntan a una ficha sin
+-- barrer la tabla. Parcial porque la enorme mayoria es NULL.
+create index compras_ficha_en_origen_idx on compras (ficha_en_origen_id)
+    where ficha_en_origen_id is not null;
 comment on column compras.contenido_por_cajon_real is 'Contenido por cajón real. Lo tipea Depósito directo (pesa/cuenta un bulto, no toda la carga).';
 
 create table fotos_recepcion (

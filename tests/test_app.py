@@ -5003,20 +5003,20 @@ COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA = [
         "id": 1, "guia_id": 105, "guia_punto": 1, "articulo_id": 11, "articulo_nombre": "Tomate Cherry", "unidad_compra": "kilo",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41", "fecha_operacion": HOY_DE_PRUEBA,
         "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
-        "fotos_balanza": 1,
+        "ficha_en_origen_id": None, "fotos_balanza": 1,
     },
     {
         "id": 2, "guia_id": 105, "guia_punto": 2, "articulo_id": 22, "articulo_nombre": "Mango", "unidad_compra": "unidad",
         "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
         "fecha_operacion": HOY_DE_PRUEBA - timedelta(days=3),
         "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
-        "fotos_balanza": 0,
+        "ficha_en_origen_id": None, "fotos_balanza": 0,
     },
     {
         "id": 3, "guia_id": 106, "guia_punto": 1, "articulo_id": 33, "articulo_nombre": "Frutilla", "unidad_compra": "cubeta",
         "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
         "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 60,
-        "fotos_balanza": 0,
+        "ficha_en_origen_id": None, "fotos_balanza": 0,
     },
 ]
 
@@ -5490,7 +5490,7 @@ def test_si_falla_el_Storage_la_compra_SIGUE_PENDIENTE_y_se_puede_recibir():
 
 
 def test_recepcionar_compra_guarda_los_reales_y_redirige():
-    with patch("app.main.recepcionar_compra", return_value=None) as mock_recepcionar:
+    with patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar:
         respuesta = cliente.post(
             "/deposito/recepcion/1/recepcionar",
             data={"cantidad_cajones_real": "38", "cantidad_total_real": "760"},
@@ -5507,7 +5507,7 @@ def test_recepcionar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
     # recepcionar_compra devuelve un aviso — no se pisa el cancelado, pero
     # tampoco puede pasar callado.
     with patch(
-        "app.main.recepcionar_compra", return_value="Esta compra figuraba cancelada en Logística."
+        "app.main.recepcionar_compra", return_value=("Esta compra figuraba cancelada en Logística.", None)
     ):
         respuesta = cliente.post(
             "/deposito/recepcion/1/recepcionar",
@@ -5521,7 +5521,7 @@ def test_recepcionar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
 
 def test_recepcionar_compra_sin_datos_muestra_error_sin_guardar():
     with (
-        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
@@ -5537,7 +5537,7 @@ def test_recepcionar_compra_sin_datos_muestra_error_sin_guardar():
 
 def test_recepcionar_compra_con_numero_invalido_muestra_error_sin_guardar():
     with (
-        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
@@ -5605,7 +5605,7 @@ def test_rechazo_parcial_guarda_los_aceptados_y_el_registro():
     # Llegaron 10, rechaza 2: recepcionar_compra recibe 8 aceptados (los
     # que usa todo el costeo — importe por bulto, ninguna cuenta cambia)
     # más el registro del rechazo.
-    with patch("app.main.recepcionar_compra", return_value=None) as mock_recepcionar:
+    with patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar:
         respuesta = cliente.post(
             "/deposito/recepcion/1/rechazo-parcial",
             data={
@@ -5625,7 +5625,7 @@ def test_rechazo_parcial_guarda_los_aceptados_y_el_registro():
 
 
 def test_rechazo_parcial_sin_motivo_guarda_none():
-    with patch("app.main.recepcionar_compra", return_value=None) as mock_recepcionar:
+    with patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar:
         respuesta = cliente.post(
             "/deposito/recepcion/1/rechazo-parcial",
             data={
@@ -5645,7 +5645,7 @@ def test_rechazo_parcial_sin_motivo_guarda_none():
 
 def test_rechazo_parcial_que_rechaza_todo_da_error_y_manda_al_otro_boton():
     with (
-        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
@@ -5665,7 +5665,7 @@ def test_rechazo_parcial_que_rechaza_todo_da_error_y_manda_al_otro_boton():
 
 def test_rechazo_parcial_de_cero_bultos_da_error_y_manda_a_recibir():
     with (
-        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
@@ -5685,7 +5685,7 @@ def test_rechazo_parcial_de_cero_bultos_da_error_y_manda_a_recibir():
 
 def test_rechazo_parcial_sin_rechazados_da_error_sin_guardar():
     with (
-        patch("app.main.recepcionar_compra") as mock_recepcionar,
+        patch("app.main.recepcionar_compra", return_value=(None, None)) as mock_recepcionar,
         patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
@@ -17532,6 +17532,7 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
             "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P41",
             "fecha_operacion": date(2026, 8, 22),
             "cantidad_cajones": 40, "contenido_por_cajon": 20, "cantidad_kilos": 800, "cantidad_fraccion": None,
+            "ficha_en_origen_id": None,
         },
         {
             "id": 2, "guia_id": 106, "guia_punto": 1, "articulo_id": 22, "articulo_nombre": "Mango",
@@ -17539,6 +17540,7 @@ def test_ver_recepcion_muestra_la_fecha_de_cada_partida_y_marca_las_viejas():
             "proveedor_nombre": "Don Pepe", "proveedor_codigo_puesto": "N01P02",
             "fecha_operacion": date(2026, 8, 20),
             "cantidad_cajones": 10, "contenido_por_cajon": 12, "cantidad_kilos": None, "cantidad_fraccion": 120,
+            "ficha_en_origen_id": None,
         },
     ]
     with (
@@ -24188,129 +24190,131 @@ def test_anular_un_pedido_NO_se_puede_desde_Deposito():
 
 # ── La compra que ya viene armada en caja nuestra ──────────────────────────
 #
-# El puesto reenvasó en NUESTRA caja antes de entregar. Al recepcionar se
-# marca, se elige la ficha, y el sistema carga la guía R solo — cargarla a
-# mano sería documentar un trabajo que nadie hizo.
+# La marca la pone el COMPRADOR al cargar la compra. Recepción solo AVISA: el
+# depósito no fue al puesto ni mandó las cajas, así que no le corresponde
+# decidirlo. Antes esto era un botón acá y le pedía una decisión comercial que
+# no había tomado.
 
 
-def _fichas_de_un_articulo(articulo_id=11):
-    return {articulo_id: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
+def _pendientes_con_una_marcada():
+    """Dos compras del mismo proveedor: la 1 viene armada, la 2 no."""
+    return [
+        dict(COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA[0], ficha_en_origen_id=3),
+        COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA[1],
+    ]
 
 
-def test_recepcion_ofrece_ya_viene_armada_SOLO_en_los_articulos_que_TIENEN_ficha():
-    """Sin ficha el camino no existe, así que el botón tampoco.
+def _catalogo_de_fichas():
+    return {11: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
 
-    Es la misma decisión que la del cajón con envase en el armado: lo que no
-    se puede elegir NO SE LISTA. Un botón que abre un selector vacío se lee
-    como "este artículo no tiene cajas" —que es falso— e invita a cargar una
-    ficha que ya existe en otro lado.
+
+def test_recepcion_AVISA_que_la_compra_viene_armada_y_NO_ofrece_nada_que_elegir():
+    """El aviso va en la marcada y SOLO en la marcada, y no hay ningún control.
+
+    Lo que se verifica es que no quedó ni el `<select>` ni la ruta vieja: una
+    pantalla que ofrece elegir la ficha le está pidiendo al depósito una
+    decisión que no es suya.
     """
     with (
-        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=_pendientes_con_una_marcada()),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        # Solo el artículo 11 (Tomate Cherry, compra 1) tiene ficha.
-        patch("app.main._cajas_para_elegir_por_articulo", return_value=_fichas_de_un_articulo()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_catalogo_de_fichas()),
     ):
         respuesta = cliente.get("/deposito/recepcion")
 
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    # Por la ACCIÓN del form y no por el texto visible: un comentario que
-    # explique el camino nombra su nombre, y el test tiene que mirar marcado.
-    assert marcado.count('/deposito/recepcion/1/en-caja-propia') == 1
-    assert '/deposito/recepcion/2/en-caja-propia' not in marcado
-    assert '/deposito/recepcion/3/en-caja-propia' not in marcado
+    # Por la CLASE y no por el texto: un comentario que explique el aviso
+    # nombra su propio texto y entraría en la cuenta (corolario 38).
+    assert marcado.count('class="viene-armada"') == 1
+    assert "Caja de EJEMPLO" in marcado
+    # Nada que elegir, y la ruta vieja no existe más.
+    assert 'name="ficha_id"' not in marcado
+    assert "en-caja-propia" not in marcado
 
 
-def test_el_POST_en_caja_propia_SIN_FICHA_no_escribe_nada():
-    with (
-        patch("app.main.recepcionar_compra_en_caja_propia") as guardar,
-        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
-        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
-        patch("app.main._cajas_para_elegir_por_articulo", return_value=_fichas_de_un_articulo()),
-    ):
-        respuesta = cliente.post(
-            "/deposito/recepcion/1/en-caja-propia",
-            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16", "ficha_id": ""},
-        )
+def test_el_aviso_NO_sale_en_las_compras_que_llegan_en_el_cajon_del_proveedor():
+    """El caso feliz del otro lado: sin marca, la pantalla es la de siempre.
 
-    assert respuesta.status_code == 400
-    assert "Elegí a qué ficha" in respuesta.text
-    guardar.assert_not_called()
-
-
-def test_el_POST_en_caja_propia_MUESTRA_el_motivo_cuando_la_base_rechaza():
-    """El ValueError de la regla llega como 400 CON el motivo adentro.
-
-    Si la compra ya generó su guía, el que está recepcionando tiene que leer
-    qué hacer —anular esa guía— y no un 500 mudo.
+    Es lo que distingue "avisa cuando corresponde" de "avisa siempre" — un
+    cartel puesto por construcción en todas las compras no es un aviso.
     """
     with (
-        patch("app.main.recepcionar_compra_en_caja_propia",
-              side_effect=ValueError("Esta compra ya generó su guía R en origen.")),
-        patch("app.main.listar_compras_pendientes_recepcion", return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_pendientes_recepcion",
+              return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
         patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
-        patch("app.main._cajas_para_elegir_por_articulo", return_value=_fichas_de_un_articulo()),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_catalogo_de_fichas()),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert 'class="viene-armada"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_el_aviso_sale_IGUAL_si_no_se_puede_leer_el_catalogo_de_fichas():
+    """Sin catálogo, el aviso pierde el nombre de la caja y no la recepción.
+
+    El camión está esperando: que no se pueda leer una tabla de nombres no
+    puede dejar sin recibir. Es la diferencia entre un dato que falta y una
+    pantalla que no anda.
+    """
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=_pendientes_con_una_marcada()),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main._cajas_para_elegir_por_articulo", side_effect=Exception("no se pudo leer")),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'class="viene-armada"' in marcado
+    assert "nuestra caja" in marcado   # el nombre genérico, no el de la ficha
+
+
+def test_recepcionar_una_compra_marcada_AVISA_QUE_GUIA_se_cargo_sola():
+    """El operario no eligió nada, así que si no se lo decimos no tiene cómo saberlo.
+
+    Y es el número que va a necesitar el día que haya que anularla.
+    """
+    with (
+        patch("app.main.recepcionar_compra", return_value=(None, 214)),
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
     ):
         respuesta = cliente.post(
-            "/deposito/recepcion/1/en-caja-propia",
-            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16", "ficha_id": "3"},
-        )
-
-    assert respuesta.status_code == 400
-    assert "ya generó su guía R en origen" in respuesta.text
-
-
-def test_el_POST_en_caja_propia_avisa_QUE_GUIA_cargó():
-    with patch("app.main.recepcionar_compra_en_caja_propia", return_value=(214, None)) as guardar:
-        respuesta = cliente.post(
-            "/deposito/recepcion/1/en-caja-propia",
-            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16", "ficha_id": "3"},
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    guardar.assert_called_once_with(1, 10.0, 16.0, 3)
     assert "R214" in urllib.parse.unquote_plus(respuesta.headers["location"])
 
 
-def test_la_guia_EN_ORIGEN_se_ve_como_tal_en_Guias_R():
-    """Los números son los mismos que los de un armado del galpón (toma 10,
-    produce 10), así que sin rótulo las dos son indistinguibles.
+def test_si_la_guia_en_origen_no_se_puede_cargar_la_pantalla_dice_POR_QUE():
+    """El freno del corte llega como motivo legible, no como un 500 mudo.
 
-    Y el renglón de la transformación AFIRMABA un reproceso que acá no
-    ocurrió: "Tomó 10 bultos → 10 cajas · 0 de segunda · 0 de merma" describe
-    un trabajo que hicimos nosotros. Es el corolario 28 — el día que se agrega
-    un camino que cae en una rama, el texto de esa rama hay que releerlo.
+    La recepción y la guía van en la misma transacción, así que si la guía no
+    entra NO SE RECIBE — y el operario se queda con el camión en la puerta.
+    Lo mínimo es que sepa qué pasó y qué hacer.
     """
-    # CON FICHA, porque una guía en origen no puede existir sin ella: el CHECK
-    # de la base la exige. Un fixture con `ficha_id` en None haría que el
-    # título dijera "FALTA LA FICHA" en un caso que no ocurre, y el test
-    # defendería una pantalla que nadie va a ver (corolario 22).
-    guia = dict(
-        GUIAS_R_DE_PRUEBA[0], id=214, tipo="en_origen", compra_origen_id=777,
-        ficha_id=3, ficha_nombre="Caja de EJEMPLO", ficha_cliente_id=7,
-        cliente_id=7, cliente_nombre="Cliente de EJEMPLO",
-        bultos_tomados=10.0, bultos_primera=10.0, bultos_segunda=0.0, bultos_merma=0.0,
-    )
-    with (
-        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
-        patch("app.main.listar_reprocesos_por_rango", return_value=[guia]),
-        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
-        patch("app.main.contar_reprocesos_sin_costo_posible", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
-        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
-        # Con cliente, la pantalla corre además la alerta de cruce.
-        patch("app.main.listar_articulos_con_primera_de_cliente", return_value=[]),
-        patch("app.main.cajas_armadas_por_ficha", return_value={(1, 3): 10.0}),
-        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
-    ):
-        respuesta = cliente.get("/administracion/stock/guias-r")
+    from app.db import ReprocesoAnteriorAlCorte
 
-    marcado = respuesta.text.split("</style>")[-1]
-    # Por la CLASE: el texto visible lo puede nombrar un comentario del
-    # `<style>` explicando por qué esa guía se pinta distinto (corolario 38).
-    assert 'class="chip-en-origen"' in marcado
-    assert "Tomó 10 bultos" not in marcado
-    assert "ya armada en caja nuestra" in marcado
+    with (
+        patch("app.main.recepcionar_compra",
+              side_effect=ReprocesoAnteriorAlCorte(date(2026, 8, 30), date(2026, 9, 5))),
+        patch("app.main.listar_compras_pendientes_recepcion",
+              return_value=COMPRAS_PENDIENTES_RECEPCION_DE_PRUEBA),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value={}),
+    ):
+        respuesta = cliente.post(
+            "/deposito/recepcion/1/recepcionar",
+            data={"cantidad_cajones_real": "10", "cantidad_total_real": "16"},
+        )
+
+    assert respuesta.status_code == 400
+    assert "anterior al corte" in respuesta.text
+    assert "No se recepcionó" in respuesta.text

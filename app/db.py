@@ -2209,6 +2209,11 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
                        -- nuestra", y matchear por nombre seria inventar una
                        -- clave donde ya hay una.
                        c.articulo_id,
+                       -- NO NULO = viene YA ARMADA en caja nuestra y al
+                       -- recepcionarla sale sola su guía R. La pantalla lo
+                       -- AVISA y no ofrece nada que elegir: la marca la puso
+                       -- el comprador, que es el único que lo sabe.
+                       c.ficha_en_origen_id,
                        a.nombre AS articulo_nombre, a.unidad_compra,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion,
@@ -2298,17 +2303,22 @@ def recepcionar_compra(
     costeo — como el importe es por bulto, ninguna cuenta cambia.
 
     Además marca la compra como retirada (ver _auto_retirar_si_corresponde)
-    si todavía no lo estaba. Devuelve el aviso de esa función (o None).
+    si todavía no lo estaba.
+
+    Devuelve (aviso_de_retiro, numero_de_guia_R). El segundo viene con
+    número solo cuando el COMPRADOR marcó la compra como "ya viene armada
+    en caja nuestra" al cargarla: ahí la guía R sale sola, en esta misma
+    transacción. Ver `_guia_en_origen_si_corresponde`.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            aviso = _recepcionar_compra(
+            aviso, numero_guia = _recepcionar_compra(
                 cursor, compra_id, cantidad_cajones_real, valor_real,
                 cantidad_cajones_rechazada, motivo_rechazo,
             )
         conexion.commit()
-        return aviso
+        return aviso, numero_guia
     finally:
         conexion.close()
 
@@ -2320,13 +2330,31 @@ def _recepcionar_compra(
     valor_real: float,
     cantidad_cajones_rechazada: float | None = None,
     motivo_rechazo: str | None = None,
-) -> str | None:
-    """La escritura de la recepción, con el cursor abierto. Ver recepcionar_compra.
+) -> tuple[str | None, int | None]:
+    """La escritura de la recepción, con el cursor abierto. Devuelve (aviso, numero_de_guia).
 
-    Existe por la misma razón que `_crear_reproceso`: la compra que llega ya
-    armada en caja nuestra tiene que recepcionarse Y cargar su guía R en la
-    MISMA transacción, y si el cuerpo estuviera copiado las dos recepciones
-    se separarían sin que nadie lo note.
+    ACÁ SE DISPARA LA GUÍA R EN ORIGEN, y por eso este cuerpo está separado
+    de `recepcionar_compra`: es el único lugar por donde pasan TODAS las
+    recepciones —la normal y la del rechazo parcial—, así que la guía sale
+    sola en las dos sin escribir la regla dos veces. Con rechazo parcial se
+    arma por los bultos ACEPTADOS, que ya vienen en cantidad_cajones_real:
+    no hay nada especial que agregar para ese caso.
+
+    QUIÉN DECIDE que viene armada es el COMPRADOR, al cargar la compra
+    (`compras.ficha_en_origen_id`). El depósito no elige nada: ve el aviso y
+    recibe. Antes esto era un botón en Recepción y le pedía al operario una
+    decisión comercial que no había tomado — él no fue al puesto ni mandó
+    las cajas.
+
+    LA GUÍA VA EN LA MISMA TRANSACCIÓN que la recepción, y si no se puede
+    cargar NO SE RECIBE. Es a propósito: una compra recepcionada sin su guía
+    deja el lote crudo y la ficha sin sus cajas. Quien llama traduce el
+    motivo a la pantalla — nunca se traga.
+
+    El lote de esta compra está entero por construcción: nace en esta misma
+    transacción, así que nadie pudo haber tomado de él todavía. Por eso acá
+    no hace falta la guarda de `dependencias_del_lote_de_compra`, que sí va
+    a hacer falta el día que se cargue una guía sobre una compra vieja.
     """
     cursor.execute(
         """
@@ -2368,7 +2396,77 @@ def _recepcionar_compra(
         ),
     )
 
-    return _auto_retirar_si_corresponde(cursor, compra_id)
+    aviso = _auto_retirar_si_corresponde(cursor, compra_id)
+    return aviso, _guia_en_origen_si_corresponde(cursor, compra_id)
+
+
+def _guia_en_origen_si_corresponde(cursor, compra_id: int) -> int | None:
+    """Si esta compra vino YA ARMADA en caja nuestra, carga su guía R. Devuelve el número, o None.
+
+    EL CONSUMO VA DIRIGIDO A SU PROPIA COMPRA, y es lo más delicado del
+    camino. Sin dirigirlo decide el FIFO, que toma el lote MÁS VIEJO: con un
+    cajón viejo del mismo artículo en el depósito, la guía se comería el
+    cajón y dejaría como lote crudo la caja que llegó armada — el resultado
+    OPUESTO al del mundo, y sin descuadrar ningún total. Medido.
+
+    Por qué CONSUME en vez de producir y listo: la compra recién
+    recepcionada ya sumó +N al stock. Una guía que produjera sin consumir
+    (como las 'inicial' del corte) dejaría el artículo con 2N. Toma N y
+    produce N —neto cero— y lo único que cambia es que el lote pasa de crudo
+    a trabajado, que es lo que la pared del armado necesita para que esas
+    cajas salgan de su ficha.
+
+    La fecha se LEE de la compra recién escrita y no se calcula acá: tiene
+    que ser la misma que el FIFO le pone a su lote, o el freno busca el lote
+    un día antes de que exista.
+    """
+    cursor.execute(
+        f"""
+        SELECT c.articulo_id, c.ficha_en_origen_id, c.cantidad_cajones_real,
+               {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='c.procesada_el')},
+               f.articulo_id, f.cliente_id
+        FROM compras c
+        LEFT JOIN fichas_logistica f ON f.id = c.ficha_en_origen_id
+        WHERE c.id = %s
+        """,
+        (compra_id,),
+    )
+    # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None y
+    # no distinguiría "no existe" de "existe" (corolario 27).
+    fila = cursor.fetchone()
+    if fila is None:
+        raise ValueError("Esa compra no existe.")
+    articulo_id, ficha_id, bultos, fecha, ficha_articulo, ficha_cliente = fila
+    if ficha_id is None:
+        return None
+
+    # La guarda va donde se ESCRIBE. Una ficha de otro artículo inventaría
+    # cajas que no existen y el Cotejo mostraría un rojo imposible de
+    # explicar — mismo motivo que en asignar_ficha_a_reproceso.
+    if ficha_articulo != articulo_id:
+        raise ValueError(
+            "La ficha marcada en esta compra es de otro artículo: no se puede armar la guía R."
+        )
+
+    bultos = float(bultos or 0)
+    if bultos <= 0:
+        raise ValueError("Esta compra viene armada pero se recepcionó con cero bultos.")
+
+    return _crear_reproceso(
+        cursor,
+        articulo_id=articulo_id,
+        bultos_tomados=bultos,
+        bultos_primera=bultos,
+        bultos_segunda=0,
+        bultos_merma=0,
+        fecha_operacion=fecha,
+        cliente_id=ficha_cliente,
+        ficha_id=ficha_id,
+        # DIRIGIDO a su propia compra. Ver el docstring.
+        reparto=[{"tipo_lote": "guia", "origen_id": compra_id, "bultos": bultos}],
+        tipo="en_origen",
+        compra_origen_id=compra_id,
+    )
 
 
 # La fecha del lote de una compra, tal como la arma la consulta de lotes de
@@ -2379,117 +2477,6 @@ def _recepcionar_compra(
 # está ahí. Lo cuida
 # `test_la_fecha_de_la_guia_en_origen_sale_de_la_MISMA_expresion_que_el_lote`.
 _SQL_FECHA_DEL_LOTE_DE_COMPRA = "({col} AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
-
-
-def recepcionar_compra_en_caja_propia(
-    compra_id: int,
-    cantidad_cajones_real: float,
-    valor_real: float,
-    ficha_id: int,
-) -> tuple[int, str | None]:
-    """La compra llegó YA ARMADA en caja nuestra: se recepciona y se carga su guía R sola.
-
-    Devuelve (numero_de_guia, aviso_de_retiro).
-
-    El puesto reenvasó en NUESTRA caja antes de entregar. Esa transformación
-    ocurrió en origen, no en el galpón, así que pedirle al operario que cargue
-    la guía R a mano sería pedirle que documente un trabajo que no hizo — y
-    que además se acuerde de hacer dos cosas en orden.
-
-    LAS DOS COSAS VAN EN UNA SOLA TRANSACCIÓN, y no es prolijidad: partidas,
-    una falla en el medio deja la compra recepcionada SIN su guía, o sea el
-    lote crudo y la ficha sin sus cajas. Y nada avisaría, porque la compra
-    quedaría perfecta.
-
-    LA GUÍA CONSUME SU PROPIA COMPRA, y esto es lo más delicado de todo el
-    camino. Sin dirigir el consumo decide el FIFO, que toma el lote MÁS VIEJO:
-    con un cajón viejo del mismo artículo en el depósito, la guía se comería
-    el cajón y dejaría como lote crudo la caja que llegó armada — el resultado
-    OPUESTO al del mundo, y sin descuadrar ningún total. Medido antes de
-    escribir esto (propuesta_fifo real, tres escenarios). Con un artículo sin
-    stock previo anda igual de bien de las dos formas, así que el caso que lo
-    distingue lleva stock viejo a propósito.
-
-    Por qué CONSUME en vez de producir y listo: la compra recepcionada ya sumó
-    +N al stock. Una guía que produjera sin consumir (como las 'inicial' del
-    corte) dejaría el artículo con 2N. Toma N y produce N —neto cero— y lo
-    único que cambia es que el lote pasa de crudo a trabajado, que es lo que
-    la pared del armado necesita para que esas cajas salgan de su ficha.
-
-    El freno de `_crear_reproceso` corre igual que siempre y no puede saltar:
-    la compra es del día, entera, y las salidas del mismo día no cuentan. Esa
-    misma asimetría es la que hace que el freno NO pueda atajar dos guías
-    sobre la misma compra —la segunda ve el lote entero— y por eso el candado
-    es el índice único de la base, no una guarda de acá.
-
-    El cliente sale de la FICHA: una compra tiene proveedor, no cliente.
-    """
-    conexion = obtener_conexion()
-    try:
-        with conexion.cursor() as cursor:
-            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es
-            # None y no distinguiría "no existe" de "existe" (corolario 27).
-            cursor.execute("SELECT articulo_id, estado FROM compras WHERE id = %s", (compra_id,))
-            compra = cursor.fetchone()
-            if compra is None:
-                raise ValueError("Esa compra no existe.")
-            articulo_id, estado = compra
-            if estado == "recepcionado":
-                raise ValueError("Esa compra ya está recepcionada.")
-
-            cursor.execute(
-                "SELECT articulo_id, cliente_id FROM fichas_logistica WHERE id = %s",
-                (ficha_id,),
-            )
-            ficha = cursor.fetchone()
-            if ficha is None:
-                raise ValueError("Esa ficha no existe.")
-            if ficha[0] != articulo_id:
-                raise ValueError("Esa ficha es de otro artículo: no puede ser la de esta compra.")
-            cliente_id = ficha[1]
-
-            aviso = _recepcionar_compra(cursor, compra_id, cantidad_cajones_real, valor_real)
-
-            # La fecha se LEE de la compra recién escrita, no se calcula acá:
-            # tiene que ser la misma que el FIFO le pone a su lote.
-            cursor.execute(
-                f"SELECT {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='procesada_el')}"
-                " FROM compras WHERE id = %s",
-                (compra_id,),
-            )
-            fecha_operacion = cursor.fetchone()[0]
-
-            bultos = float(cantidad_cajones_real)
-            try:
-                reproceso_id = _crear_reproceso(
-                    cursor,
-                    articulo_id=articulo_id,
-                    bultos_tomados=bultos,
-                    bultos_primera=bultos,
-                    bultos_segunda=0,
-                    bultos_merma=0,
-                    fecha_operacion=fecha_operacion,
-                    cliente_id=cliente_id,
-                    ficha_id=ficha_id,
-                    # DIRIGIDO a su propia compra. Ver el docstring: sin esto
-                    # el FIFO se lleva el cajón más viejo.
-                    reparto=[{"tipo_lote": "guia", "origen_id": compra_id, "bultos": bultos}],
-                    tipo="en_origen",
-                    compra_origen_id=compra_id,
-                )
-            except psycopg2.errors.UniqueViolation as error:
-                # Decide la base y el código traduce. Si el constraint que
-                # rechazó no es el que conocemos, eso SE DICE en vez de
-                # tragarse: es la señal de que las dos reglas se separaron.
-                if error.diag.constraint_name != "reprocesos_una_guia_por_compra":
-                    raise
-                raise ValueError(
-                    "Esta compra ya generó su guía R en origen. Si está mal, anulá esa guía primero."
-                ) from error
-        conexion.commit()
-        return reproceso_id, aviso
-    finally:
-        conexion.close()
 
 
 def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None = None) -> dict | None:
@@ -9164,10 +9151,10 @@ def _crear_reproceso(
 
     Existe porque hay DOS caminos que cargan una guia R normal y los dos
     tienen que frenar igual: `crear_reproceso`, que abre su propia conexion,
-    y `recepcionar_compra_en_caja_propia`, que necesita recepcionar y cargar
-    la guia en la MISMA transaccion. Copiar el cuerpo seria la regla escrita
-    dos veces, con los dos frenos adentro — y las dos copias se separan sin
-    que nadie lo note.
+    y `_recepcionar_compra`, que carga la guia R en origen en la MISMA
+    transaccion que la recepcion. Copiar el cuerpo seria la regla escrita dos
+    veces, con los dos frenos adentro — y las dos copias se separan sin que
+    nadie lo note.
 
     `tipo` y `compra_origen_id` los usa SOLO el camino en origen. El CHECK
     de la base (db/compra_en_caja_nuestra_2c_uno_a_uno.sql) es el que exige

@@ -287,7 +287,6 @@ from app.db import (
     deficit_de_cajas_por_ficha,
     obtener_uso_storage_bucket,
     recepcionar_compra,
-    recepcionar_compra_en_caja_propia,
     rechazar_compra,
     registrar_costo_envase,
     stock_de_porcion,
@@ -6900,20 +6899,26 @@ def _renderizar_pantalla_recepcion(
 
     guias = _agrupar_pendientes_por_guia(compras_pendientes)
 
-    # LAS FICHAS PARA "ya viene armada en caja nuestra", POR ARTICULO y no por
-    # cliente: una compra tiene proveedor, no cliente. Es el mismo caso que
-    # describe el docstring de esa función — el que carga está mirando la caja
-    # en el piso y ya sabe de quién es.
+    # EL NOMBRE de la ficha de las compras que vienen ya armadas, solo para el
+    # AVISO: acá no se elige nada. Sale de la misma función que nombra las
+    # cajas en el resto del sistema — si esta pantalla armara el nombre por su
+    # cuenta, dos pantallas llamarían distinto a la misma pila.
     try:
         fichas_por_articulo = _cajas_para_elegir_por_articulo()
     except Exception:
-        # Que no se pueda leer el catálogo de fichas NO puede dejar sin
-        # recepcionar: el camión está esperando. Sin fichas el camino en
-        # origen no se ofrece y los otros cuatro siguen andando.
+        # Que no se pueda leer el catálogo NO puede dejar sin recepcionar: el
+        # camión está esperando. Sin catálogo el aviso sale sin el nombre de
+        # la caja, que es peor que con nombre y mucho mejor que no recibir.
         fichas_por_articulo = {}
     for guia in guias:
         for compra in guia["compras"]:
-            compra["fichas_elegibles"] = fichas_por_articulo.get(compra["articulo_id"], [])
+            ficha_id = compra["ficha_en_origen_id"]
+            compra["viene_armada"] = ficha_id is not None
+            compra["caja_en_origen"] = next(
+                (f["nombre"] for f in fichas_por_articulo.get(compra["articulo_id"], [])
+                 if f["id"] == ficha_id),
+                None,
+            )
     # La fecha de cada guía con marca cuando tiene más de un día (mismo
     # criterio que Retirar Mercadería): el que recepciona tiene que ver de
     # cuándo es la partida — si es de anteayer, que salte a la vista.
@@ -6938,6 +6943,43 @@ def _renderizar_pantalla_recepcion(
 @app.get("/deposito/recepcion")
 def ver_recepcion(request: Request, aviso: str | None = None, procesado: str | None = None):
     return _renderizar_pantalla_recepcion(request, aviso=aviso, recien_procesado_id=_id_opcional_desde_query(procesado))
+
+
+def _aviso_de_recepcion(aviso_retiro: str | None, numero_guia: int | None) -> str | None:
+    """Junta el aviso del retiro con el de la guía R que salió sola, si salió.
+
+    El número de guía SE MUESTRA: el operario no eligió nada —la marca la puso
+    el comprador al cargar la compra— así que si no se lo decimos, no tiene
+    cómo saber que se cargó. Y es el número que va a necesitar el día que haya
+    que anularla.
+    """
+    partes = [p for p in (aviso_retiro, f"Venía armada: se cargó sola la guía R{numero_guia}."
+                          if numero_guia else None) if p]
+    return " ".join(partes) or None
+
+
+def _error_de_la_guia_en_origen(error: Exception) -> str | None:
+    """Traduce a algo legible los DOS frenos que pueden impedir la guía en origen.
+
+    Si alguno salta, la recepción entera se deshace (van en la misma
+    transacción), así que la pantalla tiene que decir POR QUÉ no se recibió —
+    un 500 mudo deja al operario con el camión en la puerta y sin saber qué
+    hacer. El del corte es el más probable el día que se cargue una compra
+    vieja: esa mercadería ya está adentro de la foto del corte.
+    """
+    if isinstance(error, ReprocesoAnteriorAlCorte):
+        return (
+            "Esta compra viene armada en caja nuestra, pero su fecha es anterior al corte "
+            "del modelo, así que no se le puede cargar la guía R (esa mercadería ya está "
+            "contada en el stock inicial). No se recepcionó: sacale la marca a la compra "
+            "o pedí ayuda antes de recibirla."
+        )
+    if isinstance(error, StockInsuficienteParaReproceso):
+        return (
+            f"Esta compra viene armada en caja nuestra y no se pudo cargar su guía R: "
+            f"{error}. No se recepcionó."
+        )
+    return None
 
 
 def _url_recepcion_con_procesado(compra_id: int, aviso_retiro: str | None) -> str:
@@ -7028,65 +7070,18 @@ def recepcionar_compra_ruta(
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
 
     try:
-        aviso_retiro = recepcionar_compra(compra_id, cajones_valor, valor_real)
+        aviso_retiro, numero_guia = recepcionar_compra(compra_id, cajones_valor, valor_real)
     except Exception as error_db:
+        motivo = _error_de_la_guia_en_origen(error_db)
+        if motivo:
+            return _renderizar_pantalla_recepcion(request, error=motivo, status_code=400)
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)
-
-
-@app.post("/deposito/recepcion/{compra_id}/en-caja-propia")
-def recepcionar_en_caja_propia_ruta(
-    request: Request,
-    compra_id: int,
-    cantidad_cajones_real: str = Form(""),
-    cantidad_total_real: str = Form(""),
-    ficha_id: str = Form(""),
-):
-    """La mercadería llegó YA ARMADA en caja nuestra: recepción + guía R, juntas.
-
-    El puesto reenvasó en origen. Cargar la guía R a mano sería pedirle al
-    operario que documente un trabajo que no hizo, y que se acuerde de hacer
-    dos cosas en orden — que es como se pierden.
-
-    La ficha se valida acá lo mínimo (que venga un número) y de verdad ABAJO,
-    en `recepcionar_compra_en_caja_propia`: la guarda va donde se ESCRIBE, no
-    donde se muestra. Un formulario armado a mano no ve ningún `<select>`.
-    """
-    error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
-    if not error:
-        error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
-    if not error and not (ficha_id or "").strip().isdigit():
-        error = "Elegí a qué ficha van las cajas que llegaron armadas."
-
-    if error:
-        return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
-
-    try:
-        numero_guia, aviso_retiro = recepcionar_compra_en_caja_propia(
-            compra_id, cajones_valor, valor_real, int(ficha_id)
-        )
-    except ValueError as error_regla:
-        return _renderizar_pantalla_recepcion(request, error=str(error_regla), status_code=400)
-    except StockInsuficienteParaReproceso as error_freno:
-        # No debería pasar —la compra es del día y está entera— pero si pasa,
-        # el motivo se muestra en vez de tragarse: sería la señal de que el
-        # lote de la compra no quedó donde el FIFO lo busca.
-        return _renderizar_pantalla_recepcion(
-            request, error=f"No se pudo armar la guía R de esta compra: {error_freno}", status_code=400
-        )
-    except Exception as error_db:
-        return _renderizar_pantalla_recepcion(
-            request, error=f"No se pudo recepcionar la compra: {error_db}", status_code=500
-        )
-
-    aviso = f"Recepcionada en caja nuestra. Se cargó sola la guía R{numero_guia}."
-    if aviso_retiro:
-        aviso = f"{aviso} {aviso_retiro}"
     return RedirectResponse(
-        url=_url_recepcion_con_procesado(compra_id, aviso), status_code=303
+        url=_url_recepcion_con_procesado(compra_id, _aviso_de_recepcion(aviso_retiro, numero_guia)),
+        status_code=303,
     )
 
 
@@ -7129,7 +7124,7 @@ def rechazo_parcial_compra_ruta(
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
 
     try:
-        aviso_retiro = recepcionar_compra(
+        aviso_retiro, numero_guia = recepcionar_compra(
             compra_id,
             cajones_aceptados,
             valor_real,
@@ -7137,11 +7132,17 @@ def rechazo_parcial_compra_ruta(
             motivo_rechazo=motivo_rechazo.strip() or None,
         )
     except Exception as error_db:
+        motivo = _error_de_la_guia_en_origen(error_db)
+        if motivo:
+            return _renderizar_pantalla_recepcion(request, error=motivo, status_code=400)
         return _renderizar_pantalla_recepcion(
             request, error=f"No se pudo guardar el rechazo parcial: {error_db}", status_code=500
         )
 
-    return RedirectResponse(url=_url_recepcion_con_procesado(compra_id, aviso_retiro), status_code=303)
+    return RedirectResponse(
+        url=_url_recepcion_con_procesado(compra_id, _aviso_de_recepcion(aviso_retiro, numero_guia)),
+        status_code=303,
+    )
 
 
 @app.post("/deposito/recepcion/{compra_id}/no-ingreso")
