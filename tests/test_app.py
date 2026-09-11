@@ -2037,6 +2037,99 @@ def test_ver_buscar_compras_con_resultados_muestra_boton_exportar():
     assert "/compras/buscar/exportar-excel?fecha_desde=2026-08-01&fecha_hasta=2026-08-06" in respuesta.text
 
 
+def test_el_borrado_multiple_anda_en_LAS_DOS_presentaciones():
+    """En celular Buscar Compras deja de ser tabla y pasa a tarjetas, pero es
+    UNA sola plantilla: el mismo marcado con otro CSS. Por eso el tildado no
+    puede cambiar entre las dos, y esto lo fija.
+
+    Lo que hace que sobreviva es `form="form-borrado-multiple"`: una relación
+    del DOCUMENTO (HTML5), no del árbol. El CSS mueve cajas; no toca a qué
+    form pertenece un input ni qué se manda. Si alguien mete los checkboxes
+    adentro de un `<form>` de verdad, o les saca el atributo, el borrado se
+    rompe en las dos y este test cae.
+
+    LO QUE ESTE TEST NO PUEDE VER (corolario 32): el atributo es la INTENCIÓN,
+    y el efecto lo decide el CSS, que pytest no corre. Que el checkbox se VEA
+    en 390px se verificó en el navegador el 11/09, tildando y leyendo el
+    FormData: en 390 y en 1200 devolvió los mismos ids.
+    """
+    with (
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/buscar?fecha_desde=2026-08-01&fecha_hasta=2026-08-06")
+
+    html = respuesta.text
+    # Cada fila manda SU id, y asociada al form por atributo.
+    for compra in COMPRAS_BUSQUEDA_DE_PRUEBA:
+        assert (
+            f'name="compra_id" value="{compra["id"]}" class="check-fila" form="form-borrado-multiple"'
+            in html
+        ), f"la compra {compra['id']} no manda su id al borrado múltiple"
+    # El form existe y está VACÍO a propósito (un <form> no anida otro).
+    assert 'id="form-borrado-multiple"' in html
+    # Y el botón se le asocia igual, porque tampoco está adentro.
+    assert 'form="form-borrado-multiple" class="boton boton-eliminar"' in html
+
+
+def test_el_seleccionar_todas_NO_se_esconde_en_celular():
+    """`#check-todas` vive en el `<thead>`, y la presentación de celular
+    esconde los rótulos de la cabecera. Un `thead { display: none }` pelado
+    se llevaba puesto el "seleccionar todas" — medido el 11/09: visible en
+    1200px, invisible en 390px. Nada avisaba: la tabla no se desbordaba, la
+    captura se veía prolija, y lo único que faltaba era una función que hoy
+    anda, en la presentación que más se usa.
+
+    Se lee el CSS y no el DOM porque el que decide acá es el CSS. Es una
+    aserción de TEXTO, con lo que eso vale (corolario 32): dice que la regla
+    que lo apagaba no está, no que se vea. Verificado en el navegador el
+    11/09 — en 390px `#check-todas` tiene rects, tilda las 3 filas y el
+    FormData vuelve con los 3 ids.
+    """
+    with (
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        html = cliente.get("/compras/buscar?fecha_desde=2026-08-01&fecha_hasta=2026-08-06").text
+
+    hoja = html.split("</style>")[0]
+    celular = hoja[hoja.index("@media (max-width: 700px)") :]
+    assert "thead { display: none; }" not in celular, (
+        "el @media apaga el <thead> entero y con él el 'seleccionar todas'"
+    )
+    # Lo que sí se esconde son los RÓTULOS, dejando la primera celda.
+    assert "thead th { display: none; }" in celular
+    assert "thead th:first-child {" in celular
+
+
+def test_exportar_NO_depende_de_lo_tildado():
+    """Exportar se lleva los FILTROS de la búsqueda, no la selección: sus
+    links son la misma URL con `fecha_desde`/`fecha_hasta`/`proveedor_id`/
+    `articulo_id`. Queda fijado porque es fácil suponer lo contrario —hay
+    checkboxes en la misma pantalla— y entonces se "arregla" algo que no
+    está roto, o se le echa la culpa al cambio de presentación.
+    """
+    with (
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        html = cliente.get(
+            "/compras/buscar?fecha_desde=2026-08-01&fecha_hasta=2026-08-06&proveedor_id=200"
+        ).text
+
+    for cual in ("pdf", "excel"):
+        assert (
+            f"/compras/buscar/exportar-{cual}?fecha_desde=2026-08-01"
+            "&fecha_hasta=2026-08-06&proveedor_id=200" in html
+        )
+    # Y no se cuelga del form del borrado, que es lo que se sospecharía.
+    exportar = html[html.index('id="boton-exportar"') - 400 : html.index('id="boton-exportar"') + 400]
+    assert "compra_id" not in exportar
+
+
 def test_ver_buscar_compras_fecha_invalida_muestra_error_y_usa_default():
     with (
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
