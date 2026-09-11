@@ -7002,8 +7002,22 @@ def _segunda_de_articulo(cursor, articulo_id: int, hasta=None) -> float:
     return _pool_segunda(*cursor.fetchone())
 
 
-def stock_deposito_por_articulo(hasta) -> list[dict]:
+def stock_deposito_por_articulo(hasta, articulo_id=None) -> list[dict]:
     """El stock del sistema por artículo (bultos) AL CIERRE DE `hasta`, calculado siempre.
+
+    `articulo_id` opcional acota a UNO, y filtra en el SELECT final y no
+    adentro de cada CTE. Es a propósito y tiene un costo dicho: las CTE
+    siguen agregando todo el catálogo, así que lo que se ahorra es el
+    armado de las filas y no el escaneo. Bajar el filtro a las ocho CTE
+    (cinco de las sumas más tres del pool de segunda) significa ocho
+    parámetros más en un orden posicional, y un orden posicional mal
+    escrito no falla: devuelve OTRO artículo. Medido el 10/09, además, el
+    costo de esta consulta es por LLAMADA y no por fila —mover el corte de
+    38 días a 5 no movió el tiempo—, así que el escaneo no era lo caro.
+
+    El paréntesis del WHERE no es cosmético: sin él, el `AND a.id` se
+    ataría solo al último `OR` y la consulta traería medio catálogo.
+    
 
     `hasta` es obligatorio y no tiene default: es la única forma de que
     nadie escriba sin querer una consulta "de hoy" que en realidad suma
@@ -7077,12 +7091,15 @@ def stock_deposito_por_articulo(hasta) -> list[dict]:
                 LEFT JOIN segunda sg ON sg.articulo_id = a.id
                 LEFT JOIN segunda_rechazo sr ON sr.articulo_id = a.id
                 LEFT JOIN remitida rm ON rm.articulo_id = a.id
-                WHERE e.total IS NOT NULL OR s.total IS NOT NULL
+                WHERE (e.total IS NOT NULL OR s.total IS NOT NULL
                    OR r.total IS NOT NULL OR aj.total IS NOT NULL
-                   OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL
+                   OR rp.articulo_id IS NOT NULL OR sr.articulo_id IS NOT NULL)
+                  {filtro_articulo_final}
                 ORDER BY a.nombre
-                """,
-                (hasta,),
+                """.format(
+                    filtro_articulo_final="AND a.id = %s" if articulo_id else ""
+                ),
+                (hasta,) + ((articulo_id,) if articulo_id else ()),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
@@ -8251,6 +8268,35 @@ def fecha_conteo_stock_mas_cercana(fecha):
         conexion.close()
 
 
+# LA CLAVE DE UNA PORCIÓN, y son TRES cosas. La segunda y los sueltos tienen
+# los dos `ficha_id` nulo: con dos, el conteo de una pisa al de la otra.
+_CLAVE_PORCION_SQL = "c.articulo_id, c.ficha_id, c.es_segunda"
+
+
+def _ordenar_porciones_contadas(filas: list[dict]) -> list[dict]:
+    """Cada artículo junto, y adentro el orden en que se recorre el depósito.
+
+    Los sueltos primero (0), después las cajas de cada ficha (1) y la segunda
+    al final (2) — el MISMO `orden` que usa `_porciones_de_deposito` para el
+    Remanente. Lo usan el Cotejo y la lista de "Contado hoy": escrito dos
+    veces, el día que uno cambie las dos pantallas muestran el mismo conteo
+    en distinto lugar y parece que hay dos conteos.
+
+    Ordenar por HORA —que es lo que hacía "Contado hoy" hasta el 11/09— deja
+    "Lima Caja Día %" arriba y "Lima" quince renglones abajo, porque se
+    contaron en momentos distintos. Para leer un conteo hay que ver juntas
+    las porciones del mismo artículo; la hora se muestra, pero no manda.
+    """
+    return sorted(
+        filas,
+        key=lambda fila: (
+            fila["articulo_nombre"],
+            2 if fila["es_segunda"] else (1 if fila["ficha_id"] else 0),
+            fila["ficha_nombre"] or "",
+        ),
+    )
+
+
 def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     """Conteos de un día para la lista "Contado hoy" del operario.
 
@@ -8275,13 +8321,29 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
     cuál es cada uno, "Banana 40 / Banana 12" no se entiende. Sin
     `es_segunda`, el conteo de segunda se leería como uno de sueltos, que es
     la misma confusión que el DISTINCT ON tenía adentro.
+
+    UN RENGLÓN POR PORCIÓN, EL MÁS NUEVO DEL DÍA (11/09). Antes traía todos
+    y ordenaba por hora, así que un conteo corregido aparecía DOS VECES —
+    "Tomate Redondo Segunda 7 a las 15:53" y "5 a las 15:51"— y se leía como
+    que se contó dos veces. No se contó dos veces: se corrigió, y corregir
+    un conteo es cargarlo de nuevo (no hay UPDATE ni anulación de conteos,
+    verificado). El viejo queda tapado y mostrarlo es mostrar algo que ya
+    no vale.
+
+    Y es el MISMO criterio que el Cotejo, que ya tomaba el más nuevo por
+    `creado_en`: con la lista mostrando dos y el Cotejo usando uno eran dos
+    respuestas a la misma pregunta. La diferencia que queda es de VENTANA y
+    es a propósito: el Cotejo toma el último de la historia hasta una fecha
+    (le importa el estado), esta lista el último DE ESE DÍA (le importa la
+    jornada).
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.cantidad, c.creado_en, a.nombre AS articulo_nombre,
+                SELECT DISTINCT ON (""" + _CLAVE_PORCION_SQL + """)
+                       c.id, c.cantidad, c.creado_en, a.nombre AS articulo_nombre,
                        c.ficha_id, c.es_segunda,
                        COALESCE(NULLIF(BTRIM(f.nombre_cliente), ''), fa.nombre) AS ficha_nombre,
                        cl.nombre AS ficha_cliente
@@ -8291,12 +8353,13 @@ def listar_conteos_stock_de_fecha(fecha) -> list[dict]:
                 LEFT JOIN articulos fa ON fa.id = f.articulo_id
                 LEFT JOIN clientes cl ON cl.id = f.cliente_id
                 WHERE c.creado_en >= ((%s::date)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') AND c.creado_en < ((%s::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')
-                ORDER BY c.creado_en DESC
+                ORDER BY """ + _CLAVE_PORCION_SQL + """, c.creado_en DESC
                 """,
                 (fecha, fecha),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
-            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+            filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+        return _ordenar_porciones_contadas(filas)
     finally:
         conexion.close()
 
@@ -8357,15 +8420,8 @@ def listar_ultimos_conteos_stock(hasta=None) -> list[dict]:
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-        # Cada artículo junto, y adentro los sueltos primero: es la porción
-        # más grande y la que más se cuenta.
-        # Cada artículo junto: los sueltos, después sus fichas, y la segunda
-        # al final — es el mismo orden en que se recorre el depósito, y el
-        # mismo `orden` que usa _porciones_de_deposito (0, 1, 2).
-        filas.sort(key=lambda fila: (fila["articulo_nombre"],
-                                     2 if fila["es_segunda"] else (1 if fila["ficha_id"] else 0),
-                                     fila["ficha_nombre"] or ""))
-        return filas
+        # El MISMO ordenador que "Contado hoy": ver _ordenar_porciones_contadas.
+        return _ordenar_porciones_contadas(filas)
     finally:
         conexion.close()
 

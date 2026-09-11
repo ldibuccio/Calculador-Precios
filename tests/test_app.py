@@ -14552,10 +14552,117 @@ EXTRACTO_EVENTOS = {
 }
 
 
+def _evolucion(url, eventos=None, saldos=None):
+    """La evolución día por día. `saldos` es {fecha: bultos} de la porción.
+
+    `stock_deposito_por_articulo` devuelve el total del artículo por día, y
+    la pantalla arma las porciones desde ahí: así el test ejercita la MISMA
+    cadena que producción (sumas → porciones → extracto) y no una lista de
+    porciones inventada.
+    """
+    saldos = saldos or {}
+    def filas_del_dia(hasta, articulo_id=None):
+        return [{"articulo_id": 1, "nombre": "EJEMPLO Uno", "grupo": None,
+                 "stock": saldos.get(hasta, 0.0), "segunda": 0.0}]
+    with (
+        patch("app.main.stock_deposito_por_articulo", side_effect=filas_del_dia),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        patch("app.main.total_reingresos_rechazo", return_value=0),
+        patch("app.main.listar_ultimos_conteos_stock", return_value=[]),
+        patch("app.main.deficit_de_cajas_por_ficha", return_value={}),
+        patch("app.main.eventos_de_stock_del_dia",
+              return_value=eventos or {"compras": [], "reprocesos": [], "armados": [],
+                                       "movimientos": [], "remitos": []}),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 11)),
+    ):
+        return cliente.get(url)
+
+
+def test_la_evolucion_CIERRA_POR_CONSTRUCCION_dia_contra_dia():
+    """El invariante de la pantalla, y la razón de reusar _remanente_a_fecha.
+
+    El "quedó" de un día TIENE que ser el "venía" del siguiente, y no porque
+    dos cuentas den igual: porque son la MISMA llamada. Una consulta propia
+    que sumara los movimientos por día sería la quinta versión de la cuenta
+    de stock, y las cuatro que hay ya se separaron entre sí una vez cada una.
+
+    Los saldos van distintos día a día a propósito: con todos iguales, una
+    pantalla que mostrara siempre el mismo número pasaría el test.
+    """
+    saldos = {date(2026, 9, 11) - timedelta(days=n): 100.0 - n * 7 for n in range(0, 6)}
+    respuesta = _evolucion(
+        "/administracion/stock/evolucion?articulo_id=1&dias=5", saldos=saldos)
+    assert respuesta.status_code == 200
+
+    import re as _re
+    puntas = _re.findall(r"Venía <b>([\d,.-]+)</b> · Quedó <b>([\d,.-]+)</b>", respuesta.text)
+    assert len(puntas) == 5
+    # Vienen del más nuevo al más viejo: lo de hoy es lo que se viene a ver.
+    assert puntas[0][1] == "100"
+    # Y encadenan: el "venía" de cada uno es el "quedó" del anterior.
+    for nuevo, viejo in zip(puntas, puntas[1:]):
+        assert nuevo[0] == viejo[1], (nuevo, viejo)
+
+
+def test_la_evolucion_topea_el_rango_aunque_pidan_mas_por_la_URL():
+    """El tope es el DISEÑO: cada día son seis consultas encadenadas. Llega
+    por query string, así que alguien puede escribir 400 y colgar la
+    pantalla — se recorta en el servidor, no en el `max` del input."""
+    saldos = {date(2026, 9, 11) - timedelta(days=n): 10.0 for n in range(0, 40)}
+    respuesta = _evolucion(
+        "/administracion/stock/evolucion?articulo_id=1&dias=400", saldos=saldos)
+    assert respuesta.status_code == 200
+    assert respuesta.text.count('class="dia-fecha"') == 15
+    # Y una basura en el parámetro cae al tope, no revienta.
+    assert _evolucion("/administracion/stock/evolucion?articulo_id=1&dias=abc",
+                      saldos=saldos).status_code == 200
+
+
+def test_la_evolucion_muestra_SIN_EXPLICAR_por_dia_y_solo_cuando_no_es_cero():
+    """Por día y no por rango: un día suelto es ruido, el mismo signo varios
+    días seguidos es un bug — y eso solo se ve día por día. Un total del
+    rango sería un número que puede ser quince chicos o uno grande.
+
+    Y solo cuando NO es cero: con quince días y cuatro porciones, un renglón
+    en cero todos los días es ruido que tapa al que importa.
+    """
+    # Día a día el saldo baja 7 sin que haya un solo evento que lo explique.
+    saldos = {date(2026, 9, 11) - timedelta(days=n): 100.0 - n * 7 for n in range(0, 4)}
+    # DESPUÉS del </style>: el comentario del CSS nombra "Sin explicar" para
+    # decir por qué se pinta distinto, y contarlo sobre el HTML entero suma
+    # el comentario. Es el mismo tropiezo que el de la barra con "Stock".
+    cuerpo = _evolucion(
+        "/administracion/stock/evolucion?articulo_id=1&dias=3",
+        saldos=saldos).text.split("</style>")[-1]
+    assert cuerpo.count("Sin explicar") == 3
+    assert cuerpo.count('class="sin-explicar"') == 3
+
+    # Con el saldo quieto y sin eventos, no hay nada sin explicar.
+    quietos = {date(2026, 9, 11) - timedelta(days=n): 50.0 for n in range(0, 4)}
+    cuerpo = _evolucion(
+        "/administracion/stock/evolucion?articulo_id=1&dias=3",
+        saldos=quietos).text.split("</style>")[-1]
+    assert "Sin explicar" not in cuerpo
+    # Y un día quieto lo DICE, en vez de quedar con las dos puntas y nada.
+    assert cuerpo.count("Sin movimientos.") == 3
+
+
+def test_la_evolucion_sin_articulo_es_el_buscador_y_no_calcula_nada():
+    """Entrar desde el hub no puede disparar quince días de consultas."""
+    with patch("app.main._remanente_a_fecha") as mock_remanente:
+        respuesta = _evolucion("/administracion/stock/evolucion")
+    assert respuesta.status_code == 200
+    assert "Elegí un artículo" in respuesta.text
+    mock_remanente.assert_not_called()
+
+
 def _extracto(url, eventos=None):
     with (
         patch("app.main.stock_deposito_por_articulo",
-              side_effect=lambda hasta: REMANENTE_FILAS if hasta == date(2026, 9, 6) else [
+              side_effect=lambda hasta, articulo_id=None: REMANENTE_FILAS if hasta == date(2026, 9, 6) else [
                   dict(f, stock=float(f["stock"]) - 10) for f in REMANENTE_FILAS]),
         patch("app.main.cajas_armadas_por_ficha", return_value=REMANENTE_CAJAS),
         patch("app.main.listar_fichas_de_todos_los_clientes", return_value=REMANENTE_FICHAS),
@@ -14783,7 +14890,9 @@ def test_una_fecha_pedida_llega_a_LAS_TRES_cuentas_y_al_link_del_Excel():
         respuesta = cliente.get("/administracion/stock/remanente?fecha=2026-09-08")
 
     pedida = date(2026, 9, 8)
-    filas.assert_called_once_with(pedida)
+    # Con el artículo en None: la pantalla del Remanente los trae TODOS. El
+    # parámetro existe para la evolución día por día, que pide de a uno.
+    filas.assert_called_once_with(pedida, None)
     cajas.assert_called_once_with(pedida)
     reingresos.assert_called_once_with(pedida)
     cuerpo = respuesta.text.split("</style>")[-1]
@@ -19104,6 +19213,49 @@ def test_los_BULTOS_son_ENTEROS_en_las_dos_puertas_que_los_validan():
         assert valor is None and "decimales" in error, roto
         error, valor = _numero_form_o_cero(roto, "primera")
         assert valor is None and "decimales" in error, roto
+
+
+def test_los_TRES_campos_de_bultos_que_faltaban_tambien_rechazan_decimales():
+    """El conteo físico, los cajones reales y los bultos rechazados.
+
+    Quedaron afuera del cambio del 10/09 porque cada uno tiene su propio
+    validador: la regla vive en `_entero_o_error` y son CUATRO puertas, no
+    dos. Un bulto es una cosa contable en las cuatro.
+
+    Lo que NO entra acá y es a propósito: `cantidad_total_real` son KILOS
+    por cajón (16,5 es un dato real) y el ajuste de stock sigue aceptando
+    decimales porque es lo único que puede reparar un stock que ya quedó
+    fraccionario.
+    """
+    from app.main import _validar_cantidad_cajones_real, _validar_rechazo_parcial
+
+    assert _validar_cantidad_cajones_real("18")[0] is None
+    error, valor = _validar_cantidad_cajones_real("18.5")
+    assert valor is None and "decimales" in error
+
+    # Recepción parcial: llegados y rechazados, los dos bultos.
+    assert _validar_rechazo_parcial("20", "5")[0] is None
+    assert "decimales" in _validar_rechazo_parcial("20.5", "5")[0]
+    assert "decimales" in _validar_rechazo_parcial("20", "5.5")[0]
+
+    # Y el conteo físico, por la ruta real: el `step` del input es una
+    # sugerencia del navegador y la guarda va donde se ESCRIBE.
+    with (
+        patch("app.main.crear_conteo_stock") as mock_crear,
+        # La pantalla se vuelve a dibujar con el error, y para eso lee.
+        patch("app.main.listar_articulos", return_value=[]),
+        patch("app.main._fichas_por_articulo", return_value={}),
+        patch("app.main.listar_conteos_stock_de_fecha", return_value=[]),
+        patch("app.main.fecha_conteo_stock_mas_cercana", return_value=None),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/fisico",
+            data={"articulo_id": "1", "cantidad": "3.5", "que_conto": "sueltos"},
+            follow_redirects=False,
+        )
+    assert respuesta.status_code == 400
+    assert "decimales" in respuesta.text
+    mock_crear.assert_not_called()
 
 
 def test_la_guia_R_rechaza_los_decimales_DESDE_EL_SERVIDOR():

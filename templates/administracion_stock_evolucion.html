@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evolución del Stock</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  form.filtros label { display: block; font-size: 0.85rem; color: #444; margin-bottom: 0.25rem; }
+  form.filtros select,
+  form.filtros input {
+    width: 100%;
+    padding: 0.65rem;
+    margin-bottom: 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .boton-buscar {
+    width: 100%;
+    padding: 0.75rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  /* EL SELECTOR DE PORCIÓN COMO BOTONES Y NO COMO <select>: son dos o tres
+     por artículo y hay que poder ver TODAS de un vistazo para elegir. Un
+     select las esconde, y esconder la lista de pilas en la pantalla que
+     compara pilas es el defecto que esta pantalla viene a arreglar.
+     Envuelven en filas en 390px, nunca se desbordan al costado. */
+  .porciones { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .porciones a {
+    flex: 1 1 auto;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #334155;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+  }
+  .porciones a.elegida { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+  .ayuda { color: #888; font-size: 0.85rem; margin: 0.5rem 0 0; line-height: 1.45; }
+  .aviso {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+    padding: 0.7rem 0.85rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  /* UN DÍA ES UNA TARJETA, no una fila de tabla. Con saldo de arranque,
+     movimientos y cierre, una tabla necesita cuatro columnas y en 390px se
+     desborda al costado — y la regla del proyecto dice de aprovechar el
+     vertical, que es lo que sobra. */
+  .dia { border-top: 1px solid #eee; padding: 0.8rem 0 0; margin-top: 0.8rem; }
+  .dia:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .dia-cabecera {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .dia-fecha { font-weight: 800; font-size: 1rem; }
+  .dia-saldos { font-size: 0.9rem; color: #475569; white-space: nowrap; }
+  .dia-saldos b { color: #1e293b; font-variant-numeric: tabular-nums; }
+  .movimientos { margin: 0.5rem 0 0; padding: 0; list-style: none; }
+  .movimientos li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+    font-size: 0.9rem;
+  }
+  .movimientos .bultos { white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .movimientos .suma { color: #15803d; }
+  .movimientos .resta { color: #b91c1c; }
+  /* "Sin explicar" NO se pinta como un movimiento más: es lo que la pantalla
+     no pudo explicar, y tiene que saltar. Un día suelto es ruido; el mismo
+     signo varios días seguidos es un bug, y para verlo hay que distinguirlo
+     de los renglones normales. */
+  .movimientos li.sin-explicar {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 8px;
+    padding: 0.45rem 0.6rem;
+    margin-top: 0.3rem;
+    color: #9a3412;
+    font-weight: 600;
+  }
+  .quieto { color: #94a3b8; font-size: 0.9rem; font-style: italic; margin: 0.4rem 0 0; }
+  .vacio { color: #888; font-style: italic; margin: 0; }
+  .volver { display: block; margin-top: 0.75rem; text-align: center; color: #888; font-size: 0.85rem; text-decoration: none; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "administracion" %}
+  {% set barra_titulo = "Evolución" %}
+  {% set barra_atras = "/administracion/stock/remanente" %}
+  {% include "_barra_navegacion.html" %}
+
+  {% if aviso %}<div class="aviso">{{ aviso }}</div>{% endif %}
+
+  <div class="tarjeta">
+    <form class="filtros" method="get" action="/administracion/stock/evolucion">
+      <label for="articulo_id">Artículo</label>
+      <select id="articulo_id" name="articulo_id">
+        <option value="">Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="hasta">Hasta el día</label>
+      <input type="date" id="hasta" name="hasta" value="{{ fin.isoformat() }}">
+
+      <label for="dias">Cuántos días (máximo {{ tope }})</label>
+      <input type="number" id="dias" name="dias" min="1" max="{{ tope }}" step="1"
+             inputmode="numeric" value="{{ dias }}">
+
+      <button type="submit" class="boton-buscar">Ver</button>
+    </form>
+    {# EL TOPE ES EL DISEÑO Y SE DICE POR QUÉ: cada día son seis consultas y
+       la pantalla las encadena. Un tope sin explicación se lee como que
+       falta algo. #}
+    <p class="ayuda">Cada día se calcula con la misma cuenta que dibuja el Remanente, así que
+      <strong>el saldo de cierre de un día es exactamente el de arranque del siguiente</strong>.
+      Por eso el máximo es {{ tope }} días: no es un recorte de la información, es lo que
+      cuesta calcularla bien.</p>
+  </div>
+
+  {% if not articulo_id %}
+  <div class="tarjeta"><p class="vacio">Elegí un artículo para ver cómo se movió, día por día.</p></div>
+  {% elif not porciones %}
+  <div class="tarjeta">
+    <p class="vacio">Este artículo no tuvo ninguna pila con stock en el rango pedido.</p>
+  </div>
+  {% else %}
+
+  <div class="tarjeta">
+    <h2>Qué pila</h2>
+    {# Las porciones del RANGO y no las de hoy: una que se vació ayer tiene
+       que poder mirarse, que es justo el día que interesa. #}
+    <div class="porciones">
+      {% for p in porciones %}
+      <a class="{% if p.elegida %}elegida{% endif %}"
+         href="/administracion/stock/evolucion?articulo_id={{ articulo_id }}&hasta={{ fin.isoformat() }}&dias={{ dias }}{% if p.ficha_id %}&ficha_id={{ p.ficha_id }}{% endif %}{% if p.es_segunda %}&segunda=1{% endif %}">{{ p.nombre }}</a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>{{ nombre }}</h2>
+    {% for f in filas %}
+    <div class="dia">
+      <div class="dia-cabecera">
+        <span class="dia-fecha">{{ f.fecha.strftime('%d/%m') }}</span>
+        <span class="dia-saldos">Venía <b>{{ f.venia|numero }}</b> · Quedó <b>{{ f.quedo|numero }}</b></span>
+      </div>
+      {% if f.filas %}
+      <ul class="movimientos">
+        {% for m in f.filas %}
+        <li class="{% if m.descripcion == SIN_EXPLICAR %}sin-explicar{% endif %}">
+          <span>{{ m.descripcion }}</span>
+          <span class="bultos {% if m.bultos > 0 %}suma{% elif m.bultos < 0 %}resta{% endif %}">{% if m.bultos > 0 %}+{% endif %}{{ m.bultos|numero }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      {# Un día sin movimientos se DICE. Sin esto, el renglón queda con las
+         dos puntas y nada en el medio, y se lee como que faltó cargar algo. #}
+      <p class="quieto">Sin movimientos.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/administracion/stock/remanente">Volver al Remanente</a>
+{% include "_pie_version.html" %}
+</body>
+</html>
