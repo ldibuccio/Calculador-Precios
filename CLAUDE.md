@@ -531,6 +531,27 @@ Y conviene que haya **un testigo independiente del parámetro**: `e5_0` trae
 recientes al lado es una contradicción visible en la misma fila; sin ese
 testigo, todos los ceros se explican solos.
 
+**Y el testigo tiene un SEGUNDO trabajo que no estaba escrito, y es el que
+falló el 12/09: es lo único que dice DE CUÁL BASE es una fila.**
+
+En una verificación de migración, **las columnas que importan dan lo mismo
+en las dos bases por diseño** — `columna 1 · guarda 1 · controlados 0 ·
+ofensores 0` es el resultado bueno en Frutamax y en Palmala. O sea que las
+dos filas son **indistinguibles entre sí**, y pegar una creyendo que son las
+dos no es un descuido: es el error natural de una salida que se ve igual
+venga de donde venga.
+
+Pasó así: se corrieron las dos, se pegó una, y se dio por confirmadas las
+dos. Lo que lo delató fue `renglones_7d 410 · ultimo_armado 11/09`, que solo
+puede ser Frutamax — Palmala no arma un pedido hace semanas. **El testigo
+está puesto para decir si la base vota (corolario 24) y terminó sirviendo
+para identificarla**, que es otra cosa.
+
+Por eso, y cuesta cero: **la fila de verificación se pega con el nombre de
+la base adelante**, y si las dos filas salen idénticas en todo menos el
+testigo, eso es exactamente lo esperado y no una razón para pegar una sola.
+La regla de arriba dice correr en las dos; ésta dice **mostrar las dos**.
+
 
 Corolario 16, del 08/09, y es una PRÁCTICA, no un patrón de bug: **un test
 de "esto no está duplicado" hay que correrlo con la duplicación puesta, o
