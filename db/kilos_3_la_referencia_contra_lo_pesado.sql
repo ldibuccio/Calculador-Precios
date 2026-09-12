@@ -5,11 +5,22 @@
 -- el sistema desde articulos.contenido_referencia, en los cuatro caminos
 -- (el form manual por JS, y foto/listado/múltiples por _contenido_referencia_de
 -- en app/main.py). O sea que un estimado sistemáticamente mal no es una carga
--- descuidada: es una referencia vieja que el sistema sigue sugiriendo.
+-- descuidada. Puede ser dos cosas, y se arreglan al revés una de la otra:
+-- una REFERENCIA VIEJA (hay un valor dominante y el cargado no es ése: se
+-- corrige al dominante) o un artículo MULTIFORMATO (no hay valor dominante:
+-- la referencia va VACÍA). El 12/09 Mango y Cherry resultaron lo segundo.
+-- Esta consulta no los separa sola: las dos causas dan el mismo desvío
+-- grande. Lo que las separa es el RANGO de abajo y preguntar cómo se compra
+-- el artículo.
 --
 -- La MEDIANA al lado del promedio a propósito: una sola recepción mal
 -- cargada mueve el promedio y no mueve la mediana, así que cuando los dos
 -- se separan el que hay que mirar es el caso, no el artículo.
+--
+-- Pero sobre un artículo MULTIFORMATO la mediana no contesta nada: devuelve
+-- el formato que más vino en la ventana y se mueve sola cuando cambia la
+-- mezcla de proveedores. Ahí el que informa es minimo/maximo — el 12/09 el
+-- 12 a 54 de Mango eran sus tres formatos y se leyó como dispersión.
 --
 -- `recepciones` es la POBLACIÓN de cada fila: una diferencia sobre dos
 -- pesadas no dice nada y sobre veinte sí. Sin esa columna, las dos filas

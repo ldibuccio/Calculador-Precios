@@ -364,6 +364,30 @@ def test_editar_articulo_exitoso_redirige_a_articulos():
     mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0, None)
 
 
+def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
+    """Vaciar el campo tiene que dejar la referencia en NULL, no conservar la vieja.
+
+    Es la única forma de sacarle la referencia a un artículo MULTIFORMATO —uno
+    que viene en varios formatos y no tiene valor dominante, como Mango (40, 12
+    y 10 unidades) o Tomate Cherry (cajones de 5 a 15 kg)—. Ahí precargar un
+    número lo hace estar mal las otras veces, así que el campo tiene que
+    preguntar en vez de proponer.
+
+    Sin este test, que el vaciado no llegara a la base sería invisible: la
+    pantalla de Artículos relee de la base y mostraría el valor viejo como si
+    nada hubiera pasado (corolario 42).
+    """
+    with patch("app.main.actualizar_articulo") as mock_actualizar:
+        respuesta = cliente.post(
+            "/articulos/1/editar",
+            data={"nombre": "Mango", "unidad_compra": "unidad", "contenido_referencia": ""},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar.assert_called_once_with(1, "Mango", "unidad", None, None)
+
+
 def test_editar_articulo_con_grupo_valido_lo_guarda():
     with patch("app.main.actualizar_articulo") as mock_actualizar:
         respuesta = cliente.post(

@@ -1736,10 +1736,12 @@ cada una descartada con una medición y no con un argumento:
    que se estaba mirando era la COLA: a veces viene 18 o 19,5, y eso es
    variación real de la fruta.
 
-**Lo que quedó**: dos artículos con la referencia de verdad mal —Mango en
-10 unidades cuando la mediana es 40, y Tomate Cherry en 5 kg cuando entran
-cajones de 5 a 15— y **dos compras con cajones faltantes**, que son las que
-importaban desde el principio.
+**Lo que quedó**: dos artículos que no pueden tener referencia —Mango, que
+viene en cajas de 40, de 12 y de 10 unidades, y Tomate Cherry, en cajones de
+5 a 15 kg— y **dos compras con cajones faltantes**, que son las que
+importaban desde el principio. (Esta línea decía que la referencia de Mango
+estaba "mal" y que su mediana era 40. Las dos cosas se cayeron el mismo día:
+ver **Mango y Cherry son MULTIFORMATO** más abajo.)
 
 ### CERRADO, y con el número al lado del razonamiento (12/09)
 
@@ -1770,8 +1772,68 @@ un mecanismo exista no dice cuánto pesa, y el que solo comprueba que existe
 se lleva la conclusión al revés.
 
 **Conclusión**: el cajón estándar explica los 16, la referencia está bien en
-casi todos, y los dos que están mal son Mango (a 40) y Cherry (vacío, porque
-no tiene valor dominante).
+casi todos, y los dos que no pueden tenerla —Mango y Cherry— **van vacíos,
+los dos por la misma razón**: no tienen valor dominante. (La primera versión
+de esta línea mandaba Mango a 40. Se cayó el mismo día; va abajo.)
+
+### Mango y Cherry son MULTIFORMATO, no referencias mal cargadas (12/09)
+
+Corrección de la conclusión de arriba, y **no sale de una medición nueva:
+sale de preguntar en el galpón.** El mango se compra en cajas de **40
+unidades, de 12 y de 10**, según el día y el proveedor. No hay un valor
+dominante.
+
+Entonces la referencia en 10 **no está mal**: está eligiendo uno de los tres
+formatos. Y ponerla en 40 —que era la corrección pendiente— la haría estar
+mal las otras dos veces, y encima más mal que hoy: 40 es el formato más
+grande, así que el error de precargarlo es el más caro de los tres.
+
+Los dos van **vacíos**, y es la regla de esta misma sección aplicada al pie
+de la letra: precargar sirve cuando hay un valor dominante y estorba cuando
+no lo hay. Sin dominante el precargado va a estar mal siempre, y precargar
+mal es justamente lo que invita a aceptar mal. Vacío, el campo pregunta en
+vez de proponer.
+
+**Y es una CATEGORÍA distinta, no un caso más de referencia vieja**, que es
+lo que hay que llevarse:
+
+| | qué le pasa a la referencia | qué se hace |
+|---|---|---|
+| **Referencia vieja** | hay un valor dominante y el cargado no es ése | se corrige al dominante |
+| **Artículo MULTIFORMATO** | no hay valor dominante | se deja vacía |
+
+La medición vieja no las distingue: las dos se ven igual, como un desvío
+grande entre el estimado y lo pesado. **El que lea "Mango, desvío +30" sin
+esto al lado va a querer corregirlo a 40**, que es exactamente lo que se
+acaba de decidir que no va.
+
+#### Lo que la consulta SÍ mostró, y se leyó como otra cosa
+
+`kilos_3` devuelve `minimo` y `maximo` al lado del promedio y la mediana.
+Para Mango eso dio un rango de **12 a 54**, y se leyó como dispersión
+alrededor de un valor mal cargado. Un rango de 12 a 54 en un artículo que
+viene en tres formatos **no es dispersión: son los tres formatos** — y eso
+era distinguible de la otra lectura ahí mismo, en la fila que ya estaba a la
+vista. Corolario 19 otra vez: la salvaguarda estaba puesta, el dato estaba
+en la fila, y se leyó lo que se esperaba encontrar.
+
+**Y la mediana, que está en esa consulta a propósito para que un caso raro
+no mueva el diagnóstico, sobre un artículo multiformato no contesta nada**:
+devuelve el formato que más vino en la ventana, y se mueve sola el día que
+cambia la mezcla de proveedores. Un estadístico de centro sobre una
+población que en realidad son tres se lee perfecto y no significa nada. Es
+el corolario 13 con otra ropa — una fórmula exacta sobre el conjunto deja de
+contestar la pregunta apenas el conjunto no es uno solo.
+
+**La señal, y es la misma que la de "La señal que inventé, y que falló en el
+caso que la generó", más abajo en esta sección**: antes de leer
+un valor como un error de carga, preguntarse **qué GENERA los valores.**
+Allá un valor REPETIDO entre artículos que no se parecen resultó ser el
+cajón estándar del mercado y no un default copiado; acá un valor DISPERSO
+adentro de un mismo artículo resultó ser tres formatos y no una referencia
+vieja. Las dos veces la forma de los datos parecía un error del sistema, la
+explicación estaba en cómo se compra la fruta, y **se contestó preguntando,
+no midiendo de nuevo.**
 
 ### Lo que queda ANOTADO Y NO CONSTRUIDO: la otra contaminación
 
@@ -1871,7 +1933,7 @@ Separarlos evitó construir uno que nadie iba a mirar:
 | | qué dice | cuántos | cuándo se apaga |
 |---|---|---|---|
 | **Faltaron CAJONES** | faltaron bultos en ESTA compra | 2 de 25 | al investigar esa compra |
-| **Referencia mal cargada** | el sistema sugiere mal para ESTE artículo | 2 artículos (Mango y Cherry) | al corregir la referencia |
+| **Referencia mal cargada** | el sistema sugiere mal para ESTE artículo | 2 artículos (Mango y Cherry) | al vaciar la referencia — los dos son multiformato, no se corrigen a un número |
 | ~~Diferencia de contenido por compra~~ | — | **21 por semana** | nunca |
 
 La tercera **no se construyó**, y la razón se sostuvo aunque la causa
@@ -3044,8 +3106,11 @@ queda anotado que el argumento ya no es el mismo.
 1. **Volver a correr `kilos_4` el 25/09.** Si el 82% sin tocar era falta de
    pesaje y la foto lo está corrigiendo, en dos semanas el promedio de
    `contenido_por_cajon_real` va a valer algo que hoy no vale. **Hasta
-   entonces no se mueve ninguna referencia** — salvo Mango a 40, donde la
-   diferencia es de 30 sobre 40 y no la explica ningún redondeo.
+   entonces no se mueve ninguna referencia.** Acá había una excepción
+   —Mango a 40— y se cayó: Mango es multiformato y su referencia va vacía,
+   no en 40. **Y en Mango y en Cherry el desvío que mida `kilos_4` no
+   significa nada**, porque promediar tres formatos no contesta ninguna
+   pregunta: lo que hay que mirar son los otros.
 2. **La explicación que los datos NO pueden descartar**: que el operario
    saque la foto justo en las cargas que ya le generaban duda. Ahí la foto no
    dispararía nada — sería un *marcador* de sospecha, y el que corrige es el
