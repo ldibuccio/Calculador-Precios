@@ -1663,6 +1663,123 @@ primera semana — con diez mermas encima se revisa también si la lista corta
 de motivos alcanza, que hoy es una apuesta que no se puede validar contra
 nada.
 
+## Un campo que el sistema PRECARGA no es un dato que alguien declaró
+
+Del 12/09, y es **el espejo exacto de "un campo sin consecuencia se llena
+vacío"**, que está justo abajo. Allá un campo que no mueve nada queda en
+blanco. Acá un campo se llena SIEMPRE, con el mismo valor equivocado, y
+tampoco lo decidió nadie: lo decidió la pantalla.
+
+### El caso
+
+Midiendo la diferencia entre lo comprado y lo recibido salieron **41
+compras con más de un kilo de diferencia** desde el corte. La primera
+lectura fue "ruido de balanza". La segunda, mía, fue una hipótesis de
+imputación del sistema: que `contenido_por_cajon_real` viniera NULL y el
+total real se armara con el contenido estimado. **Las dos eran falsas, y
+las dos se cayeron con datos.**
+
+Lo que había: **el contenido estimado era 16,0 en 16 de los 25 casos más
+grandes**, en artículos que no se parecen en nada — Mandarina, Tomate
+Redondo, Jugo, Zapallito, Pomelo, Ombligo, Pepino, Perita. Mandarina
+aparece cuatro veces cargada en 16 y pesada entre 18,0 y 19,5. Morrón Rojo,
+cargado en 12 y pesado en 9,7 y 10,1.
+
+**Ese 16 no lo tipea el comprador: se lo precarga el sistema**, desde
+`articulos.contenido_referencia`, en **los cuatro caminos de carga** — el
+formulario manual lo pisa por JS al elegir el artículo, y foto, listado y
+múltiples lo hacen en el server con `_contenido_referencia_de`. El
+comprador elige "Mandarina" y el campo se llena solo con 16; para que quede
+18 tiene que notarlo y pisarlo.
+
+O sea que el estimado no es una estimación: **es lo que la pantalla
+propuso.** Y aceptar lo que propone un campo precargado con un número
+plausible es lo que hace cualquiera.
+
+### La regla
+
+**Antes de leer un campo sistemáticamente mal como una carga descuidada,
+buscar quién lo llena.** Si la pantalla lo precarga, el error no está en la
+persona: está en la sugerencia, y se arregla una vez y para todos.
+
+Y el corolario que la vuelve barata de aplicar: **un valor precargado
+PLAUSIBLE es peor que un campo vacío.** Vacío obliga a decidir; lleno
+invita a aceptar. Es exactamente el corolario 26 con otra ropa — un cartel
+que se pasa con el mismo click que ya se iba a hacer no es una revisión, y
+un número que se acepta con el mismo click no es una estimación.
+
+**Cómo se reconoce sin haberlo sufrido**: cuando el mismo valor aparece en
+artículos, clientes o proveedores que no tienen nada que ver entre sí, eso
+no es una coincidencia de la realidad — es un default. La realidad no
+coordina a la Mandarina con el Zapallito.
+
+### El comentario que envejeció, y esta vez sin que nadie tocara nada
+
+El comment de `contenido_referencia` dice, textual: *"Cuánto trae
+**habitualmente** el cajón/caja que se compra… Solo referencia: se puede
+editar en cada compra si ese día vino distinto."*
+
+Era cierto y sigue describiendo el caso que imaginó quien lo escribió: "hoy
+vino distinto". El caso real es otro — **"el número está mal desde
+siempre"**— y para ése la frase no solo no ayuda: tranquiliza, porque
+presenta como excepción lo que resultó ser la norma.
+
+Es de la familia del `eliminar_compra` y del docstring de la alerta, pero
+sin el cambio de código que en aquéllos separó el comentario de la
+realidad: **acá no cambió el código, cambiaron los datos.** Nadie tocó esa
+columna; lo que envejeció fue el mundo alrededor. Por eso no hay commit que
+culpar ni grep que lo encuentre, y por eso vale escribirlo: la señal no es
+"alguien tocó esto", es **"este comentario describe una excepción y yo
+estoy viendo la regla"**.
+
+### La técnica que lo destapó: mirar la FORMA, no el conteo
+
+Los 41 casos se repartían así: **37 arriba de 10 kilos, 25 arriba de 25 —
+y solo 4 en toda la banda de 1 a 10.**
+
+Eso es lo que dijo "acá no hay ruido". El ruido de medición tiene una forma
+conocida: la banda chica es la más gorda y la cola se afina. Acá la banda
+chica estaba casi vacía y el 90% de los casos estaba arriba de diez kilos.
+**Son dos poblaciones distintas, y la grande no es de medición.**
+
+La regla, y es más ancha que este caso: **cuando hay que decidir si una
+medición es ruido o es un problema, el conteo no alcanza — hay que mirar
+cómo se REPARTE.** Un "41 casos" no se puede leer; un "41, de los cuales 37
+arriba de 10 y 4 en la banda chica" se lee solo. Cuesta tres columnas más en
+la consulta (`> 1`, `> 5`, `> 10`, `> 25`) y es lo que decidió todo el
+diagnóstico.
+
+Engancha con **"más hallazgos que población condena la heurística"** por el
+lado que faltaba: aquella regla decide con UN cociente y solo en una
+dirección. Ésta decide con la forma, y puede absolver — acá el 41 sobre
+~100 habría sonado a heurística mal calibrada, y la forma dijo lo
+contrario.
+
+### Las tres cosas que salieron de esto, y por qué son TRES y no dos
+
+Separarlas fue lo que evitó construir una alerta que nadie iba a mirar:
+
+| | qué dice | cuántos | cuándo se apaga |
+|---|---|---|---|
+| **Faltaron CAJONES** | faltaron bultos en ESTA compra | 2 de 25 | al investigar esa compra |
+| **Referencia vieja** | el sistema sugiere mal para ESTE artículo | ~8 artículos | al corregir la referencia |
+| ~~Diferencia de contenido por compra~~ | — | **21 por semana** | nunca, mientras la referencia esté mal |
+
+La tercera **no se construyó**, y la razón es la que hay que llevarse:
+**una alerta que dispara veintiún veces por semana señalando la misma causa
+no se mira dos semanas.** El aviso que sirve es el que se apaga cuando lo
+atendés, y para eso tiene que estar en la unidad de la CAUSA —el artículo—
+y no en la del síntoma —la compra—.
+
+**Cómo se decide en general**: contar cuántos disparos tendría el aviso y
+cuántas causas distintas hay detrás. Si los disparos son muchos y las
+causas pocas, la alerta está en la unidad equivocada.
+
+**Y lo que queda abierto, dicho para no re-derivarlo**: si el estimado pasa
+a ser el promedio real medido, la alerta de kilos **cambia de pregunta** —
+de "lo que el comprador creía" a "lo que suele venir". Es mejor pregunta y
+es otra; hay que decidirla sabiendo eso, no encontrárselo después.
+
 ## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
 
 Del 09/09, y va como regla y no como corolario porque **no es de la familia
