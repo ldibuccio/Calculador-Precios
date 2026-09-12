@@ -3175,8 +3175,128 @@ De acá en adelante:
   medias, aplicada al repo: `git diff` leído contra lo que uno quiso
   escribir, no contra la sensación de que se restauró.
 
+### La consecuencia que es más grande que el incidente
+
+**Todo resultado de test posterior a lanzar un canario en segundo plano es
+inválido, y no hay forma de saber CUÁLES lo eran.** El canario rompe y
+restaura en ciclos de medio minuto: una corrida cae adentro de un ciclo o no,
+y eso no queda anotado en ningún lado. Así que no se salva la parte buena —
+**se descarta todo lo posterior al lanzamiento y se corre de nuevo.**
+
+Eso es lo que lo vuelve una regla y no un descuido: el costo no es el rato
+perdido arreglando dos tests sanos, es que **queda un bloque de evidencia
+que no se puede auditar.** Un verde de adentro de ese bloque no prueba nada
+y tampoco se distingue de uno bueno — es exactamente la ausencia de filas
+del backfill, pero en la herramienta con la que se decide si algo se
+mergea.
+
+### La señal, que es la única barata
+
+**Si un test falla y lo que afirma se ve correcto en el código, verificar
+que no haya un proceso tocando el árbol ANTES de "arreglar" el test.**
+
+La reacción natural es la contraria —el test falla, algo estará mal en el
+test o en el código— y esa reacción es correcta el 99% de las veces, que es
+justo lo que la vuelve peligrosa acá. `ps aux | grep` cuesta un segundo y es
+lo que separa "el código no hace lo que digo" de "el archivo no dice lo que
+escribí".
+
+Es el corolario 22 corrido de lugar: allá la pregunta era *"¿este test
+afirma lo que hoy queremos?"*; acá es **"¿el archivo que el test leyó es el
+que yo escribí?"**. Las dos veces el reflejo de arreglar el test es lo que
+hace el daño.
+
 Y el detalle que lo volvió barato: **"NO APLICA (0 veces)" es información, no
 un problema del script.** Un canario que no encuentra qué romper está
 diciendo que el código no dice lo que uno cree. Vale tanto como uno que no
 hace caer ningún test (corolario 35), y por la misma razón: las dos veces lo
 que falla es la herramienta de verificar, que también es código.
+
+## Corolario 51: un `except Exception` convierte un error de ARRANQUE en una degradación permanente y silenciosa
+
+Del 12/09. `_compras_del_renglon_para_devolucion` se traga el error a
+propósito y devuelve vacío, y **el argumento es bueno**: sin poder rejugar el
+FIFO, el camino que queda es el del proveedor suelto, que es el mismo que
+usan las devoluciones de un renglón sin lote. Que no se pueda leer una lista
+no puede dejar sin CARGAR una devolución.
+
+Lo que no estaba pensado: **`compras_que_alimentaron_el_renglon` no estaba
+importada en `app/main.py`.** El `except` se comía el `NameError`, la
+pantalla caía al proveedor suelto, y ahí se quedaba **para siempre**.
+
+### Por qué es peor que un error a secas
+
+El `except` se escribió contra una falla **ambiental e intermitente** —la
+base que no contesta— y también atrapa las de **programación**: `NameError`,
+`AttributeError`, `TypeError`. Y esas dos clases son opuestas en lo único
+que importa acá:
+
+- La ambiental pasa **a veces**, y el camino degradado es el correcto
+  mientras dure.
+- La de programación pasa **siempre**, y el camino degradado deja de ser la
+  excepción: **pasa a ser el único que existe.**
+
+Y no se distinguen desde afuera. La pantalla que cae al proveedor suelto
+porque la base está caída y la que cae porque una función no existe se ven
+**exactamente iguales** — y la segunda se ve igual que el caso legítimo, el
+renglón sin lote. No hay error, no hay hueco, no hay nada raro que mirar. Es
+la familia del campo que se escribe y nadie lee, corrida un paso: acá la
+función **no se llama nunca** y el sistema se ve entero.
+
+**Y no era silencioso en los logs**: el `logger.exception` está puesto y
+habría gritado en cada request. Era silencioso **en la pantalla**, que es
+donde alguien mira. Corolario 19 otra vez — la salvaguarda que existe y no
+se lee. `logger.exception` aparece **43 veces** en `app/main.py`, así que el
+patrón es de la casa y no de esta función: cualquiera de las 43 puede estar
+tapando un import que falta, hoy, sin que nada lo diga.
+
+### Lo que lo agarró, y es una herramienta que no sabíamos que teníamos
+
+**`patch("app.main.compras_que_alimentaron_el_renglon")` es, él solo, una
+aserción de que `app.main` importa ese nombre.** `mock.patch` no crea el
+atributo: si no está, levanta
+
+    AttributeError: <module 'app.main'> does not have the attribute '...'
+
+y el test cae ruidosamente **antes de ejercitar una sola línea**. O sea que
+lo encontró un test que ni siquiera estaba escrito para eso — el que verifica
+que la pantalla ofrezca las compras — y lo encontró por NOMBRAR la función,
+no por correrla.
+
+De ahí sale lo accionable, y es barato: **todo camino nuevo que llame a un
+colaborador nuevo lleva un test que lo PARCHEA**, aunque el test venga a
+verificar otra cosa. El parche paga el import gratis. Sin ningún test que lo
+nombre, un `except Exception` puede sostener un `NameError` indefinidamente.
+
+### La señal para reconocerlo sin sufrirlo
+
+Cuando se escribe un `except` amplio para degradar con elegancia,
+preguntarse: **¿cómo me entero si la degradación es PERMANENTE?** Si la
+respuesta es "por los logs", no hay respuesta —nadie los lee— y si es "se
+vería raro en la pantalla", tampoco: el caso degradado se diseñó justamente
+para verse bien.
+
+Las dos salidas que sirven, y con cualquiera alcanza:
+
+- **Angostar el `except`** a lo que de verdad se está anticipando
+  (`psycopg.Error` y no `Exception`), para que un `NameError` explote como lo
+  que es.
+- **Un test que atraviese el camino BUENO**, no solo el degradado. Un `except`
+  que nunca se ejercita a la inversa es un `if` con una sola rama probada.
+
+### Y la otra copia, buscada el mismo día (corolario 2)
+
+Si el `except` puede sostener un `NameError`, la pregunta inmediata es
+cuántos más hay escondidos detrás de los otros 42. **Se barrió `app/` y
+`core/` con `pyflakes`: 0 nombres indefinidos.**
+
+Y el cero está verificado, porque un cero sin canario no informa (corolario
+47): plantado a propósito el mismo caso de hoy —una llamada a una función
+inexistente adentro del mismo `except`— pyflakes lo nombra con archivo y
+línea, y sacándolo vuelve a 0. O sea que **hoy no hay ninguna otra**, y eso
+es un hecho medido y no una impresión.
+
+**Queda ANOTADO Y NO CONSTRUIDO**: convertirlo en un test de la suite es la
+forma de que no vuelva —es la única guarda que ve esto antes de que lo vea
+un operario— pero **agrega `pyflakes` como dependencia**, y eso se decide,
+no se mete de prepo en un commit de otra cosa.
