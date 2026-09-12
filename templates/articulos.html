@@ -149,7 +149,7 @@
 
   <div class="tarjeta">
     <h2>Agregar artículo</h2>
-    <form method="post" action="/articulos/nuevo">
+    <form method="post" action="/compras/articulos/nuevo">
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" required>
 
@@ -207,8 +207,8 @@
             </td>
             <td>
               <div class="acciones">
-                <a class="boton boton-editar" href="/articulos/{{ articulo.id }}/editar">Editar</a>
-                <form class="form-eliminar" method="post" action="/articulos/{{ articulo.id }}/eliminar"
+                <a class="boton boton-editar" href="/compras/articulos/{{ articulo.id }}/editar">Editar</a>
+                <form class="form-eliminar" method="post" action="/compras/articulos/{{ articulo.id }}/eliminar"
                       onsubmit="return confirm('¿Eliminar {{ articulo.nombre }}?');">
                   <button type="submit" class="boton-eliminar">Eliminar</button>
                 </form>

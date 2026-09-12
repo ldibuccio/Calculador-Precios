@@ -154,7 +154,7 @@ ARTICULOS_DE_PRUEBA = [
 
 def test_ver_articulos_lista_vacia():
     with patch("app.main.listar_articulos", return_value=[]):
-        respuesta = cliente.get("/articulos")
+        respuesta = cliente.get("/compras/articulos")
 
     assert respuesta.status_code == 200
     assert "No hay artículos cargados todavía." in respuesta.text
@@ -162,7 +162,7 @@ def test_ver_articulos_lista_vacia():
 
 def test_ver_articulos_error_de_base_muestra_pagina_de_error_clara():
     with patch("app.main.listar_articulos", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/articulos")
+        respuesta = cliente.get("/compras/articulos")
 
     assert respuesta.status_code == 500
     assert "No se pudo leer el catálogo" in respuesta.text
@@ -170,13 +170,13 @@ def test_ver_articulos_error_de_base_muestra_pagina_de_error_clara():
 
 def test_ver_articulos_muestra_solo_nombre():
     with patch("app.main.listar_articulos", return_value=ARTICULOS_DE_PRUEBA):
-        respuesta = cliente.get("/articulos")
+        respuesta = cliente.get("/compras/articulos")
 
     assert respuesta.status_code == 200
     assert "Frutilla" in respuesta.text
     assert "Mango" in respuesta.text
-    assert "/articulos/1/editar" in respuesta.text
-    assert "/articulos/1/eliminar" in respuesta.text
+    assert "/compras/articulos/1/editar" in respuesta.text
+    assert "/compras/articulos/1/eliminar" in respuesta.text
     # codigo_interno es del cliente Día, no del artículo: no debe pedirse ni mostrarse acá
     assert "codigo_interno" not in respuesta.text
     # unidad_venta y envase ya no viven en articulos: no deben aparecer en la página
@@ -188,7 +188,7 @@ def test_ver_articulos_muestra_solo_nombre():
 
 def test_ver_articulos_muestra_columna_grupo_con_sin_clasificar():
     with patch("app.main.listar_articulos", return_value=ARTICULOS_DE_PRUEBA):
-        respuesta = cliente.get("/articulos")
+        respuesta = cliente.get("/compras/articulos")
 
     assert respuesta.status_code == 200
     assert "<th>Grupo</th>" in respuesta.text
@@ -198,7 +198,7 @@ def test_ver_articulos_muestra_columna_grupo_con_sin_clasificar():
 
 def test_ver_articulos_incluye_link_a_inicio():
     with patch("app.main.listar_articulos", return_value=[]):
-        respuesta = cliente.get("/articulos")
+        respuesta = cliente.get("/compras/articulos")
 
     assert respuesta.status_code == 200
     assert 'href="/inicio"' in respuesta.text
@@ -207,20 +207,20 @@ def test_ver_articulos_incluye_link_a_inicio():
 def test_agregar_articulo_exitoso_redirige_a_articulos():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
-            "/articulos/nuevo",
+            "/compras/articulos/nuevo",
             data={"nombre": "Kiwi", "unidad_compra": "unidad", "contenido_referencia": "10"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/articulos"
+    assert respuesta.headers["location"] == "/compras/articulos"
     mock_crear.assert_called_once_with("Kiwi", "unidad", 10.0, None)
 
 
 def test_agregar_articulo_sin_contenido_referencia_guarda_none():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
-            "/articulos/nuevo",
+            "/compras/articulos/nuevo",
             data={"nombre": "Kiwi", "unidad_compra": "kilo", "contenido_referencia": ""},
             follow_redirects=False,
         )
@@ -232,7 +232,7 @@ def test_agregar_articulo_sin_contenido_referencia_guarda_none():
 def test_agregar_articulo_con_grupo_valido_lo_guarda():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
-            "/articulos/nuevo",
+            "/compras/articulos/nuevo",
             data={"nombre": "Kiwi", "unidad_compra": "kilo", "contenido_referencia": "", "grupo": "fruta"},
             follow_redirects=False,
         )
@@ -244,7 +244,7 @@ def test_agregar_articulo_con_grupo_valido_lo_guarda():
 def test_agregar_articulo_con_grupo_hoja_lo_guarda():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
-            "/articulos/nuevo",
+            "/compras/articulos/nuevo",
             data={"nombre": "Rúcula", "unidad_compra": "unidad", "contenido_referencia": "", "grupo": "hoja"},
             follow_redirects=False,
         )
@@ -256,7 +256,7 @@ def test_agregar_articulo_con_grupo_hoja_lo_guarda():
 def test_agregar_articulo_con_grupo_pesada_lo_guarda():
     with patch("app.main.crear_articulo") as mock_crear:
         respuesta = cliente.post(
-            "/articulos/nuevo",
+            "/compras/articulos/nuevo",
             data={"nombre": "Zapallo", "unidad_compra": "kilo", "contenido_referencia": "", "grupo": "pesada"},
             follow_redirects=False,
         )
@@ -268,7 +268,7 @@ def test_agregar_articulo_con_grupo_pesada_lo_guarda():
 def test_agregar_articulo_grupo_invalido_muestra_error():
     with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
         respuesta = cliente.post(
-            "/articulos/nuevo",
+            "/compras/articulos/nuevo",
             data={"nombre": "Kiwi", "unidad_compra": "kilo", "grupo": "lacteo"},
         )
 
@@ -279,7 +279,7 @@ def test_agregar_articulo_grupo_invalido_muestra_error():
 
 def test_agregar_articulo_nombre_vacio_muestra_error():
     with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
-        respuesta = cliente.post("/articulos/nuevo", data={"nombre": "   ", "unidad_compra": "kilo"})
+        respuesta = cliente.post("/compras/articulos/nuevo", data={"nombre": "   ", "unidad_compra": "kilo"})
 
     assert respuesta.status_code == 400
     assert "no puede estar vacío" in respuesta.text
@@ -290,7 +290,7 @@ def test_agregar_articulo_nombre_string_vacio_muestra_error_prolijo_no_422():
     # Regresión: un campo de texto Form(...) vacío ("" y no solo espacios) hacía
     # que FastAPI devolviera un 422 crudo en vez de nuestro error prolijo.
     with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
-        respuesta = cliente.post("/articulos/nuevo", data={"nombre": "", "unidad_compra": "kilo"})
+        respuesta = cliente.post("/compras/articulos/nuevo", data={"nombre": "", "unidad_compra": "kilo"})
 
     assert respuesta.status_code == 400
     assert "no puede estar vacío" in respuesta.text
@@ -299,7 +299,7 @@ def test_agregar_articulo_nombre_string_vacio_muestra_error_prolijo_no_422():
 
 def test_agregar_articulo_unidad_compra_invalida_muestra_error():
     with patch("app.main.crear_articulo") as mock_crear, patch("app.main.listar_articulos", return_value=[]):
-        respuesta = cliente.post("/articulos/nuevo", data={"nombre": "Kiwi", "unidad_compra": "litro"})
+        respuesta = cliente.post("/compras/articulos/nuevo", data={"nombre": "Kiwi", "unidad_compra": "litro"})
 
     assert respuesta.status_code == 400
     assert "unidad de compra válida" in respuesta.text
@@ -311,7 +311,7 @@ def test_agregar_articulo_error_de_base_muestra_mensaje_claro():
         patch("app.main.crear_articulo", side_effect=Exception("no se pudo conectar")),
         patch("app.main.listar_articulos", return_value=[]),
     ):
-        respuesta = cliente.post("/articulos/nuevo", data={"nombre": "Kiwi", "unidad_compra": "kilo"})
+        respuesta = cliente.post("/compras/articulos/nuevo", data={"nombre": "Kiwi", "unidad_compra": "kilo"})
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar" in respuesta.text
@@ -328,25 +328,25 @@ ARTICULO_DE_PRUEBA = {
 
 def test_ver_editar_articulo_muestra_datos_precargados():
     with patch("app.main.obtener_articulo", return_value=ARTICULO_DE_PRUEBA):
-        respuesta = cliente.get("/articulos/1/editar")
+        respuesta = cliente.get("/compras/articulos/1/editar")
 
     assert respuesta.status_code == 200
     assert "Frutilla" in respuesta.text
-    assert 'action="/articulos/1/editar"' in respuesta.text
+    assert 'action="/compras/articulos/1/editar"' in respuesta.text
     assert "merma" not in respuesta.text.lower()
     assert '<option value="fruta" selected>Fruta</option>' in respuesta.text
 
 
 def test_ver_editar_articulo_inexistente_da_404():
     with patch("app.main.obtener_articulo", return_value=None):
-        respuesta = cliente.get("/articulos/999/editar")
+        respuesta = cliente.get("/compras/articulos/999/editar")
 
     assert respuesta.status_code == 404
 
 
 def test_ver_editar_articulo_error_de_base_da_500():
     with patch("app.main.obtener_articulo", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.get("/articulos/1/editar")
+        respuesta = cliente.get("/compras/articulos/1/editar")
 
     assert respuesta.status_code == 500
 
@@ -354,13 +354,13 @@ def test_ver_editar_articulo_error_de_base_da_500():
 def test_editar_articulo_exitoso_redirige_a_articulos():
     with patch("app.main.actualizar_articulo") as mock_actualizar:
         respuesta = cliente.post(
-            "/articulos/1/editar",
+            "/compras/articulos/1/editar",
             data={"nombre": "Frutilla Premium", "unidad_compra": "cubeta", "contenido_referencia": "12"},
             follow_redirects=False,
         )
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/articulos"
+    assert respuesta.headers["location"] == "/compras/articulos"
     mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0, None)
 
 
@@ -379,7 +379,7 @@ def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
     """
     with patch("app.main.actualizar_articulo") as mock_actualizar:
         respuesta = cliente.post(
-            "/articulos/1/editar",
+            "/compras/articulos/1/editar",
             data={"nombre": "Mango", "unidad_compra": "unidad", "contenido_referencia": ""},
             follow_redirects=False,
         )
@@ -391,7 +391,7 @@ def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
 def test_editar_articulo_con_grupo_valido_lo_guarda():
     with patch("app.main.actualizar_articulo") as mock_actualizar:
         respuesta = cliente.post(
-            "/articulos/1/editar",
+            "/compras/articulos/1/editar",
             data={"nombre": "Frutilla", "unidad_compra": "cubeta", "contenido_referencia": "12", "grupo": "hortaliza"},
             follow_redirects=False,
         )
@@ -403,7 +403,7 @@ def test_editar_articulo_con_grupo_valido_lo_guarda():
 def test_editar_articulo_grupo_invalido_muestra_error():
     with patch("app.main.actualizar_articulo") as mock_actualizar:
         respuesta = cliente.post(
-            "/articulos/1/editar",
+            "/compras/articulos/1/editar",
             data={"nombre": "Frutilla", "unidad_compra": "cubeta", "grupo": "lacteo"},
         )
 
@@ -414,7 +414,7 @@ def test_editar_articulo_grupo_invalido_muestra_error():
 
 def test_editar_articulo_nombre_vacio_muestra_error():
     with patch("app.main.actualizar_articulo") as mock_actualizar:
-        respuesta = cliente.post("/articulos/1/editar", data={"nombre": "   ", "unidad_compra": "kilo"})
+        respuesta = cliente.post("/compras/articulos/1/editar", data={"nombre": "   ", "unidad_compra": "kilo"})
 
     assert respuesta.status_code == 400
     assert "no puede estar vacío" in respuesta.text
@@ -423,7 +423,7 @@ def test_editar_articulo_nombre_vacio_muestra_error():
 
 def test_editar_articulo_unidad_compra_invalida_muestra_error():
     with patch("app.main.actualizar_articulo") as mock_actualizar:
-        respuesta = cliente.post("/articulos/1/editar", data={"nombre": "Frutilla", "unidad_compra": "litro"})
+        respuesta = cliente.post("/compras/articulos/1/editar", data={"nombre": "Frutilla", "unidad_compra": "litro"})
 
     assert respuesta.status_code == 400
     assert "unidad de compra válida" in respuesta.text
@@ -432,7 +432,7 @@ def test_editar_articulo_unidad_compra_invalida_muestra_error():
 
 def test_editar_articulo_error_de_base_muestra_mensaje_claro():
     with patch("app.main.actualizar_articulo", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.post("/articulos/1/editar", data={"nombre": "Frutilla", "unidad_compra": "kilo"})
+        respuesta = cliente.post("/compras/articulos/1/editar", data={"nombre": "Frutilla", "unidad_compra": "kilo"})
 
     assert respuesta.status_code == 500
     assert "No se pudo guardar" in respuesta.text
@@ -440,10 +440,10 @@ def test_editar_articulo_error_de_base_muestra_mensaje_claro():
 
 def test_eliminar_articulo_exitoso_redirige_a_articulos():
     with patch("app.main.desactivar_articulo") as mock_desactivar:
-        respuesta = cliente.post("/articulos/1/eliminar", follow_redirects=False)
+        respuesta = cliente.post("/compras/articulos/1/eliminar", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    assert respuesta.headers["location"] == "/articulos"
+    assert respuesta.headers["location"] == "/compras/articulos"
     mock_desactivar.assert_called_once_with(1)
 
 
@@ -451,14 +451,14 @@ def test_eliminar_articulo_no_borra_la_fila_solo_marca_inactivo():
     # desactivar_articulo (borrado lógico) hace UPDATE activo=false, no DELETE.
     # Este test confirma que la ruta llama a esa función y no a otra.
     with patch("app.main.desactivar_articulo") as mock_desactivar:
-        cliente.post("/articulos/1/eliminar", follow_redirects=False)
+        cliente.post("/compras/articulos/1/eliminar", follow_redirects=False)
 
     mock_desactivar.assert_called_once()
 
 
 def test_eliminar_articulo_error_de_base_da_500():
     with patch("app.main.desactivar_articulo", side_effect=Exception("no se pudo conectar")):
-        respuesta = cliente.post("/articulos/1/eliminar")
+        respuesta = cliente.post("/compras/articulos/1/eliminar")
 
     assert respuesta.status_code == 500
 
@@ -1547,7 +1547,7 @@ def test_ver_compras_incluye_links_a_catalogo_y_a_inicio():
     respuesta = cliente.get("/compras")
 
     assert respuesta.status_code == 200
-    assert 'href="/articulos"' in respuesta.text
+    assert 'href="/compras/articulos"' in respuesta.text
     assert 'href="/inicio"' in respuesta.text
     # Regresión: /conversion se fusionó dentro de las fichas de logística
     # del cliente, ya no existe como pantalla propia.
@@ -3953,6 +3953,77 @@ def test_la_puerta_de_compras_emite_su_cookie_SOLO_PARA_SU_PREFIJO():
     cabecera = next(v for k, v in respuesta.headers.items() if k.lower() == "set-cookie")
     assert "Path=/compras" in cabecera
     cliente.cookies.clear()
+
+
+def test_la_puerta_de_compras_deja_pasar_el_301_de_la_url_vieja_de_corregir_recepcion():
+    """Un favorito guardado no puede pedir dos claves seguidas.
+
+    La pantalla se mudó a Gerencia y esto es solo el redirect que lo dice; no
+    muestra nada. Sin la excepción, seguir el favorito pedía la clave de
+    Compras para ver el redirect y la de Gerencia al llegar — la peor primera
+    impresión posible.
+
+    Lleva parámetro, así que la lista de excepciones por igualdad no alcanza:
+    va por patrón.
+    """
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+        respuesta = cliente.get("/compras/30/corregir-recepcion", follow_redirects=False)
+
+    assert respuesta.status_code == 301
+    assert respuesta.headers["location"] == "/gerencia/compras/30/corregir-recepcion"
+
+
+def test_la_puerta_de_compras_trata_los_EXPORTAR_como_escritura():
+    """Son GET y van del lado duro igual: no muestran una pantalla, SACAN un
+    Excel con todos los importes de compra.
+
+    Un archivo que se bajó no se cierra cuando se cierra la sesión, así que
+    acá la asimetría "los GET se abren" no aplica. Es la única excepción y
+    por eso está enumerada.
+    """
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": ""}):
+        for ruta in ("/compras/buscar/exportar-excel", "/compras/buscar/exportar-pdf"):
+            respuesta = cliente.get(ruta)
+            assert respuesta.status_code == 503, ruta
+            assert "CLAVE_COMPRAS" in respuesta.text, ruta
+
+
+def test_las_urls_viejas_de_articulos_redirigen_a_las_nuevas():
+    """Artículos se mudó bajo /compras el 12/09 para que la cookie le llegue.
+
+    Solo los GET: un favorito se guarda de una pantalla, no de un POST.
+    """
+    cliente.cookies.clear()
+    for vieja, nueva in (("/articulos", "/compras/articulos"),
+                         ("/articulos/7/editar", "/compras/articulos/7/editar")):
+        respuesta = cliente.get(vieja, follow_redirects=False)
+        assert respuesta.status_code == 301, vieja
+        assert respuesta.headers["location"] == nueva
+
+
+def test_NINGUN_LINK_INTERNO_apunta_a_la_url_vieja_de_articulos():
+    """El 301 funciona pero agrega un salto, y el día que alguien lo saque se
+    rompen todos juntos.
+
+    Por eso el redirect es para favoritos ajenos y NO un camino interno: acá
+    se exige que ninguna plantilla ni ningún redirect del server dependan de
+    él. Un grep se corre una vez; esto se corre siempre, que es la diferencia
+    el día que alguien agregue un link nuevo copiando uno viejo.
+    """
+    import glob
+
+    ofensores = []
+    for ruta in glob.glob("templates/*.html"):
+        texto = io.open(ruta, encoding="utf-8").read()
+        if re.search(r'"/articulos(?=["/?])', texto):
+            ofensores.append(ruta)
+    codigo = io.open("app/main.py", encoding="utf-8").read()
+    if re.search(r'RedirectResponse\(url=f?"/articulos(?=["/?])', codigo):
+        ofensores.append("app/main.py (RedirectResponse)")
+
+    assert ofensores == [], f"apuntan a la URL vieja: {ofensores}"
 
 
 @pytest.fixture(autouse=True)

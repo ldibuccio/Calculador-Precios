@@ -1647,7 +1647,7 @@ def salud_db() -> dict:
     return {"articulos": cantidad_articulos, "version": _version_app()}
 
 
-@app.get("/articulos")
+@app.get("/compras/articulos")
 def ver_articulos(request: Request, error: str | None = None):
     try:
         articulos = listar_articulos()
@@ -1664,7 +1664,7 @@ def ver_articulos(request: Request, error: str | None = None):
     )
 
 
-@app.post("/articulos/nuevo")
+@app.post("/compras/articulos/nuevo")
 def agregar_articulo(
     request: Request,
     nombre: str = Form(""),
@@ -1705,10 +1705,10 @@ def agregar_articulo(
             status_code=500,
         )
 
-    return RedirectResponse(url="/articulos", status_code=303)
+    return RedirectResponse(url="/compras/articulos", status_code=303)
 
 
-@app.get("/articulos/{articulo_id}/editar")
+@app.get("/compras/articulos/{articulo_id}/editar")
 def ver_editar_articulo(request: Request, articulo_id: int, error: str | None = None):
     try:
         articulo = obtener_articulo(articulo_id)
@@ -1723,7 +1723,7 @@ def ver_editar_articulo(request: Request, articulo_id: int, error: str | None = 
     )
 
 
-@app.post("/articulos/{articulo_id}/editar")
+@app.post("/compras/articulos/{articulo_id}/editar")
 def editar_articulo(
     request: Request,
     articulo_id: int,
@@ -1781,17 +1781,17 @@ def editar_articulo(
             status_code=500,
         )
 
-    return RedirectResponse(url="/articulos", status_code=303)
+    return RedirectResponse(url="/compras/articulos", status_code=303)
 
 
-@app.post("/articulos/{articulo_id}/eliminar")
+@app.post("/compras/articulos/{articulo_id}/eliminar")
 def eliminar_articulo(articulo_id: int):
     try:
         desactivar_articulo(articulo_id)
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar el artículo: {error}") from error
 
-    return RedirectResponse(url="/articulos", status_code=303)
+    return RedirectResponse(url="/compras/articulos", status_code=303)
 
 
 @app.get("/clientes")
@@ -11444,7 +11444,7 @@ ALERTAS = [
         # compra se edita en Artículos (Compras) y la de venta en Fichas
         # (Comercial). En uno solo, el que la ve no siempre puede tocarla.
         modulos=("compras", "comercial"),
-        url="/articulos",
+        url="/compras/articulos",
         texto_link="Ver en Artículos",
         # EN LAMBDA como las otras dieciocho, y no una referencia directa: el
         # registro se arma al importar, así que una referencia captura el
@@ -12699,16 +12699,33 @@ async def puerta_de_administracion(request: Request, call_next):
 # dos claves y eso es correcto: son dos zonas.
 RUTAS_COMPRAS_SIN_CLAVE = ("/compras/clave",)
 
+# Y las que llevan PARÁMETRO, que no se pueden comparar por igualdad. Hoy es
+# una sola: el 301 de la URL vieja de Corregir Recepción. Seguir un favorito
+# guardado y que pida dos claves seguidas —la de Compras para ver el redirect
+# y la de Gerencia al llegar— es la peor primera impresión posible, y el
+# redirect no muestra nada: solo dice a dónde se mudó la pantalla.
+PATRONES_COMPRAS_SIN_CLAVE = (re.compile(r"^/compras/\d+/corregir-recepcion$"),)
+
+# LOS DOS EXPORTAR VAN DEL LADO DURO aunque sean GET. Son la excepción a
+# "los GET se abren para que un deploy no trabe la consulta": no muestran una
+# pantalla, SACAN DEL SISTEMA un archivo con todos los importes de compra.
+# Un Excel que se baja no se cierra cuando se cierra la sesión.
+RUTAS_COMPRAS_QUE_EXPORTAN = ("/compras/buscar/exportar-excel", "/compras/buscar/exportar-pdf")
+
+
+def _compras_sin_clave(ruta: str) -> bool:
+    return ruta in RUTAS_COMPRAS_SIN_CLAVE or any(p.match(ruta) for p in PATRONES_COMPRAS_SIN_CLAVE)
+
 
 @app.middleware("http")
 async def puerta_de_compras(request: Request, call_next):
     ruta = request.url.path
     if not ruta.startswith(PUERTA_COMPRAS.prefijo):
         return await call_next(request)
-    if ruta in RUTAS_COMPRAS_SIN_CLAVE:
+    if _compras_sin_clave(ruta):
         return await call_next(request)
 
-    if request.method == "POST":
+    if request.method == "POST" or ruta in RUTAS_COMPRAS_QUE_EXPORTAN:
         rechazo = _puerta_para_escribir(PUERTA_COMPRAS, request)
         if rechazo is not None:
             return rechazo
@@ -12734,6 +12751,22 @@ def bloquear_compras_ruta(request: Request):
     respuesta = RedirectResponse(url="/inicio", status_code=303)
     respuesta.delete_cookie(PUERTA_COMPRAS.cookie, path=PUERTA_COMPRAS.prefijo)
     return respuesta
+
+
+# LAS URLs VIEJAS DE ARTÍCULOS, que el 12/09 se mudó bajo /compras para que
+# la cookie le llegue (con path=/compras, fuera del prefijo no viaja). Solo
+# los GET: un favorito se guarda de una pantalla, no de un POST, y los forms
+# que postean son nuestros y ya apuntan a la ruta nueva — se verificó que no
+# quedara ni una referencia vieja, así que ningún camino interno depende de
+# estos redirects. Están para el celular de alguien.
+@app.get("/articulos")
+def ver_articulos_url_vieja():
+    return RedirectResponse(url="/compras/articulos", status_code=301)
+
+
+@app.get("/articulos/{articulo_id}/editar")
+def ver_editar_articulo_url_vieja(articulo_id: int):
+    return RedirectResponse(url=f"/compras/articulos/{articulo_id}/editar", status_code=301)
 
 
 @app.get("/administracion/clave")

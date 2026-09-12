@@ -67,7 +67,7 @@
 <body>
   {% set barra_sector = "compras" %}
   {% set barra_titulo = "Editar artículo" %}
-  {% set barra_atras = "/articulos" %}
+  {% set barra_atras = "/compras/articulos" %}
   {% include "_barra_navegacion.html" %}
 
   {% if error %}
@@ -75,7 +75,7 @@
   {% endif %}
 
   <div class="tarjeta">
-    <form method="post" action="/articulos/{{ articulo.id }}/editar">
+    <form method="post" action="/compras/articulos/{{ articulo.id }}/editar">
       <label for="nombre">Nombre *</label>
       <input type="text" id="nombre" name="nombre" value="{{ articulo.nombre }}" required>
 
@@ -102,7 +102,7 @@
 
       <button type="submit">Guardar cambios</button>
     </form>
-    <a class="volver" href="/articulos">Volver al catálogo</a>
+    <a class="volver" href="/compras/articulos">Volver al catálogo</a>
   </div>
 {% include "_pie_version.html" %}
 </body>
