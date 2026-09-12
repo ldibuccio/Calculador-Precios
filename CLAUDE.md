@@ -3524,3 +3524,89 @@ El módulo **no lo adivina**: hay que mirar si la pantalla tiene alguno y, si
 lo tiene, medir la tabla contra su caja (`tabla.scrollWidth −
 caja.clientWidth`). Está en el docstring de `medir`, y se repite acá porque
 el que va a creerle a ese cero es el que leyó este archivo y no el módulo.
+
+## Corolario 54: el total DIMENSIONA, la magnitud unitaria DETECTA
+
+Del 12/09, y es reutilizable: no es de las alertas de compras, es de
+cualquier umbral.
+
+**Un umbral sobre un TOTAL escala con la cantidad.** Así que en una operación
+grande cualquier ruido lo pasa, y la alerta se llena de casos que no se le
+pueden reclamar a nadie. **El que decide si algo es anómalo es el número por
+unidad; el total decide si vale actuar.**
+
+El caso, con los números al lado: la alerta de kilos faltantes filtraba por
+`(estimado − real) × cajones ≥ 1`. Entraban
+
+```
+Jugo       −0,6k por cajón · total −19,8k   (33 cajones)
+Berenjena  −0,3k por cajón · total  −6,0k   (20 cajones)
+Cherry     −0,5k por cajón · total  −5,0k
+Pepino     −1,0k por cajón · total −15,0k
+```
+
+**Tres décimas de kilo por cajón sobre veinte cajones son seis kilos**, y los
+seis pasan un umbral de uno mientras las tres décimas son ruido de balanza.
+Los tres primeros no se le reclaman a nadie; entraban por tener muchos
+cajones.
+
+### La señal, y es la que hay que llevarse
+
+> **Si el umbral se puede pasar aumentando la CANTIDAD sin que el problema
+> empeore, está aplicado sobre el lugar equivocado.**
+
+Se contesta sin datos y en el momento de escribir el `where`: multiplicar por
+más cajones no hace que el proveedor haya entregado peor.
+
+**Y la propiedad que hace barato el cambio**: con la cantidad ≥ 1, todo lo
+que pasa el umbral unitario pasaba también el del total. El conjunto nuevo es
+**subconjunto** del viejo, así que mover el umbral al lugar correcto solo
+puede SACAR casos, nunca agregar — no hay que revisar si se perdió algo que
+antes se veía.
+
+Medido en Frutamax (`db/kilos_5_cuantos_quedan_con_el_umbral_por_cajon.sql`,
+`desde_la_foto` 09/09, `ultima_recepcion` 11/09): **de 11 a 8 sobre 74
+recepciones**, o sea que el 11% de las compras tiene una diferencia real de
+un kilo o más por cajón. Ocho reclamos posibles es accionable; once señalando
+lo mismo, no.
+
+**Y el 11 al lado del 8 es lo que hace legible el resultado** — por eso la
+consulta devuelve las dos cuentas en la misma fila. Sin el número viejo,
+"quedan 8" no dice si el cambio hizo algo. Es el corolario 45 aplicado a un
+cambio de criterio en vez de a un total.
+
+### El denominador lleva su recorte, y no es el que dice la ventana
+
+Los 74 **no son de siete días**. La ventana pide siete (`current_date - 7`)
+pero el piso de la foto la recorta al 09/09, así que son **del 09 al 12/09**.
+El recorte efectivo es el MÁS RESTRICTIVO de los dos, y el que cita el 11%
+sin eso está diciendo otra cosa.
+
+Lo único que lo deja ver es que la consulta devuelve `desde_la_foto` como
+columna (corolario 17) al lado del número: el parámetro viaja adentro del
+resultado y no en un párrafo aparte que se lee una vez (corolario 19).
+
+### Lo que NO lo agarró, que es la parte incómoda
+
+**La suite estaba verde y siguió verde.** Dos tests fijaban el filtro sobre
+el total —uno exigía el producto en el `WHERE`— así que eran **guardianes del
+bug** (corolario 22): el arreglo los rompió, y la primera lectura de ese rojo
+es "me equivoqué yo".
+
+Y el comentario arriba de la constante **argumentaba explícitamente por el
+total**: *"medir por cajón dejaría afuera exactamente los casos grandes de
+las compras grandes"*. Era un argumento válido sobre una pregunta equivocada
+—qué casos son GRANDES, no cuáles son ANÓMALOS— y es el corolario 25 otra
+vez: un argumento bien construido defendiendo una premisa que nadie discutió.
+
+Lo agarró **el dueño mirando la pantalla y reconociendo los artículos**. Ni
+un test, ni una consulta: alguien que sabe que a la Berenjena no se le
+reclaman trescientos gramos.
+
+**Cómo queda cuidado de acá en adelante**, porque "mirar la pantalla" no es
+una guarda: el test ahora exige el umbral por cajón **y que el producto NO
+esté en el `WHERE`** — esa segunda mitad es la única que impide volver, y sin
+ella el test lo pasa igual una consulta que multiplique. Y la constante se
+llama `UMBRAL_KILOS_FALTANTES_POR_CAJON`: **el nombre lleva el alcance**
+(corolario 8), porque este número no se puede comparar contra un total y fue
+exactamente esa confusión la que produjo el bug.
