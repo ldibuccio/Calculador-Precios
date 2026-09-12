@@ -12136,6 +12136,58 @@ def test_editar_los_KILOS_mueve_la_rentabilidad_que_es_la_pregunta_del_puesto():
     assert _valor(marcado, "importe_cajon") == "16000"
 
 
+def test_editar_el_PRECIO_recalcula_la_RENTABILIDAD_que_es_la_otra_mitad_de_la_regla():
+    """La pregunta es "¿a cuánto tengo que venderlo para que me dé?", y va en los dos sentidos.
+
+    LA OTRA MITAD YA TENÍA TEST y ésta no: el camino por defecto —entrar sin
+    tocar nada— también calcula la rentabilidad, así que esta dirección
+    pasaba por el camino de al lado y nadie la estaba mirando. Un `elif` que
+    dejara de recalcular al tocar el precio no habría volteado nada.
+
+    POR ESO EL PRECIO QUE SE TIPEA NO ES EL VIGENTE: con 1500 —el de la
+    ficha— la rentabilidad da 26,25% igual que de partida, y el test no
+    podría distinguir "recalculó con lo que tipeé" de "ignoró lo que tipeé".
+    Con 1800 son 52,5% y solo puede salir de haber leído el campo.
+
+      entra    = 1800 × (1 + 0,105 − 0,23) = 1575
+      utilidad = (1575 − 50 − 1000) / 1000 = 52,5%
+    """
+    marcado = _analizar(
+        "/compras/analizar?ficha_id=901"
+        "&importe_cajon=16000&kilos_bulto=16&precio=1800&utilidad=&edite=precio"
+    )
+
+    assert _valor(marcado, "utilidad") == "52.5"
+    assert _valor(marcado, "precio") == "1800", "la pantalla pisó el precio que se tipeó"
+    # El costo no se movió: es un dato, no una decisión.
+    assert _valor(marcado, "importe_cajon") == "16000"
+    assert _valor(marcado, "kilos_bulto") == "16"
+    # Y la marca de calculado quedó en la rentabilidad, NO en el precio: el
+    # precio lo puso una persona. Acotado a cada <label>, porque un regex que
+    # cruza de uno al otro da los dos siempre (corolario 4 en HTML).
+    def marcado_como_calculado(campo):
+        encontrado = re.search(rf'<label for="{campo}"[^>]*>(.*?)</label>', marcado, re.S)
+        return encontrado is not None and "marca-calculado" in encontrado.group(1)
+
+    assert marcado_como_calculado("utilidad")
+    assert not marcado_como_calculado("precio")
+
+
+def test_LOS_CUATRO_se_pueden_tipear():
+    """"Quedan cuatro, los cuatro editables". Un <p> de solo lectura no se puede tipear.
+
+    El costo por kilo se fue de la pantalla justamente por no ser uno de los
+    cuatro, y el recuadro del objetivo es de solo lectura a propósito — si
+    fuera editable sería una cuarta regla de recálculo y la rentabilidad
+    terminaría moviendo el costo.
+    """
+    marcado = _analizar("/compras/analizar?cliente_id=1")
+
+    for campo in ("importe_cajon", "kilos_bulto", "precio", "utilidad"):
+        assert re.search(rf'<input type="number" id="{campo}"', marcado), campo
+        assert f"marcarYEnviar('{campo}')" in marcado, f"{campo} no manda el formulario"
+
+
 def test_editar_la_RENTABILIDAD_recalcula_el_PRECIO_y_nunca_el_costo():
     """La asimetría del negocio: el costo es un dato y el precio es una decisión.
 
