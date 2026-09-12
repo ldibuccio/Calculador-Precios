@@ -2860,3 +2860,62 @@ verdadero se merguea.
 Es exactamente lo que este archivo dice en otro lado sobre el reproceso:
 *"flake" no es una causa raíz*. La diferencia es que allá se trata de no
 aceptar la palabra, y acá de no **fabricar** el hábito que la hace creíble.
+
+## Corolario 45: una medición que devuelve un TOTAL trae el total esperado al lado
+
+Del 12/09, y es la tercera vez en la semana que una medición mide otra cosa
+y devuelve un número plausible. Las tres veces el número se veía bien solo.
+
+El caso: para probar si la suite dependía del orden, barajé los 2268 ids y se
+los pasé a pytest con `xargs`. `xargs` **parte la lista** cuando no entra en
+la línea de comandos, así que corrió pytest cuatro veces —una por pedazo— y
+lo que leí fue el resumen del último: **`649 passed`**.
+
+Lo único que lo delató fue que **649 no es 2268**. Con una suite de 700 tests
+el número habría pasado sin que nadie lo mirara, y yo habría escrito "el
+orden no importa" apoyado en una corrida que nunca existió.
+
+**La regla, y cuesta una columna**: toda medición cuyo resultado sea un total
+—filas, tests, bultos, pesos, casos— **imprime al lado el total que tenía que
+dar**. No un comentario en otro lado: en la misma línea, donde se lee el
+número.
+
+    2268 de 2268 tests            <- se lee solo
+    649 passed                    <- necesita que alguien se acuerde del 2268
+
+Es exactamente la forma operativa de **"más hallazgos que población condena
+la heurística"**, aplicada al otro lado del cociente: allá el denominador
+dice contra cuánto se está contando; **acá dice si se contó todo.** Las dos
+son la misma cosa —un número solo no se puede leer— y las dos se pagan con
+una columna más.
+
+Y engancha con el testigo del corolario 24 por la misma razón: el testigo
+dice si la base está viva, la población contra cuánto se cuenta, y el total
+esperado si la medición llegó hasta el final. **Los tres existen porque un
+número sin su referencia al lado obliga a que alguien se acuerde, y nadie se
+acuerda** (corolario 19: la salvaguarda que existe y no se lee).
+
+## Corolario 46: un conteo de corridas verdes vale por lo que se MOVIÓ entre una y otra, no por cuántas son
+
+Del 12/09, y sale del mismo turno pero es más ancho que los tests.
+
+Corrí la suite diez veces en verde y lo reporté como "no reproducible". Las
+diez fueron **el mismo orden**: sin plugin de orden, pytest es determinista.
+Lo que probaron es que la corrida es **repetible**; lo conté como que la
+suite está **sana**, que es otra cosa.
+
+**Diez corridas idénticas son una corrida.** El número diez no agrega nada:
+lo que agrega información es cada cosa que cambia entre una y la siguiente
+—el orden, la hora, la máquina, el estado de la base—. Doce órdenes
+distintos dicen algo; diez repeticiones del mismo, no.
+
+**Vale para cualquier verificación por repetición**, no solo para una suite:
+reintentar un script, recargar una pantalla, volver a correr una consulta. Si
+entre un intento y el otro no cambió nada, el segundo no es una segunda
+confirmación — es la primera contada dos veces. Es el mismo argumento que el
+del corolario 24 cuando una base está parada: **correr no alcanza, tiene que
+haber algo distinto que medir.**
+
+Y la trampa de fondo es la de siempre en este archivo: *no encontrar
+contradicción* no es *haber verificado*. Acá con el agravante de que el
+conteo alto —diez— da una sensación de rigor que la evidencia no tenía.
