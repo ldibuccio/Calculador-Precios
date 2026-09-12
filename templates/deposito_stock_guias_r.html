@@ -333,7 +333,7 @@
   {% for g in guias %}
   <div class="tarjeta {% if g.anulado_el %}anulada{% endif %}">
     <div class="encabezado-guia">
-      {# EL ARTÍCULO MÁS LA CAJA, del mismo namer que el Remanente y las
+      {# EL ARTÍCULO MÁS LA CAJA, del mismo namer que el Stock del Depósito y las
          otras tres pantallas (`_titulo_de_porcion`). Antes decía el
          artículo pelado y dos guías R del mismo artículo para fichas
          distintas se veían idénticas en la lista.
@@ -397,9 +397,9 @@
       <summary>{% if g.ficha_nombre %}Corregir la ficha{% else %}Asignar la ficha{% endif %}</summary>
       {# Qué implica, dicho antes de tocar nada: el costo NO se mueve (los
          consumos se congelaron al cargar la guía) pero las cajas cambian de
-         pila, y eso sí se ve en el Remanente y en el Cotejo. #}
+         pila, y eso sí se ve en el Stock del Depósito y en el Cotejo. #}
       <p class="implica">Las cajas de esta guía pasan de una pila a la otra en el
-        Remanente y en el Cotejo. <strong>El costo no cambia</strong>: los consumos
+        Stock del Depósito y en el Cotejo. <strong>El costo no cambia</strong>: los consumos
         y el precio quedaron congelados al cargar la guía.</p>
       {% if g.contada_despues_el %}
       {# El caso que puede hacer daño: esa pila YA se contó después de esta

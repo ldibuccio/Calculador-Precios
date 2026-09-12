@@ -145,6 +145,8 @@ from app.db import (
     listar_subcuentas_costos_fijos,
     obtener_subcuenta_costos_fijos,
     devoluciones_vinculadas_por_rango,
+    listar_cajones_faltantes,
+    listar_pedidos_incompletos,
     listar_pedidos_para_reingreso,
     listar_renglones_para_reingreso,
     obtener_renglon_para_reingreso,
@@ -181,8 +183,11 @@ from app.db import (
     listar_pedidos_vigentes_con_armado,
     PedidoConArmado,
     PedidoInexistente,
+    PedidoInexistenteParaControl,
     PedidoYaAnulado,
     anular_pedido,
+    contar_cajones_faltantes,
+    contar_pedidos_sin_controlar,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
     buscar_renglones_pedidos,
@@ -217,6 +222,7 @@ from app.db import (
     lotes_para_reproceso,
     dependencias_del_lote_de_compra,
     desglose_de_renglon_armado,
+    guardar_control_de_pedido,
     guardar_lotes_elegidos,
     StockInsuficienteParaReproceso,
     RepartoDesactualizado,
@@ -390,6 +396,19 @@ ORIGENES_RETIRO_LABELS = {
 # alerta lo sigue. Alargar el listado hace que la alerta mire más atrás, que
 # es correcto; acortarlo la achica sola, que también.
 DIAS_PASADOS_LISTADO_PEDIDOS = 7
+
+# FALTARON CAJONES. Un cajón de diferencia ya es un caso: un bulto que se
+# compró y no llegó es mercadería que falta, sin banda gris.
+#
+# NO ES la alerta de kilos que se intentó primero, y la distinción costó
+# tres mediciones el 12/09. De las 25 diferencias de kilaje más grandes, 21
+# eran de CONTENIDO —el cajón vino más pesado o más liviano— y medido por
+# artículo eso resultó variación real de la fruta: 17 de 22 referencias con
+# desvío menor a un kilo y ocho en cero exacto. Un aviso sobre eso
+# dispararía veintiún veces por semana sin nada que corregir, que es el
+# cartel que se deja de mirar. Las que importaban eran las otras dos.
+UMBRAL_CAJONES_FALTANTES = 1
+DIAS_ALERTA_CAJONES_FALTANTES = 7
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -906,6 +925,29 @@ templates.env.filters["porcentaje"] = _formatear_porcentaje
 templates.env.filters["kilos"] = _formatear_kilos
 templates.env.filters["sufijo_unidad"] = _sufijo_unidad
 templates.env.filters["tamano"] = _formatear_bytes
+
+
+def _cajas_en_origen_por_articulo() -> dict:
+    """El catálogo de cajas por artículo para el selector de "viene armada".
+
+    VA COMO GLOBAL DEL ENTORNO y no en el contexto de cada render: la pantalla
+    de carga de compras se dibuja desde OCHO lugares distintos —el alta, la
+    manual, la edición y sus cinco re-renders por error— y pasar el catálogo en
+    cada uno son ocho lugares de los que uno se puede olvidar. El que se
+    olvide deja el selector vacío, que se lee como "este artículo no tiene
+    cajas" y es falso.
+
+    Se traga el error a propósito: que no se pueda leer el catálogo no puede
+    dejar sin CARGAR una compra. Sin catálogo el selector no se ofrece y el
+    resto de la pantalla anda igual.
+    """
+    try:
+        return _cajas_para_elegir_por_articulo()
+    except Exception:
+        return {}
+
+
+templates.env.globals["cajas_en_origen_por_articulo"] = _cajas_en_origen_por_articulo
 templates.env.filters["fecha_hora"] = _formatear_fecha_hora
 
 
@@ -2236,7 +2278,8 @@ def cambiar_articulo_de_ficha_ruta(
 
 
 def _validar_compra_nueva_form(
-    articulo_id: str, cantidad_cajones: str, contenido_por_cajon: str, importe: str, sena: str, tipo_retiro: str
+    articulo_id: str, cantidad_cajones: str, contenido_por_cajon: str, importe: str, sena: str,
+    tipo_retiro: str, ficha_en_origen_id: str,
 ) -> tuple[str | None, dict]:
     """Valida los campos del alta de una compra (cajones × contenido por cajón).
 
@@ -2244,6 +2287,17 @@ def _validar_compra_nueva_form(
     y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo). No
     valida acá si el artículo tiene unidad_compra configurada: eso requiere leerlo de la base, y lo
     hace la ruta después de esta validación.
+
+    ficha_en_origen_id es la marca de "viene YA ARMADA en caja nuestra": vacío
+    = compra normal, llega el cajón del proveedor. Acá se valida SOLO LA FORMA
+    (que sea un número); que la ficha exista y sea del MISMO ARTÍCULO lo decide
+    la base, en `_insertar_compra_con_guia`, que es donde se ESCRIBE — un
+    formulario armado a mano no ve ningún `<select>`.
+
+    VA SIN DEFAULT a propósito, aunque cinco llamadores tengan que cambiar: con
+    un default, la pantalla de carga que alguien agregue mañana y se olvide de
+    pasarlo queda como una puerta por la que este caso no se puede registrar, y
+    nadie se entera. Sin default, Python avisa.
     """
     error = None
     valores = {
@@ -2253,6 +2307,7 @@ def _validar_compra_nueva_form(
         "importe": None,
         "sena": None,
         "tipo_retiro": tipo_retiro,
+        "ficha_en_origen_id": None,
     }
 
     articulo_id = articulo_id.strip()
@@ -2278,6 +2333,14 @@ def _validar_compra_nueva_form(
 
     if not error:
         error = _validar_tipo_retiro(tipo_retiro)
+
+    if not error:
+        ficha = (ficha_en_origen_id or "").strip()
+        if ficha:
+            if not ficha.isdigit():
+                error = "La caja elegida para la mercadería que viene armada no es válida."
+            else:
+                valores["ficha_en_origen_id"] = int(ficha)
 
     return error, valores
 
@@ -2867,6 +2930,7 @@ async def agregar_compra_manual(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
     comanda_foto: UploadFile | None = File(None),
 ):
     """Guarda proveedor Y primer artículo en UN solo paso (la pantalla combinada de carga manual).
@@ -2912,7 +2976,8 @@ async def agregar_compra_manual(
         error, nombre_valor = _validar_nombre(nombre)
     if not error:
         error, valores = _validar_compra_nueva_form(
-            articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+            articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
+            ficha_en_origen_id,
         )
 
     comprimida = None
@@ -2964,6 +3029,7 @@ async def agregar_compra_manual(
             valores["sena"],
             valores["tipo_retiro"],
             foto_ruta,
+            ficha_en_origen_id=valores["ficha_en_origen_id"],
         )
     except Exception as error_db:
         return _reintentar(f"No se pudo guardar la compra: {error_db}", 500)
@@ -2985,6 +3051,7 @@ async def agregar_compra(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
     comanda_foto: UploadFile | None = File(None),
 ):
     bytes_foto = await comanda_foto.read() if comanda_foto is not None else b""
@@ -3045,7 +3112,8 @@ async def agregar_compra(
         return RedirectResponse(url="/compras/buscar", status_code=303)
 
     error, valores = _validar_compra_nueva_form(
-        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
+        ficha_en_origen_id,
     )
     if error and bytes_foto:
         error += AVISO_READJUNTAR_COMANDA
@@ -3132,6 +3200,7 @@ async def agregar_compra(
             valores["sena"],
             valores["tipo_retiro"],
             foto_ruta,
+            ficha_en_origen_id=valores["ficha_en_origen_id"],
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -3614,6 +3683,9 @@ async def confirmar_compra_foto(request: Request):
         importe_texto = str(form.get(prefijo + "importe", ""))
         sena_texto = str(form.get(prefijo + "sena", ""))
         tipo_retiro_texto = str(form.get(prefijo + "tipo_retiro", ""))
+        # POR RENGLÓN y no por comanda: al mismo puesto se le pueden comprar
+        # dos cosas y que solo una venga armada en caja nuestra.
+        ficha_en_origen_texto = str(form.get(prefijo + "ficha_en_origen_id", ""))
 
         renglones_para_mostrar.append(
             {
@@ -3624,6 +3696,7 @@ async def confirmar_compra_foto(request: Request):
                 "importe": importe_texto,
                 "sena": sena_texto,
                 "tipo_retiro": tipo_retiro_texto,
+                "ficha_en_origen_id": ficha_en_origen_texto,
                 "nota_margen": "",
                 "advertencia": False,
                 "descartado": descartado,
@@ -3637,7 +3710,8 @@ async def confirmar_compra_foto(request: Request):
             continue
 
         error_renglon, valores_renglon = _validar_compra_nueva_form(
-            articulo_id_texto, cantidad_cajones_texto, contenido_por_cajon_texto, importe_texto, sena_texto, tipo_retiro_texto
+            articulo_id_texto, cantidad_cajones_texto, contenido_por_cajon_texto,
+            importe_texto, sena_texto, tipo_retiro_texto, ficha_en_origen_texto,
         )
 
         articulo = None
@@ -3730,6 +3804,7 @@ async def confirmar_compra_foto(request: Request):
                         "importe": valores["importe"],
                         "sena": valores["sena"],
                         "tipo_retiro": valores["tipo_retiro"],
+                        "ficha_en_origen_id": valores["ficha_en_origen_id"],
                     }
                 )
 
@@ -3955,6 +4030,7 @@ def editar_compra(
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
 ):
     """"Guardar" actualiza el renglón que se está editando (bloqueado si ya está recepcionado/retirado).
 
@@ -3977,7 +4053,8 @@ def editar_compra(
         raise HTTPException(status_code=404, detail="Compra no encontrada")
 
     error, valores = _validar_compra_nueva_form(
-        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro
+        articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
+        ficha_en_origen_id,
     )
 
     articulo = None
@@ -4053,6 +4130,7 @@ def editar_compra(
                 valores["importe"],
                 valores["sena"],
                 valores["tipo_retiro"],
+                ficha_en_origen_id=valores["ficha_en_origen_id"],
             )
         except Exception as error_db:
             articulos = listar_articulos()
@@ -4587,6 +4665,7 @@ def cargar_ingreso_retroactivo(
     contenido_por_cajon: str = Form(""),
     importe: str = Form(""),
     fecha_recepcion: str = Form(""),
+    ficha_en_origen_id: str = Form(""),
 ):
     """Crea la compra YA RECEPCIONADA Y RETIRADA, fechada el día que entró.
 
@@ -4642,6 +4721,20 @@ def cargar_ingreso_retroactivo(
         elif proveedor is None:
             error = "Elegí un proveedor válido."
 
+    # La marca "viene armada en caja nuestra". Acá se valida la FORMA nomás:
+    # que la ficha exista y sea del mismo artículo lo decide la base, donde se
+    # escribe. Este camino no pasa por `_validar_compra_nueva_form` —valida
+    # campo por campo— así que el parseo va acá, y por eso hay un test que
+    # exige que los DOS caminos entiendan lo mismo.
+    ficha_marcada = None
+    if error is None:
+        ficha_texto = (ficha_en_origen_id or "").strip()
+        if ficha_texto:
+            if not ficha_texto.isdigit():
+                error = "La caja elegida para la mercadería que viene armada no es válida."
+            else:
+                ficha_marcada = int(ficha_texto)
+
     if error:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=error, status_code=400)
 
@@ -4658,6 +4751,7 @@ def cargar_ingreso_retroactivo(
             cantidad_kilos, cantidad_fraccion, importe_valor, None, "Clark",
             ingreso_directo_deposito=True,
             recepcionada_el=momento,
+            ficha_en_origen_id=ficha_marcada,
         )
     except ValueError as rechazo:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=str(rechazo), status_code=400)
@@ -6631,6 +6725,7 @@ def ingresar_mercaderia(
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
     tipo_retiro: str = Form("Clark"),
+    ficha_en_origen_id: str = Form(""),
 ):
     """Agrega un artículo ya recibido en Depósito, sin pasar por Logística ni por Recepción.
 
@@ -6652,7 +6747,9 @@ def ingresar_mercaderia(
     if proveedor is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
 
-    error, valores = _validar_compra_nueva_form(articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro)
+    error, valores = _validar_compra_nueva_form(
+        articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro, ficha_en_origen_id
+    )
 
     articulo = None
     if not error:
@@ -7921,7 +8018,7 @@ def exportar_remanente_deposito_excel(fecha: str | None = None):
         content=generar_excel_remanente(hasta, porciones),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition":
-                 f'attachment; filename="Remanente_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
+                 f'attachment; filename="Stock_del_Deposito_{hasta.strftime("%d_%m_%Y")}.xlsx"'},
     )
 
 
@@ -10577,6 +10674,73 @@ def _url_retiros_viejos(datos) -> str:
     })
 
 
+def _detalle_cajones_faltantes() -> dict:
+    """Las filas de la alerta de cajones faltantes: una por compra, la mayor arriba.
+
+    El RESUMEN se cuenta sobre estas filas y no con otra consulta: es el
+    rótulo del bloque, así que tiene que contar lo que se ve.
+    """
+    filas = listar_cajones_faltantes(
+        _hoy_argentina() - timedelta(days=DIAS_ALERTA_CAJONES_FALTANTES),
+        _hoy_argentina(),
+        UMBRAL_CAJONES_FALTANTES,
+    )
+    renglones = []
+    for fila in filas:
+        # Los kilos que representa el faltante, no solo los bultos: seis
+        # cajones de Pera son ciento ocho kilos, y el que decide si reclamar
+        # mira la plata. Con la unidad al lado, que en 'unidad' y 'cubeta'
+        # decir "kg" sería mentir.
+        contenido = fila["contenido_faltante"]
+        renglones.append([
+            fila["fecha_operacion"].strftime("%d/%m"),
+            fila["articulo"],
+            f'{fila["proveedor"]} ({fila["puesto"]})',
+            _formatear_numero(fila["cajones_comprados"]),
+            _formatear_numero(fila["cajones_recibidos"]),
+            f'−{_formatear_numero(fila["cajones_faltantes"])}',
+            (f'−{_formatear_numero(contenido)}{SUFIJOS_UNIDAD_COMPRA.get(fila["unidad_compra"], "")}'
+             if contenido is not None else "—"),
+        ])
+    return {
+        "columnas": ["Fecha", "Artículo", "Proveedor", "Comprados", "Recibidos",
+                     "Faltan", "Equivale a"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} compra{'s' if len(renglones) != 1 else ''}",
+    }
+
+
+def _detalle_pedidos_incompletos() -> dict:
+    """Las filas de los pedidos armados con faltantes: una por RENGLÓN.
+
+    El resumen dice LAS DOS CUENTAS —pedidos y renglones— porque son dos
+    unidades distintas del mismo tema: la alerta cuenta pedidos y esto lista
+    renglones. Elegir una dejaría a la otra sin rótulo, y el que lea "3" con
+    once filas abajo va a pensar que algo está roto.
+    """
+    filas = listar_pedidos_incompletos(
+        _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)
+    )
+    renglones = [[
+        fila["fecha_operacion"].strftime("%d/%m"),
+        fila["cliente"],
+        fila["sucursal"] or "—",
+        fila["articulo"] or "(sin identificar)",
+        _formatear_numero(fila["pedido"]),
+        # Sin armar es NULL y se dice así: un 0 sería un número que nadie
+        # cargó, y encima se lee como "se armó cero", que es otra cosa.
+        _formatear_numero(fila["armado"]) if fila["armado"] is not None else "sin armar",
+        _formatear_numero(fila["faltante"]),
+    ] for fila in filas]
+    pedidos = len({fila["pedido_id"] for fila in filas})
+    return {
+        "columnas": ["Fecha", "Cliente", "Suc.", "Artículo", "Pedido", "Armado", "Faltante"],
+        "filas": renglones,
+        "resumen": (f"{pedidos} pedido{'s' if pedidos != 1 else ''}, "
+                    f"{len(renglones)} {'renglón' if len(renglones) == 1 else 'renglones'}"),
+    }
+
+
 # ----------------------------------------------------------------------------
 # EL REGISTRO DE ALERTAS
 # ----------------------------------------------------------------------------
@@ -10641,10 +10805,15 @@ ALERTAS = [
         # ajuste tienen que explicar — o alguien sacó de más.
         titulo="Stock de depósito en negativo (salidas sin explicar)",
         url="/administracion/stock/remanente",
-        texto_link="Ver en el Remanente",
+        texto_link="Ver en Stock del Depósito",
         # Apuntaba a Stock del Sistema, que se borró el 06/09. Va al
-        # Remanente, que es donde quedaron los negativos, en su sección
-        # aparte. NO va al Cotejo: ahí solo aparece lo que se contó, así que
+        # Stock del Depósito, que es donde quedaron los negativos, en su
+        # sección aparte. OJO CON LOS TRES NOMBRES, que se parecen y son
+        # tres cosas: "Stock del Sistema" era ESTA pantalla hasta el 06/09
+        # y hoy es la de VACÍOS en Puesto (/puesto/envases/stock); esta se
+        # llamó "Remanente" entre el 06/09 y el 11/09; y "Stock del
+        # Depósito" es su nombre de hoy. La ruta sigue diciendo
+        # /stock/remanente: es el slug, no el nombre. NO va al Cotejo: ahí solo aparece lo que se contó, así que
         # un artículo en negativo que nadie contó no se ve — y mandar a
         # mirar donde el problema no está ya nos costó una vez.
         #
@@ -10665,7 +10834,7 @@ ALERTAS = [
         titulo="Armados esperando una guía R del artículo",
         titulo_corto="Falta cargar guías R",
         url="/administracion/stock/remanente",
-        texto_link="Ver en el Remanente",
+        texto_link="Ver en Stock del Depósito",
         # Administración y no Depósito: el que carga la guía R es Depósito,
         # pero el que ve que falta es quien mira los números. Y el operario
         # ya lo tiene en su propia pantalla, en el desglose de lotes del
@@ -10769,6 +10938,53 @@ ALERTAS = [
         contar=lambda: contar_pedidos_incompletos(
             _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)
         ),
+        detallar=_detalle_pedidos_incompletos,
+    ),
+    DefinicionAlerta(
+        codigo="pedidos_sin_controlar",
+        titulo="Pedidos entregados que Administración no controló",
+        titulo_corto="Pedidos sin controlar",
+        url="/administracion/pedidos/buscar",
+        texto_link="Ver en Buscar Pedidos",
+        # Solo Administración: el control es suyo. Depósito ya tiene seis
+        # alertas y ésta no la puede resolver.
+        modulos=("administracion",),
+        # ES LA CONSECUENCIA DEL TILDE, y por eso existe. Un campo que no
+        # aparece en ninguna cuenta ni en ninguna decisión se llena vacío en
+        # dos semanas, y eso no es indisciplina: es la respuesta correcta al
+        # incentivo que hay puesto. Acá la pregunta que contesta es
+        # "¿facturamos algo que nadie miró?", que es para lo que se pidió.
+        #
+        # HASTA AYER Y NO HASTA HOY: el pedido de hoy se controla hoy a la
+        # tarde. Prendida a la mañana con lo que todavía se está por hacer,
+        # se aprende a ignorar.
+        #
+        # La ventana sale de DIAS_PASADOS_LISTADO_PEDIDOS y no de un 7
+        # escrito acá: contar pedidos que Buscar Pedidos no lista por
+        # defecto dejaría el banner diciendo un número y la pantalla
+        # mostrando otro.
+        contar=lambda: contar_pedidos_sin_controlar(
+            _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS),
+            _hoy_argentina() - timedelta(days=1),
+        ),
+    ),
+    DefinicionAlerta(
+        codigo="cajones_faltantes",
+        titulo="Compras que llegaron con menos bultos de los que se compraron",
+        titulo_corto="Faltaron bultos",
+        # Al detalle del sector y no a Buscar Compras: con cuarenta casos, un
+        # número sin la lista al lado no dice por dónde empezar.
+        url="/compras/alertas",
+        texto_link="Ver el detalle",
+        # Solo el comprador: es él el que cargó el estimado y el único que
+        # puede decir si la diferencia es real o se tipeó mal.
+        modulos=("compras",),
+        contar=lambda: contar_cajones_faltantes(
+            _hoy_argentina() - timedelta(days=DIAS_ALERTA_CAJONES_FALTANTES),
+            _hoy_argentina(),
+            UMBRAL_CAJONES_FALTANTES,
+        ),
+        detallar=_detalle_cajones_faltantes,
     ),
     DefinicionAlerta(
         codigo="mails_sin_confirmar",
@@ -10860,6 +11076,74 @@ def _banner_alertas(modulo: str) -> dict:
 def ver_auditoria_url_vieja():
     """La URL vieja (cuando Auditoría vivía en Gerencia) sigue llegando: redirige a su sector propio."""
     return RedirectResponse(url="/auditoria", status_code=301)
+
+
+def _bloques_de_alertas(modulo: str) -> list[dict]:
+    """Los bloques de la pantalla de Alertas de un sector, armados DESDE EL REGISTRO.
+
+    No hay ni un bloque escrito a mano: se recorren las alertas que declaran
+    el módulo (`para_mostrar`, la misma que usa el banner) y cada una arma el
+    suyo. Una alerta nueva del sector aparece acá sin tocar esta función —
+    que es justo lo que impide que en tres meses haya una en el banner sin
+    bloque y nadie se entere.
+
+    LA CUENTA DEL BLOQUE CON DETALLE SALE DE SUS PROPIAS FILAS. El número de
+    la foto (el del banner) puede ser de hace seis horas y éste es de ahora;
+    si el bloque mostrara el de la foto arriba de las filas de ahora, los dos
+    números se contradirían sin que nadie pueda explicar cuál mirar. Por eso
+    `casos` pasa a ser len(filas) y el bloque dice que se calculó recién.
+
+    SI EL DETALLE FALLA, EL BLOQUE NO DESAPARECE: queda con el número de la
+    foto y su link, que es lo que tenía antes, más el motivo. Una alerta que
+    se esconde porque su consulta nueva se rompió es peor que una sin
+    detalle — el problema que avisaba sigue estando.
+    """
+    try:
+        estado = listar_estado_alertas()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    por_codigo = {definicion.codigo: definicion for definicion in ALERTAS}
+    bloques = []
+    for alerta in para_mostrar(ALERTAS, estado, modulo):
+        bloque = dict(alerta, columnas=None, filas=None, resumen=None,
+                      en_vivo=False, error_detalle=None)
+        detallar = getattr(por_codigo.get(alerta["codigo"]), "detallar", None)
+        if detallar is not None:
+            try:
+                detalle = detallar()
+            except Exception as error_detalle:
+                logger.exception("No se pudo detallar la alerta %s", alerta["codigo"])
+                bloque["error_detalle"] = str(error_detalle)
+            else:
+                bloque["columnas"] = detalle["columnas"]
+                bloque["filas"] = detalle["filas"]
+                bloque["resumen"] = detalle["resumen"]
+                bloque["casos"] = len(detalle["filas"])
+                bloque["en_vivo"] = True
+        bloques.append(bloque)
+    return bloques
+
+
+@app.get("/compras/alertas")
+def ver_alertas_compras(request: Request):
+    """Las alertas del comprador con su detalle: una fila por caso, no un número.
+
+    El banner sigue siendo un título y una cantidad —es una cinta que corre
+    en 390px y ahí no entra una tabla— y su link trae acá. Y acá y no en
+    Auditoría porque son dos trabajos distintos: Auditoría es para mirar
+    para atrás y muestra las dieciocho del sistema; esto el comprador lo
+    necesita en el momento y solo con lo suyo.
+    """
+    return templates.TemplateResponse(
+        request,
+        "compras_alertas.html",
+        {
+            "bloques": _bloques_de_alertas("compras"),
+            "modulo_nombre": "Compras",
+            "volver": "/compras",
+        },
+    )
 
 
 @app.get("/auditoria")
@@ -12200,7 +12484,7 @@ def devolver_vacios_ruta(
 
     Si la cantidad supera lo que el sistema decía, la diferencia queda
     GRABADA en el movimiento (stock_sistema) y el aviso lo dice — el
-    negativo después se ve en Stock del Sistema y en el Cotejo.
+    negativo después se ve en Stock del Depósito y en el Cotejo.
     """
     error, cantidad_valor = _validar_cantidad_vacios(cantidad)
 
@@ -13770,11 +14054,38 @@ def ver_pedido_del_dia(request: Request, cliente_id: str | None = None, fecha: s
 
 
 def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
-    """Agrupa los renglones de Buscar Pedidos por fecha, con los totales que se facturan.
+    """Agrupa los renglones de Buscar Pedidos por FECHA y, adentro, por SUCURSAL.
 
     Los kilos son SIEMPRE los kilos_enviados que grabó el depósito al
     armar — un renglón sin kilaje se cuenta aparte, jamás se calcula el
-    de la ficha acá. Los anulados se muestran (registrados) pero no suman.
+    de la ficha acá.
+
+    SOLO SE LISTA LO ARMADO, y eso sale también de los totales: un renglón
+    sin armar no se entregó, así que no es facturable y sumarlo al total
+    dejaría el número de arriba sin cerrar contra lo que se ve. No se
+    esconden en silencio: `sin_armar` viaja a la pantalla para el pie.
+
+    Los ANULADOS caen adentro de los sin armar y no hay que filtrarlos
+    aparte: anular un renglón le borra el armado_el (ver anular_renglon),
+    así que ninguno puede estar armado. Se cuentan igual para el pie.
+
+    EL GRUPO DE FECHA SE CREA AUNQUE QUEDE VACÍO. Si un pedido no tiene un
+    solo renglón armado, la tarjeta igual aparece: es exactamente el caso
+    en el que "Anular este pedido" está permitido, y sin la tarjeta el
+    botón no existiría. Es el corolario 31 — una operación sin puerta en la
+    pantalla termina en el editor de la base.
+
+    "CONTROLADO" ES UNA CUENTA, NO UNA COLUMNA: el pedido está controlado
+    cuando `controlados == armados`. Guardado como estado, un renglón nuevo
+    lo dejaría en verde hasta que alguien se acordara de destildarlo; como
+    cuenta, se vuelve incompleto solo. Es la misma razón por la que el
+    reparto del FIFO se rejuega en cada lectura en vez de guardarse.
+
+    KILOS POR BULTO SE DIVIDE, no sale de la ficha: así
+    `kilos_por_bulto × bultos = kilos` cierra exacto en cada fila. El
+    contenido nominal de la ficha da números redondos y puede no coincidir
+    con el total de al lado — dos columnas que no multiplican bien son
+    peores que una columna de menos.
     """
     grupos: list[dict] = []
     grupos_por_fecha: dict = {}
@@ -13782,6 +14093,7 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
     total_bultos = 0.0
     sin_kilaje = 0
     anulados = 0
+    sin_armar = 0
 
     for renglon in renglones:
         fecha = renglon["fecha_operacion"]
@@ -13790,48 +14102,58 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
             grupo = {
                 "fecha": fecha,
                 "fecha_mostrar": fecha.strftime("%d/%m/%Y"),
-                "filas": [],
+                "sucursales": [],
                 "kilos": 0.0,
                 "bultos": 0.0,
                 "sin_kilaje": 0,
+                "sin_armar": 0,
                 # El pedido VIGENTE de esa fecha: un grupo es exactamente un
                 # pedido, porque la consulta sale del DISTINCT ON de siempre.
                 # Va acá para poder ofrecer "Anular" sin una segunda consulta
                 # que podría elegir otro.
                 "pedido_id": renglon["pedido_id"],
                 "armados": 0,
+                "controlados": 0,
             }
             grupos_por_fecha[fecha] = grupo
             grupos.append(grupo)
 
-        # Los bultos que se mandaron: la cantidad armada real si existe,
-        # si no lo pedido (el renglón sin armar muestra lo pedido).
-        bultos = float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None else float(renglon["cantidad"])
-        anulado = renglon["anulado_el"] is not None
-        armado = renglon["armado_el"] is not None
-        if armado and not anulado:
-            grupo["armados"] += 1
+        if renglon["anulado_el"] is not None:
+            anulados += 1
+        if renglon["armado_el"] is None:
+            sin_armar += 1
+            grupo["sin_armar"] += 1
+            continue
+
+        grupo["armados"] += 1
+        if renglon.get("controlado_el") is not None:
+            grupo["controlados"] += 1
+        # Los bultos que se mandaron: la cantidad armada real si existe, si
+        # no lo pedido (se armó completo y no se grabó un número aparte).
+        bultos = (float(renglon["cantidad_armada"]) if renglon["cantidad_armada"] is not None
+                  else float(renglon["cantidad"]))
         kilos = float(renglon["kilos_enviados"]) if renglon["kilos_enviados"] is not None else None
 
-        fila = {
+        sucursal = _sucursal_del_grupo(grupo, renglon)
+        sucursal["filas"].append({
+            "renglon_id": renglon["id"],
             "articulo_nombre": renglon["articulo_nombre"] or "(sin identificar)",
             "sucursal": renglon["sucursal"],
             "bultos": bultos,
             "kilos": kilos,
-            "anulado": anulado,
-            "armado": armado,
-        }
-        grupo["filas"].append(fila)
+            "kilos_por_bulto": (kilos / bultos) if (kilos is not None and bultos) else None,
+            "controlado": renglon.get("controlado_el") is not None,
+        })
 
-        if anulado:
-            anulados += 1
-            continue
+        sucursal["bultos"] += bultos
         grupo["bultos"] += bultos
         total_bultos += bultos
         if kilos is not None:
+            sucursal["kilos"] += kilos
             grupo["kilos"] += kilos
             total_kilos += kilos
         else:
+            sucursal["sin_kilaje"] += 1
             grupo["sin_kilaje"] += 1
             sin_kilaje += 1
 
@@ -13840,9 +14162,38 @@ def _grupos_buscar_pedidos(renglones: list[dict]) -> tuple[list[dict], dict]:
         "bultos": total_bultos,
         "sin_kilaje": sin_kilaje,
         "anulados": anulados,
+        "sin_armar": sin_armar,
         "renglones": len(renglones),
     }
     return grupos, totales
+
+
+def _sucursal_del_grupo(grupo: dict, renglon: dict) -> dict:
+    """El sub-grupo de sucursal de un renglón, creado la primera vez que aparece.
+
+    La orden de compra se toma del PRIMER renglón de cada sucursal y no se
+    vuelve a mirar: `pedidos_sucursales` tiene `unique (pedido_id,
+    sucursal)`, así que todos los renglones de una sucursal traen la misma.
+
+    Una sucursal en NULL (renglón sin sucursal) es su propio grupo, con el
+    rótulo dicho como lo que es. Meterla en el primero que hubiera sería
+    contar bultos de una sucursal en otra.
+    """
+    nombre = renglon["sucursal"]
+    for sucursal in grupo["sucursales"]:
+        if sucursal["sucursal"] == nombre:
+            return sucursal
+    sucursal = {
+        "sucursal": nombre,
+        "sucursal_mostrar": nombre or "Sin sucursal",
+        "orden_compra": renglon.get("orden_compra"),
+        "filas": [],
+        "kilos": 0.0,
+        "bultos": 0.0,
+        "sin_kilaje": 0,
+    }
+    grupo["sucursales"].append(sucursal)
+    return sucursal
 
 
 def _leer_filtros_buscar_pedidos(cliente_id_texto, fecha_desde_texto, fecha_hasta_texto):
@@ -13959,6 +14310,39 @@ def anular_pedido_ruta(pedido_id: int, cliente_id: str = Form(""),
         raise HTTPException(status_code=500, detail=f"No se pudo anular el pedido: {error_db}") from error_db
     else:
         aviso = f"Pedido {pedido_id} anulado. Queda de registro; no lo cuenta ninguna pantalla."
+    return RedirectResponse(
+        url="/administracion/pedidos/buscar?" + urlencode({**filtros, "aviso": aviso}),
+        status_code=303,
+    )
+
+
+@app.post("/administracion/pedidos/{pedido_id}/control")
+def guardar_control_de_pedido_ruta(pedido_id: int, cliente_id: str = Form(""),
+                                   fecha_desde: str = Form(""), fecha_hasta: str = Form(""),
+                                   renglon_id: list[int] = Form(default=[])):
+    """Guarda el control de Administración de un pedido: los tildados, y destilda el resto.
+
+    La lista llega como los checkboxes que VINIERON: un checkbox apagado no
+    manda nada, así que destildar es "no estar en la lista". Por eso se
+    manda el pedido entero de una y no renglón por renglón — con un POST
+    por tilde no habría forma de distinguir "lo saqué" de "no lo toqué".
+
+    Las guardas viven en `guardar_control_de_pedido` (app/db.py) y no acá:
+    si estuvieran en la ruta, el día que otro llamador guarde un control se
+    las saltearía. Acá solo se traduce la excepción a un aviso.
+
+    Vuelve a la búsqueda con los MISMOS filtros: lo que hay que ver después
+    de controlar es la lista con los tildes puestos.
+    """
+    filtros = {"cliente_id": cliente_id, "fecha_desde": fecha_desde, "fecha_hasta": fecha_hasta}
+    try:
+        tildados = guardar_control_de_pedido(pedido_id, renglon_id)
+    except PedidoInexistenteParaControl:
+        aviso = "Ese pedido no existe."
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar el control: {error_db}") from error_db
+    else:
+        aviso = f"Control guardado: {tildados} renglón(es) controlados en el pedido {pedido_id}."
     return RedirectResponse(
         url="/administracion/pedidos/buscar?" + urlencode({**filtros, "aviso": aviso}),
         status_code=303,
@@ -14865,13 +15249,26 @@ def desarmar_renglon_pedido_ruta(
     fecha: str = Form(""),
     sucursal: str = Form(""),
 ):
-    """Destilda un renglón (toque por error, o apareció el stock que faltaba)."""
+    """Destilda un renglón (toque por error, o apareció el stock que faltaba).
+
+    SI TENÍA EL CONTROL DE ADMINISTRACIÓN, SE AVISA. El control se cae solo
+    —lo obliga el CHECK de la base, no una cortesía de acá— pero caerse en
+    silencio sería peor que no tenerlo: el que desarma tiene que saber que
+    tiró abajo un control que alguien ya había hecho, porque después hay
+    que volver a hacerlo.
+    """
     try:
-        desmarcar_renglon_armado(renglon_id)
+        estaba_controlado = desmarcar_renglon_armado(renglon_id)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo destildar el renglón: {error_db}") from error_db
 
-    return RedirectResponse(url=_url_vuelta_armado(cliente_id, fecha, sucursal), status_code=303)
+    destino = _url_vuelta_armado(cliente_id, fecha, sucursal)
+    if estaba_controlado:
+        destino += "&" + urlencode({
+            "aviso": "Ojo: ese renglón ya estaba controlado por Administración. "
+                     "Al destildarlo se borró el control, así que hay que volver a controlarlo.",
+        })
+    return RedirectResponse(url=destino, status_code=303)
 
 
 @app.post("/deposito/pedido/{pedido_id}/renglones/{renglon_id}/anular")

@@ -248,6 +248,13 @@
     border-top: 1px solid #eee;
   }
   .renglon-procesado:first-of-type { border-top: none; padding-top: 0; }
+  /* Pegado al nombre del artículo y no al resto del renglón: el que revisa
+     lo que ya se recibió lee "qué" y "de quién" como una sola cosa. */
+  .proveedor-procesado {
+    color: #666;
+    font-size: 0.88rem;
+    margin: 0 0 0.35rem;
+  }
   .renglon-procesado form { margin: 0; }
   .aviso-bloqueo {
     color: #888;
@@ -308,6 +315,7 @@
       {% for p in procesados_hoy %}
       <div class="renglon-procesado">
         <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
+        <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.proveedor_codigo_puesto }})</p>
         <p class="cantidad">{{ p.estado_label }} a las {{ p.procesada_el|hora }}</p>
         {% if p.estado == "recepcionado" and p.cantidad_cajones_real is not none and p.contenido_por_cajon_real is not none %}
         <p class="cantidad">Recibido: {{ p.cantidad_cajones_real|numero }} cajones × {{ p.contenido_por_cajon_real|kilos }}{{ p.unidad_compra|sufijo_unidad }} = {{ (p.cantidad_cajones_real * p.contenido_por_cajon_real)|kilos }}{{ p.unidad_compra|sufijo_unidad }}</p>

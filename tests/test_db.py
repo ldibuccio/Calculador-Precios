@@ -494,6 +494,7 @@ def test_crear_compra_asigna_el_primer_punto_de_una_guia_nueva():
         [
             (105,),  # SELECT id de guias_compra (ya existía o se acaba de crear)
             (0,),  # SELECT COUNT(*) de compras con esa guía: ninguna todavía
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -525,6 +526,7 @@ def test_crear_compra_suma_puntos_si_la_guia_ya_tiene_renglones():
         [
             (105,),  # SELECT id de guias_compra
             (2,),  # ya hay 2 compras con esa guía
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -544,8 +546,8 @@ def test_crear_compras_de_comanda_guarda_todos_los_renglones_en_un_solo_commit()
     conexion, cursor = _conexion_falsa(
         [
             None,  # SELECT 1 por carga_token: no existe, se guarda normal
-            (105,), (0,),  # guía y punto del renglón 1
-            (105,), (1,),  # guía y punto del renglón 2
+            (105,), (0,), (900,),  # guía, punto e id del renglón 1
+            (105,), (1,), (901,),  # guía, punto e id del renglón 2
         ]
     )
     renglones = [
@@ -608,7 +610,7 @@ def test_crear_compras_de_comanda_con_token_ya_usado_no_inserta_nada():
 def test_crear_compras_de_comanda_sin_token_guarda_sin_chequear():
     # Forms viejos que quedaron abiertos de antes del cambio: sin token no
     # hay chequeo anti-duplicado, se guarda directo (como siempre).
-    conexion, cursor = _conexion_falsa([(105,), (0,)])
+    conexion, cursor = _conexion_falsa([(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         guardo = crear_compras_de_comanda(
@@ -651,6 +653,7 @@ def test_crear_compra_ingreso_directo_deposito_nace_recepcionada_y_retirada():
         [
             (105,),  # SELECT id de guias_compra
             (0,),  # SELECT COUNT(*) de compras con esa guía
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -701,7 +704,7 @@ def test_el_ingreso_retroactivo_fecha_las_DOS_columnas_por_las_que_entra_al_stoc
     """
     from app.db import crear_compra
 
-    conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,)])
+    conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,), (900,)])
     momento = datetime(2026, 9, 7, 12, 0)
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -735,7 +738,7 @@ def test_el_ingreso_retroactivo_RECHAZA_una_fecha_del_dia_del_corte_o_anterior()
     for dia, tiene_que_entrar in ((date(2026, 9, 6), True),
                                   (date(2026, 9, 5), False),
                                   (date(2026, 9, 4), False)):
-        conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,)])
+        conexion, cursor = _conexion_falsa([(date(2026, 9, 5),), (105,), (0,), (900,)])
         with patch("app.db.obtener_conexion", return_value=conexion):
             if tiene_que_entrar:
                 crear_compra(dia, 5, 200, 10, 16, 160, None, 0, None, "Clark",
@@ -756,7 +759,7 @@ def test_la_fecha_de_recepcion_NO_se_puede_elegir_en_una_carga_normal():
     dejarla elegir ahí sería fechar una recepción que todavía no pasó."""
     from app.db import crear_compra
 
-    conexion, _ = _conexion_falsa([(105,), (0,)])
+    conexion, _ = _conexion_falsa([(105,), (0,), (900,)])
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError) as rechazo:
             crear_compra(date(2026, 9, 7), 5, 200, 10, 16, 160, None, None, None, "Clark",
@@ -772,6 +775,7 @@ def test_crear_compra_sin_ingreso_directo_sigue_igual_que_antes():
         [
             (105,),
             (0,),
+            (900,),  # el id que devuelve el INSERT de la compra
         ]
     )
 
@@ -2284,7 +2288,7 @@ def test_crear_compra_cooperativa_nace_retirada_con_origen_cooperativa():
     # La Cooperativa es un tercero: se asume que retira. La compra nace con
     # estado_retiro 'retirado' y retiro_origen 'cooperativa', pero la
     # recepción en Depósito sigue pendiente y sin valores reales.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])  # guia_id, punto
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])  # guia_id, punto
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Cooperativa")
@@ -2339,7 +2343,7 @@ def test_actualizar_cantidad_de_cooperativa_a_tipo_real_vuelve_el_retiro_a_pendi
 def test_crear_compra_carro_nace_retirada_con_origen_automatico():
     # Carro lo maneja un tercero que nunca entra al sistema: nadie tilda
     # nunca esas compras — nacen con el retiro hecho, igual que Cooperativa.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Carro")
@@ -2351,7 +2355,7 @@ def test_crear_compra_carro_nace_retirada_con_origen_automatico():
 
 
 def test_crear_compra_clark_sigue_naciendo_pendiente_de_retiro():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,)])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         crear_compra(date(2026, 8, 19), 5, 200, 10, 18, 180, None, 50000.0, None, "Clark")
@@ -3030,7 +3034,10 @@ def test_una_ficha_con_guias_R_NO_se_borra_y_lo_dice_con_el_numero():
 
 
 def test_una_ficha_sin_guias_R_se_borra_como_siempre():
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), None])
+    # Dos conteos: guías R y compras que la marcan como "viene armada".
+    # Los dos en cero es el caso feliz, y es el único que distingue una
+    # guarda que funciona de una que siempre frena.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(901)
@@ -3415,16 +3422,22 @@ def test_actualizar_ficha_inexistente_no_escribe_bitacora():
 def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
     # El primer fetchone es el conteo de guías R: sin guías, sigue de largo
     # y borra como siempre.
-    conexion, cursor = _conexion_falsa([(0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)])
+    conexion, cursor = _conexion_falsa(
+        [(0,), (0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)]
+    )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(10)
 
-    consulta_delete = cursor.execute.call_args_list[1].args[0]
+    # Por FRAGMENTO y no por posición: la guarda de las compras que vienen
+    # armadas entró en el medio, y correr los índices rompe tests que no
+    # hablan de eso.
+    consulta_delete = _sql_que_contiene(cursor, "DELETE FROM fichas_logistica")
     assert "DELETE FROM fichas_logistica WHERE id = %s" in consulta_delete
     assert "RETURNING" in consulta_delete
-    consulta_foto, parametros_foto = cursor.execute.call_args_list[2].args
-    assert "INSERT INTO fichas_logistica_historial" in consulta_foto
+    consulta_foto, parametros_foto = _sql_y_parametros_que_contienen(
+        cursor, "INSERT INTO fichas_logistica_historial"
+    )
     assert parametros_foto == (10, 1, 5, 100, 6, "kilo", False, "BERENJENA", None, "borrado")
     conexion.commit.assert_called_once()
 
@@ -3700,7 +3713,16 @@ def test_desmarcar_renglon_armado_borra_tilde_y_cantidad():
         desmarcar_renglon_armado(12)
 
     consulta, parametros = cursor.execute.call_args_list[0].args
-    assert "SET armado_el = NULL, cantidad_armada = NULL" in consulta
+    # Columna por columna: el assert de una línea entera se cae con un salto
+    # de línea y no dice cuál falta.
+    for columna in ("armado_el = NULL", "cantidad_armada = NULL", "kilos_enviados = NULL"):
+        assert columna in consulta, columna
+    # Y EL CONTROL DE ADMINISTRACIÓN. No es una cortesía: sin esta columna,
+    # el CHECK pedidos_renglones_controlado_solo_armado RECHAZA el UPDATE, y
+    # destildar un renglón controlado explota en la cara del que arma.
+    assert "controlado_el = NULL" in consulta
+    # Y devuelve si HABÍA un control, para que la pantalla pueda avisar.
+    assert "RETURNING (controlado_el IS NOT NULL)" in consulta
     assert parametros == (12,)
     # El tilde se fue: ya no hay salida de la que decir de dónde salió.
     assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
@@ -4162,10 +4184,189 @@ def test_anular_renglon_pedido_limpia_el_tilde_y_sus_numeros():
         anular_renglon_pedido(11)
 
     consulta = cursor.execute.call_args_list[0].args[0]
-    assert "SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL" in consulta
+    # Columna por columna y no la línea entera: el assert de una línea se cae
+    # con un salto de línea y no dice cuál columna falta.
+    assert "SET anulado_el = now()" in consulta
+    for columna in ("armado_el = NULL", "cantidad_armada = NULL", "kilos_enviados = NULL"):
+        assert columna in consulta, columna
+    # Y el control de Administración, que sin el armado no puede quedar: lo
+    # obliga el CHECK pedidos_renglones_controlado_solo_armado, así que sin
+    # esta columna el UPDATE lo RECHAZA la base.
+    assert "controlado_el = NULL" in consulta
     # Un renglón anulado no manda nada: su corrección de lotes tampoco.
     assert "DELETE FROM pedidos_renglones_lotes_elegidos" in cursor.execute.call_args_list[1].args[0]
     conexion.commit.assert_called_once()
+
+
+def test_cajones_faltantes_cuenta_los_que_llegaron_de_MENOS_y_no_los_de_mas():
+    """MENOS y no "distinto": recibir de más es un dato, pero no es que falte nada.
+
+    Mezclarlos dejaría al aviso sin una sola cosa que decir. Se mira el
+    TEXTO del SQL y no un valor devuelto: lo que cambia acá es el WHERE, y
+    con un cursor falso la fila la entrega el mock sin leer una letra de la
+    consulta (corolario 40).
+    """
+    from app.db import contar_cajones_faltantes
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (2, date(2026, 9, 5))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    assert "(c.cantidad_cajones - c.cantidad_cajones_real) >= %s" in consulta
+    assert "ABS(c.cantidad_cajones - c.cantidad_cajones_real)" not in consulta
+    # Sin número real de cajones no hay nada que comparar.
+    assert "c.cantidad_cajones_real IS NOT NULL" in consulta
+    # TODAS las unidades: un cajón faltante de un artículo por unidad falta
+    # igual. El filtro por 'kilo' era del intento anterior, que medía kilos.
+    assert "unidad_compra = 'kilo'" not in consulta
+    assert cursor.execute.call_args_list[0].args[1] == (date(2026, 9, 4), date(2026, 9, 11), 1)
+    assert resultado == {"casos": 2, "mas_viejo": date(2026, 9, 5)}
+
+
+def test_la_cuenta_y_la_lista_de_cajones_faltantes_comparten_EL_MISMO_WHERE():
+    """Con un WHERE cada una, el día que se separen el banner dice un número y la pantalla lista otro.
+
+    No se comparan los textos enteros —uno trae COUNT y el otro columnas—
+    sino que el recorte de las dos salga de la MISMA constante, comprobando
+    que cada condición esté en las dos.
+    """
+    from app.db import contar_cajones_faltantes, listar_cajones_faltantes
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (0, None)
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+        listar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+
+    cuenta = cursor.execute.call_args_list[0].args[0]
+    lista = cursor.execute.call_args_list[1].args[0]
+    for condicion in (
+        "c.estado = 'recepcionado'",
+        "c.cantidad_cajones_real IS NOT NULL",
+        "c.fecha_operacion >= %s AND c.fecha_operacion <= %s",
+        "(c.cantidad_cajones - c.cantidad_cajones_real) >= %s",
+    ):
+        assert condicion in cuenta, ("falta en la cuenta", condicion)
+        assert condicion in lista, ("falta en la lista", condicion)
+    # Y los MISMOS parámetros, en el mismo orden.
+    assert cursor.execute.call_args_list[0].args[1] == cursor.execute.call_args_list[1].args[1]
+
+
+def test_la_lista_de_cajones_faltantes_trae_lo_que_REPRESENTA_el_faltante():
+    """Seis cajones de Pera son ciento ocho kilos: el que decide si reclamar mira la plata.
+
+    Y usa el contenido REAL si existe, no el estimado: el estimado es
+    justamente el número del que se desconfía.
+    """
+    from app.db import listar_cajones_faltantes
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon)" in consulta
+    assert "AS contenido_faltante" in consulta
+    assert "ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC" in consulta
+
+
+def test_guardar_control_pregunta_la_EXISTENCIA_sin_agregado():
+    """`count(*)` devuelve (0,) para un pedido que no existe: la guarda no serviría.
+
+    Es el corolario 27: un agregado sin group by SIEMPRE produce una fila,
+    así que `fetchone() is None` no se cumple nunca. La existencia se
+    pregunta con un SELECT sin agregado, y el conteo va después.
+    """
+    from app.db import guardar_control_de_pedido
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.side_effect = [(71,), (2,)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        tildados = guardar_control_de_pedido(71, [11, 14])
+
+    existencia = cursor.execute.call_args_list[0].args[0]
+    assert "count(" not in existencia.lower(), existencia
+    assert "SELECT id FROM pedidos WHERE id = %s" in existencia
+    assert tildados == 2
+
+
+def test_guardar_control_de_pedido_INEXISTENTE_no_escribe_y_lo_dice():
+    from app.db import PedidoInexistenteParaControl, guardar_control_de_pedido
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = None
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            guardar_control_de_pedido(999, [11])
+        except PedidoInexistenteParaControl:
+            pass
+        else:
+            raise AssertionError("tenía que levantar PedidoInexistenteParaControl")
+
+    # Una sola consulta: la de existencia. No se escribió nada.
+    assert len(cursor.execute.call_args_list) == 1
+    conexion.commit.assert_not_called()
+
+
+def test_guardar_control_TILDA_los_que_vienen_y_DESTILDA_el_resto():
+    """Destildar es "no estar en la lista": un checkbox apagado no manda nada.
+
+    Sin el ELSE NULL, sacar un tilde sería imposible desde la pantalla — se
+    podría tildar y nunca destildar, y nadie lo notaría hasta querer sacar
+    uno.
+    """
+    from app.db import guardar_control_de_pedido
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.side_effect = [(71,), (2,)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        guardar_control_de_pedido(71, [11, 14])
+
+    llamada = cursor.execute.call_args_list[1]
+    consulta, parametros = llamada.args[0], llamada.args[1]
+    assert "controlado_el = CASE WHEN id = ANY(%s) THEN now() ELSE NULL END" in consulta
+    # La guarda va donde se ESCRIBE: la lista puede llegar por un POST a
+    # mano. El CHECK de la base cubre el sin armar; el anulado no, y por eso
+    # los dos están acá.
+    assert "armado_el IS NOT NULL" in consulta
+    assert "anulado_el IS NULL" in consulta
+    assert "pedido_id = %s" in consulta
+    assert parametros == ([11, 14], 71)
+    conexion.commit.assert_called_once()
+
+
+def test_contar_pedidos_sin_controlar_cuenta_PEDIDOS_vigentes_con_algun_armado():
+    from app.db import contar_pedidos_sin_controlar
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (3, date(2026, 9, 5))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_pedidos_sin_controlar(date(2026, 9, 4), date(2026, 9, 10))
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    # "Entregado" = con algún renglón armado: la mercadería salió y ya se
+    # factura. Un pedido sin armar nada no es un control que falta.
+    assert "r.armado_el IS NOT NULL" in consulta
+    # Los anulados no se facturan: ni el pedido ni el renglón.
+    assert "p.anulado_el IS NULL" in consulta
+    assert "r.anulado_el IS NULL" in consulta
+    # Lo que la vuelve un caso: que le FALTE alguno.
+    assert "HAVING count(*) FILTER (WHERE r.controlado_el IS NULL) > 0" in consulta
+    assert cursor.execute.call_args_list[0].args[1] == (date(2026, 9, 4), date(2026, 9, 10))
+    assert resultado == {"casos": 3, "mas_viejo": date(2026, 9, 5)}
 
 
 def test_desanular_renglon_pedido_vuelve_a_pendientes():
@@ -7422,3 +7623,128 @@ def test_corregir_recepcion_SIGUE_ANDANDO_si_la_guia_en_origen_esta_ANULADA():
     conexion.commit.assert_called_once()
     consulta = _sql_que_contiene(cursor, "FROM reprocesos")
     assert "compra_origen_id = %s" in consulta and "anulado_el IS NULL" in consulta
+
+
+def test_una_ficha_MARCADA_en_una_compra_que_viene_armada_NO_se_borra():
+    """Sin esta guarda el DELETE revienta con el error crudo de la foreign key.
+
+    Y el error crudo no dice QUÉ compra lo retiene, así que el que llega no
+    tiene cómo destrabarlo. Es la misma forma que la guarda de las guías R que
+    ya estaba al lado: las dos contestan "¿quién apunta a esta ficha?".
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="2 compras que vienen armadas"):
+            eliminar_ficha(901)
+
+    assert not [c for c in cursor.execute.call_args_list if "DELETE FROM fichas_logistica" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_la_guarda_de_la_ficha_NO_cuenta_las_compras_RECHAZADAS():
+    """Una compra rechazada ya no va a recepcionarse nunca: su marca no retiene nada.
+
+    El filtro va en la consulta y no en Python — la regla la decide la base.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), None])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        eliminar_ficha(901)
+
+    consulta = _sql_que_contiene(cursor, "FROM compras")
+    assert "ficha_en_origen_id = %s" in consulta
+    assert "estado IS DISTINCT FROM 'rechazado'" in consulta
+
+
+def test_marcar_una_compra_con_una_caja_de_OTRO_ARTICULO_no_la_guarda():
+    """La guarda va donde se ESCRIBE la marca, y eso es la CARGA, no la recepción.
+
+    Puesta al recepcionar, la recepción se caería por un error cometido días
+    antes —con el camión en la puerta— y el que lo cometió no es el que lo
+    sufre. Acá rebota en el momento, contra el que se equivocó.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (2,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="otro artículo"):
+            crear_compra(
+                date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+                ficha_en_origen_id=3,
+            )
+
+    assert not [c for c in cursor.execute.call_args_list
+                if "UPDATE compras SET ficha_en_origen_id" in c.args[0]]
+    conexion.commit.assert_not_called()
+
+
+def test_una_compra_marcada_con_la_caja_de_SU_articulo_se_guarda():
+    """El caso FELIZ, el único que distingue una guarda que funciona de una que siempre frena."""
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+            ficha_en_origen_id=3,
+        )
+
+    consulta, parametros = _sql_y_parametros_que_contienen(cursor, "SET ficha_en_origen_id")
+    assert parametros == (3, 900)
+    conexion.commit.assert_called_once()
+
+
+def test_una_compra_PENDIENTE_marcada_NO_carga_la_guia_R_todavia():
+    """La guía sale al RECEPCIONAR, no al cargar: la mercadería no llegó.
+
+    Solo el ingreso directo la carga en el mismo insert, porque esa compra
+    nace 'recepcionado' y no pasa por Recepción nunca.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(105,), (0,), (900,), (1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 9, 11), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+            ficha_en_origen_id=3,
+        )
+
+    assert not [c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos" in c.args[0]]
+
+
+def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
+    """Esa compra nace 'recepcionado' y NO PASA POR RECEPCIÓN nunca.
+
+    Si el disparo viviera solo en `_recepcionar_compra`, `/deposito/ingresar`
+    y el ingreso retroactivo de Gerencia serían dos puertas por las que este
+    caso no se puede registrar — y el operario volvería a la guía R a mano,
+    que es exactamente lo que todo esto vino a evitar.
+    """
+    conexion, cursor = _conexion_falsa(
+        filas_fetchone=[
+            (105,), (0,), (900,),          # guía, punto e id de la compra
+            (1,),                          # el artículo de la ficha marcada
+            (1, 3, 10.0, date(2026, 8, 25), 1, 7),  # la compra recién escrita
+            _CORTE,
+            (99,),                         # INSERT INTO reprocesos RETURNING id
+        ]
+    )
+    cursor.description = COLUMNAS_LOTES
+    cursor.fetchall.side_effect = [
+        [_lote_compra(900, date(2026, 8, 25), 10.0, 1200.0)],
+        [],
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_compra(
+            date(2026, 8, 25), 1, 200, 10, 16, 160, None, 5000.0, None, "Clark",
+            ingreso_directo_deposito=True,
+            ficha_en_origen_id=3,
+        )
+
+    cabecera = next(c for c in cursor.execute.call_args_list if "INSERT INTO reprocesos\n" in c.args[0])
+    assert _valor_insertado(cursor, "tipo", "INSERT INTO reprocesos\n") == "en_origen"
+    assert _valor_insertado(cursor, "compra_origen_id", "INSERT INTO reprocesos\n") == 900
+    # UNA sola transacción: el insert de la compra y el de la guía sobre el
+    # mismo cursor, con un solo commit.
+    conexion.cursor.assert_called_once()
+    conexion.commit.assert_called_once()
+    assert cabecera is not None

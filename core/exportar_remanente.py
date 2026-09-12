@@ -170,10 +170,10 @@ def generar_excel_remanente(fecha: date, porciones: list[dict]) -> bytes:
     """
     libro = Workbook()
     hoja = libro.active
-    hoja.title = "Remanente"
+    hoja.title = "Stock del Depósito"
 
     hoja.merge_cells("A1:E1")
-    hoja["A1"] = "Remanente del depósito"
+    hoja["A1"] = "Stock del Depósito"
     hoja["A1"].font = Font(bold=True, size=14)
 
     hoja.merge_cells("A2:E2")

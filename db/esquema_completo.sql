@@ -608,16 +608,32 @@ create table pedidos_renglones (
     kilos_enviados    numeric,
     anulado_el        timestamptz,
     ficha_id          bigint references fichas_logistica (id) on delete set null,
+    -- Tilde de Administracion: "controle este renglon". Guarda CUANDO y nada
+    -- mas — el sistema no tiene usuarios (ver el comentario de la seccion 17
+    -- sobre la tabla de operarios), asi que un "quien" seria un campo sin
+    -- consecuencia. El estado del PEDIDO no se guarda: "controlado" es una
+    -- cuenta (todos sus renglones vigentes y armados tienen tilde), asi que
+    -- un renglon nuevo lo vuelve incompleto solo.
+    controlado_el     timestamptz,
     -- Sin artículo no hay ficha: un renglón sin identificar no puede traer
     -- una ficha colgada (y al revés sí: identificado sin ficha es posible).
     constraint pedidos_renglones_ficha_solo_identificados
-        check (articulo_id is not null or ficha_id is null)
+        check (articulo_id is not null or ficha_id is null),
+    -- Lo que se controlo fue ESTE renglon con estos bultos y estos kilos: si
+    -- se desarma, esos numeros dejaron de existir y el tilde estaria
+    -- afirmando algo sobre otra cosa. Con el CHECK, el UPDATE que desarma
+    -- falla si no limpia el tilde en la misma sentencia. Una sola direccion a
+    -- proposito: armado SIN controlar es el estado normal.
+    constraint pedidos_renglones_controlado_solo_armado
+        check (controlado_el is null or armado_el is not null)
 );
 
 comment on table pedidos_renglones is 'Un renglon por articulo Y sucursal. articulo_id NULL = sin identificar, con el texto crudo conservado. armado_el: tilde de armado del deposito (= termine con este renglon); cantidad_armada: cuantos bultos se armaron realmente si fue menos que lo pedido (NULL = completo).';
 
 comment on column pedidos_renglones.kilos_enviados is 'Kilos REALES con los que el depósito mandó el renglón (se cargan al tildar; editables). NULL = sin armar. Es el número que se factura.';
 comment on column pedidos_renglones.anulado_el is 'Renglón que no se va a armar: anulado (baja lógica), fuera del progreso, nunca borrado.';
+comment on column pedidos_renglones.controlado_el is 'Cuando Administracion tildo este renglon como controlado en Buscar Pedidos. NULL = sin controlar. No guarda quien: el sistema no tiene usuarios. Se limpia al desarmar el renglon (lo obliga el CHECK pedidos_renglones_controlado_solo_armado).';
+
 comment on column pedidos_renglones.ficha_id is 'La ficha con la que el cliente pidió este renglón: la clave de VENTA (precio, kilaje, envase y el nombre que ve el que arma). Sale del código del cliente al matchear. articulo_id sigue al lado como clave de COMPRA — es lo que descuenta stock, y dos fichas del mismo artículo descuentan del mismo stock. NULL = renglón sin identificar, o ficha borrada después.';
 
 -- De qué lote dijo EL QUE ARMA que sacó los bultos de un renglón. Guarda SOLO

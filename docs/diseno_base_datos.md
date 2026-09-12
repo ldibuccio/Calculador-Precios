@@ -2989,6 +2989,15 @@ tenían respuesta, y ninguna se veía desde la pantalla.
 
 ### Lo que se hizo con esa regla: el Remanente reemplazó a Stock del Sistema (06/09)
 
+> **TRES NOMBRES, y se parecen: leer con cuidado todo lo de arriba.**
+> **"Stock del Sistema"** fue esta pantalla hasta el 06/09 y hoy es **la de
+> VACÍOS en Puesto** (`/puesto/envases/stock`), que nunca se tocó. La de
+> mercadería se llamó **"Remanente"** del 06/09 al 11/09 y desde el 11/09 se
+> llama **"Stock del Depósito"** — la ruta sigue siendo
+> `/administracion/stock/remanente`, que es el slug y no el nombre. Todo lo
+> que este documento diga "Stock del Sistema" ANTES de esta línea habla de la
+> pantalla borrada, no de la de vacíos.
+
 No fue un swap. Antes de borrar se miraron las tres preguntas del corolario, y
 las tres tenían respuesta:
 

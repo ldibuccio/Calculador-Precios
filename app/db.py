@@ -811,6 +811,14 @@ def eliminar_ficha(ficha_id: int) -> None:
     asignado quedaría indistinguible de uno que el operario dejó SIN
     ASIGNAR, y el stock de cajas de esa ficha cambiaría sin que nadie lo
     haya pedido. Borrar una ficha no puede mover el stock.
+
+    Y DESDE QUE `compras` tiene `ficha_en_origen_id` hay un SEGUNDO caso: una
+    compra que viene ya armada en caja nuestra y todavía no se recepcionó
+    apunta a su ficha desde ahí. Sin esta guarda el DELETE reventaría con el
+    error crudo de la foreign key —que no dice qué compra lo retiene— en vez
+    del mensaje. Las dos guardas se enumeran juntas a propósito: son la misma
+    pregunta ("¿quién apunta a esta ficha?") y separarlas es cómo se olvida
+    la tercera.
     """
     conexion = obtener_conexion()
     try:
@@ -827,6 +835,25 @@ def eliminar_ficha(ficha_id: int) -> None:
                     f"no se puede borrar. {'Reasignala' if una else 'Reasignalas'} a otra ficha "
                     "desde Guías R si hace falta."
                 )
+
+            cursor.execute(
+                """
+                SELECT count(*) FROM compras
+                WHERE ficha_en_origen_id = %s AND estado IS DISTINCT FROM 'rechazado'
+                """,
+                (ficha_id,),
+            )
+            compras = cursor.fetchone()[0]
+            if compras:
+                una = compras == 1
+                raise ValueError(
+                    f"Esa ficha está marcada en {compras} "
+                    f"{'compra que viene armada' if una else 'compras que vienen armadas'} "
+                    "en caja nuestra: no se puede borrar. "
+                    f"{'Sacale la marca' if una else 'Sacales la marca'} a "
+                    f"{'esa compra' if una else 'esas compras'} primero."
+                )
+
             cursor.execute(
                 """
                 DELETE FROM fichas_logistica WHERE id = %s
@@ -1686,6 +1713,7 @@ def crear_compra(
     foto_ruta: str | None = None,
     ingreso_directo_deposito: bool = False,
     recepcionada_el=None,
+    ficha_en_origen_id: int | None = None,
 ) -> None:
     """Inserta una compra cargada por el comprador, con su guía asignada.
 
@@ -1763,6 +1791,7 @@ def crear_compra(
                 foto_ruta,
                 ingreso_directo_deposito=ingreso_directo_deposito,
                 recepcionada_el=recepcionada_el,
+                ficha_en_origen_id=ficha_en_origen_id,
             )
         conexion.commit()
     finally:
@@ -1823,8 +1852,9 @@ def _insertar_compra_con_guia(
     ingreso_directo_deposito: bool = False,
     carga_token: str | None = None,
     recepcionada_el=None,
-) -> None:
-    """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear.
+    ficha_en_origen_id: int | None = None,
+) -> int:
+    """Inserta UNA compra (con su guía) usando el cursor que le pasan — sin abrir conexión ni commitear. Devuelve su id.
 
     Es el cuerpo de crear_compra (ver su docstring para el significado de
     cada campo y de las tres ramas), separado para que
@@ -1847,6 +1877,20 @@ def _insertar_compra_con_guia(
     dice que esta compra se cargó con fecha retroactiva. Sin eso, dentro de
     tres meses la fila se ve igual que una normal fechada un día en que
     nadie cargó nada.
+
+    ficha_en_origen_id: la compra viene YA ARMADA en caja nuestra y estas son
+    las cajas de esa ficha. Lo marca el COMPRADOR, que es el único que lo
+    sabe. Se escribe con un UPDATE aparte y no adentro de los tres INSERT: son
+    tres listas de columnas distintas, y una columna repetida en las tres es
+    tres lugares de los que una rama nueva se puede olvidar. El `RETURNING id`
+    sí va en las tres, pero es un sufijo — no se pierde en el medio de una
+    lista.
+
+    Y EN EL INGRESO DIRECTO LA GUÍA R SALE ACÁ MISMO, porque esa compra nace
+    'recepcionado' y NO PASA POR RECEPCIÓN: si el disparo viviera solo allá,
+    estos dos caminos —el de Depósito y el retroactivo de Gerencia— serían dos
+    puertas por las que este caso no se puede registrar, y el operario volvería
+    a la guía R a mano. Va en la misma transacción que el insert.
     """
     cursor.execute(
         """
@@ -1886,6 +1930,7 @@ def _insertar_compra_con_guia(
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     'recepcionado', 'retirado', %s, %s, %s, %s,
                     COALESCE(%s, now()), COALESCE(%s, now()), 'ingreso_directo')
+            RETURNING id
             """,
             (
                 fecha_operacion,
@@ -1916,6 +1961,7 @@ def _insertar_compra_con_guia(
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, carga_token, estado, estado_retiro, retiro_procesado_el, retiro_origen)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'retirado', now(), %s)
+            RETURNING id
             """,
             (
                 fecha_operacion,
@@ -1942,6 +1988,7 @@ def _insertar_compra_con_guia(
                  cantidad_kilos, cantidad_fraccion, importe, sena, tipo_retiro,
                  guia_id, guia_punto, carga_token, estado, estado_retiro)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pendiente', 'pendiente')
+            RETURNING id
             """,
             (
                 fecha_operacion,
@@ -1959,6 +2006,38 @@ def _insertar_compra_con_guia(
                 carga_token,
             ),
         )
+
+    (compra_id,) = cursor.fetchone()
+
+    if ficha_en_origen_id is not None:
+        # LA GUARDA VA ACÁ, donde se escribe la marca, y no al recepcionar:
+        # allá sería tarde —la recepción se caería por un error que se cometió
+        # días antes, con el camión en la puerta— y el que la cometió no es el
+        # que lo sufriría. Una ficha de otro artículo inventaría cajas que no
+        # existen y el Cotejo mostraría un rojo imposible de explicar.
+        #
+        # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None
+        # y no distinguiría "no existe" de "existe" (corolario 27).
+        cursor.execute(
+            "SELECT articulo_id FROM fichas_logistica WHERE id = %s",
+            (ficha_en_origen_id,),
+        )
+        ficha = cursor.fetchone()
+        if ficha is None:
+            raise ValueError("Esa caja no existe.")
+        if ficha[0] != articulo_id:
+            raise ValueError(
+                "Esa caja es de otro artículo: no puede ser la de esta compra."
+            )
+
+        cursor.execute(
+            "UPDATE compras SET ficha_en_origen_id = %s WHERE id = %s",
+            (ficha_en_origen_id, compra_id),
+        )
+        if ingreso_directo_deposito:
+            _guia_en_origen_si_corresponde(cursor, compra_id)
+
+    return compra_id
 
 
 def comanda_ya_guardada(carga_token: str) -> bool:
@@ -2031,6 +2110,9 @@ def crear_compras_de_comanda(
                     renglon["tipo_retiro"],
                     foto_ruta,
                     carga_token=carga_token,
+                    # POR RENGLÓN y no por comanda: al mismo puesto se le
+                    # pueden comprar dos cosas y que solo una venga armada.
+                    ficha_en_origen_id=renglon.get("ficha_en_origen_id"),
                 )
         conexion.commit()
         return True
@@ -6029,23 +6111,42 @@ def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
         conexion.close()
 
 
-def desmarcar_renglon_armado(renglon_id: int) -> None:
+def desmarcar_renglon_armado(renglon_id: int) -> bool:
     """Destilda un renglón (toque por error, o apareció el stock): vuelve arriba, sin cantidad parcial.
 
     Y BORRA LA CORRECCIÓN de lotes, en la misma transacción: el tilde se fue,
     así que ya no hay salida de la que decir de dónde salió. Dejarla sería una
     corrección apuntando a una cantidad que ya no existe, esperando a que
     alguien vuelva a tildar con otro número.
+
+    Y BORRA EL CONTROL DE ADMINISTRACIÓN, por lo mismo y un escalón más
+    fuerte: lo que se controló fue ESTE renglón con estos bultos y estos
+    kilos, así que un tilde de control sobre un renglón desarmado estaría
+    afirmando algo sobre números que ya no existen. No es una cortesía del
+    código: sin el `controlado_el = NULL` el CHECK
+    pedidos_renglones_controlado_solo_armado RECHAZA este UPDATE.
+
+    Devuelve True si había un control puesto, para que la pantalla pueda
+    decir que se tiró abajo — el que desarma tiene que enterarse.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "UPDATE pedidos_renglones SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL WHERE id = %s",
+                """
+                UPDATE pedidos_renglones
+                SET armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL,
+                    controlado_el = NULL
+                WHERE id = %s
+                RETURNING (controlado_el IS NOT NULL)
+                """,
                 (renglon_id,),
             )
+            fila = cursor.fetchone()
+            estaba_controlado = bool(fila and fila[0])
             _borrar_lotes_elegidos(cursor, renglon_id)
         conexion.commit()
+        return estaba_controlado
     finally:
         conexion.close()
 
@@ -6054,7 +6155,9 @@ def anular_renglon_pedido(renglon_id: int) -> None:
     """La CRUZ del armado: este renglón directamente no se va a armar. Anulado, nunca borrado.
 
     Si estaba tildado, el tilde y sus números se limpian: anulado y armado
-    son estados excluyentes — un renglón anulado no manda nada.
+    son estados excluyentes — un renglón anulado no manda nada. Y con ellos
+    el control de Administración, que sin el armado no puede quedar: lo
+    obliga el CHECK pedidos_renglones_controlado_solo_armado.
     """
     conexion = obtener_conexion()
     try:
@@ -6062,7 +6165,8 @@ def anular_renglon_pedido(renglon_id: int) -> None:
             cursor.execute(
                 """
                 UPDATE pedidos_renglones
-                SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL, kilos_enviados = NULL
+                SET anulado_el = now(), armado_el = NULL, cantidad_armada = NULL,
+                    kilos_enviados = NULL, controlado_el = NULL
                 WHERE id = %s
                 """,
                 (renglon_id,),
@@ -6114,6 +6218,17 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
     el kilaje de la ficha en el listado. Los anulados vienen marcados
     (anulado_el), nunca desaparecen. Una fila por renglón, del pedido
     vigente de cada fecha (los reemplazados no cuentan doble).
+
+    Trae la ORDEN DE COMPRA de la sucursal del renglón, para el encabezado
+    del grupo. LEFT JOIN y no JOIN: `pedidos_sucursales` se llena al leer el
+    mail, así que un pedido cargado a mano puede no tener fila — y ahí el
+    encabezado dice "sin orden de compra", que es un dato y no un error. El
+    `unique (pedido_id, sucursal)` de esa tabla es lo que hace que el join
+    no pueda duplicar renglones.
+
+    ORDENADO POR SUCURSAL primero: la pantalla agrupa por sucursal adentro
+    de cada fecha, y el agrupador arma los grupos en el orden en que vienen
+    las filas.
     """
     conexion = obtener_conexion()
     try:
@@ -6129,17 +6244,120 @@ def buscar_renglones_pedidos(cliente_id: int, fecha_desde, fecha_hasta) -> list[
                 )
                 SELECT v.fecha_operacion, v.id AS pedido_id, r.id, r.sucursal, r.articulo_id,
                        COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo_nombre,
-                       r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el
+                       r.cantidad, r.cantidad_armada, r.kilos_enviados, r.armado_el, r.anulado_el,
+                       r.controlado_el, ps.orden_compra
                 FROM vigentes v
                 JOIN pedidos_renglones r ON r.pedido_id = v.id
                 LEFT JOIN articulos a ON a.id = r.articulo_id
-                ORDER BY v.fecha_operacion DESC, (r.anulado_el IS NOT NULL),
-                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo), r.sucursal
+                LEFT JOIN pedidos_sucursales ps
+                       ON ps.pedido_id = v.id AND ps.sucursal = r.sucursal
+                ORDER BY v.fecha_operacion DESC, r.sucursal,
+                         (r.anulado_el IS NOT NULL),
+                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
                 """,
                 (cliente_id, fecha_desde, fecha_hasta),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+class PedidoInexistenteParaControl(Exception):
+    """El pedido que se quiso controlar no existe."""
+
+
+def guardar_control_de_pedido(pedido_id: int, renglones_tildados: list[int]) -> int:
+    """Guarda el control de Administración de un pedido: tilda los que vienen y DESTILDA el resto.
+
+    Destildar los que no vienen y no solo tildar los que sí es lo que hace
+    que el destildado exista: un checkbox que se apaga no manda nada, así
+    que "los que no llegaron" es la única forma de saber cuáles se sacaron.
+
+    SOLO LOS ARMADOS Y NO ANULADOS: la lista puede llegar armada a mano por
+    un POST. La guarda va acá, donde se ESCRIBE, y no en la pantalla —
+    aunque el CHECK de la base ya rechazaría el caso del sin armar, el del
+    anulado no lo cubre y no tiene por qué: anulado y armado ya son
+    excluyentes por otro lado.
+
+    LA EXISTENCIA SE PREGUNTA SIN AGREGADO. Un `select count(*)` devuelve
+    (0,) para un pedido que no existe, así que `fetchone() is None` no se
+    cumple nunca y la guarda no distinguiría "no hay" de "hay cero"
+    (corolario 27).
+
+    Devuelve cuántos quedaron tildados, que es lo que la pantalla avisa.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT id FROM pedidos WHERE id = %s", (pedido_id,))
+            if cursor.fetchone() is None:
+                raise PedidoInexistenteParaControl(f"El pedido {pedido_id} no existe.")
+
+            cursor.execute(
+                """
+                UPDATE pedidos_renglones
+                SET controlado_el = CASE WHEN id = ANY(%s) THEN now() ELSE NULL END
+                WHERE pedido_id = %s
+                  AND armado_el IS NOT NULL
+                  AND anulado_el IS NULL
+                """,
+                (list(renglones_tildados), pedido_id),
+            )
+            cursor.execute(
+                """
+                SELECT count(*) FROM pedidos_renglones
+                WHERE pedido_id = %s AND controlado_el IS NOT NULL
+                """,
+                (pedido_id,),
+            )
+            (tildados,) = cursor.fetchone()
+        conexion.commit()
+        return tildados
+    finally:
+        conexion.close()
+
+
+def contar_pedidos_sin_controlar(desde, hasta) -> dict:
+    """Pedidos ENTREGADOS en el rango con algún renglón armado que nadie controló.
+
+    "Entregado" es tener al menos un renglón armado: la mercadería salió del
+    galpón, así que ya se factura y el control llega tarde o no llega.
+
+    HASTA EXCLUYE HOY, y lo decide el que llama: el pedido de hoy se
+    controla hoy a la tarde, y una alerta que se prende a la mañana con lo
+    que todavía se está por hacer se aprende a ignorar en una semana.
+
+    Con VENTANA, como los pedidos incompletos y por la misma razón: un
+    pedido viejo sin controlar ya no se puede controlar —los números que
+    había que mirar contra el remito son de hace un mes— así que sin
+    ventana quedaría prendida para siempre, sin forma de resolverla ni de
+    limpiarla.
+
+    Cuenta PEDIDOS y no renglones: el que abre la pantalla abre un pedido.
+    Solo los VIGENTES (anulado_el IS NULL): un pedido anulado no se factura.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(*), min(fecha_operacion)
+                FROM (
+                    SELECT p.id, p.fecha_operacion
+                    FROM pedidos p
+                    JOIN pedidos_renglones r ON r.pedido_id = p.id
+                    WHERE p.anulado_el IS NULL
+                      AND p.fecha_operacion >= %s AND p.fecha_operacion <= %s
+                      AND r.armado_el IS NOT NULL AND r.anulado_el IS NULL
+                    GROUP BY p.id, p.fecha_operacion
+                    HAVING count(*) FILTER (WHERE r.controlado_el IS NULL) > 0
+                ) sin_controlar
+                """,
+                (desde, hasta),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": casos, "mas_viejo": mas_viejo}
     finally:
         conexion.close()
 
@@ -6229,6 +6447,156 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
             "por_ficha": {f[0]: float(f[1]) for f in filas if f[1] is not None},
             "dias": dias,
         }
+    finally:
+        conexion.close()
+
+
+# FALTARON CAJONES: se recibieron MENOS bultos de los que se compraron.
+#
+# NO ES una diferencia de kilos, y la distinción costó tres mediciones el
+# 12/09. De las 25 diferencias de kilaje más grandes, 21 eran de CONTENIDO
+# —el cajón vino más pesado o más liviano— y eso resultó ser variación real
+# de la fruta: medido por artículo, 17 de 22 referencias tienen desvío menor
+# a un kilo y ocho están en cero exacto. Un aviso sobre eso dispararía
+# veintiún veces por semana sin nada que corregir.
+#
+# Las que importan son las otras 2 de 25: Limón 45 -> 35 y Pera 40 -> 34.
+# Ahí FALTA MERCADERÍA, no varía el peso del bulto.
+#
+# MENOS y no "distinto": recibir de más también es un dato, pero no es el
+# mismo problema —no falta nada— y mezclarlos dejaría al aviso sin una sola
+# cosa que decir.
+#
+# TODAS LAS UNIDADES, al revés que el intento anterior: los cajones se
+# cuentan igual sean de kilo, de unidad o de cubeta. El filtro por 'kilo'
+# tenía sentido cuando el umbral era en kilos; acá sería dejar afuera
+# faltantes reales por el envase del artículo.
+_SQL_CAJONES_FALTANTES = """
+    FROM compras c
+    JOIN articulos a ON a.id = c.articulo_id
+    JOIN proveedores p ON p.id = c.proveedor_id
+    WHERE c.estado = 'recepcionado'
+      AND c.cantidad_cajones_real IS NOT NULL
+      AND c.fecha_operacion >= %s AND c.fecha_operacion <= %s
+      AND (c.cantidad_cajones - c.cantidad_cajones_real) >= %s
+"""
+
+
+def contar_cajones_faltantes(desde, hasta, umbral_cajones) -> dict:
+    """Compras que se recibieron con al menos `umbral_cajones` bultos MENOS de los comprados.
+
+    NO SE RECORTA POR EL CORTE, y es a propósito: el corte existe para el
+    modelo de STOCK —de ahí para atrás la foto ya trae todo neteado— y esto
+    no es una cuenta de stock, es un cotejo entre dos números que alguien
+    cargó. El motivo de aquella exclusión no es el motivo de ésta, así que
+    no se hereda. Lo que sí lleva es la ventana, por lo de siempre: una
+    compra de hace un mes ya no se corrige, y sin ventana la alerta queda
+    prendida para siempre.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*), MIN(c.fecha_operacion)" + _SQL_CAJONES_FALTANTES,
+                (desde, hasta, umbral_cajones),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def listar_cajones_faltantes(desde, hasta, umbral_cajones) -> list[dict]:
+    """Las mismas compras que cuenta contar_cajones_faltantes, con su detalle.
+
+    MISMO RECORTE, escrito UNA vez (_SQL_CAJONES_FALTANTES): si la cuenta y
+    la lista tuvieran cada una su WHERE, el día que se separen el banner
+    diría un número y la pantalla listaría otro, y nadie sabría cuál mirar.
+
+    Trae los KILOS que representa el faltante además de los bultos: seis
+    cajones de Pera son ciento ocho kilos, y el que decide si reclamar mira
+    la plata, no la cantidad de cajas.
+
+    Las más grandes primero.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo,
+                       a.unidad_compra, p.nombre AS proveedor,
+                       p.codigo_puesto AS puesto,
+                       c.cantidad_cajones AS cajones_comprados,
+                       c.cantidad_cajones_real AS cajones_recibidos,
+                       (c.cantidad_cajones - c.cantidad_cajones_real) AS cajones_faltantes,
+                       ((c.cantidad_cajones - c.cantidad_cajones_real)
+                        * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon))
+                        AS contenido_faltante
+                """
+                + _SQL_CAJONES_FALTANTES
+                + """
+                ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC,
+                         c.fecha_operacion DESC
+                """,
+                (desde, hasta, umbral_cajones),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_pedidos_incompletos(fecha_desde) -> list[dict]:
+    """Los RENGLONES que explican los pedidos que cuenta contar_pedidos_incompletos.
+
+    OJO CON LAS DOS UNIDADES, que es la trampa de esta pareja: la cuenta
+    devuelve PEDIDOS y esto devuelve RENGLONES. Son dos números distintos con
+    el mismo tema, y por eso la pantalla muestra los dos con su nombre — "3
+    pedidos, 11 renglones"— en vez de elegir uno y dejar al otro sin rótulo.
+
+    MISMO CRITERIO que la cuenta: renglones armables (con sucursal e
+    identificados), del pedido VIGENTE de cada cliente y fecha, armados con
+    menos bultos de los pedidos. Lo que la cuenta agrega y esto no puede
+    mostrar como renglón es la otra mitad del criterio —un pedido CERRADO con
+    renglones sin armar—, así que ésos también entran acá, con lo armado en
+    NULL: el renglón no se armó, y decir 0 sería inventar un número.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (p.cliente_id, p.fecha_operacion)
+                           p.id, p.fecha_operacion, p.cliente_id, p.armado_cerrado_el
+                    FROM pedidos p
+                    WHERE p.anulado_el IS NULL AND p.fecha_operacion >= %s
+                    ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC
+                )
+                SELECT v.id AS pedido_id, v.fecha_operacion, cl.nombre AS cliente,
+                       r.sucursal,
+                       COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo,
+                       r.cantidad AS pedido, r.cantidad_armada AS armado,
+                       r.cantidad - COALESCE(r.cantidad_armada, 0) AS faltante
+                FROM vigentes v
+                JOIN clientes cl ON cl.id = v.cliente_id
+                JOIN pedidos_renglones r ON r.pedido_id = v.id
+                LEFT JOIN articulos a ON a.id = r.articulo_id
+                WHERE r.articulo_id IS NOT NULL AND r.anulado_el IS NULL
+                  AND r.sucursal IS NOT NULL
+                  AND (
+                        (r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
+                         AND r.cantidad_armada < r.cantidad)
+                     OR (v.armado_cerrado_el IS NOT NULL AND r.armado_el IS NULL)
+                  )
+                ORDER BY v.fecha_operacion DESC, cl.nombre, r.sucursal,
+                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
+                """,
+                (fecha_desde,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()
 
@@ -7700,7 +8068,8 @@ def _entradas_y_salidas_stock_varios(cursor, articulo_ids: list[int], corte=None
 
     Son las MISMAS tres consultas de siempre con "= ANY(%s)" en vez de "= %s".
     Antes se corrían una vez por artículo, con su conexión cada vez: el listado
-    de Stock del Sistema abría una por artículo con guía R, y la Rentabilidad
+    de Stock del Sistema —la pantalla que se borró el 06/09— abría una por
+    artículo con guía R, y la Rentabilidad
     Real dos por artículo del rango. Con el reproceso funcionando eso crece con
     el catálogo.
 
@@ -7884,7 +8253,7 @@ def entradas_y_salidas_stock_articulos(articulo_ids: list[int]) -> dict:
     """Los lotes y las salidas fechadas de VARIOS artículos, en UNA conexión.
 
     Devuelve {articulo_id: (entradas, salidas)}. Es la que
-    usan las pantallas que miran muchos artículos de una (Stock del Sistema,
+    usan las pantallas que miran muchos artículos de una (Stock del Depósito,
     Guías R, Rentabilidad Real): antes abrían una conexión por artículo.
     """
     if not articulo_ids:

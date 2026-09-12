@@ -1663,6 +1663,152 @@ primera semana — con diez mermas encima se revisa también si la lista corta
 de motivos alcanza, que hoy es una apuesta que no se puede validar contra
 nada.
 
+## Un campo que el sistema PRECARGA no es un dato que alguien declaró
+
+Del 12/09, y es **el espejo de "un campo sin consecuencia se llena vacío"**,
+que está justo abajo. Allá un campo que no mueve nada queda en blanco. Acá
+un campo se llena SIEMPRE y tampoco lo decidió la persona: lo decidió la
+pantalla.
+
+**El hecho verificado, que es lo único que esta sección afirma sobre el
+sistema**: el contenido estimado de una compra **no lo tipea el comprador**.
+Se lo precarga `articulos.contenido_referencia` en **los cuatro caminos de
+carga** — el formulario manual lo pisa por JS al elegir el artículo, y foto,
+listado y múltiples lo hacen en el server con `_contenido_referencia_de`. El
+comprador elige el artículo y el campo se llena solo; para que quede otro
+número tiene que notarlo y pisarlo.
+
+De ahí sale la regla, y vale aunque el caso que la trajo haya terminado en
+otra cosa: **antes de leer un campo sistemáticamente mal como una carga
+descuidada, buscar quién lo llena.** Si la pantalla lo precarga, el error no
+está en la persona.
+
+Y el corolario que la vuelve barata: **un valor precargado PLAUSIBLE es peor
+que un campo vacío.** Vacío obliga a decidir; lleno invita a aceptar. Es el
+corolario 26 con otra ropa — un cartel que se pasa con el mismo click que ya
+se iba a hacer no es una revisión, y un número que se acepta con el mismo
+click no es una estimación.
+
+**Cuándo precargar, entonces**, que es la parte accionable: **sirve cuando
+hay un valor DOMINANTE y estorba cuando no lo hay.** Con un dominante, el
+precargado acierta casi siempre y el que lo pisa es la excepción. Sin
+dominante —un artículo que viene en formatos distintos por diseño— el
+precargado va a estar mal siempre, y precargar mal es exactamente lo que
+invita a aceptar mal. Ahí la referencia va **vacía**, para que el campo
+pregunte en vez de proponer.
+
+### El caso, y las TRES hipótesis que se cayeron antes de la buena
+
+Salieron **41 compras con más de un kilo de diferencia** entre lo comprado
+y lo recibido. Se probaron tres explicaciones y **las tres eran falsas**,
+cada una descartada con una medición y no con un argumento:
+
+1. **"Es ruido de balanza."** Falsa por la FORMA del reparto (abajo).
+2. **"El sistema imputa mal"** —mía—: que `contenido_por_cajon_real` viniera
+   NULL y el total real se armara con el contenido estimado. Falsa: la
+   columna que se agregó para separar causa de efecto dio `false` en los 25.
+3. **"La referencia está vieja"** —también mía, y la que más lejos llegó—:
+   el estimado era 16,0 en 16 de los 25 casos más grandes, en artículos que
+   no se parecen en nada. Falsa: medido por artículo, **17 de 22 tienen
+   desvío menor a un kilo y ocho están en CERO exacto**. El 16 de Mandarina,
+   Redondo, Jugo, Ombligo y Zapallito **es correcto** — su mediana es 16. Lo
+   que se estaba mirando era la COLA: a veces viene 18 o 19,5, y eso es
+   variación real de la fruta.
+
+**Lo que quedó**: dos artículos con la referencia de verdad mal —Mango en
+10 unidades cuando la mediana es 40, y Tomate Cherry en 5 kg cuando entran
+cajones de 5 a 15— y **dos compras con cajones faltantes**, que son las que
+importaban desde el principio.
+
+### La señal que inventé, y que falló en el caso que la generó
+
+Escribí, el mismo día y en este archivo: *"cuando el mismo valor aparece en
+artículos que no tienen nada que ver, eso no es una coincidencia de la
+realidad: es un default — la realidad no coordina a la Mandarina con el
+Zapallito."*
+
+**Es falso, y falló acá.** La realidad SÍ los coordina: **el cajón del
+mercado tiene un tamaño estándar**, así que dieciséis kilos de mandarina,
+de tomate y de zapallito en el mismo cajón no es un default copiado — es un
+envase compartido. El valor repetido era un hecho del mundo, no un descuido.
+
+Es **exactamente** lo de los proveedores con códigos vecinos, con otra
+ropa: allá medí parecido donde la cercanía era estructural (los puestos son
+una grilla); acá leí un valor compartido como copia donde lo compartido era
+el envase. La regla de aquel caso ya lo decía y no la apliqué a la mía:
+**antes de medir parecido, preguntarse qué GENERA los valores.** Un cajón
+estándar genera valores iguales entre cosas distintas, igual que una
+grilla.
+
+Y la lección de método, que es la que más se repite en este archivo: **la
+señal la escribí en el mismo turno en que la usé, y sin medirla.** El
+corolario 33 dice que una negativa mal escrita acá cierra la búsqueda del
+que la lea en tres meses; ésta era una POSITIVA —"esto es un default"— y
+mandaba a corregir cinco referencias que estaban bien. Lo único que la
+frenó fue una consulta de veinte líneas corrida al día siguiente.
+
+### El comentario que NO había envejecido
+
+En la primera versión de esta sección escribí que el comment de
+`contenido_referencia` —*"se puede editar en cada compra si ese día vino
+distinto"*— había envejecido, porque el caso real era "el número está mal
+desde siempre".
+
+**También era falso.** El caso real es el que el comentario describe: la
+referencia está bien y algunos días viene distinto. El comentario tenía
+razón y el que lo estaba leyendo mal era yo.
+
+Vale dejarlo escrito porque es el modo de falla al revés del que este
+archivo persigue: **no un comentario que envejeció, sino un lector que
+declara envejecido un comentario que le contradice la hipótesis.** La
+diferencia entre las dos cosas no se decide leyendo: se decide midiendo lo
+que el comentario afirma.
+
+### La técnica que sí funcionó: mirar la FORMA, no el conteo
+
+Los 41 casos se repartían así: **37 arriba de 10 kilos, 25 arriba de 25 — y
+solo 4 en toda la banda de 1 a 10.**
+
+El ruido de medición tiene la forma al revés: la banda chica es la más
+gorda y la cola se afina. Acá la banda chica estaba casi vacía. **Eso
+descartó "ruido de balanza" y estuvo bien descartarlo.**
+
+Pero conviene anotar hasta dónde llega, porque de ahí salté de más:
+**"no es ruido de medición" NO es "son errores".** Era variación real del
+producto, que también produce diferencias grandes en el total —tres kilos
+por cajón sobre cuarenta cajones son ciento veinte— y no es un problema de
+nadie. La forma dice que hay dos poblaciones; **no dice qué es la segunda.**
+
+La regla, y es más ancha que el caso: **cuando hay que decidir si una
+medición es ruido o es otra cosa, el conteo no alcanza — hay que mirar cómo
+se REPARTE.** Cuesta tres columnas más en la consulta (`> 1`, `> 5`,
+`> 10`, `> 25`) y decidió todo el diagnóstico. Engancha con **"más
+hallazgos que población condena la heurística"** por el lado que a aquella
+le falta: aquélla condena y nunca absuelve; la forma puede absolver — acá
+41 sobre ~100 habría sonado a umbral mal calibrado y la forma dijo lo
+contrario.
+
+### Por qué salieron TRES avisos donde parecían dos
+
+Separarlos evitó construir uno que nadie iba a mirar:
+
+| | qué dice | cuántos | cuándo se apaga |
+|---|---|---|---|
+| **Faltaron CAJONES** | faltaron bultos en ESTA compra | 2 de 25 | al investigar esa compra |
+| **Referencia mal cargada** | el sistema sugiere mal para ESTE artículo | 2 artículos | al corregir la referencia |
+| ~~Diferencia de contenido por compra~~ | — | **21 por semana** | nunca |
+
+La tercera **no se construyó**, y la razón se sostuvo aunque la causa
+resultara otra: **un aviso que dispara veintiún veces por semana no se mira
+dos semanas**, y menos ahora, que se sabe que la mayoría de esos veintiuno
+no son un problema. El aviso que sirve es el que se apaga cuando lo
+atendés, y para eso tiene que estar en la unidad de la CAUSA —el artículo—
+y no en la del síntoma —la compra—.
+
+**Cómo se decide en general**: contar cuántos disparos tendría el aviso y
+cuántas causas distintas hay detrás. Si los disparos son muchos y las
+causas pocas, la alerta está en la unidad equivocada.
+
 ## Un campo sin consecuencia se llena vacío, y eso no es indisciplina
 
 Del 09/09, y va como regla y no como corolario porque **no es de la familia

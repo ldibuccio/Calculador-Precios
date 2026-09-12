@@ -2472,7 +2472,7 @@ def test_agregar_compra_manual_guarda_proveedor_y_articulo_en_un_paso():
     # siguientes artículos no lo repiten.
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     mock_proveedor.assert_called_once_with("N07P41", "Saturno")
-    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(hoy, 5, 200, 8.0, 18.0, 144.0, None, 3000.0, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_manual_con_guardar_termina_en_buscar():
@@ -2687,7 +2687,7 @@ def test_agregar_compra_exitosa_redirige_al_mismo_proveedor_calcula_kilos():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/nueva?proveedor_id=200"
     # 10 cajones × 18 kg = 180 kg (unidad_compra del artículo = kilo)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
@@ -2713,7 +2713,7 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
 
     assert respuesta.status_code == 303
     # 5 cajones × 10 unidades = 50 unidades (unidad_compra del artículo = unidad)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_proveedor_inexistente_da_404():
@@ -2784,7 +2784,7 @@ def test_agregar_compra_terminar_con_renglon_cargado_lo_guarda_y_va_a_compras():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/buscar"
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_terminar_con_renglon_invalido_muestra_error_y_no_pierde_datos():
@@ -2910,7 +2910,7 @@ def test_agregar_compra_sin_importe_queda_pendiente():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark", None, ficha_en_origen_id=None)
 
 
 def test_agregar_compra_importe_negativo_muestra_error():
@@ -2987,7 +2987,7 @@ def test_agregar_compra_tipo_retiro_pases_se_acepta():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None)
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, 50000.0, None, "Pases", None, ficha_en_origen_id=None)
 
 
 def test_ver_nueva_compra_con_proveedor_muestra_las_tres_opciones_de_retiro():
@@ -4483,7 +4483,8 @@ def test_editar_compra_agregar_articulo_crea_compra_nueva_en_la_misma_guia():
     mock_actualizar_cantidad.assert_not_called()
     mock_actualizar_precio.assert_not_called()
     mock_crear.assert_called_once_with(
-        COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0, None, 20000.0, None, "Pases"
+        COMPRA_DE_PRUEBA["fecha_operacion"], 6, COMPRA_DE_PRUEBA["proveedor_id"], 5.0, 10.0, 50.0,
+        None, 20000.0, None, "Pases", ficha_en_origen_id=None,
     )
 
 
@@ -5864,6 +5865,29 @@ def test_ver_recepcion_panel_procesados_hoy_muestra_hora_y_deshacer_solo_no_ingr
     assert 'action="/deposito/recepcion/2/deshacer-no-ingreso"' not in respuesta.text
 
 
+def test_ver_recepcion_panel_procesados_hoy_muestra_el_proveedor_de_CADA_renglon():
+    # El que revisa lo que ya se recibió necesita saber de QUIÉN vino cada
+    # cosa, no solo qué. Y los dos renglones llevan proveedores DISTINTOS a
+    # propósito: con el mismo en los dos, un renglón que mostrara el
+    # proveedor del otro —o uno solo para toda la lista— pasaría igual.
+    uno = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[0],
+               proveedor_nombre="EJEMPLO Uno", proveedor_codigo_puesto="N01P01")
+    dos = dict(PROCESADOS_HOY_RECEPCION_DE_PRUEBA[1],
+               proveedor_nombre="EJEMPLO Dos", proveedor_codigo_puesto="N02P02")
+    with (
+        patch("app.main.listar_compras_pendientes_recepcion", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_recepcion", return_value=[uno, dos]),
+    ):
+        respuesta = cliente.get("/deposito/recepcion")
+
+    assert respuesta.status_code == 200
+    # Por la CLASE y no por el texto suelto: el nombre del proveedor también
+    # aparece en las guías pendientes y en la tarjeta efímera (corolario 38).
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<p class="proveedor-procesado">EJEMPLO Uno (N01P01)</p>' in marcado
+    assert '<p class="proveedor-procesado">EJEMPLO Dos (N02P02)</p>' in marcado
+
+
 def test_ver_recepcion_panel_procesados_hoy_muestra_cantidad_y_kilos_recibidos():
     # Lo recepcionado muestra con qué números reales se recibió: cajones,
     # contenido por cajón y el total. Lo no ingresado (o sin contenido real
@@ -6502,6 +6526,9 @@ RENGLON_KIWI_ESPERADO = {
     "importe": 5000.0,
     "sena": None,
     "tipo_retiro": "Clark",
+    # El renglón se compara ENTERO, así que este campo tiene que estar aunque
+    # sea None: que el test caiga el día que alguien agrega uno es su función.
+    "ficha_en_origen_id": None,
 }
 
 
@@ -11153,31 +11180,57 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     """
     from app.main import ALERTAS, recalcular
 
-    with (
-        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
-        patch("app.alertas.candado_alertas") as candado,
-        patch("app.alertas.guardar_estado_alerta"),
-        patch("app.main.contar_compras_sin_precio", return_value={"casos": 0, "mas_viejo": None}) as sin_precio,
-        patch("app.main.contar_retiros_pendientes_viejos", return_value={"casos": 0, "mas_viejo": None}) as retiros,
-        patch("app.main.contar_recepciones_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as recepciones,
-        patch("app.main.contar_articulos_comprados_incotizables", return_value=0) as incotizables,
-        patch("app.main.contar_senas_pendientes_viejas", return_value={"casos": 0, "mas_viejo": None}) as senas,
-        patch("app.main.contar_mails_pedido_leidos_con_ia", return_value={"casos": 0, "mas_viejo": None}) as leidos_ia,
-        patch("app.main.contar_stock_vacios_negativos", return_value=0),
-        patch("app.main.contar_stock_deposito_negativo", return_value=0),
-        patch("app.main.contar_bultos_esperando_guia_r", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_reprocesos_costo_incompleto", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_con_renglones_sin_identificar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_incompletos", return_value={"casos": 0, "mas_viejo": None}) as incompletos,
-        patch("app.main.contar_mails_pedido_sin_procesar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_pedidos_faltantes", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main.contar_casillas_sin_revisar", return_value={"casos": 0, "mas_viejo": None}),
-        patch("app.main._cruces_primera_reproceso", return_value=[]),
-        patch("app.main.listar_articulos",
-              return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}]),
-    ):
+    # Con ExitStack y no con un `with (...)` de veintipico: CPython no
+    # acepta más de 20 bloques anidados estáticos, y la alerta número
+    # dieciocho lo rompió con un SyntaxError que no dice una palabra de las
+    # alertas. Cada contador nuevo entra en la lista y listo.
+    from contextlib import ExitStack
+
+    VACIO = {"casos": 0, "mas_viejo": None}
+    contadores = {
+        "contar_compras_sin_precio": VACIO,
+        "contar_retiros_pendientes_viejos": VACIO,
+        "contar_recepciones_pendientes_viejas": VACIO,
+        "contar_articulos_comprados_incotizables": 0,
+        "contar_senas_pendientes_viejas": VACIO,
+        "contar_mails_pedido_leidos_con_ia": VACIO,
+        "contar_stock_vacios_negativos": 0,
+        "contar_stock_deposito_negativo": 0,
+        "contar_bultos_esperando_guia_r": VACIO,
+        "contar_reprocesos_costo_incompleto": VACIO,
+        "contar_pedidos_con_renglones_sin_identificar": VACIO,
+        "contar_pedidos_incompletos": VACIO,
+        "contar_pedidos_sin_controlar": VACIO,
+        "contar_cajones_faltantes": VACIO,
+        "contar_mails_pedido_sin_procesar": VACIO,
+        "contar_pedidos_faltantes": VACIO,
+        "contar_casillas_sin_revisar": VACIO,
+    }
+    with ExitStack() as pila:
+        pila.enter_context(patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA))
+        candado = pila.enter_context(patch("app.alertas.candado_alertas"))
+        pila.enter_context(patch("app.alertas.guardar_estado_alerta"))
+        pila.enter_context(patch("app.main._cruces_primera_reproceso", return_value=[]))
+        pila.enter_context(patch(
+            "app.main.listar_articulos",
+            return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}, {"id": 5, "nombre": "EJEMPLO Cinco"}],
+        ))
+        mocks = {
+            nombre: pila.enter_context(patch(f"app.main.{nombre}", return_value=valor))
+            for nombre, valor in contadores.items()
+        }
         candado.return_value.__enter__.return_value = True
         resumen = recalcular(ALERTAS)
+
+    sin_precio = mocks["contar_compras_sin_precio"]
+    retiros = mocks["contar_retiros_pendientes_viejos"]
+    recepciones = mocks["contar_recepciones_pendientes_viejas"]
+    incotizables = mocks["contar_articulos_comprados_incotizables"]
+    senas = mocks["contar_senas_pendientes_viejas"]
+    leidos_ia = mocks["contar_mails_pedido_leidos_con_ia"]
+    incompletos = mocks["contar_pedidos_incompletos"]
+    sin_controlar = mocks["contar_pedidos_sin_controlar"]
+    faltantes = mocks["contar_cajones_faltantes"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -11191,6 +11244,330 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     incotizables.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA)
     senas.assert_called_once_with(date(2026, 7, 30))
     leidos_ia.assert_called_once_with(date(2026, 7, 30))
+    # Pedidos sin controlar: 7 días para atrás y HASTA AYER. El pedido de hoy
+    # se controla hoy a la tarde — una alerta prendida a la mañana con lo que
+    # todavía se está por hacer se aprende a ignorar.
+    sin_controlar.assert_called_once_with(date(2026, 7, 30), date(2026, 8, 5))
+    # Cajones faltantes: 7 días para atrás y HASTA HOY (una compra que llegó
+    # hoy con diez bultos de menos hay que verla hoy), con el umbral de UN
+    # cajón — un bulto que se compró y no llegó no tiene banda gris.
+    faltantes.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
+
+
+# Las CINCO pantallas que precargan el contenido por cajón. La lista va acá
+# escrita una vez: el test de abajo la recorre entera, así que una sexta
+# pantalla que copie el mismo JS entra al test el día que se la agregue a
+# esta lista — y si no se agrega, el grep del test lo dice.
+PANTALLAS_QUE_PRECARGAN_CONTENIDO = (
+    "compra_form", "compra_manual", "compra_revision_foto",
+    "compra_listado", "compra_fotos_multiples",
+)
+
+# deposito_ingresar NO está en la lista, y es lo contrario de un olvido: ahí
+# se sacó la precarga ENTERA. Lo cuida su propio test, abajo.
+
+
+def test_cambiar_a_un_articulo_SIN_referencia_LIMPIA_el_contenido_precargado():
+    """Sin el else, queda el número del artículo ANTERIOR: un valor de otra cosa.
+
+    Es peor que el default y peor que el vacío: el 16 de la Mandarina
+    quedaría cargado sobre un Cherry, y el que lo mira no tiene cómo saber
+    de dónde salió.
+
+    Y la referencia vacía va a dejar de ser rara: es lo que le corresponde a
+    un artículo que viene en formatos distintos por diseño, donde precargar
+    acierta nunca. Ver la sección "Un campo que el sistema PRECARGA" de
+    CLAUDE.md.
+
+    LAS CINCO PANTALLAS, porque es la misma copia escrita cinco veces: el
+    día que se arregle una sola, este test cae por las otras cuatro.
+    """
+    for nombre in PANTALLAS_QUE_PRECARGAN_CONTENIDO:
+        js = io.open(f"templates/{nombre}.html", encoding="utf-8").read()
+        assert 'contenidoInput.value = contenidoReferencia ? contenidoReferencia : "";' in js, nombre
+        # Y la forma vieja no puede quedar en ninguna: con las dos, gana la
+        # que corra última y el arreglo depende del orden.
+        assert "if (contenidoReferencia) {" not in js, nombre
+
+
+def test_el_ingreso_directo_NO_precarga_el_contenido_porque_ahi_ya_es_el_dato_real():
+    """La pantalla dice "esto ya es el dato real" y el campo llegaba con un número puesto.
+
+    Y acá el número no tiene segunda oportunidad: el ingreso directo escribe
+    contenido_por_cajon en LAS DOS columnas, la estimada y la REAL, porque
+    nace recepcionado. Una referencia aceptada sin pesar no queda como un
+    estimado a corregir en Recepción — queda como "Depósito pesó esto" para
+    todo el sistema, y de ahí sale el promedio con el que después se juzga
+    si la referencia era buena. La referencia se confirmaría a sí misma.
+
+    Se verifica que NO esté la precarga y que SÍ esté lo que la hace
+    innecesaria: el campo obligatorio y el cartel que lo explica.
+    """
+    js = io.open("templates/deposito_ingresar.html", encoding="utf-8").read()
+    assert "contenidoReferencia" not in js
+    assert "data-contenido-referencia" not in js
+
+    marcado = js.split("</style>")[-1]
+    assert 'id="contenido_por_cajon"' in marcado and "required" in marcado
+    assert "esto ya es el dato real" in marcado
+
+    # Y la razón de fondo, en el código que la crea: el ingreso directo
+    # escribe el mismo valor en la columna estimada y en la real.
+    db = io.open("app/db.py", encoding="utf-8").read()
+    assert "'ingreso_directo')" in db
+
+
+def test_no_hay_una_SEXTA_pantalla_que_precargue_el_contenido_sin_el_arreglo():
+    """El test de arriba mira una lista escrita a mano: esto verifica la lista.
+
+    Un test que recorre una lista fija no puede ver lo que no está en la
+    lista — que es, por definición, lo que falta. Así que acá se barren
+    TODAS las plantillas y se exige que las que tocan contenidoReferencia
+    sean exactamente esas cinco.
+    """
+    import glob
+
+    tocan = {ruta.split("/")[-1].removesuffix(".html")
+             for ruta in glob.glob("templates/*.html")
+             if "contenidoReferencia" in io.open(ruta, encoding="utf-8").read()}
+    assert tocan == set(PANTALLAS_QUE_PRECARGAN_CONTENIDO), tocan
+
+
+# --- La pantalla de Alertas del sector (12/09) -------------------------------
+# Auditoría muestra las dieciocho con su número; ésta muestra las del SECTOR
+# con una fila por caso. Los bloques salen del registro, no escritos a mano.
+
+
+def _alertas_de_compras(filas_faltantes=None, filas_incompletos=None, foto=None):
+    """Abre /compras/alertas con el detalle parcheado, y devuelve el marcado.
+
+    Parchea los LISTADORES y no los detalladores: así lo que se prueba es la
+    pantalla entera —registro, armado del bloque, tabla— y no una función
+    devolviendo lo que le dijeron.
+    """
+    from unittest.mock import patch as _patch
+    with (
+        _patch("app.main.listar_estado_alertas", return_value=foto if foto is not None else _foto_alertas()),
+        _patch("app.main.listar_cajones_faltantes", return_value=filas_faltantes or []),
+        _patch("app.main.listar_pedidos_incompletos", return_value=filas_incompletos or []),
+        _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/alertas")
+    assert respuesta.status_code == 200
+    return respuesta.text.split("</style>")[-1]
+
+
+# Los dos casos REALES del 12/09, con nombres de ejemplo: Limón 45 -> 35 y
+# Pera 40 -> 34. Y el segundo en 'unidad' a propósito: los cajones se cuentan
+# igual sea cual sea el envase, y el sufijo del equivalente tiene que
+# acompañar — decir "kg" sobre unidades sería mentir.
+FALTANTES_DE_PRUEBA = [
+    {"id": 501, "fecha_operacion": date(2026, 8, 5), "articulo": "EJEMPLO Uno",
+     "unidad_compra": "kilo", "proveedor": "EJEMPLO Prov", "puesto": "N99P01",
+     "cajones_comprados": 45, "cajones_recibidos": 35,
+     "cajones_faltantes": 10, "contenido_faltante": 170},
+    {"id": 502, "fecha_operacion": date(2026, 8, 4), "articulo": "EJEMPLO Dos",
+     "unidad_compra": "unidad", "proveedor": "EJEMPLO Otro", "puesto": "N99P02",
+     "cajones_comprados": 40, "cajones_recibidos": 34,
+     "cajones_faltantes": 6, "contenido_faltante": 108},
+]
+
+INCOMPLETOS_DE_PRUEBA = [
+    {"pedido_id": 71, "fecha_operacion": date(2026, 8, 5), "cliente": "EJEMPLO Cli",
+     "sucursal": "VL", "articulo": "EJEMPLO Uno", "pedido": 15, "armado": 12, "faltante": 3},
+    {"pedido_id": 71, "fecha_operacion": date(2026, 8, 5), "cliente": "EJEMPLO Cli",
+     "sucursal": "BZ", "articulo": "EJEMPLO Dos", "pedido": 10, "armado": 4, "faltante": 6},
+    {"pedido_id": 72, "fecha_operacion": date(2026, 8, 4), "cliente": "EJEMPLO Cli",
+     "sucursal": "VL", "articulo": "EJEMPLO Tres", "pedido": 20, "armado": None, "faltante": 20},
+]
+
+
+def test_alertas_de_compras_lista_UNA_FILA_POR_CASO_no_un_numero():
+    marcado = _alertas_de_compras(
+        filas_faltantes=FALTANTES_DE_PRUEBA,
+        foto=_foto_alertas({"cajones_faltantes": (2, date(2026, 8, 4))}),
+    )
+
+    assert "Compras que llegaron con menos bultos de los que se compraron" in marcado
+    for columna in ("Fecha", "Artículo", "Proveedor", "Comprados", "Recibidos",
+                    "Faltan", "Equivale a"):
+        assert f"<th>{columna}</th>" in marcado, columna
+    assert "EJEMPLO Uno" in marcado and "EJEMPLO Prov (N99P01)" in marcado
+    # Los bultos que faltan Y lo que representan: el que decide si reclamar
+    # mira la plata, no la cantidad de cajas.
+    assert "−10" in marcado and "−170k" in marcado
+    # El sufijo sigue a la UNIDAD del artículo: sobre 'unidad' decir "k"
+    # sería mentir.
+    assert "−6" in marcado and "−108u" in marcado
+
+
+def test_la_cuenta_del_bloque_sale_de_SUS_FILAS_y_no_de_la_foto():
+    """El número del banner es de hace hasta seis horas; éste es de ahora.
+
+    Si el bloque mostrara el de la foto arriba de las filas de ahora, los dos
+    se contradirían y nadie podría decir cuál mirar. La foto dice 5 y hay 2
+    filas: tiene que decir 2.
+    """
+    marcado = _alertas_de_compras(
+        filas_faltantes=FALTANTES_DE_PRUEBA,
+        foto=_foto_alertas({"cajones_faltantes": (5, date(2026, 8, 4))}),
+    )
+
+    assert "2 compras" in marcado
+    assert "5 compras" not in marcado and "5 casos" not in marcado
+    assert "Calculado ahora." in marcado
+
+
+def test_el_bloque_con_detalle_deja_casos_EN_SUS_FILAS_y_no_en_el_de_la_foto():
+    """El contrato, mirado en el dato y no en el HTML.
+
+    La plantilla hoy muestra el `resumen` y no `casos`, así que un test que
+    solo lee la pantalla NO PUEDE ver si `casos` quedó con el número viejo
+    de la foto — se verificó rompiendo el código a propósito y no cayó
+    nada. Y que quede viejo importa: es el número que va a mostrar el día
+    que alguien pinte `b.casos` en esa rama, y ahí diría cinco arriba de
+    dos filas.
+    """
+    from app.main import _bloques_de_alertas
+
+    with (
+        patch("app.main.listar_estado_alertas",
+              return_value=_foto_alertas({"cajones_faltantes": (5, date(2026, 8, 4))})),
+        patch("app.main.listar_cajones_faltantes", return_value=FALTANTES_DE_PRUEBA),
+        patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        bloques = _bloques_de_alertas("compras")
+
+    kilaje = next(b for b in bloques if b["codigo"] == "cajones_faltantes")
+    assert kilaje["filas"] is not None
+    assert kilaje["casos"] == len(kilaje["filas"]) == 2, kilaje["casos"]
+    assert kilaje["en_vivo"] is True
+
+    # Y una SIN detalle conserva el de la foto, que es lo correcto ahí: es el
+    # único número que esa alerta tiene.
+    with (
+        patch("app.main.listar_estado_alertas",
+              return_value=_foto_alertas({"compras_sin_precio": (4, date(2026, 8, 1))})),
+        patch("app.main.listar_cajones_faltantes", return_value=[]),
+        patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        bloques = _bloques_de_alertas("compras")
+
+    sin_precio = next(b for b in bloques if b["codigo"] == "compras_sin_precio")
+    assert sin_precio["filas"] is None
+    assert sin_precio["casos"] == 4
+    assert sin_precio["en_vivo"] is False
+
+
+def test_el_bloque_de_incompletos_dice_LAS_DOS_CUENTAS():
+    """Cuenta PEDIDOS y lista RENGLONES: los dos números con su nombre.
+
+    El fixture trae tres renglones de DOS pedidos a propósito. Con uno por
+    pedido, un resumen que contara mal no se notaría.
+    """
+    marcado = _alertas_de_compras(
+        filas_incompletos=INCOMPLETOS_DE_PRUEBA,
+        foto=_foto_alertas({"pedidos_incompletos": (2, date(2026, 8, 4))}),
+    )
+
+    assert "2 pedidos, 3 renglones" in marcado
+    for columna in ("Cliente", "Suc.", "Pedido", "Armado", "Faltante"):
+        assert f"<th>{columna}</th>" in marcado, columna
+    # Sin armar es NULL y se dice así: un 0 se lee como "se armó cero".
+    assert "sin armar" in marcado
+
+
+def test_una_alerta_SIN_detalle_muestra_el_numero_y_el_link_como_hoy():
+    """Dieciséis de las dieciocho solo saben contar y no hay que inventarles nada."""
+    marcado = _alertas_de_compras(
+        foto=_foto_alertas({"compras_sin_precio": (4, date(2026, 8, 1))}),
+    )
+
+    assert "Compras sin precio de compra cargado" in marcado
+    assert "4 casos" in marcado
+    assert 'href="/compras/pendientes"' in marcado
+    assert "Ver en Compras sin precio" in marcado
+
+
+def test_si_el_detalle_FALLA_el_bloque_no_desaparece():
+    """Una alerta que se esconde porque su consulta nueva se rompió es peor que una sin detalle.
+
+    El problema que avisaba sigue estando, así que el bloque queda con el
+    número de la foto, su link, y el motivo escrito.
+    """
+    from unittest.mock import patch as _patch
+    with (
+        _patch("app.main.listar_estado_alertas",
+               return_value=_foto_alertas({"cajones_faltantes": (7, date(2026, 8, 4))})),
+        _patch("app.main.listar_cajones_faltantes", side_effect=RuntimeError("se cayó la consulta")),
+        _patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/alertas")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "Compras que llegaron con menos bultos" in marcado
+    assert "7 casos" in marcado
+    assert "se cayó la consulta" in marcado
+
+
+def test_la_pantalla_se_arma_DESDE_EL_REGISTRO_y_una_alerta_nueva_aparece_sola():
+    """Un bloque escrito a mano deja, en tres meses, una alerta en el banner sin bloque.
+
+    Se inventa una alerta del sector compras EN EL REGISTRO y la pantalla
+    tiene que mostrarla sin que nadie toque la plantilla ni la ruta. Si los
+    bloques estuvieran escritos a mano, este test no podría pasar.
+    """
+    from app.alertas import DefinicionAlerta
+    import app.main as main
+
+    inventada = DefinicionAlerta(
+        codigo="alerta_inventada_para_el_test",
+        titulo="EJEMPLO Alerta que no existía ayer",
+        url="/compras",
+        texto_link="Ver el ejemplo",
+        modulos=("compras",),
+        contar=lambda: {"casos": 0, "mas_viejo": None},
+    )
+    from unittest.mock import patch as _patch
+    with _patch.object(main, "ALERTAS", list(main.ALERTAS) + [inventada]):
+        foto = _foto_alertas({"alerta_inventada_para_el_test": (3, date(2026, 8, 2))})
+        with (
+            _patch("app.main.listar_estado_alertas", return_value=foto),
+            _patch("app.main.listar_cajones_faltantes", return_value=[]),
+            _patch("app.main.listar_pedidos_incompletos", return_value=[]),
+            _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        ):
+            marcado = cliente.get("/compras/alertas").text.split("</style>")[-1]
+
+    assert "EJEMPLO Alerta que no existía ayer" in marcado
+    assert "3 casos" in marcado
+    assert "Ver el ejemplo" in marcado
+
+
+def test_alertas_de_compras_NO_muestra_las_de_otros_sectores():
+    """Solo lo del comprador: Auditoría es la que muestra las dieciocho."""
+    marcado = _alertas_de_compras(
+        foto=_foto_alertas({
+            "compras_sin_precio": (4, date(2026, 8, 1)),
+            "recepciones_pendientes": (9, date(2026, 8, 1)),   # depósito
+            "senas_vacios_pendientes": (2, date(2026, 8, 1)),  # puesto
+        }),
+    )
+
+    assert "Compras sin precio de compra cargado" in marcado
+    assert "Mercadería sin recepcionar" not in marcado
+    assert "Señas de vacíos" not in marcado
+
+
+def test_el_boton_de_Alertas_esta_en_el_sector_del_comprador():
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
+        marcado = cliente.get("/compras").text.split("</style>")[-1]
+
+    assert '<a class="boton boton-naranja" href="/compras/alertas">Alertas</a>' in marcado
 
 
 def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
@@ -14631,6 +15008,59 @@ def test_el_renglon_armado_de_MAS_no_lleva_el_ambar_del_incompleto():
 
 # --- El Remanente: la vista del depósito, una porción por renglón (06/09) ---
 
+# La pantalla se llama STOCK DEL DEPÓSITO desde el 11/09. Antes fue
+# "Remanente" (06/09 al 11/09), y antes de eso el nombre "Stock del Sistema"
+# era de OTRA pantalla de mercadería que se borró — hoy ese nombre es el de
+# la de VACÍOS en Puesto, que nunca se tocó. La ruta sigue diciendo
+# /administracion/stock/remanente: es el slug, no el nombre.
+NOMBRE_STOCK_DEPOSITO = "Stock del Depósito"
+
+
+def test_el_nombre_de_la_pantalla_dice_LO_MISMO_en_el_boton_el_titulo_y_el_Excel():
+    """El botón, el título de la pantalla y el Excel son UN nombre, no tres.
+
+    Si el botón dice una cosa y la pantalla otra, son dos nombres para la
+    misma pantalla — que es exactamente lo que este renombre vino a cerrar.
+    Los cuatro se leen de los archivos, no de una copia escrita acá.
+    """
+    boton = io.open("templates/administracion.html", encoding="utf-8").read()
+    pantalla = io.open("templates/administracion_stock_remanente.html", encoding="utf-8").read()
+    ruta_excel = io.open("app/main.py", encoding="utf-8").read()
+    excel = io.open("core/exportar_remanente.py", encoding="utf-8").read()
+
+    # Por el atributo entero y no por la palabra suelta: el nombre también
+    # aparece en los comentarios que explican el renombre (corolario 38).
+    assert f'href="/administracion/stock/remanente">{NOMBRE_STOCK_DEPOSITO}</a>' in boton
+    assert f"<title>{NOMBRE_STOCK_DEPOSITO}</title>" in pantalla
+    assert f'{{% set barra_titulo = "{NOMBRE_STOCK_DEPOSITO}" %}}' in pantalla
+    assert f'hoja.title = "{NOMBRE_STOCK_DEPOSITO}"' in excel
+    assert f'hoja["A1"] = "{NOMBRE_STOCK_DEPOSITO}"' in excel
+    # El archivo que se baja, sin tildes ni espacios pero el mismo nombre.
+    assert 'filename="Stock_del_Deposito_{hasta.strftime' in ruta_excel
+
+
+def test_no_queda_NINGUN_texto_visible_diciendo_Remanente():
+    """Un solo lugar que siga diciendo "Remanente" son dos nombres para una pantalla.
+
+    Mira SOLO texto visible: saca el <style>, los comentarios de Jinja y de
+    HTML (que nombran el nombre viejo a propósito, para explicar el cambio)
+    y la ruta /stock/remanente, que es el slug y se queda.
+    """
+    import glob
+    ofensores = []
+    for archivo in sorted(glob.glob("templates/*.html")):
+        h = io.open(archivo, encoding="utf-8").read()
+        if "</style>" in h:
+            h = h.split("</style>")[-1]
+        h = re.sub(r"\{#.*?#\}", "", h, flags=re.S)
+        h = re.sub(r"<!--.*?-->", "", h, flags=re.S)
+        h = h.replace("/administracion/stock/remanente", "")
+        for linea in h.splitlines():
+            if "emanente" in linea:
+                ofensores.append(f"{archivo}: {linea.strip()[:90]}")
+    assert ofensores == [], ofensores
+
+
 REMANENTE_FILAS = [
     {"articulo_id": 1, "nombre": "Mandarina", "stock": 35.0, "segunda": 3.0, "grupo": "fruta"},
     {"articulo_id": 2, "nombre": "Pomelo", "stock": 31.0, "segunda": 0.0, "grupo": "fruta"},
@@ -15107,7 +15537,7 @@ def test_el_excel_se_baja_a_la_fecha_pedida_y_el_archivo_la_lleva_en_el_nombre()
         respuesta = cliente.get(
             "/administracion/stock/remanente/exportar-excel?fecha=2026-09-08")
 
-    assert 'filename="Remanente_08_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    assert 'filename="Stock_del_Deposito_08_09_2026.xlsx"' in respuesta.headers["content-disposition"]
     hoja = load_workbook(BytesIO(respuesta.content)).active
     assert hoja["A2"].value == "Al 08/09/2026"
 
@@ -15245,8 +15675,8 @@ def test_el_excel_del_remanente_trae_el_fisico_y_la_diferencia():
     el que cuenta no entra ahí. En su lugar va el conteo que YA existe."""
     respuesta, hoja = _hoja_remanente()
 
-    assert 'filename="Remanente_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
-    assert hoja.title == "Remanente"
+    assert 'filename="Stock_del_Deposito_06_09_2026.xlsx"' in respuesta.headers["content-disposition"]
+    assert hoja.title == "Stock del Depósito"
     assert [c.value for c in hoja[4]] == [
         "Producto", "Sistema", "Físico", "Contado el", "Diferencia",
     ]
@@ -15505,7 +15935,10 @@ def test_el_total_del_excel_dice_renglon_en_singular_con_uno_solo():
 
 
 def test_desarmar_renglon_destilda():
-    with patch("app.main.desmarcar_renglon_armado") as mock_desmarcar:
+    # return_value=False a propósito y no un Mock pelado: un Mock es
+    # truthy, así que la rama del aviso se tomaría siempre y el test no
+    # podría distinguir las dos.
+    with patch("app.main.desmarcar_renglon_armado", return_value=False) as mock_desmarcar:
         respuesta = cliente.post(
             "/deposito/pedido/50/renglones/12/desarmar",
             data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
@@ -15514,6 +15947,29 @@ def test_desarmar_renglon_destilda():
 
     assert respuesta.status_code == 303
     mock_desmarcar.assert_called_once_with(12)
+    # Sin control puesto no hay nada que avisar.
+    assert "aviso" not in respuesta.headers["location"]
+
+
+def test_desarmar_un_renglon_CONTROLADO_avisa_que_se_tiro_el_control_abajo():
+    """El control se cae solo (lo obliga el CHECK), pero no en silencio.
+
+    El que desarma tiene que saber que tiró abajo un control que alguien ya
+    había hecho, porque después hay que volver a hacerlo. Un campo que se
+    borra sin avisar es la forma de que nadie confíe en el tilde.
+    """
+    with patch("app.main.desmarcar_renglon_armado", return_value=True):
+        respuesta = cliente.post(
+            "/deposito/pedido/50/renglones/12/desarmar",
+            data={"cliente_id": "1", "fecha": "2026-08-21", "sucursal": "VL"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    destino = respuesta.headers["location"]
+    assert "aviso=" in destino
+    assert "controlado" in urllib.parse.unquote_plus(destino)
+    assert "volver a controlarlo" in urllib.parse.unquote_plus(destino)
 
 
 def test_ver_pedido_muestra_el_incompleto_y_el_armado_real_por_sucursal():
@@ -17442,7 +17898,7 @@ def test_agregar_compra_clasica_con_comanda_adjunta_la_cuelga_de_la_guia():
         respuesta = cliente.post(
             "/compras/nueva",
             data={"proveedor_id": "200", "accion": "agregar", "articulo_id": "5", "cantidad_cajones": "10",
-                  "contenido_por_cajon": "18", "importe": "50000", "sena": "", "tipo_retiro": "Clark"},
+                  "contenido_por_cajon": "18", "importe": "50000", "sena": "", "tipo_retiro": "Clark", "ficha_en_origen_id": None},
             files={"comanda_foto": ("comanda.jpg", b"bytes", "image/jpeg")},
             follow_redirects=False,
         )
@@ -17879,16 +18335,29 @@ def test_terminar_pedido_no_cuenta_renglones_sin_sucursal_como_pendientes():
 # grupo lo lleva para poder ofrecer "Anular" sin una segunda consulta.
 # El del 21/08 tiene un renglón armado; el del 20/08 no (su único renglón
 # está anulado), así que sirven para los dos estados del botón.
+# DOS sucursales armadas con órdenes de compra DISTINTAS, a propósito: con
+# una sola, o con la misma OC en las dos, una pantalla que mostrara una sola
+# OC para todo el pedido pasaría igual. Es el rival plantado.
 RENGLONES_BUSCAR_DE_PRUEBA = [
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 11, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 15.0, "cantidad_armada": 12.0,
-     "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None},
+     "kilos_enviados": 240.0, "armado_el": datetime(2026, 8, 21, 13, 0), "anulado_el": None,
+     "orden_compra": "4417", "controlado_el": None},
+    {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 14, "sucursal": "BZ", "articulo_id": 3,
+     "articulo_nombre": "Zapallo", "cantidad": 10.0, "cantidad_armada": 10.0,
+     "kilos_enviados": 95.0, "armado_el": datetime(2026, 8, 21, 13, 30), "anulado_el": None,
+     "orden_compra": "9902", "controlado_el": None},
+    # Sin armar: no se entregó, así que no se lista ni suma.
     {"fecha_operacion": date(2026, 8, 21), "pedido_id": 71, "id": 12, "sucursal": "BZ", "articulo_id": 2,
      "articulo_nombre": "Batata", "cantidad": 40.0, "cantidad_armada": None,
-     "kilos_enviados": None, "armado_el": None, "anulado_el": None},
+     "kilos_enviados": None, "armado_el": None, "anulado_el": None,
+     "orden_compra": "9902", "controlado_el": None},
+    # El pedido del 20/08 queda con CERO armados: su tarjeta igual tiene que
+    # aparecer, porque es justo donde "Anular" está permitido.
     {"fecha_operacion": date(2026, 8, 20), "pedido_id": 72, "id": 13, "sucursal": "VL", "articulo_id": 1,
      "articulo_nombre": "Banana", "cantidad": 10.0, "cantidad_armada": None,
-     "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0)},
+     "kilos_enviados": None, "armado_el": None, "anulado_el": datetime(2026, 8, 20, 13, 0),
+     "orden_compra": None, "controlado_el": None},
 ]
 
 
@@ -17902,18 +18371,70 @@ def test_buscar_pedidos_muestra_los_kilos_enviados_nunca_los_de_ficha():
 
     assert respuesta.status_code == 200
     texto = respuesta.text
-    assert "Pedido del 21/08/2026" in texto
-    # Los kilos REALES del depósito (240, de 12 bultos armados) — y el sin
-    # armar dice "sin kilaje", jamás un cálculo de ficha.
-    assert "240 kg" in texto
-    assert "sin kilaje" in texto
-    assert "sin armar" in texto
-    # El anulado, visible como anulado (registrado, no borrado) y sin sumar.
-    assert "anulado" in texto
-    assert "1 anulado" in texto
+    marcado = texto.split("</style>")[-1]
+    assert "Pedido del 21/08/2026" in marcado
+    # Los kilos REALES del depósito (240, de 12 bultos armados), jamás un
+    # cálculo de ficha. Y los kilos POR BULTO salen de dividir: 240/12 = 20.
+    assert "240 kg" in marcado
+    assert "12 bultos × 20 kg" in marcado
+    # Total: 240 + 95, solo lo armado.
+    assert "335 kg" in marcado
     # Export con los mismos filtros.
-    assert "/administracion/pedidos/buscar/exportar-pdf?cliente_id=1" in texto
-    assert "/administracion/pedidos/buscar/exportar-excel?cliente_id=1" in texto
+    assert "/administracion/pedidos/buscar/exportar-pdf?cliente_id=1" in marcado
+    assert "/administracion/pedidos/buscar/exportar-excel?cliente_id=1" in marcado
+
+
+def test_buscar_pedidos_agrupa_por_sucursal_con_SU_orden_de_compra():
+    """Cada sucursal es su grupo, con la OC que le corresponde a ELLA.
+
+    Las dos del fixture tienen OC distintas: con la misma en las dos, una
+    pantalla que mostrara una sola OC para todo el pedido pasaría igual.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    # Por la CLASE y no por el texto suelto: "VL" y "OC" aparecen en prosa.
+    assert '<span class="sigla">VL</span>' in marcado
+    assert '<span class="sigla">BZ</span>' in marcado
+    assert '<span class="oc">OC 4417</span>' in marcado
+    assert '<span class="oc">OC 9902</span>' in marcado
+    # El pedido del 20/08 no tiene fila en pedidos_sucursales: se dice.
+    assert "sin orden de compra" not in marcado  # ninguna sucursal LISTADA queda sin OC
+
+
+def test_buscar_pedidos_NO_lista_los_sin_armar_ni_los_suma_pero_los_CUENTA():
+    """Lo sin armar no se entregó: fuera de la lista y del total, dicho en el pie.
+
+    El fixture tiene una Batata sin armar (40 bultos) y una Banana anulada.
+    Si alguna de las dos entrara al total, el número de arriba dejaría de
+    cerrar contra lo que se ve.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    # No están listados.
+    assert "Batata" not in marcado
+    # Los bultos del total son SOLO los armados: 12 + 10 = 22. Con la Batata
+    # adentro darían 62, y con la Banana anulada, 72.
+    assert "22 bultos en 2 pedidos" in marcado
+    # Pero se cuentan, y a la vista: 2 sin armar (la Batata y la anulada).
+    assert "2 sin armar, fuera de la lista y del total." in marcado
+    assert "De ésos, 1 anulado." in marcado
+    # Y el pedido del 20/08, que quedó sin un solo renglón listado, sigue
+    # teniendo su tarjeta — es donde vive el botón de Anular.
+    assert "Pedido del 20/08/2026" in marcado
 
 
 def test_buscar_pedidos_sin_cliente_muestra_solo_el_selector():
@@ -17943,6 +18464,52 @@ def test_exportar_buscar_pedidos_pdf_y_excel():
     assert 'filename="Pedidos_2026-08-15_a_2026-08-22.pdf"' in pdf.headers["content-disposition"]
     assert excel.status_code == 200
     assert "spreadsheetml" in excel.headers["content-type"]
+
+
+def test_el_Excel_de_pedidos_tiene_LAS_SEIS_COLUMNAS_y_Armado_va_VACIA():
+    """Fecha · Artículo · Cantidad · Kilos por bulto · Kilos totales · Armado.
+
+    La última va vacía a propósito: es la que se tilda a mano sobre el
+    papel. Y se verifica que la fila CIERRE — por bulto × cantidad =
+    totales — que es la razón por la que "kilos por bulto" se divide en vez
+    de salir del contenido nominal de la ficha.
+    """
+    from openpyxl import load_workbook
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.obtener_cliente", return_value=dict(CLIENTE_DE_PRUEBA)),
+        patch("app.main.buscar_renglones_pedidos", return_value=list(RENGLONES_BUSCAR_DE_PRUEBA)),
+    ):
+        excel = cliente.get(
+            "/administracion/pedidos/buscar/exportar-excel?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        )
+
+    hoja = load_workbook(io.BytesIO(excel.content)).active
+    filas = [[c.value for c in fila] for fila in hoja.iter_rows(max_col=6)]
+
+    encabezados = [f for f in filas if f[0] == "Fecha"]
+    assert encabezados, filas
+    for encabezado in encabezados:
+        assert encabezado == ["Fecha", "Artículo", "Cantidad", "Kilos por bulto",
+                              "Kilos totales", "Armado"]
+
+    # El título de cada sección lleva la sucursal Y su orden de compra.
+    titulos = [f[0] for f in filas if isinstance(f[0], str) and f[0].startswith("Pedido del")]
+    assert "Pedido del 21/08/2026 — VL · OC 4417" in titulos
+    assert "Pedido del 21/08/2026 — BZ · OC 9902" in titulos
+
+    banana = next(f for f in filas if f[1] == "Banana")
+    assert banana[0] == "21/08/2026"
+    assert banana[2] == 12.0          # Cantidad
+    assert banana[3] == 20.0          # Kilos por bulto: 240 / 12
+    assert banana[4] == 240.0         # Kilos totales
+    assert banana[5] is None          # Armado: VACÍA
+    # La fila cierra: por bulto × cantidad = totales.
+    assert banana[3] * banana[2] == banana[4]
+
+    # Lo sin armar no está: no se entregó, así que no se factura.
+    assert not [f for f in filas if f[1] == "Batata"]
 
 
 def test_armar_esconde_los_terminados_en_una_seccion_plegada():
@@ -24122,6 +24689,86 @@ def test_la_regla_de_la_fecha_DUDOSA_esta_escrita_UNA_vez():
     assert not sueltos, f"el umbral volvió a escribirse a mano en app/main.py: {sueltos}"
 
 
+def test_buscar_pedidos_muestra_el_tilde_de_control_con_lo_que_YA_estaba():
+    """Al volver a abrir la lista, lo controlado tiene que verse controlado.
+
+    El fixture trae UNO controlado y UNO sin controlar a propósito: con los
+    dos iguales, una plantilla que pusiera `checked` siempre —o nunca—
+    pasaría igual.
+    """
+    renglones = [dict(r) for r in RENGLONES_BUSCAR_DE_PRUEBA]
+    renglones[0]["controlado_el"] = datetime(2026, 8, 22, 9, 0)   # Banana, VL
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=renglones),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    assert '<input type="checkbox" name="renglon_id" value="11" checked>' in marcado
+    assert '<input type="checkbox" name="renglon_id" value="14" >' in marcado
+    # El estado del pedido es una CUENTA: 1 de 2, no una columna guardada.
+    assert "Control: 1 de 2 renglones." in marcado
+    assert 'action="/administracion/pedidos/71/control"' in marcado
+
+
+def test_buscar_pedidos_dice_CONTROLADO_solo_cuando_estan_TODOS():
+    """La cuenta es la que decide, así que un renglón nuevo lo vuelve incompleto solo."""
+    renglones = [dict(r) for r in RENGLONES_BUSCAR_DE_PRUEBA]
+    for renglon in renglones:
+        if renglon["armado_el"] is not None:
+            renglon["controlado_el"] = datetime(2026, 8, 22, 9, 0)
+
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 22)),
+        patch("app.main.listar_clientes", return_value=CLIENTES_PARA_SELECTOR),
+        patch("app.main.buscar_renglones_pedidos", return_value=renglones),
+    ):
+        marcado = cliente.get(
+            "/administracion/pedidos/buscar?cliente_id=1&fecha_desde=2026-08-15&fecha_hasta=2026-08-22"
+        ).text.split("</style>")[-1]
+
+    assert "Controlado: los 2 renglones." in marcado
+    assert 'class="estado-control completo"' in marcado
+
+
+def test_guardar_el_control_manda_los_TILDADOS_y_vuelve_con_los_filtros():
+    with patch("app.main.guardar_control_de_pedido", return_value=2) as mock_guardar:
+        respuesta = cliente.post(
+            "/administracion/pedidos/71/control",
+            data={"cliente_id": "1", "fecha_desde": "2026-08-15", "fecha_hasta": "2026-08-22",
+                  "renglon_id": ["11", "14"]},
+            follow_redirects=False,
+        )
+
+    mock_guardar.assert_called_once_with(71, [11, 14])
+    assert respuesta.status_code == 303
+    destino = respuesta.headers["location"]
+    assert "cliente_id=1" in destino and "fecha_desde=2026-08-15" in destino
+
+
+def test_guardar_el_control_SIN_NINGUN_TILDE_manda_la_lista_VACIA():
+    """Destildar todo tiene que llegar como [], no como "no se mandó nada".
+
+    Un checkbox apagado no manda nada, así que sacar el último tilde y no
+    tocar la pantalla se ven iguales del lado del navegador. Si la ruta
+    tratara la lista vacía como "no hagas nada", el último tilde no se
+    podría sacar nunca.
+    """
+    with patch("app.main.guardar_control_de_pedido", return_value=0) as mock_guardar:
+        respuesta = cliente.post(
+            "/administracion/pedidos/71/control",
+            data={"cliente_id": "1", "fecha_desde": "2026-08-15", "fecha_hasta": "2026-08-22"},
+            follow_redirects=False,
+        )
+
+    mock_guardar.assert_called_once_with(71, [])
+    assert respuesta.status_code == 303
+
+
 def test_buscar_pedidos_ofrece_anular_y_lo_BLOQUEA_con_el_motivo_a_la_vista():
     """El botón deshabilitado se muestra igual, con el porqué al lado.
 
@@ -24146,7 +24793,7 @@ def test_buscar_pedidos_ofrece_anular_y_lo_BLOQUEA_con_el_motivo_a_la_vista():
     # El del 21/08 sí: bloqueado, y el motivo se lee.
     assert 'action="/administracion/pedidos/71/anular"' not in cuerpo
     assert "disabled" in cuerpo
-    assert "1 renglón ya armado" in cuerpo
+    assert "2 renglones ya armados" in cuerpo
 
 
 def test_anular_un_pedido_con_armados_no_escribe_y_lo_dice():
@@ -24318,3 +24965,121 @@ def test_si_la_guia_en_origen_no_se_puede_cargar_la_pantalla_dice_POR_QUE():
     assert respuesta.status_code == 400
     assert "anterior al corte" in respuesta.text
     assert "No se recepcionó" in respuesta.text
+
+
+# ── El comprador marca "viene armada" al CARGAR la compra ──────────────────
+#
+# La pantalla de carga se dibuja desde ocho lugares (el alta, la manual, la
+# edición y sus re-renders por error), así que el catálogo de cajas va como
+# global del entorno: pasarlo en el contexto de cada uno son ocho lugares de
+# los que uno se puede olvidar, y el que se olvide deja el selector vacío.
+
+
+def _cajas_de_un_articulo():
+    """Solo el artículo 5 tiene cajas; el otro de ARTICULOS_CON_UNIDAD_COMPRA no."""
+    return {5: [{"id": 3, "cliente_id": 7, "nombre": "Caja de EJEMPLO", "kilaje": "16 kg"}]}
+
+
+def test_la_carga_de_compras_OFRECE_marcar_que_viene_armada():
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    # Por el ATRIBUTO entero y no por el texto: un comentario que explique el
+    # campo nombra su propio rótulo y entraría en la cuenta (corolario 38).
+    assert 'name="ficha_en_origen_id"' in marcado
+    # La opción lleva su artículo, que es lo que el JS usa para filtrar.
+    assert 'data-articulo="5"' in marcado
+    # UN SOLO CONTROL: elegir la caja ES marcarla. Una casilla aparte serían
+    # dos cosas que tienen que coincidir.
+    assert 'name="viene_armada"' not in marcado
+
+
+def test_la_carga_NO_ofrece_el_selector_si_NINGUN_articulo_tiene_caja():
+    """Sin cajas el camino no existe, y un selector vacío se lee como "este
+    artículo no tiene cajas", que es falso."""
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value={}),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert 'name="ficha_en_origen_id"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_la_carga_de_compras_ANDA_IGUAL_si_no_se_puede_leer_el_catalogo_de_cajas():
+    """Que no se pueda leer una tabla de nombres no puede dejar sin CARGAR.
+
+    El global se traga el error a propósito: sin catálogo no se ofrece el
+    selector y el resto del formulario funciona igual.
+    """
+    with (
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._cajas_para_elegir_por_articulo", side_effect=Exception("no se pudo leer")),
+    ):
+        respuesta = cliente.get("/compras/nueva?proveedor_id=200")
+
+    assert respuesta.status_code == 200
+    assert 'name="cantidad_cajones"' in respuesta.text
+    assert 'name="ficha_en_origen_id"' not in respuesta.text.split("</style>")[-1]
+
+
+def test_cargar_una_compra_MARCADA_le_pasa_la_caja_al_guardado():
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "articulo_id": "5",
+                "cantidad_cajones": "10",
+                "contenido_por_cajon": "18",
+                "importe": "50000",
+                "sena": "",
+                "tipo_retiro": "Clark",
+                "ficha_en_origen_id": "3",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["ficha_en_origen_id"] == 3
+
+
+def test_una_caja_que_no_es_un_numero_NO_llega_al_guardado():
+    """La guarda de la FORMA, acá; la de que exista y sea del mismo artículo,
+    en la base, que es donde se escribe."""
+    with (
+        patch("app.main.crear_compra") as mock_crear,
+        patch("app.main.obtener_articulo", return_value=ARTICULOS_CON_UNIDAD_COMPRA[0]),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200", "articulo_id": "5", "cantidad_cajones": "10",
+                "contenido_por_cajon": "18", "importe": "50000", "sena": "",
+                "tipo_retiro": "Clark", "ficha_en_origen_id": "la de siempre",
+            },
+        )
+
+    assert respuesta.status_code == 400
+    assert "no es válida" in respuesta.text
+    mock_crear.assert_not_called()
