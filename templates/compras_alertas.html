@@ -112,7 +112,11 @@
       <h2>{{ b.titulo }}</h2>
       {% if b.resumen %}
       <p class="resumen">{{ b.resumen }}</p>
-      <p class="cuando">Calculado ahora.</p>
+      {# LA NOTA VA ACÁ y no adentro del resumen: el resumen es el titular en
+         cuerpo grande, y una oración ahí ocupa cuatro renglones de los pocos
+         que hay en 390px. Acá dice contra qué se midió, que es lo que un
+         número solo no puede decir. #}
+      <p class="cuando">Calculado ahora{% if b.nota %} · {{ b.nota }}{% endif %}.</p>
       {% elif b.casos is not none %}
       <p class="resumen">{{ b.casos }} caso{{ "s" if b.casos != 1 }}</p>
       <p class="cuando">De la última vez que se calcularon las alertas{% if b.mas_viejo %} — el más viejo es del {{ b.mas_viejo.strftime("%d/%m/%Y") }}{% endif %}.</p>

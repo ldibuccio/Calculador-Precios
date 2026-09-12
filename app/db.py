@@ -6856,6 +6856,140 @@ def listar_cajones_faltantes(desde, hasta, umbral_cajones) -> list[dict]:
         conexion.close()
 
 
+
+# LA DIFERENCIA DE KILOS, y su recorte más importante NO es el umbral: es
+# que solo mira DESDE QUE EXISTE LA FOTO DE BALANZA.
+#
+# Antes de la foto, el 82% de las recepciones se aceptaba con el estimado
+# precargado sin tocarlo, así que "lo recibido" no era un pesaje: era la
+# referencia repitiéndose. Una diferencia calculada contra eso no mide
+# kilos que faltaron — mide qué tan vieja está la referencia, y ya se midió
+# que la referencia está bien en casi todos (12/09). Medir desde la foto es
+# lo que convierte esta alerta en algo que se puede reclamar.
+#
+# EL PISO SALE DE LA BASE Y NO DE UNA FECHA ESCRITA ACÁ, y eso hace dos
+# cosas: cada base contesta la suya —el deploy es el mismo, el uso no— y una
+# base donde nadie sacó una foto devuelve MIN() NULL, la comparación da NULL
+# y no sale ninguna fila. Que una base que no pesa no diga nada es correcto;
+# lo que NO puede pasar es que ese cero se lea como "acá no hay problema",
+# y por eso `contar` devuelve la fecha del piso al lado del número.
+_SQL_DIFERENCIA_DE_KILOS = """
+    FROM compras c
+    JOIN articulos a ON a.id = c.articulo_id
+    JOIN proveedores p ON p.id = c.proveedor_id
+    WHERE c.estado = 'recepcionado'
+      AND c.contenido_por_cajon_real IS NOT NULL
+      AND c.cantidad_cajones_real IS NOT NULL
+      AND c.fecha_operacion >= %s AND c.fecha_operacion <= %s
+      AND c.fecha_operacion >= (SELECT MIN(""" + _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="f.creado_en") + """)
+                                  FROM fotos_recepcion f)
+      AND ((c.contenido_por_cajon - c.contenido_por_cajon_real)
+           * c.cantidad_cajones_real) >= %s
+"""
+
+# El piso, solo, para poder MOSTRARLO. Es la misma expresión que el `where`
+# de arriba y por eso sale de un solo lugar: si la consulta recorta por una
+# fecha y la pantalla dice otra, el que lee no sabe cuál creer.
+_SQL_DESDE_QUE_HAY_FOTO = (
+    "SELECT MIN(" + _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="f.creado_en") + ") FROM fotos_recepcion f"
+)
+
+
+def contar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> dict:
+    """Compras cuyos cajones pesaron al menos `umbral_contenido` MENOS en total de lo comprado.
+
+    SOLO LO QUE FALTÓ, no la diferencia en valor absoluto: un cajón que vino
+    más pesado no se le reclama a nadie. Es la misma dirección que la alerta
+    de bultos, que también cuenta faltantes y no sobrantes.
+
+    EL TOTAL Y NO EL POR CAJÓN: dos kilos de menos por cajón sobre cincuenta
+    y seis cajones son ciento doce kilos, y lo que decide si vale reclamar es
+    el segundo número. Se multiplica por los cajones RECIBIDOS porque los
+    kilos que se perdieron por peso solo pudieron perderse en los cajones que
+    llegaron; los que no llegaron son la otra alerta y no se cuentan dos veces.
+
+    NO SE RECORTA POR EL CORTE, por lo mismo que la de bultos: el corte es del
+    modelo de stock y esto es un cotejo entre dos números que alguien cargó.
+    Lo que sí lleva es la ventana —una compra de hace un mes ya no se
+    reclama— y el piso de la foto, que es lo que hace que los números
+    signifiquen algo.
+
+    Devuelve `desde_la_foto` AL LADO del número: sin eso, un cero de una base
+    que nunca pesó se lee igual que un cero de una base que pesa y no tiene
+    diferencias, y los dos ceros dicen cosas opuestas.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*), MIN(c.fecha_operacion), (" + _SQL_DESDE_QUE_HAY_FOTO + ")"
+                + _SQL_DIFERENCIA_DE_KILOS,
+                (desde, hasta, umbral_contenido),
+            )
+            casos, mas_viejo, desde_la_foto = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo, "desde_la_foto": desde_la_foto}
+    finally:
+        conexion.close()
+
+
+def listar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> list[dict]:
+    """Las mismas compras que cuenta contar_diferencia_de_kilos, con su detalle.
+
+    MISMO RECORTE, escrito UNA vez (_SQL_DIFERENCIA_DE_KILOS): si la cuenta y
+    la lista tuvieran cada una su WHERE, el banner diría un número y la
+    pantalla listaría otro.
+
+    Trae el contenido POR CAJÓN —que es lo que el comprador cargó y lo que
+    Depósito pesó, los dos números que se pueden ir a mirar— y el total
+    faltante al lado, que es lo que se reclama. Las más grandes primero.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo,
+                       a.unidad_compra, p.nombre AS proveedor,
+                       p.codigo_puesto AS puesto,
+                       c.contenido_por_cajon AS contenido_comprado,
+                       c.contenido_por_cajon_real AS contenido_recibido,
+                       (c.contenido_por_cajon - c.contenido_por_cajon_real)
+                        AS contenido_faltante_por_cajon,
+                       c.cantidad_cajones_real AS cajones_recibidos,
+                       ((c.contenido_por_cajon - c.contenido_por_cajon_real)
+                        * c.cantidad_cajones_real) AS contenido_faltante_total
+                """
+                + _SQL_DIFERENCIA_DE_KILOS
+                + """
+                ORDER BY ((c.contenido_por_cajon - c.contenido_por_cajon_real)
+                          * c.cantidad_cajones_real) DESC,
+                         c.fecha_operacion DESC
+                """,
+                (desde, hasta, umbral_contenido),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def fecha_de_la_primera_foto_de_balanza():
+    """Desde cuándo esta base pesa de verdad, o None si nunca se sacó una foto.
+
+    Lo lee la pantalla de Alertas para poder DECIR contra qué se midió. Es la
+    misma expresión que usa el recorte, en una sola constante: una pantalla
+    que dice una fecha distinta de la que la consulta usó es peor que no
+    decir ninguna.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(_SQL_DESDE_QUE_HAY_FOTO)
+            (fecha,) = cursor.fetchone()
+        return fecha
+    finally:
+        conexion.close()
+
 def listar_pedidos_incompletos(fecha_desde) -> list[dict]:
     """Los RENGLONES que explican los pedidos que cuenta contar_pedidos_incompletos.
 

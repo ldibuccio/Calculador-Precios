@@ -4284,6 +4284,155 @@ def test_la_lista_de_cajones_faltantes_trae_lo_que_REPRESENTA_el_faltante():
     assert "ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC" in consulta
 
 
+
+def test_kilos_faltantes_cuenta_los_que_pesaron_de_MENOS_y_no_los_de_mas():
+    """Un cajón que vino más pesado no se le reclama a nadie.
+
+    Misma dirección que su hermana la de bultos: faltantes, no "distintos".
+    Con `abs` el aviso llenaría la lista de casos donde no se perdió nada.
+
+    Por el TEXTO del SQL: lo que cambia es el WHERE, y con un cursor falso la
+    fila la entrega el mock sin leer una letra de la consulta (corolario 40).
+    """
+    from app.db import contar_diferencia_de_kilos
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (2, date(2026, 9, 10), date(2026, 9, 9))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    assert "* c.cantidad_cajones_real) >= %s" in consulta
+    # SIN MAYÚSCULAS: el canario lo escribió en minúscula y el assert no lo
+    # vio — un `abs` escrito de la otra forma rompe la regla exactamente
+    # igual, y SQL no distingue. Un test que fija una grafía prueba la
+    # grafía, no la regla.
+    assert "abs(" not in consulta.lower()
+    # Sin peso real no hay nada que comparar: esa compra no se pesó.
+    assert "c.contenido_por_cajon_real IS NOT NULL" in consulta
+    assert cursor.execute.call_args_list[0].args[1] == (date(2026, 9, 5), date(2026, 9, 12), 1)
+    assert resultado == {"casos": 2, "mas_viejo": date(2026, 9, 10),
+                         "desde_la_foto": date(2026, 9, 9)}
+
+
+def test_los_kilos_faltantes_se_miden_SOBRE_LOS_CAJONES_RECIBIDOS():
+    """Los kilos que se perdieron por PESO solo pudieron perderse en los cajones que llegaron.
+
+    Multiplicar por los comprados metería adentro de esta alerta los kilos de
+    los cajones que no llegaron — que son la alerta de bultos— y la misma
+    compra aportaría el mismo kilo a las dos. Las dos son disjuntas por causa
+    y este es el único lugar del código donde eso está escrito.
+    """
+    from app.db import contar_diferencia_de_kilos, listar_diferencia_de_kilos
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (0, None, None)
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+        listar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+
+    for consulta in (cursor.execute.call_args_list[0].args[0],
+                     cursor.execute.call_args_list[1].args[0]):
+        assert "* c.cantidad_cajones_real)" in consulta
+        assert "* c.cantidad_cajones)" not in consulta
+
+
+def test_los_kilos_faltantes_SOLO_MIRAN_desde_que_hay_foto_de_balanza():
+    """El recorte que hace que esta alerta signifique algo.
+
+    Antes de la foto, el 82% de las recepciones se aceptaba con el estimado
+    precargado sin tocarlo: la diferencia contra eso no mide kilos que
+    faltaron, mide la referencia repitiéndose. Sin este piso la alerta
+    arrastraría las 41 compras de la medición vieja, que es exactamente lo
+    que la hizo descartar la primera vez.
+
+    Y el piso SALE DE LA BASE, no de una fecha escrita en el código: el
+    deploy es el mismo en las dos bases, el uso no.
+    """
+    from app.db import contar_diferencia_de_kilos, listar_diferencia_de_kilos
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (0, None, None)
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+        listar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+
+    for consulta in (cursor.execute.call_args_list[0].args[0],
+                     cursor.execute.call_args_list[1].args[0]):
+        assert "FROM fotos_recepcion f" in consulta
+        assert "c.fecha_operacion >= (SELECT MIN(" in consulta
+        # En hora ARGENTINA: creado_en es timestamptz, y una foto de las 21
+        # de un martes es del miércoles en UTC. Es la misma expresión que usa
+        # el FIFO para fechar un lote, escrita una sola vez.
+        assert "AT TIME ZONE 'America/Argentina/Buenos_Aires'" in consulta
+
+
+def test_la_cuenta_de_kilos_faltantes_DEVUELVE_el_piso_que_uso():
+    """Un cero de una base que nunca pesó y uno de una base sin diferencias dicen cosas OPUESTAS.
+
+    Y se ven igual de prolijos. El testigo al lado del número es lo único que
+    los separa (corolario 24), y tiene que salir de la MISMA expresión que el
+    recorte: una pantalla que dice una fecha distinta de la que la consulta
+    usó es peor que no decir ninguna.
+    """
+    from app.db import contar_diferencia_de_kilos
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (0, None, None)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+
+    assert resultado == {"casos": 0, "mas_viejo": None, "desde_la_foto": None}
+    # La expresión del testigo y la del recorte salen de LA MISMA constante:
+    # si se escribieran dos veces, el día que se separen la pantalla diría
+    # una fecha y la consulta recortaría por otra, y nadie se entera.
+    #
+    # Se compara el CAST, que es la pieza compartida — no la línea entera:
+    # en el WHERE va partida y con sangría, así que un `in` del texto completo
+    # falla por espacios y no por lo que se quiere probar.
+    from app.db import (_SQL_DESDE_QUE_HAY_FOTO, _SQL_DIFERENCIA_DE_KILOS,
+                        _SQL_FECHA_DEL_LOTE_DE_COMPRA)
+    cast = _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="f.creado_en")
+    assert cast in _SQL_DESDE_QUE_HAY_FOTO
+    assert cast in _SQL_DIFERENCIA_DE_KILOS
+
+
+def test_la_cuenta_y_la_lista_de_kilos_faltantes_comparten_EL_MISMO_WHERE():
+    """Con un WHERE cada una, el banner dice un número y la pantalla lista otro."""
+    from app.db import contar_diferencia_de_kilos, listar_diferencia_de_kilos
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (0, None, None)
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+        listar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
+
+    cuenta = cursor.execute.call_args_list[0].args[0]
+    lista = cursor.execute.call_args_list[1].args[0]
+    for condicion in (
+        "c.estado = 'recepcionado'",
+        "c.contenido_por_cajon_real IS NOT NULL",
+        "c.cantidad_cajones_real IS NOT NULL",
+        "c.fecha_operacion >= %s AND c.fecha_operacion <= %s",
+        "FROM fotos_recepcion f",
+        "* c.cantidad_cajones_real) >= %s",
+    ):
+        assert condicion in cuenta, ("falta en la cuenta", condicion)
+        assert condicion in lista, ("falta en la lista", condicion)
+    assert cursor.execute.call_args_list[0].args[1] == cursor.execute.call_args_list[1].args[1]
+
+
 def test_guardar_control_pregunta_la_EXISTENCIA_sin_agregado():
     """`count(*)` devuelve (0,) para un pedido que no existe: la guarda no serviría.
 

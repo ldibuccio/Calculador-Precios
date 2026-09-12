@@ -75,6 +75,7 @@ from app.db import (
     cambiar_fecha_activacion_casilla,
     compras_que_alimentaron_el_renglon,
     contar_compras_buscadas,
+    contar_diferencia_de_kilos,
     contar_ingresos_deposito,
     contar_mails_pedido_leidos_con_ia,
     contar_mails_pedido_sin_procesar,
@@ -82,6 +83,8 @@ from app.db import (
     contar_pedidos_incompletos,
     desmarcar_renglon_armado,
     devoluciones_de_la_compra,
+    fecha_de_la_primera_foto_de_balanza,
+    listar_diferencia_de_kilos,
     marcar_renglon_armado,
     contar_retiros_buscados,
     cerrar_disponible_generado,
@@ -417,15 +420,34 @@ DIAS_PASADOS_LISTADO_PEDIDOS = 7
 # FALTARON CAJONES. Un cajón de diferencia ya es un caso: un bulto que se
 # compró y no llegó es mercadería que falta, sin banda gris.
 #
-# NO ES la alerta de kilos que se intentó primero, y la distinción costó
-# tres mediciones el 12/09. De las 25 diferencias de kilaje más grandes, 21
-# eran de CONTENIDO —el cajón vino más pesado o más liviano— y medido por
-# artículo eso resultó variación real de la fruta: 17 de 22 referencias con
-# desvío menor a un kilo y ocho en cero exacto. Un aviso sobre eso
-# dispararía veintiún veces por semana sin nada que corregir, que es el
-# cartel que se deja de mirar. Las que importaban eran las otras dos.
+# ES HERMANA DE LA DE KILOS, no su reemplazo — y eso corrige lo que este
+# comentario decía hasta el 12/09. La de kilos se había descartado porque
+# "dispararía veintiún veces por semana sin nada que corregir", y ese
+# argumento se apoyaba en una medición contaminada: el 82% de las
+# recepciones se aceptaba con el estimado precargado sin tocarlo, así que
+# aquellas 41 diferencias no eran pesajes — era la referencia repitiéndose.
+# Desde que la foto de balanza hace que pesen (63% corrige con foto contra
+# 8% sin foto), las diferencias que aparecen son reales y se reclaman.
+#
+# LAS DOS SON DISJUNTAS POR CAUSA, y por eso son dos y no una: acá faltan
+# BULTOS, allá los bultos que llegaron PESARON menos. Los kilos de los
+# cajones que no llegaron no se cuentan en la de kilos —se multiplica por
+# los cajones recibidos— así que una compra no aporta el mismo kilo a las dos.
 UMBRAL_CAJONES_FALTANTES = 1
 DIAS_ALERTA_CAJONES_FALTANTES = 7
+
+# FALTARON KILOS: los cajones llegaron, y pesaron menos de lo comprado.
+#
+# EL UMBRAL ES SOBRE EL TOTAL Y NO SOBRE EL CAJÓN. Un kilo por cajón no se
+# discute con nadie; ese mismo kilo sobre cincuenta y seis cajones son
+# cincuenta y seis kilos, que es plata. Medir por cajón dejaría afuera
+# exactamente los casos grandes de las compras grandes.
+#
+# La ventana es la misma que la de bultos —siete días móviles, porque una
+# compra de hace un mes ya no se reclama— y el piso de la foto lo pone la
+# consulta leyendo la base, no una fecha escrita acá.
+UMBRAL_KILOS_FALTANTES = 1
+DIAS_ALERTA_KILOS_FALTANTES = 7
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -10939,6 +10961,71 @@ def _detalle_cajones_faltantes() -> dict:
     }
 
 
+
+def _detalle_kilos_faltantes() -> dict:
+    """Las filas de la alerta de kilos faltantes: una por compra, la mayor arriba.
+
+    EL RESUMEN LLEVA EL PISO DE LA FOTO, y no es un adorno: sin él, una lista
+    vacía de una base que nunca pesó se lee igual que una de una base que pesa
+    y no tiene diferencias. Son cosas opuestas — la primera dice "acá no se
+    puede medir" y la segunda "acá está todo bien"— y las dos se ven igual de
+    prolijas. Va donde se toma la decisión, que es esta pantalla, porque la
+    foto guardada de la alerta solo se queda con {casos, mas_viejo}.
+    """
+    filas = listar_diferencia_de_kilos(
+        _hoy_argentina() - timedelta(days=DIAS_ALERTA_KILOS_FALTANTES),
+        _hoy_argentina(),
+        UMBRAL_KILOS_FALTANTES,
+    )
+    # LOS DOS "NO HAY FECHA" SON HECHOS DISTINTOS y la pantalla no puede
+    # decirles lo mismo: `None` de una lectura que salió bien significa que
+    # esta base nunca sacó una foto; una lectura que falló no significa nada
+    # sobre las fotos — significa que no se pudo preguntar. Escribir "sin
+    # fotos" en el segundo caso sería afirmar algo que no se verificó, que es
+    # el `{% else %}` que dice "esto no existe".
+    try:
+        desde_la_foto = fecha_de_la_primera_foto_de_balanza()
+        se_pudo_leer = True
+    except Exception:
+        # La lista ya está calculada: que no se pueda leer el piso no puede
+        # vaciar la pantalla. Lo que sí se pierde es poder decir contra qué se
+        # midió, y el resumen lo dice en vez de callarlo.
+        logger.exception("No se pudo leer desde cuándo hay fotos de balanza")
+        desde_la_foto, se_pudo_leer = None, False
+
+    renglones = []
+    for fila in filas:
+        sufijo = SUFIJOS_UNIDAD_COMPRA.get(fila["unidad_compra"], "")
+        renglones.append([
+            fila["fecha_operacion"].strftime("%d/%m"),
+            fila["articulo"],
+            f'{fila["proveedor"]} ({fila["puesto"]})',
+            f'{_formatear_numero(fila["contenido_comprado"])}{sufijo}',
+            f'{_formatear_numero(fila["contenido_recibido"])}{sufijo}',
+            f'−{_formatear_numero(fila["contenido_faltante_por_cajon"])}{sufijo}',
+            # EL NÚMERO QUE DECIDE, y por eso lleva de dónde sale en la misma
+            # celda: "−112k (56 cajones)". Un total sin los cajones al lado
+            # obliga a ir a buscar por cuánto se multiplicó, y nadie va.
+            f'−{_formatear_numero(fila["contenido_faltante_total"])}{sufijo}'
+            f' ({_formatear_numero(fila["cajones_recibidos"])} cajones)',
+        ])
+
+    if not se_pudo_leer:
+        medido = "no se pudo leer desde cuándo se pesa, así que no sé contra qué período es esto"
+    elif desde_la_foto is None:
+        medido = ("sin ninguna foto de balanza en esta base: mientras nadie pese, "
+                  "estas diferencias no se pueden leer")
+    else:
+        medido = (f"desde el {desde_la_foto.strftime('%d/%m')}, que es cuando se sacó "
+                  "la primera foto de balanza")
+    return {
+        "columnas": ["Fecha", "Artículo", "Proveedor", "Comprado", "Recibido",
+                     "Por cajón", "Falta en total"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} compra{'s' if len(renglones) != 1 else ''}",
+        "nota": medido,
+    }
+
 def _detalle_unidades_que_diferen() -> dict:
     """Los pares donde la unidad de compra y la de venta no coinciden.
 
@@ -11244,6 +11331,25 @@ ALERTAS = [
         detallar=_detalle_cajones_faltantes,
     ),
     DefinicionAlerta(
+        codigo="kilos_faltantes",
+        titulo="Compras cuyos cajones pesaron menos de lo que se compró",
+        titulo_corto="Faltaron kilos",
+        # Al lado de la de bultos y por el mismo camino: las dos se investigan
+        # con la compra adelante, y con varios casos un número sin la lista no
+        # dice por dónde empezar.
+        url="/compras/alertas",
+        texto_link="Ver el detalle",
+        # Solo el comprador, igual que la de bultos: él cargó el estimado y es
+        # el que le reclama al proveedor.
+        modulos=("compras",),
+        contar=lambda: contar_diferencia_de_kilos(
+            _hoy_argentina() - timedelta(days=DIAS_ALERTA_KILOS_FALTANTES),
+            _hoy_argentina(),
+            UMBRAL_KILOS_FALTANTES,
+        ),
+        detallar=_detalle_kilos_faltantes,
+    ),
+    DefinicionAlerta(
         codigo="unidades_que_difieren",
         titulo="Artículos que se compran en una unidad y se venden en otra",
         titulo_corto="Unidad de compra ≠ unidad de venta",
@@ -11393,6 +11499,11 @@ def _bloques_de_alertas(modulo: str) -> list[dict]:
                 bloque["columnas"] = detalle["columnas"]
                 bloque["filas"] = detalle["filas"]
                 bloque["resumen"] = detalle["resumen"]
+                # OPCIONAL, y la mayoría no la tiene: el CONTRA QUÉ se midió,
+                # cuando el número no se puede leer sin eso. Va en la línea
+                # chica y no en el resumen porque el resumen es el titular —
+                # una oración ahí sale en cuerpo 22 y en cuatro renglones.
+                bloque["nota"] = detalle.get("nota")
                 bloque["casos"] = len(detalle["filas"])
                 bloque["en_vivo"] = True
         bloques.append(bloque)

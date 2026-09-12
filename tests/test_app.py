@@ -11293,6 +11293,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_pedidos_incompletos": VACIO,
         "contar_pedidos_sin_controlar": VACIO,
         "contar_cajones_faltantes": VACIO,
+        "contar_diferencia_de_kilos": VACIO,
         "contar_unidades_que_diferen": 0,
         "contar_mails_pedido_sin_procesar": VACIO,
         "contar_pedidos_faltantes": VACIO,
@@ -11323,6 +11324,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     incompletos = mocks["contar_pedidos_incompletos"]
     sin_controlar = mocks["contar_pedidos_sin_controlar"]
     faltantes = mocks["contar_cajones_faltantes"]
+    kilos = mocks["contar_diferencia_de_kilos"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -11344,6 +11346,12 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     # hoy con diez bultos de menos hay que verla hoy), con el umbral de UN
     # cajón — un bulto que se compró y no llegó no tiene banda gris.
     faltantes.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
+    # Kilos faltantes: LA MISMA ventana y el MISMO umbral que su hermana, y
+    # eso es a propósito — son dos caras del mismo cotejo y dos ventanas
+    # distintas harían que una compra apareciera en una y no en la otra sin
+    # ninguna razón que se pueda explicar. El piso de la foto NO viaja acá:
+    # lo pone la consulta leyendo la base, así que cada base contesta la suya.
+    kilos.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
 
 
 # Las CINCO pantallas que precargan el contenido por cajón. La lista va acá
@@ -11648,7 +11656,8 @@ def test_la_pantalla_NO_tiene_NINGUNA_formula_en_JAVASCRIPT():
 # con una fila por caso. Los bloques salen del registro, no escritos a mano.
 
 
-def _alertas_de_compras(filas_faltantes=None, filas_incompletos=None, foto=None):
+def _alertas_de_compras(filas_faltantes=None, filas_incompletos=None, foto=None,
+                        filas_kilos=None, desde_la_foto=date(2026, 9, 9)):
     """Abre /compras/alertas con el detalle parcheado, y devuelve el marcado.
 
     Parchea los LISTADORES y no los detalladores: así lo que se prueba es la
@@ -11659,6 +11668,10 @@ def _alertas_de_compras(filas_faltantes=None, filas_incompletos=None, foto=None)
     with (
         _patch("app.main.listar_estado_alertas", return_value=foto if foto is not None else _foto_alertas()),
         _patch("app.main.listar_cajones_faltantes", return_value=filas_faltantes or []),
+        _patch("app.main.listar_diferencia_de_kilos", return_value=filas_kilos or []),
+        # El piso de la foto: por defecto 09/09, que es cuando empezó a
+        # haberlas. `None` es la base que nunca pesó, y tiene su propio test.
+        _patch("app.main.fecha_de_la_primera_foto_de_balanza", return_value=desde_la_foto),
         _patch("app.main.listar_pedidos_incompletos", return_value=filas_incompletos or []),
         _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
     ):
@@ -11709,6 +11722,162 @@ def test_alertas_de_compras_lista_UNA_FILA_POR_CASO_no_un_numero():
     # El sufijo sigue a la UNIDAD del artículo: sobre 'unidad' decir "k"
     # sería mentir.
     assert "−6" in marcado and "−108u" in marcado
+
+
+
+# El caso REAL del 12/09, con nombre de ejemplo: 12k comprados, 10k recibidos
+# sobre 56 cajones son 112 kilos. Y el segundo en 'unidad' a propósito: el
+# sufijo sigue a la unidad del artículo, decir "k" sobre unidades sería mentir.
+KILOS_DE_PRUEBA = [
+    {"id": 601, "fecha_operacion": date(2026, 8, 5), "articulo": "EJEMPLO Uno",
+     "unidad_compra": "kilo", "proveedor": "EJEMPLO Prov", "puesto": "N99P01",
+     "contenido_comprado": 12, "contenido_recibido": 10,
+     "contenido_faltante_por_cajon": 2, "cajones_recibidos": 56,
+     "contenido_faltante_total": 112},
+    {"id": 602, "fecha_operacion": date(2026, 8, 4), "articulo": "EJEMPLO Dos",
+     "unidad_compra": "unidad", "proveedor": "EJEMPLO Otro", "puesto": "N99P02",
+     "contenido_comprado": 40, "contenido_recibido": 38,
+     "contenido_faltante_por_cajon": 2, "cajones_recibidos": 9,
+     "contenido_faltante_total": 18},
+]
+
+
+def test_alertas_de_compras_lista_LOS_KILOS_QUE_FALTARON_con_el_total_al_lado():
+    """El total es el que decide si vale reclamar, y por eso va con los cajones al lado.
+
+    Dos kilos por cajón no se discute con nadie; esos mismos dos kilos sobre
+    cincuenta y seis cajones son ciento doce, que es plata. Un total sin los
+    cajones obliga a ir a buscar por cuánto se multiplicó, y nadie va.
+    """
+    marcado = _alertas_de_compras(
+        filas_kilos=KILOS_DE_PRUEBA,
+        foto=_foto_alertas({"kilos_faltantes": (2, date(2026, 8, 4))}),
+    )
+
+    assert "Compras cuyos cajones pesaron menos de lo que se compró" in marcado
+    for columna in ("Fecha", "Artículo", "Proveedor", "Comprado", "Recibido",
+                    "Por cajón", "Falta en total"):
+        assert f"<th>{columna}</th>" in marcado, columna
+    assert "EJEMPLO Prov (N99P01)" in marcado
+    # Los dos números que se pueden ir a mirar —lo que cargó el comprador y lo
+    # que pesó Depósito— y el total con su multiplicador.
+    assert "12k" in marcado and "10k" in marcado and "−2k" in marcado
+    assert "−112k (56 cajones)" in marcado
+    # El sufijo sigue a la UNIDAD del artículo.
+    assert "−18u (9 cajones)" in marcado
+
+
+def test_el_resumen_de_los_kilos_DICE_DESDE_CUANDO_se_esta_midiendo():
+    """El testigo al lado del número (corolario 24), en la pantalla donde se decide.
+
+    Sin esto, la lista no dice contra qué período se midió, y el que la lee no
+    tiene cómo saber que las compras de antes del 09/09 no están adentro — ni
+    por qué no lo están.
+    """
+    marcado = _alertas_de_compras(
+        filas_kilos=KILOS_DE_PRUEBA,
+        desde_la_foto=date(2026, 9, 9),
+        foto=_foto_alertas({"kilos_faltantes": (2, date(2026, 8, 4))}),
+    )
+
+    # El conteo es el TITULAR y el período va en la línea chica, al lado de
+    # "Calculado ahora": una oración en el titular sale en cuerpo 22 y ocupa
+    # cuatro renglones de los pocos que hay en 390px.
+    assert '<p class="resumen">2 compras</p>' in marcado
+    assert "Calculado ahora · desde el 09/09" in marcado
+    assert "primera foto de balanza" in marcado
+
+
+def test_una_base_que_NUNCA_PESO_lo_DICE_y_no_se_confunde_con_una_lectura_que_fallo():
+    """Un cero de una base que no pesa y uno de una base sin diferencias dicen cosas OPUESTAS.
+
+    El primero es "acá no se puede medir" y el segundo "acá está todo bien", y
+    los dos se ven igual de prolijos — es el cero que tranquiliza del
+    corolario 24.
+
+    SE PRUEBA SOBRE `_detalle_kilos_faltantes` Y NO SOBRE LA PANTALLA, y eso
+    es un hallazgo y no una comodidad: con cero casos el bloque no se dibuja
+    —la pantalla muestra solo las alertas con casos— así que por esa vía la
+    rama es inalcanzable. Probarla a través de la pantalla habría necesitado
+    un montaje que no se parece a nada, y el test habría pasado sin decir
+    nada de lo que importa.
+
+    Y LAS DOS RAMAS SON DISTINTAS: `None` de una lectura que salió bien dice
+    que no hay fotos; una lectura que FALLÓ no dice nada sobre las fotos.
+    Con un solo mensaje, el caso de error estaría afirmando algo que nadie
+    verificó.
+    """
+    from app.main import _detalle_kilos_faltantes
+
+    with (
+        patch("app.main.listar_diferencia_de_kilos", return_value=[]),
+        patch("app.main.fecha_de_la_primera_foto_de_balanza", return_value=None),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        sin_fotos = _detalle_kilos_faltantes()
+
+    with (
+        patch("app.main.listar_diferencia_de_kilos", return_value=[]),
+        patch("app.main.fecha_de_la_primera_foto_de_balanza", side_effect=RuntimeError("caída")),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        no_se_pudo = _detalle_kilos_faltantes()
+
+    assert "sin ninguna foto de balanza en esta base" in sin_fotos["nota"]
+    assert "no se pudo leer desde cuándo se pesa" in no_se_pudo["nota"]
+    # Y no dicen lo mismo, que es todo el punto.
+    assert sin_fotos["nota"] != no_se_pudo["nota"]
+    # El titular es el mismo en los dos: lo que cambia es el contra qué.
+    assert sin_fotos["resumen"] == no_se_pudo["resumen"] == "0 compras"
+
+
+def test_si_no_se_puede_leer_el_piso_la_lista_SIGUE_SALIENDO():
+    """La lista ya está calculada: que falle una consulta de contexto no puede vaciarla.
+
+    Y lo que se pierde —poder decir contra qué se midió— la pantalla lo dice
+    en vez de callarlo: un resumen sin el período no puede parecerse a uno con
+    el período bien.
+    """
+    from unittest.mock import patch as _patch
+    with (
+        _patch("app.main.listar_estado_alertas",
+               return_value=_foto_alertas({"kilos_faltantes": (2, date(2026, 8, 4))})),
+        _patch("app.main.listar_cajones_faltantes", return_value=[]),
+        _patch("app.main.listar_diferencia_de_kilos", return_value=KILOS_DE_PRUEBA),
+        _patch("app.main.fecha_de_la_primera_foto_de_balanza", side_effect=RuntimeError("base caída")),
+        _patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/alertas")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "−112k (56 cajones)" in marcado
+    # Dice que NO SE PUDO PREGUNTAR, no que no haya fotos: son dos hechos
+    # distintos y el segundo no se verificó.
+    assert "no se pudo leer desde cuándo se pesa" in marcado
+    assert "sin ninguna foto de balanza" not in marcado
+
+
+def test_las_DOS_alertas_de_la_compra_son_bloques_distintos_y_no_se_pisan():
+    """Bultos que no llegaron y kilos que pesaron de menos son dos causas distintas.
+
+    Se investigan distinto —una es una compra incompleta, la otra un peso— y
+    por eso son dos bloques. Que las dos salgan juntas en la misma pantalla es
+    lo que dejaría ver si una compra cae en las dos, que es justo lo que la
+    cuenta sobre los cajones RECIBIDOS evita.
+    """
+    marcado = _alertas_de_compras(
+        filas_faltantes=FALTANTES_DE_PRUEBA,
+        filas_kilos=KILOS_DE_PRUEBA,
+        foto=_foto_alertas({"cajones_faltantes": (2, date(2026, 8, 4)),
+                            "kilos_faltantes": (2, date(2026, 8, 4))}),
+    )
+
+    assert "Compras que llegaron con menos bultos de los que se compraron" in marcado
+    assert "Compras cuyos cajones pesaron menos de lo que se compró" in marcado
+    # Cada uno con su tabla: los encabezados que NO comparten lo demuestran.
+    assert "<th>Faltan</th>" in marcado and "<th>Falta en total</th>" in marcado
 
 
 def test_la_cuenta_del_bloque_sale_de_SUS_FILAS_y_no_de_la_foto():
