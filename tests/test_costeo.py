@@ -347,6 +347,82 @@ def _calcular_negociacion(
     return resultado, mock_compras, mock_vigentes
 
 
+def test_el_importe_y_el_contenido_por_cajon_DIVIDIDOS_dan_EXACTAMENTE_el_costo_actual():
+    """La identidad que ata el Análisis de Artículo a Márgenes por Artículo.
+
+    El Análisis parte de dos números —lo que el puesto cobra por cajón y lo
+    que ese cajón trae— para poder preguntar "¿y si trae 14 en vez de 16?".
+    `costo_actual` tiene el contenido adentro COMO DIVISOR, así que sin
+    separarlos esa pregunta no se puede hacer.
+
+    Lo que garantiza que las dos pantallas no se separen es que el cociente
+    de los dos dé el costo EXACTO, no parecido. Y no es una coincidencia
+    aritmética que haya que confiar: sale de que las dos son sumas sobre los
+    mismos cajones. Lo único que puede romperla es que los filtros de
+    `_costear_compras` y `_promedios_por_cajon` se separen — y entonces se
+    rompe acá, que es lo que este test existe para hacer.
+
+    El fixture tiene compras con importes Y contenidos distintos a
+    propósito: con todas iguales, el promedio ponderado y el simple dan lo
+    mismo y una implementación que no pondere pasaría igual.
+    """
+    compras = [
+        {"articulo_id": 1, "articulo_nombre": "Articulo A", "fecha_operacion": date(2026, 8, 4),
+         "cantidad_cajones": 10, "contenido_por_cajon": 16, "cantidad_kilos": 160, "importe": 1600},
+        {"articulo_id": 1, "articulo_nombre": "Articulo A", "fecha_operacion": date(2026, 8, 4),
+         "cantidad_cajones": 30, "contenido_por_cajon": 20, "cantidad_kilos": 600, "importe": 2400},
+    ]
+    resultado, _, _ = _calcular_negociacion(compras=compras)
+    fila = next(f for f in resultado if f["articulo_id"] == 1)
+
+    # Ponderado por CAJONES, no promedio simple: (1600×10 + 2400×30)/40 = 2200
+    # (el simple daría 2000), y (16×10 + 20×30)/40 = 19 (el simple, 18).
+    assert fila["importe_por_cajon"] == 2200
+    assert fila["contenido_por_cajon"] == 19
+
+    # LA IDENTIDAD. Exacta, no aproximada.
+    assert fila["importe_por_cajon"] / fila["contenido_por_cajon"] == fila["costo_actual"]
+
+
+def test_los_promedios_por_cajon_EXCLUYEN_las_compras_sin_precio_igual_que_el_costo():
+    """Si un filtro mira las compras sin importe y el otro no, la identidad se rompe.
+
+    Es el único modo de falla que tiene, así que se prueba directo: una
+    compra sin importe en la ventana, con un contenido bien distinto para
+    que meterla mueva el número.
+    """
+    compras = [
+        {"articulo_id": 1, "articulo_nombre": "Articulo A", "fecha_operacion": date(2026, 8, 4),
+         "cantidad_cajones": 10, "contenido_por_cajon": 16, "cantidad_kilos": 160, "importe": 1600},
+        # Sin precio todavía: no puede entrar en ninguno de los dos.
+        {"articulo_id": 1, "articulo_nombre": "Articulo A", "fecha_operacion": date(2026, 8, 4),
+         "cantidad_cajones": 90, "contenido_por_cajon": 40, "cantidad_kilos": 3600, "importe": None},
+    ]
+    resultado, _, _ = _calcular_negociacion(compras=compras)
+    fila = next(f for f in resultado if f["articulo_id"] == 1)
+
+    # Solo la que tiene importe: 1600 el cajón, 16 el contenido. Con la otra
+    # adentro darían 37,6 y 37,6 respectivamente.
+    assert fila["importe_por_cajon"] == 1600
+    assert fila["contenido_por_cajon"] == 16
+    assert fila["importe_por_cajon"] / fila["contenido_por_cajon"] == fila["costo_actual"]
+    assert fila["compras_sin_precio_excluidas"] == 1
+
+
+def test_sin_ninguna_compra_con_precio_los_promedios_son_None_y_no_cero():
+    """Cero diría "el cajón sale cero", que es un precio. None dice que no hay dato."""
+    compras = [
+        {"articulo_id": 1, "articulo_nombre": "Articulo A", "fecha_operacion": date(2026, 8, 4),
+         "cantidad_cajones": 10, "contenido_por_cajon": 16, "cantidad_kilos": 160, "importe": None},
+    ]
+    resultado, _, _ = _calcular_negociacion(compras=compras)
+    fila = next(f for f in resultado if f["articulo_id"] == 1)
+
+    assert fila["importe_por_cajon"] is None
+    assert fila["contenido_por_cajon"] is None
+    assert fila["costo_actual"] is None
+
+
 def test_negociacion_articulo_fresco_con_costo_anterior_y_variacion():
     resultado, _, _ = _calcular_negociacion()
     por_id = {a["articulo_id"]: a for a in resultado}
