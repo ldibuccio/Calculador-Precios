@@ -531,6 +531,27 @@ Y conviene que haya **un testigo independiente del parámetro**: `e5_0` trae
 recientes al lado es una contradicción visible en la misma fila; sin ese
 testigo, todos los ceros se explican solos.
 
+**Y el testigo tiene un SEGUNDO trabajo que no estaba escrito, y es el que
+falló el 12/09: es lo único que dice DE CUÁL BASE es una fila.**
+
+En una verificación de migración, **las columnas que importan dan lo mismo
+en las dos bases por diseño** — `columna 1 · guarda 1 · controlados 0 ·
+ofensores 0` es el resultado bueno en Frutamax y en Palmala. O sea que las
+dos filas son **indistinguibles entre sí**, y pegar una creyendo que son las
+dos no es un descuido: es el error natural de una salida que se ve igual
+venga de donde venga.
+
+Pasó así: se corrieron las dos, se pegó una, y se dio por confirmadas las
+dos. Lo que lo delató fue `renglones_7d 410 · ultimo_armado 11/09`, que solo
+puede ser Frutamax — Palmala no arma un pedido hace semanas. **El testigo
+está puesto para decir si la base vota (corolario 24) y terminó sirviendo
+para identificarla**, que es otra cosa.
+
+Por eso, y cuesta cero: **la fila de verificación se pega con el nombre de
+la base adelante**, y si las dos filas salen idénticas en todo menos el
+testigo, eso es exactamente lo esperado y no una razón para pegar una sola.
+La regla de arriba dice correr en las dos; ésta dice **mostrar las dos**.
+
 
 Corolario 16, del 08/09, y es una PRÁCTICA, no un patrón de bug: **un test
 de "esto no está duplicado" hay que correrlo con la duplicación puesta, o
@@ -1720,6 +1741,61 @@ cada una descartada con una medición y no con un argumento:
 cajones de 5 a 15— y **dos compras con cajones faltantes**, que son las que
 importaban desde el principio.
 
+### CERRADO, y con el número al lado del razonamiento (12/09)
+
+Quedaba una duda que el razonamiento no podía contestar: el promedio de
+`contenido_por_cajon_real` es lo que se usa para juzgar si la referencia es
+buena, y el ingreso directo escribe la referencia EN ESA COLUMNA por
+construcción. O sea que la referencia podía estar confirmándose a sí misma,
+y los ocho ceros exactos podían no significar nada.
+
+Medido (`db/kilos_3b_sin_el_ingreso_directo.sql`, Frutamax, últimos 60
+días):
+
+- **El ingreso directo es marginal**: 13 recepciones sobre 421, y en 13 de
+  los 22 artículos **ni una**.
+- **Los ceros exactos NO se movieron**: Mzn Gob, Pera, Mzn Red, Frutilla y
+  Arándano siguen en 0,00 **sin una sola compra por ese camino**. No se
+  estaban confirmando a sí mismos.
+- **Mango es el único donde se ve, y se ve exactamente como el mecanismo
+  predice**: +28,67 con el ingreso directo adentro, **+30,00 sin él**. Esa
+  recepción directa traía el número pegado a la referencia y por eso
+  acercaba el desvío a cero.
+
+Y esa última línea es la que conviene leer con cuidado, porque las dos
+mitades se separan: **la medición CONFIRMÓ el mecanismo y REFUTÓ su
+importancia.** Mango muestra que la contaminación es real y que empuja para
+donde se dijo; los 421 muestran que sobre 13 recepciones no mueve nada. Que
+un mecanismo exista no dice cuánto pesa, y el que solo comprueba que existe
+se lleva la conclusión al revés.
+
+**Conclusión**: el cajón estándar explica los 16, la referencia está bien en
+casi todos, y los dos que están mal son Mango (a 40) y Cherry (vacío, porque
+no tiene valor dominante).
+
+### Lo que queda ANOTADO Y NO CONSTRUIDO: la otra contaminación
+
+**Recepción precarga LOS DOS campos reales con el estimado**
+(`deposito_recepcion.html`: `value="{{ c.cantidad_cajones }}"` y
+`value="{{ c.contenido_por_cajon }}"`, sin JS que los limpie). Apretar
+"Recibir" sin tocar nada graba `real = estimado` **por el camino normal**,
+no por el excepcional — así que es mucho más grande que el ingreso directo
+que sí se midió.
+
+**No se construyó nada, por pedido, y la razón es buena**: con lo que se
+sabe hoy no cambia ninguna decisión. La referencia ya se dio por buena por
+otro camino, y las dos que estaban mal ya están identificadas.
+
+Queda medible cuando haga falta, y la consulta está escrita:
+`db/kilos_4_cuanto_de_lo_pesado_se_peso.sql` separa por si alguien CAMBIÓ el
+número, que es lo que de verdad distingue "lo pesaron" de "lo aceptaron".
+
+**Y el día que alguien la retome, la trampa está acá**: excluir el ingreso
+directo NO alcanza, y ésa fue la primera reacción de los dos. Es la regla de
+las exclusiones al pie de la letra — el motivo de esa exclusión (escribe las
+dos columnas) no es el motivo del problema (el real puede ser igual al
+estimado sin que nadie pese).
+
 ### La señal que inventé, y que falló en el caso que la generó
 
 Escribí, el mismo día y en este archivo: *"cuando el mismo valor aparece en
@@ -1795,7 +1871,7 @@ Separarlos evitó construir uno que nadie iba a mirar:
 | | qué dice | cuántos | cuándo se apaga |
 |---|---|---|---|
 | **Faltaron CAJONES** | faltaron bultos en ESTA compra | 2 de 25 | al investigar esa compra |
-| **Referencia mal cargada** | el sistema sugiere mal para ESTE artículo | 2 artículos | al corregir la referencia |
+| **Referencia mal cargada** | el sistema sugiere mal para ESTE artículo | 2 artículos (Mango y Cherry) | al corregir la referencia |
 | ~~Diferencia de contenido por compra~~ | — | **21 por semana** | nunca |
 
 La tercera **no se construyó**, y la razón se sostuvo aunque la causa
