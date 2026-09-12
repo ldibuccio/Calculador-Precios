@@ -2520,6 +2520,10 @@ def _renderizar_pantalla_buscar_compras(
             "proveedor_nombre_actual": proveedor_nombre_actual,
             "articulo_id": articulo_id_valor,
             "articulo_nombre_actual": articulo_nombre_actual,
+            "resumen_filtros": _resumen_de_filtros(
+                fecha_desde_valor, fecha_hasta_valor,
+                proveedor_nombre_actual, articulo_nombre_actual,
+            ),
             "error_fecha": error_fecha,
             "compras": compras,
             "aviso": aviso,
@@ -2527,6 +2531,27 @@ def _renderizar_pantalla_buscar_compras(
         },
         status_code=status_code,
     )
+
+
+def _resumen_de_filtros(fecha_desde, fecha_hasta, proveedor_nombre, articulo_nombre) -> str:
+    """Qué está filtrado, en una línea, para el encabezado de los filtros plegados.
+
+    EXISTE PORQUE LOS FILTROS ARRANCAN CERRADOS, y un bloque cerrado que no
+    dice qué tiene adentro es peor que uno abierto: el que llega no sabe si
+    está viendo todo o un recorte, y la lista de abajo se lee mal sin eso.
+
+    DICE "TODOS" Y NO CALLA: un filtro vacío no es la ausencia de un dato, es
+    la decisión de no filtrar, y las dos cosas se ven igual si el renglón solo
+    nombra lo que está puesto.
+
+    Se arma acá y no en la plantilla para poder formatear las fechas y para
+    que tenga test: en Jinja saldría un `strftime` sobre un string ISO, que no
+    es una fecha.
+    """
+    partes = [f"{fecha_desde.strftime('%d/%m')} al {fecha_hasta.strftime('%d/%m')}"]
+    partes.append(proveedor_nombre or "todos los proveedores")
+    partes.append(articulo_nombre or "todos los artículos")
+    return " · ".join(partes)
 
 
 @app.get("/compras/buscar")

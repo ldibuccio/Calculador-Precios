@@ -224,6 +224,16 @@
          sizeaba la FECHA —que también cae ahí— y no el checkbox: el título
          arrancaba 90px adentro y la tarjeta se leía centrada. Medido. */
       grid-template-columns: 1.35rem auto 1fr;
+      /* LOS INDICADORES COMPARTEN FILA CON EL BOTÓN, y ahí está el ahorro:
+         esa fila vale `max(pastillas, botón)` en vez de la suma, y no hay
+         fila nueva para las marcas.
+         
+         LO QUE NO SE PUDO: meter el importe en esa fila. La columna 1 mide
+         1.35rem —es la del checkbox— así que "SIN PRECIO" partía en dos.
+         Y los indicadores pegados a la fecha partían "41 cajones × 16u",
+         porque fecha y cantidad comparten fila. Las dos se vieron en la
+         captura, no en el número: el alto bajaba igual mientras el texto se
+         rompía. */
       grid-template-areas:
         "check    articulo articulo"
         "prov     prov     prov"
@@ -251,10 +261,87 @@
     td:nth-child(4) { grid-area: articulo; font-weight: 800; font-size: 1.05rem; }
     td:nth-child(5) { grid-area: cantidad; color: #475569; }
     td:nth-child(6) { grid-area: importe; font-weight: 700; margin-top: 0.2rem; }
-    td:nth-child(7) { grid-area: acciones; margin-top: 0.5rem; }
+    /* Las marcas a la izquierda y el botón a la derecha, en la misma línea. */
+    td:nth-child(7) {
+      grid-area: acciones;
+      margin-top: 0.35rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    /* Abierto, el cuerpo del menú ocupa el ancho entero de la tarjeta. */
+    td:nth-child(7) > .menu-acciones[open] { flex: 1 0 100%; }
     /* El checkbox más grande y alineado con el título: es el que se toca. */
     td:nth-child(1) input { width: 1.15rem; height: 1.15rem; }
   }
+  /* El encabezado de los filtros es un BOTÓN de dedo, no un link: 44px de
+     alto y el resumen abajo del título, que en 390px no entran en la misma
+     línea sin que el resumen se corte. */
+  .filtros > summary {
+    cursor: pointer;
+    padding: 0.7rem 0.2rem;
+    min-height: 44px;
+    box-sizing: border-box;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .filtros > summary::-webkit-details-marker { display: none; }
+  .filtros-titulo { font-weight: 700; color: #222; }
+  .filtros-titulo::after { content: " ▾"; color: #888; }
+  .filtros[open] .filtros-titulo::after { content: " ▴"; }
+  .filtros-resumen { font-size: 0.85rem; color: #666; line-height: 1.35; }
+  /* EL MENÚ POR RENGLÓN. El summary es de dedo (44px) y el cuerpo se apila:
+     en 390px cinco pastillas en fila vuelven a ser el problema que el menú
+     viene a resolver. */
+  .menu-acciones > summary {
+    cursor: pointer;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 0.9rem;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #374151;
+  }
+  .menu-acciones > summary::-webkit-details-marker { display: none; }
+  .menu-acciones[open] > summary { background: #f3f4f6; }
+  .menu-cuerpo {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    padding: 0.6rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+  }
+  .menu-cuerpo .boton, .menu-cuerpo .boton-eliminar { width: 100%; box-sizing: border-box; text-align: center; }
+  .menu-cuerpo .form-eliminar { margin: 0; }
+  /* LOS INDICADORES: chicos y al lado de la fecha, para escanear. El que
+     falta en gris, el que está en verde — la diferencia tiene que verse sin
+     leer, que es lo que "escanear" quiere decir. */
+  .indicadores { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; }
+  .indicadores span {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .indicadores .hay { background: #dcfce7; color: #166534; }
+  .indicadores .no-hay { background: #f3f4f6; color: #9ca3af; }
+  /* La fila entera lleva al Detalle: que se note que se puede tocar. */
+  tbody tr[data-detalle] { cursor: pointer; }
+  .link-detalle { color: inherit; text-decoration: none; }
+  .link-detalle:hover, .link-detalle:focus { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -264,6 +351,23 @@
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
+    {# LOS FILTROS ARRANCAN PLEGADOS, y no es una preferencia de estilo: esta
+       tarjeta medía 484 de los 844px del viewport en un celular, así que al
+       llegar se veía UNA compra. Plegada pasa a tres, que es más que todo el
+       resto de lo que se le puede sacar a esta pantalla junto.
+
+       ABIERTOS CUANDO NO HAY RESULTADOS, cerrados cuando sí: sin filas lo que
+       hay que hacer es cambiar el filtro, y esconderlo sería dejar al que
+       llega mirando una lista vacía sin la herramienta para arreglarla.
+
+       Y EL RESUMEN VA EN EL SUMMARY: un bloque cerrado que no dice qué tiene
+       adentro es peor que uno abierto — el que lo lee no sabe si está viendo
+       todo o un recorte. #}
+    <details class="filtros" {% if not compras %}open{% endif %}>
+      <summary>
+        <span class="filtros-titulo">Filtros</span>
+        <span class="filtros-resumen">{{ resumen_filtros }}</span>
+      </summary>
     <form method="get" action="/compras/buscar" id="form-buscar">
       <label for="fecha_desde">Desde</label>
       <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fecha_desde }}">
@@ -297,7 +401,13 @@
 
       <button type="submit">Buscar</button>
     </form>
+    </details>
 
+    {# EXPORTAR QUEDA AFUERA DEL PLEGADO, a propósito. Contar qué vive adentro
+       de un contenedor antes de esconderlo dio 12 interactivos, y éste no es
+       un filtro: es una acción sobre el resultado. Adentro quedaría a un
+       toque de distancia de algo que se usa justo después de buscar, que es
+       la función perdida en la presentación que más se usa. #}
     {% if compras %}
     <button type="button" class="boton" id="boton-exportar" onclick="mostrarOpcionesExportar()">Exportar</button>
     <div id="opciones-exportar" style="display: none;">
@@ -356,64 +466,79 @@
         </thead>
         <tbody>
           {% for c in compras %}
-          <tr>
+          <tr data-detalle="/compras/{{ c.id }}/detalle">
             <td><input type="checkbox" name="compra_id" value="{{ c.id }}" class="check-fila" form="form-borrado-multiple"></td>
             <td>{{ c.fecha_operacion.strftime("%d/%m/%Y") }}</td>
             <td>{{ c.proveedor_nombre }} ({{ c.proveedor_codigo_puesto }})</td>
-            <td>{{ c.articulo_nombre }}</td>
+            {# EL NOMBRE ES UN LINK DE VERDAD, además del click en la fila. La
+               fila entera la mueve el JS de abajo y eso alcanza para el dedo,
+               pero un renglón que navega sin ser un link no se alcanza con el
+               teclado y no dice que se pueda tocar. El link lo hace visible y
+               lo hace funcionar sin JS. #}
+            <td><a class="link-detalle" href="/compras/{{ c.id }}/detalle">{{ c.articulo_nombre }}</a></td>
             <td>{{ c.cantidad_cajones|numero }} cajones × {{ c.contenido_por_cajon|kilos }}{{ c.unidad_compra|sufijo_unidad }}</td>
             <td>{% if c.importe is not none %}{{ c.importe|moneda }}{% else %}<span class="sin-precio">SIN PRECIO</span>{% endif %}</td>
             <td>
-              <div class="acciones">
-                {# Los filtros viajan en la URL de editar para que Guardar/Volver vuelvan a ESTA búsqueda. #}
-                <a class="boton boton-editar" href="/compras/{{ c.id }}/editar?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Editar</a>
-                <a class="boton boton-detalle" href="/compras/{{ c.id }}/detalle">Detalle</a>
-                {# LAS DOS FOTOS, CADA UNA CON SU NOMBRE. Son de cosas
-                   distintas —la comanda es el papel del proveedor, el pesaje
-                   es la mercadería sobre la balanza— y hasta el 10/09 acá
-                   había un solo "Ver foto" que abría la comanda: la de la
-                   balanza se cargaba y no aparecía por ningún lado en esta
-                   pantalla. La cuenta ganó un término y el que lo lee no se
-                   enteró.
+              {# LAS ACCIONES ADENTRO DE UN MENÚ, y el Detalle AFUERA porque la
+                 tarjeta entera lleva ahí: es lo que se quiere el 80% de las
+                 veces y no necesita botón.
 
-                   Y LA QUE FALTA SE VE, en gris y sin link, mismo criterio
-                   que el "sin foto" de Movimientos: con un solo botón, "no
-                   está la del pesaje" y "nunca hubo pesaje" se veían igual
-                   —las dos, un botón—, y esta es la pantalla desde donde se
-                   audita. Un hueco que no se ve no se llena nunca. #}
-                {% if c.tiene_comanda %}
-                <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Comanda</a>
-                {% else %}
-                <span class="boton boton-sin-foto">Sin comanda</span>
-                {% endif %}
-                {# LA SALIDA para la compra que se recepcionó SIN la marca de
-                   "viene armada". El camino normal es marcarla al cargarla y
-                   que la guía R salga sola al recepcionar; esto es para
-                   cuando eso no pasó. Sin este botón la única forma sería la
-                   guía R a mano, que es documentar un trabajo que no se hizo
-                   así — la mercadería vino armada del puesto, nadie reprocesó
-                   nada.
+                 MEDIDO ANTES DE ESCRIBIRLO: el menú gana 1,1 filas por
+                 pantalla (4,5 a 5,6), que es poco — los botones son el 35%
+                 del alto del renglón, no el alto. Va igual, y por la otra
+                 razón: cinco pastillas de colores por tarjeta compiten con
+                 los datos, y eso el conteo de filas no lo mide.
 
-                   Solo donde se puede: recepcionada y todavía sin marca. Las
-                   dos columnas vienen de `buscar_compras` y no se deducen de
-                   otra cosa. #}
-                {% if c.estado == "recepcionado" and c.ficha_en_origen_id is none %}
-                <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada">Vino armada</a>
-                {% endif %}
-                {% if c.tiene_pesaje %}
-                <a class="boton boton-ver-foto" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank" rel="noopener">Pesaje</a>
-                {% else %}
-                <span class="boton boton-sin-foto">Sin pesaje</span>
-                {% endif %}
-                <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
-                      onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
-                  <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
-                  <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
-                  <input type="hidden" name="proveedor_id" value="{{ proveedor_id if proveedor_id is not none else '' }}">
-                  <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
-                  <button type="submit" class="boton-eliminar">Eliminar</button>
-                </form>
-              </div>
+                 LOS INDICADORES DE FOTO QUEDAN AFUERA del menú, arriba con la
+                 fecha: si hay pesaje o no es información que se quiere ver
+                 ESCANEANDO, sin abrir nada. Cuestan 2px vayan donde vayan
+                 —medido— así que no hay razón para esconderlos. Adentro del
+                 menú va la ACCIÓN de abrirlas; afuera, que existan. #}
+              {# LAS DOS FOTOS COMO INDICADOR, AFUERA del menú y en su misma
+                 línea: si hay pesaje o no es lo que se mira ESCANEANDO, sin
+                 abrir nada. Y la que FALTA se ve, mismo criterio que el "sin
+                 foto" de Movimientos — con un solo estado, "no está la del
+                 pesaje" y "nunca hubo pesaje" se veían igual, y ésta es la
+                 pantalla desde donde se audita. #}
+              <span class="indicadores">
+                <span class="{{ 'hay' if c.tiene_comanda else 'no-hay' }}">{{ "Comanda" if c.tiene_comanda else "Sin comanda" }}</span>
+                <span class="{{ 'hay' if c.tiene_pesaje else 'no-hay' }}">{{ "Pesaje" if c.tiene_pesaje else "Sin pesaje" }}</span>
+              </span>
+              <details class="menu-acciones">
+                <summary>Acciones ▾</summary>
+                <div class="menu-cuerpo">
+                  {# Los filtros viajan en la URL de editar para que Guardar/Volver vuelvan a ESTA búsqueda. #}
+                  <a class="boton boton-editar" href="/compras/{{ c.id }}/editar?fecha_desde={{ fecha_desde }}&fecha_hasta={{ fecha_hasta }}&proveedor_id={{ proveedor_id if proveedor_id is not none else '' }}&articulo_id={{ articulo_id if articulo_id is not none else '' }}">Editar</a>
+                  {% if c.tiene_comanda %}
+                  <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Ver comanda</a>
+                  {% endif %}
+                  {% if c.tiene_pesaje %}
+                  <a class="boton boton-ver-foto" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank" rel="noopener">Ver pesaje</a>
+                  {% endif %}
+                  {# LA SALIDA para la compra que se recepcionó SIN la marca de
+                     "viene armada". El camino normal es marcarla al cargarla y
+                     que la guía R salga sola al recepcionar; esto es para
+                     cuando eso no pasó. Sin este botón la única forma sería la
+                     guía R a mano, que es documentar un trabajo que no se hizo
+                     así — la mercadería vino armada del puesto, nadie reprocesó
+                     nada.
+
+                     Solo donde se puede: recepcionada y todavía sin marca. Las
+                     dos columnas vienen de `buscar_compras` y no se deducen de
+                     otra cosa. #}
+                  {% if c.estado == "recepcionado" and c.ficha_en_origen_id is none %}
+                  <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada">Vino armada</a>
+                  {% endif %}
+                  <form class="form-eliminar" method="post" action="/compras/{{ c.id }}/eliminar"
+                        onsubmit="return confirm('¿Eliminar la compra de {{ c.articulo_nombre }}?');">
+                    <input type="hidden" name="fecha_desde" value="{{ fecha_desde }}">
+                    <input type="hidden" name="fecha_hasta" value="{{ fecha_hasta }}">
+                    <input type="hidden" name="proveedor_id" value="{{ proveedor_id if proveedor_id is not none else '' }}">
+                    <input type="hidden" name="articulo_id" value="{{ articulo_id if articulo_id is not none else '' }}">
+                    <button type="submit" class="boton-eliminar">Eliminar</button>
+                  </form>
+                </div>
+              </details>
             </td>
           </tr>
           {% endfor %}
@@ -426,6 +551,17 @@
   </div>
 
   <script>
+    // LA TARJETA ENTERA LLEVA AL DETALLE: es lo que se quiere el 80% de las
+    // veces y no necesita botón. Se ignora todo lo que ya hace algo —el
+    // check, el menú, los links, el form de borrar—: sin eso, abrir el menú
+    // navegaría en vez de abrirlo.
+    document.querySelectorAll("tbody tr[data-detalle]").forEach(function (fila) {
+      fila.addEventListener("click", function (evento) {
+        if (evento.target.closest("a, button, input, label, details, summary, form")) { return; }
+        window.location.href = fila.dataset.detalle;
+      });
+    });
+
     const checkTodas = document.getElementById("check-todas");
     const checksFila = Array.from(document.querySelectorAll(".check-fila"));
     const botonBorrarSeleccionadas = document.getElementById("boton-borrar-seleccionadas");

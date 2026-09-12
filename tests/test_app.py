@@ -2397,6 +2397,129 @@ def test_ver_buscar_compras_boton_borrar_seleccionadas_es_tamano_normal():
     assert 'class="boton boton-eliminar" id="boton-borrar-seleccionadas"' in respuesta.text
 
 
+
+def test_los_filtros_arrancan_PLEGADOS_cuando_hay_resultados():
+    """La tarjeta de filtros medía 484 de los 844px del viewport: al llegar se
+    veía UNA compra. Plegada se ven tres, que es más que todo lo demás junto.
+
+    Se mira el atributo `open` del `<details>`, que es lo que decide.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        texto = cliente.get("/compras/buscar").text
+
+    marcado = texto.split("</style>")[-1]
+    assert '<details class="filtros" >' in marcado or '<details class="filtros">' in marcado
+    assert '<details class="filtros" open>' not in marcado
+
+
+def test_los_filtros_arrancan_ABIERTOS_cuando_no_hay_resultados():
+    """Sin filas, lo que hay que hacer es cambiar el filtro.
+
+    Esconderlo dejaría al que llega mirando una lista vacía sin la
+    herramienta para arreglarla — es la mitad del diseño que un test de
+    "arrancan plegados" no puede ver.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=[]),
+    ):
+        texto = cliente.get("/compras/buscar").text
+
+    assert '<details class="filtros" open>' in texto.split("</style>")[-1]
+
+
+def test_el_resumen_de_los_filtros_DICE_TODOS_y_no_se_calla():
+    """Un bloque cerrado que no dice qué tiene adentro es peor que uno abierto.
+
+    Y un filtro vacío no es la ausencia de un dato: es la decisión de no
+    filtrar. Si el renglón solo nombrara lo que está puesto, "sin filtrar por
+    proveedor" y "no sé" se verían igual.
+    """
+    from app.main import _resumen_de_filtros
+
+    sin_filtros = _resumen_de_filtros(date(2026, 9, 5), date(2026, 9, 12), None, None)
+    assert sin_filtros == "05/09 al 12/09 · todos los proveedores · todos los artículos"
+
+    con_filtros = _resumen_de_filtros(date(2026, 9, 5), date(2026, 9, 12),
+                                      "EJEMPLO Prov", "EJEMPLO Art")
+    assert con_filtros == "05/09 al 12/09 · EJEMPLO Prov · EJEMPLO Art"
+
+
+def test_EXPORTAR_queda_AFUERA_del_plegado():
+    """Contar qué vive adentro de un contenedor antes de esconderlo dio 12
+    interactivos, y Exportar era uno.
+
+    No es un filtro: es una acción sobre el resultado, y se usa JUSTO DESPUÉS
+    de buscar. Adentro del plegado sería una función que anda, perdida a un
+    toque de distancia — que es exactamente lo que pasó con el "seleccionar
+    todas" del `<thead>` el 11/09.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        marcado = cliente.get("/compras/buscar").text.split("</style>")[-1]
+
+    antes, despues = marcado.split("</details>", 1)
+    assert 'id="boton-exportar"' not in antes, "Exportar quedó adentro del plegado"
+    assert 'id="boton-exportar"' in despues
+
+
+def test_la_tarjeta_entera_lleva_al_DETALLE_y_no_depende_solo_del_JS():
+    """Es lo que se quiere el 80% de las veces y no necesita botón.
+
+    LAS DOS MITADES: el `data-detalle` lo usa el click de la fila —que es lo
+    que hace que la tarjeta entera sirva— y el link en el nombre es lo que
+    hace que ande sin JS y se alcance con el teclado. Con una sola, la
+    pantalla anda peor para alguien.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        texto = cliente.get("/compras/buscar").text
+
+    marcado = texto.split("</style>")[-1]
+    assert '<tr data-detalle="/compras/1/detalle">' in marcado
+    assert '<a class="link-detalle" href="/compras/1/detalle">' in marcado
+    # Y el click NO se lleva puesto lo que ya hace algo: sin esta lista, abrir
+    # el menú navegaría al Detalle en vez de abrirlo.
+    assert 'closest("a, button, input, label, details, summary, form")' in texto
+
+
+def test_las_acciones_viven_ADENTRO_del_menu_y_los_indicadores_AFUERA():
+    """La separación que pidió el dueño: la acción a un toque, el dato a la vista.
+
+    Editar y Eliminar casi no se usan desde esta pantalla, así que a dos
+    toques están bien. Si hay pesaje o no se mira escaneando, así que no
+    puede estar adentro.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.buscar_compras", return_value=COMPRAS_BUSQUEDA_DE_PRUEBA),
+    ):
+        marcado = cliente.get("/compras/buscar").text.split("</style>")[-1]
+
+    cuerpo = marcado.split('<div class="menu-cuerpo">')[1].split("</details>")[0]
+    assert ">Editar<" in cuerpo and ">Eliminar<" in cuerpo
+    # Los indicadores están en la celda pero ANTES del <details>.
+    antes_del_menu = marcado.split('<details class="menu-acciones">')[0]
+    assert 'class="indicadores"' in antes_del_menu
+
+
 def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     """Comanda y pesaje son de cosas distintas y hasta el 10/09 había un solo
     "Ver foto" que abría la comanda: la de la balanza no aparecía acá.
@@ -2422,20 +2545,32 @@ def test_buscar_compras_muestra_LAS_DOS_FOTOS_y_dice_cual_falta():
     # La comanda cuelga de la GUÍA; el pesaje, de la COMPRA. Dos rutas
     # distintas, y por eso el assert pide la URL entera y no el texto: con
     # el texto solo, las dos etiquetas apuntando a la misma ruta pasarían.
-    assert 'href="/compras/1/foto" target="_blank" rel="noopener">Comanda<' in texto
-    assert 'href="/deposito/recepcion/1/foto-balanza/ver" target="_blank" rel="noopener">Pesaje<' in texto
-    # La que falta SE VE, en gris y sin link.
-    assert 'href="/compras/2/foto"' in texto and ">Sin pesaje<" in texto
-    assert 'href="/deposito/recepcion/3/foto-balanza/ver"' in texto and ">Sin comanda<" in texto
-    # Y la que no tiene ninguna dice las dos cosas, no se queda muda.
-    assert texto.count(">Sin comanda<") == 2
-    assert texto.count(">Sin pesaje<") == 2
+    assert 'href="/compras/1/foto" target="_blank" rel="noopener">Ver comanda<' in texto
+    assert 'href="/deposito/recepcion/1/foto-balanza/ver" target="_blank" rel="noopener">Ver pesaje<' in texto
+    assert 'href="/compras/2/foto"' in texto
+    assert 'href="/deposito/recepcion/3/foto-balanza/ver"' in texto
     assert 'href="/compras/4/foto"' not in texto
     assert 'href="/deposito/recepcion/4/foto-balanza/ver"' not in texto
 
-    # Lo de siempre, que no se movió.
+    # EL INDICADOR ES OTRA COSA QUE LA ACCIÓN, y esa separación es el
+    # contrato del 12/09: la acción de abrir la foto vive adentro del menú
+    # —a un toque— y QUE EXISTA se ve sin abrir nada, porque es lo que se
+    # mira escaneando. Las cuatro compras dicen las dos cosas: la que no
+    # tiene no se queda muda.
+    marcado = texto.split("</style>")[-1]
+    assert marcado.count('class="hay">Comanda<') == 2
+    assert marcado.count('class="no-hay">Sin comanda<') == 2
+    assert marcado.count('class="hay">Pesaje<') == 2
+    assert marcado.count('class="no-hay">Sin pesaje<') == 2
+    # Y los indicadores están AFUERA del menú: adentro habría que abrirlo
+    # para saber si falta el pesaje, que es justo lo que no se quiere.
+    for cuerpo in marcado.split('<div class="menu-cuerpo">')[1:]:
+        assert 'class="no-hay"' not in cuerpo.split("</details>")[0]
+
+    # Editar sigue estando, adentro del menú. DETALLE YA NO ES UN BOTÓN: la
+    # tarjeta entera lleva ahí, que es lo que se quiere el 80% de las veces.
     assert texto.count(">Editar<") == 4
-    assert texto.count(">Detalle<") == 4
+    assert ">Detalle<" not in texto
 
 
 def test_ver_buscar_compras_muestra_el_aviso_cuando_viene_en_la_url():
