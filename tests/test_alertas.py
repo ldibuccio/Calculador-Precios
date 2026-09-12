@@ -269,3 +269,43 @@ def test_si_el_link_no_se_puede_armar_la_alerta_igual_se_ve():
                                  contar=lambda: {"casos": 1})
     unidas = unir([definicion], [_fila(codigo="x", casos=1)])
     assert unidas[0]["url"] == "/auditoria"
+
+
+def test_para_mostrar_DEVUELVE_EN_EL_ORDEN_DEL_REGISTRO():
+    """El orden del registro es el de las pantallas, y eso es un contrato, no una casualidad.
+
+    La pantalla de Alertas se arma sola recorriendo el registro: por eso el
+    orden de los bloques no se escribe en la plantilla —ahí habría que
+    enumerar las alertas a mano y se rompería el día que aparezca una nueva—
+    sino que sale de acá.
+
+    Si alguien ordenara por casos, por título o alfabéticamente en `unir` o en
+    `para_mostrar`, los bloques se moverían solos y nada avisaría. El registro
+    de verdad tiene veintiuna entradas y este test usa cuatro a propósito:
+    fija el MECANISMO, no un orden concreto que envejezca al agregar alertas.
+    """
+    definiciones = [_definicion(codigo=c, modulos=("compras",)) for c in ("d", "b", "c", "a")]
+    estado = [{"codigo": c, "casos": n, "mas_viejo": None, "calculada_el": None, "error": None}
+              for c, n in (("d", 1), ("b", 9), ("c", 5), ("a", 3))]
+
+    # Los casos están desordenados a propósito (1, 9, 5, 3) y los códigos
+    # también: un `sort` por cualquiera de los dos daría otra cosa que "dbca".
+    assert [a["codigo"] for a in para_mostrar(definiciones, estado)] == ["d", "b", "c", "a"]
+    assert [a["codigo"] for a in para_mostrar(definiciones, estado, "compras")] == ["d", "b", "c", "a"]
+    assert [a["codigo"] for a in unir(definiciones, estado)] == ["d", "b", "c", "a"]
+
+
+def test_en_COMPRAS_la_alerta_de_kilos_va_ANTES_que_la_de_bultos():
+    """Pedido del comprador el 12/09: la de kilos es la que mira primero.
+
+    Va sobre el registro REAL y no sobre un fixture, porque lo que se está
+    fijando es la decisión —este bloque arriba de aquél— y un fixture propio
+    la afirmaría sobre datos inventados.
+
+    El de arriba cuida el mecanismo; éste cuida la decisión. Se rompen por
+    motivos distintos: aquél si alguien ordena en `unir`, éste si alguien
+    reacomoda el registro por prolijidad o agrupando por módulo, que es
+    exactamente lo que se ve inofensivo.
+    """
+    codigos = [definicion.codigo for definicion in ALERTAS]
+    assert codigos.index("kilos_faltantes") < codigos.index("cajones_faltantes")

@@ -258,6 +258,12 @@ def hay_que_recalcular(estado, ahora) -> bool:
 def unir(definiciones, estado) -> list:
     """Cruza el registro (título, url) con la foto (casos, cuándo), por código.
 
+    DEVUELVE EN EL ORDEN DE `definiciones`, y eso es parte del contrato: el
+    orden del registro es el que ven las pantallas. No es un detalle de cómo
+    está escrito este bucle — hay pantallas que dependen de él (la de kilos va
+    antes que la de bultos en Compras porque el comprador la mira primero), y
+    ordenar acá por casos o por título se las llevaría puestas en silencio.
+
     Una alerta del registro SIN fila en la foto sale con casos=None: es "sin
     calcular todavía", que no es lo mismo que cero. Mostrarla en cero sería
     decir que está todo bien sin haber mirado.
@@ -303,6 +309,9 @@ def para_mostrar(definiciones, estado, modulo=None) -> list:
 
     Una alerta con error sale aunque su último conteo diera cero: que no se
     haya podido calcular ES la noticia.
+
+    FILTRA, NUNCA REORDENA: el orden que entra es el que sale, que es el del
+    registro. Ver `unir`.
     """
     unidas = unir(definiciones, estado)
     if modulo is not None:

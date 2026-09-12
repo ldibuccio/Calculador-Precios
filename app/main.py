@@ -11131,6 +11131,23 @@ def _detalle_pedidos_incompletos() -> dict:
 # Los conteos NO corren acá: los corre el recálculo cada 12 horas y las
 # pantallas leen la foto. Ver app/alertas.py para el porqué.
 #
+# EL ORDEN DE ESTA LISTA ES EL ORDEN DE LAS PANTALLAS, y eso es un CONTRATO,
+# no una casualidad de la implementación: `unir` recorre las definiciones y
+# agrega en orden, `para_mostrar` solo filtra, y las pantallas iteran lo que
+# les llega sin reordenar nada. Así que reacomodar entradas acá —aunque sea
+# por prolijidad, para agrupar por módulo o alfabéticamente— MUEVE LOS BLOQUES
+# de Alertas, del banner y de Auditoría, sin que nada avise.
+#
+# Por eso el orden no se escribe en la plantilla: ahí habría que enumerar las
+# alertas a mano y la lista se rompería el día que aparezca una nueva, que es
+# exactamente lo que la pantalla genérica viene a evitar. Acá una alerta nueva
+# aparece sola, en el lugar donde se la ponga.
+#
+# Y es un orden SOLO: una alerta no puede salir primera en un módulo y tercera
+# en otro. Si alguna vez hace falta eso, ahí sí hay que agregarle una
+# prioridad a DefinicionAlerta — hoy no hace falta y sería un campo más para
+# mantener.
+#
 # "contar" va SIEMPRE como lambda, aunque la función no necesite argumentos.
 # Este registro se evalúa al importar el módulo, y varias funciones de conteo
 # se definen más abajo en este mismo archivo: con la lambda el nombre se
@@ -11346,6 +11363,30 @@ ALERTAS = [
         ),
     ),
     DefinicionAlerta(
+        codigo="kilos_faltantes",
+        titulo="Compras cuyos cajones pesaron menos de lo que se compró",
+        titulo_corto="Faltaron kilos",
+        # VA ANTES QUE LA DE BULTOS, y no es alfabético ni casual: es la que
+        # el comprador mira primero. El orden de esta lista ES el orden de la
+        # pantalla (ver el encabezado del registro), así que mover esta
+        # entrada de lugar mueve el bloque — no lo reacomodes por prolijidad.
+        #
+        # Por lo demás va al lado de la de bultos y por el mismo camino: las
+        # dos se investigan con la compra adelante, y con varios casos un
+        # número sin la lista no dice por dónde empezar.
+        url="/compras/alertas",
+        texto_link="Ver el detalle",
+        # Solo el comprador, igual que la de bultos: él cargó el estimado y es
+        # el que le reclama al proveedor.
+        modulos=("compras",),
+        contar=lambda: contar_diferencia_de_kilos(
+            _hoy_argentina() - timedelta(days=DIAS_ALERTA_KILOS_FALTANTES),
+            _hoy_argentina(),
+            UMBRAL_KILOS_FALTANTES_POR_CAJON,
+        ),
+        detallar=_detalle_kilos_faltantes,
+    ),
+    DefinicionAlerta(
         codigo="cajones_faltantes",
         titulo="Compras que llegaron con menos bultos de los que se compraron",
         titulo_corto="Faltaron bultos",
@@ -11362,25 +11403,6 @@ ALERTAS = [
             UMBRAL_CAJONES_FALTANTES,
         ),
         detallar=_detalle_cajones_faltantes,
-    ),
-    DefinicionAlerta(
-        codigo="kilos_faltantes",
-        titulo="Compras cuyos cajones pesaron menos de lo que se compró",
-        titulo_corto="Faltaron kilos",
-        # Al lado de la de bultos y por el mismo camino: las dos se investigan
-        # con la compra adelante, y con varios casos un número sin la lista no
-        # dice por dónde empezar.
-        url="/compras/alertas",
-        texto_link="Ver el detalle",
-        # Solo el comprador, igual que la de bultos: él cargó el estimado y es
-        # el que le reclama al proveedor.
-        modulos=("compras",),
-        contar=lambda: contar_diferencia_de_kilos(
-            _hoy_argentina() - timedelta(days=DIAS_ALERTA_KILOS_FALTANTES),
-            _hoy_argentina(),
-            UMBRAL_KILOS_FALTANTES_POR_CAJON,
-        ),
-        detallar=_detalle_kilos_faltantes,
     ),
     DefinicionAlerta(
         codigo="unidades_que_difieren",
