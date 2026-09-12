@@ -4028,8 +4028,13 @@ def test_NINGUN_LINK_INTERNO_apunta_a_la_url_vieja_de_articulos():
 
 # --- La pantalla de alertas de Comercial (12/09) -----------------------------
 
-def _alertas_de(ruta, codigos):
-    """Renderiza una pantalla de alertas con esos códigos con casos."""
+def _alertas_de(ruta, codigos, unidades=None):
+    """Renderiza una pantalla de alertas con esos códigos con casos.
+
+    `unidades` son las filas de `unidades_que_difieren`: vacío por defecto
+    —que es lo que basta para casi todo— y con filas cuando lo que se prueba
+    necesita que el bloque tenga TABLA.
+    """
     from datetime import datetime as _dt
     ahora = _dt.now(ARGENTINA_TEST)
     estado = [{"codigo": c, "casos": 2, "mas_viejo": None, "calculada_el": ahora, "error": None}
@@ -4038,7 +4043,7 @@ def _alertas_de(ruta, codigos):
         patch("app.main.listar_estado_alertas", return_value=estado),
         patch("app.main.listar_compras_sin_precio", return_value=[]),
         patch("app.main.listar_articulos_comprados_incotizables", return_value=[]),
-        patch("app.main.listar_unidades_que_diferen", return_value=[]),
+        patch("app.main.listar_unidades_que_diferen", return_value=unidades or []),
     ):
         respuesta = cliente.get(ruta)
     assert respuesta.status_code == 200, respuesta.status_code
@@ -4091,6 +4096,80 @@ def test_las_alertas_de_COMERCIAL_ahora_TRAEN_SU_DETALLE():
     for codigo in ("compras_sin_precio", "articulos_incotizables", "unidades_que_difieren"):
         assert por_codigo[codigo].detallar is not None, codigo
         assert "comercial" in por_codigo[codigo].modulos, codigo
+
+
+FILA_UNIDADES = {"articulo": "EJEMPLO Kiwi", "unidad_compra": "kilo",
+                 "cliente": "EJEMPLO Cliente", "unidad_venta": "cubeta",
+                 "compras": 0, "precios": 0, "renglones": 0}
+TITULO_UNIDADES = "Artículos que se compran en una unidad y se venden en otra"
+
+
+def _bloque_de(marcado, titulo):
+    """El marcado de UN bloque de la pantalla de alertas, por su título.
+
+    La pantalla muestra todos los bloques del sector, así que un
+    `"X" not in marcado` sobre la página entera mide los seis juntos y
+    matchea el de al lado — es el corolario 4 en HTML. El recorte es lo que
+    hace que la afirmación sea sobre el bloque que se quiso mirar.
+    """
+    cuerpo = marcado.split("</style>")[-1]
+    bloques = cuerpo.split('<div class="bloque">')
+    elegidos = [b for b in bloques if f"<h2>{titulo}</h2>" in b]
+    assert len(elegidos) == 1, f"bloques con ese título: {len(elegidos)}"
+    return elegidos[0]
+
+
+def test_un_bloque_CON_TABLA_igual_muestra_su_link():
+    """Ver cuáles son y poder ir a arreglarlos son dos cosas distintas.
+
+    El link era el `else` del detalle, de cuando esta pantalla era solo de
+    Compras: quien tenía tabla no tenía link y al revés. Con dos sectores eso
+    se cayó — a Comercial se le acababa de dar un destino propio en Fichas
+    para `unidades_que_difieren` y SU PROPIA TABLA se lo tapaba, que es la
+    forma más cara de perder algo: el arreglo entró, el test de que entró
+    pasaba, y en la pantalla no estaba.
+
+    Se afirma sobre el marcado y no sobre el texto visible: el `href` no
+    puede aparecer en prosa ni en el CSS (corolarios 38 y 50).
+    """
+    marcado = _alertas_de("/comercial/alertas", ["unidades_que_difieren"],
+                          unidades=[FILA_UNIDADES])
+    bloque = _bloque_de(marcado, TITULO_UNIDADES)
+
+    assert "EJEMPLO Kiwi" in bloque, "no hay tabla, el test no prueba nada"
+    assert '<a class="link" href="/fichas"' in bloque
+
+
+def test_el_link_esta_en_LOS_TRES_ESTADOS_de_un_bloque():
+    """Un bloque puede estar en tres estados y el link va en los tres.
+
+    Los tres se ven parecidos y se rompen distinto, por eso van los tres:
+
+      con tabla        el detalle trajo filas
+      detalle vacío    el detalle corrió y no encontró ninguno (filas == [])
+      sin detalle      la alerta no tiene `detallar` (filas is None)
+
+    El de arriba prueba el primero. Éste prueba los otros dos, y el TERCERO
+    es el que impide el arreglo de mentira: mover el link adentro del `if` de
+    la tabla haría pasar al primero y dejaría a las quince alertas sin
+    `detallar` sin ninguna salida.
+
+    Ojo con el segundo, que es el que casi se escribe mal: una alerta CON
+    `detallar` que no encuentra casos cae en el estado del medio, no en el de
+    abajo. Los dos se ven igual en la pantalla —no hay tabla— y son ramas
+    distintas de la plantilla.
+    """
+    # detalle vacío: la alerta detalla, y hoy no hay ninguno
+    vacio = _bloque_de(_alertas_de("/comercial/alertas", ["unidades_que_difieren"]),
+                       TITULO_UNIDADES)
+    assert "Ninguno ahora mismo" in vacio, "no cayó en la rama del detalle vacío"
+    assert '<a class="link" href="/fichas"' in vacio
+
+    # sin detalle: `guias_r_costo_incompleto` no tiene `detallar`
+    sin_detalle = _bloque_de(_alertas_de("/compras/alertas", ["guias_r_costo_incompleto"]),
+                             "Guías R esperando el precio de una compra")
+    assert "Ninguno ahora mismo" not in sin_detalle, "esta alerta no debería detallar"
+    assert '<a class="link" href="/compras/pendientes"' in sin_detalle
 
 
 @pytest.fixture(autouse=True)

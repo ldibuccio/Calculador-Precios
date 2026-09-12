@@ -40,7 +40,8 @@
     text-decoration: none;
   }
   .sin-casos { color: #166534; font-weight: 700; margin: 0; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  .sin-casos + .link { margin-top: 0.9rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-bottom: 0.9rem; }
   th {
     text-align: left;
     font-size: 0.72rem;
@@ -145,9 +146,16 @@
       </table>
       {% elif b.filas is not none %}
       <p class="sin-casos">✓ Ninguno ahora mismo.</p>
-      {% else %}
-      <a class="link" href="{{ b.url }}">{{ b.texto_link }}</a>
       {% endif %}
+
+      {# EL LINK VA SIEMPRE, TAMBIÉN CON TABLA. Era un `else` del detalle, de
+         cuando esta pantalla era solo de Compras y el link era la única
+         salida: quien no tenía detalle tenía el link, y viceversa. Con dos
+         sectores eso se cayó — VER CUÁLES SON Y PODER IR A ARREGLARLOS SON
+         DOS COSAS DISTINTAS, y la tabla contesta la primera. El caso que lo
+         mostró: a Comercial se le acababa de dar un destino propio en Fichas
+         para `unidades_que_difieren` y su propia tabla se lo tapaba. #}
+      <a class="link" href="{{ b.url }}">{{ b.texto_link }}</a>
     </div>
     {% endfor %}
   {% else %}

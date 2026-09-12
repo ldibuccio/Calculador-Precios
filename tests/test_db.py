@@ -96,6 +96,7 @@ from app.db import (
     compra_tiene_precio_bloqueado,
     contar_compras_sin_precio,
     contar_articulos_comprados_incotizables,
+    listar_articulos_comprados_incotizables,
     contar_recepciones_pendientes_viejas,
     contar_senas_pendientes_viejas,
     contar_stock_vacios_negativos,
@@ -1425,6 +1426,49 @@ def test_contar_articulos_comprados_incotizables_pide_ficha_y_precio_vigente():
     # lo único que lo puede decir — son dos fechas, así que invertirlas no da
     # error: da otro resultado.
     assert parametros == (date(2026, 8, 6), date(2026, 7, 30))
+
+
+def test_el_ORDEN_DE_LOS_PARAMETROS_de_incotizables_LO_FIJA_EL_TEXTO_del_SQL():
+    """Dos fechas invertidas no dan error: dan otro resultado, y eso no se ve.
+
+    El test de acá arriba fija la LLAMADA, y con un cursor falso eso pasa
+    igual con el SQL reordenado (corolario 40): el residuo es que alguien
+    mueva la marca `sin_precio` fuera del SELECT, o la ventana al principio, y
+    los dos `%s` se liguen al revés sin que nada se queje — la ventana se
+    recortaría con `hoy` y el precio se miraría vigente desde hace una semana.
+    Ninguna de las dos consultas fallaría; las dos devolverían otra cosa.
+
+    Esto ata las dos mitades: QUÉ POSICIÓN ocupa cada `%s` en el texto, y que
+    los dos llamadores pasen (hoy, desde) en ese orden. Movida una sola de las
+    dos, el test cae.
+
+    Se cuentan los `%s` ANTERIORES a cada cláusula y no se compara el texto
+    entero: así el test sobrevive a que alguien reformatee la consulta, que es
+    lo que pasa siempre, y cae solo cuando cambia lo que importa.
+    """
+    from app.db import _SQL_INCOTIZABLES
+
+    assert _SQL_INCOTIZABLES.count("%s") == 2, "apareció o desapareció un parámetro"
+    antes_del_precio = _SQL_INCOTIZABLES[
+        :_SQL_INCOTIZABLES.index("vigente_desde <= %s")].count("%s")
+    antes_de_la_ventana = _SQL_INCOTIZABLES[
+        :_SQL_INCOTIZABLES.index("fecha_operacion >= %s")].count("%s")
+    assert antes_del_precio == 0, "el %s del precio vigente ya no es el PRIMERO"
+    assert antes_de_la_ventana == 1, "el %s de la ventana ya no es el SEGUNDO"
+
+    # Y LOS DOS LLAMADORES, no solo el que tenía test: comparten el SQL, así
+    # que un orden equivocado en uno es el mismo bug en los dos.
+    desde, hoy = date(2026, 7, 30), date(2026, 8, 6)
+    for funcion, falsa in (
+        (contar_articulos_comprados_incotizables, dict(filas_fetchone=[(4,)])),
+        (listar_articulos_comprados_incotizables, dict(filas_fetchall=[])),
+    ):
+        conexion, cursor = _conexion_falsa(**falsa)
+        cursor.description = [("articulo",), ("sin_ficha",), ("sin_precio",)]
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion(desde, hoy)
+        _, parametros = cursor.execute.call_args.args
+        assert parametros == (hoy, desde), funcion.__name__
 
 
 def test_contar_senas_pendientes_viejas_usa_el_criterio_de_la_pantalla():
