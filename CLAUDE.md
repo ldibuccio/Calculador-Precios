@@ -1825,6 +1825,29 @@ población que en realidad son tres se lee perfecto y no significa nada. Es
 el corolario 13 con otra ropa — una fórmula exacta sobre el conjunto deja de
 contestar la pregunta apenas el conjunto no es uno solo.
 
+#### HECHO el 12/09: las dos referencias están vacías
+
+Lionel las vació desde `/articulos`. Y hay una consecuencia que conviene
+saber antes de extrañarlos:
+
+**`kilos_3` y `kilos_4` filtran las dos por `contenido_referencia is not
+null`, así que Mango y Cherry ya NO APARECEN en ninguna.** No es que su
+desvío pase a dar cero: la fila se va. El que corra `kilos_4` el 25/09 no los
+va a encontrar, y eso es lo correcto —sin referencia no hay contra qué
+comparar, que es justamente por qué se vaciaron— pero se ve igual que si
+hubieran dejado de tener problema.
+
+**Vaciar la referencia los saca de la vigilancia, y ése es el precio de la
+decisión.** Está bien pagarlo: un promedio contra un valor que no existe no
+contesta nada. Lo que NO hay que hacer es devolverles un número para que
+vuelvan a aparecer en la consulta — eso sería mover el mundo para que entre
+en la medición.
+
+Lo único que lo deja ver es la columna `arts_con_referencia` de `kilos_3`,
+que es la población: baja en dos y ahí se nota que se fueron. Es el
+denominador del corolario 45 haciendo un trabajo que no era el suyo —
+avisar que alguien salió del conjunto.
+
 **La señal, y es la misma que la de "La señal que inventé, y que falló en el
 caso que la generó", más abajo en esta sección**: antes de leer
 un valor como un error de carga, preguntarse **qué GENERA los valores.**
@@ -3108,9 +3131,11 @@ queda anotado que el argumento ya no es el mismo.
    `contenido_por_cajon_real` va a valer algo que hoy no vale. **Hasta
    entonces no se mueve ninguna referencia.** Acá había una excepción
    —Mango a 40— y se cayó: Mango es multiformato y su referencia va vacía,
-   no en 40. **Y en Mango y en Cherry el desvío que mida `kilos_4` no
-   significa nada**, porque promediar tres formatos no contesta ninguna
-   pregunta: lo que hay que mirar son los otros.
+   no en 40. **Y Mango y Cherry directamente no van a aparecer**: el 12/09 se
+   les vació la referencia y las dos consultas filtran por
+   `contenido_referencia is not null`. No los busques — su desvío no
+   contestaba nada igual, porque promediar tres formatos no es una pregunta.
+   Lo que hay que mirar son los otros.
 2. **La explicación que los datos NO pueden descartar**: que el operario
    saque la foto justo en las cargas que ya le generaban duda. Ahí la foto no
    dispararía nada — sería un *marcador* de sospecha, y el que corrige es el
@@ -3155,6 +3180,20 @@ Y el caso se cerró como dormido: Kiwi nunca se compró en ninguna de las dos
 bases —cero compras, cero precios, cero renglones— así que no hay plata mal
 calculada. **Las tres columnas de "¿se usa?" son las que lo dijeron**, y sin
 ellas el mismo hallazgo habría mandado a revisar meses de costos.
+
+**ARREGLADO el 12/09**: Lionel alineó la ficha desde la pantalla de Fichas.
+Como Kiwi estaba dormido, la dirección en que se alineó no cambia ningún
+número viejo — no hay compras ni precios que recalcular.
+
+**Y la verificación no hay que acordarse de correrla**, que es el punto de
+haberla puesto como alerta y no como cartel: `unidades_que_difieren`
+recalcula sola cada seis horas y se apaga cuando el par deja de diferir. Si
+en la próxima corrida el banner sigue mostrándola, es que quedó algo — y si
+se apaga, eso es la confirmación, sin una consulta de por medio.
+
+Es la diferencia práctica entre una guarda que mira el ESTADO y una que mira
+la escritura: la del estado también sirve para confirmar que el arreglo
+entró.
 
 ## Corolario 49: cuando un registro se arma al IMPORTAR, la forma de llamar importa tanto como qué se llama
 
