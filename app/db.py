@@ -6451,6 +6451,156 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
         conexion.close()
 
 
+# La diferencia de kilaje de una compra: cajones × contenido, con el real
+# pisando al estimado columna por columna. Escrita UNA vez porque la cuenta y
+# el detalle tienen que dar lo mismo — si se separan, el banner dice un número
+# y la pantalla lista otro.
+_SQL_KILOS_DE_LA_COMPRA = """
+    (c.cantidad_cajones * c.contenido_por_cajon) AS total_estimado,
+    (COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
+     * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon)) AS total_real
+"""
+
+# El MISMO recorte para las dos. Solo 'kilo': en 'unidad' y 'cubeta' un umbral
+# de un kilo no significa nada. Y solo las que tienen algún número real
+# cargado: sin eso no hay nada que comparar.
+_SQL_COMPRAS_COMPARABLES = """
+    FROM compras c
+    JOIN articulos a ON a.id = c.articulo_id
+    JOIN proveedores p ON p.id = c.proveedor_id
+    WHERE c.estado = 'recepcionado'
+      AND a.unidad_compra = 'kilo'
+      AND c.fecha_operacion >= %s AND c.fecha_operacion <= %s
+      AND (c.cantidad_cajones_real IS NOT NULL OR c.contenido_por_cajon_real IS NOT NULL)
+      AND ABS((COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
+               * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon))
+              - (c.cantidad_cajones * c.contenido_por_cajon)) > %s
+"""
+
+
+def contar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> dict:
+    """Compras recibidas con más de `umbral_kilos` de diferencia contra lo comprado.
+
+    LA DIFERENCIA ES EL TOTAL, no el por-bulto: un kilo por cajón sobre
+    cuarenta cajones son cuarenta kilos, así que los dos umbrales se
+    llamarían igual y medirían cosas distintas. Se compara
+    cajones × contenido con el real pisando al estimado columna por columna,
+    que es la misma cuenta que usa el costeo.
+
+    NO SE RECORTA POR EL CORTE, y es a propósito: el corte existe para el
+    modelo de STOCK —de ahí para atrás la foto ya trae todo neteado— y esto
+    no es una cuenta de stock, es un cotejo entre dos números que alguien
+    cargó. El motivo de aquella exclusión no es el motivo de ésta, así que
+    no se hereda. Lo que sí lleva es la ventana, por lo de siempre: una
+    compra de hace un mes ya no se corrige, y sin ventana la alerta queda
+    prendida para siempre.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*), MIN(c.fecha_operacion)" + _SQL_COMPRAS_COMPARABLES,
+                (desde, hasta, umbral_kilos),
+            )
+            casos, mas_viejo = cursor.fetchone()
+        return {"casos": int(casos), "mas_viejo": mas_viejo}
+    finally:
+        conexion.close()
+
+
+def listar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> list[dict]:
+    """Las mismas compras que cuenta contar_diferencias_de_kilaje, con su detalle.
+
+    MISMO RECORTE, escrito UNA vez (_SQL_COMPRAS_COMPARABLES): si la cuenta y
+    la lista tuvieran cada una su WHERE, el día que se separen el banner diría
+    un número y la pantalla listaría otro, y nadie sabría cuál mirar.
+
+    `contenido_real_nulo` viaja con cada fila porque cambia lo que el número
+    significa: Depósito contó los cajones y no pesó el bulto, así que el total
+    real usa el contenido ESTIMADO y la diferencia sale entera de los cajones.
+    Esa fila no dice "recibimos menos kilos", dice "no lo pesamos".
+
+    Las más grandes primero: son las que no pueden ser una diferencia real.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.fecha_operacion, a.nombre AS articulo,
+                       p.nombre AS proveedor, p.codigo_puesto AS puesto,
+                       c.contenido_por_cajon_real IS NULL AS contenido_real_nulo,
+                """
+                + _SQL_KILOS_DE_LA_COMPRA
+                + _SQL_COMPRAS_COMPARABLES
+                + """
+                ORDER BY ABS((COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
+                              * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon))
+                             - (c.cantidad_cajones * c.contenido_por_cajon)) DESC,
+                         c.fecha_operacion DESC
+                """,
+                (desde, hasta, umbral_kilos),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
+def listar_pedidos_incompletos(fecha_desde) -> list[dict]:
+    """Los RENGLONES que explican los pedidos que cuenta contar_pedidos_incompletos.
+
+    OJO CON LAS DOS UNIDADES, que es la trampa de esta pareja: la cuenta
+    devuelve PEDIDOS y esto devuelve RENGLONES. Son dos números distintos con
+    el mismo tema, y por eso la pantalla muestra los dos con su nombre — "3
+    pedidos, 11 renglones"— en vez de elegir uno y dejar al otro sin rótulo.
+
+    MISMO CRITERIO que la cuenta: renglones armables (con sucursal e
+    identificados), del pedido VIGENTE de cada cliente y fecha, armados con
+    menos bultos de los pedidos. Lo que la cuenta agrega y esto no puede
+    mostrar como renglón es la otra mitad del criterio —un pedido CERRADO con
+    renglones sin armar—, así que ésos también entran acá, con lo armado en
+    NULL: el renglón no se armó, y decir 0 sería inventar un número.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigentes AS (
+                    SELECT DISTINCT ON (p.cliente_id, p.fecha_operacion)
+                           p.id, p.fecha_operacion, p.cliente_id, p.armado_cerrado_el
+                    FROM pedidos p
+                    WHERE p.anulado_el IS NULL AND p.fecha_operacion >= %s
+                    ORDER BY p.cliente_id, p.fecha_operacion, p.creado_en DESC
+                )
+                SELECT v.id AS pedido_id, v.fecha_operacion, cl.nombre AS cliente,
+                       r.sucursal,
+                       COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo) AS articulo,
+                       r.cantidad AS pedido, r.cantidad_armada AS armado,
+                       r.cantidad - COALESCE(r.cantidad_armada, 0) AS faltante
+                FROM vigentes v
+                JOIN clientes cl ON cl.id = v.cliente_id
+                JOIN pedidos_renglones r ON r.pedido_id = v.id
+                LEFT JOIN articulos a ON a.id = r.articulo_id
+                WHERE r.articulo_id IS NOT NULL AND r.anulado_el IS NULL
+                  AND r.sucursal IS NOT NULL
+                  AND (
+                        (r.armado_el IS NOT NULL AND r.cantidad_armada IS NOT NULL
+                         AND r.cantidad_armada < r.cantidad)
+                     OR (v.armado_cerrado_el IS NOT NULL AND r.armado_el IS NULL)
+                  )
+                ORDER BY v.fecha_operacion DESC, cl.nombre, r.sucursal,
+                         COALESCE(a.nombre, r.texto_descripcion, r.texto_codigo)
+                """,
+                (fecha_desde,),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def contar_pedidos_incompletos(fecha_desde) -> dict:
     """Pedidos vigentes desde una fecha que salieron con mercadería incompleta, y el más viejo.
 

@@ -145,6 +145,8 @@ from app.db import (
     listar_subcuentas_costos_fijos,
     obtener_subcuenta_costos_fijos,
     devoluciones_vinculadas_por_rango,
+    listar_diferencias_de_kilaje,
+    listar_pedidos_incompletos,
     listar_pedidos_para_reingreso,
     listar_renglones_para_reingreso,
     obtener_renglon_para_reingreso,
@@ -184,6 +186,7 @@ from app.db import (
     PedidoInexistenteParaControl,
     PedidoYaAnulado,
     anular_pedido,
+    contar_diferencias_de_kilaje,
     contar_pedidos_sin_controlar,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
@@ -393,6 +396,20 @@ ORIGENES_RETIRO_LABELS = {
 # alerta lo sigue. Alargar el listado hace que la alerta mire más atrás, que
 # es correcto; acortarlo la achica sola, que también.
 DIAS_PASADOS_LISTADO_PEDIDOS = 7
+
+# LA ALERTA DE KILAJE. El umbral es de UN kilo sobre el TOTAL de la compra
+# (cajones × contenido), no por bulto: un kilo por cajón sobre cuarenta
+# cajones son cuarenta kilos, y los dos umbrales se llamarían igual midiendo
+# cosas distintas.
+#
+# UN KILO DEJA MUCHOS CASOS Y ESTÁ BIEN, decidido el 12/09 con el dato
+# adelante: de 41 diferencias medidas, 37 estaban arriba de 10 kilos y 25
+# arriba de 25 — o sea CUATRO en toda la banda de 1 a 10. Si fueran
+# imprecisiones de balanza la banda chica sería la gorda; son dos poblaciones
+# y la grande no es de medición. El umbral no sale del conteo: sale de que
+# una diferencia real es de uno o dos kilos, que es cosa del negocio.
+UMBRAL_DIFERENCIA_KILOS = 1
+DIAS_ALERTA_DIFERENCIA_KILOS = 7
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -10658,6 +10675,69 @@ def _url_retiros_viejos(datos) -> str:
     })
 
 
+def _detalle_diferencias_de_kilaje() -> dict:
+    """Las filas de la alerta de kilaje: una por compra, la más grande arriba.
+
+    El RESUMEN se cuenta sobre estas filas y no con otra consulta: es el
+    rótulo del bloque, así que tiene que contar lo que se ve.
+    """
+    filas = listar_diferencias_de_kilaje(
+        _hoy_argentina() - timedelta(days=DIAS_ALERTA_DIFERENCIA_KILOS),
+        _hoy_argentina(),
+        UMBRAL_DIFERENCIA_KILOS,
+    )
+    renglones = []
+    for fila in filas:
+        diferencia = float(fila["total_real"]) - float(fila["total_estimado"])
+        renglones.append([
+            fila["fecha_operacion"].strftime("%d/%m"),
+            fila["articulo"],
+            f'{fila["proveedor"]} ({fila["puesto"]})',
+            _formatear_numero(fila["total_estimado"]),
+            # "no se pesó" y no un número: con contenido real nulo, el total
+            # real se armó con el contenido ESTIMADO, así que mostrarlo como
+            # un dato medido sería afirmar algo que nadie midió.
+            "no se pesó" if fila["contenido_real_nulo"] else _formatear_numero(fila["total_real"]),
+            f'{"+" if diferencia > 0 else ""}{_formatear_numero(diferencia)} kg',
+        ])
+    return {
+        "columnas": ["Fecha", "Artículo", "Proveedor", "Comprado", "Recibido", "Diferencia"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} compra{'s' if len(renglones) != 1 else ''}",
+    }
+
+
+def _detalle_pedidos_incompletos() -> dict:
+    """Las filas de los pedidos armados con faltantes: una por RENGLÓN.
+
+    El resumen dice LAS DOS CUENTAS —pedidos y renglones— porque son dos
+    unidades distintas del mismo tema: la alerta cuenta pedidos y esto lista
+    renglones. Elegir una dejaría a la otra sin rótulo, y el que lea "3" con
+    once filas abajo va a pensar que algo está roto.
+    """
+    filas = listar_pedidos_incompletos(
+        _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)
+    )
+    renglones = [[
+        fila["fecha_operacion"].strftime("%d/%m"),
+        fila["cliente"],
+        fila["sucursal"] or "—",
+        fila["articulo"] or "(sin identificar)",
+        _formatear_numero(fila["pedido"]),
+        # Sin armar es NULL y se dice así: un 0 sería un número que nadie
+        # cargó, y encima se lee como "se armó cero", que es otra cosa.
+        _formatear_numero(fila["armado"]) if fila["armado"] is not None else "sin armar",
+        _formatear_numero(fila["faltante"]),
+    ] for fila in filas]
+    pedidos = len({fila["pedido_id"] for fila in filas})
+    return {
+        "columnas": ["Fecha", "Cliente", "Suc.", "Artículo", "Pedido", "Armado", "Faltante"],
+        "filas": renglones,
+        "resumen": (f"{pedidos} pedido{'s' if pedidos != 1 else ''}, "
+                    f"{len(renglones)} {'renglón' if len(renglones) == 1 else 'renglones'}"),
+    }
+
+
 # ----------------------------------------------------------------------------
 # EL REGISTRO DE ALERTAS
 # ----------------------------------------------------------------------------
@@ -10855,6 +10935,7 @@ ALERTAS = [
         contar=lambda: contar_pedidos_incompletos(
             _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS)
         ),
+        detallar=_detalle_pedidos_incompletos,
     ),
     DefinicionAlerta(
         codigo="pedidos_sin_controlar",
@@ -10883,6 +10964,24 @@ ALERTAS = [
             _hoy_argentina() - timedelta(days=DIAS_PASADOS_LISTADO_PEDIDOS),
             _hoy_argentina() - timedelta(days=1),
         ),
+    ),
+    DefinicionAlerta(
+        codigo="diferencia_de_kilaje",
+        titulo="Compras con diferencia de kilos entre lo comprado y lo recibido",
+        titulo_corto="Diferencia de kilos",
+        # Al detalle del sector y no a Buscar Compras: con cuarenta casos, un
+        # número sin la lista al lado no dice por dónde empezar.
+        url="/compras/alertas",
+        texto_link="Ver el detalle",
+        # Solo el comprador: es él el que cargó el estimado y el único que
+        # puede decir si la diferencia es real o se tipeó mal.
+        modulos=("compras",),
+        contar=lambda: contar_diferencias_de_kilaje(
+            _hoy_argentina() - timedelta(days=DIAS_ALERTA_DIFERENCIA_KILOS),
+            _hoy_argentina(),
+            UMBRAL_DIFERENCIA_KILOS,
+        ),
+        detallar=_detalle_diferencias_de_kilaje,
     ),
     DefinicionAlerta(
         codigo="mails_sin_confirmar",
@@ -10974,6 +11073,74 @@ def _banner_alertas(modulo: str) -> dict:
 def ver_auditoria_url_vieja():
     """La URL vieja (cuando Auditoría vivía en Gerencia) sigue llegando: redirige a su sector propio."""
     return RedirectResponse(url="/auditoria", status_code=301)
+
+
+def _bloques_de_alertas(modulo: str) -> list[dict]:
+    """Los bloques de la pantalla de Alertas de un sector, armados DESDE EL REGISTRO.
+
+    No hay ni un bloque escrito a mano: se recorren las alertas que declaran
+    el módulo (`para_mostrar`, la misma que usa el banner) y cada una arma el
+    suyo. Una alerta nueva del sector aparece acá sin tocar esta función —
+    que es justo lo que impide que en tres meses haya una en el banner sin
+    bloque y nadie se entere.
+
+    LA CUENTA DEL BLOQUE CON DETALLE SALE DE SUS PROPIAS FILAS. El número de
+    la foto (el del banner) puede ser de hace seis horas y éste es de ahora;
+    si el bloque mostrara el de la foto arriba de las filas de ahora, los dos
+    números se contradirían sin que nadie pueda explicar cuál mirar. Por eso
+    `casos` pasa a ser len(filas) y el bloque dice que se calculó recién.
+
+    SI EL DETALLE FALLA, EL BLOQUE NO DESAPARECE: queda con el número de la
+    foto y su link, que es lo que tenía antes, más el motivo. Una alerta que
+    se esconde porque su consulta nueva se rompió es peor que una sin
+    detalle — el problema que avisaba sigue estando.
+    """
+    try:
+        estado = listar_estado_alertas()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    por_codigo = {definicion.codigo: definicion for definicion in ALERTAS}
+    bloques = []
+    for alerta in para_mostrar(ALERTAS, estado, modulo):
+        bloque = dict(alerta, columnas=None, filas=None, resumen=None,
+                      en_vivo=False, error_detalle=None)
+        detallar = getattr(por_codigo.get(alerta["codigo"]), "detallar", None)
+        if detallar is not None:
+            try:
+                detalle = detallar()
+            except Exception as error_detalle:
+                logger.exception("No se pudo detallar la alerta %s", alerta["codigo"])
+                bloque["error_detalle"] = str(error_detalle)
+            else:
+                bloque["columnas"] = detalle["columnas"]
+                bloque["filas"] = detalle["filas"]
+                bloque["resumen"] = detalle["resumen"]
+                bloque["casos"] = len(detalle["filas"])
+                bloque["en_vivo"] = True
+        bloques.append(bloque)
+    return bloques
+
+
+@app.get("/compras/alertas")
+def ver_alertas_compras(request: Request):
+    """Las alertas del comprador con su detalle: una fila por caso, no un número.
+
+    El banner sigue siendo un título y una cantidad —es una cinta que corre
+    en 390px y ahí no entra una tabla— y su link trae acá. Y acá y no en
+    Auditoría porque son dos trabajos distintos: Auditoría es para mirar
+    para atrás y muestra las dieciocho del sistema; esto el comprador lo
+    necesita en el momento y solo con lo suyo.
+    """
+    return templates.TemplateResponse(
+        request,
+        "compras_alertas.html",
+        {
+            "bloques": _bloques_de_alertas("compras"),
+            "modulo_nombre": "Compras",
+            "volver": "/compras",
+        },
+    )
 
 
 @app.get("/auditoria")

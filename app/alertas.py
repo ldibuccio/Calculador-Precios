@@ -64,6 +64,32 @@ class DefinicionAlerta:
     en 390px: ahí un título largo se lee a medias y el número queda para el
     final. Vacío = se usa el título entero, que es lo normal. Auditoría
     muestra SIEMPRE el largo: ahí sobra lugar y la aclaración sirve.
+
+    detallar: OPCIONAL, y la mayoría no lo tiene ni tiene por qué. Devuelve
+    las FILAS que explican el número, para la pantalla de Alertas del
+    sector: {"columnas": [...], "filas": [[...]], "resumen": "..."}.
+
+    Sin detallar, la pantalla muestra lo mismo que Auditoría —título,
+    cantidad y link—, que es exactamente lo que hace falta para una alerta
+    que solo sabe contar. No se le escribe un detalle a una alerta que nadie
+    pidió: dieciséis de las dieciocho son agregados puros y construirles una
+    consulta de detalle sería trabajo sobre un requisito que no existe.
+
+    EL DETALLE SE CALCULA EN VIVO, NO SALE DE LA FOTO. La foto guarda solo
+    {casos, mas_viejo, calculada_el, error}: guardar las filas de dieciocho
+    alertas cada seis horas no tiene sentido. La consecuencia es que el
+    número del banner (la foto, de hasta seis horas atrás) y el de la
+    pantalla (ahora) PUEDEN no coincidir, y eso no es un bug: son dos
+    instantes. Por eso la pantalla cuenta sus PROPIAS filas y dice "calculado
+    ahora" — el número y la lista salen del mismo lugar, así que no se pueden
+    contradecir entre sí, que es lo único que un lector no podría explicar.
+
+    Y por lo mismo `resumen` lo arma la función DESDE SUS FILAS, nunca desde
+    otra consulta: es el rótulo del bloque y tiene que contar lo que se ve.
+    Sirve cuando las filas no son la unidad del título — los pedidos
+    incompletos cuentan PEDIDOS y listan RENGLONES, y ahí el resumen dice los
+    dos ("3 pedidos, 11 renglones") en vez de elegir uno y dejar al otro sin
+    nombre.
     """
 
     codigo: str
@@ -73,6 +99,7 @@ class DefinicionAlerta:
     contar: Callable
     modulos: tuple = field(default_factory=tuple)
     titulo_corto: str = ""
+    detallar: Callable | None = None
 
 
 def normalizar_conteo(resultado) -> dict:

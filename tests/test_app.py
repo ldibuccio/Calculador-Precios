@@ -11201,6 +11201,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_pedidos_con_renglones_sin_identificar": VACIO,
         "contar_pedidos_incompletos": VACIO,
         "contar_pedidos_sin_controlar": VACIO,
+        "contar_diferencias_de_kilaje": VACIO,
         "contar_mails_pedido_sin_procesar": VACIO,
         "contar_pedidos_faltantes": VACIO,
         "contar_casillas_sin_revisar": VACIO,
@@ -11229,6 +11230,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     leidos_ia = mocks["contar_mails_pedido_leidos_con_ia"]
     incompletos = mocks["contar_pedidos_incompletos"]
     sin_controlar = mocks["contar_pedidos_sin_controlar"]
+    kilaje = mocks["contar_diferencias_de_kilaje"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -11242,6 +11244,244 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     incotizables.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA)
     senas.assert_called_once_with(date(2026, 7, 30))
     leidos_ia.assert_called_once_with(date(2026, 7, 30))
+    # Pedidos sin controlar: 7 días para atrás y HASTA AYER. El pedido de hoy
+    # se controla hoy a la tarde — una alerta prendida a la mañana con lo que
+    # todavía se está por hacer se aprende a ignorar.
+    sin_controlar.assert_called_once_with(date(2026, 7, 30), date(2026, 8, 5))
+    # Kilaje: 7 días para atrás y HASTA HOY (una compra recibida hoy con 40
+    # kilos de diferencia hay que verla hoy), con el umbral de UN kilo sobre
+    # el TOTAL de la compra.
+    kilaje.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
+
+
+# --- La pantalla de Alertas del sector (12/09) -------------------------------
+# Auditoría muestra las dieciocho con su número; ésta muestra las del SECTOR
+# con una fila por caso. Los bloques salen del registro, no escritos a mano.
+
+
+def _alertas_de_compras(filas_kilaje=None, filas_incompletos=None, foto=None):
+    """Abre /compras/alertas con el detalle parcheado, y devuelve el marcado.
+
+    Parchea los LISTADORES y no los detalladores: así lo que se prueba es la
+    pantalla entera —registro, armado del bloque, tabla— y no una función
+    devolviendo lo que le dijeron.
+    """
+    from unittest.mock import patch as _patch
+    with (
+        _patch("app.main.listar_estado_alertas", return_value=foto if foto is not None else _foto_alertas()),
+        _patch("app.main.listar_diferencias_de_kilaje", return_value=filas_kilaje or []),
+        _patch("app.main.listar_pedidos_incompletos", return_value=filas_incompletos or []),
+        _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/alertas")
+    assert respuesta.status_code == 200
+    return respuesta.text.split("</style>")[-1]
+
+
+KILAJE_DE_PRUEBA = [
+    {"id": 501, "fecha_operacion": date(2026, 8, 5), "articulo": "EJEMPLO Uno",
+     "proveedor": "EJEMPLO Prov", "puesto": "N99P01", "contenido_real_nulo": False,
+     "total_estimado": 800, "total_real": 900},
+    {"id": 502, "fecha_operacion": date(2026, 8, 4), "articulo": "EJEMPLO Dos",
+     "proveedor": "EJEMPLO Otro", "puesto": "N99P02", "contenido_real_nulo": True,
+     "total_estimado": 800, "total_real": 740},
+]
+
+INCOMPLETOS_DE_PRUEBA = [
+    {"pedido_id": 71, "fecha_operacion": date(2026, 8, 5), "cliente": "EJEMPLO Cli",
+     "sucursal": "VL", "articulo": "EJEMPLO Uno", "pedido": 15, "armado": 12, "faltante": 3},
+    {"pedido_id": 71, "fecha_operacion": date(2026, 8, 5), "cliente": "EJEMPLO Cli",
+     "sucursal": "BZ", "articulo": "EJEMPLO Dos", "pedido": 10, "armado": 4, "faltante": 6},
+    {"pedido_id": 72, "fecha_operacion": date(2026, 8, 4), "cliente": "EJEMPLO Cli",
+     "sucursal": "VL", "articulo": "EJEMPLO Tres", "pedido": 20, "armado": None, "faltante": 20},
+]
+
+
+def test_alertas_de_compras_lista_UNA_FILA_POR_CASO_no_un_numero():
+    marcado = _alertas_de_compras(
+        filas_kilaje=KILAJE_DE_PRUEBA,
+        foto=_foto_alertas({"diferencia_de_kilaje": (2, date(2026, 8, 4))}),
+    )
+
+    assert "Compras con diferencia de kilos entre lo comprado y lo recibido" in marcado
+    for columna in ("Fecha", "Artículo", "Proveedor", "Comprado", "Recibido", "Diferencia"):
+        assert f"<th>{columna}</th>" in marcado, columna
+    assert "EJEMPLO Uno" in marcado and "EJEMPLO Prov (N99P01)" in marcado
+    assert "+100 kg" in marcado
+    assert "-60 kg" in marcado
+    # CONTENIDO REAL NULO: Depósito contó cajones y no pesó, así que el total
+    # real se armó con el contenido ESTIMADO. Mostrarlo como un número medido
+    # sería afirmar algo que nadie midió.
+    assert "no se pesó" in marcado
+
+
+def test_la_cuenta_del_bloque_sale_de_SUS_FILAS_y_no_de_la_foto():
+    """El número del banner es de hace hasta seis horas; éste es de ahora.
+
+    Si el bloque mostrara el de la foto arriba de las filas de ahora, los dos
+    se contradirían y nadie podría decir cuál mirar. La foto dice 5 y hay 2
+    filas: tiene que decir 2.
+    """
+    marcado = _alertas_de_compras(
+        filas_kilaje=KILAJE_DE_PRUEBA,
+        foto=_foto_alertas({"diferencia_de_kilaje": (5, date(2026, 8, 4))}),
+    )
+
+    assert "2 compras" in marcado
+    assert "5 compras" not in marcado and "5 casos" not in marcado
+    assert "Calculado ahora." in marcado
+
+
+def test_el_bloque_con_detalle_deja_casos_EN_SUS_FILAS_y_no_en_el_de_la_foto():
+    """El contrato, mirado en el dato y no en el HTML.
+
+    La plantilla hoy muestra el `resumen` y no `casos`, así que un test que
+    solo lee la pantalla NO PUEDE ver si `casos` quedó con el número viejo
+    de la foto — se verificó rompiendo el código a propósito y no cayó
+    nada. Y que quede viejo importa: es el número que va a mostrar el día
+    que alguien pinte `b.casos` en esa rama, y ahí diría cinco arriba de
+    dos filas.
+    """
+    from app.main import _bloques_de_alertas
+
+    with (
+        patch("app.main.listar_estado_alertas",
+              return_value=_foto_alertas({"diferencia_de_kilaje": (5, date(2026, 8, 4))})),
+        patch("app.main.listar_diferencias_de_kilaje", return_value=KILAJE_DE_PRUEBA),
+        patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        bloques = _bloques_de_alertas("compras")
+
+    kilaje = next(b for b in bloques if b["codigo"] == "diferencia_de_kilaje")
+    assert kilaje["filas"] is not None
+    assert kilaje["casos"] == len(kilaje["filas"]) == 2, kilaje["casos"]
+    assert kilaje["en_vivo"] is True
+
+    # Y una SIN detalle conserva el de la foto, que es lo correcto ahí: es el
+    # único número que esa alerta tiene.
+    with (
+        patch("app.main.listar_estado_alertas",
+              return_value=_foto_alertas({"compras_sin_precio": (4, date(2026, 8, 1))})),
+        patch("app.main.listar_diferencias_de_kilaje", return_value=[]),
+        patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        bloques = _bloques_de_alertas("compras")
+
+    sin_precio = next(b for b in bloques if b["codigo"] == "compras_sin_precio")
+    assert sin_precio["filas"] is None
+    assert sin_precio["casos"] == 4
+    assert sin_precio["en_vivo"] is False
+
+
+def test_el_bloque_de_incompletos_dice_LAS_DOS_CUENTAS():
+    """Cuenta PEDIDOS y lista RENGLONES: los dos números con su nombre.
+
+    El fixture trae tres renglones de DOS pedidos a propósito. Con uno por
+    pedido, un resumen que contara mal no se notaría.
+    """
+    marcado = _alertas_de_compras(
+        filas_incompletos=INCOMPLETOS_DE_PRUEBA,
+        foto=_foto_alertas({"pedidos_incompletos": (2, date(2026, 8, 4))}),
+    )
+
+    assert "2 pedidos, 3 renglones" in marcado
+    for columna in ("Cliente", "Suc.", "Pedido", "Armado", "Faltante"):
+        assert f"<th>{columna}</th>" in marcado, columna
+    # Sin armar es NULL y se dice así: un 0 se lee como "se armó cero".
+    assert "sin armar" in marcado
+
+
+def test_una_alerta_SIN_detalle_muestra_el_numero_y_el_link_como_hoy():
+    """Dieciséis de las dieciocho solo saben contar y no hay que inventarles nada."""
+    marcado = _alertas_de_compras(
+        foto=_foto_alertas({"compras_sin_precio": (4, date(2026, 8, 1))}),
+    )
+
+    assert "Compras sin precio de compra cargado" in marcado
+    assert "4 casos" in marcado
+    assert 'href="/compras/pendientes"' in marcado
+    assert "Ver en Compras sin precio" in marcado
+
+
+def test_si_el_detalle_FALLA_el_bloque_no_desaparece():
+    """Una alerta que se esconde porque su consulta nueva se rompió es peor que una sin detalle.
+
+    El problema que avisaba sigue estando, así que el bloque queda con el
+    número de la foto, su link, y el motivo escrito.
+    """
+    from unittest.mock import patch as _patch
+    with (
+        _patch("app.main.listar_estado_alertas",
+               return_value=_foto_alertas({"diferencia_de_kilaje": (7, date(2026, 8, 4))})),
+        _patch("app.main.listar_diferencias_de_kilaje", side_effect=RuntimeError("se cayó la consulta")),
+        _patch("app.main.listar_pedidos_incompletos", return_value=[]),
+        _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+    ):
+        respuesta = cliente.get("/compras/alertas")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "Compras con diferencia de kilos" in marcado
+    assert "7 casos" in marcado
+    assert "se cayó la consulta" in marcado
+
+
+def test_la_pantalla_se_arma_DESDE_EL_REGISTRO_y_una_alerta_nueva_aparece_sola():
+    """Un bloque escrito a mano deja, en tres meses, una alerta en el banner sin bloque.
+
+    Se inventa una alerta del sector compras EN EL REGISTRO y la pantalla
+    tiene que mostrarla sin que nadie toque la plantilla ni la ruta. Si los
+    bloques estuvieran escritos a mano, este test no podría pasar.
+    """
+    from app.alertas import DefinicionAlerta
+    import app.main as main
+
+    inventada = DefinicionAlerta(
+        codigo="alerta_inventada_para_el_test",
+        titulo="EJEMPLO Alerta que no existía ayer",
+        url="/compras",
+        texto_link="Ver el ejemplo",
+        modulos=("compras",),
+        contar=lambda: {"casos": 0, "mas_viejo": None},
+    )
+    from unittest.mock import patch as _patch
+    with _patch.object(main, "ALERTAS", list(main.ALERTAS) + [inventada]):
+        foto = _foto_alertas({"alerta_inventada_para_el_test": (3, date(2026, 8, 2))})
+        with (
+            _patch("app.main.listar_estado_alertas", return_value=foto),
+            _patch("app.main.listar_diferencias_de_kilaje", return_value=[]),
+            _patch("app.main.listar_pedidos_incompletos", return_value=[]),
+            _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        ):
+            marcado = cliente.get("/compras/alertas").text.split("</style>")[-1]
+
+    assert "EJEMPLO Alerta que no existía ayer" in marcado
+    assert "3 casos" in marcado
+    assert "Ver el ejemplo" in marcado
+
+
+def test_alertas_de_compras_NO_muestra_las_de_otros_sectores():
+    """Solo lo del comprador: Auditoría es la que muestra las dieciocho."""
+    marcado = _alertas_de_compras(
+        foto=_foto_alertas({
+            "compras_sin_precio": (4, date(2026, 8, 1)),
+            "recepciones_pendientes": (9, date(2026, 8, 1)),   # depósito
+            "senas_vacios_pendientes": (2, date(2026, 8, 1)),  # puesto
+        }),
+    )
+
+    assert "Compras sin precio de compra cargado" in marcado
+    assert "Mercadería sin recepcionar" not in marcado
+    assert "Señas de vacíos" not in marcado
+
+
+def test_el_boton_de_Alertas_esta_en_el_sector_del_comprador():
+    with patch("app.main.listar_estado_alertas", return_value=_foto_alertas()):
+        marcado = cliente.get("/compras").text.split("</style>")[-1]
+
+    assert '<a class="boton boton-naranja" href="/compras/alertas">Alertas</a>' in marcado
 
 
 def test_ver_auditoria_sin_casos_muestra_todo_en_orden():
