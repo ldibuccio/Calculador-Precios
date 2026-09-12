@@ -3300,3 +3300,95 @@ es un hecho medido y no una impresión.
 forma de que no vuelva —es la única guarda que ve esto antes de que lo vea
 un operario— pero **agrega `pyflakes` como dependencia**, y eso se decide,
 no se mete de prepo en un commit de otra cosa.
+
+## Corolario 52: una simulación de layout tiene que usar los TAMAÑOS MÍNIMOS REALES de lo que se toca
+
+Del 12/09, y es de la familia del fixture que no se parece a producción, pero
+sobre PÍXELES en vez de sobre datos.
+
+Para decidir si convenía meter los cinco botones de Buscar Compras en un
+menú, se simuló el después en el navegador: reemplazar el bloque de acciones
+por un botón y medir el alto de la fila. Dio **1,1 filas más por pantalla**,
+y con ese número se tomó la decisión.
+
+**Lo construido dio 0,6.** La primera versión, de hecho, midió **196px por
+fila contra los 187 de antes: el menú salía PEOR.**
+
+La diferencia es una sola cosa: **el botón de la simulación era chico.** Un
+`summary` de 44px —el mínimo para tocarlo con el pulgar, que es la regla
+mobile-first de este archivo— cuesta casi lo mismo que las cinco pastillas
+que viene a reemplazar. La simulación midió una pantalla que no se puede
+usar.
+
+**La regla**: toda simulación de layout se hace con los tamaños que el
+elemento va a tener DE VERDAD — 44px de alto lo tocable, el `line-height`
+real del texto, el padding real del contenedor. Si no, lo que se mide es una
+pantalla imaginaria que nadie va a poder usar, y el número decide igual.
+
+**Cómo se reconoce**: si la simulación se escribe rápido —`innerHTML = '<button>…'`—
+ahí está el riesgo. El atajo que la hace rápida es justamente el que le saca
+las restricciones. La versión honesta es más larga porque tiene que traer el
+CSS del componente real.
+
+Y engancha con el corolario 47 por el lado que le falta: allá el cero no
+podía moverse, acá el número **sí se movía y medía otra cosa**. Los dos se
+leen como una medición buena.
+
+### La otra mitad, y es peor: el NÚMERO MEJORABA Y LA PANTALLA EMPEORABA
+
+Construyendo el menú, dos intentos bajaron el alto de la fila **rompiendo el
+texto**:
+
+- Meter el importe en la fila del botón: la columna 1 de la grilla mide
+  1.35rem —es la del checkbox— así que **"SIN PRECIO" partía en dos**.
+- Pegar los indicadores de foto a la fecha: fecha y cantidad comparten fila,
+  así que **"41 cajones × 16u" partía en dos**.
+
+Las dos veces el alto promedio bajaba y el número decía que iba mejorando.
+**Las dos se vieron en la CAPTURA, no en el número.**
+
+Por eso, de acá en adelante, **toda medición de alto de tarjeta trae al lado
+un detector de quiebre**: una celda que mide más que su propio `line-height`
+envolvió. Cuesta cinco líneas de JS y es lo único que distingue "entra mejor"
+de "entra porque se rompió":
+
+```js
+const lh = parseFloat(getComputedStyle(td).lineHeight) || 16;
+if (td.getBoundingClientRect().height > lh * 1.6) quebradas.push(td.textContent);
+```
+
+Es el testigo del corolario 24 en otra unidad: **un número solo no se puede
+leer**, y el alto de una fila sin el quiebre al lado miente exactamente
+cuando el diseño empeora.
+
+### Y lo que el detector decidió el mismo día: la compactación NO va
+
+Con el detector puesto se midió la tercera pieza —fusionar las líneas de la
+tarjeta— antes de escribirla:
+
+| | alto | filas | quebradas |
+|---|---|---|---|
+| como quedó | 164,2px | 5,1 | ninguna |
+| compactada, nombres del largo real | 134,9px | **6,3** | "40 cajones × 16k" en 8 de 12 |
+| compactada, nombres largos | **168,2px** | 5,0 | casi todas |
+
+O sea: **gana 1,2 filas rompiendo texto, y con nombres largos es PEOR que
+hoy.** Una variante conservadora —mover solo el importe— tampoco: 142,7px con
+nombres cortos y **177,3px con largos**, partiendo el título del artículo.
+
+La conclusión no es "compactar está mal": es que **el largo de los nombres no
+lo controlamos**, y un diseño que solo entra con los nombres cortos de hoy es
+un diseño que se rompe el día que alguien carga un proveedor con nombre
+largo. El de hoy no se rompe con ninguno de los dos.
+
+**Y la premisa del pedido estaba mal, que es lo que más conviene anotar**: se
+pidió compactar "conservando los rótulos" y **esta pantalla no tiene rótulos
+en celular** — es una decisión tomada y escrita en su propio CSS (*"se miró
+celda por celda y los contenidos se identifican solos: la fecha parece fecha,
+`20 cajones × 16k` es obvio, el importe lleva $ o dice SIN PRECIO"*). Los
+rótulos en mayúsculas que se recordaban son los de OTRA pantalla, la de
+Alertas, que sí usa `data-rotulo`.
+
+Es el corolario 20 en su forma barata: **antes de construir para conservar
+algo, verificar que ese algo exista.** Un `grep data-rotulo` de un segundo, y
+la mitad del requisito se cae.
