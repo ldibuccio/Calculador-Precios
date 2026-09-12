@@ -162,6 +162,10 @@
         {% set tipo_retiro_elegido = compra.tipo_retiro if compra else None %}
         {% include "_opciones_tipo_retiro.html" %}
       </select>
+
+      {% set caja_articulo_select = "articulo_id" %}
+      {% set caja_elegida = compra.ficha_en_origen_id if compra else none %}
+      {% include "_caja_en_origen.html" %}
       <p class="ayuda">Cómo llegó al depósito — queda como dato en el Detalle, aunque esta compra ya nace retirada.</p>
 
       <button type="submit" name="accion" value="terminar" formnovalidate class="boton-exito" id="boton-terminar-carga">Guardar</button>

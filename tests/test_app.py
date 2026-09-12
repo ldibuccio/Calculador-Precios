@@ -1876,6 +1876,12 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "importe": 45000.0,
         "sena": None,
         "tipo_retiro": "Clark",
+        # Las dos que deciden si va el botón de "Vino armada". Van en el
+        # fixture porque `buscar_compras` las devuelve: un fixture que no se
+        # parece a producción en el campo que una pantalla mira convierte a
+        # sus tests en guardianes del caso equivocado (corolario 22).
+        "estado": "recepcionado",
+        "ficha_en_origen_id": None,
     },
     {
         "id": 2,
@@ -1891,6 +1897,8 @@ COMPRAS_BUSQUEDA_DE_PRUEBA = [
         "importe": None,
         "sena": None,
         "tipo_retiro": "Carro",
+        "estado": "pendiente",
+        "ficha_en_origen_id": None,
     },
 ]
 
@@ -4334,7 +4342,9 @@ def test_editar_compra_exitosa_redirige_a_compras():
     assert respuesta.headers["location"] == "/compras/buscar"
     # COMPRA_DE_PRUEBA está pendiente/pendiente: ni cantidad ni precio
     # están bloqueados, se actualizan los dos.
-    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro")
+    # La estructura ENTERA, el None de la marca incluido: sin la marca en
+    # la comparación, el día que la edición vuelva a tirarla el test pasa.
+    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro", None)
     mock_actualizar_precio.assert_called_once_with(30, 55000.0, 1000.0)
 
 
@@ -10416,6 +10426,7 @@ def test_ingresar_mercaderia_exitoso_agregar_redirige_con_aviso():
     mock_crear.assert_called_once_with(
         HOY_DE_PRUEBA, 5, 200, 10.0, 18.0, 180.0, None, None, None, "Clark",
         ingreso_directo_deposito=True,
+        ficha_en_origen_id=None,
     )
 
 
@@ -25301,3 +25312,552 @@ def test_una_caja_que_no_es_un_numero_NO_llega_al_guardado():
     assert respuesta.status_code == 400
     assert "no es válida" in respuesta.text
     mock_crear.assert_not_called()
+
+
+# ── La marca de "viene armada" en LAS CINCO pantallas de carga ─────────────
+#
+# El 12/09 el sistema sabía RECIBIR una compra marcada y casi nadie podía
+# marcarla: el control estaba en una sola plantilla, y dos de los seis
+# caminos que escriben aceptaban el campo y lo TIRABAN sin decir nada. Los
+# dos tests de abajo son los que encuentran eso, y encuentran al que falte
+# mañana — no al que ya está.
+
+
+CAMINOS_DE_CARGA_DE_COMPRAS = {
+    "templates/compra_form.html": "el alta por proveedor confirmado y la edición",
+    "templates/compra_manual.html": "la manual (proveedor + primer artículo en un paso)",
+    "templates/_fragmento_renglones_comanda.html": "cada renglón de la comanda leída por foto",
+    "templates/deposito_ingresar.html": "el ingreso directo de Depósito",
+    "templates/gerencia_ingreso_retroactivo.html": "la carga retroactiva de Gerencia",
+}
+
+
+def test_TODAS_las_pantallas_de_carga_ofrecen_marcar_que_viene_armada():
+    """La lista es el test: una pantalla de carga sin el control no se ve rota.
+
+    El que la usa no sabe que le falta algo —no hay hueco, no hay error— así
+    que el único momento en que se puede notar es acá. Y va por el INCLUDE y
+    no por el `name` del campo: el control vive en un solo archivo justamente
+    para que no haya cinco copias que se separen.
+    """
+    faltan = [
+        f"{ruta} ({para_que})"
+        for ruta, para_que in CAMINOS_DE_CARGA_DE_COMPRAS.items()
+        if '_caja_en_origen.html' not in io.open(ruta, encoding="utf-8").read()
+    ]
+    assert not faltan, f"Pantallas de carga sin el control de 'viene armada': {faltan}"
+
+
+def test_TODOS_los_que_GUARDAN_una_compra_le_pasan_la_marca():
+    """Grepea el CONSTRUCTOR, no el campo: el que falta, por definición, no lo nombra.
+
+    Es el corolario 3 al pie de la letra, y el 12/09 encontró dos: el ingreso
+    directo de Depósito llamaba a `crear_compra` sin la marca, y la edición
+    llamaba a `actualizar_cantidad_compra` sin ella. Los dos ACEPTABAN el
+    campo del formulario —el `Form("")` estaba puesto— así que leyendo la
+    firma de la ruta se veían completos.
+    """
+    import ast
+
+    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    # Cuántos POSICIONALES tiene que haber para que la marca viaje sin nombre.
+    POSICION_DE_LA_MARCA = {"actualizar_cantidad_compra": 8}
+    sin_la_marca = []
+    for nodo in ast.walk(arbol):
+        if not isinstance(nodo, ast.Call) or not isinstance(nodo.func, ast.Name):
+            continue
+        if nodo.func.id not in ("crear_compra", "actualizar_cantidad_compra"):
+            continue
+        por_nombre = any(k.arg == "ficha_en_origen_id" for k in nodo.keywords)
+        por_posicion = len(nodo.args) >= POSICION_DE_LA_MARCA.get(nodo.func.id, 99)
+        if not (por_nombre or por_posicion):
+            sin_la_marca.append(f"{nodo.func.id}() en la línea {nodo.lineno}")
+    assert not sin_la_marca, f"Guardan una compra y tiran la marca: {sin_la_marca}"
+
+
+def test_la_comanda_ofrece_una_caja_POR_RENGLON_y_no_una_para_toda_la_foto():
+    """Al mismo puesto se le pueden comprar dos cosas y que solo una venga armada.
+
+    Y cada control se filtra con el <select> de artículo de SU renglón: con
+    uno solo para toda la comanda, el segundo renglón ofrecería las cajas del
+    primero.
+    """
+    renglones = [
+        {"texto_leido": "kiwi", "articulo_id": 5, "cantidad_cajones": "10",
+         "contenido_por_cajon": "18", "importe": "", "sena": "", "tipo_retiro": "Clark"},
+        {"texto_leido": "otro", "articulo_id": 5, "cantidad_cajones": "4",
+         "contenido_por_cajon": "18", "importe": "", "sena": "", "tipo_retiro": "Clark"},
+    ]
+    with (
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        pagina = templates.get_template("_fragmento_renglones_comanda.html").render(
+            renglones=renglones, articulos=ARTICULOS_CON_UNIDAD_COMPRA, foto_preview=""
+        )
+
+    assert 'name="item_0_ficha_en_origen_id"' in pagina
+    assert 'name="item_1_ficha_en_origen_id"' in pagina
+    # Cada bloque apunta al artículo de su propio renglón.
+    assert 'data-articulo-select="item_0_articulo_id"' in pagina
+    assert 'data-articulo-select="item_1_articulo_id"' in pagina
+
+
+def test_el_ingreso_directo_le_pasa_la_marca_al_guardado():
+    """El agujero del 12/09: la ruta aceptaba el campo y `crear_compra` no lo veía.
+
+    Y acá importa doble, porque esta compra nace 'recepcionado' y NO PASA POR
+    RECEPCIÓN: la guía R sale en el mismo insert o no sale nunca.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/deposito/ingresar",
+            data={"proveedor_id": "200",
+                  "accion": "agregar", "articulo_id": "5", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "18", "tipo_retiro": "Clark",
+                  "ficha_en_origen_id": "3"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    assert mock_crear.call_args.kwargs["ficha_en_origen_id"] == 3
+    assert mock_crear.call_args.kwargs["ingreso_directo_deposito"] is True
+
+
+def test_la_edicion_GUARDA_la_marca_y_no_solo_la_muestra():
+    """El otro agujero: la plantilla mostraba el selector con la caja elegida
+    y el POST la tiraba. Se veía andar — el valor volvía de la base."""
+    with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.actualizar_cantidad_compra") as mock_actualizar_cantidad,
+        patch("app.main.actualizar_precio_compra"),
+    ):
+        respuesta = cliente.post(
+            "/compras/30/editar",
+            data={"articulo_id": "5", "cantidad_cajones": "8", "contenido_por_cajon": "15",
+                  "importe": "55000", "sena": "1000", "tipo_retiro": "Carro",
+                  "ficha_en_origen_id": "3"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_actualizar_cantidad.assert_called_once_with(30, 5, 8.0, 15.0, 120.0, None, "Carro", 3)
+
+
+def test_el_retroactivo_devuelve_la_caja_elegida_cuando_el_guardado_FALLA():
+    """La marca tiene que sobrevivir al reintento.
+
+    El que reintenta corrige el campo que la pantalla le señaló y aprieta de
+    nuevo; no vuelve a revisar uno que ya había llenado. Perdida en silencio,
+    la compra se guarda sin marca y nadie se entera.
+    """
+    with (
+        patch("app.main._puerta_de_gerencia_para_escribir", return_value=None),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+        patch("app.main.crear_compra", side_effect=ValueError("la fecha no va")),
+    ):
+        respuesta = cliente.post(
+            "/gerencia/compras/ingreso-retroactivo",
+            data={"proveedor_id": "200", "articulo_id": "5", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "18", "importe": "100",
+                  "fecha_recepcion": "2026-09-10", "ficha_en_origen_id": "3"},
+        )
+
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'name="ficha_en_origen_id"' in marcado
+    # LA OPCIÓN 3 Y SOLO ELLA marcada. Un `"selected" in marcado` a secas
+    # pasaría por cualquier <option selected> de la pantalla —el proveedor, el
+    # artículo— y no probaría nada de lo que este test dice probar.
+    import re as _re
+    elegidas = _re.findall(r'<option value="(\d+)"[^>]*\bselected\b', marcado, _re.S)
+    assert "3" in elegidas
+
+
+# ── La salida: marcar "vino armada" una compra YA recepcionada ─────────────
+#
+# El camino normal es que la marque el comprador al cargarla y que la guía R
+# salga sola al recepcionar. Esto es para cuando eso no pasó. Sin esta
+# pantalla, la única forma de registrarlo sería cargar la guía R a mano, que
+# es documentar un trabajo que no se hizo así: nadie reprocesó nada, la
+# mercadería vino armada del puesto.
+
+
+def _compra_recepcionada_sin_marca(**cambios):
+    base = {
+        "id": 30,
+        "articulo_id": 5,
+        "articulo_nombre": "Kiwi",
+        "unidad_compra": "kilo",
+        "proveedor_nombre": "EJEMPLO Uno",
+        "proveedor_codigo_puesto": "N07P41",
+        "fecha_operacion": date(2026, 9, 9),
+        "estado": "recepcionado",
+        "ficha_en_origen_id": None,
+        "cantidad_cajones_real": 10,
+        # La recepción fue DOS DÍAS DESPUÉS de la compra a propósito: es lo
+        # único que distingue "la guía toma la fecha del lote" de "la guía
+        # toma la fecha de la compra", y con las dos iguales las dos
+        # implementaciones dan el mismo resultado.
+        "fecha_del_lote": date(2026, 9, 11),
+        "motivo_corte": None,
+    }
+    base.update(cambios)
+    return base
+
+
+def _lote_entero():
+    return {"entraron": 10.0, "guias_r": [], "renglones": [], "salieron": 0.0,
+            "sin_lote_de_mas": 0.0, "guias_rotas": []}
+
+
+def test_vino_armada_dice_que_la_guia_va_fechada_EL_DIA_DE_LA_RECEPCION():
+    """No la de hoy ni la de la compra: la del LOTE.
+
+    Tiene que ser la misma fecha con la que el FIFO fecha este lote, o el
+    freno busca el lote un día antes de que exista y rebota por un stock que
+    está ahí. Y se dice en la pantalla porque el que aprieta tiene que poder
+    explicar después por qué la guía quedó fechada ahí.
+    """
+    with (
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/30/vino-armada")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "11/09" in marcado       # la recepción, que es la fecha del lote
+    assert 'name="ficha_en_origen_id"' in marcado
+    assert "Caja de EJEMPLO" in marcado
+
+
+def test_vino_armada_muestra_LO_QUE_YA_SALIO_del_lote_antes_de_confirmar():
+    """Acá el lote puede tener días y estar comido — en la recepción nace en la
+    misma transacción y eso no puede pasar.
+
+    Si no alcanza, el freno de la guía R rebota. Que el número esté ARRIBA del
+    botón es lo que separa "no anduvo" de "ya sabía por qué".
+    """
+    consumido = {
+        "entraron": 10.0,
+        "guias_r": [{"reproceso_id": 214, "fecha": date(2026, 9, 11), "bultos": 4.0}],
+        "renglones": [{"cliente_nombre": "EJEMPLO Dos", "fecha": date(2026, 9, 11),
+                       "bultos": 3.0, "elegido_a_mano": False, "cliente_id": 7}],
+        "salieron": 7.0, "sin_lote_de_mas": 0.0, "guias_rotas": [],
+    }
+    with (
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=consumido),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/30/vino-armada")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "ya salieron" in marcado
+    assert "R214" in marcado
+    assert "EJEMPLO Dos" in marcado
+
+
+def test_vino_armada_BLOQUEA_la_compra_que_todavia_no_se_recepciono():
+    """Y manda al camino que sí corresponde, en vez de decir solo que no.
+
+    Para una compra sin recepcionar la marca va en la carga y la guía sale
+    sola: ofrecerle este botón la marcaría por un camino que no hace falta.
+    """
+    with (
+        patch("app.main.compra_para_marcar_armada",
+              return_value=_compra_recepcionada_sin_marca(estado="pendiente")),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/30/vino-armada")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'class="bloqueo"' in marcado
+    assert "todavía no se recepcionó" in marcado
+    assert 'name="ficha_en_origen_id"' not in marcado
+
+
+def test_vino_armada_BLOQUEA_por_el_corte_y_DICE_por_que():
+    """El aviso del corte, ANTES del botón y no como error después.
+
+    Una compra fechada el día del corte o antes no tiene lote del FIFO: esa
+    mercadería ya está adentro de la foto del stock inicial. El botón no
+    podría funcionar nunca, así que no se ofrece.
+    """
+    motivo = ("La fecha tiene que ser POSTERIOR al corte del modelo (05/09/2026). "
+              "Ese día ya está adentro de la foto del stock inicial, así que una compra "
+              "fechada ahí suma al total sin ser un lote del FIFO.")
+    with (
+        patch("app.main.compra_para_marcar_armada",
+              return_value=_compra_recepcionada_sin_marca(
+                  fecha_del_lote=date(2026, 9, 5), motivo_corte=motivo)),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/30/vino-armada")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert 'class="bloqueo"' in marcado
+    assert "POSTERIOR al corte" in marcado
+    assert "no hay lote contra el que armar la guía R" in marcado
+    assert 'name="ficha_en_origen_id"' not in marcado
+
+
+def test_vino_armada_BLOQUEA_la_que_YA_esta_marcada():
+    with (
+        patch("app.main.compra_para_marcar_armada",
+              return_value=_compra_recepcionada_sin_marca(ficha_en_origen_id=3)),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.get("/compras/30/vino-armada")
+
+    assert "ya está marcada" in respuesta.text.split("</style>")[-1]
+
+
+def test_vino_armada_sin_NINGUNA_caja_del_articulo_lo_dice_en_vez_de_ofrecer_un_selector_vacio():
+    """Un selector vacío se lee como "no tiene cajas" sin explicar que lo que
+    falta es la ficha del cliente."""
+    with (
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value={}),
+    ):
+        respuesta = cliente.get("/compras/30/vino-armada")
+
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "no tiene ninguna caja cargada" in marcado
+    assert 'name="ficha_en_origen_id"' not in marcado
+
+
+def test_marcar_vino_armada_escribe_y_AVISA_QUE_GUIA_se_cargo():
+    """Es el número que va a necesitar el día que haya que anularla."""
+    with patch("app.main.marcar_compra_armada_en_origen", return_value=214) as mock_marcar:
+        respuesta = cliente.post(
+            "/compras/30/vino-armada", data={"ficha_en_origen_id": "3"}, follow_redirects=False
+        )
+
+    assert respuesta.status_code == 303
+    mock_marcar.assert_called_once_with(30, 3)
+    assert "R214" in urllib.parse.unquote_plus(respuesta.headers["location"])
+
+
+def test_marcar_vino_armada_traduce_el_FRENO_DEL_STOCK_y_dice_que_no_escribio_nada():
+    """La marca y la guía van en la misma transacción: si la guía rebota, la
+    marca tampoco se escribe — y eso hay que decirlo.
+
+    Sin la última frase, el que lo lee no sabe si quedó marcada a medias y
+    vuelve a apretar.
+    """
+    from app.db import StockInsuficienteParaReproceso
+
+    with (
+        patch("app.main.marcar_compra_armada_en_origen",
+              side_effect=StockInsuficienteParaReproceso(10.0, 3.0, [])),
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.post("/compras/30/vino-armada", data={"ficha_en_origen_id": "3"})
+
+    assert respuesta.status_code == 400
+    assert "no se pudo cargar su guía R" in respuesta.text
+    assert "No se marcó nada" in respuesta.text
+    # Y NO el texto del otro camino: allá lo que se deshace es la recepción.
+    assert "No se recepcionó" not in respuesta.text.split("</style>")[-1]
+
+
+def test_marcar_vino_armada_sin_elegir_caja_no_llama_a_la_base():
+    with (
+        patch("app.main.marcar_compra_armada_en_origen") as mock_marcar,
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        respuesta = cliente.post("/compras/30/vino-armada", data={"ficha_en_origen_id": ""})
+
+    assert respuesta.status_code == 400
+    mock_marcar.assert_not_called()
+
+
+def _compras_buscadas(estado, ficha_en_origen_id):
+    fila = dict(COMPRAS_BUSQUEDA_DE_PRUEBA[0])
+    fila.update({"estado": estado, "ficha_en_origen_id": ficha_en_origen_id})
+    return [fila]
+
+
+def test_el_boton_VINO_ARMADA_sale_SOLO_en_la_recepcionada_sin_marca():
+    """Las tres combinaciones, porque las tres se ven igual desde afuera.
+
+    Por la CLASE y no por el texto: un comentario que explique el botón
+    nombra su propio rótulo y entraría en la cuenta (corolario 38).
+    """
+    casos = {
+        ("recepcionado", None): True,     # la única que puede
+        ("recepcionado", 3): False,       # ya marcada: su guía ya está
+        ("pendiente", None): False,       # todavía no hay lote
+    }
+    for (estado, ficha), tiene_boton in casos.items():
+        with (
+            patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+            patch("app.main.buscar_compras", return_value=_compras_buscadas(estado, ficha)),
+            patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+            patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        ):
+            respuesta = cliente.get("/compras/buscar")
+        marcado = respuesta.text.split("</style>")[-1]
+        assert ('class="boton boton-vino-armada"' in marcado) is tiene_boton, (estado, ficha)
+
+
+def test_vino_armada_BLOQUEADA_no_promete_la_fecha_de_una_guia_que_no_va_a_existir():
+    """La tarjeta dice "la guía va a quedar fechada el ..." y con el bloqueo
+    puesto eso es falso: no hay guía.
+
+    Lo encontró la captura, no un test: el `{% if %}` de esa línea preguntaba
+    solo si había fecha, y la había. Es la rama que ganó un camino nuevo y se
+    quedó afirmando lo que valía antes.
+    """
+    motivo = "La fecha tiene que ser POSTERIOR al corte del modelo (05/09/2026)."
+    with (
+        patch("app.main.compra_para_marcar_armada",
+              return_value=_compra_recepcionada_sin_marca(
+                  fecha_del_lote=date(2026, 9, 5), motivo_corte=motivo)),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        bloqueada = cliente.get("/compras/30/vino-armada").text.split("</style>")[-1]
+
+    with (
+        patch("app.main.compra_para_marcar_armada", return_value=_compra_recepcionada_sin_marca()),
+        patch("app.main._dependencias_con_nombres", return_value=_lote_entero()),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+    ):
+        abierta = cliente.get("/compras/30/vino-armada").text.split("</style>")[-1]
+
+    assert "va a quedar fechada" not in bloqueada
+    # Y LAS DOS DIRECCIONES: sin esto, sacar la línea entera pasaría el test.
+    assert "va a quedar fechada" in abierta
+
+
+def test_la_marca_VUELVE_en_el_reintento_de_las_cinco_pantallas():
+    """Un error de guardado no puede llevarse puesta la caja elegida.
+
+    LAS CINCO DE UNA, porque son once dicts distintos que rearman el
+    formulario y de once se cae uno. Que fallen todas juntas acá es más barato
+    que descubrir dentro de tres meses que una pantalla guarda sin marca.
+
+    Y el modo de falla es el peor: no hay error, no hay hueco, la compra se
+    guarda bien salvo por el campo que se perdió.
+    """
+    import re
+
+    def elegidas(html):
+        return re.findall(r'<option value="(\d+)"[^>]*\bselected\b',
+                          html.split("</style>")[-1], re.S)
+
+    def comunes(articulo_revienta=False):
+        articulo = (patch("app.main.obtener_articulo", side_effect=Exception("se cayó la base"))
+                    if articulo_revienta
+                    else patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA))
+        return (
+            patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+            patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+            articulo,
+            patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+            patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+            patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+            patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+            patch("app.main.crear_compra", side_effect=Exception("se cayó la base")),
+            patch("app.main.obtener_o_crear_proveedor_por_codigo",
+                  return_value=(PROVEEDOR_DE_PRUEBA, False)),
+        )
+
+    campos = {"articulo_id": "5", "cantidad_cajones": "10", "contenido_por_cajon": "18",
+              "importe": "50000", "sena": "", "tipo_retiro": "Clark",
+              "ficha_en_origen_id": "3"}
+    # DOS FORMAS DE FALLAR, y no una: cada pantalla rearma el formulario en
+    # varias ramas —la base que se cae y el campo que no valida— y con una
+    # sola, las otras se pueden quedar sin la marca sin que nada avise. El
+    # campo inválido es además el que la gente pega todos los días.
+    INVALIDO = {"cantidad_cajones": "no es un número"}
+    # TRES ramas y no dos: la de leer el artículo es la que falta en cuanto se
+    # prueba una sola, y es la que ninguna de las otras dos toca.
+    FALLAS = (("la base se cae", {}, False),
+              ("un campo no valida", INVALIDO, False),
+              ("no se pudo leer el artículo", {}, True))
+
+    perdieron = []
+
+    for falla, extra, revienta in FALLAS:
+      with ExitStack() as pila:
+        for contexto in comunes(revienta):
+            pila.enter_context(contexto)
+
+        casos = {
+            "el alta por proveedor confirmado":
+                ("/compras/nueva", dict(campos, proveedor_id="200")),
+            "la manual":
+                ("/compras/nueva/manual", dict(campos, codigo_puesto="N07P41", nombre="EJEMPLO Uno")),
+            "el ingreso directo de Depósito":
+                ("/deposito/ingresar", {"proveedor_id": "200", "accion": "agregar",
+                                        "articulo_id": "5", "cantidad_cajones": "10",
+                                        "contenido_por_cajon": "18", "tipo_retiro": "Clark",
+                                        "ficha_en_origen_id": "3"}),
+        }
+        for nombre, (url, datos) in casos.items():
+            if "3" not in elegidas(cliente.post(url, data=dict(datos, **extra)).text):
+                perdieron.append(f"{nombre} ({falla})")
+
+      # La edición es aparte: no pasa por `crear_compra`.
+      with (
+        patch("app.main.obtener_compra", return_value=COMPRA_DE_PRUEBA),
+        patch("app.main.obtener_articulo", side_effect=Exception("se cayó la base"))
+        if revienta else patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+        patch("app.main.actualizar_cantidad_compra", side_effect=Exception("se cayó la base")),
+      ):
+        # Y SUS DOS ACCIONES: "Guardar" actualiza el renglón, "Agregar
+        # artículo" inserta una compra NUEVA por otro camino y con su propio
+        # dict de reintento. Con una sola, la otra se queda sin la marca.
+        for accion in ("guardar", "agregar"):
+            respuesta = cliente.post(
+                "/compras/30/editar", data=dict(campos, accion=accion, **extra))
+            if "3" not in elegidas(respuesta.text):
+                perdieron.append(f"la edición · {accion} ({falla})")
+
+    # Y el retroactivo, que valida la marca por su cuenta.
+    with (
+        patch("app.main._puerta_de_gerencia_para_escribir", return_value=None),
+        patch("app.main.fecha_corte", return_value=date(2026, 9, 5)),
+        patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)),
+        patch("app.main.listar_articulos", return_value=ARTICULOS_CON_UNIDAD_COMPRA),
+        patch("app.main.listar_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_KILO_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main._cajas_para_elegir_por_articulo", return_value=_cajas_de_un_articulo()),
+        patch("app.main.crear_compra", side_effect=ValueError("se cayó la base")),
+    ):
+        respuesta = cliente.post(
+            "/gerencia/compras/ingreso-retroactivo",
+            data={"proveedor_id": "200", "articulo_id": "5", "cantidad_cajones": "10",
+                  "contenido_por_cajon": "18", "importe": "100",
+                  "fecha_recepcion": "2026-09-10", "ficha_en_origen_id": "3"},
+        )
+        if "3" not in elegidas(respuesta.text):
+            perdieron.append("el retroactivo de Gerencia")
+
+    assert not perdieron, f"Pierden la caja elegida al reintentar: {perdieron}"

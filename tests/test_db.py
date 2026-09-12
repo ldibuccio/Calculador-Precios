@@ -2308,8 +2308,13 @@ def test_actualizar_cantidad_a_cooperativa_marca_el_retiro_en_el_mismo_update():
     with patch("app.db.obtener_conexion", return_value=conexion):
         actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Cooperativa")
 
-    consulta_update, parametros_update = cursor.execute.call_args_list[-1].args
-    assert "estado_retiro = 'retirado'" in consulta_update
+    # EL UPDATE DEL RETIRO, buscado por lo que dice y no por ser el último:
+    # la marca de "viene armada" se escribe con un UPDATE propio después, así
+    # que `[-1]` dejó de ser éste el día que esa marca se agregó.
+    consulta_update, parametros_update = next(
+        llamada.args for llamada in cursor.execute.call_args_list
+        if "estado_retiro = 'retirado'" in llamada.args[0]
+    )
     assert "retiro_origen = %s" in consulta_update
     assert "automatico_cooperativa" in parametros_update
 
@@ -7748,3 +7753,188 @@ def test_el_ingreso_directo_MARCADO_carga_su_guia_R_en_el_MISMO_insert():
     conexion.cursor.assert_called_once()
     conexion.commit.assert_called_once()
     assert cabecera is not None
+
+
+# ── Marcar "vino armada" una compra YA recepcionada ────────────────────────
+
+
+from app.db import (  # noqa: E402
+    compra_para_marcar_armada,
+    marcar_compra_armada_en_origen,
+)
+
+
+def _conexion_para_marcar(estado="recepcionado", ya_marcada=None, fecha_del_lote=date(2026, 9, 11),
+                          corte=date(2026, 9, 5), articulo_de_la_ficha=5):
+    """El orden de los fetchone() es el orden en que la función pregunta."""
+    return _conexion_falsa(filas_fetchone=[
+        (estado, ya_marcada, 10.0, fecha_del_lote),   # el estado de la compra
+        (corte,),                                     # corte_modelo
+        (5,),                                         # articulo_id de la compra
+        (articulo_de_la_ficha,),                      # articulo_id de la ficha
+    ])
+
+
+def test_marcar_armada_escribe_la_marca_Y_CARGA_LA_GUIA_en_la_misma_transaccion():
+    """Las dos o ninguna: una compra marcada sin su guía deja el lote crudo y
+    la ficha sin sus cajas, que es el estado que esto viene a arreglar."""
+    conexion, cursor = _conexion_para_marcar()
+
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._guia_en_origen_si_corresponde", return_value=214) as mock_guia,
+    ):
+        assert marcar_compra_armada_en_origen(30, 3) == 214
+
+    consulta, parametros = next(
+        llamada.args for llamada in cursor.execute.call_args_list
+        if "UPDATE compras SET ficha_en_origen_id" in llamada.args[0]
+    )
+    assert parametros == (3, 30)
+    mock_guia.assert_called_once_with(cursor, 30)
+    conexion.commit.assert_called_once()
+
+
+def test_marcar_armada_RECHAZA_la_compra_que_no_esta_recepcionada():
+    """Sin recepción no hay lote, y además la marca tiene su camino: va en la
+    carga y la guía sale sola al recibirla."""
+    conexion, cursor = _conexion_para_marcar(estado="pendiente")
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="todavía no se recepcionó"):
+            marcar_compra_armada_en_origen(30, 3)
+
+    conexion.commit.assert_not_called()
+
+
+def test_marcar_armada_RECHAZA_la_que_ya_estaba_marcada():
+    """Marcarla dos veces cargaría dos guías R por la misma mercadería."""
+    conexion, cursor = _conexion_para_marcar(ya_marcada=3)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="ya está marcada"):
+            marcar_compra_armada_en_origen(30, 3)
+
+
+def test_marcar_armada_RECHAZA_por_el_corte_con_la_MISMA_regla_que_la_carga_retroactiva():
+    """La fecha del lote es la de la RECEPCIÓN, y tiene que ser posterior al
+    corte — estricto, el día del corte también queda afuera."""
+    conexion, cursor = _conexion_para_marcar(fecha_del_lote=date(2026, 9, 5),
+                                             corte=date(2026, 9, 5))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="POSTERIOR al corte"):
+            marcar_compra_armada_en_origen(30, 3)
+
+
+def test_marcar_armada_RECHAZA_una_caja_de_OTRO_articulo():
+    """Inventaría cajas que no existen y el Cotejo mostraría un rojo imposible
+    de explicar. Y lo pregunta la MISMA guarda que usan el alta y la edición."""
+    conexion, cursor = _conexion_para_marcar(articulo_de_la_ficha=99)
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="de otro artículo"):
+            marcar_compra_armada_en_origen(30, 3)
+
+
+def test_marcar_armada_NO_COMMITEA_si_la_guia_R_rebota():
+    """Es la mitad que hace que "las dos o ninguna" sea verdad.
+
+    Sin esto la marca quedaría escrita y la guía no, que es exactamente el
+    estado roto que esta función viene a evitar.
+    """
+    from app.db import StockInsuficienteParaReproceso
+
+    conexion, cursor = _conexion_para_marcar()
+
+    with (
+        patch("app.db.obtener_conexion", return_value=conexion),
+        patch("app.db._guia_en_origen_si_corresponde",
+              side_effect=StockInsuficienteParaReproceso(10.0, 3.0, [])),
+    ):
+        with pytest.raises(StockInsuficienteParaReproceso):
+            marcar_compra_armada_en_origen(30, 3)
+
+    conexion.commit.assert_not_called()
+
+
+def test_la_fecha_del_lote_de_la_pantalla_sale_de_PROCESADA_EL_y_no_de_fecha_operacion():
+    """La guía tiene que quedar fechada el día en que su lote existe.
+
+    Y es la MISMA expresión con la que el FIFO fecha el lote — con la fecha de
+    operación, una compra del lunes recibida el miércoles quedaría con la guía
+    dos días antes de que su lote exista y el freno la rebotaría por un stock
+    que está ahí.
+
+    Se mira el TEXTO de la consulta y no el valor: el valor lo devuelve el
+    mock, no la columna que la consulta pidió (corolario 40).
+    """
+    from app.db import _SQL_FECHA_DEL_LOTE_DE_COMPRA
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[
+        (30, 5, "Kiwi", "kilo", "EJEMPLO Uno", "N07P41",
+         date(2026, 9, 9), "recepcionado", None, 10.0, date(2026, 9, 11)),
+        (date(2026, 9, 5),),
+    ])
+    cursor.description = [
+        ("id",), ("articulo_id",), ("articulo_nombre",), ("unidad_compra",),
+        ("proveedor_nombre",), ("proveedor_codigo_puesto",), ("fecha_operacion",),
+        ("estado",), ("ficha_en_origen_id",), ("cantidad_cajones_real",), ("fecha_del_lote",),
+    ]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        compra = compra_para_marcar_armada(30)
+
+    consulta = _sql_que_contiene(cursor, "fecha_del_lote")
+    assert _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="c.procesada_el") in consulta
+    assert compra["fecha_del_lote"] == date(2026, 9, 11)
+    assert compra["motivo_corte"] is None
+
+
+def test_buscar_compras_TRAE_estado_y_la_marca_para_decidir_el_boton():
+    """Por el TEXTO de la consulta: con un cursor falso, la fila la entrega el
+    mock y las columnas llegan igual con el SELECT equivocado (corolario 40)."""
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        buscar_compras(date(2026, 9, 1), date(2026, 9, 12))
+
+    consulta = _sql_que_contiene(cursor, "FROM compras c")
+    assert "c.estado" in consulta
+    assert "c.ficha_en_origen_id" in consulta
+
+
+def test_actualizar_cantidad_ESCRIBE_la_marca_y_la_valida_contra_el_articulo_NUEVO():
+    """La marca viaja con el artículo, y por eso se valida contra el que QUEDA.
+
+    Cambiar el artículo de una compra marcada dejaría la marca apuntando a una
+    caja de otro artículo — que es justo lo que la guarda prohíbe. Separadas en
+    dos funciones, cada una haría su mitad bien y el resultado sería inválido.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[
+        ("pendiente", "pendiente", None),   # el estado de la compra
+        (99,),                              # la ficha es del artículo 99
+    ])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError, match="de otro artículo"):
+            actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", 3)
+
+
+def test_actualizar_cantidad_DESMARCA_cuando_la_marca_viene_vacia():
+    """Desmarcar es una decisión, no un campo que se dejó vacío.
+
+    Sin el UPDATE a NULL, sacar la caja en la pantalla de editar no sacaría
+    nada: la compra seguiría marcada y su guía saldría igual al recepcionarla.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("pendiente", "pendiente", None)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        actualizar_cantidad_compra(30, 5, 10, 18, 180, None, "Clark", None)
+
+    consulta, parametros = next(
+        llamada.args for llamada in cursor.execute.call_args_list
+        if "UPDATE compras SET ficha_en_origen_id" in llamada.args[0]
+    )
+    assert parametros == (None, 30)

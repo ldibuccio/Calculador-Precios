@@ -172,6 +172,10 @@
         {% include "_opciones_tipo_retiro.html" %}
       </select>
 
+      {% set caja_articulo_select = "articulo_id" %}
+      {% set caja_elegida = compra.ficha_en_origen_id if compra else none %}
+      {% include "_caja_en_origen.html" %}
+
       {# Adjuntar la comanda SIN analizarla: la foto viaja con el form y al
          guardar se comprime y cuelga de la guía del proveedor del día —
          el mismo bucket y la misma baja resolución de siempre. #}

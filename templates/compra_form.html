@@ -90,11 +90,9 @@
   /* El bloque de "viene armada": informa y pregunta, no es un problema. Sin
      margen propio arriba se pega al selector de retiro y se lee como parte
      de él. */
-  .en-origen { margin-top: 1rem; }
   /* min-width: 0 para que el select no empuje nada fuera de la pantalla a
      390px: un control de formulario no baja de su ancho intrínseco sin esto,
      y lo que cede es lo que está al lado. */
-  .en-origen select { width: 100%; min-width: 0; }
 
   .boton-adjuntar { background: #ea580c; }
   .input-foto-oculto { display: none; }
@@ -229,37 +227,10 @@
         {% include "_opciones_tipo_retiro.html" %}
       </select>
 
-      {# ¿VIENE YA ARMADA EN CAJA NUESTRA? Lo marca el COMPRADOR y solo él: fue
-         al puesto, mandó las cajas y decidió comprarlo armado en vez del
-         cajón. El depósito no tiene cómo saberlo.
-
-         UN SOLO CONTROL y no una casilla más un selector: dos controles que
-         tienen que coincidir son la misma regla dos veces, y el día que se
-         separan queda una compra "marcada" sin caja o una caja sin marca. Acá
-         elegir la caja ES marcarla.
-
-         Las opciones se filtran por artículo desde el JS de abajo, que es el
-         mismo que ya corre al cambiar de artículo. El `<select>` entero se
-         esconde si el artículo elegido no tiene ninguna caja: un selector
-         vacío se lee como "este artículo no tiene cajas", que es falso. #}
-      {% set cajas_por_articulo = cajas_en_origen_por_articulo() %}
-      {% if cajas_por_articulo %}
-      <div id="bloque-en-origen" class="en-origen" hidden>
-        <label for="ficha_en_origen_id">¿Viene ya armada en caja nuestra?</label>
-        <select id="ficha_en_origen_id" name="ficha_en_origen_id"
-                class="{{ 'campo-bloqueado' if cantidad_bloqueada }}">
-          <option value="">No, llega el cajón del proveedor</option>
-          {% for articulo_id, cajas in cajas_por_articulo.items() %}
-            {% for caja in cajas %}
-            <option value="{{ caja.id }}" data-articulo="{{ articulo_id }}"
-                    {% if compra and compra.ficha_en_origen_id == caja.id %}selected{% endif %}>
-              Sí, en {{ caja.nombre }}{% if caja.kilaje %} — {{ caja.kilaje }}{% endif %}
-            </option>
-            {% endfor %}
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
+      {% set caja_articulo_select = "articulo_id" %}
+      {% set caja_elegida = compra.ficha_en_origen_id if compra else none %}
+      {% set caja_bloqueada = cantidad_bloqueada %}
+      {% include "_caja_en_origen.html" %}
 
       {% if modo == "nueva" %}
       {# Adjuntar la comanda SIN analizarla: viaja con el form y al guardar
@@ -331,42 +302,7 @@
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
     const ETIQUETAS_CONTENIDO = { kilo: "Kilos por cajón *", unidad: "Unidades por cajón *", cubeta: "Cubetas por cajón *" };
 
-    // LAS CAJAS DEL ARTICULO ELEGIDO. Las opciones se sacan y se vuelven a
-    // poner desde una copia guardada al cargar la pantalla: esconderlas con
-    // CSS no es confiable en todos los navegadores —y en un <option> menos—,
-    // y lo que el operario tiene adelante lo decide el navegador, no el
-    // atributo.
-    const TODAS_LAS_CAJAS = (() => {
-      const select = document.getElementById("ficha_en_origen_id");
-      return select ? Array.from(select.options).slice(1) : [];
-    })();
-
-    function actualizarCajasEnOrigen(articuloId) {
-      const bloque = document.getElementById("bloque-en-origen");
-      const select = document.getElementById("ficha_en_origen_id");
-      if (!bloque || !select) return;
-
-      const suyas = TODAS_LAS_CAJAS.filter((o) => o.dataset.articulo === String(articuloId));
-      const elegida = select.value;
-      select.length = 1;
-      suyas.forEach((o) => select.appendChild(o));
-      // Si la caja que estaba elegida no es de este articulo, vuelve al "no":
-      // dejarla puesta guardaria una marca que la base rechaza.
-      select.value = suyas.some((o) => o.value === elegida) ? elegida : "";
-      bloque.hidden = suyas.length === 0;
-    }
-
-    // Y AL CARGAR LA PANTALLA, no solo al cambiar de artículo: en modo editar
-    // el artículo ya viene elegido, y sin esto el selector arrancaría con las
-    // cajas de TODOS los artículos. Es la misma función llamada una vez más,
-    // no una copia de su lógica.
-    document.addEventListener("DOMContentLoaded", function () {
-      const selectArticulo = document.getElementById("articulo_id");
-      if (selectArticulo) actualizarCajasEnOrigen(selectArticulo.value);
-    });
-
     function actualizarContenidoPorCajon(select) {
-      actualizarCajasEnOrigen(select.value);
       const opcion = select.selectedOptions[0];
       const ayuda = document.getElementById("ayuda-unidad-compra");
       const contenidoInput = document.getElementById("contenido_por_cajon");

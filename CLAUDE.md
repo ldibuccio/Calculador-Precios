@@ -2689,3 +2689,94 @@ para interpretar sus pedidos por mail. No convierte unidades.
 Analizar Artículo hereda el supuesto y **eso es lo correcto**: lo peligroso
 sería que esta pantalla usara una regla distinta a las demás, que es la
 familia de la regla escrita dos veces. Queda anotado y no se tocó.
+
+## Corolario 42: un campo que se LEE bien puede no ESCRIBIRSE, y si la pantalla lo relee de la base la prueba a mano no lo ve
+
+Del 12/09, y es el hallazgo más caro del turno.
+
+La marca "viene armada en caja nuestra" viajaba por SEIS caminos de carga.
+Los seis tenían su `ficha_en_origen_id: str = Form("")` en la firma de la
+ruta, así que **leyendo el código se veían los seis completos**. Dos no la
+guardaban: el ingreso directo de Depósito la validaba y no se la pasaba a
+`crear_compra`, y la edición la aceptaba y el POST la tiraba.
+
+**Y la edición es el caso que hay que entender, porque PARECÍA ANDAR.** Su
+plantilla mostraba el selector con la caja ya elegida. Abrir la pantalla,
+elegir una caja, guardar, volver a abrir: la caja estaba ahí. Pero estaba
+porque **la pantalla la relee de la base**, no porque el guardado la hubiera
+escrito — el valor que volvía era el que había puesto OTRO camino (el alta).
+La prueba a mano confirma la lectura y no dice una palabra de la escritura.
+
+La forma general, y es más ancha que este campo: **una pantalla que muestra
+lo que relee de la base no puede testimoniar sobre lo que escribe.** Leer y
+escribir son dos operaciones, la pantalla ejercita las dos en el mismo gesto,
+y el resultado visible sale de la primera. Mientras el valor haya llegado a
+la base por cualquier vía, la de escritura puede estar muerta.
+
+Es la familia del corolario 40 —el mock entrega lo que le pidieron, no lo que
+la consulta pidió— corrida de andamio: allá el que decide el resultado es el
+fixture; **acá es el estado anterior de la base.** En los dos, lo que se
+afirma lo produjo algo que no es el código que se quiere probar.
+
+**Lo único que lo muestra: grepear el CONSTRUCTOR, no el campo.** Es el
+corolario 3 al pie de la letra —el que falta, por definición, no nombra el
+campo— y acá hizo falta grepear DOS: `crear_compra(` y
+`actualizar_cantidad_compra(`, que son los dos que escriben. Cada uno tenía
+un llamador olvidado, y ninguno de los dos aparece buscando
+`ficha_en_origen_id`: los dos lo nombran en la firma de su ruta.
+
+Y el test que lo deja cerrado no enumera los seis caminos a mano: **parsea
+`app/main.py` con `ast`, busca las llamadas a los dos constructores y exige
+que cada una pase la marca.** Una lista escrita a mano protege los seis de
+hoy; el parseo protege al séptimo, que es el que nadie va a recordar.
+
+## Corolario 43: el re-render por error es donde peor se pierde un campo
+
+Del 12/09, y va aparte del 42 porque es un lugar distinto y nadie lo mira.
+
+Las cinco pantallas de carga rearman el formulario cuando algo falla, y lo
+hacen con un `dict` escrito a mano por rama: la base que se cae, el campo que
+no valida, el artículo que no se pudo leer. **Once dicts en total.** La marca
+de "viene armada" no estaba en ninguno.
+
+**Por qué es el peor lugar, y es sobre la persona y no sobre el código: el
+que reintenta corrige el campo que la pantalla le señaló y aprieta de nuevo.
+No vuelve a revisar los que ya había llenado.** No es descuido — es lo
+correcto: la pantalla le dijo qué estaba mal y él lo arregló. Así que el
+campo perdido se va sin que nadie lo mire, y lo que queda guardado es una
+compra **bien cargada salvo por eso**. No hay error, no hay hueco, no hay
+nada que se vea raro después.
+
+Es de la familia del campo sin consecuencia y del valor precargado plausible:
+en las tres, el sistema termina con un dato que la persona cree haber
+declarado y no declaró. Lo que cambia es el mecanismo — allá el incentivo,
+acá el precargado, y aquí **el flujo de la corrección**.
+
+**La regla**: cuando una pantalla gana un campo, el campo se agrega TAMBIÉN
+en cada rama que rearma el formulario. Y como eso son once lugares de los que
+se cae uno, lo que lo sostiene no es la prolijidad sino un test que las
+recorre todas y falla nombrando cuál perdió la marca.
+
+### Y el canario corrido LÍNEA POR LÍNEA, que es de lo que más sirvió
+
+Escrito el test, se borró de a una las once líneas y se corrió el test cada
+vez, mirando **qué pantalla y qué rama nombraba el error**. Primera vuelta:
+**tres líneas se podían borrar sin que nada cayera.** Y las tres eran la
+MISMA rama —"no se pudo leer el artículo"—, que el test no ejercitaba en
+ninguna de las cinco pantallas.
+
+Eso es lo que un canario de una sola pasada no da. Correrlo entero dice "el
+test sirve"; **correrlo línea por línea dice CUÁL PEDAZO no está cubierto**,
+y el patrón que forman las que no caen dice por qué: acá no eran tres
+descuidos sueltos, era una rama entera sin probar. Con esa pista el arreglo
+fue una sola cosa —agregar esa forma de falla al test— y no tres parches.
+
+La segunda vuelta dejó una sola sin cubrir, y también tenía explicación: era
+la acción "Agregar artículo" de la pantalla de editar, que inserta por otro
+camino. Tercera vuelta: **las once caen, cada una nombrando su pantalla y su
+rama.**
+
+**Cuándo vale el trabajo**: cuando lo que se prueba es una LISTA de lugares
+que tienen que hacer todos lo mismo —once dicts, seis pantallas, cinco
+llamadores—. Ahí el test pasa en verde con la mitad de la lista sin tocar, y
+la única forma de saber cuál mitad es romper de a una.

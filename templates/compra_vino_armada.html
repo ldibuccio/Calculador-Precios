@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vino armada en caja nuestra</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #222; }
+  h2 { font-size: 1.1rem; font-weight: 800; margin: 0 0 0.15rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .puesto { color: #999; font-size: 0.8rem; margin: 0 0 0.85rem; }
+  .dato { margin: 0 0 0.35rem; font-size: 0.95rem; }
+  .dato strong { font-weight: 700; }
+  /* LA LISTA: contexto para decidir, antes de escribir nada. Mismo molde
+     que Corregir Recepción — es la misma lista y se lee igual. */
+  .dependencias { border: 1px solid #ddd; border-radius: 10px; padding: 0.9rem; margin-bottom: 1rem; background: #fafafa; }
+  .dependencias h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .dependencias .titular { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 700; }
+  .dependencias .vacio { margin: 0; font-size: 0.95rem; color: #666; line-height: 1.4; }
+  .dependencias h4 { margin: 0.8rem 0 0.3rem; font-size: 0.8rem; color: #666; letter-spacing: 0.03em; }
+  .dependencias ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; color: #444; }
+  .dependencias li { margin-bottom: 0.15rem; }
+  .a-mano { color: #6d28d9; font-weight: 700; }
+  .dependencias .asimetria { margin: 0.85rem 0 0; font-size: 0.85rem; color: #666; line-height: 1.4; }
+  /* EL BLOQUEO: por qué no se puede, con todas las letras y en lugar del
+     botón. Amarillo (mirá esto), no rojo (rompiste algo). */
+  .bloqueo {
+    border: 1px solid #f0c36d;
+    background: #fdf6e3;
+    border-radius: 10px;
+    padding: 0.9rem;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .error {
+    background: #fdecea;
+    border: 1px solid #f5c6cb;
+    color: #a32020;
+    border-radius: 10px;
+    padding: 0.9rem;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  label { display: block; font-weight: 700; font-size: 0.9rem; margin: 0.9rem 0 0.35rem; }
+  select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0.85rem 0.7rem;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .ayuda { color: #666; font-size: 0.85rem; line-height: 1.4; margin: 0.4rem 0 0; }
+  button, .boton {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.95rem;
+    margin-top: 0.9rem;
+    font-size: 1rem;
+    font-weight: 700;
+    border: none;
+    border-radius: 10px;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .boton-guardar { background: #16a34a; color: #fff; }
+  .boton-secundario { background: #fff; color: #222; border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Vino armada en caja nuestra" %}
+  {% set barra_atras = "/compras/buscar" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <h2>{{ compra.articulo_nombre }}</h2>
+    <p class="puesto">{{ compra.proveedor_nombre }} ({{ compra.proveedor_codigo_puesto }})</p>
+    <p class="dato">Compra del <strong>{{ compra.fecha_operacion|fecha_corta }}</strong>,
+      {{ compra.cantidad_cajones_real|numero }} bultos recibidos.</p>
+    {# Y SOLO CUANDO LA GUÍA SE PUEDE ARMAR. Con el bloqueo puesto, prometer
+       la fecha de una guía que no va a existir es una afirmación que dejó de
+       ser cierta el día que este camino ganó una rama que no llega al botón:
+       el que la lee se va creyendo que quedó fechada ahí. #}
+    {% if compra.fecha_del_lote and not bloqueo %}
+    {# LA FECHA DE LA GUÍA ES LA DE LA RECEPCIÓN, no la de hoy ni la de la
+       compra: tiene que ser la misma que el FIFO le pone al lote, o el freno
+       busca el lote un día antes de que exista. Se dice porque el que aprieta
+       tiene que poder explicar después por qué la guía quedó fechada ahí. #}
+    <p class="dato">La guía R va a quedar fechada el
+      <strong>{{ compra.fecha_del_lote|fecha_corta }}</strong>, que es el día en que se recibió
+      — el mismo con el que el sistema fecha este lote.</p>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if bloqueo %}
+  <div class="bloqueo">{{ bloqueo }}</div>
+  <a class="boton boton-secundario" href="/compras/buscar">Volver a Buscar Compras</a>
+  {% elif not cajas %}
+  {# Sin cajas de este artículo no hay nada que elegir, y decirlo es la
+     respuesta: un selector vacío se lee como "no tiene cajas" sin explicar
+     que la ficha es lo que falta. #}
+  <div class="bloqueo">Este artículo no tiene ninguna caja cargada, así que no hay en cuál
+    haber venido armado. Cargá la ficha del cliente primero.</div>
+  <a class="boton boton-secundario" href="/compras/buscar">Volver a Buscar Compras</a>
+  {% else %}
+
+  {% if dependencias %}
+  <div class="dependencias">
+    <h3>Qué salió de este lote</h3>
+    {% if not dependencias.guias_r and not dependencias.renglones %}
+    <p class="vacio">Nada todavía. Los {{ dependencias.entraron|numero }} bultos siguen enteros:
+      ninguna guía R ni ningún renglón armado salió de acá.</p>
+    {% else %}
+    <p class="titular">De los {{ dependencias.entraron|numero }} bultos que entraron,
+      ya salieron {{ dependencias.salieron|numero }}.</p>
+
+    {% if dependencias.guias_r %}
+    <h4>GUÍAS R — {{ dependencias.guias_r|length }},
+      {{ dependencias.guias_r|sum(attribute="bultos")|numero }} bultos</h4>
+    <ul>
+      {% for g in dependencias.guias_r %}
+      <li>R{{ g.reproceso_id }} · {{ g.fecha|fecha_corta }} · {{ g.bultos|numero }} bultos</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if dependencias.renglones %}
+    <h4>RENGLONES ARMADOS — {{ dependencias.renglones|length }},
+      {{ dependencias.renglones|sum(attribute="bultos")|numero }} bultos</h4>
+    <ul>
+      {% for r in dependencias.renglones %}
+      <li>{{ r.cliente_nombre }} · {{ r.fecha|fecha_corta }} · {{ r.bultos|numero }} bultos{% if r.elegido_a_mano %}
+        <span class="a-mano">— lo eligió a mano</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {# LA GUÍA TOMA EL LOTE ENTERO, así que lo que ya salió es justo lo que
+       puede hacerla rebotar. Dicho acá, arriba del botón, y no después del
+       error: el freno lo mide el sistema, pero el que decide tiene que ver
+       contra qué. #}
+    <p class="asimetria">La guía R toma los {{ dependencias.entraron|numero }} bultos de este lote.
+      Si ya salieron, puede no alcanzar y el sistema la va a frenar.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/compras/{{ compra.id }}/vino-armada" class="tarjeta">
+    <label for="ficha_en_origen_id">¿En qué caja vino armada?</label>
+    <select id="ficha_en_origen_id" name="ficha_en_origen_id" required>
+      <option value="" selected disabled>Elegí la caja...</option>
+      {% for caja in cajas %}
+      <option value="{{ caja.id }}">{{ caja.nombre }}{% if caja.kilaje %} — {{ caja.kilaje }}{% endif %}</option>
+      {% endfor %}
+    </select>
+    <p class="ayuda">Se carga la guía R de una vez, por los
+      {{ compra.cantidad_cajones_real|numero }} bultos recibidos: el lote pasa a estar trabajado
+      y las cajas quedan en esa ficha.</p>
+    <button type="submit" class="boton-guardar">Sí, vino armada — cargar la guía R</button>
+    <a class="boton boton-secundario" href="/compras/buscar">Cancelar</a>
+  </form>
+  {% endif %}
+  {% include "_pie_version.html" %}
+</body>
+</html>

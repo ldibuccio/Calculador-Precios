@@ -140,6 +140,11 @@
     width: auto;
   }
   .boton-editar { background: #2563eb; }
+  /* Violeta, el mismo color con que el sistema marca "esto lo decidió una
+     persona" (el "lo eligió a mano" del desglose): marcarla a mano es
+     exactamente eso. No verde —no es el camino normal— ni rojo —no está
+     mal—. */
+  .boton-vino-armada { background: #6d28d9; color: #fff; }
   .boton-detalle { background: #0891b2; }
   .boton-eliminar { background: #dc2626; border: none; color: #fff; border-radius: 8px; font-weight: 600; cursor: pointer; }
   .boton-ver-foto { background: #6b7280; }
@@ -380,6 +385,20 @@
                 <a class="boton boton-ver-foto" href="/compras/{{ c.id }}/foto" target="_blank" rel="noopener">Comanda</a>
                 {% else %}
                 <span class="boton boton-sin-foto">Sin comanda</span>
+                {% endif %}
+                {# LA SALIDA para la compra que se recepcionó SIN la marca de
+                   "viene armada". El camino normal es marcarla al cargarla y
+                   que la guía R salga sola al recepcionar; esto es para
+                   cuando eso no pasó. Sin este botón la única forma sería la
+                   guía R a mano, que es documentar un trabajo que no se hizo
+                   así — la mercadería vino armada del puesto, nadie reprocesó
+                   nada.
+
+                   Solo donde se puede: recepcionada y todavía sin marca. Las
+                   dos columnas vienen de `buscar_compras` y no se deducen de
+                   otra cosa. #}
+                {% if c.estado == "recepcionado" and c.ficha_en_origen_id is none %}
+                <a class="boton boton-vino-armada" href="/compras/{{ c.id }}/vino-armada">Vino armada</a>
                 {% endif %}
                 {% if c.tiene_pesaje %}
                 <a class="boton boton-ver-foto" href="/deposito/recepcion/{{ c.id }}/foto-balanza/ver" target="_blank" rel="noopener">Pesaje</a>

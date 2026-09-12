@@ -76,6 +76,13 @@
         {% endfor %}
       </select>
 
+      {# El <select> de artículo de esta pantalla se llama "articulo" a secas,
+         no "articulo_id" como en las otras cuatro: por eso el id va como
+         parámetro del include y no clavado adentro. #}
+      {% set caja_articulo_select = "articulo" %}
+      {% set caja_elegida = precarga.ficha_en_origen_id %}
+      {% include "_caja_en_origen.html" %}
+
       <label for="fecha">Día en que entró la mercadería</label>
       {# min = el día DESPUÉS del corte. El navegador ataja lo mismo que la
          guarda del server, que es la que decide: el día del corte ya está
