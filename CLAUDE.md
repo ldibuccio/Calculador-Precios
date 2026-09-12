@@ -3721,3 +3721,83 @@ modifica código lleva escrito qué espera encontrar, y si no lo encuentra no
 toca el archivo.** Es la familia del corolario 35 —la herramienta de
 verificar también es código— del lado bueno: la suposición estaba mal, y el
 assert la convirtió en un error en vez de en un borrado de más.
+
+## Corolario 56: un campo único en una definición que se muestra en VARIOS contextos va a estar mal para todos menos uno
+
+Del 12/09, y la formulación es del dueño: **la url era una; los sectores,
+tres.**
+
+`DefinicionAlerta` tiene una `url` y un `texto_link`, y una alerta puede
+mostrarse en varios sectores a la vez (`modulos`). La acción que la apaga
+vive en UNO de esos sectores, así que el link es correcto para ése y
+arbitrario para el resto. No es un caso mal cargado: **es la forma del
+problema**, y estaba en el tipo desde el principio.
+
+### Por qué estuvo invisible hasta que dejó de estarlo
+
+Sin zonas con clave, un link al sector equivocado era **un rodeo**: llegabas
+igual. El 12/09 Compras ganó puerta y el mismo link, sin cambiar una letra,
+pasó a ser **una pared**. La alerta `unidades_que_difieren` se muestra en
+Compras y en Comercial y apuntaba a Artículos; ese día Artículos se mudó bajo
+`/compras`, y el usuario de Comercial quedó pegando contra una clave que no
+es la suya.
+
+Es la familia del corolario 28 —algo que afirmaba lo que valía antes del
+camino nuevo— con la vuelta de que acá **el cambio que lo activa está en otro
+archivo y en otra decisión**: nadie tocó la alerta.
+
+### Lo que lo encontró, y es lo único que sirve
+
+**Enumerar el producto cruzado, no mirar el caso reportado.** Escrita la
+guarda —para cada alerta, para cada sector que la muestra, ¿su link cae en
+una zona con puerta ajena?— aparecieron **dos más** que nadie había visto:
+
+```
+compras_sin_precio        se muestra en comercial  ->  /compras/pendientes
+guias_r_costo_incompleto  se muestra en compras    ->  /administracion/stock/guias-r
+```
+
+Una la produjo la puerta de ese mismo día; la otra era anterior y llevaba
+dos días. Es el corolario 2 —buscar la otra copia— hecho consulta en vez de
+hecho a mano: con tres sectores y veintiuna alertas, el `grep` no alcanza
+porque **el defecto no está en ninguna línea: está en el cruce**.
+
+### La distinción que evita rediseñar a ciegas
+
+No todos los campos de una definición son por contexto, y confundirlos hace
+un tipo lleno de diccionarios:
+
+> **Los campos que describen la COSA son únicos. Los que describen el CAMINO
+> son por contexto.**
+
+El código, el título, la cantidad, la fecha del caso más viejo: son la cosa,
+y no dependen de quién mire. La url y el texto del link son el camino, y
+cambian con quién mira. La señal barata para reconocer un campo del segundo
+tipo: **nombra un lugar o le habla a alguien** — una url, un "Ver en X", un
+texto de ayuda que dice qué hacer.
+
+### Y las dos mitades de un link viajan JUNTAS
+
+`destinos_por_sector` guarda `sector: (url, texto)` y no hay un segundo
+diccionario en paralelo. Separados se despegan: el día que alguien cambie el
+destino de un sector y no el texto, el link dice "Ver en Guías R" y lleva a
+Compras sin precio. **Un solo lugar para una sola decisión** — es la regla
+escrita dos veces, en su versión más chica.
+
+### Lo que el mecanismo NO hace, y hay que decirlo
+
+**Da dónde poner un destino; no inventa uno.** De los tres casos, dos se
+resolvieron —cada sector tiene una pantalla donde actuar— y el tercero no:
+`compras_sin_precio` se muestra en Comercial, y en Comercial **no hay a
+dónde mandarla**, porque la acción (cargar el precio de compra) vive en
+Compras y punto.
+
+Ése se cierra dando `detallar` a la alerta —para que Comercial vea CUÁLES
+son sin salir— o sacándole el sector. Las dos son decisiones de producto y
+quedan anotadas como deuda **en el test**, con la lista que falla si aparece
+una cuarta y también si una se arregla y queda en la lista (corolario 22: que
+la deuda no termine protegiendo algo que ya no pasa).
+
+Y la razón por la que ese caso es el peor de los tres: **no tiene `detallar`,
+así que el link era su única forma de ver cuáles son.** Hoy Comercial recibe
+un número que no puede abrir, que es peor que no tener la alerta.

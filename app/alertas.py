@@ -90,6 +90,23 @@ class DefinicionAlerta:
     incompletos cuentan PEDIDOS y listan RENGLONES, y ahí el resumen dice los
     dos ("3 pedidos, 11 renglones") en vez de elegir uno y dejar al otro sin
     nombre.
+
+    destinos_por_sector: UN DESTINO POR SECTOR, y es la corrección de una
+    forma de bug, no una comodidad. `url` es una sola para TODOS los sectores
+    que muestran la alerta, así que con dos sectores y la acción viviendo en
+    uno solo, el otro siempre queda del lado de afuera — y desde que hay
+    zonas con clave, "afuera" dejó de ser una molestia y pasó a ser una
+    puerta ajena. Pasó tres veces.
+
+    Cada entrada es `sector: (url, texto_link)`, LOS DOS JUNTOS y no dos
+    diccionarios en paralelo: son las dos mitades de un mismo link, y
+    separados se despegan — el día que alguien cambie el destino de un
+    sector y no el texto, el link dice "Ver en Guías R" y lleva a Compras
+    sin precio. Un solo lugar para una sola decisión.
+
+    Vacío es lo normal: la mayoría se muestra en un solo sector, o su
+    destino sirve igual para todos. Auditoría (modulo None) usa siempre `url`
+    y `texto_link`, porque no es un sector: las muestra todas.
     """
 
     codigo: str
@@ -100,6 +117,7 @@ class DefinicionAlerta:
     modulos: tuple = field(default_factory=tuple)
     titulo_corto: str = ""
     detallar: Callable | None = None
+    destinos_por_sector: dict = field(default_factory=dict)
 
 
 def normalizar_conteo(resultado) -> dict:
@@ -255,8 +273,12 @@ def hay_que_recalcular(estado, ahora) -> bool:
     return (ahora - max(fechas)) > timedelta(hours=HORAS_RECALCULO)
 
 
-def unir(definiciones, estado) -> list:
+def unir(definiciones, estado, modulo=None) -> list:
     """Cruza el registro (título, url) con la foto (casos, cuándo), por código.
+
+    `modulo` decide QUÉ LINK lleva cada alerta —url y texto— : el de
+    `destinos_por_sector` si lo tiene para ese sector, y el de siempre si no.
+    Con None —Auditoría, que no filtra— va siempre el de siempre.
 
     DEVUELVE EN EL ORDEN DE `definiciones`, y eso es parte del contrato: el
     orden del registro es el que ven las pantallas. No es un detalle de cómo
@@ -280,8 +302,10 @@ def unir(definiciones, estado) -> list:
         # La URL puede depender del dato (ej. los retiros viejos linkean al
         # rango de fechas del caso más viejo). Si falla, se cae al módulo:
         # un link mal armado no puede tapar la alerta.
+        destino = definicion.destinos_por_sector.get(modulo) if modulo else None
+        url_cruda, texto_link = destino if destino else (definicion.url, definicion.texto_link)
         try:
-            url = definicion.url(datos) if callable(definicion.url) else definicion.url
+            url = url_cruda(datos) if callable(url_cruda) else url_cruda
         except Exception:
             logger.exception("No se pudo armar el link de la alerta %s", definicion.codigo)
             url = "/auditoria"
@@ -290,7 +314,7 @@ def unir(definiciones, estado) -> list:
             "codigo": definicion.codigo,
             "titulo": definicion.titulo,
             "url": url,
-            "texto_link": definicion.texto_link,
+            "texto_link": texto_link,
             "modulos": definicion.modulos,
             "casos": fila["casos"] if fila else None,
             "mas_viejo": fila["mas_viejo"] if fila else None,
@@ -313,7 +337,7 @@ def para_mostrar(definiciones, estado, modulo=None) -> list:
     FILTRA, NUNCA REORDENA: el orden que entra es el que sale, que es el del
     registro. Ver `unir`.
     """
-    unidas = unir(definiciones, estado)
+    unidas = unir(definiciones, estado, modulo)
     if modulo is not None:
         unidas = [a for a in unidas if modulo in a["modulos"]]
     return [a for a in unidas if a["casos"] is None or a["casos"] > 0 or a["error"]]

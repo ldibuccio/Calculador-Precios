@@ -316,12 +316,17 @@ def test_en_COMPRAS_la_alerta_de_kilos_va_ANTES_que_la_de_bultos():
 # silencio. Cada una tiene que decidirse, y la de compras_sin_precio la
 # produjo la puerta de Compras del 12/09 (antes /compras no pedía nada).
 DEUDA_ALERTAS_CONTRA_PUERTA_AJENA = {
-    # Comercial la ve y el link cae en /compras/pendientes. Sin `detallar`,
-    # ese link es su ÚNICA forma de ver cuáles son.
+    # LA ÚNICA QUE QUEDA, y no la arregla `destinos_por_sector`: Comercial la
+    # ve, el link cae en /compras/pendientes, y en Comercial NO HAY a dónde
+    # mandarla — la acción (cargar el precio de compra) vive en Compras y
+    # punto. El mecanismo da dónde poner un destino; no inventa uno.
+    #
+    # Se cierra de una de dos formas, y las dos son decisión de producto:
+    # darle `detallar` para que Comercial vea CUÁLES son desde su propia
+    # pantalla de alertas (que todavía no existe), o sacarle el sector. Hoy
+    # recibe un número que no puede abrir, que es peor que no tener la
+    # alerta.
     ("compras_sin_precio", "comercial"),
-    # Compras la ve y el link cae en /administracion/stock/guias-r. Anterior
-    # a todo esto: Administración tiene clave desde el 10/09.
-    ("guias_r_costo_incompleto", "compras"),
 }
 
 
@@ -347,13 +352,18 @@ def test_NINGUNA_ALERTA_manda_a_un_sector_contra_la_puerta_de_otro():
     """
     from app.main import ALERTAS, PUERTAS_POR_SECTOR
 
-    datos = {"casos": 1, "mas_viejo": None}
+    # LA URL SALE DE `unir`, que es quien la resuelve en producción, y no de
+    # repetir acá la regla de `destinos_por_sector`: copiada, el día que la
+    # resolución cambie este test seguiría midiendo la vieja y diría que no
+    # hay choques cuando los hay. Es la regla escrita dos veces.
+    estado = [{"codigo": d.codigo, "casos": 1, "mas_viejo": None,
+               "calculada_el": None, "error": None} for d in ALERTAS]
     ofensores = set()
     for definicion in ALERTAS:
-        url = definicion.url(datos) if callable(definicion.url) else definicion.url
         for modulo in definicion.modulos:
+            (alerta,) = [a for a in unir([definicion], estado, modulo)]
             for puerta in PUERTAS_POR_SECTOR.values():
-                if url.startswith(puerta.prefijo) and puerta.sector != modulo:
+                if alerta["url"].startswith(puerta.prefijo) and puerta.sector != modulo:
                     ofensores.add((definicion.codigo, modulo))
 
     nuevas = ofensores - DEUDA_ALERTAS_CONTRA_PUERTA_AJENA
@@ -363,3 +373,34 @@ def test_NINGUNA_ALERTA_manda_a_un_sector_contra_la_puerta_de_otro():
     # quede protegiendo algo que ya no pasa (corolario 22).
     arregladas = DEUDA_ALERTAS_CONTRA_PUERTA_AJENA - ofensores
     assert arregladas == set(), f"ya no chocan, sacalas de la deuda: {arregladas}"
+
+
+def test_el_destino_por_sector_manda_y_ARRASTRA_SU_TEXTO():
+    """Cada sector a donde puede actuar, con el link diciendo a dónde va.
+
+    LAS DOS MITADES JUNTAS es el punto: si la url fuera por sector y el texto
+    no, el comprador vería "Ver en Guías R" y caería en Compras sin precio.
+    Por eso `destinos_por_sector` guarda el par y no hay un segundo
+    diccionario en paralelo — separados se despegan y nadie se entera.
+
+    Auditoría (modulo None) no es un sector: usa el de siempre.
+    """
+    definicion = DefinicionAlerta(
+        codigo="prueba", titulo="Título de prueba", url="/el-de-siempre",
+        texto_link="Ver el de siempre", contar=lambda: 1,
+        modulos=("compras", "comercial"),
+        destinos_por_sector={"comercial": ("/el-de-comercial", "Ver el de Comercial")},
+    )
+    estado = [{"codigo": "prueba", "casos": 1, "mas_viejo": None,
+               "calculada_el": None, "error": None}]
+
+    (auditoria,) = unir([definicion], estado)
+    assert (auditoria["url"], auditoria["texto_link"]) == ("/el-de-siempre", "Ver el de siempre")
+
+    # El sector SIN entrada propia sigue con el de siempre.
+    (compras,) = unir([definicion], estado, "compras")
+    assert (compras["url"], compras["texto_link"]) == ("/el-de-siempre", "Ver el de siempre")
+
+    # Y el que la tiene se lleva LAS DOS MITADES.
+    (comercial,) = unir([definicion], estado, "comercial")
+    assert (comercial["url"], comercial["texto_link"]) == ("/el-de-comercial", "Ver el de Comercial")

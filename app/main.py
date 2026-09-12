@@ -11283,9 +11283,14 @@ ALERTAS = [
         titulo="Guías R esperando el precio de una compra",
         titulo_corto="Guías R esperando precio",
         url="/administracion/stock/guias-r",
-        # A los dos: se arregla cargando el precio de una compra que falta
-        # (eso es Compras), pero el que cargó el reproceso es el que puede
-        # avisar cuál falta.
+        # CADA SECTOR A DONDE PUEDE ACTUAR. Se arregla cargando el precio de
+        # una compra que falta —eso es Compras, y su pantalla es Compras sin
+        # precio— pero el que cargó el reproceso es el que puede avisar cuál
+        # falta, y eso se ve en Guías R.
+        #
+        # Con la url sola, el comprador caía en /administracion/stock/guias-r
+        # y pegaba contra la clave de Administración, que no es la suya.
+        destinos_por_sector={"compras": ("/compras/pendientes", "Ver en Compras sin precio")},
         texto_link="Ver en Guías R",
         # Guías R se mudó a Administración; Compras se queda porque el
         # costo incompleto lo resuelve el que carga el precio.
@@ -11444,27 +11449,20 @@ ALERTAS = [
         # compra se edita en Artículos (Compras) y la de venta en Fichas
         # (Comercial). En uno solo, el que la ve no siempre puede tocarla.
         modulos=("compras", "comercial"),
-        # EL LINK VA A FICHAS, que es de Comercial y NO TIENE PUERTA. Apuntaba
-        # a Artículos, y el 12/09 Artículos se mudó bajo /compras: un usuario
-        # de Comercial que siguiera el link de su propia alerta pegaba contra
-        # una clave que no es la suya. Fichas es su sector y es donde vive
-        # `unidad_venta`, que es la mitad que él puede tocar.
+        # CADA SECTOR A SU MITAD, que es para lo que existe urls_por_sector:
+        # la unidad de compra se edita en Artículos (bajo /compras, con su
+        # clave) y la de venta en Fichas (Comercial, sin puerta). Con una url
+        # sola, el que no era dueño del destino terminaba contra una clave
+        # ajena — pasó el 12/09 con Comercial cuando Artículos se mudó.
         #
-        # El de Compras entra por Artículos desde su botonera, con su clave.
-        # QUEDA ASIMÉTRICO A PROPÓSITO —el link lleva directo a la mitad de
-        # uno solo de los dos— y lo que decide cuál es que ninguno choque con
-        # la puerta del otro: Compras tiene camino propio y Comercial no lo
-        # tendría.
-        #
-        # LO QUE COMERCIAL SIGUE SIN VER es CUÁL par difiere: el detalle de
-        # esta alerta se muestra en /compras/alertas, que está detrás de la
-        # clave de Compras, y su banner solo le da título y cantidad. O sea
-        # que este cambio le devuelve un destino donde puede actuar, no la
-        # información. Eso se arregla de verdad el día que DefinicionAlerta
-        # pueda tener una url POR SECTOR — hoy tiene una sola para todos, y
-        # ésa es la causa de fondo de los tres casos (ver el test
-        # test_NINGUNA_ALERTA_manda_a_un_sector_contra_la_puerta_de_otro).
+        # El default va a Fichas y no a Artículos porque lo usa Auditoría,
+        # que no es un sector y la mira cualquiera: de las dos mitades, la
+        # que no tiene puerta es la que nunca deja a nadie afuera.
         url="/fichas",
+        destinos_por_sector={
+            "compras": ("/compras/articulos", "Ver en Artículos"),
+            "comercial": ("/fichas", "Ver en Fichas"),
+        },
         texto_link="Ver en Fichas",
         # EN LAMBDA como las otras dieciocho, y no una referencia directa: el
         # registro se arma al importar, así que una referencia captura el
