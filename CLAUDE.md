@@ -2919,3 +2919,67 @@ haber algo distinto que medir.**
 Y la trampa de fondo es la de siempre en este archivo: *no encontrar
 contradicción* no es *haber verificado*. Acá con el agravante de que el
 conteo alto —diez— da una sensación de rigor que la evidencia no tenía.
+
+## Corolario 47: un cero que NO PUEDE dar distinto de cero no es una medición
+
+Del 12/09. Midiendo el desborde horizontal de cuatro pantallas a 390px, el
+número daba **0 con el arreglo puesto y 0 sin él**. No era que las pantallas
+estuvieran bien: era que el número elegido no podía dar otra cosa.
+
+`.tabla-scroll { overflow-x: auto }` **se come el desborde de la página**: la
+tabla se sale de su caja, la caja la absorbe con un scroll interno, y
+`document.documentElement.scrollWidth` nunca crece. El operario arrastra la
+tabla de costado —"Estado", "Eliminar" y "Utilidad" no se ven nunca— y la
+medición dice cero, verdadero, todos los días.
+
+**Lo que hay que medir es el sobrante de la tabla CONTRA SU CAJA**
+(`tabla.scrollWidth − caja.clientWidth`), que es lo que la persona sufre. Con
+eso los números aparecieron: 173, 138, 159, 127, 98, 85 px — y los dos
+primeros coincidían EXACTO con los que el dueño había medido por su cuenta,
+que fue la confirmación de que recién ahí estábamos midiendo lo mismo.
+
+### Lo único que lo agarró, y es la parte accionable
+
+**No fue leer el código: fue el canario.** Romper el arreglo a propósito y
+mirar si el número SE MUEVE. Un cero que no se mueve al romper lo que lo
+produce no está informando nada — es un cero de construcción.
+
+Leído, el resultado se veía perfecto: la medición estaba bien escrita,
+apuntaba a la pantalla correcta, y devolvía el número que uno esperaría de
+una pantalla sana. No hay nada mal que señalar. Por eso la regla no es
+"revisá la medición" —eso no se puede hacer mirándola— sino:
+
+> **Antes de creerle a un cero, romper a propósito lo que lo hace cero y
+> exigir que deje de serlo.**
+
+Es el canario del corolario 12 aplicado al OTRO lado. Allá se rompe el
+recorte de una consulta para ver si el piso está puesto; acá se rompe el
+ARREGLO para ver si la medición lo ve. Y es el hermano del 36: allá el cero
+es falso porque el `where` no sabe reconocer el caso, acá porque el número
+no puede crecer aunque el caso esté.
+
+### Dos formas distintas del mismo error EN LA MISMA TANDA
+
+Y eso es lo que dice que no es raro:
+
+1. **El contenedor se comía el desborde** — el caso de arriba.
+2. **Las tablas estaban ESCONDIDAS.** En Cargar Precios el cuadro vive
+   adentro de un panel que arranca cerrado. Medirlo sin abrirlo daba
+   `0px · OCULTA`: cuatro tablas de 0 píxeles, porque no estaban en
+   pantalla. Abriendo el panel: 169, 139, 68, 98.
+
+Las dos veces el número era verdadero, era cero, y era incapaz de ser otra
+cosa. Por caminos completamente distintos —uno de CSS, otro de estado de la
+pantalla— en la misma media hora.
+
+**La forma general, que es más ancha que el CSS**: cualquier medición sobre
+"lo que está a la vista" puede estar midiendo sobre lo que NO está — porque
+algo lo contiene, porque está cerrado, porque está filtrado, porque todavía
+no se cargó. Y no se nota, porque lo que devuelve es el número que uno
+quería ver.
+
+Engancha con **"esconder un contenedor esconde todo lo que vive adentro"**
+por el otro extremo: allá el `display: none` se llevaba puesta una función y
+el desborde medía 0 igual; acá el cero era del propio arreglo. En los dos, la
+frase que cierra es la misma — *nada en la medición que uno eligió puede
+delatar algo que quedó afuera de esa medición*.
