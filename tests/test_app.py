@@ -11662,8 +11662,12 @@ def test_analizar_parte_de_la_ULTIMA_COMPRA_y_calcula_la_rentabilidad():
 
     Y el costo por kilo NO es un cuarto dato: es el cociente de los dos
     primeros, que es lo que después deja preguntar "¿y si trae 14?".
+
+    Se entra por CLIENTE, que es el orden en que se piensa: las condiciones
+    son suyas. Con una sola ficha no hay nada que preguntar y se cae directo
+    en el análisis.
     """
-    marcado = _analizar("/compras/analizar?articulo_id=1")
+    marcado = _analizar("/compras/analizar?cliente_id=1")
 
     assert _valor(marcado, "importe_cajon") == "16000"
     assert _valor(marcado, "kilos_bulto") == "16"
@@ -11672,6 +11676,82 @@ def test_analizar_parte_de_la_ULTIMA_COMPRA_y_calcula_la_rentabilidad():
     assert "$1.000" in marcado
     # (1500 × 0,875 − 50 − 1000) / 1000 = 26,25%
     assert _valor(marcado, "utilidad") == "26.25"
+
+
+# --- El orden: CLIENTE primero, artículo adentro (12/09) --------------------
+# Pedido del dueño: "las condiciones son del cliente, así que el cliente es el
+# contexto y el artículo es lo que cambia adentro de ese contexto".
+
+def test_el_selector_de_articulo_SOLO_LISTA_LAS_FICHAS_DE_ESE_CLIENTE():
+    """Elegido el cliente, los artículos que se ofrecen son los suyos y ninguno más.
+
+    La ficha 903 es de OTRO cliente y del mismo artículo: si el filtro fuera
+    por artículo en vez de por cliente, entraría. Está puesta para eso.
+    """
+    de_otro = dict(FICHA_ANALISIS, id=903, cliente_id=2, nombre_cliente="EJEMPLO DOS")
+    marcado = _analizar("/compras/analizar?cliente_id=1",
+                        fichas=[FICHA_ANALISIS, FICHA_ANALISIS_2, de_otro])
+
+    opciones = re.findall(r'<option value="(\d+)"[^>]*>([^<]*)</option>', marcado)
+    ids = [i for i, _ in opciones]
+    assert "901" in ids and "902" in ids
+    assert "903" not in ids, "se coló la ficha de otro cliente"
+
+
+def test_al_cambiar_de_ARTICULO_el_cliente_SIGUE_ELEGIDO():
+    """Analizando tres artículos de Día, el cliente no se vuelve a elegir.
+
+    Es el trabajo que más se hace, y con el orden viejo —artículo y después
+    ficha— había que empezar de nuevo cada vez. Lo que lo sostiene es que el
+    formulario del artículo lleve el cliente escondido.
+    """
+    marcado = _analizar("/compras/analizar?cliente_id=1",
+                        fichas=[FICHA_ANALISIS, FICHA_ANALISIS_2])
+
+    formulario = marcado[marcado.index('<select id="ficha_id"') - 600:marcado.index('<select id="ficha_id"')]
+    assert '<input type="hidden" name="cliente_id" value="1">' in formulario
+
+
+def test_el_selector_de_CLIENTE_no_arrastra_la_ficha_o_cambiar_de_cliente_no_haria_nada():
+    """La contracara de "la ficha manda": si el form del cliente llevara la ficha, no se podría cambiar.
+
+    Del otro lado, la ficha define su cliente (para que un link compartido
+    abra su análisis). Así que un `hidden` de ficha_id acá dejaría el
+    selector de cliente muerto — elegís otro y volvés al mismo. Es el tipo de
+    cosa que se ve rarísima en la pantalla y obvia en el código.
+    """
+    marcado = _analizar("/compras/analizar?ficha_id=901")
+
+    inicio = marcado.index('<select id="cliente_id"')
+    formulario = marcado[marcado.rindex("<form", 0, inicio):inicio]
+    assert "ficha_id" not in formulario
+
+
+def test_un_link_con_SOLO_LA_FICHA_abre_su_analisis_y_deduce_el_cliente():
+    """Los links compartidos traen la ficha y los números: tienen que seguir andando.
+
+    De la ficha sale su cliente, así que no hace falta que el link lo traiga
+    — ni que traiga el articulo_id que la pantalla ya no lee.
+    """
+    marcado = _analizar("/compras/analizar?ficha_id=901&articulo_id=1")
+
+    assert _valor(marcado, "importe_cajon") == "16000"
+    assert '<option value="1" selected>EJEMPLO Cli</option>' in marcado
+
+
+def test_DOS_FICHAS_del_mismo_articulo_son_DOS_ENTRADAS_distinguibles():
+    """El caso de Día con Banana Bolivia y Banana Ecuador, que es por qué no hay un tercer paso.
+
+    Listando FICHAS en vez de artículos, las dos son dos opciones con su
+    nombre y no hay nada que desambiguar después. Si el selector mostrara el
+    nombre del artículo a secas, las dos dirían "EJEMPLO Uno" y no habría
+    forma de elegir.
+    """
+    marcado = _analizar("/compras/analizar?cliente_id=1",
+                        fichas=[FICHA_ANALISIS, FICHA_ANALISIS_2])
+
+    assert "EJEMPLO Uno · EJEMPLO UNO BOLIVIA" in marcado
+    assert "EJEMPLO Uno · EJEMPLO UNO ECUADOR" in marcado
 
 
 def test_editar_los_KILOS_mueve_la_rentabilidad_que_es_la_pregunta_del_puesto():
@@ -11683,7 +11763,7 @@ def test_editar_los_KILOS_mueve_la_rentabilidad_que_es_la_pregunta_del_puesto():
     14 en vez de 16, que es exactamente la decisión parado en el puesto.
     """
     marcado = _analizar(
-        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "/compras/analizar?ficha_id=901"
         "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
     )
 
@@ -11703,7 +11783,7 @@ def test_editar_la_RENTABILIDAD_recalcula_el_PRECIO_y_nunca_el_costo():
     utilidad_real, nada más.
     """
     marcado = _analizar(
-        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "/compras/analizar?ficha_id=901"
         "&importe_cajon=16000&kilos_bulto=16&precio=1500&utilidad=25&edite=utilidad"
     )
 
@@ -11718,11 +11798,11 @@ def test_editar_la_RENTABILIDAD_recalcula_el_PRECIO_y_nunca_el_costo():
 def test_se_ve_CUAL_se_movio_y_el_costo_por_kilo_nunca_se_tipea():
     """Sin esto, en dos minutos nadie sabe qué puso a mano y qué calculó la pantalla."""
     editando_kilos = _analizar(
-        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "/compras/analizar?ficha_id=901"
         "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
     )
     editando_renta = _analizar(
-        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "/compras/analizar?ficha_id=901"
         "&importe_cajon=16000&kilos_bulto=16&precio=1500&utilidad=25&edite=utilidad"
     )
 
@@ -11750,9 +11830,9 @@ def test_el_renglon_del_objetivo_va_contra_la_utilidad_OBJETIVO_y_no_contra_la_d
     Con 16 kilos: (1312,50 − 50) / 1,25 × 16 = $16.160 — piden 16.000, entra.
     Con 14 kilos: (1312,50 − 50) / 1,25 × 14 = $14.140 — piden 16.000, NO entra.
     """
-    con_16 = _analizar("/compras/analizar?articulo_id=1")
+    con_16 = _analizar("/compras/analizar?cliente_id=1")
     con_14 = _analizar(
-        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "/compras/analizar?ficha_id=901"
         "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
     )
 
@@ -11766,7 +11846,7 @@ def test_el_renglon_del_objetivo_va_contra_la_utilidad_OBJETIVO_y_no_contra_la_d
 def test_sin_utilidad_objetivo_cargada_NO_hay_renglon_de_objetivo():
     """No hay contra qué: un renglón que se inventa el objetivo sería peor que no tenerlo."""
     marcado = _analizar(
-        "/compras/analizar?articulo_id=1",
+        "/compras/analizar?cliente_id=1",
         tasas={"tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": None},
     )
     assert "podés pagar el cajón hasta" not in marcado
@@ -11774,22 +11854,26 @@ def test_sin_utilidad_objetivo_cargada_NO_hay_renglon_de_objetivo():
     assert _valor(marcado, "utilidad") == "26.25"
 
 
-def test_con_DOS_fichas_del_articulo_hay_que_elegir_y_con_una_se_saltea():
-    """Las TASAS son por cliente, así que la rentabilidad sin decir la ficha no existe."""
-    dos = _analizar("/compras/analizar?articulo_id=1",
+def test_con_DOS_fichas_del_cliente_hay_que_elegir_y_con_una_se_saltea():
+    """Las TASAS son por cliente, así que la rentabilidad sin decir la ficha no existe.
+
+    Desde el 12/09 se elige adentro del cliente: el selector lista SUS
+    fichas, y con una sola no hay nada que preguntar.
+    """
+    dos = _analizar("/compras/analizar?cliente_id=1",
                     fichas=[FICHA_ANALISIS, FICHA_ANALISIS_2])
     assert 'id="ficha_id"' in dos
     assert "EJEMPLO UNO BOLIVIA" in dos and "EJEMPLO UNO ECUADOR" in dos
     # Sin ficha elegida todavía no hay análisis.
     assert 'id="importe_cajon"' not in dos
 
-    una = _analizar("/compras/analizar?articulo_id=1")
+    una = _analizar("/compras/analizar?cliente_id=1")
     assert 'id="ficha_id"' not in una
     assert 'id="importe_cajon"' in una
 
 
 def test_sin_costo_reciente_lo_DICE_en_vez_de_mostrar_una_pantalla_vacia():
-    marcado = _analizar("/compras/analizar?articulo_id=1",
+    marcado = _analizar("/compras/analizar?cliente_id=1",
                         fila=dict(FILA_ANALISIS, costo_actual=None))
     assert "no hay costo del que partir" in marcado
     assert 'id="importe_cajon"' not in marcado
@@ -11801,7 +11885,7 @@ def test_las_TASAS_del_cliente_se_muestran():
     Una cuenta que parece mal estando bien se paga con que nadie vuelva a
     confiar en la pantalla.
     """
-    marcado = _analizar("/compras/analizar?articulo_id=1")
+    marcado = _analizar("/compras/analizar?cliente_id=1")
     assert "+10.5%" in marcado
     assert "−23%" in marcado
     # CADA UNA CON SU NOMBRE: hasta el 12/09 decía "Suma +10,5%" sin decir
@@ -11825,7 +11909,7 @@ def test_el_aviso_de_SIN_TASAS_va_PEGADO_al_numero_y_no_en_la_tarjeta_de_abajo()
     existía. Lo que cambió es que esté ANTES del cierre del formulario, o sea
     adentro de la tarjeta donde se lee el número.
     """
-    marcado = _analizar("/compras/analizar?articulo_id=1", tasas=SIN_TASAS_ANALISIS)
+    marcado = _analizar("/compras/analizar?cliente_id=1", tasas=SIN_TASAS_ANALISIS)
 
     assert "no tiene ninguna tasa cargada" in marcado
     # EL FORMULARIO DEL ANÁLISIS, no el primero que aparezca: arriba está el
@@ -11847,7 +11931,7 @@ def test_el_aviso_de_SIN_TASAS_va_PEGADO_al_numero_y_no_en_la_tarjeta_de_abajo()
 
 def test_con_tasas_NO_sale_el_aviso():
     """La otra mitad. Un aviso que sale siempre es un aviso que no se mira."""
-    marcado = _analizar("/compras/analizar?articulo_id=1")
+    marcado = _analizar("/compras/analizar?cliente_id=1")
     assert 'class="sin-tasas"' not in marcado
 
 
@@ -11857,7 +11941,7 @@ def test_sin_utilidad_objetivo_el_renglon_DICE_POR_QUE_no_esta():
     Es la única lectura que contesta "¿hasta cuánto puedo pagar el cajón?", o
     sea la pregunta del puesto. Un renglón que no está no se puede extrañar.
     """
-    marcado = _analizar("/compras/analizar?articulo_id=1", tasas=SIN_TASAS_ANALISIS)
+    marcado = _analizar("/compras/analizar?cliente_id=1", tasas=SIN_TASAS_ANALISIS)
 
     assert "podés pagar el cajón hasta" not in marcado
     # Por la CLASE y por un fragmento que no cruza el salto de línea: la

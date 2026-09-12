@@ -11694,10 +11694,28 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
     return resultado
 
 
+def _etiqueta_de_ficha(ficha: dict) -> str:
+    """Cómo se lee una ficha en el selector, ADENTRO de un cliente ya elegido.
+
+    El artículo va PRIMERO porque es lo que se está eligiendo ("Banana"), y el
+    nombre propio del cliente se agrega solo cuando dice algo que el artículo
+    no dice: "Banana · BANANA BOLIVIA". Sin eso, las dos fichas de Día se
+    verían las dos como "Banana" y no habría forma de saber cuál es cuál.
+
+    Sale de `_nombre_de_ficha` y no de una condición propia, que es lo único
+    que impide que esta pantalla y las que arman se separen el día que cambie
+    la regla de qué nombre gana.
+    """
+    propio = _nombre_de_ficha(ficha)
+    if propio == ficha["articulo_nombre"]:
+        return propio
+    return f'{ficha["articulo_nombre"]} · {propio}'
+
+
 @app.get("/compras/analizar")
 def ver_analizar_articulo(
     request: Request,
-    articulo_id: str | None = None,
+    cliente_id: str | None = None,
     ficha_id: str | None = None,
     importe_cajon: str | None = None,
     kilos_bulto: str | None = None,
@@ -11717,49 +11735,70 @@ def ver_analizar_articulo(
       servidor llama al motor. Cuesta un viaje por edición y es lo único que
       garantiza que esta pantalla y Márgenes por Artículo no se separen.
 
-    ES POR FICHA, no por artículo, y el precio es la parte chica del motivo:
-    las TASAS son por cliente, así que "la rentabilidad de Mandarina" sin
-    decir a quién se le vende no existe. Con una sola ficha el paso se
-    saltea; con varias hay que elegir.
+    EL CLIENTE PRIMERO, Y DESPUÉS EL ARTÍCULO, porque es el orden en que se
+    piensa: **las condiciones son del cliente**, así que el cliente es el
+    CONTEXTO y el artículo es lo que cambia adentro. Analizando tres
+    artículos de Día, el cliente no se vuelve a elegir. Al revés —artículo y
+    después ficha— ver otro artículo del mismo cliente obligaba a empezar de
+    nuevo, que es el trabajo que más se hace.
+
+    Y por eso el selector lista FICHAS DEL CLIENTE y no artículos: las dos
+    fichas de Banana de Día son dos entradas con su nombre
+    (`_etiqueta_de_ficha`), no un artículo que después hay que desambiguar en
+    un tercer paso. El paso no se saltea cuando no hace falta: **no existe**.
+
+    LA FICHA MANDA sobre el cliente cuando vienen las dos: un link compartido
+    trae `ficha_id` con los números puestos, y de la ficha sale su cliente.
+    Por eso el selector de cliente NO arrastra la ficha elegida — si lo
+    hiciera, cambiar de cliente no haría nada y sería imposible de explicar.
     """
-    articulo_valor = _id_opcional_desde_query(articulo_id)
+    cliente_valor = _id_opcional_desde_query(cliente_id)
     ficha_valor = _id_opcional_desde_query(ficha_id)
 
     try:
-        articulos = listar_articulos()
         fichas = listar_fichas_de_todos_los_clientes()
-        clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+        clientes = listar_clientes()
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
+    # La ficha manda: así un link viejo o compartido, que trae ficha_id y
+    # quizás un articulo_id que ya no se lee, sigue abriendo su análisis.
+    elegida = next((f for f in fichas if f["id"] == ficha_valor), None) if ficha_valor is not None else None
+    if elegida is not None:
+        cliente_valor = elegida["cliente_id"]
+
     contexto = {
-        "articulos": articulos,
-        "articulo_id": articulo_valor,
-        "fichas_del_articulo": None,
+        "clientes": clientes,
+        "cliente_id": cliente_valor,
+        "cliente_nombre": next((c["nombre"] for c in clientes if c["id"] == cliente_valor), None),
+        "fichas_del_cliente": None,
         "ficha": None,
         "analisis": None,
         "sin_datos": None,
     }
 
-    if articulo_valor is None:
+    if cliente_valor is None:
         return templates.TemplateResponse(request, "compras_analizar.html", contexto)
 
-    del_articulo = [f for f in fichas if f["articulo_id"] == articulo_valor]
-    for ficha in del_articulo:
-        ficha["cliente_nombre"] = clientes.get(ficha["cliente_id"], f"#{ficha['cliente_id']}")
-    contexto["fichas_del_articulo"] = del_articulo
+    # Ya vienen ordenadas por nombre de artículo desde la consulta, así que
+    # el selector conserva ese orden sin volver a ordenar acá.
+    del_cliente = [dict(f, etiqueta=_etiqueta_de_ficha(f)) for f in fichas if f["cliente_id"] == cliente_valor]
+    contexto["fichas_del_cliente"] = del_cliente
 
-    if ficha_valor is None and len(del_articulo) == 1:
-        ficha_valor = del_articulo[0]["id"]
+    if not del_cliente:
+        contexto["sin_datos"] = ("Ese cliente no tiene ninguna ficha de venta cargada, así que no hay "
+                                 "artículos que analizarle. Se cargan en Fichas.")
+        return templates.TemplateResponse(request, "compras_analizar.html", contexto)
+
+    # Con una sola ficha no hay nada que preguntar.
+    if ficha_valor is None and len(del_cliente) == 1:
+        ficha_valor = del_cliente[0]["id"]
     if ficha_valor is None:
-        if not del_articulo:
-            contexto["sin_datos"] = ("Ese artículo no tiene ninguna ficha de venta, así que no hay "
-                                     "precio ni cliente contra los que calcular. Se carga en Fichas.")
         return templates.TemplateResponse(request, "compras_analizar.html", contexto)
 
-    ficha = next((f for f in del_articulo if f["id"] == ficha_valor), None)
+    ficha = next((f for f in del_cliente if f["id"] == ficha_valor), None)
     if ficha is None:
-        raise HTTPException(status_code=404, detail="Esa ficha no es de ese artículo")
+        raise HTTPException(status_code=404, detail="Esa ficha no existe")
     contexto["ficha"] = ficha
 
     try:
@@ -11791,6 +11830,7 @@ def ver_analizar_articulo(
     contexto["fila"] = fila
     contexto["tasas"] = tasas
     return templates.TemplateResponse(request, "compras_analizar.html", contexto)
+
 
 
 @app.get("/compras/alertas")

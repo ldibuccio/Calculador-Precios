@@ -127,30 +127,39 @@
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
+    {# EL CLIENTE PRIMERO: las condiciones son suyas, así que es el contexto
+       y el artículo es lo que cambia adentro. Este formulario NO arrastra la
+       ficha elegida a propósito — si la llevara, cambiar de cliente no haría
+       nada, porque del otro lado la ficha manda sobre el cliente. #}
     <form method="get" action="/compras/analizar">
-      <label for="articulo_id">Artículo</label>
-      <select id="articulo_id" name="articulo_id" onchange="this.form.submit()">
-        <option value="" {% if not articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>
-        {% for a in articulos %}
-        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()">
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
         {% endfor %}
       </select>
     </form>
 
-    {# LA FICHA, y solo cuando hay más de una: con una sola el paso se
-       saltea. No es un capricho de precio — las TASAS son por cliente, así
-       que la rentabilidad sin decir a quién se le vende no existe. #}
-    {% if fichas_del_articulo and fichas_del_articulo|length > 1 %}
+    {# EL ARTÍCULO, y solo los que este cliente tiene ficha. Lleva el cliente
+       escondido para que siga elegido al cambiar de artículo, que es el
+       trabajo que más se hace: tres artículos del mismo cliente, sin volver
+       a elegirlo.
+
+       Lista FICHAS y no artículos: con dos fichas del mismo artículo —Banana
+       Bolivia y Banana Ecuador para Día— cada una es una entrada con su
+       nombre, así que no hay un tercer paso para desambiguar. #}
+    {% if fichas_del_cliente and fichas_del_cliente|length > 1 %}
     <form method="get" action="/compras/analizar">
-      <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
-      <label for="ficha_id">Ficha de venta</label>
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+      <label for="ficha_id">Artículo</label>
       <select id="ficha_id" name="ficha_id" onchange="this.form.submit()">
-        <option value="" {% if not ficha %}selected{% endif %} disabled>Elegí la ficha...</option>
-        {% for f in fichas_del_articulo %}
-        <option value="{{ f.id }}" {% if ficha and ficha.id == f.id %}selected{% endif %}>{{ f.cliente_nombre }} · {{ f.nombre_cliente or f.articulo_nombre }}</option>
+        <option value="" {% if not ficha %}selected{% endif %} disabled>Elegí un artículo...</option>
+        {% for f in fichas_del_cliente %}
+        <option value="{{ f.id }}" {% if ficha and ficha.id == f.id %}selected{% endif %}>{{ f.etiqueta }}</option>
         {% endfor %}
       </select>
-      <p class="ayuda">El precio y las tasas son del cliente, así que cada ficha se analiza por separado.</p>
+      <p class="ayuda">Solo los artículos que {{ cliente_nombre }} tiene en ficha: el precio y las tasas son suyos.</p>
     </form>
     {% endif %}
   </div>
@@ -161,14 +170,21 @@
 
   {% if analisis %}
   <div class="tarjeta">
-    <h2>{{ ficha.cliente_nombre }} · {{ ficha.nombre_cliente or ficha.articulo_nombre }}</h2>
+    {# SIN EL CLIENTE: está en el selector tres centímetros más arriba y otra
+       vez en "Tasas de ...". Repetirlo acá hacía un título de tres líneas en
+       390px que empujaba los números abajo del pliegue.
+
+       La ficha SÍ va entera, y no es decoración: el selector cerrado corta el
+       texto ("EJEMPLO Uno · EJEMPLO UNO BO"), así que con dos fichas del
+       mismo artículo este título es dónde se confirma cuál quedó elegida. #}
+    <h2>{{ ficha.etiqueta }}</h2>
     <p class="ayuda">Cambiá cualquiera de los cuatro y los demás se recalculan. Lo verde lo calcula la pantalla.</p>
 
     {# Se manda solo al cambiar un campo, y el cálculo lo hace el SERVIDOR
        con las funciones del motor. Escribir la fórmula en JavaScript sería
        la rentabilidad por cuarta vez, en otro lenguaje y sin test. #}
     <form method="get" action="/compras/analizar" id="form-analisis">
-      <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
+      <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
       <input type="hidden" name="ficha_id" value="{{ ficha.id }}">
       <input type="hidden" name="edite" id="campo-editado" value="">
 
@@ -253,7 +269,7 @@
     {# Las tasas A LA VISTA: son las que hacen que la cuenta no cierre "a
        ojo", y una cuenta que parece mal estando bien se paga con que nadie
        vuelva a confiar en la pantalla. #}
-    <h3>Tasas de {{ ficha.cliente_nombre }}</h3>
+    <h3>Tasas de {{ cliente_nombre }}</h3>
     {# CADA UNA CON SU NOMBRE. Hasta el 12/09 decía "Suma +10,5%" sin nombrar
        cuál era: el nombre existía en la base y `_agrupar_conceptos` lo tiraba.
        Un porcentaje sin nombre obliga a ir a buscarlo a la pantalla del
