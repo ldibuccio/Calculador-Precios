@@ -3090,3 +3090,27 @@ Y el caso se cerró como dormido: Kiwi nunca se compró en ninguna de las dos
 bases —cero compras, cero precios, cero renglones— así que no hay plata mal
 calculada. **Las tres columnas de "¿se usa?" son las que lo dijeron**, y sin
 ellas el mismo hallazgo habría mandado a revisar meses de costos.
+
+## Corolario 49: cuando un registro se arma al IMPORTAR, la forma de llamar importa tanto como qué se llama
+
+Del 12/09, y va corto.
+
+La alerta nueva se registró con `contar=contar_unidades_que_diferen` —la
+referencia a secas— y las otras dieciocho usan `contar=lambda:
+contar_...()`. El registro se construye al importar el módulo, así que la
+referencia **captura el objeto de ese momento** y deja de seguir al nombre:
+parchearlo después no lo toca. La lambda lo resuelve al llamar.
+
+El síntoma no fue una alerta rota: fue que el test que recorre las
+dieciocho intentó ir a la base de verdad, porque su `patch` no tenía efecto
+sobre la única entrada escrita distinto.
+
+**Lo que se lleva, y es más ancho que el registro de alertas**: en cualquier
+tabla de callables armada a nivel de módulo —alertas, validadores, un
+despacho por tipo— la referencia directa y la lambda **no son dos estilos**.
+Una congela y la otra no, y la diferencia solo se ve cuando alguien quiere
+sustituir la función: un test, un modo de prueba, un reemplazo en caliente.
+
+Y lo agarró el test que las recorre TODAS, que es exactamente para lo que
+está: la entrada nueva era la única escrita distinto de las dieciocho, y esa
+inconsistencia no se ve leyendo la entrada sola — se ve al lado de las otras.
