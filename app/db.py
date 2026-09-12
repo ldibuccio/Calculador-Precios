@@ -1270,6 +1270,11 @@ def buscar_compras(
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
                        COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
                        c.importe, c.sena, c.tipo_retiro,
+                       -- Los dos que deciden si esta compra puede recibir la
+                       -- marca "vino armada" a mano: solo una recepcionada y
+                       -- todavía sin marca. La pantalla no re-deriva la
+                       -- condición de otra columna.
+                       c.estado, c.ficha_en_origen_id,
                        EXISTS (SELECT 1 FROM fotos_guia fg WHERE fg.guia_id = c.guia_id) AS tiene_comanda,
                        -- LA SEGUNDA FOTO, y cuelga de la COMPRA y no de la
                        -- guía: la comanda es el papel del proveedor y es una
@@ -1826,14 +1831,61 @@ def _recepcion_retroactiva_validada(cursor, recepcionada_el, ingreso_directo_dep
         return None
     if not ingreso_directo_deposito:
         raise ValueError("La fecha de recepción solo se puede elegir en un ingreso directo.")
-    corte = _fecha_corte(cursor)
-    if recepcionada_el.date() <= corte:
-        raise ValueError(
-            f"La fecha de recepción tiene que ser POSTERIOR al corte del modelo ({corte:%d/%m/%Y}). "
-            "Ese día ya está adentro de la foto del stock inicial, así que una compra fechada "
-            "ahí sumaría al total sin ser un lote del FIFO."
-        )
+    motivo = _motivo_sin_lote_por_el_corte(cursor, recepcionada_el.date())
+    if motivo is not None:
+        raise ValueError(motivo)
     return recepcionada_el
+
+
+def _motivo_sin_lote_por_el_corte(cursor, fecha) -> str | None:
+    """Por qué esa fecha NO tiene lote del FIFO, o None si lo tiene.
+
+    ESTRICTAMENTE POSTERIOR AL CORTE, y el día del corte también queda
+    afuera. Es la asimetría de siempre —el conteo del corte se toma A LA
+    TARDE, así que todo lo de ese día ya está adentro de la foto—.
+
+    VUELVE UN MOTIVO EN VEZ DE LEVANTAR porque los dos que la usan la
+    necesitan de formas distintas: la carga retroactiva la traduce a un
+    ValueError al escribir, y la pantalla de "vino armada" la muestra ANTES,
+    como aviso, para no ofrecer un botón que no puede funcionar. Una guarda
+    que solo sabe explotar obliga a escribir la condición una segunda vez
+    para poder avisar, y esa segunda copia es la que se separa.
+    """
+    corte = _fecha_corte(cursor)
+    if fecha > corte:
+        return None
+    return (
+        f"La fecha tiene que ser POSTERIOR al corte del modelo ({corte:%d/%m/%Y}). "
+        "Ese día ya está adentro de la foto del stock inicial, así que una compra fechada "
+        "ahí suma al total sin ser un lote del FIFO."
+    )
+
+
+def _validar_caja_en_origen(cursor, ficha_en_origen_id: int, articulo_id: int) -> None:
+    """Levanta ValueError si esa caja no existe o no es del artículo de la compra.
+
+    LA REGLA VIVE ACÁ UNA SOLA VEZ y la llaman los TRES lugares que escriben
+    la marca —el alta, la edición y la marcada a mano de una compra ya
+    recepcionada—. Escrita en cada uno serían tres, y el día que se separan
+    una de las tres deja entrar una ficha de otro artículo: eso inventa cajas
+    que no existen y el Cotejo muestra un rojo imposible de explicar.
+
+    Y VA DONDE SE ESCRIBE, no al recepcionar: allá sería tarde —la recepción
+    se caería por un error que se cometió días antes, con el camión en la
+    puerta— y el que lo cometió no es el que lo sufriría.
+
+    SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None y no
+    distinguiría "no existe" de "existe" (corolario 27).
+    """
+    cursor.execute(
+        "SELECT articulo_id FROM fichas_logistica WHERE id = %s",
+        (ficha_en_origen_id,),
+    )
+    ficha = cursor.fetchone()
+    if ficha is None:
+        raise ValueError("Esa caja no existe.")
+    if ficha[0] != articulo_id:
+        raise ValueError("Esa caja es de otro artículo: no puede ser la de esta compra.")
 
 
 def _insertar_compra_con_guia(
@@ -2010,26 +2062,7 @@ def _insertar_compra_con_guia(
     (compra_id,) = cursor.fetchone()
 
     if ficha_en_origen_id is not None:
-        # LA GUARDA VA ACÁ, donde se escribe la marca, y no al recepcionar:
-        # allá sería tarde —la recepción se caería por un error que se cometió
-        # días antes, con el camión en la puerta— y el que la cometió no es el
-        # que lo sufriría. Una ficha de otro artículo inventaría cajas que no
-        # existen y el Cotejo mostraría un rojo imposible de explicar.
-        #
-        # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca es None
-        # y no distinguiría "no existe" de "existe" (corolario 27).
-        cursor.execute(
-            "SELECT articulo_id FROM fichas_logistica WHERE id = %s",
-            (ficha_en_origen_id,),
-        )
-        ficha = cursor.fetchone()
-        if ficha is None:
-            raise ValueError("Esa caja no existe.")
-        if ficha[0] != articulo_id:
-            raise ValueError(
-                "Esa caja es de otro artículo: no puede ser la de esta compra."
-            )
-
+        _validar_caja_en_origen(cursor, ficha_en_origen_id, articulo_id)
         cursor.execute(
             "UPDATE compras SET ficha_en_origen_id = %s WHERE id = %s",
             (ficha_en_origen_id, compra_id),
@@ -2163,8 +2196,9 @@ def actualizar_cantidad_compra(
     cantidad_kilos: float | None,
     cantidad_fraccion: float | None,
     tipo_retiro: str,
+    ficha_en_origen_id: int | None = None,
 ) -> None:
-    """Actualiza artículo/cantidad/tipo de retiro de una compra existente. No toca importe ni seña.
+    """Actualiza artículo/cantidad/marca de "viene armada"/tipo de retiro de una compra existente. No toca importe ni seña.
 
     Bloqueada (ValueError) SOLO si la compra ya pasó por Depósito
     (recepcionada, con rechazo total o nunca ingresada — ver
@@ -2182,6 +2216,23 @@ def actualizar_cantidad_compra(
     - de un tipo automático (retiro_origen automatico_*) a otro tipo: el
       retiro vuelve a pendiente, sin cicatriz (como deshacer_retiro).
     - cualquier otro caso: el retiro no se toca.
+
+    ficha_en_origen_id VIAJA CON EL ARTÍCULO y por eso entra acá y no en una
+    función aparte: cambiar el artículo de una compra marcada dejaría la
+    marca apuntando a una caja de OTRO artículo, que es justo lo que la
+    guarda prohíbe. Juntos, el chequeo corre contra el artículo NUEVO y no
+    hay forma de que se separen. None = "no, llega el cajón del proveedor", y
+    eso también se escribe: desmarcar es una decisión, no un campo que se
+    dejó vacío.
+
+    Se escribe con un UPDATE aparte y no adentro de las tres ramas de arriba,
+    por el mismo motivo que en el alta: tres listas de columnas distintas son
+    tres lugares de los que una rama nueva se puede olvidar.
+
+    Y ACÁ NO SE DISPARA NINGUNA GUÍA R. No hace falta: esta función solo
+    corre mientras la compra NO esté recepcionada (el bloqueo de arriba), así
+    que la guía sale después, al recibirla. Para una compra YA recepcionada el
+    camino es otro y está en `marcar_compra_armada_en_origen`.
     """
     conexion = obtener_conexion()
     try:
@@ -2236,6 +2287,13 @@ def actualizar_cantidad_compra(
                     """,
                     (articulo_id, cantidad_cajones, contenido_por_cajon, cantidad_kilos, cantidad_fraccion, tipo_retiro, compra_id),
                 )
+
+            if ficha_en_origen_id is not None:
+                _validar_caja_en_origen(cursor, ficha_en_origen_id, articulo_id)
+            cursor.execute(
+                "UPDATE compras SET ficha_en_origen_id = %s WHERE id = %s",
+                (ficha_en_origen_id, compra_id),
+            )
         conexion.commit()
     finally:
         conexion.close()
@@ -2559,6 +2617,126 @@ def _guia_en_origen_si_corresponde(cursor, compra_id: int) -> int | None:
 # está ahí. Lo cuida
 # `test_la_fecha_de_la_guia_en_origen_sale_de_la_MISMA_expresion_que_el_lote`.
 _SQL_FECHA_DEL_LOTE_DE_COMPRA = "({col} AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
+
+
+def compra_para_marcar_armada(compra_id: int) -> dict | None:
+    """Los datos de una compra ya recepcionada para decidir si vino armada. None si no existe.
+
+    Es la pantalla de "Vino armada" de Buscar Compras: la salida para la
+    compra que YA se recepcionó sin la marca, porque el comprador se olvidó o
+    porque nadie se la había podido poner.
+
+    `motivo_corte` viene con texto cuando esa compra NO tiene lote del FIFO —
+    fechada el día del corte o antes—: ahí la guía R no se puede armar y la
+    pantalla lo dice EN VEZ de ofrecer el botón. Sale de
+    `_motivo_sin_lote_por_el_corte`, la misma regla que usa la carga
+    retroactiva; escrita de nuevo acá serían dos.
+
+    `fecha_del_lote` es la fecha que va a llevar la guía, y sale de
+    `procesada_el` con la MISMA expresión con que el FIFO fecha el lote — no
+    de `fecha_operacion`, que es el día de la compra en el Mercado y puede ser
+    otro. La guía tiene que quedar fechada el día en que su lote existe.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT c.id, c.articulo_id, a.nombre AS articulo_nombre, a.unidad_compra,
+                       p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
+                       c.fecha_operacion, c.estado, c.ficha_en_origen_id,
+                       c.cantidad_cajones_real,
+                       {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='c.procesada_el')} AS fecha_del_lote
+                FROM compras c
+                JOIN articulos a ON a.id = c.articulo_id
+                JOIN proveedores p ON p.id = c.proveedor_id
+                WHERE c.id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                return None
+            compra = dict(zip([d[0] for d in cursor.description], fila))
+            compra["motivo_corte"] = (
+                _motivo_sin_lote_por_el_corte(cursor, compra["fecha_del_lote"])
+                if compra["fecha_del_lote"] is not None
+                else None
+            )
+            return compra
+    finally:
+        conexion.close()
+
+
+def marcar_compra_armada_en_origen(compra_id: int, ficha_en_origen_id: int) -> int:
+    """Marca una compra YA RECEPCIONADA como venida armada en caja nuestra y carga su guía R. Devuelve el número.
+
+    ES LA SALIDA para el caso que el camino normal no cubre: la marca la pone
+    el comprador AL CARGAR, y la guía sale sola al recepcionar. Una compra que
+    ya se recepcionó sin marca no tiene por dónde — antes de esto, la única
+    forma era la guía R a mano, que es documentar un trabajo que no se hizo
+    así.
+
+    LAS DOS COSAS VAN EN LA MISMA TRANSACCIÓN, y si la guía no se puede armar
+    la marca tampoco se escribe: una compra marcada sin su guía deja el lote
+    crudo y la ficha sin sus cajas, que es exactamente el estado que esto
+    viene a arreglar.
+
+    ACÁ SÍ HACE FALTA la guarda del lote que en la recepción no hacía: allá el
+    lote nace en la misma transacción y nadie pudo haber tomado de él; acá la
+    compra puede ser de hace días y su lote puede estar comido. No se decide
+    por adelantado quién se lo llevó — de eso se encarga el freno de
+    `_crear_reproceso`, que mira el restante real contra la MISMA lista que el
+    FIFO. Lo que hace esta función es no esconderlo: la pantalla muestra antes
+    qué salió de ese lote (`dependencias_del_lote_de_compra`) para que la
+    decisión se tome con eso a la vista, y si el freno rebota, el motivo sube
+    tal cual.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            # SIN agregado, para que "no existe" y "existe" no se vean igual
+            # (corolario 27).
+            cursor.execute(
+                f"""
+                SELECT estado, ficha_en_origen_id, cantidad_cajones_real,
+                       {_SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col='procesada_el')}
+                FROM compras WHERE id = %s
+                """,
+                (compra_id,),
+            )
+            fila = cursor.fetchone()
+            if fila is None:
+                raise ValueError("Esa compra no existe.")
+            estado, ya_marcada, bultos, fecha_del_lote = fila
+
+            if estado != "recepcionado":
+                raise ValueError(
+                    "Esta compra todavía no se recepcionó: la marca va en la carga, "
+                    "y la guía R sale sola cuando Depósito la reciba."
+                )
+            if ya_marcada is not None:
+                raise ValueError("Esta compra ya está marcada como venida armada.")
+            if fecha_del_lote is None:
+                raise ValueError("Esta compra no tiene fecha de recepción: no hay lote contra el que armar la guía.")
+
+            motivo = _motivo_sin_lote_por_el_corte(cursor, fecha_del_lote)
+            if motivo is not None:
+                raise ValueError(motivo)
+
+            cursor.execute("SELECT articulo_id FROM compras WHERE id = %s", (compra_id,))
+            (articulo_id,) = cursor.fetchone()
+            _validar_caja_en_origen(cursor, ficha_en_origen_id, articulo_id)
+
+            cursor.execute(
+                "UPDATE compras SET ficha_en_origen_id = %s WHERE id = %s",
+                (ficha_en_origen_id, compra_id),
+            )
+            numero = _guia_en_origen_si_corresponde(cursor, compra_id)
+        conexion.commit()
+        return numero
+    finally:
+        conexion.close()
 
 
 def dependencias_del_lote_de_compra(compra_id: int, nueva_cantidad: float | None = None) -> dict | None:

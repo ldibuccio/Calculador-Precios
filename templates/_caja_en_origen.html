@@ -1,0 +1,101 @@
+{# ¿VIENE YA ARMADA EN CAJA NUESTRA? Lo marca el COMPRADOR y solo él: fue al
+   puesto, mandó las cajas y decidió comprarlo armado en vez del cajón. El
+   depósito no tiene cómo saberlo.
+
+   UN SOLO CONTROL y no una casilla más un selector: dos controles que tienen
+   que coincidir son la misma regla dos veces, y el día que se separan queda
+   una compra "marcada" sin caja o una caja sin marca. Acá elegir la caja ES
+   marcarla.
+
+   Y VIVE EN UN SOLO ARCHIVO porque lo usan CINCO pantallas de carga —el alta,
+   la manual, cada renglón de la comanda, el ingreso directo y el retroactivo—.
+   Escrito en cada una serían cinco copias de un filtro por artículo, que es
+   justo la familia que este proyecto ya pagó tres veces en una semana.
+
+   Quien lo incluye setea antes:
+     caja_campo            nombre/id del campo (default "ficha_en_origen_id").
+                           En la comanda va con el prefijo del renglón.
+     caja_articulo_select  id del <select> de artículo con el que se filtra.
+     caja_elegida          la ficha ya marcada, o none.
+     caja_bloqueada        true si la compra ya no admite cambios. #}
+{% set caja_campo = caja_campo | default("ficha_en_origen_id") %}
+{% set cajas_por_articulo = cajas_en_origen_por_articulo() %}
+{% if cajas_por_articulo %}
+{# El bloque arranca ESCONDIDO y lo muestra el JS de abajo cuando el artículo
+   elegido tiene cajas: un selector vacío se lee como "este artículo no tiene
+   cajas", que es falso.
+
+   El `hidden` se respeta porque acá NINGUNA regla de CSS le da `display` a
+   `.en-origen` — el margen y el ancho van inline a propósito. Con un
+   `display:` puesto en la hoja de la pantalla, `[hidden]` pierde (viene sin
+   `!important`) y el bloque quedaría a la vista con la orden de esconderse
+   dada: el atributo es la INTENCIÓN, el CSS es el efecto. #}
+<div class="en-origen" data-caja-en-origen data-articulo-select="{{ caja_articulo_select }}"
+     style="margin-top: 1rem;" hidden>
+  <label for="{{ caja_campo }}">¿Viene ya armada en caja nuestra?</label>
+  <select id="{{ caja_campo }}" name="{{ caja_campo }}"
+          style="width: 100%; min-width: 0;"
+          class="{{ 'campo-bloqueado' if caja_bloqueada }}">
+    <option value="">No, llega el cajón del proveedor</option>
+    {% for articulo_id, cajas in cajas_por_articulo.items() %}
+      {% for caja in cajas %}
+      <option value="{{ caja.id }}" data-articulo="{{ articulo_id }}"
+              {% if caja_elegida is defined and caja_elegida and caja_elegida|string == caja.id|string %}selected{% endif %}>
+        Sí, en {{ caja.nombre }}{% if caja.kilaje %} — {{ caja.kilaje }}{% endif %}
+      </option>
+      {% endfor %}
+    {% endfor %}
+  </select>
+</div>
+<script>
+  // EL SCRIPT VIAJA CON EL CONTROL, y no en un include aparte que cada
+  // pantalla tenga que acordarse de poner: el que se lo olvidara dejaría el
+  // bloque escondido para siempre —arranca `hidden`— y eso no se ve. Un
+  // control que no aparece no se reporta.
+  //
+  // La guarda de abajo lo hace idempotente: el cableado recorre TODOS los
+  // bloques de la página, así que registrarlo una vez alcanza aunque la
+  // comanda repita el control una vez por renglón.
+  if (!window.__cajasEnOrigenCableadas) {
+    window.__cajasEnOrigenCableadas = true;
+
+    // Las opciones se sacan y se vuelven a poner desde una copia guardada al
+    // cargar la pantalla: esconder un <option> con CSS no es confiable en
+    // todos los navegadores, y lo que el operario tiene adelante lo decide el
+    // navegador, no el atributo.
+    const CAJAS_DE_CADA_BLOQUE = new WeakMap();
+
+    function actualizarCajasEnOrigen(bloque) {
+      const select = bloque.querySelector("select");
+      const articulo = document.getElementById(bloque.dataset.articuloSelect);
+      if (!select || !articulo) return;
+
+      const todas = CAJAS_DE_CADA_BLOQUE.get(bloque) || [];
+      const suyas = todas.filter((o) => o.dataset.articulo === String(articulo.value));
+      const elegida = select.value;
+      select.length = 1;
+      suyas.forEach((o) => select.appendChild(o));
+      // Si la caja que estaba elegida no es de este artículo, vuelve al "no":
+      // dejarla puesta guardaría una marca que la base rechaza.
+      select.value = suyas.some((o) => o.value === elegida) ? elegida : "";
+      bloque.hidden = suyas.length === 0;
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+      document.querySelectorAll("[data-caja-en-origen]").forEach(function (bloque) {
+        const select = bloque.querySelector("select");
+        const articulo = document.getElementById(bloque.dataset.articuloSelect);
+        if (!select || !articulo) return;
+        CAJAS_DE_CADA_BLOQUE.set(bloque, Array.from(select.options).slice(1));
+        articulo.addEventListener("change", function () {
+          actualizarCajasEnOrigen(bloque);
+        });
+        // Y AL CARGAR, no solo al cambiar de artículo: en modo editar y en la
+        // comanda el artículo ya viene elegido, y sin esto el selector
+        // arrancaría con las cajas de TODOS los artículos.
+        actualizarCajasEnOrigen(bloque);
+      });
+    });
+  }
+</script>
+{% endif %}

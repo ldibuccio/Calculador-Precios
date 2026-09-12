@@ -231,7 +231,9 @@ from app.db import (
     listar_articulos_para_reproceso,
     cajas_armadas_por_ficha,
     lotes_para_reproceso,
+    compra_para_marcar_armada,
     dependencias_del_lote_de_compra,
+    marcar_compra_armada_en_origen,
     desglose_de_renglon_armado,
     guardar_control_de_pedido,
     guardar_lotes_elegidos,
@@ -2976,6 +2978,14 @@ async def agregar_compra_manual(
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
+            # LA MARCA VUELVE EN EL REINTENTO, acá y en los otros diez dicts
+            # que rearman el formulario tras un error. El que reintenta
+            # corrige el campo que la pantalla le señaló y aprieta de nuevo;
+            # no vuelve a revisar uno que ya había llenado. Perdida acá, la
+            # compra se guarda SIN marca y nadie se entera — y once lugares
+            # es de donde se cae una. Lo cuida
+            # `test_la_marca_VUELVE_en_el_reintento_de_las_cinco_pantallas`.
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return _renderizar_compra_manual(
             request, error=error, codigo_puesto=codigo_puesto, nombre=nombre, compra=compra, status_code=status_code
@@ -3145,6 +3155,7 @@ async def agregar_compra(
                 "importe": importe,
                 "sena": sena,
                 "tipo_retiro": tipo_retiro,
+                "ficha_en_origen_id": ficha_en_origen_id,
             }
             return templates.TemplateResponse(
                 request,
@@ -3176,6 +3187,7 @@ async def agregar_compra(
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return templates.TemplateResponse(
             request,
@@ -3225,6 +3237,7 @@ async def agregar_compra(
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return templates.TemplateResponse(
             request,
@@ -4085,6 +4098,7 @@ def editar_compra(
                 "importe": importe,
                 "sena": sena,
                 "tipo_retiro": tipo_retiro,
+                "ficha_en_origen_id": ficha_en_origen_id,
             }
             return templates.TemplateResponse(
                 request,
@@ -4115,6 +4129,7 @@ def editar_compra(
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return templates.TemplateResponse(
             request,
@@ -4156,6 +4171,7 @@ def editar_compra(
                 "importe": importe,
                 "sena": sena,
                 "tipo_retiro": tipo_retiro,
+                "ficha_en_origen_id": ficha_en_origen_id,
             }
             return templates.TemplateResponse(
                 request,
@@ -4192,6 +4208,11 @@ def editar_compra(
                 cantidad_kilos,
                 cantidad_fraccion,
                 valores["tipo_retiro"],
+                # La marca va con la cantidad y no aparte: comparten el
+                # bloqueo (una compra recepcionada no se re-marca por acá,
+                # para eso está "Vino armada" de Buscar Compras) y comparten
+                # el artículo, que es contra lo que la caja se valida.
+                valores["ficha_en_origen_id"],
             )
         if not precio_bloqueado:
             actualizar_precio_compra(compra_id, valores["importe"], valores["sena"])
@@ -4209,6 +4230,7 @@ def editar_compra(
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return templates.TemplateResponse(
             request,
@@ -4230,6 +4252,113 @@ def editar_compra(
     filtros_query = request.url.query
     destino = f"/compras/buscar?{filtros_query}" if filtros_query else "/compras/buscar"
     return RedirectResponse(url=destino, status_code=303)
+
+
+def _dependencias_con_nombres(compra_id: int, nueva_cantidad: float | None = None) -> dict | None:
+    """Qué salió del lote de esta compra, con el NOMBRE del cliente en cada renglón.
+
+    `dependencias_del_lote_de_compra` devuelve `cliente_id` porque no tiene
+    por qué saber de nombres. El paso de traducirlo vive acá una sola vez: lo
+    necesitan las DOS pantallas que muestran esta lista —Corregir Recepción y
+    "Vino armada"— y escrito en cada una, la segunda se olvida del `else` y
+    muestra un hueco donde va el cliente.
+    """
+    dependencias = dependencias_del_lote_de_compra(compra_id, nueva_cantidad=nueva_cantidad)
+    if dependencias:
+        clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+        for renglon in dependencias["renglones"]:
+            renglon["cliente_nombre"] = clientes.get(renglon["cliente_id"], "Sin cliente")
+    return dependencias
+
+
+def _renderizar_vino_armada(request: Request, compra_id: int, *, error=None, status_code: int = 200):
+    """La pantalla de "Vino armada" para una compra YA recepcionada. Una sola armadora para el GET y los reintentos del POST.
+
+    Todo lo que muestra se vuelve a LEER acá y nada se arrastra del POST: lo
+    que salió del lote lo calcula el FIFO en el momento, y entre que se abrió
+    la pantalla y se apretó el botón pudo armarse un pedido. Un reintento que
+    repitiera la foto vieja mostraría un lote más entero de lo que está.
+    """
+    compra = compra_para_marcar_armada(compra_id)
+    if compra is None:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+
+    # POR QUÉ NO SE PUEDE, cuando no se puede, y ANTES del botón. Los tres
+    # motivos son distintos y los tres se dicen con todas las letras: un botón
+    # que no funciona y no explica nada es peor que no tenerlo.
+    bloqueo = None
+    if compra["ficha_en_origen_id"] is not None:
+        bloqueo = "Esta compra ya está marcada como venida armada: su guía R ya está cargada."
+    elif compra["estado"] != "recepcionado":
+        bloqueo = (
+            "Esta compra todavía no se recepcionó. La marca va en la carga —editala y elegí "
+            "la caja— y la guía R sale sola cuando Depósito la reciba."
+        )
+    elif compra["motivo_corte"] is not None:
+        bloqueo = (
+            f"{compra['motivo_corte']} Esa mercadería ya está contada en el stock inicial, "
+            "así que no hay lote contra el que armar la guía R."
+        )
+
+    contexto = {
+        "compra": compra,
+        "bloqueo": bloqueo,
+        "cajas": _cajas_en_origen_por_articulo().get(compra["articulo_id"], []),
+        # QUÉ SALIÓ YA DE ESE LOTE, a la vista antes de confirmar. Acá el lote
+        # puede tener días y estar comido —en la recepción nace en la misma
+        # transacción y eso no puede pasar—, y si no llega, el freno de la
+        # guía R rebota. Que el número esté arriba del botón es lo que separa
+        # "no anduvo" de "ya sabía por qué".
+        "dependencias": _dependencias_con_nombres(compra_id) if bloqueo is None else None,
+        "error": error,
+    }
+    return templates.TemplateResponse(
+        request, "compra_vino_armada.html", contexto, status_code=status_code
+    )
+
+
+@app.get("/compras/{compra_id}/vino-armada")
+def ver_vino_armada(request: Request, compra_id: int):
+    """La salida para la compra que se recepcionó SIN la marca de "viene armada".
+
+    El camino normal es que la marque el comprador al cargarla y que la guía R
+    salga sola al recepcionar. Esta pantalla es para cuando eso no pasó: sin
+    ella, la única forma de registrarlo sería cargar la guía R a mano, que es
+    documentar un trabajo que no se hizo así — el operario no reprocesó nada,
+    la mercadería vino armada del puesto.
+    """
+    return _renderizar_vino_armada(request, compra_id)
+
+
+@app.post("/compras/{compra_id}/vino-armada")
+def marcar_vino_armada(request: Request, compra_id: int, ficha_en_origen_id: str = Form("")):
+    """Escribe la marca y carga la guía R, las dos en la MISMA transacción.
+
+    Acá no se re-decide nada de lo que la pantalla mostró: las guardas —que
+    esté recepcionada, que no esté ya marcada, que la fecha pase el corte, que
+    la caja sea de este artículo— viven en `marcar_compra_armada_en_origen`,
+    que es donde se escribe. Un formulario armado a mano no ve ningún cartel.
+    """
+    texto = (ficha_en_origen_id or "").strip()
+    if not texto.isdigit():
+        return _renderizar_vino_armada(
+            request, compra_id, error="Elegí en qué caja vino armada.", status_code=400
+        )
+
+    try:
+        numero = marcar_compra_armada_en_origen(compra_id, int(texto))
+    except (ReprocesoAnteriorAlCorte, StockInsuficienteParaReproceso) as freno:
+        motivo = _error_de_la_guia_en_origen(freno, COLA_GUIA_EN_ORIGEN_AL_MARCAR)
+        return _renderizar_vino_armada(request, compra_id, error=motivo, status_code=400)
+    except ValueError as rechazo:
+        return _renderizar_vino_armada(request, compra_id, error=str(rechazo), status_code=400)
+    except Exception as error_db:
+        return _renderizar_vino_armada(
+            request, compra_id, error=f"No se pudo guardar: {error_db}", status_code=500
+        )
+
+    aviso = f"Marcada como venida armada: se cargó la guía R{numero}."
+    return RedirectResponse(url=f"/compras/buscar?{urlencode({'aviso': aviso})}", status_code=303)
 
 
 def _borrar_fotos_del_storage(rutas, contexto: str) -> None:
@@ -4573,8 +4702,7 @@ def _renderizar_pantalla_corregir_recepcion(
         # La lista va ARRIBA del formulario y ANTES de escribir nada: el que
         # corrige tiene que decidir qué número poner, y eso depende de qué se
         # llevó el lote.
-        dependencias = dependencias_del_lote_de_compra(compra_id) if compra else None
-        clientes = {c["id"]: c["nombre"] for c in listar_clientes()} if dependencias else {}
+        dependencias = _dependencias_con_nombres(compra_id) if compra else None
         # LAS FOTOS, y ésta es la pantalla que más las necesita: acá se
         # cambia el número de bultos de una compra YA recepcionada, y la
         # foto de la balanza es la evidencia de ese número. Hasta el 10/09
@@ -4588,10 +4716,6 @@ def _renderizar_pantalla_corregir_recepcion(
 
     if compra is None:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
-
-    if dependencias:
-        for renglon in dependencias["renglones"]:
-            renglon["cliente_nombre"] = clientes.get(renglon["cliente_id"], "Sin cliente")
 
     return templates.TemplateResponse(
         request,
@@ -4704,6 +4828,12 @@ def cargar_ingreso_retroactivo(
         "proveedor_id": proveedor_id, "articulo_id": articulo_id,
         "cantidad_cajones": cantidad_cajones, "contenido_por_cajon": contenido_por_cajon,
         "importe": importe, "fecha_recepcion": fecha_recepcion,
+        # Va a la precarga como TEXTO, igual que los demás: al re-renderizar
+        # por un error, el selector tiene que volver con la caja que se había
+        # elegido. Sin esto la marca se pierde en silencio en cada reintento,
+        # que es la peor forma de perderla — el que reintenta no vuelve a
+        # mirar un campo que ya llenó.
+        "ficha_en_origen_id": ficha_en_origen_id,
     }
 
     error, cajones = _validar_cantidad_cajones(cantidad_cajones)
@@ -6776,6 +6906,7 @@ def ingresar_mercaderia(
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
                 "tipo_retiro": tipo_retiro,
+                "ficha_en_origen_id": ficha_en_origen_id,
             }
             return templates.TemplateResponse(
                 request,
@@ -6804,6 +6935,7 @@ def ingresar_mercaderia(
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
             "tipo_retiro": tipo_retiro,
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return templates.TemplateResponse(
             request,
@@ -6837,6 +6969,11 @@ def ingresar_mercaderia(
             None,
             valores["tipo_retiro"],
             ingreso_directo_deposito=True,
+            # Y ACÁ LA GUÍA R SALE EN EL MISMO INSERT, porque esta compra nace
+            # 'recepcionado' y no pasa por Recepción: sin esto, el único
+            # camino para registrar una entrada que ya viene armada sería la
+            # guía R a mano.
+            ficha_en_origen_id=valores["ficha_en_origen_id"],
         )
     except Exception as error_db:
         articulos = listar_articulos()
@@ -6847,6 +6984,7 @@ def ingresar_mercaderia(
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
             "tipo_retiro": tipo_retiro,
+            "ficha_en_origen_id": ficha_en_origen_id,
         }
         return templates.TemplateResponse(
             request,
@@ -7067,26 +7205,38 @@ def _aviso_de_recepcion(aviso_retiro: str | None, numero_guia: int | None) -> st
     return " ".join(partes) or None
 
 
-def _error_de_la_guia_en_origen(error: Exception) -> str | None:
+# Lo que queda deshecho cuando la guía en origen no se puede cargar. Es lo
+# ÚNICO que cambia entre los dos caminos que la disparan —al recepcionar se
+# cae la recepción; al marcarla a mano no se escribe la marca— y por eso viaja
+# como parámetro: los DOS frenos se nombran una sola vez. Escrito como dos
+# funciones parecidas, el día que aparezca un freno nuevo se agrega en una.
+COLA_GUIA_EN_ORIGEN_AL_RECIBIR = (
+    "No se recepcionó: sacale la marca a la compra o pedí ayuda antes de recibirla."
+)
+COLA_GUIA_EN_ORIGEN_AL_MARCAR = (
+    "No se marcó nada: la compra quedó como estaba."
+)
+
+
+def _error_de_la_guia_en_origen(error: Exception, cola: str = COLA_GUIA_EN_ORIGEN_AL_RECIBIR) -> str | None:
     """Traduce a algo legible los DOS frenos que pueden impedir la guía en origen.
 
-    Si alguno salta, la recepción entera se deshace (van en la misma
-    transacción), así que la pantalla tiene que decir POR QUÉ no se recibió —
-    un 500 mudo deja al operario con el camión en la puerta y sin saber qué
-    hacer. El del corte es el más probable el día que se cargue una compra
-    vieja: esa mercadería ya está adentro de la foto del corte.
+    Si alguno salta, lo que la acompañaba en la transacción se deshace entero,
+    así que la pantalla tiene que decir POR QUÉ — un 500 mudo deja al operario
+    con el camión en la puerta y sin saber qué hacer. El del corte es el más
+    probable el día que se cargue una compra vieja: esa mercadería ya está
+    adentro de la foto del corte.
     """
     if isinstance(error, ReprocesoAnteriorAlCorte):
         return (
             "Esta compra viene armada en caja nuestra, pero su fecha es anterior al corte "
             "del modelo, así que no se le puede cargar la guía R (esa mercadería ya está "
-            "contada en el stock inicial). No se recepcionó: sacale la marca a la compra "
-            "o pedí ayuda antes de recibirla."
+            f"contada en el stock inicial). {cola}"
         )
     if isinstance(error, StockInsuficienteParaReproceso):
         return (
             f"Esta compra viene armada en caja nuestra y no se pudo cargar su guía R: "
-            f"{error}. No se recepcionó."
+            f"{error}. {cola}"
         )
     return None
 
