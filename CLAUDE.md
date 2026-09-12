@@ -3403,3 +3403,59 @@ Alertas, que sí usa `data-rotulo`.
 Es el corolario 20 en su forma barata: **antes de construir para conservar
 algo, verificar que ese algo exista.** Un `grep data-rotulo` de un segundo, y
 la mitad del requisito se cae.
+
+## Corolario 53: un hallazgo que NO PUEDE ser cero tampoco informa nada
+
+Del 12/09, y es **el corolario 47 dado vuelta**. Los dos son la misma falla
+en espejo, y conviene leerlos juntos:
+
+| | qué pasa | cómo se ve |
+|---|---|---|
+| **Corolario 47** | el número **no puede dar distinto de cero** | "acá no hay problema" |
+| **Éste** | el número **no puede dar cero** | "acá está lleno de problemas" |
+
+**Salió de la herramienta, no del código.** El detector de quiebre de
+`scripts/medir_layout.py` compara el alto de una celda contra su
+`line-height` por una tolerancia. Con `1.6` funciona; con **`1.0` TODA celda
+daría quebrada**, porque el padding y el `line-height` redondeado empujan
+unos píxeles sin que haya una segunda línea.
+
+Y ahí está lo peligroso, dicho por el dueño: **un detector que marca todo se
+ve igual de trabajador que uno que funciona.** Devuelve listas largas, los
+informes salen llenos, y nadie sospecha de una herramienta que "encuentra
+mucho". El de corolario 47 tranquiliza; éste da la sensación contraria —de
+rigor— y las dos sensaciones son falsas por el mismo motivo: **el número no
+depende de lo que se está midiendo.**
+
+### La regla, y vale para cualquier diagnóstico
+
+**Antes de creerle a un detector, verificar que pueda dar las DOS
+respuestas.** No alcanza con el caso que tiene que encontrar: hace falta
+también el que NO tiene que encontrar, y los dos plantados a propósito.
+
+Un test que solo prueba el caso positivo lo pasa igual un detector que marca
+todo. Un test que solo prueba el negativo lo pasa igual uno que no marca
+nada. **Los dos juntos son lo único que lo separa de una herramienta rota**,
+y por eso el test del detector tiene la pareja completa —la celda que
+envuelve seguro y la página donde no envuelve ninguna— además del canario que
+baja la tolerancia a 1.0.
+
+Vale para todo lo que busque algo: una alerta, una consulta de ofensores, un
+validador, una regla de lint, un umbral. Es la forma CONSTRUCTIVA de lo que
+**"más hallazgos que población condena la heurística"** dice desde el campo:
+aquélla mira el resultado sobre datos reales y condena; ésta se hace antes,
+sobre casos plantados, y decide si la herramienta sirve.
+
+### El límite conocido de este detector, escrito antes de que alguien le crea
+
+Y es el 47 otra vez, adentro de la herramienta que salió del 47:
+
+**El `desborde` que devuelve `medir` es de la PÁGINA.** En una pantalla con
+un contenedor `overflow-x: auto` ese número **da 0 aunque la tabla se salga**
+— el contenedor se lo come. Es exactamente lo que pasó con las cuatro
+pantallas de Cargar Precios y Buscar Compras el 12/09.
+
+El módulo **no lo adivina**: hay que mirar si la pantalla tiene alguno y, si
+lo tiene, medir la tabla contra su caja (`tabla.scrollWidth −
+caja.clientWidth`). Está en el docstring de `medir`, y se repite acá porque
+el que va a creerle a ese cero es el que leyó este archivo y no el módulo.
