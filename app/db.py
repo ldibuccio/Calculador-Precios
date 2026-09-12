@@ -6451,41 +6451,39 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
         conexion.close()
 
 
-# La diferencia de kilaje de una compra: cajones × contenido, con el real
-# pisando al estimado columna por columna. Escrita UNA vez porque la cuenta y
-# el detalle tienen que dar lo mismo — si se separan, el banner dice un número
-# y la pantalla lista otro.
-_SQL_KILOS_DE_LA_COMPRA = """
-    (c.cantidad_cajones * c.contenido_por_cajon) AS total_estimado,
-    (COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
-     * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon)) AS total_real
-"""
-
-# El MISMO recorte para las dos. Solo 'kilo': en 'unidad' y 'cubeta' un umbral
-# de un kilo no significa nada. Y solo las que tienen algún número real
-# cargado: sin eso no hay nada que comparar.
-_SQL_COMPRAS_COMPARABLES = """
+# FALTARON CAJONES: se recibieron MENOS bultos de los que se compraron.
+#
+# NO ES una diferencia de kilos, y la distinción costó tres mediciones el
+# 12/09. De las 25 diferencias de kilaje más grandes, 21 eran de CONTENIDO
+# —el cajón vino más pesado o más liviano— y eso resultó ser variación real
+# de la fruta: medido por artículo, 17 de 22 referencias tienen desvío menor
+# a un kilo y ocho están en cero exacto. Un aviso sobre eso dispararía
+# veintiún veces por semana sin nada que corregir.
+#
+# Las que importan son las otras 2 de 25: Limón 45 -> 35 y Pera 40 -> 34.
+# Ahí FALTA MERCADERÍA, no varía el peso del bulto.
+#
+# MENOS y no "distinto": recibir de más también es un dato, pero no es el
+# mismo problema —no falta nada— y mezclarlos dejaría al aviso sin una sola
+# cosa que decir.
+#
+# TODAS LAS UNIDADES, al revés que el intento anterior: los cajones se
+# cuentan igual sean de kilo, de unidad o de cubeta. El filtro por 'kilo'
+# tenía sentido cuando el umbral era en kilos; acá sería dejar afuera
+# faltantes reales por el envase del artículo.
+_SQL_CAJONES_FALTANTES = """
     FROM compras c
     JOIN articulos a ON a.id = c.articulo_id
     JOIN proveedores p ON p.id = c.proveedor_id
     WHERE c.estado = 'recepcionado'
-      AND a.unidad_compra = 'kilo'
+      AND c.cantidad_cajones_real IS NOT NULL
       AND c.fecha_operacion >= %s AND c.fecha_operacion <= %s
-      AND (c.cantidad_cajones_real IS NOT NULL OR c.contenido_por_cajon_real IS NOT NULL)
-      AND ABS((COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
-               * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon))
-              - (c.cantidad_cajones * c.contenido_por_cajon)) > %s
+      AND (c.cantidad_cajones - c.cantidad_cajones_real) >= %s
 """
 
 
-def contar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> dict:
-    """Compras recibidas con más de `umbral_kilos` de diferencia contra lo comprado.
-
-    LA DIFERENCIA ES EL TOTAL, no el por-bulto: un kilo por cajón sobre
-    cuarenta cajones son cuarenta kilos, así que los dos umbrales se
-    llamarían igual y medirían cosas distintas. Se compara
-    cajones × contenido con el real pisando al estimado columna por columna,
-    que es la misma cuenta que usa el costeo.
+def contar_cajones_faltantes(desde, hasta, umbral_cajones) -> dict:
+    """Compras que se recibieron con al menos `umbral_cajones` bultos MENOS de los comprados.
 
     NO SE RECORTA POR EL CORTE, y es a propósito: el corte existe para el
     modelo de STOCK —de ahí para atrás la foto ya trae todo neteado— y esto
@@ -6499,8 +6497,8 @@ def contar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> dict:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "SELECT COUNT(*), MIN(c.fecha_operacion)" + _SQL_COMPRAS_COMPARABLES,
-                (desde, hasta, umbral_kilos),
+                "SELECT COUNT(*), MIN(c.fecha_operacion)" + _SQL_CAJONES_FALTANTES,
+                (desde, hasta, umbral_cajones),
             )
             casos, mas_viejo = cursor.fetchone()
         return {"casos": int(casos), "mas_viejo": mas_viejo}
@@ -6508,19 +6506,18 @@ def contar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> dict:
         conexion.close()
 
 
-def listar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> list[dict]:
-    """Las mismas compras que cuenta contar_diferencias_de_kilaje, con su detalle.
+def listar_cajones_faltantes(desde, hasta, umbral_cajones) -> list[dict]:
+    """Las mismas compras que cuenta contar_cajones_faltantes, con su detalle.
 
-    MISMO RECORTE, escrito UNA vez (_SQL_COMPRAS_COMPARABLES): si la cuenta y
-    la lista tuvieran cada una su WHERE, el día que se separen el banner diría
-    un número y la pantalla listaría otro, y nadie sabría cuál mirar.
+    MISMO RECORTE, escrito UNA vez (_SQL_CAJONES_FALTANTES): si la cuenta y
+    la lista tuvieran cada una su WHERE, el día que se separen el banner
+    diría un número y la pantalla listaría otro, y nadie sabría cuál mirar.
 
-    `contenido_real_nulo` viaja con cada fila porque cambia lo que el número
-    significa: Depósito contó los cajones y no pesó el bulto, así que el total
-    real usa el contenido ESTIMADO y la diferencia sale entera de los cajones.
-    Esa fila no dice "recibimos menos kilos", dice "no lo pesamos".
+    Trae los KILOS que representa el faltante además de los bultos: seis
+    cajones de Pera son ciento ocho kilos, y el que decide si reclamar mira
+    la plata, no la cantidad de cajas.
 
-    Las más grandes primero: son las que no pueden ser una diferencia real.
+    Las más grandes primero.
     """
     conexion = obtener_conexion()
     try:
@@ -6528,18 +6525,21 @@ def listar_diferencias_de_kilaje(desde, hasta, umbral_kilos) -> list[dict]:
             cursor.execute(
                 """
                 SELECT c.id, c.fecha_operacion, a.nombre AS articulo,
-                       p.nombre AS proveedor, p.codigo_puesto AS puesto,
-                       c.contenido_por_cajon_real IS NULL AS contenido_real_nulo,
+                       a.unidad_compra, p.nombre AS proveedor,
+                       p.codigo_puesto AS puesto,
+                       c.cantidad_cajones AS cajones_comprados,
+                       c.cantidad_cajones_real AS cajones_recibidos,
+                       (c.cantidad_cajones - c.cantidad_cajones_real) AS cajones_faltantes,
+                       ((c.cantidad_cajones - c.cantidad_cajones_real)
+                        * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon))
+                        AS contenido_faltante
                 """
-                + _SQL_KILOS_DE_LA_COMPRA
-                + _SQL_COMPRAS_COMPARABLES
+                + _SQL_CAJONES_FALTANTES
                 + """
-                ORDER BY ABS((COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
-                              * COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon))
-                             - (c.cantidad_cajones * c.contenido_por_cajon)) DESC,
+                ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC,
                          c.fecha_operacion DESC
                 """,
-                (desde, hasta, umbral_kilos),
+                (desde, hasta, umbral_cajones),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]

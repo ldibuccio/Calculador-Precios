@@ -145,7 +145,7 @@ from app.db import (
     listar_subcuentas_costos_fijos,
     obtener_subcuenta_costos_fijos,
     devoluciones_vinculadas_por_rango,
-    listar_diferencias_de_kilaje,
+    listar_cajones_faltantes,
     listar_pedidos_incompletos,
     listar_pedidos_para_reingreso,
     listar_renglones_para_reingreso,
@@ -186,7 +186,7 @@ from app.db import (
     PedidoInexistenteParaControl,
     PedidoYaAnulado,
     anular_pedido,
-    contar_diferencias_de_kilaje,
+    contar_cajones_faltantes,
     contar_pedidos_sin_controlar,
     listar_renglones_pedidos_vigentes,
     anular_renglon_pedido,
@@ -397,19 +397,18 @@ ORIGENES_RETIRO_LABELS = {
 # es correcto; acortarlo la achica sola, que también.
 DIAS_PASADOS_LISTADO_PEDIDOS = 7
 
-# LA ALERTA DE KILAJE. El umbral es de UN kilo sobre el TOTAL de la compra
-# (cajones × contenido), no por bulto: un kilo por cajón sobre cuarenta
-# cajones son cuarenta kilos, y los dos umbrales se llamarían igual midiendo
-# cosas distintas.
+# FALTARON CAJONES. Un cajón de diferencia ya es un caso: un bulto que se
+# compró y no llegó es mercadería que falta, sin banda gris.
 #
-# UN KILO DEJA MUCHOS CASOS Y ESTÁ BIEN, decidido el 12/09 con el dato
-# adelante: de 41 diferencias medidas, 37 estaban arriba de 10 kilos y 25
-# arriba de 25 — o sea CUATRO en toda la banda de 1 a 10. Si fueran
-# imprecisiones de balanza la banda chica sería la gorda; son dos poblaciones
-# y la grande no es de medición. El umbral no sale del conteo: sale de que
-# una diferencia real es de uno o dos kilos, que es cosa del negocio.
-UMBRAL_DIFERENCIA_KILOS = 1
-DIAS_ALERTA_DIFERENCIA_KILOS = 7
+# NO ES la alerta de kilos que se intentó primero, y la distinción costó
+# tres mediciones el 12/09. De las 25 diferencias de kilaje más grandes, 21
+# eran de CONTENIDO —el cajón vino más pesado o más liviano— y medido por
+# artículo eso resultó variación real de la fruta: 17 de 22 referencias con
+# desvío menor a un kilo y ocho en cero exacto. Un aviso sobre eso
+# dispararía veintiún veces por semana sin nada que corregir, que es el
+# cartel que se deja de mirar. Las que importaban eran las otras dos.
+UMBRAL_CAJONES_FALTANTES = 1
+DIAS_ALERTA_CAJONES_FALTANTES = 7
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
 REGEX_CODIGO_PUESTO = re.compile(r"^[NL][0-9]{2}P[0-9]{2}$")
@@ -10675,33 +10674,37 @@ def _url_retiros_viejos(datos) -> str:
     })
 
 
-def _detalle_diferencias_de_kilaje() -> dict:
-    """Las filas de la alerta de kilaje: una por compra, la más grande arriba.
+def _detalle_cajones_faltantes() -> dict:
+    """Las filas de la alerta de cajones faltantes: una por compra, la mayor arriba.
 
     El RESUMEN se cuenta sobre estas filas y no con otra consulta: es el
     rótulo del bloque, así que tiene que contar lo que se ve.
     """
-    filas = listar_diferencias_de_kilaje(
-        _hoy_argentina() - timedelta(days=DIAS_ALERTA_DIFERENCIA_KILOS),
+    filas = listar_cajones_faltantes(
+        _hoy_argentina() - timedelta(days=DIAS_ALERTA_CAJONES_FALTANTES),
         _hoy_argentina(),
-        UMBRAL_DIFERENCIA_KILOS,
+        UMBRAL_CAJONES_FALTANTES,
     )
     renglones = []
     for fila in filas:
-        diferencia = float(fila["total_real"]) - float(fila["total_estimado"])
+        # Los kilos que representa el faltante, no solo los bultos: seis
+        # cajones de Pera son ciento ocho kilos, y el que decide si reclamar
+        # mira la plata. Con la unidad al lado, que en 'unidad' y 'cubeta'
+        # decir "kg" sería mentir.
+        contenido = fila["contenido_faltante"]
         renglones.append([
             fila["fecha_operacion"].strftime("%d/%m"),
             fila["articulo"],
             f'{fila["proveedor"]} ({fila["puesto"]})',
-            _formatear_numero(fila["total_estimado"]),
-            # "no se pesó" y no un número: con contenido real nulo, el total
-            # real se armó con el contenido ESTIMADO, así que mostrarlo como
-            # un dato medido sería afirmar algo que nadie midió.
-            "no se pesó" if fila["contenido_real_nulo"] else _formatear_numero(fila["total_real"]),
-            f'{"+" if diferencia > 0 else ""}{_formatear_numero(diferencia)} kg',
+            _formatear_numero(fila["cajones_comprados"]),
+            _formatear_numero(fila["cajones_recibidos"]),
+            f'−{_formatear_numero(fila["cajones_faltantes"])}',
+            (f'−{_formatear_numero(contenido)}{SUFIJOS_UNIDAD_COMPRA.get(fila["unidad_compra"], "")}'
+             if contenido is not None else "—"),
         ])
     return {
-        "columnas": ["Fecha", "Artículo", "Proveedor", "Comprado", "Recibido", "Diferencia"],
+        "columnas": ["Fecha", "Artículo", "Proveedor", "Comprados", "Recibidos",
+                     "Faltan", "Equivale a"],
         "filas": renglones,
         "resumen": f"{len(renglones)} compra{'s' if len(renglones) != 1 else ''}",
     }
@@ -10966,9 +10969,9 @@ ALERTAS = [
         ),
     ),
     DefinicionAlerta(
-        codigo="diferencia_de_kilaje",
-        titulo="Compras con diferencia de kilos entre lo comprado y lo recibido",
-        titulo_corto="Diferencia de kilos",
+        codigo="cajones_faltantes",
+        titulo="Compras que llegaron con menos bultos de los que se compraron",
+        titulo_corto="Faltaron bultos",
         # Al detalle del sector y no a Buscar Compras: con cuarenta casos, un
         # número sin la lista al lado no dice por dónde empezar.
         url="/compras/alertas",
@@ -10976,12 +10979,12 @@ ALERTAS = [
         # Solo el comprador: es él el que cargó el estimado y el único que
         # puede decir si la diferencia es real o se tipeó mal.
         modulos=("compras",),
-        contar=lambda: contar_diferencias_de_kilaje(
-            _hoy_argentina() - timedelta(days=DIAS_ALERTA_DIFERENCIA_KILOS),
+        contar=lambda: contar_cajones_faltantes(
+            _hoy_argentina() - timedelta(days=DIAS_ALERTA_CAJONES_FALTANTES),
             _hoy_argentina(),
-            UMBRAL_DIFERENCIA_KILOS,
+            UMBRAL_CAJONES_FALTANTES,
         ),
-        detallar=_detalle_diferencias_de_kilaje,
+        detallar=_detalle_cajones_faltantes,
     ),
     DefinicionAlerta(
         codigo="mails_sin_confirmar",

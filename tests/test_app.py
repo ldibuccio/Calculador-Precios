@@ -11201,7 +11201,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_pedidos_con_renglones_sin_identificar": VACIO,
         "contar_pedidos_incompletos": VACIO,
         "contar_pedidos_sin_controlar": VACIO,
-        "contar_diferencias_de_kilaje": VACIO,
+        "contar_cajones_faltantes": VACIO,
         "contar_mails_pedido_sin_procesar": VACIO,
         "contar_pedidos_faltantes": VACIO,
         "contar_casillas_sin_revisar": VACIO,
@@ -11230,7 +11230,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     leidos_ia = mocks["contar_mails_pedido_leidos_con_ia"]
     incompletos = mocks["contar_pedidos_incompletos"]
     sin_controlar = mocks["contar_pedidos_sin_controlar"]
-    kilaje = mocks["contar_diferencias_de_kilaje"]
+    faltantes = mocks["contar_cajones_faltantes"]
 
     assert resumen["corrio"] is True and resumen["fallaron"] == 0
     # "Más de 48 horas" = de anteayer para atrás; señas y comprados, 7 días.
@@ -11248,10 +11248,62 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
     # se controla hoy a la tarde — una alerta prendida a la mañana con lo que
     # todavía se está por hacer se aprende a ignorar.
     sin_controlar.assert_called_once_with(date(2026, 7, 30), date(2026, 8, 5))
-    # Kilaje: 7 días para atrás y HASTA HOY (una compra recibida hoy con 40
-    # kilos de diferencia hay que verla hoy), con el umbral de UN kilo sobre
-    # el TOTAL de la compra.
-    kilaje.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
+    # Cajones faltantes: 7 días para atrás y HASTA HOY (una compra que llegó
+    # hoy con diez bultos de menos hay que verla hoy), con el umbral de UN
+    # cajón — un bulto que se compró y no llegó no tiene banda gris.
+    faltantes.assert_called_once_with(date(2026, 7, 30), HOY_DE_PRUEBA, 1)
+
+
+# Las CINCO pantallas que precargan el contenido por cajón. La lista va acá
+# escrita una vez: el test de abajo la recorre entera, así que una sexta
+# pantalla que copie el mismo JS entra al test el día que se la agregue a
+# esta lista — y si no se agrega, el grep del test lo dice.
+PANTALLAS_QUE_PRECARGAN_CONTENIDO = (
+    "compra_form", "compra_manual", "compra_revision_foto",
+    "compra_listado", "compra_fotos_multiples",
+    # La SEXTA, que no está en Compras y por eso no apareció grepeando las
+    # de compra_*: el ingreso directo del depósito precarga igual.
+    "deposito_ingresar",
+)
+
+
+def test_cambiar_a_un_articulo_SIN_referencia_LIMPIA_el_contenido_precargado():
+    """Sin el else, queda el número del artículo ANTERIOR: un valor de otra cosa.
+
+    Es peor que el default y peor que el vacío: el 16 de la Mandarina
+    quedaría cargado sobre un Cherry, y el que lo mira no tiene cómo saber
+    de dónde salió.
+
+    Y la referencia vacía va a dejar de ser rara: es lo que le corresponde a
+    un artículo que viene en formatos distintos por diseño, donde precargar
+    acierta nunca. Ver la sección "Un campo que el sistema PRECARGA" de
+    CLAUDE.md.
+
+    LAS CINCO PANTALLAS, porque es la misma copia escrita cinco veces: el
+    día que se arregle una sola, este test cae por las otras cuatro.
+    """
+    for nombre in PANTALLAS_QUE_PRECARGAN_CONTENIDO:
+        js = io.open(f"templates/{nombre}.html", encoding="utf-8").read()
+        assert 'contenidoInput.value = contenidoReferencia ? contenidoReferencia : "";' in js, nombre
+        # Y la forma vieja no puede quedar en ninguna: con las dos, gana la
+        # que corra última y el arreglo depende del orden.
+        assert "if (contenidoReferencia) {" not in js, nombre
+
+
+def test_no_hay_una_SEXTA_pantalla_que_precargue_el_contenido_sin_el_arreglo():
+    """El test de arriba mira una lista escrita a mano: esto verifica la lista.
+
+    Un test que recorre una lista fija no puede ver lo que no está en la
+    lista — que es, por definición, lo que falta. Así que acá se barren
+    TODAS las plantillas y se exige que las que tocan contenidoReferencia
+    sean exactamente esas cinco.
+    """
+    import glob
+
+    tocan = {ruta.split("/")[-1].removesuffix(".html")
+             for ruta in glob.glob("templates/*.html")
+             if "contenidoReferencia" in io.open(ruta, encoding="utf-8").read()}
+    assert tocan == set(PANTALLAS_QUE_PRECARGAN_CONTENIDO), tocan
 
 
 # --- La pantalla de Alertas del sector (12/09) -------------------------------
@@ -11259,7 +11311,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
 # con una fila por caso. Los bloques salen del registro, no escritos a mano.
 
 
-def _alertas_de_compras(filas_kilaje=None, filas_incompletos=None, foto=None):
+def _alertas_de_compras(filas_faltantes=None, filas_incompletos=None, foto=None):
     """Abre /compras/alertas con el detalle parcheado, y devuelve el marcado.
 
     Parchea los LISTADORES y no los detalladores: así lo que se prueba es la
@@ -11269,7 +11321,7 @@ def _alertas_de_compras(filas_kilaje=None, filas_incompletos=None, foto=None):
     from unittest.mock import patch as _patch
     with (
         _patch("app.main.listar_estado_alertas", return_value=foto if foto is not None else _foto_alertas()),
-        _patch("app.main.listar_diferencias_de_kilaje", return_value=filas_kilaje or []),
+        _patch("app.main.listar_cajones_faltantes", return_value=filas_faltantes or []),
         _patch("app.main.listar_pedidos_incompletos", return_value=filas_incompletos or []),
         _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
     ):
@@ -11278,13 +11330,19 @@ def _alertas_de_compras(filas_kilaje=None, filas_incompletos=None, foto=None):
     return respuesta.text.split("</style>")[-1]
 
 
-KILAJE_DE_PRUEBA = [
+# Los dos casos REALES del 12/09, con nombres de ejemplo: Limón 45 -> 35 y
+# Pera 40 -> 34. Y el segundo en 'unidad' a propósito: los cajones se cuentan
+# igual sea cual sea el envase, y el sufijo del equivalente tiene que
+# acompañar — decir "kg" sobre unidades sería mentir.
+FALTANTES_DE_PRUEBA = [
     {"id": 501, "fecha_operacion": date(2026, 8, 5), "articulo": "EJEMPLO Uno",
-     "proveedor": "EJEMPLO Prov", "puesto": "N99P01", "contenido_real_nulo": False,
-     "total_estimado": 800, "total_real": 900},
+     "unidad_compra": "kilo", "proveedor": "EJEMPLO Prov", "puesto": "N99P01",
+     "cajones_comprados": 45, "cajones_recibidos": 35,
+     "cajones_faltantes": 10, "contenido_faltante": 170},
     {"id": 502, "fecha_operacion": date(2026, 8, 4), "articulo": "EJEMPLO Dos",
-     "proveedor": "EJEMPLO Otro", "puesto": "N99P02", "contenido_real_nulo": True,
-     "total_estimado": 800, "total_real": 740},
+     "unidad_compra": "unidad", "proveedor": "EJEMPLO Otro", "puesto": "N99P02",
+     "cajones_comprados": 40, "cajones_recibidos": 34,
+     "cajones_faltantes": 6, "contenido_faltante": 108},
 ]
 
 INCOMPLETOS_DE_PRUEBA = [
@@ -11299,20 +11357,21 @@ INCOMPLETOS_DE_PRUEBA = [
 
 def test_alertas_de_compras_lista_UNA_FILA_POR_CASO_no_un_numero():
     marcado = _alertas_de_compras(
-        filas_kilaje=KILAJE_DE_PRUEBA,
-        foto=_foto_alertas({"diferencia_de_kilaje": (2, date(2026, 8, 4))}),
+        filas_faltantes=FALTANTES_DE_PRUEBA,
+        foto=_foto_alertas({"cajones_faltantes": (2, date(2026, 8, 4))}),
     )
 
-    assert "Compras con diferencia de kilos entre lo comprado y lo recibido" in marcado
-    for columna in ("Fecha", "Artículo", "Proveedor", "Comprado", "Recibido", "Diferencia"):
+    assert "Compras que llegaron con menos bultos de los que se compraron" in marcado
+    for columna in ("Fecha", "Artículo", "Proveedor", "Comprados", "Recibidos",
+                    "Faltan", "Equivale a"):
         assert f"<th>{columna}</th>" in marcado, columna
     assert "EJEMPLO Uno" in marcado and "EJEMPLO Prov (N99P01)" in marcado
-    assert "+100 kg" in marcado
-    assert "-60 kg" in marcado
-    # CONTENIDO REAL NULO: Depósito contó cajones y no pesó, así que el total
-    # real se armó con el contenido ESTIMADO. Mostrarlo como un número medido
-    # sería afirmar algo que nadie midió.
-    assert "no se pesó" in marcado
+    # Los bultos que faltan Y lo que representan: el que decide si reclamar
+    # mira la plata, no la cantidad de cajas.
+    assert "−10" in marcado and "−170k" in marcado
+    # El sufijo sigue a la UNIDAD del artículo: sobre 'unidad' decir "k"
+    # sería mentir.
+    assert "−6" in marcado and "−108u" in marcado
 
 
 def test_la_cuenta_del_bloque_sale_de_SUS_FILAS_y_no_de_la_foto():
@@ -11323,8 +11382,8 @@ def test_la_cuenta_del_bloque_sale_de_SUS_FILAS_y_no_de_la_foto():
     filas: tiene que decir 2.
     """
     marcado = _alertas_de_compras(
-        filas_kilaje=KILAJE_DE_PRUEBA,
-        foto=_foto_alertas({"diferencia_de_kilaje": (5, date(2026, 8, 4))}),
+        filas_faltantes=FALTANTES_DE_PRUEBA,
+        foto=_foto_alertas({"cajones_faltantes": (5, date(2026, 8, 4))}),
     )
 
     assert "2 compras" in marcado
@@ -11346,14 +11405,14 @@ def test_el_bloque_con_detalle_deja_casos_EN_SUS_FILAS_y_no_en_el_de_la_foto():
 
     with (
         patch("app.main.listar_estado_alertas",
-              return_value=_foto_alertas({"diferencia_de_kilaje": (5, date(2026, 8, 4))})),
-        patch("app.main.listar_diferencias_de_kilaje", return_value=KILAJE_DE_PRUEBA),
+              return_value=_foto_alertas({"cajones_faltantes": (5, date(2026, 8, 4))})),
+        patch("app.main.listar_cajones_faltantes", return_value=FALTANTES_DE_PRUEBA),
         patch("app.main.listar_pedidos_incompletos", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
     ):
         bloques = _bloques_de_alertas("compras")
 
-    kilaje = next(b for b in bloques if b["codigo"] == "diferencia_de_kilaje")
+    kilaje = next(b for b in bloques if b["codigo"] == "cajones_faltantes")
     assert kilaje["filas"] is not None
     assert kilaje["casos"] == len(kilaje["filas"]) == 2, kilaje["casos"]
     assert kilaje["en_vivo"] is True
@@ -11363,7 +11422,7 @@ def test_el_bloque_con_detalle_deja_casos_EN_SUS_FILAS_y_no_en_el_de_la_foto():
     with (
         patch("app.main.listar_estado_alertas",
               return_value=_foto_alertas({"compras_sin_precio": (4, date(2026, 8, 1))})),
-        patch("app.main.listar_diferencias_de_kilaje", return_value=[]),
+        patch("app.main.listar_cajones_faltantes", return_value=[]),
         patch("app.main.listar_pedidos_incompletos", return_value=[]),
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
     ):
@@ -11414,8 +11473,8 @@ def test_si_el_detalle_FALLA_el_bloque_no_desaparece():
     from unittest.mock import patch as _patch
     with (
         _patch("app.main.listar_estado_alertas",
-               return_value=_foto_alertas({"diferencia_de_kilaje": (7, date(2026, 8, 4))})),
-        _patch("app.main.listar_diferencias_de_kilaje", side_effect=RuntimeError("se cayó la consulta")),
+               return_value=_foto_alertas({"cajones_faltantes": (7, date(2026, 8, 4))})),
+        _patch("app.main.listar_cajones_faltantes", side_effect=RuntimeError("se cayó la consulta")),
         _patch("app.main.listar_pedidos_incompletos", return_value=[]),
         _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
     ):
@@ -11423,7 +11482,7 @@ def test_si_el_detalle_FALLA_el_bloque_no_desaparece():
 
     assert respuesta.status_code == 200
     marcado = respuesta.text.split("</style>")[-1]
-    assert "Compras con diferencia de kilos" in marcado
+    assert "Compras que llegaron con menos bultos" in marcado
     assert "7 casos" in marcado
     assert "se cayó la consulta" in marcado
 
@@ -11451,7 +11510,7 @@ def test_la_pantalla_se_arma_DESDE_EL_REGISTRO_y_una_alerta_nueva_aparece_sola()
         foto = _foto_alertas({"alerta_inventada_para_el_test": (3, date(2026, 8, 2))})
         with (
             _patch("app.main.listar_estado_alertas", return_value=foto),
-            _patch("app.main.listar_diferencias_de_kilaje", return_value=[]),
+            _patch("app.main.listar_cajones_faltantes", return_value=[]),
             _patch("app.main.listar_pedidos_incompletos", return_value=[]),
             _patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         ):

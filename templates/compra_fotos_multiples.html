@@ -386,10 +386,14 @@
       if (etiqueta) {
         etiqueta.textContent = etiquetasContenido[opcion.dataset.unidadCompra] || "Contenido por cajón *";
       }
+      // EL ELSE ES OBLIGATORIO, no una prolijidad: sin él, cambiar a un
+      // artículo SIN referencia deja el número del artículo ANTERIOR en el
+      // campo — un valor de otra cosa, que es peor que el default y que el
+      // vacío. Y la referencia vacía va a dejar de ser rara: es lo que le
+      // corresponde a un artículo que viene en formatos distintos por
+      // diseño (Cherry), donde precargar acierta nunca.
       const contenidoReferencia = opcion.dataset.contenidoReferencia;
-      if (contenidoReferencia) {
-        contenidoInput.value = contenidoReferencia;
-      }
+      contenidoInput.value = contenidoReferencia ? contenidoReferencia : "";
     }
 
     function alternarDescarte(indice, checkbox) {

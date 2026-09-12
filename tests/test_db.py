@@ -4198,6 +4198,87 @@ def test_anular_renglon_pedido_limpia_el_tilde_y_sus_numeros():
     conexion.commit.assert_called_once()
 
 
+def test_cajones_faltantes_cuenta_los_que_llegaron_de_MENOS_y_no_los_de_mas():
+    """MENOS y no "distinto": recibir de más es un dato, pero no es que falte nada.
+
+    Mezclarlos dejaría al aviso sin una sola cosa que decir. Se mira el
+    TEXTO del SQL y no un valor devuelto: lo que cambia acá es el WHERE, y
+    con un cursor falso la fila la entrega el mock sin leer una letra de la
+    consulta (corolario 40).
+    """
+    from app.db import contar_cajones_faltantes
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (2, date(2026, 9, 5))
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        resultado = contar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    assert "(c.cantidad_cajones - c.cantidad_cajones_real) >= %s" in consulta
+    assert "ABS(c.cantidad_cajones - c.cantidad_cajones_real)" not in consulta
+    # Sin número real de cajones no hay nada que comparar.
+    assert "c.cantidad_cajones_real IS NOT NULL" in consulta
+    # TODAS las unidades: un cajón faltante de un artículo por unidad falta
+    # igual. El filtro por 'kilo' era del intento anterior, que medía kilos.
+    assert "unidad_compra = 'kilo'" not in consulta
+    assert cursor.execute.call_args_list[0].args[1] == (date(2026, 9, 4), date(2026, 9, 11), 1)
+    assert resultado == {"casos": 2, "mas_viejo": date(2026, 9, 5)}
+
+
+def test_la_cuenta_y_la_lista_de_cajones_faltantes_comparten_EL_MISMO_WHERE():
+    """Con un WHERE cada una, el día que se separen el banner dice un número y la pantalla lista otro.
+
+    No se comparan los textos enteros —uno trae COUNT y el otro columnas—
+    sino que el recorte de las dos salga de la MISMA constante, comprobando
+    que cada condición esté en las dos.
+    """
+    from app.db import contar_cajones_faltantes, listar_cajones_faltantes
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchone.return_value = (0, None)
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+        listar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+
+    cuenta = cursor.execute.call_args_list[0].args[0]
+    lista = cursor.execute.call_args_list[1].args[0]
+    for condicion in (
+        "c.estado = 'recepcionado'",
+        "c.cantidad_cajones_real IS NOT NULL",
+        "c.fecha_operacion >= %s AND c.fecha_operacion <= %s",
+        "(c.cantidad_cajones - c.cantidad_cajones_real) >= %s",
+    ):
+        assert condicion in cuenta, ("falta en la cuenta", condicion)
+        assert condicion in lista, ("falta en la lista", condicion)
+    # Y los MISMOS parámetros, en el mismo orden.
+    assert cursor.execute.call_args_list[0].args[1] == cursor.execute.call_args_list[1].args[1]
+
+
+def test_la_lista_de_cajones_faltantes_trae_lo_que_REPRESENTA_el_faltante():
+    """Seis cajones de Pera son ciento ocho kilos: el que decide si reclamar mira la plata.
+
+    Y usa el contenido REAL si existe, no el estimado: el estimado es
+    justamente el número del que se desconfía.
+    """
+    from app.db import listar_cajones_faltantes
+
+    conexion, cursor = _conexion_falsa()
+    cursor.fetchall.return_value = []
+    cursor.description = [("id",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_cajones_faltantes(date(2026, 9, 4), date(2026, 9, 11), 1)
+
+    consulta = cursor.execute.call_args_list[0].args[0]
+    assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon)" in consulta
+    assert "AS contenido_faltante" in consulta
+    assert "ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC" in consulta
+
+
 def test_guardar_control_pregunta_la_EXISTENCIA_sin_agregado():
     """`count(*)` devuelve (0,) para un pedido que no existe: la guarda no serviría.
 
