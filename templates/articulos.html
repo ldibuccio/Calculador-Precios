@@ -85,6 +85,56 @@
   .boton-editar { background: #2563eb; }
   .boton-eliminar { background: #dc2626; }
   .form-eliminar { display: inline; }
+
+  /* ── CELULAR: la tabla pasa a TARJETAS ────────────────────────────────
+     Cinco columnas más los dos botones no entran en 390px, y con el scroll
+     lateral "Eliminar" queda siempre fuera de la pantalla. Va al final del
+     <style>: una media query que quede antes de las reglas que pisa no las
+     pisa.
+
+     El <thead> se esconde ENTERO y no solo sus rótulos: se contaron sus
+     elementos interactivos antes de escribir esto y son CERO. */
+  @media (max-width: 700px) {
+    .tabla-scroll { overflow-x: visible; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr {
+      display: grid;
+      grid-template-columns: auto auto 1fr;
+      grid-template-areas:
+        "nombre   nombre  nombre"
+        "unidad   conten  grupo"
+        "acciones acciones acciones";
+      gap: 0.15rem 0.7rem;
+      align-items: baseline;
+      padding: 0.85rem 0;
+      border-top: 1px solid #eee;
+    }
+    tbody tr:first-child { border-top: none; }
+    td { border-bottom: none; padding: 0; }
+    td:nth-child(1) { grid-area: nombre; font-weight: 800; font-size: 1.05rem; }
+    td:nth-child(2) { grid-area: unidad; color: #475569; }
+    /* "16" SUELTO NO SE EXPLICA: en la tabla lo explica el <th>Contenido
+       ref.</th>. El rótulo va como prefijo y solo en celular. */
+    td:nth-child(3) { grid-area: conten; color: #475569; }
+    td:nth-child(3)::before { content: "ref. "; color: #94a3b8; }
+    td:nth-child(4) { grid-area: grupo; color: #475569; justify-self: end; }
+    td:nth-child(5) { grid-area: acciones; margin-top: 0.55rem; }
+    /* LOS BOTONES SE AGRANDAN: en la tabla son chicos porque comparten
+       renglón con cinco columnas; acá tienen la fila entera y son lo que
+       se toca con el pulgar. */
+    td:nth-child(5) .acciones { display: flex; gap: 0.5rem; }
+    td:nth-child(5) .acciones > * { flex: 1 1 0; min-width: 0; }
+    td:nth-child(5) .boton,
+    td:nth-child(5) .boton-eliminar {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.7rem 0.5rem;
+      font-size: 0.95rem;
+      text-align: center;
+    }
+  }
 </style>
 </head>
 <body>

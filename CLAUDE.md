@@ -2919,3 +2919,198 @@ haber algo distinto que medir.**
 Y la trampa de fondo es la de siempre en este archivo: *no encontrar
 contradicción* no es *haber verificado*. Acá con el agravante de que el
 conteo alto —diez— da una sensación de rigor que la evidencia no tenía.
+
+## Corolario 47: un cero que NO PUEDE dar distinto de cero no es una medición
+
+Del 12/09. Midiendo el desborde horizontal de cuatro pantallas a 390px, el
+número daba **0 con el arreglo puesto y 0 sin él**. No era que las pantallas
+estuvieran bien: era que el número elegido no podía dar otra cosa.
+
+`.tabla-scroll { overflow-x: auto }` **se come el desborde de la página**: la
+tabla se sale de su caja, la caja la absorbe con un scroll interno, y
+`document.documentElement.scrollWidth` nunca crece. El operario arrastra la
+tabla de costado —"Estado", "Eliminar" y "Utilidad" no se ven nunca— y la
+medición dice cero, verdadero, todos los días.
+
+**Lo que hay que medir es el sobrante de la tabla CONTRA SU CAJA**
+(`tabla.scrollWidth − caja.clientWidth`), que es lo que la persona sufre. Con
+eso los números aparecieron: 173, 138, 159, 127, 98, 85 px — y los dos
+primeros coincidían EXACTO con los que el dueño había medido por su cuenta,
+que fue la confirmación de que recién ahí estábamos midiendo lo mismo.
+
+### Lo único que lo agarró, y es la parte accionable
+
+**No fue leer el código: fue el canario.** Romper el arreglo a propósito y
+mirar si el número SE MUEVE. Un cero que no se mueve al romper lo que lo
+produce no está informando nada — es un cero de construcción.
+
+Leído, el resultado se veía perfecto: la medición estaba bien escrita,
+apuntaba a la pantalla correcta, y devolvía el número que uno esperaría de
+una pantalla sana. No hay nada mal que señalar. Por eso la regla no es
+"revisá la medición" —eso no se puede hacer mirándola— sino:
+
+> **Antes de creerle a un cero, romper a propósito lo que lo hace cero y
+> exigir que deje de serlo.**
+
+Es el canario del corolario 12 aplicado al OTRO lado. Allá se rompe el
+recorte de una consulta para ver si el piso está puesto; acá se rompe el
+ARREGLO para ver si la medición lo ve. Y es el hermano del 36: allá el cero
+es falso porque el `where` no sabe reconocer el caso, acá porque el número
+no puede crecer aunque el caso esté.
+
+### Dos formas distintas del mismo error EN LA MISMA TANDA
+
+Y eso es lo que dice que no es raro:
+
+1. **El contenedor se comía el desborde** — el caso de arriba.
+2. **Las tablas estaban ESCONDIDAS.** En Cargar Precios el cuadro vive
+   adentro de un panel que arranca cerrado. Medirlo sin abrirlo daba
+   `0px · OCULTA`: cuatro tablas de 0 píxeles, porque no estaban en
+   pantalla. Abriendo el panel: 169, 139, 68, 98.
+
+Las dos veces el número era verdadero, era cero, y era incapaz de ser otra
+cosa. Por caminos completamente distintos —uno de CSS, otro de estado de la
+pantalla— en la misma media hora.
+
+**La forma general, que es más ancha que el CSS**: cualquier medición sobre
+"lo que está a la vista" puede estar midiendo sobre lo que NO está — porque
+algo lo contiene, porque está cerrado, porque está filtrado, porque todavía
+no se cargó. Y no se nota, porque lo que devuelve es el número que uno
+quería ver.
+
+Engancha con **"esconder un contenedor esconde todo lo que vive adentro"**
+por el otro extremo: allá el `display: none` se llevaba puesta una función y
+el desborde medía 0 igual; acá el cero era del propio arreglo. En los dos, la
+frase que cierra es la misma — *nada en la medición que uno eligió puede
+delatar algo que quedó afuera de esa medición*.
+
+## El pesaje: la foto no documenta el pesaje, lo DISPARA
+
+Del 12/09, y va como sección porque es un hecho del sistema que cambia lo
+que vale una función, no la trampa de un día.
+
+**El número, y no se puede citar sin su control al lado**, porque el 63%
+solo significa algo pegado al 8%:
+
+| | recepciones | tocadas | |
+|---|---|---|---|
+| **Antes de la foto** (Frutamax, hasta el 09/09) | 367 | 35 | **9,5%** |
+| **En la ventana, CON foto** (09 al 12/09) | 62 | 39 | **63%** |
+| **En la ventana, SIN foto** (mismos días) | 12 | 1 | **8%** |
+
+"Tocada" es que alguien cambió el número precargado al recepcionar; "sin
+tocar" es apretar Recibir con el estimado puesto, que graba *pesó
+exactamente lo que se había cargado*.
+
+**La tercera fila es la que decide, y por eso la medición se hizo dos
+veces.** El primer corte —60 días, con foto contra sin foto— comparaba la
+función nueva contra el pasado: dos poblaciones de épocas distintas. Acotado
+a la ventana quedaba el otro confundido: que hubiera cambiado *el período* y
+no la foto. **Las 12 sin foto de esos mismos días dan 8%, casi idéntico al
+9,5% de antes**: el período no cambió. Cambió quién saca la foto.
+
+Y `foto_despues = 0`: ninguna foto se subió después de recepcionar, así que
+todas son previas al número. La evidencia es limpia.
+
+### La conclusión es la CONTRARIA a la que teníamos dos turnos antes
+
+Con el 82% sin tocar de `kilos_4` habíamos concluido *"Depósito no pesa"*.
+Es falso, y el error era de alcance: **las 343 sin tocar y sin foto son de
+antes de que la foto existiera.** No eran operarios que no pesan: era un
+período en el que no había nada que empujara a pesar.
+
+Es la familia del corolario 24 —una población que no vota— con otra ropa: no
+es una base parada, es **una función que todavía no existía**. Y el aviso
+para la próxima es el mismo: antes de leer una tasa histórica como un hábito,
+preguntarse desde cuándo existe lo que se está midiendo.
+
+### Lo que cambia, y es de diseño
+
+**La foto pasó de "prueba de que se pesó" a "lo que hace que se pese".** Hoy
+la pantalla avisa y no traba: el botón dice que falta la foto y deja recibir
+igual (*"el camión no se para por una foto"*, y sigue siendo verdad).
+
+Con este número, ese cartel está haciendo más que documentar — **está
+produciendo el pesaje**. Eso cambia cuánto vale hacerla obligatoria, que
+antes era una discusión sobre auditoría y ahora es sobre la calidad del dato
+de entrada.
+
+**NO SE CAMBIÓ NADA**, por pedido, y la razón es buena: cuatro días y 62
+casos es poco para mover una traba que puede dejar un camión esperando. Pero
+queda anotado que el argumento ya no es el mismo.
+
+### Y lo que queda ANOTADO Y NO HECHO
+
+1. **Volver a correr `kilos_4` el 25/09.** Si el 82% sin tocar era falta de
+   pesaje y la foto lo está corrigiendo, en dos semanas el promedio de
+   `contenido_por_cajon_real` va a valer algo que hoy no vale. **Hasta
+   entonces no se mueve ninguna referencia** — salvo Mango a 40, donde la
+   diferencia es de 30 sobre 40 y no la explica ningún redondeo.
+2. **La explicación que los datos NO pueden descartar**: que el operario
+   saque la foto justo en las cargas que ya le generaban duda. Ahí la foto no
+   dispararía nada — sería un *marcador* de sospecha, y el que corrige es el
+   mismo que ya iba a corregir. Ninguna consulta lo separa, porque quién saca
+   la foto lo elige él. **Lo separa hacerla obligatoria unos días**: sin
+   elección no hay selección.
+
+## Corolario 48: una divergencia entre bases no la escribe nadie, así que ninguna guarda de escritura la ve
+
+Del 12/09. Las dos bases tenían la ficha de Kiwi distinta: Frutamax
+`kilo/kilo` y Palmala `kilo/cubeta`. En Palmala eso rompe el supuesto del
+costeo (ver la sección de `unidad_compra` y `unidad_venta`).
+
+**Nadie cargó eso mal un día.** Las dos fichas se cargaron bien en su
+momento y las bases se separaron después — por una migración que corrió en
+una sola, por una corrección hecha a mano, por el orden en que se crearon.
+No hay un momento de escritura donde una guarda hubiera saltado.
+
+Eso decide DÓNDE va la guarda, y es al revés de lo que este archivo repite:
+*la guarda va donde se ESCRIBE* vale para el error que alguien comete
+tipeando. **Para el estado que se degrada solo, la guarda tiene que mirar el
+ESTADO, no la escritura** — y en este sistema eso es el registro de alertas,
+que recalcula cada seis horas y se ve en el banner y en la pantalla del
+sector.
+
+Por eso la guarda quedó como alerta (`unidades_que_difieren`) y no como un
+cartel en la pantalla de Fichas. Un cartel al guardar no habría visto NUNCA
+este caso.
+
+Dos decisiones adentro, las dos con su razón:
+
+- **A LOS DOS SECTORES.** La unidad de compra se edita en Artículos
+  (Compras) y la de venta en Fichas (Comercial): en uno solo, el que la ve
+  no siempre puede tocarla.
+- **NO FILTRA POR "SE USA".** Un par dormido no rompe ninguna cuenta hoy, y
+  la primera versión lo excluía. Pero el día que se compre ese artículo el
+  costo sale mal **desde la primera compra**, y nadie va a estar mirando —
+  el aviso llegaría cuando ya no sirve. Usado y dormido se distinguen en el
+  DETALLE, que es donde se decide cuál atender primero, no en si aparece.
+
+Y el caso se cerró como dormido: Kiwi nunca se compró en ninguna de las dos
+bases —cero compras, cero precios, cero renglones— así que no hay plata mal
+calculada. **Las tres columnas de "¿se usa?" son las que lo dijeron**, y sin
+ellas el mismo hallazgo habría mandado a revisar meses de costos.
+
+## Corolario 49: cuando un registro se arma al IMPORTAR, la forma de llamar importa tanto como qué se llama
+
+Del 12/09, y va corto.
+
+La alerta nueva se registró con `contar=contar_unidades_que_diferen` —la
+referencia a secas— y las otras dieciocho usan `contar=lambda:
+contar_...()`. El registro se construye al importar el módulo, así que la
+referencia **captura el objeto de ese momento** y deja de seguir al nombre:
+parchearlo después no lo toca. La lambda lo resuelve al llamar.
+
+El síntoma no fue una alerta rota: fue que el test que recorre las
+dieciocho intentó ir a la base de verdad, porque su `patch` no tenía efecto
+sobre la única entrada escrita distinto.
+
+**Lo que se lleva, y es más ancho que el registro de alertas**: en cualquier
+tabla de callables armada a nivel de módulo —alertas, validadores, un
+despacho por tipo— la referencia directa y la lambda **no son dos estilos**.
+Una congela y la otra no, y la diferencia solo se ve cuando alguien quiere
+sustituir la función: un test, un modo de prueba, un reemplazo en caliente.
+
+Y lo agarró el test que las recorre TODAS, que es exactamente para lo que
+está: la entrada nueva era la única escrita distinto de las dieciocho, y esa
+inconsistencia no se ve leyendo la entrada sola — se ve al lado de las otras.

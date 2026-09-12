@@ -7938,3 +7938,57 @@ def test_actualizar_cantidad_DESMARCA_cuando_la_marca_viene_vacia():
         if "UPDATE compras SET ficha_en_origen_id" in llamada.args[0]
     )
     assert parametros == (None, 30)
+
+
+# ── La guarda de las unidades ──────────────────────────────────────────────
+
+
+from app.db import (  # noqa: E402
+    contar_unidades_que_diferen,
+    listar_unidades_que_diferen,
+)
+
+
+def test_la_guarda_de_unidades_cuenta_y_lista_con_LA_MISMA_condicion():
+    """Si fueran dos consultas, el banner podría decir 1 y la pantalla no
+    mostrar ninguno — y eso es lo único que el que lo lee no puede explicar.
+
+    Se mira el TEXTO del SQL y no el número: con un cursor falso el valor lo
+    entrega el mock, así que el conteo llega igual con el `where` equivocado
+    (corolario 40).
+    """
+    from app.db import _SQL_UNIDADES_QUE_DIFIEREN
+
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        contar_unidades_que_diferen()
+    consulta_conteo = _sql_que_contiene(cursor, "FROM articulos a")
+
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = [("articulo",)]
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_unidades_que_diferen()
+    consulta_lista = _sql_que_contiene(cursor, "FROM articulos a")
+
+    assert _SQL_UNIDADES_QUE_DIFIEREN in consulta_conteo
+    assert _SQL_UNIDADES_QUE_DIFIEREN in consulta_lista
+
+
+def test_la_guarda_de_unidades_NO_recorta_por_tiempo_ni_por_uso():
+    """Las dos cosas que la apagarían antes de que sirva.
+
+    Con ventana se apagaría sola a los dos días dejando el costo torcido para
+    siempre. Y filtrando por "se usa", el par dormido avisaría recién cuando
+    ya se compró — o sea, cuando el costo ya salió mal la primera vez.
+    """
+    from app.db import _SQL_UNIDADES_QUE_DIFIEREN
+
+    assert "fecha_operacion" not in _SQL_UNIDADES_QUE_DIFIEREN
+    assert "current_date" not in _SQL_UNIDADES_QUE_DIFIEREN
+    assert "EXISTS" not in _SQL_UNIDADES_QUE_DIFIEREN.upper()
+    # Lo que SÍ recorta: el artículo inactivo y la unidad sin cargar.
+    assert "a.activo" in _SQL_UNIDADES_QUE_DIFIEREN
+    assert "a.unidad_compra IS NOT NULL" in _SQL_UNIDADES_QUE_DIFIEREN
+    # `IS DISTINCT FROM` y no `<>`: con un NULL de un lado, `<>` da NULL y el
+    # par se escapa en silencio.
+    assert "IS DISTINCT FROM f.unidad_venta" in _SQL_UNIDADES_QUE_DIFIEREN
