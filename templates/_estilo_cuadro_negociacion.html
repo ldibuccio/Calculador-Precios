@@ -1,0 +1,104 @@
+{# EL CELULAR DEL CUADRO DE NEGOCIACIÓN, en su propio parcial y no adentro de
+   `_cuadro_negociacion.html`.
+
+   Dos razones, y las dos importan:
+
+   1. El cuadro se incluye desde DOS pantallas —Márgenes por Artículo y
+      Cargar Precios— y las reglas tienen que ser las mismas en las dos. En el
+      <style> de cada una serían una copia, y las copias se separan.
+   2. El fragmento del cuadro va en el <body>, así que un <style> ahí adentro
+      movería el ÚLTIMO `</style>` de la página. Noventa y siete tests de la
+      suite parten el HTML por ahí para quedarse con el marcado: uno en el
+      body los rompería a todos por una razón que no tiene nada que ver con
+      lo que prueban. Mismo motivo por el que el pie de versión va inline.
+
+   Quien incluya `_cuadro_negociacion.html` tiene que incluir esto en su
+   <head>. Lo cuida `test_toda_pantalla_con_el_cuadro_incluye_su_estilo_de_celular`. #}
+<style>
+  /* ── CELULAR: las cuatro tablas pasan a TARJETAS ──────────────────────
+     Cinco y seis columnas de plata no entran en 390px. Con el scroll
+     lateral, "Vigente" y "Utilidad" —que son las columnas por las que se
+     abre esta pantalla— quedan siempre afuera de la vista.
+
+     El <thead> se esconde ENTERO y no solo sus rótulos: se contaron los
+     elementos interactivos de las cuatro cabeceras antes de escribir esto
+     y son CERO en las cuatro, así que acá no se lleva puesta ninguna
+     función. El buscador de "Todos los artículos" vive AFUERA de la tabla
+     y no lo toca nada de esto. */
+  @media (max-width: 700px) {
+    /* El scroll se apaga: si quedara, una tarjeta ancha volvería a correr
+       la pantalla al costado y el arreglo sería invisible. */
+    .tabla-scroll { overflow-x: visible; }
+    .tabla-costos, .tabla-precios,
+    .tabla-costos tbody, .tabla-precios tbody,
+    .tabla-costos tr, .tabla-precios tr,
+    .tabla-costos td, .tabla-precios td { display: block; }
+    .tabla-costos thead, .tabla-precios thead { display: none; }
+    .tabla-costos tr, .tabla-precios tr {
+      display: grid;
+      gap: 0.15rem 0.7rem;
+      align-items: baseline;
+      padding: 0.85rem 0;
+      border-top: 1px solid #eee;
+    }
+    .tabla-costos tbody tr:first-child,
+    .tabla-precios tbody tr:first-child { border-top: none; }
+    .tabla-costos td, .tabla-precios td { border-bottom: none; padding: 0; }
+
+    /* SON DOS FORMAS DE TABLA Y POR ESO DOS CLASES: costos lleva seis
+       columnas (anterior y nuevo) y precios cinco (vigente, sugerido,
+       utilidad). Con un solo juego de `nth-child` la quinta columna de una
+       caería en el lugar de la otra — y el número se vería bien igual, que
+       es lo peor que puede pasar con plata en pantalla. */
+    .tabla-costos tr {
+      grid-template-columns: 1fr auto;
+      grid-template-areas:
+        "producto producto"
+        "venta    venta"
+        "antes    ahora"
+        "sugerido vigente";
+    }
+    .tabla-costos td:nth-child(1) { grid-area: producto; font-weight: 800; font-size: 1.05rem; }
+    .tabla-costos td:nth-child(2) { grid-area: venta; color: #64748b; }
+    .tabla-costos td:nth-child(2)::before { content: "venta "; color: #94a3b8; }
+    /* SIN LA CABECERA, CUATRO MONTOS SEGUIDOS NO SE DISTINGUEN. En la tabla
+       los explica el <th>; sueltos en la tarjeta son cuatro precios sin
+       nombre, y confundir "costo anterior" con "vigente" es cambiar un
+       precio mal. El rótulo va como prefijo y SOLO en celular. */
+    .tabla-costos td:nth-child(3) { grid-area: antes; color: #475569; }
+    .tabla-costos td:nth-child(3)::before { content: "antes "; color: #94a3b8; }
+    .tabla-costos td:nth-child(4) { grid-area: ahora; color: #475569; justify-self: end; }
+    .tabla-costos td:nth-child(4)::before { content: "ahora "; color: #94a3b8; }
+    .tabla-costos td:nth-child(5) { grid-area: sugerido; }
+    .tabla-costos td:nth-child(5)::before { content: "sugerido "; color: #94a3b8; }
+    .tabla-costos td:nth-child(6) { grid-area: vigente; justify-self: end; }
+    .tabla-costos td:nth-child(6)::before { content: "vigente "; color: #94a3b8; }
+
+    .tabla-precios tr {
+      grid-template-columns: 1fr auto;
+      grid-template-areas:
+        "producto producto"
+        "venta    utilidad"
+        "vigente  sugerido";
+    }
+    .tabla-precios td:nth-child(1) { grid-area: producto; font-weight: 800; font-size: 1.05rem; }
+    /* DOS PORCENTAJES EN EL MISMO RENGLÓN y ninguno se explica solo: a la
+       izquierda cuánto pesa la ficha sobre lo facturado, a la derecha la
+       utilidad. En la tabla los separa el <th>; en la tarjeta quedan uno al
+       lado del otro y confundirlos es leer al revés qué artículo conviene. */
+    .tabla-precios td:nth-child(2) { grid-area: venta; color: #64748b; }
+    .tabla-precios td:nth-child(2)::before { content: "venta "; color: #94a3b8; }
+    .tabla-precios td:nth-child(3) { grid-area: vigente; }
+    .tabla-precios td:nth-child(3)::before { content: "vigente "; color: #94a3b8; }
+    .tabla-precios td:nth-child(4) { grid-area: sugerido; justify-self: end; }
+    .tabla-precios td:nth-child(4)::before { content: "sugerido "; color: #94a3b8; }
+    /* La utilidad arriba a la derecha: es lo que decide si hay que tocar el
+       precio, y en la tabla está al final de la fila. */
+    .tabla-precios td:nth-child(5) { grid-area: utilidad; justify-self: end; font-weight: 700; }
+    .tabla-precios td:nth-child(5)::before { content: "utilidad "; color: #94a3b8; font-weight: 400; }
+
+    /* La columna "% de la venta" se esconde en escritorio cuando no hay
+       facturación (`.col-venta`), y esa regla sigue mandando acá: si el
+       <td> está en `display: none`, el grid simplemente no lo coloca. */
+  }
+</style>

@@ -25861,3 +25861,108 @@ def test_la_marca_VUELVE_en_el_reintento_de_las_cinco_pantallas():
             perdieron.append("el retroactivo de Gerencia")
 
     assert not perdieron, f"Pierden la caja elegida al reintentar: {perdieron}"
+
+
+# ── Celular: las tablas que faltaban pasar a tarjetas ──────────────────────
+
+
+PANTALLAS_CON_TABLA_EN_CELULAR = {
+    "templates/logistica_consultar.html": "el histórico de retiros (7 columnas)",
+    "templates/articulos.html": "el catálogo (5 columnas + dos botones)",
+    "templates/_estilo_cuadro_negociacion.html": "las cuatro tablas del cuadro de negociación",
+}
+
+
+def _css_de(ruta: str) -> str:
+    """El CSS de verdad: lo que hay ENTRE `<style>` y `</style>`.
+
+    No sirve `split("</style>")[0]`, que es lo que usa el resto de la suite:
+    los comentarios de estos archivos EXPLICAN por qué el estilo va en el
+    <head> y para eso NOMBRAN `</style>`, así que el split corta ahí y
+    devuelve el comentario en vez del CSS. Es el corolario 38 adentro del
+    test escrito para aplicar sus reglas — un comentario nombra la cosa, y el
+    test busca la cosa.
+    """
+    texto = io.open(ruta, encoding="utf-8").read()
+    return texto[texto.index("<style>") + len("<style>"):texto.rindex("</style>")]
+
+
+def test_las_tablas_anchas_se_vuelven_TARJETAS_en_celular():
+    """Sin esto la tabla queda adentro de un scroll lateral y las columnas de
+    la derecha —Estado, Eliminar, Utilidad— no se ven nunca.
+
+    Se mira el CSS (`split("</style>")[0]`) y no el marcado: lo que decide si
+    la tarjeta existe es la regla, no el atributo.
+    """
+    faltan = []
+    for ruta, que_es in PANTALLAS_CON_TABLA_EN_CELULAR.items():
+        css = _css_de(ruta)
+        if "@media (max-width: 700px)" not in css or "thead" not in css:
+            faltan.append(f"{ruta} ({que_es})")
+    assert not faltan, f"Tablas que siguen pidiendo scroll lateral en celular: {faltan}"
+
+
+def test_el_scroll_lateral_se_APAGA_donde_la_tabla_pasa_a_tarjeta():
+    """La mitad que se olvida: con `overflow-x: auto` puesto, una tarjeta un
+    poco ancha vuelve a correr la pantalla al costado y el arreglo se ve
+    igual que antes."""
+    sin_apagar = [
+        ruta for ruta in PANTALLAS_CON_TABLA_EN_CELULAR
+        if ".tabla-scroll { overflow-x: visible; }" not in _css_de(ruta)
+    ]
+    assert not sin_apagar, f"Pasan a tarjeta y dejan el scroll prendido: {sin_apagar}"
+
+
+def test_toda_pantalla_con_el_cuadro_incluye_su_estilo_de_celular():
+    """El estilo del cuadro vive en su propio parcial y va en el <head>.
+
+    Si una pantalla incluye el cuadro y se olvida del estilo, sus cuatro
+    tablas vuelven al scroll lateral **sin que nada se vea roto**: la tabla
+    se dibuja igual, solo que cortada. Por eso la lista se lee del disco y no
+    se escribe a mano — el que se olvide va a ser una pantalla futura.
+    """
+    import glob
+
+    faltan = []
+    for ruta in sorted(glob.glob("templates/*.html")):
+        texto = io.open(ruta, encoding="utf-8").read()
+        incluye_cuadro = '{% include "_cuadro_negociacion.html" %}' in texto
+        incluye_estilo = '{% include "_estilo_cuadro_negociacion.html" %}' in texto
+        if incluye_cuadro and not incluye_estilo:
+            faltan.append(ruta)
+    assert not faltan, f"Incluyen el cuadro y no su estilo de celular: {faltan}"
+
+
+def test_el_estilo_del_cuadro_va_en_el_HEAD_y_no_adentro_del_fragmento():
+    """Un <style> en el <body> movería el ÚLTIMO `</style>` de la página, y
+    noventa y siete tests de esta suite parten el HTML por ahí para quedarse
+    con el marcado. Mismo motivo por el que el pie de versión va inline.
+    """
+    fragmento = io.open("templates/_cuadro_negociacion.html", encoding="utf-8").read()
+    assert "<style" not in fragmento
+
+    for ruta in ("templates/negociar.html", "templates/precios_cargar.html"):
+        texto = io.open(ruta, encoding="utf-8").read()
+        # El include del estilo va ANTES del cierre del <head>; el del cuadro,
+        # después. Si se invirtieran, el último </style> caería en el body.
+        assert texto.index('{% include "_estilo_cuadro_negociacion.html" %}') < texto.index("</head>"), ruta
+        assert texto.index('{% include "_cuadro_negociacion.html" %}') > texto.index("</head>"), ruta
+
+
+def test_las_dos_FORMAS_de_tabla_del_cuadro_estan_separadas_por_clase():
+    """Costos lleva SEIS columnas y precios CINCO.
+
+    Con un solo juego de `nth-child` la quinta columna de una caería en el
+    lugar de la otra, y el número se vería bien igual — que es lo peor que
+    puede pasar con plata en pantalla.
+    """
+    fragmento = io.open("templates/_cuadro_negociacion.html", encoding="utf-8").read()
+    assert fragmento.count('<table class="tabla-costos">') == 2
+    assert fragmento.count('<table class="tabla-precios">') == 2
+
+    css = io.open("templates/_estilo_cuadro_negociacion.html", encoding="utf-8").read()
+    # Cada monto lleva su rótulo en celular: cuatro cifras seguidas sin nombre
+    # no se distinguen, y confundir "costo anterior" con "vigente" es cambiar
+    # un precio mal.
+    for rotulo in ("antes ", "ahora ", "sugerido ", "vigente ", "utilidad ", "venta "):
+        assert f'content: "{rotulo}"' in css, rotulo

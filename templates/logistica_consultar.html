@@ -137,6 +137,54 @@
     border-radius: 999px;
     margin-top: 0.15rem;
   }
+
+  /* ── CELULAR: la tabla pasa a TARJETAS ────────────────────────────────
+     Siete columnas no entran en 390px, y envolverlas en un scroll lateral
+     deja el Estado —que es lo que se viene a consultar— siempre afuera de
+     la pantalla. Va al final del <style> a propósito: una media query que
+     quede antes de las reglas que pisa no las pisa.
+
+     El <thead> se esconde ENTERO y no solo sus rótulos: se contaron sus
+     elementos interactivos antes de escribir esto y son CERO, así que acá
+     no se lleva puesta ninguna función. */
+  @media (max-width: 700px) {
+    /* El scroll se apaga: si quedara, una tarjeta ancha volvería a correr
+       la pantalla al costado y el arreglo sería invisible. */
+    .tabla-scroll { overflow-x: visible; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr {
+      display: grid;
+      grid-template-columns: auto auto 1fr;
+      grid-template-areas:
+        "articulo articulo articulo"
+        "prov     prov     prov"
+        "fecha    hora     bultos"
+        "tipo     estado   estado";
+      gap: 0.15rem 0.7rem;
+      align-items: baseline;
+      padding: 0.85rem 0;
+      border-top: 1px solid #eee;
+    }
+    tbody tr:first-child { border-top: none; }
+    td { border-bottom: none; padding: 0; }
+    /* Por POSICIÓN y no por una clase en cada celda: la clase habría que
+       escribirla siete veces y acordarse de moverla el día que una columna
+       cambie de lugar. El orden del <thead> manda. */
+    td:nth-child(1) { grid-area: fecha; color: #64748b; }
+    td:nth-child(2) { grid-area: hora; color: #64748b; }
+    td:nth-child(3) { grid-area: prov; color: #475569; }
+    /* EL ARTÍCULO ES EL TÍTULO: el histórico se lee por QUÉ se retiró. */
+    td:nth-child(4) { grid-area: articulo; font-weight: 800; font-size: 1.05rem; }
+    /* SIN LA CABECERA, "10" NO SE EXPLICA SOLO: en la tabla lo explica el
+       <th>Bultos</th>, suelto en la tarjeta es un número al lado de una
+       hora. Se le pone la unidad, que es como ya se lee en otras
+       pantallas, y solo existe en celular. */
+    td:nth-child(5) { grid-area: bultos; color: #475569; text-align: left; }
+    td:nth-child(5)::after { content: " bultos"; }
+    td:nth-child(6) { grid-area: tipo; color: #475569; }
+    td:nth-child(7) { grid-area: estado; justify-self: end; text-align: right; }
+  }
 </style>
 </head>
 <body>
