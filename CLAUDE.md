@@ -2780,3 +2780,83 @@ rama.**
 que tienen que hacer todos lo mismo —once dicts, seis pantallas, cinco
 llamadores—. Ahí el test pasa en verde con la mitad de la lista sin tocar, y
 la única forma de saber cuál mitad es romper de a una.
+
+## Corolario 44: una suite donde uno de 2268 falla a veces y nadie sabe cuál ya no dice que sí
+
+Del 12/09, y es el riesgo de fondo del turno — más grande que el commit que
+lo destapó.
+
+Lo que pasó: la suite dio `1 failed, 2267 passed` **una vez**, el commit salió
+igual, y las corridas siguientes dieron todas verde. El nombre del test no
+quedó en ningún lado.
+
+### Lo primero, que es mío y es el arreglo más barato
+
+`pytest | tail -1 && git commit` **commitea con la suite en rojo**: en un
+pipe el código de salida es el del ÚLTIMO comando, así que el `&&` ve el de
+`tail`, que siempre sale bien. Y el pipe además se comió las líneas `FAILED`,
+que eran lo único que decía qué test era.
+
+De acá en adelante la suite se corre **sin pipe**, a un archivo, y se mira el
+`$?`:
+
+    python3 -m pytest tests/ -q > /tmp/suite.txt 2>&1; echo "salió con $?"
+
+Es la familia de *la ausencia de error no es confirmación*, con una vuelta
+peor: acá el error **existía** y el comando lo tapó.
+
+### Lo segundo, y es lo que casi me lleva a cerrar mal
+
+Corrí diez veces en verde y estuve por escribir "no reproducible". **Las diez
+fueron el MISMO orden**: no hay ningún plugin de orden instalado, así que el
+default de pytest es determinista. Diez verdes sin variar nada prueban que la
+corrida es repetible; no prueban que la suite sea sana, y yo las estaba
+leyendo como lo segundo.
+
+**Un conteo de corridas verdes no vale por la cantidad, vale por cuántas
+COSAS distintas se movieron entre una y otra.** Diez iguales son una.
+
+Por eso queda `tests/conftest.py` con el barajador: `SEMILLA_ORDEN=7 pytest`
+corre los mismos tests en otro orden, y la semilla va por entorno —no
+automática— para que un rojo se pueda repetir igual. Barajar siempre es lo
+peor que se le puede hacer a un test intermitente: lo vuelve irrepetible.
+
+### Lo tercero: la medición del orden se rompió y devolvió un número plausible
+
+La primera versión barajaba los 2268 ids y se los pasaba a pytest con
+`xargs`. **`xargs` parte la lista** cuando no entra en la línea de comandos,
+así que corrió pytest cuatro veces por semilla —cada una con un pedazo— y lo
+que leí fue el resumen del ÚLTIMO pedazo: `649 passed`.
+
+Se veía como una corrida. Y no medía lo que decía medir: cuatro procesos
+separados no prueban nada sobre el orden dentro de UNO. Es el corolario 11 con
+otra ropa —la medición está bien hecha y contesta otra pregunta— y lo único
+que lo delató fue que **649 no es 2268**. Si la suite hubiera tenido 700
+tests, el número habría pasado sin que nadie lo mirara.
+
+La forma correcta es el hook de colección (`pytest_collection_modifyitems`),
+que baraja adentro de la única corrida que hay.
+
+### El estado, dicho como está
+
+Probado: **doce corridas en órdenes aleatorios distintos** (semillas 1 a 12),
+las doce en 2268 verdes y con código de salida 0, más once en el orden por
+defecto. No se reprodujo.
+
+Eso es **no reproducible con lo que probé**, y no es "era un flake". Quedaron
+sin probar la hora (la corrida roja fue a las 23:40 de Argentina, con el UTC
+ya en el día siguiente) y cualquier cosa que dependiera del estado de la
+máquina en ese momento. Los tres tests que usan el reloj real se revisaron a
+mano: los tres miden con offsets relativos, así que no son candidatos.
+
+### Y el riesgo, que es lo que hay que tener a la vista
+
+**Una suite de 2268 tests donde uno falla el 9% de las veces y nadie sabe
+cuál es una suite que dejó de decir que sí.** El daño no es el rojo: es que
+el día que falle de verdad, la primera reacción va a ser correrla de nuevo —
+y esa reacción va a estar justificada, porque ya pasó. Ahí es cuando un rojo
+verdadero se merguea.
+
+Es exactamente lo que este archivo dice en otro lado sobre el reproceso:
+*"flake" no es una causa raíz*. La diferencia es que allá se trata de no
+aceptar la palabra, y acá de no **fabricar** el hábito que la hace creíble.
