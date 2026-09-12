@@ -11179,6 +11179,13 @@ def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dic
     Devuelve los cinco valores más `calculados`, que dice cuáles NO los
     tipeó una persona: sin eso, en dos minutos nadie sabe qué puso a mano y
     qué salió de la cuenta.
+
+    UNIDADES: el importe es del cajón (unidad de compra) y el precio es por
+    unidad de venta; la división por los kilos del bulto los une suponiendo
+    que las dos unidades son la misma. No hay conversión en ningún lado
+    —`_costear_compras` hace exactamente lo mismo— y esta pantalla HEREDA
+    ese supuesto a propósito: usar acá una regla distinta a la del resto
+    sería la regla escrita dos veces. Anotado en CLAUDE.md.
     """
     resultado = dict(valores)
     # El costo por unidad SIEMPRE es calculado: es el cociente de los dos
