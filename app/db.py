@@ -3322,6 +3322,20 @@ def contar_ingresos_deposito(
         conexion.close()
 
 
+# EL RECORTE, escrito UNA vez: lo usan el conteo y la lista. Con un WHERE
+# cada una, el banner diría un número y la pantalla listaría otro — es la
+# regla escrita dos veces, en su versión más barata de evitar.
+# Lo que se comparte es EL WHERE, que es la regla; el FROM y los JOIN los
+# escribe cada consulta, porque la lista necesita el artículo y el proveedor
+# y el conteo no. Partido así no hay que hacerle cirugía de texto a una
+# constante compartida para reusarla.
+_SQL_COMPRAS_SIN_PRECIO_DONDE = """
+    WHERE c.importe IS NULL
+      AND c.estado IN ('pendiente', 'recepcionado')
+      AND c.estado_retiro IN ('pendiente', 'retirado')
+"""
+
+
 def contar_compras_sin_precio() -> dict:
     """Compras que siguen sin precio de compra cargado, y la más vieja.
 
@@ -3346,13 +3360,8 @@ def contar_compras_sin_precio() -> dict:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT COUNT(*), MIN(c.fecha_operacion)
-                FROM compras c
-                WHERE c.importe IS NULL
-                  AND c.estado IN ('pendiente', 'recepcionado')
-                  AND c.estado_retiro IN ('pendiente', 'retirado')
-                """
+                "SELECT COUNT(*), MIN(c.fecha_operacion) FROM compras c"
+                + _SQL_COMPRAS_SIN_PRECIO_DONDE
             )
             casos, mas_viejo = cursor.fetchone()
         return {"casos": int(casos), "mas_viejo": mas_viejo}
@@ -3388,6 +3397,31 @@ def contar_stock_vacios_negativos() -> int:
         conexion.close()
 
 
+# LAS DOS MITADES DEL PROBLEMA, escritas UNA vez cada una. Las usan el
+# conteo (como filtro) y la lista (como filtro Y como columna, para decir
+# CUÁL de las dos falta). Sin esto, la columna que explica el caso y el
+# criterio que lo selecciona serían dos reglas y se separarían.
+_SQL_SIN_FICHA = ("NOT EXISTS (SELECT 1 FROM fichas_logistica f"
+                  " WHERE f.articulo_id = comprados.articulo_id)")
+_SQL_SIN_PRECIO_DE_VENTA = ("NOT EXISTS (SELECT 1 FROM precios_venta_historial p"
+                            " WHERE p.articulo_id = comprados.articulo_id"
+                            " AND p.vigente_desde <= %s)")
+
+# El bloque interno completo: los comprados desde la fecha, con las dos
+# marcas puestas. El orden de los %s es el del TEXTO — primero el de
+# `sin_precio` (está en el SELECT) y después el de la ventana (está en el
+# FROM)— y por eso los dos llamadores pasan (hoy, fecha_desde) y no al revés.
+_SQL_INCOTIZABLES = f"""
+    FROM (
+        SELECT comprados.articulo_id,
+               {_SQL_SIN_FICHA} AS sin_ficha,
+               {_SQL_SIN_PRECIO_DE_VENTA} AS sin_precio
+        FROM (SELECT DISTINCT c.articulo_id FROM compras c
+               WHERE c.fecha_operacion >= %s) comprados
+    ) x
+"""
+
+
 def contar_articulos_comprados_incotizables(fecha_desde, hoy) -> int:
     """Auditoría: artículos con compras desde fecha_desde que no se pueden cotizar para NINGÚN cliente.
 
@@ -3400,20 +3434,40 @@ def contar_articulos_comprados_incotizables(fecha_desde, hoy) -> int:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT COUNT(*) FROM (
-                    SELECT DISTINCT c.articulo_id FROM compras c WHERE c.fecha_operacion >= %s
-                ) comprados
-                WHERE NOT EXISTS (
-                        SELECT 1 FROM fichas_logistica f WHERE f.articulo_id = comprados.articulo_id)
-                   OR NOT EXISTS (
-                        SELECT 1 FROM precios_venta_historial p
-                        WHERE p.articulo_id = comprados.articulo_id AND p.vigente_desde <= %s)
-                """,
-                (fecha_desde, hoy),
+                "SELECT COUNT(*)" + _SQL_INCOTIZABLES + " WHERE x.sin_ficha OR x.sin_precio",
+                (hoy, fecha_desde),
             )
             (casos,) = cursor.fetchone()
         return int(casos)
+    finally:
+        conexion.close()
+
+
+def listar_articulos_comprados_incotizables(fecha_desde, hoy) -> list[dict]:
+    """Los mismos artículos que cuenta contar_articulos_comprados_incotizables.
+
+    Y trae CUÁL DE LAS DOS COSAS falta, que es lo único que vuelve accionable
+    el número: "sin ficha" se arregla en Fichas y "sin precio" en Cargar
+    Precios — son dos pantallas distintas del mismo sector. Un artículo puede
+    tener las dos.
+
+    Las marcas salen de las MISMAS expresiones que filtran (_SQL_SIN_FICHA y
+    _SQL_SIN_PRECIO_DE_VENTA), no de repetirlas: si la columna dijera una cosa
+    y el filtro otra, la lista mostraría casos que no explica.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT a.nombre AS articulo, x.sin_ficha, x.sin_precio"
+                + _SQL_INCOTIZABLES
+                + """ JOIN articulos a ON a.id = x.articulo_id
+                      WHERE x.sin_ficha OR x.sin_precio
+                      ORDER BY a.nombre""",
+                (hoy, fecha_desde),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
     finally:
         conexion.close()
 
@@ -3668,7 +3722,10 @@ def listar_compras_sin_precio() -> list[dict]:
     """Compras (de cualquier fecha) con importe todavía vacío, para completarlo desde /compras/pendientes.
 
     Solo las que todavía pueden llegar a venderse: estado en (pendiente,
-    recepcionado) y estado_retiro en (pendiente, retirado). Rechazada,
+    recepcionado) y estado_retiro en (pendiente, retirado). Ese recorte sale
+    de _SQL_COMPRAS_SIN_PRECIO_DONDE, la MISMA constante que usa
+    contar_compras_sin_precio — hasta el 12/09 estaba escrito a mano en las
+    dos, que es la regla escrita dos veces esperando separarse. Rechazada,
     no_ingresado o con el retiro cancelado significan que esa mercadería
     nunca se va a vender — no tiene sentido perseguirle el costo, así que
     quedan afuera aunque el importe siga en NULL.
@@ -3694,11 +3751,9 @@ def listar_compras_sin_precio() -> list[dict]:
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 JOIN proveedores p ON p.id = c.proveedor_id
-                WHERE c.importe IS NULL
-                  AND c.estado IN ('pendiente', 'recepcionado')
-                  AND c.estado_retiro IN ('pendiente', 'retirado')
-                ORDER BY c.fecha_operacion, p.codigo_puesto, c.cargado_el
                 """
+                + _SQL_COMPRAS_SIN_PRECIO_DONDE
+                + " ORDER BY c.fecha_operacion, p.codigo_puesto, c.cargado_el"
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             filas = cursor.fetchall()

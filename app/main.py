@@ -258,6 +258,7 @@ from app.db import (
     listar_compras_por_fecha_y_proveedor,
     listar_compras_procesadas_hoy_recepcion,
     listar_compras_procesadas_hoy_retiro,
+    listar_articulos_comprados_incotizables,
     listar_compras_sin_precio,
     listar_conceptos_editables_por_cliente,
     listar_conteos_vacios_de_fecha,
@@ -10988,6 +10989,73 @@ def _url_retiros_viejos(datos) -> str:
     })
 
 
+def _detalle_compras_sin_precio() -> dict:
+    """Las compras que esperan precio, la más vieja arriba.
+
+    EXISTE PARA COMERCIAL, y por eso vale la consulta: el link de esta alerta
+    lleva a /compras/pendientes, que desde el 12/09 está detrás de la clave
+    de Compras. Comercial la ve en su banner —"el que factura es el que se
+    come el problema"— y sin detalle recibía un número que no podía abrir.
+    Ahora ve CUÁLES son y le avisa al comprador; cargarlas sigue siendo de
+    Compras, y ahí el link sirve.
+
+    Por eso las columnas son las de NOMBRAR una compra, no las de cargarla:
+    la fecha, el artículo y el proveedor con su puesto. "Kleppe (N09P37), el
+    jueves, Mandarina" es lo que hace falta para avisar cuál es.
+
+    Reusa `listar_compras_sin_precio`, que ya existía para la pantalla de
+    Compras sin precio y comparte el WHERE con el conteo. No se escribió una
+    consulta nueva: la que hacía falta ya estaba, y no grepear el nombre
+    antes casi la duplica.
+    """
+    filas = listar_compras_sin_precio()
+    renglones = [
+        [
+            fila["fecha_operacion"].strftime("%d/%m"),
+            fila["articulo_nombre"],
+            f'{fila["proveedor_nombre"]} ({fila["proveedor_codigo_puesto"]})',
+            (f'{_formatear_numero(fila["cantidad_cajones"])} × '
+             f'{_formatear_numero(fila["contenido_por_cajon"])}'
+             f'{SUFIJOS_UNIDAD_COMPRA.get(fila["unidad_compra"], "")}'),
+        ]
+        for fila in filas
+    ]
+    return {
+        "columnas": ["Fecha", "Artículo", "Proveedor", "Cantidad"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} compra{'s' if len(renglones) != 1 else ''}",
+    }
+
+
+def _detalle_articulos_incotizables() -> dict:
+    """Los artículos comprados que no se pueden cotizar, y CUÁL de las dos cosas falta.
+
+    Las dos mitades se arreglan en pantallas distintas del mismo sector
+    —"sin ficha" en Fichas y "sin precio" en Cargar Precios— así que un
+    número solo no dice a dónde ir. Un artículo puede tener las dos.
+
+    La marca sale de la misma expresión que filtra (ver
+    listar_articulos_comprados_incotizables): la columna que explica el caso
+    y el criterio que lo elige no pueden ser dos reglas.
+    """
+    filas = listar_articulos_comprados_incotizables(
+        _hoy_argentina() - timedelta(days=7), _hoy_argentina()
+    )
+    renglones = [
+        [
+            fila["articulo"],
+            "sin ficha" if fila["sin_ficha"] else "—",
+            "sin precio" if fila["sin_precio"] else "—",
+        ]
+        for fila in filas
+    ]
+    return {
+        "columnas": ["Artículo", "Ficha", "Precio de venta"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} artículo{'s' if len(renglones) != 1 else ''}",
+    }
+
+
 def _detalle_cajones_faltantes() -> dict:
     """Las filas de la alerta de cajones faltantes: una por compra, la mayor arriba.
 
@@ -11200,6 +11268,7 @@ ALERTAS = [
         # es un agujero hasta que alguien lo tapa. Lo que sí filtra es el
         # ESTADO: una compra rechazada o cancelada nunca va a tener precio.
         contar=lambda: contar_compras_sin_precio(),
+        detallar=_detalle_compras_sin_precio,
     ),
     DefinicionAlerta(
         codigo="retiros_sin_hacer",
@@ -11319,6 +11388,7 @@ ALERTAS = [
         contar=lambda: contar_articulos_comprados_incotizables(
             _hoy_argentina() - timedelta(days=7), _hoy_argentina()
         ),
+        detallar=_detalle_articulos_incotizables,
     ),
     DefinicionAlerta(
         codigo="senas_vacios_pendientes",
@@ -11893,15 +11963,43 @@ def ver_alertas_compras(request: Request):
     para atrás y muestra las dieciocho del sistema; esto el comprador lo
     necesita en el momento y solo con lo suyo.
     """
+    return _pantalla_de_alertas(request, "compras", "Compras", "/compras")
+
+
+def _pantalla_de_alertas(request: Request, sector: str, nombre: str, volver: str):
+    """La pantalla de alertas de UN sector. Una sola para todos.
+
+    Ya era genérica salvo una línea: `_bloques_de_alertas` recibe el módulo y
+    la plantilla usa `modulo_nombre` y `volver` en todos lados. Lo único
+    específico era el `barra_sector` fijo en "compras", y eso no es un
+    detalle: el sector decide a dónde postea el candado, así que copiarla
+    para Comercial habría hecho que su 🔒 cerrara Compras.
+
+    Se llama `alertas_sector.html` y ya no `compras_alertas.html`: el nombre
+    mentía desde que la usa un segundo sector, y renombrar una plantilla es
+    gratis — al revés que una tabla, que cuesta una migración.
+    """
     return templates.TemplateResponse(
         request,
-        "compras_alertas.html",
+        "alertas_sector.html",
         {
-            "bloques": _bloques_de_alertas("compras"),
-            "modulo_nombre": "Compras",
-            "volver": "/compras",
+            "bloques": _bloques_de_alertas(sector),
+            "sector": sector,
+            "modulo_nombre": nombre,
+            "volver": volver,
         },
     )
+
+
+@app.get("/comercial/alertas")
+def ver_alertas_comercial(request: Request):
+    """Lo mismo que la de Compras, para Comercial, con las alertas de su sector.
+
+    Existe porque su banner solo da título y cantidad, y el detalle de sus
+    tres alertas vivía en /compras/alertas — detrás de una clave que no es la
+    suya. Comercial veía números que no podía abrir.
+    """
+    return _pantalla_de_alertas(request, "comercial", "Comercial", "/comercial")
 
 
 @app.get("/auditoria")

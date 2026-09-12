@@ -4026,6 +4026,73 @@ def test_NINGUN_LINK_INTERNO_apunta_a_la_url_vieja_de_articulos():
     assert ofensores == [], f"apuntan a la URL vieja: {ofensores}"
 
 
+# --- La pantalla de alertas de Comercial (12/09) -----------------------------
+
+def _alertas_de(ruta, codigos):
+    """Renderiza una pantalla de alertas con esos códigos con casos."""
+    from datetime import datetime as _dt
+    ahora = _dt.now(ARGENTINA_TEST)
+    estado = [{"codigo": c, "casos": 2, "mas_viejo": None, "calculada_el": ahora, "error": None}
+              for c in codigos]
+    with (
+        patch("app.main.listar_estado_alertas", return_value=estado),
+        patch("app.main.listar_compras_sin_precio", return_value=[]),
+        patch("app.main.listar_articulos_comprados_incotizables", return_value=[]),
+        patch("app.main.listar_unidades_que_diferen", return_value=[]),
+    ):
+        respuesta = cliente.get(ruta)
+    assert respuesta.status_code == 200, respuesta.status_code
+    return respuesta.text
+
+
+def test_la_pantalla_de_alertas_de_COMERCIAL_no_lleva_el_candado_de_compras():
+    """El sector decide a dónde postea el 🔒, y esta plantilla nació con "compras" fijo.
+
+    Copiada tal cual para Comercial, su candado habría cerrado COMPRAS desde
+    una pantalla de Comercial — el mismo bug que tenía
+    compra_corregir_recepcion, pero hecho a propósito. Por eso el sector
+    viene de la ruta.
+
+    Comercial no tiene puerta, así que acá directamente no hay candado; lo
+    que el test fija es que no aparezca el de OTRO sector.
+    """
+    marcado = _alertas_de("/comercial/alertas", ["compras_sin_precio"])
+
+    assert 'action="/compras/bloquear"' not in marcado
+    assert "Volver a Comercial" in marcado
+
+
+def test_las_dos_pantallas_de_alertas_son_LA_MISMA_plantilla():
+    """Una sola pantalla para los dos sectores: copiada, el día que se arregle
+    algo en una la otra queda vieja y nadie se entera.
+
+    Se compara una marca del marcado que solo puede venir de la plantilla, no
+    el texto visible — que justamente cambia por sector (corolario 38).
+    """
+    de_compras = _alertas_de("/compras/alertas", ["compras_sin_precio"])
+    de_comercial = _alertas_de("/comercial/alertas", ["compras_sin_precio"])
+
+    for marcado, nombre in ((de_compras, "Compras"), (de_comercial, "Comercial")):
+        assert f"Volver a {nombre}" in marcado
+        assert 'class="bloque"' in marcado or "<h2" in marcado
+
+
+def test_las_alertas_de_COMERCIAL_ahora_TRAEN_SU_DETALLE():
+    """Las tres de Comercial tenían que dejar de ser un número que no se puede abrir.
+
+    Sin `detallar`, la pantalla del sector muestra lo mismo que el banner
+    —título, cantidad y link— y el link de dos de ellas cae en una zona con
+    clave ajena. El detalle es lo que la vuelve útil sin mandarla a ningún
+    lado.
+    """
+    from app.main import ALERTAS
+
+    por_codigo = {a.codigo: a for a in ALERTAS}
+    for codigo in ("compras_sin_precio", "articulos_incotizables", "unidades_que_difieren"):
+        assert por_codigo[codigo].detallar is not None, codigo
+        assert "comercial" in por_codigo[codigo].modulos, codigo
+
+
 @pytest.fixture(autouse=True)
 def _puerta_de_compras_abierta(request):
     """La suite cruza Compras como la cruza una persona: con la clave puesta.

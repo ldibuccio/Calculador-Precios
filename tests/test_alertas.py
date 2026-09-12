@@ -321,11 +321,16 @@ DEUDA_ALERTAS_CONTRA_PUERTA_AJENA = {
     # mandarla — la acción (cargar el precio de compra) vive en Compras y
     # punto. El mecanismo da dónde poner un destino; no inventa uno.
     #
-    # Se cierra de una de dos formas, y las dos son decisión de producto:
-    # darle `detallar` para que Comercial vea CUÁLES son desde su propia
-    # pantalla de alertas (que todavía no existe), o sacarle el sector. Hoy
-    # recibe un número que no puede abrir, que es peor que no tener la
-    # alerta.
+    # LO QUE YA SE HIZO (12/09), y por eso la entrada queda pero el motivo
+    # cambió: Comercial tiene su pantalla de alertas (/comercial/alertas) y
+    # esta alerta tiene `detallar`, así que ahí VE cuáles son las compras sin
+    # precio sin cruzar ninguna puerta. Ya no recibe un número que no puede
+    # abrir.
+    #
+    # Lo que sigue chocando es EL LINK: apunta a /compras/pendientes, que es
+    # donde se carga el precio, y esa acción no se puede mover. Cerrarlo del
+    # todo es decisión de producto —sacarle el link a Comercial, o sacarle el
+    # sector— y por eso la deuda no se borra: se achicó.
     ("compras_sin_precio", "comercial"),
 }
 

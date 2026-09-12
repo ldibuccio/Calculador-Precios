@@ -99,7 +99,11 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "compras" %}
+  {# EL SECTOR VIENE DE LA RUTA. Fijo en "compras" —que es como nació— esta
+     pantalla le habría puesto a Comercial la barra y el candado de Compras:
+     el sector es lo que decide a dónde postea el 🔒, y es exactamente el bug
+     que tenía compra_corregir_recepcion. #}
+  {% set barra_sector = sector %}
   {% set barra_titulo = "Alertas" %}
   {% set barra_atras = volver %}
   {% include "_barra_navegacion.html" %}

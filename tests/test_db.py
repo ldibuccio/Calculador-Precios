@@ -1414,7 +1414,17 @@ def test_contar_articulos_comprados_incotizables_pide_ficha_y_precio_vigente():
     assert "FROM fichas_logistica" in consulta
     assert "FROM precios_venta_historial" in consulta
     assert "vigente_desde <= %s" in consulta
-    assert parametros == (date(2026, 7, 30), date(2026, 8, 6))
+    # EL ORDEN ES (hoy, desde) y no al revés: desde el 12/09 la marca
+    # `sin_precio` vive en el SELECT del bloque interno, que textualmente va
+    # ANTES del FROM donde está la ventana, y los %s se ligan por posición.
+    #
+    # Este assert protege de que alguien cambie la LLAMADA, no de que alguien
+    # reordene el SQL: con un cursor falso las dos cosas pasan igual
+    # (corolario 40). Que el orden sea el correcto se verificó corriendo la
+    # consulta contra db/esquema_completo.sql con los casos plantados, que es
+    # lo único que lo puede decir — son dos fechas, así que invertirlas no da
+    # error: da otro resultado.
+    assert parametros == (date(2026, 8, 6), date(2026, 7, 30))
 
 
 def test_contar_senas_pendientes_viejas_usa_el_criterio_de_la_pantalla():
