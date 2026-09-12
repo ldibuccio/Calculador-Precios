@@ -309,3 +309,57 @@ def test_en_COMPRAS_la_alerta_de_kilos_va_ANTES_que_la_de_bultos():
     """
     codigos = [definicion.codigo for definicion in ALERTAS]
     assert codigos.index("kilos_faltantes") < codigos.index("cajones_faltantes")
+
+
+# Las que HOY mandan a un sector contra la puerta de otro. NO es una lista de
+# casos aprobados: es deuda conocida, anotada para que una CUARTA no entre en
+# silencio. Cada una tiene que decidirse, y la de compras_sin_precio la
+# produjo la puerta de Compras del 12/09 (antes /compras no pedía nada).
+DEUDA_ALERTAS_CONTRA_PUERTA_AJENA = {
+    # Comercial la ve y el link cae en /compras/pendientes. Sin `detallar`,
+    # ese link es su ÚNICA forma de ver cuáles son.
+    ("compras_sin_precio", "comercial"),
+    # Compras la ve y el link cae en /administracion/stock/guias-r. Anterior
+    # a todo esto: Administración tiene clave desde el 10/09.
+    ("guias_r_costo_incompleto", "compras"),
+}
+
+
+def test_NINGUNA_ALERTA_manda_a_un_sector_contra_la_puerta_de_otro():
+    """Una alerta que se muestra en un sector y linkea a la zona de OTRO deja
+    a quien la sigue contra una clave que no tiene.
+
+    Pasó el 12/09 con `unidades_que_difieren`: se muestra en Compras y en
+    Comercial, y apuntaba a Artículos — que ese mismo día se mudó bajo
+    /compras. El usuario de Comercial seguía el link de su propia alerta y
+    pegaba contra una puerta ajena. Se reapuntó a Fichas, que es de su sector
+    y no tiene puerta.
+
+    LA CAUSA DE FONDO es que `DefinicionAlerta` tiene UNA url para todos los
+    sectores que la muestran, así que con dos sectores y una acción que vive
+    en uno solo, el otro siempre queda del lado de afuera. Este test no la
+    arregla: hace que no crezca.
+
+    Se mide contra las puertas REALES del registro, no contra una lista de
+    prefijos escrita acá: el día que un sector gane clave, sus alertas
+    entran solas a este control — que es exactamente como apareció el caso
+    que lo originó.
+    """
+    from app.main import ALERTAS, PUERTAS_POR_SECTOR
+
+    datos = {"casos": 1, "mas_viejo": None}
+    ofensores = set()
+    for definicion in ALERTAS:
+        url = definicion.url(datos) if callable(definicion.url) else definicion.url
+        for modulo in definicion.modulos:
+            for puerta in PUERTAS_POR_SECTOR.values():
+                if url.startswith(puerta.prefijo) and puerta.sector != modulo:
+                    ofensores.add((definicion.codigo, modulo))
+
+    nuevas = ofensores - DEUDA_ALERTAS_CONTRA_PUERTA_AJENA
+    assert nuevas == set(), f"alertas nuevas que mandan a una puerta ajena: {nuevas}"
+
+    # Y al revés: una que se arregle sale de la deuda, para que la lista no
+    # quede protegiendo algo que ya no pasa (corolario 22).
+    arregladas = DEUDA_ALERTAS_CONTRA_PUERTA_AJENA - ofensores
+    assert arregladas == set(), f"ya no chocan, sacalas de la deuda: {arregladas}"

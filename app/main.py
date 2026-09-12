@@ -11444,8 +11444,28 @@ ALERTAS = [
         # compra se edita en Artículos (Compras) y la de venta en Fichas
         # (Comercial). En uno solo, el que la ve no siempre puede tocarla.
         modulos=("compras", "comercial"),
-        url="/compras/articulos",
-        texto_link="Ver en Artículos",
+        # EL LINK VA A FICHAS, que es de Comercial y NO TIENE PUERTA. Apuntaba
+        # a Artículos, y el 12/09 Artículos se mudó bajo /compras: un usuario
+        # de Comercial que siguiera el link de su propia alerta pegaba contra
+        # una clave que no es la suya. Fichas es su sector y es donde vive
+        # `unidad_venta`, que es la mitad que él puede tocar.
+        #
+        # El de Compras entra por Artículos desde su botonera, con su clave.
+        # QUEDA ASIMÉTRICO A PROPÓSITO —el link lleva directo a la mitad de
+        # uno solo de los dos— y lo que decide cuál es que ninguno choque con
+        # la puerta del otro: Compras tiene camino propio y Comercial no lo
+        # tendría.
+        #
+        # LO QUE COMERCIAL SIGUE SIN VER es CUÁL par difiere: el detalle de
+        # esta alerta se muestra en /compras/alertas, que está detrás de la
+        # clave de Compras, y su banner solo le da título y cantidad. O sea
+        # que este cambio le devuelve un destino donde puede actuar, no la
+        # información. Eso se arregla de verdad el día que DefinicionAlerta
+        # pueda tener una url POR SECTOR — hoy tiene una sola para todos, y
+        # ésa es la causa de fondo de los tres casos (ver el test
+        # test_NINGUNA_ALERTA_manda_a_un_sector_contra_la_puerta_de_otro).
+        url="/fichas",
+        texto_link="Ver en Fichas",
         # EN LAMBDA como las otras dieciocho, y no una referencia directa: el
         # registro se arma al importar, así que una referencia captura el
         # objeto de ese momento y deja de seguir al nombre. La lambda lo
