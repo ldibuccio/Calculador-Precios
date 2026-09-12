@@ -3347,15 +3347,26 @@ texto**:
 Las dos veces el alto promedio bajaba y el número decía que iba mejorando.
 **Las dos se vieron en la CAPTURA, no en el número.**
 
-Por eso, de acá en adelante, **toda medición de alto de tarjeta trae al lado
-un detector de quiebre**: una celda que mide más que su propio `line-height`
-envolvió. Cuesta cinco líneas de JS y es lo único que distingue "entra mejor"
-de "entra porque se rompió":
+Por eso, de acá en adelante, **toda medición de layout usa
+`scripts/medir_layout.py`**, que devuelve los tres números juntos: alto,
+QUEBRADAS y desborde. Ya no es un snippet para copiar — está en el repo, con
+sus tests, y su docstring cuenta por qué existe.
 
-```js
-const lh = parseFloat(getComputedStyle(td).lineHeight) || 16;
-if (td.getBoundingClientRect().height > lh * 1.6) quebradas.push(td.textContent);
+```python
+from scripts.medir_layout import medir_sync, imprimir
+imprimir("como está hoy", medir_sync(html, ancho=390))
 ```
+
+**El alto solo nunca alcanzó**, y la lista de quebradas es lo único que
+distingue "entra mejor" de "entra porque se rompió".
+
+**Y son DOS fallas distintas, con un número cada una.** Lo encontró el propio
+fixture del test: la primera versión plantaba una palabra de sesenta X para
+simular un quiebre y **no detectaba nada**, porque una palabra que no se puede
+partir NO envuelve — se desborda. La celda queda de una línea y se sale por el
+costado. Un detector de quiebre solo la habría dado por buena; por eso
+`desborde` viaja en la misma medición. El caso plantado tenía que plantarse
+bien, que es el corolario 36 mordiendo adentro del test escrito para aplicarlo.
 
 Es el testigo del corolario 24 en otra unidad: **un número solo no se puede
 leer**, y el alto de una fila sin el quiebre al lado miente exactamente
