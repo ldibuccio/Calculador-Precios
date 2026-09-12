@@ -6649,6 +6649,87 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
 # cuentan igual sean de kilo, de unidad o de cubeta. El filtro por 'kilo'
 # tenía sentido cuando el umbral era en kilos; acá sería dejar afuera
 # faltantes reales por el envase del artículo.
+# El par (cómo se COMPRA el artículo, cómo se VENDE la ficha). Escrito UNA
+# vez y compartido por el conteo y el detalle: si fueran dos consultas, el
+# banner podría decir 1 y la pantalla no mostrar ninguno, y eso es lo único
+# que el que lo lee no puede explicar.
+#
+# POR QUÉ ES UN PROBLEMA: `_costear_compras` (app/costeo.py) divide
+# SUM(importe x cajones) por SUM(cajones x contenido_por_cajon) y llama al
+# resultado "costo por unidad de VENTA". El numerador es plata y el
+# denominador es contenido de COMPRA, así que esa igualdad SOLO vale si las
+# dos unidades son la misma. No hay conversión en ningún lado — ver la
+# sección de CLAUDE.md sobre unidad_compra y unidad_venta.
+_SQL_UNIDADES_QUE_DIFIEREN = """
+    FROM articulos a
+    JOIN fichas_logistica f ON f.articulo_id = a.id
+    JOIN clientes cl ON cl.id = f.cliente_id
+    WHERE a.activo
+      AND a.unidad_compra IS NOT NULL
+      AND a.unidad_compra IS DISTINCT FROM f.unidad_venta
+"""
+
+
+def contar_unidades_que_diferen() -> int:
+    """Pares artículo-ficha donde la unidad de compra y la de venta no coinciden.
+
+    SIN VENTANA DE TIEMPO, y a propósito: no es un hecho que pase y se
+    resuelva solo, es una configuración que queda mal hasta que alguien la
+    arregla. Con ventana se apagaría sola a los dos días dejando el costo
+    torcido para siempre.
+
+    Y NO MIRA SI SE USA. La primera versión contaba solo los pares con
+    compras: un par dormido no rompe ninguna cuenta hoy. Pero el día que se
+    compre ese artículo, el costo sale mal desde la primera compra y nadie
+    va a estar mirando — el aviso llega cuando ya no sirve. El que se usa y
+    el que duerme se distinguen en el DETALLE, que es donde se decide cuál
+    atender primero.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*)" + _SQL_UNIDADES_QUE_DIFIEREN)
+            (casos,) = cursor.fetchone()
+        return int(casos)
+    finally:
+        conexion.close()
+
+
+def listar_unidades_que_diferen() -> list[dict]:
+    """Los pares que difieren, con lo que decide si urgen: si ya se usan.
+
+    `compras`, `precios` y `renglones` en cero es un dato DORMIDO —se
+    corrige y listo—; con cualquiera en distinto de cero hay plata calculada
+    con una división entre unidades distintas.
+
+    El nombre del cliente sale de `nombre_cliente` si la ficha lo tiene, y si
+    no del cliente: son dos cosas distintas y confundirlas manda a buscar un
+    cliente que no existe. Acá gana el de la ficha porque es el que el que
+    mira la ficha va a reconocer.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.nombre AS articulo, a.unidad_compra,
+                       COALESCE(f.nombre_cliente, cl.nombre) AS cliente,
+                       f.unidad_venta, f.id AS ficha_id,
+                       (SELECT COUNT(*) FROM compras c WHERE c.articulo_id = a.id) AS compras,
+                       (SELECT COUNT(*) FROM precios_venta_historial v
+                         WHERE v.ficha_id = f.id) AS precios,
+                       (SELECT COUNT(*) FROM pedidos_renglones r
+                         WHERE r.ficha_id = f.id AND r.anulado_el IS NULL) AS renglones
+                """
+                + _SQL_UNIDADES_QUE_DIFIEREN
+                + " ORDER BY a.nombre, f.id"
+            )
+            columnas = [d[0] for d in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 _SQL_CAJONES_FALTANTES = """
     FROM compras c
     JOIN articulos a ON a.id = c.articulo_id

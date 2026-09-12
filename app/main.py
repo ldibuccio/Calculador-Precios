@@ -93,6 +93,8 @@ from app.db import (
     contar_articulos,
     contar_articulos_comprados_incotizables,
     contar_compras_sin_precio,
+    contar_unidades_que_diferen,
+    listar_unidades_que_diferen,
     contar_recepciones_pendientes_viejas,
     contar_retiros_pendientes_viejos,
     contar_senas_pendientes_viejas,
@@ -10872,6 +10874,34 @@ def _detalle_cajones_faltantes() -> dict:
     }
 
 
+def _detalle_unidades_que_diferen() -> dict:
+    """Los pares donde la unidad de compra y la de venta no coinciden.
+
+    LA COLUMNA "USO" ES LA QUE DECIDE QUÉ HACER, y por eso va y no se
+    resume en un número: un par que nunca se compró ni se vendió es un dato
+    dormido —se corrige y listo—; uno con compras o precios encima es plata
+    ya calculada dividiendo entre unidades distintas, y eso no se arregla
+    cambiando la unidad. Sin esa columna, los dos casos se leen igual y el
+    que llega no tiene con qué priorizar.
+    """
+    renglones = []
+    for fila in listar_unidades_que_diferen():
+        usado = fila["compras"] or fila["precios"] or fila["renglones"]
+        renglones.append([
+            fila["articulo"],
+            fila["unidad_compra"],
+            fila["cliente"],
+            fila["unidad_venta"],
+            (f'{fila["compras"]} compras · {fila["precios"]} precios · '
+             f'{fila["renglones"]} renglones') if usado else "sin usar",
+        ])
+    return {
+        "columnas": ["Artículo", "Se compra por", "Cliente", "Se vende por", "Uso"],
+        "filas": renglones,
+        "resumen": f"{len(renglones)} par{'es' if len(renglones) != 1 else ''}",
+    }
+
+
 def _detalle_pedidos_incompletos() -> dict:
     """Las filas de los pedidos armados con faltantes: una por RENGLÓN.
 
@@ -11147,6 +11177,23 @@ ALERTAS = [
             UMBRAL_CAJONES_FALTANTES,
         ),
         detallar=_detalle_cajones_faltantes,
+    ),
+    DefinicionAlerta(
+        codigo="unidades_que_difieren",
+        titulo="Artículos que se compran en una unidad y se venden en otra",
+        titulo_corto="Unidad de compra ≠ unidad de venta",
+        # A LOS DOS SECTORES porque la mitad la arregla cada uno: la unidad de
+        # compra se edita en Artículos (Compras) y la de venta en Fichas
+        # (Comercial). En uno solo, el que la ve no siempre puede tocarla.
+        modulos=("compras", "comercial"),
+        url="/articulos",
+        texto_link="Ver en Artículos",
+        # EN LAMBDA como las otras dieciocho, y no una referencia directa: el
+        # registro se arma al importar, así que una referencia captura el
+        # objeto de ese momento y deja de seguir al nombre. La lambda lo
+        # resuelve al llamar.
+        contar=lambda: contar_unidades_que_diferen(),
+        detallar=_detalle_unidades_que_diferen,
     ),
     DefinicionAlerta(
         codigo="mails_sin_confirmar",

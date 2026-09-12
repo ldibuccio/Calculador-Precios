@@ -2983,3 +2983,110 @@ por el otro extremo: allá el `display: none` se llevaba puesta una función y
 el desborde medía 0 igual; acá el cero era del propio arreglo. En los dos, la
 frase que cierra es la misma — *nada en la medición que uno eligió puede
 delatar algo que quedó afuera de esa medición*.
+
+## El pesaje: la foto no documenta el pesaje, lo DISPARA
+
+Del 12/09, y va como sección porque es un hecho del sistema que cambia lo
+que vale una función, no la trampa de un día.
+
+**El número, y no se puede citar sin su control al lado**, porque el 63%
+solo significa algo pegado al 8%:
+
+| | recepciones | tocadas | |
+|---|---|---|---|
+| **Antes de la foto** (Frutamax, hasta el 09/09) | 367 | 35 | **9,5%** |
+| **En la ventana, CON foto** (09 al 12/09) | 62 | 39 | **63%** |
+| **En la ventana, SIN foto** (mismos días) | 12 | 1 | **8%** |
+
+"Tocada" es que alguien cambió el número precargado al recepcionar; "sin
+tocar" es apretar Recibir con el estimado puesto, que graba *pesó
+exactamente lo que se había cargado*.
+
+**La tercera fila es la que decide, y por eso la medición se hizo dos
+veces.** El primer corte —60 días, con foto contra sin foto— comparaba la
+función nueva contra el pasado: dos poblaciones de épocas distintas. Acotado
+a la ventana quedaba el otro confundido: que hubiera cambiado *el período* y
+no la foto. **Las 12 sin foto de esos mismos días dan 8%, casi idéntico al
+9,5% de antes**: el período no cambió. Cambió quién saca la foto.
+
+Y `foto_despues = 0`: ninguna foto se subió después de recepcionar, así que
+todas son previas al número. La evidencia es limpia.
+
+### La conclusión es la CONTRARIA a la que teníamos dos turnos antes
+
+Con el 82% sin tocar de `kilos_4` habíamos concluido *"Depósito no pesa"*.
+Es falso, y el error era de alcance: **las 343 sin tocar y sin foto son de
+antes de que la foto existiera.** No eran operarios que no pesan: era un
+período en el que no había nada que empujara a pesar.
+
+Es la familia del corolario 24 —una población que no vota— con otra ropa: no
+es una base parada, es **una función que todavía no existía**. Y el aviso
+para la próxima es el mismo: antes de leer una tasa histórica como un hábito,
+preguntarse desde cuándo existe lo que se está midiendo.
+
+### Lo que cambia, y es de diseño
+
+**La foto pasó de "prueba de que se pesó" a "lo que hace que se pese".** Hoy
+la pantalla avisa y no traba: el botón dice que falta la foto y deja recibir
+igual (*"el camión no se para por una foto"*, y sigue siendo verdad).
+
+Con este número, ese cartel está haciendo más que documentar — **está
+produciendo el pesaje**. Eso cambia cuánto vale hacerla obligatoria, que
+antes era una discusión sobre auditoría y ahora es sobre la calidad del dato
+de entrada.
+
+**NO SE CAMBIÓ NADA**, por pedido, y la razón es buena: cuatro días y 62
+casos es poco para mover una traba que puede dejar un camión esperando. Pero
+queda anotado que el argumento ya no es el mismo.
+
+### Y lo que queda ANOTADO Y NO HECHO
+
+1. **Volver a correr `kilos_4` el 25/09.** Si el 82% sin tocar era falta de
+   pesaje y la foto lo está corrigiendo, en dos semanas el promedio de
+   `contenido_por_cajon_real` va a valer algo que hoy no vale. **Hasta
+   entonces no se mueve ninguna referencia** — salvo Mango a 40, donde la
+   diferencia es de 30 sobre 40 y no la explica ningún redondeo.
+2. **La explicación que los datos NO pueden descartar**: que el operario
+   saque la foto justo en las cargas que ya le generaban duda. Ahí la foto no
+   dispararía nada — sería un *marcador* de sospecha, y el que corrige es el
+   mismo que ya iba a corregir. Ninguna consulta lo separa, porque quién saca
+   la foto lo elige él. **Lo separa hacerla obligatoria unos días**: sin
+   elección no hay selección.
+
+## Corolario 48: una divergencia entre bases no la escribe nadie, así que ninguna guarda de escritura la ve
+
+Del 12/09. Las dos bases tenían la ficha de Kiwi distinta: Frutamax
+`kilo/kilo` y Palmala `kilo/cubeta`. En Palmala eso rompe el supuesto del
+costeo (ver la sección de `unidad_compra` y `unidad_venta`).
+
+**Nadie cargó eso mal un día.** Las dos fichas se cargaron bien en su
+momento y las bases se separaron después — por una migración que corrió en
+una sola, por una corrección hecha a mano, por el orden en que se crearon.
+No hay un momento de escritura donde una guarda hubiera saltado.
+
+Eso decide DÓNDE va la guarda, y es al revés de lo que este archivo repite:
+*la guarda va donde se ESCRIBE* vale para el error que alguien comete
+tipeando. **Para el estado que se degrada solo, la guarda tiene que mirar el
+ESTADO, no la escritura** — y en este sistema eso es el registro de alertas,
+que recalcula cada seis horas y se ve en el banner y en la pantalla del
+sector.
+
+Por eso la guarda quedó como alerta (`unidades_que_difieren`) y no como un
+cartel en la pantalla de Fichas. Un cartel al guardar no habría visto NUNCA
+este caso.
+
+Dos decisiones adentro, las dos con su razón:
+
+- **A LOS DOS SECTORES.** La unidad de compra se edita en Artículos
+  (Compras) y la de venta en Fichas (Comercial): en uno solo, el que la ve
+  no siempre puede tocarla.
+- **NO FILTRA POR "SE USA".** Un par dormido no rompe ninguna cuenta hoy, y
+  la primera versión lo excluía. Pero el día que se compre ese artículo el
+  costo sale mal **desde la primera compra**, y nadie va a estar mirando —
+  el aviso llegaría cuando ya no sirve. Usado y dormido se distinguen en el
+  DETALLE, que es donde se decide cuál atender primero, no en si aparece.
+
+Y el caso se cerró como dormido: Kiwi nunca se compró en ninguna de las dos
+bases —cero compras, cero precios, cero renglones— así que no hay plata mal
+calculada. **Las tres columnas de "¿se usa?" son las que lo dijeron**, y sin
+ellas el mismo hallazgo habría mandado a revisar meses de costos.

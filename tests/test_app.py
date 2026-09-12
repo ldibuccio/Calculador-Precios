@@ -11213,6 +11213,7 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
         "contar_pedidos_incompletos": VACIO,
         "contar_pedidos_sin_controlar": VACIO,
         "contar_cajones_faltantes": VACIO,
+        "contar_unidades_que_diferen": 0,
         "contar_mails_pedido_sin_procesar": VACIO,
         "contar_pedidos_faltantes": VACIO,
         "contar_casillas_sin_revisar": VACIO,
@@ -25966,3 +25967,41 @@ def test_las_dos_FORMAS_de_tabla_del_cuadro_estan_separadas_por_clase():
     # un precio mal.
     for rotulo in ("antes ", "ahora ", "sugerido ", "vigente ", "utilidad ", "venta "):
         assert f'content: "{rotulo}"' in css, rotulo
+
+
+def test_la_alerta_de_unidades_va_a_LOS_DOS_sectores_que_la_pueden_arreglar():
+    """La unidad de compra se edita en Artículos (Compras) y la de venta en
+    Fichas (Comercial): en un solo sector, el que la ve no siempre puede
+    tocarla."""
+    from app.main import ALERTAS
+
+    alerta = next(a for a in ALERTAS if a.codigo == "unidades_que_difieren")
+    assert set(alerta.modulos) == {"compras", "comercial"}
+    assert alerta.detallar is not None
+
+
+def test_el_detalle_de_unidades_DISTINGUE_el_par_dormido_del_que_ya_se_usa():
+    """Es la columna que decide qué hacer: un par sin usar se corrige y listo;
+    uno con compras encima es plata ya calculada dividiendo entre unidades
+    distintas, y eso no se arregla cambiando la unidad.
+
+    Sin esa columna los dos casos se leen igual y el que llega no tiene con
+    qué priorizar.
+    """
+    from app.main import _detalle_unidades_que_diferen
+
+    filas = [
+        {"articulo": "EJEMPLO Uno", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
+         "unidad_venta": "cubeta", "ficha_id": 1, "compras": 0, "precios": 0, "renglones": 0},
+        {"articulo": "EJEMPLO Tres", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
+         "unidad_venta": "unidad", "ficha_id": 2, "compras": 7, "precios": 1, "renglones": 0},
+    ]
+    with patch("app.main.listar_unidades_que_diferen", return_value=filas):
+        detalle = _detalle_unidades_que_diferen()
+
+    assert detalle["filas"][0][-1] == "sin usar"
+    assert detalle["filas"][1][-1] == "7 compras · 1 precios · 0 renglones"
+    assert detalle["resumen"] == "2 pares"
+    # Las dos unidades van en la misma fila: el par es el hallazgo, no cada
+    # una por su lado.
+    assert detalle["filas"][0][1] == "kilo" and detalle["filas"][0][3] == "cubeta"
