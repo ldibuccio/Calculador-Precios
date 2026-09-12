@@ -1,5 +1,10 @@
 -- ¿Cuantas devoluciones al proveedor hay, y con que se las puede rastrear?
 --
+-- Va de 3 y no de 1: `devoluciones_2_cuantas_veces.sql` ya existia y mide
+-- OTRA cosa —el rechazo que volvia ANTES de que el cuarto destino
+-- existiera—. Dos archivos numerados al reves de como pasaron se cobran en
+-- la proxima lectura, cuando ya nadie se acuerda de cual vino primero.
+--
 -- LA PREGUNTA QUE DECIDE: para reclamarle al proveedor hace falta decir "de
 -- la compra del martes te devolvi 8 bultos". El movimiento NO guarda la
 -- compra: guarda `pedido_renglon_id` (de que renglon armado volvio) y

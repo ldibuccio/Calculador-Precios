@@ -91,7 +91,12 @@ create table proveedores (
     creado_en       timestamptz not null default now(),
     actualizado_en  timestamptz not null default now(),
     codigo_puesto   text unique not null check (codigo_puesto ~ '^[NL][0-9]{2}P[0-9]{2}$'),
-    activo          boolean not null default true
+    activo          boolean not null default true,
+    -- Once dígitos sin guiones, y NULLABLE: la mayoría de los puestos no lo
+    -- tiene cargado y exigirlo dejaría sin poder crear un proveedor en el
+    -- Mercado. Ver db/agregar_cuit_a_proveedores.sql.
+    cuit            text,
+    constraint proveedores_cuit_check check (cuit is null or cuit ~ '^[0-9]{11}$')
 );
 
 comment on column proveedores.activo is
@@ -815,8 +820,17 @@ create table movimientos_stock (
     costo_por_bulto numeric check (costo_por_bulto is null or costo_por_bulto >= 0),
     -- Reingreso por rechazo: qué se hizo con lo que volvió.
     destino_rechazo text
-        check (destino_rechazo is null or destino_rechazo in ('stock', 'segunda', 'reproceso')),
+        check (destino_rechazo is null or destino_rechazo in
+               ('stock', 'segunda', 'reproceso', 'devolucion_proveedor')),
     bultos_segunda numeric check (bultos_segunda is null or bultos_segunda > 0),
+    -- Cuarto destino del rechazo: a quién se le devolvió la mercadería. El
+    -- descuento se arregla fuera del sistema, así que acá no hay cuenta
+    -- corriente — lo único que se guarda es el proveedor. Ver
+    -- db/devolucion_al_proveedor.sql.
+    proveedor_devolucion_id bigint references proveedores (id),
+    constraint movimientos_stock_proveedor_solo_devolucion
+        check (proveedor_devolucion_id is null
+               or destino_rechazo = 'devolucion_proveedor'),
     -- Merma dirigida a un lote puntual (NULL = FIFO, el default).
     lote_tipo text
         check (lote_tipo is null

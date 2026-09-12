@@ -8593,6 +8593,21 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        -- corolario 3: al agregar un campo hay que grepear
                        -- quién CONSTRUYE la estructura, no quién la nombra.
                        m.ficha_id,
+                       -- A QUIÉN se le devolvió, y faltaba por la MISMA razón
+                       -- que la ficha de arriba: la columna se agregó con el
+                       -- cuarto destino del rechazo y este lector no se
+                       -- actualizó. El comentario que explica el corolario 3
+                       -- está tres líneas más arriba y el caso volvió a pasar
+                       -- con la columna siguiente — un comentario avisa al que
+                       -- lo lee, y al que agrega una columna no lo lee nadie.
+                       --
+                       -- Sin esto la pantalla decía "se le devolvió al
+                       -- proveedor" y no decía a cuál: el dato estaba en la
+                       -- base y no salía por ninguna pantalla, que es el campo
+                       -- sin consecuencia con otra ropa.
+                       m.proveedor_devolucion_id,
+                       pd.nombre AS proveedor_devolucion_nombre,
+                       pd.codigo_puesto AS proveedor_devolucion_puesto,
                        p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido,
                        -- CUÁNTAS FOTOS TIENE, no si tiene: el listado lo
                        -- muestra como "sin foto" en gris cuando da 0, y eso
@@ -8606,6 +8621,7 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 LEFT JOIN clientes cl ON cl.id = m.cliente_id
                 LEFT JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
                 LEFT JOIN pedidos p ON p.id = r.pedido_id
+                LEFT JOIN proveedores pd ON pd.id = m.proveedor_devolucion_id
                 WHERE m.fecha_operacion >= %s AND m.fecha_operacion <= %s
                 ORDER BY m.fecha_operacion DESC, m.creado_en DESC
                 """,

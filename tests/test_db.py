@@ -7992,3 +7992,71 @@ def test_la_guarda_de_unidades_NO_recorta_por_tiempo_ni_por_uso():
     # `IS DISTINCT FROM` y no `<>`: con un NULL de un lado, `<>` da NULL y el
     # par se escapa en silencio.
     assert "IS DISTINCT FROM f.unidad_venta" in _SQL_UNIDADES_QUE_DIFIEREN
+
+
+def test_toda_columna_que_agrega_una_MIGRACION_esta_en_el_esquema_completo():
+    """`db/esquema_completo.sql` tiene que ser el esquema REAL, no uno viejo.
+
+    CLAUDE.md manda verificar los nombres contra ese archivo antes de escribir
+    cualquier SQL. Si una migración agrega una columna y el archivo no la
+    tiene, la próxima consulta que alguien escriba contra ella falla **y
+    parece que la columna no existe** — que es la peor forma de equivocarse:
+    manda a construir lo que ya está.
+
+    El 12/09 faltaban DOS, las dos del mismo turno: `proveedor_devolucion_id`
+    (con el CHECK de `destino_rechazo` todavía en la lista vieja) y
+    `proveedores.cuit`. Las otras migraciones de la semana sí lo habían
+    actualizado en el mismo commit, así que el paso existía y era MANUAL: lo
+    único que fallaba era acordarse. Esto lo saca de la memoria.
+
+    RESTA LOS `drop`, y hace falta: cinco columnas que una migración agregó
+    fueron borradas después (`compras.foto_ruta`, las dos de la excepción del
+    freno) o viven en tablas que ya no existen (`precios_dia`,
+    `pedidos_supermercado`). Sin restarlas, el test exigiría poner en el
+    esquema columnas que el sistema no tiene — y un test que pide lo
+    incorrecto se termina aflojando hasta que no pide nada.
+    """
+    import io
+    import pathlib
+    import re
+
+    AGREGA = re.compile(
+        r"alter\s+table\s+(?:if\s+exists\s+)?(\w+)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)", re.I)
+    BORRA_COLUMNA = re.compile(
+        r"alter\s+table\s+(?:if\s+exists\s+)?(\w+)\s+drop\s+column\s+(?:if\s+exists\s+)?(\w+)", re.I)
+    BORRA_TABLA = re.compile(r"drop\s+table\s+(?:if\s+exists\s+)?(\w+)", re.I)
+
+    esquema = io.open("db/esquema_completo.sql", encoding="utf-8").read()
+    agregadas, borradas, tablas_borradas = [], set(), set()
+    for ruta in sorted(pathlib.Path("db").glob("*.sql")):
+        if ruta.name == "esquema_completo.sql":
+            continue
+        texto = io.open(ruta, encoding="utf-8").read()
+        agregadas += [(t.lower(), c.lower(), ruta.name) for t, c in AGREGA.findall(texto)]
+        borradas |= {(t.lower(), c.lower()) for t, c in BORRA_COLUMNA.findall(texto)}
+        tablas_borradas |= {t.lower() for t in BORRA_TABLA.findall(texto)}
+
+    # El canario de que el barrido MIRA algo: si el regex dejara de matchear,
+    # la lista vacía haría pasar el test sin revisar una sola migración.
+    assert len(agregadas) > 40, f"el barrido encontró solo {len(agregadas)} columnas: revisá el regex"
+
+    faltan = []
+    for tabla, columna, archivo in agregadas:
+        if (tabla, columna) in borradas or tabla in tablas_borradas:
+            continue
+        bloque = re.search(rf"^create table {tabla} \((.*?)^\);", esquema, re.S | re.M)
+        # LA DEFINICIÓN, no cualquier mención: el nombre de la columna también
+        # aparece en los `constraint` del mismo bloque, así que un `\bcolumna\b`
+        # suelto da por presente una columna que solo está nombrada en su
+        # propio CHECK. Lo destapó el canario —borrar la definición y dejar el
+        # constraint no hacía caer el test—, no leerlo. Es el corolario 4
+        # aplicado al esquema: el assert tiene que poder matchear solo lo que
+        # se quiso probar.
+        definicion = re.compile(rf"^\s*{columna}\s+\w", re.M)
+        if bloque is None or not definicion.search(bloque.group(1)):
+            faltan.append(f"{archivo}: {tabla}.{columna}")
+
+    assert not faltan, (
+        "Columnas que una migración agregó y no están en db/esquema_completo.sql: "
+        f"{sorted(set(faltan))}"
+    )

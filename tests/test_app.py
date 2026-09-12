@@ -26005,3 +26005,60 @@ def test_el_detalle_de_unidades_DISTINGUE_el_par_dormido_del_que_ya_se_usa():
     # Las dos unidades van en la misma fila: el par es el hallazgo, no cada
     # una por su lado.
     assert detalle["filas"][0][1] == "kilo" and detalle["filas"][0][3] == "cubeta"
+
+
+def test_movimientos_DICE_A_QUIEN_se_le_devolvio_y_no_solo_que_se_devolvio():
+    """"Se le devolvió al proveedor" sin decir a cuál no sirve para reclamarle.
+
+    El dato estaba guardado desde que existe el cuarto destino y no lo leía
+    ninguna consulta ni lo mostraba ninguna pantalla: el campo sin
+    consecuencia, con la vuelta de que acá sí tenía un uso — el reclamo.
+
+    Y el caso SIN proveedor va en el mismo test: las devoluciones anteriores
+    a esto tienen que seguir diciendo lo que se sabe, no un hueco.
+    """
+    movimientos = [
+        {"id": 40, "tipo": "reingreso_rechazo", "cantidad": 8.0, "motivo": "rechazo del super",
+         "fecha_operacion": date(2026, 8, 24), "stock_sistema": 10.0,
+         "creado_en": datetime(2026, 8, 25, 9, 0), "anulado_el": None,
+         "articulo_nombre": "Fruta de ejemplo", "cliente_nombre": "EJEMPLO Uno",
+         "destino_rechazo": "devolucion_proveedor",
+         "proveedor_devolucion_id": 1, "proveedor_devolucion_nombre": "Puesto de EJEMPLO",
+         "proveedor_devolucion_puesto": "N07P41"},
+        {"id": 41, "tipo": "reingreso_rechazo", "cantidad": 5.0, "motivo": "rechazo viejo",
+         "fecha_operacion": date(2026, 8, 24), "stock_sistema": 10.0,
+         "creado_en": datetime(2026, 8, 25, 9, 30), "anulado_el": None,
+         "articulo_nombre": "Otra de ejemplo", "cliente_nombre": "EJEMPLO Uno",
+         "destino_rechazo": "devolucion_proveedor",
+         "proveedor_devolucion_id": None, "proveedor_devolucion_nombre": None,
+         "proveedor_devolucion_puesto": None},
+    ]
+    with (
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+        patch("app.main.listar_movimientos_stock_por_rango", return_value=movimientos),
+        patch("app.main.listar_remitos_segunda_por_rango", return_value=[]),
+        patch("app.main.listar_fichas_de_todos_los_clientes", return_value=[]),
+        patch("app.main.listar_clientes", return_value=[]),
+        patch("app.main.cajas_armadas_por_ficha", return_value={}),
+    ):
+        respuesta = cliente.get("/administracion/stock/movimientos")
+
+    assert respuesta.status_code == 200
+    marcado = respuesta.text.split("</style>")[-1]
+    assert "se le devolvió a Puesto de EJEMPLO (N07P41)" in marcado
+    # El que no tiene proveedor dice lo que sí se sabe, sin hueco ni "None".
+    assert "se le devolvió al proveedor" in marcado
+    assert "None" not in marcado
+
+
+def test_la_consulta_de_movimientos_TRAE_el_proveedor_de_la_devolucion():
+    """Por el TEXTO del SQL: con un cursor falso la fila la entrega el mock, así
+    que la columna llega igual con el SELECT equivocado (corolario 40)."""
+    import inspect
+
+    import app.db as db
+
+    consulta = inspect.getsource(db.listar_movimientos_stock_por_rango)
+    assert "m.proveedor_devolucion_id" in consulta
+    assert "pd.nombre AS proveedor_devolucion_nombre" in consulta
+    assert "LEFT JOIN proveedores pd ON pd.id = m.proveedor_devolucion_id" in consulta

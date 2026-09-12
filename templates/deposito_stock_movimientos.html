@@ -144,7 +144,22 @@
                  como un reingreso normal: entró al depósito y se quedó. Sin
                  esta rama el `if/elif` no afirma nada falso —no hay `else`—
                  pero calla justo lo que pasó. -#}
-              {%- elif m.destino_rechazo == "devolucion_proveedor" %} · <strong>se le devolvió al proveedor</strong> (no cuenta como venta ni como pérdida){% endif %}
+              {#- Y CON EL NOMBRE: "se le devolvió al proveedor" sin decir a
+                 cuál no sirve para reclamarle a nadie, y el dato ya estaba
+                 guardado desde que existe el destino — se escribía y no lo
+                 leía ninguna pantalla.
+
+                 El `{% if %}` del nombre no es prolijidad: las devoluciones
+                 anteriores a que el lector trajera la columna, y cualquiera
+                 cargada sin proveedor, tienen que seguir diciendo lo que sí
+                 se sabe en vez de mostrar un hueco. -#}
+              {%- elif m.destino_rechazo == "devolucion_proveedor" %} · <strong>se le devolvió
+                {%- if m.proveedor_devolucion_nombre %} a {{ m.proveedor_devolucion_nombre }}
+                  {#- El puesto al lado del nombre, como en todas las pantallas
+                     de compras: dos proveedores se pueden llamar parecido y el
+                     código de puesto es el que no se repite. -#}
+                  {%- if m.proveedor_devolucion_puesto %} ({{ m.proveedor_devolucion_puesto }}){% endif %}
+                {%- else %} al proveedor{% endif %}</strong> (no cuenta como venta ni como pérdida){% endif %}
             {%- endif %}
             {%- if m.lote_tipo %} · mermado de un lote elegido a mano{% endif %}
             {# SIN FOTO A LA VISTA. Una merma legítima y una que tapa un
