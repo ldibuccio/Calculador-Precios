@@ -159,7 +159,11 @@
                      de compras: dos proveedores se pueden llamar parecido y el
                      código de puesto es el que no se repite. -#}
                   {%- if m.proveedor_devolucion_puesto %} ({{ m.proveedor_devolucion_puesto }}){% endif %}
-                {%- else %} al proveedor{% endif %}</strong> (no cuenta como venta ni como pérdida){% endif %}
+                {%- else %} al proveedor{% endif %}</strong>
+              {#- Y DE QUÉ COMPRA, cuando se eligió: es el dato con el que se
+                 reclama. Las devoluciones anteriores al 12/09 no lo tienen y
+                 siguen diciendo lo que sí se sabe. -#}
+              {%- if m.compra_devolucion_fecha %}, de la compra del {{ m.compra_devolucion_fecha|fecha_corta }}{% endif %} (no cuenta como venta ni como pérdida){% endif %}
             {%- endif %}
             {%- if m.lote_tipo %} · mermado de un lote elegido a mano{% endif %}
             {# SIN FOTO A LA VISTA. Una merma legítima y una que tapa un

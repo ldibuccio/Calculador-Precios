@@ -73,6 +73,7 @@ from app.db import (
     buscar_retiros,
     cambiar_articulo_de_ficha,
     cambiar_fecha_activacion_casilla,
+    compras_que_alimentaron_el_renglon,
     contar_compras_buscadas,
     contar_ingresos_deposito,
     contar_mails_pedido_leidos_con_ia,
@@ -80,6 +81,7 @@ from app.db import (
     contar_pedidos_con_renglones_sin_identificar,
     contar_pedidos_incompletos,
     desmarcar_renglon_armado,
+    devoluciones_de_la_compra,
     marcar_renglon_armado,
     contar_retiros_buscados,
     cerrar_disponible_generado,
@@ -282,7 +284,6 @@ from app.db import (
     cargar_valor_sena,
     listar_tipos_envase_puesto,
     listar_todos_los_proveedores,
-    proveedor_sugerido_para_devolucion,
     listar_todas_las_conversiones,
     listar_ultimos_conteos_vacios,
     listar_vacios_devueltos_de_fecha,
@@ -4670,6 +4671,18 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
     if compra["cantidad_cajones_retirada"] is not None:
         diferencia_cajones_retirados = compra["cantidad_cajones_retirada"] - compra["cantidad_cajones"]
 
+    # LO QUE SE LE DEVOLVIÓ DE ESTA COMPRA, que es el otro extremo del
+    # vínculo que carga Depósito. Va acá y no en una pantalla aparte porque
+    # el reclamo se arma mirando la compra: cuánto se pagó y cuánto volvió.
+    #
+    # Si falla, el detalle sale igual sin la lista: es información de más,
+    # no la pantalla. Lo que no puede pasar es que no se pueda abrir.
+    try:
+        devoluciones = devoluciones_de_la_compra(compra_id)
+    except Exception:
+        logger.exception("No se pudieron leer las devoluciones de la compra %s", compra_id)
+        devoluciones = []
+
     diferencia_cajones_recepcion = None
     diferencia_contenido_recepcion = None
     if compra["cantidad_cajones_real"] is not None:
@@ -4690,6 +4703,8 @@ def ver_detalle_compra(request: Request, compra_id: int, aviso: str | None = Non
             "diferencia_cajones_retirados": diferencia_cajones_retirados,
             "diferencia_cajones_recepcion": diferencia_cajones_recepcion,
             "diferencia_contenido_recepcion": diferencia_contenido_recepcion,
+            "devoluciones": devoluciones,
+            "bultos_devueltos": round(sum(d["bultos"] for d in devoluciones), 2),
             "aviso": aviso,
         },
     )
@@ -9073,35 +9088,57 @@ def _costo_congelado_para_reingreso(renglon: dict) -> float | None:
 DESTINOS_REINGRESO = ("stock", "segunda", "reproceso", "devolucion_proveedor")
 
 
+def _compras_del_renglon_para_devolucion(renglon_id: int) -> dict:
+    """{compra_id: la compra} de las que alimentaron este renglón, para VALIDAR.
+
+    La pantalla ofrece esta misma lista y la ruta pregunta acá si lo que
+    llegó está adentro: un POST a mano con una compra de otro artículo
+    dejaría el reclamo apuntando a la compra equivocada, y eso no se ve —
+    el movimiento se guarda igual y el número cierra.
+
+    Se traga el error a propósito y devuelve vacío: sin poder rejugar el
+    FIFO, el camino que queda es el del proveedor suelto, que es el mismo
+    que usan las devoluciones cuyo renglón salió sin lote.
+    """
+    try:
+        return {c["compra_id"]: c for c in compras_que_alimentaron_el_renglon(renglon_id)}
+    except Exception:
+        logger.exception("No se pudieron leer las compras del renglón %s", renglon_id)
+        return {}
+
+
 def _renderizar_form_reingreso(request: Request, renglon: dict, *, precarga=None, error=None, status_code: int = 200):
     """El paso 3 (la carga en sí) con el tope calculado por el server: armado − ya devuelto."""
-    # La lista completa y, aparte, la SUGERENCIA del FIFO. La sugerencia no
-    # preselecciona sola: se muestra con de dónde salió ("el FIFO dice que
-    # X puso 8 de 10 bultos") y el operario confirma o cambia. Preseleccionar
-    # convertiría una propuesta en un default, y el FIFO acá no manda — puede
-    # haber varios proveedores o bultos sin lote.
+    # La lista suelta de proveedores es el CAMINO DE ABAJO: solo se ofrece
+    # cuando el renglón no tiene ninguna compra que mostrar (salió sin lote,
+    # o de guías R). Con compras se elige la compra y el proveedor sale de
+    # ella — preguntarlo aparte sería la misma cosa escrita dos veces.
     #
-    # Si falla, la pantalla sale igual sin sugerencia: es una comodidad, no
-    # la regla. La regla es que el operario elija.
+    # Si falla, la pantalla sale igual con la lista vacía: el select vacío
+    # se ve y el POST rechaza. Lo que no puede pasar es que no se pueda
+    # abrir la pantalla.
     try:
         proveedores = listar_todos_los_proveedores()
     except Exception:
         logger.exception("No se pudieron leer los proveedores para la devolución")
         proveedores = []
-    try:
-        sugerido = proveedor_sugerido_para_devolucion(renglon["id"])
-    except Exception:
-        logger.exception("No se pudo sugerir el proveedor del renglón %s", renglon["id"])
-        sugerido = None
+    # LAS COMPRAS QUE ALIMENTARON EL RENGLÓN, para elegir UNA. Es el dato que
+    # el reclamo necesita: "de la compra del martes te devolví 8". La lista
+    # vacía es información —el renglón salió sin lote o de guías R— y ahí la
+    # pantalla cae al proveedor suelto, que es lo único que se sabe.
+    #
+    # Se traga el error igual que los proveedores: que no se pueda rejugar el
+    # FIFO no puede dejar sin CARGAR una devolución.
+    compras_del_renglon = list(_compras_del_renglon_para_devolucion(renglon["id"]).values())
 
     contexto = {
+        "compras_del_renglon": compras_del_renglon,
         "paso": "form",
         "renglon": renglon,
         "tope": float(renglon["bultos_armados"]) - float(renglon["ya_devuelto"]),
         "precarga": precarga or {},
         "hoy": _hoy_argentina().isoformat(),
         "proveedores": proveedores,
-        "proveedor_sugerido": sugerido,
         "aviso": None,
         "error": error,
     }
@@ -9169,6 +9206,7 @@ def cargar_reingreso_stock_ruta(
     fecha: str = Form(""),
     destino: str = Form("stock"),
     proveedor_id: str = Form(""),
+    compra_devolucion_id: str = Form(""),
     cajones: str = Form(""),
 ):
     """Mercadería que el cliente devolvió: entra al stock MARCADA como rechazo y VINCULADA a su renglón de pedido.
@@ -9224,16 +9262,33 @@ def cargar_reingreso_stock_ruta(
     destino_valor = destino if destino in DESTINOS_REINGRESO else "stock"
     bultos_segunda = None
     proveedor_valor = None
+    compra_valor = None
+    compra_elegida = None
     if not error and destino_valor == "segunda":
         bultos_segunda = cantidad_valor  # la misma caja, sin tocar
     elif not error and destino_valor == "reproceso":
         error, bultos_segunda = _validar_bultos_positivos(cajones, "cajones que salieron")
     elif not error and destino_valor == "devolucion_proveedor":
-        # EL PROVEEDOR ES OBLIGATORIO ACÁ, y la guarda va en el server y no
-        # en el `required` del HTML: un formulario armado a mano entra sin
-        # ver el atributo. Sin proveedor, la devolución no dice a quién se
-        # le devolvió y el registro no sirve para lo único que existe.
-        if proveedor_id.strip().isdigit():
+        # LA COMPRA PRIMERO, y si hay compras para elegir el proveedor NO se
+        # manda: sale de ella. Los dos juntos son la misma cosa dos veces y
+        # la base los rechaza — el CHECK `movimientos_stock_compra_o_proveedor`
+        # es el que decide, esto solo traduce.
+        #
+        # LA GUARDA VA EN EL SERVER y no en el `required` del HTML: un
+        # formulario armado a mano entra sin ver el atributo. Sin una de las
+        # dos, la devolución no dice de dónde salió y el registro no sirve
+        # para lo único que existe, que es el reclamo.
+        compras_ofrecidas = _compras_del_renglon_para_devolucion(renglon["id"])
+        if compras_ofrecidas:
+            if compra_devolucion_id.strip().isdigit() and int(compra_devolucion_id) in compras_ofrecidas:
+                compra_valor = int(compra_devolucion_id)
+                compra_elegida = compras_ofrecidas[compra_valor]
+            else:
+                # SOLO LAS DEL RENGLÓN: una compra de otro artículo o de otro
+                # día no puede ser de donde salió esto, y aceptarla por un POST
+                # a mano dejaría un reclamo apuntando a la compra equivocada.
+                error = "Elegí de qué compra salió la mercadería que se devolvió."
+        elif proveedor_id.strip().isdigit():
             proveedor_valor = int(proveedor_id)
         else:
             error = "Elegí a qué proveedor se le devolvió la mercadería." 
@@ -9243,6 +9298,9 @@ def cargar_reingreso_stock_ruta(
             "cantidad": cantidad, "motivo": motivo_limpio, "fecha": fecha,
             "destino": destino_valor, "cajones": cajones,
             "proveedor_id": proveedor_id,
+            # Vuelve en el reintento: el que corrige el campo que la pantalla
+            # le señaló no vuelve a revisar los que ya llenó.
+            "compra_devolucion_id": compra_devolucion_id,
         }
         return _renderizar_form_reingreso(request, renglon, precarga=precarga, error=error, status_code=400)
 
@@ -9256,6 +9314,7 @@ def cargar_reingreso_stock_ruta(
             destino_rechazo=destino_valor,
             bultos_segunda=bultos_segunda,
             proveedor_devolucion_id=proveedor_valor,
+            compra_devolucion_id=compra_valor,
         )
     except Exception as error_db:
         return _renderizar_form_reingreso(
@@ -9264,8 +9323,14 @@ def cargar_reingreso_stock_ruta(
 
     # El aviso repite lo que cargó y QUÉ SE HIZO con la mercadería, con
     # las palabras de la pantalla — nunca el stock resultante ni el costo.
+    # EL NOMBRE SALE DE LA COMPRA ELEGIDA, que ya lo trae: una lectura menos
+    # y un camino de error menos. La lista suelta es el caso de abajo.
     nombre_proveedor = "el proveedor"
-    if proveedor_valor is not None:
+    de_la_compra = ""
+    if compra_elegida is not None:
+        nombre_proveedor = compra_elegida["proveedor_nombre"]
+        de_la_compra = f" (compra del {compra_elegida['fecha_operacion'].strftime('%d/%m')})"
+    elif proveedor_valor is not None:
         try:
             proveedor = obtener_proveedor(proveedor_valor)
             if proveedor:
@@ -9286,7 +9351,7 @@ def cargar_reingreso_stock_ruta(
         # afuera del sistema y el aviso es el único lugar donde se lo
         # recuerda en el momento.
         "devolucion_proveedor": (
-            f"Se le devolvió a {nombre_proveedor}: sale del stock y no va al pool de "
+            f"Se le devolvió a {nombre_proveedor}{de_la_compra}: sale del stock y no va al pool de "
             "segunda. No cuenta como venta ni como pérdida — acordate de "
             "descontárselo del pago."
         ),

@@ -6149,30 +6149,35 @@ def desglose_de_renglon_armado(renglon_id: int) -> dict | None:
     }
 
 
-def proveedor_sugerido_para_devolucion(renglon_id: int) -> dict | None:
-    """Qué proveedor trajo la mercadería de este renglón, SEGÚN EL FIFO.
+def compras_que_alimentaron_el_renglon(renglon_id: int) -> list[dict]:
+    """De qué COMPRAS salió la mercadería de este renglón, SEGÚN EL FIFO, con cuántos bultos puso cada una.
 
-    Es una SUGERENCIA y nada más: la pantalla la propone y el operario la
-    cambia. No puede ser una regla porque el FIFO no siempre contesta una
-    sola cosa —un renglón puede haberse servido de lotes de VARIAS compras,
-    de proveedores distintos— y porque una parte puede haber salido SIN
-    LOTE, que es información verdadera y no un dato que falte.
+    Es lo que la pantalla de devolución ofrece para elegir: "25 de la compra
+    del 08, 5 de la del 09". La persona elige UNA — el sistema no reparte los
+    bultos devueltos entre compras, porque nadie miró qué caja venía de qué
+    cajón y cualquier reparto sería inventado.
 
-    Se devuelve el proveedor de la compra que puso MÁS bultos, con cuántos
-    de cuántos puso, para que la pantalla pueda decir de dónde salió la
-    propuesta en vez de afirmarla. None si no hay ningún lote de compra
-    —todo sin lote, o todo de guías R— y ahí el operario elige de cero.
+    De la MÁS GRANDE a la más chica: la que puso más bultos es la que más
+    probablemente trajo lo que volvió, y ponerla primera es proponer sin
+    afirmar. La lista vacía es información: el renglón salió sin lote, o de
+    guías R, y ahí no hay compra que elegir.
 
-    Solo mira los lotes de tipo 'guia', que son los únicos que apuntan a
-    una compra (`origen_id` = compras.id). Un lote de reproceso es una caja
+    Solo mira los lotes de tipo 'guia', que son los únicos que apuntan a una
+    compra (`origen_id` = compras.id). Un lote de reproceso es una caja
     armada acá: su proveedor está un escalón más atrás y no se sigue.
+
+    LO REPARTIDO Y NO LO OFRECIDO: lo que se ofreció es lo que había, y lo
+    que interesa es de dónde salió de verdad.
+
+    Y ES UNA FOTO DEL MOMENTO, no un hecho congelado: el FIFO se rejuega en
+    cada lectura, así que esto puede cambiar si mañana se corrige otra
+    recepción. Por eso lo que se GUARDA es la compra que la persona eligió,
+    no este cálculo — una vez elegida, la respuesta no se mueve más.
     """
     desglose = desglose_de_renglon_armado(renglon_id)
     if not desglose:
-        return None
+        return []
 
-    # Lo REPARTIDO, no lo ofrecido: lo que se ofreció es lo que había, y lo
-    # que interesa es de dónde salió de verdad.
     bultos_por_compra: dict[int, float] = {}
     for clave, bultos in (desglose.get("propuestos") or {}).items():
         tipo, _, origen = clave.partition(":")
@@ -6181,36 +6186,81 @@ def proveedor_sugerido_para_devolucion(renglon_id: int) -> dict | None:
         bultos_por_compra[int(origen)] = bultos_por_compra.get(int(origen), 0.0) + float(bultos)
 
     if not bultos_por_compra:
-        return None
+        return []
 
-    compra_id = max(bultos_por_compra, key=lambda c: bultos_por_compra[c])
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
-            # SIN agregado: `fetchone() is None` sobre un `count(*)` nunca
-            # es None y no distinguiría "no está" de "hay cero".
             cursor.execute(
                 """
-                SELECT p.id, p.nombre, p.codigo_puesto
+                SELECT c.id, c.fecha_operacion, p.id, p.nombre, p.codigo_puesto,
+                       COALESCE(c.cantidad_cajones_real, c.cantidad_cajones)
                 FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
-                WHERE c.id = %s
+                WHERE c.id = ANY(%s)
                 """,
-                (compra_id,),
+                (list(bultos_por_compra),),
             )
-            fila = cursor.fetchone()
+            filas = cursor.fetchall()
     finally:
         conexion.close()
 
-    if fila is None:
-        return None
-    return {
-        "id": fila[0],
-        "nombre": fila[1],
-        "codigo_puesto": fila[2],
-        "bultos": bultos_por_compra[compra_id],
-        "bultos_totales": sum(bultos_por_compra.values()),
-        "cuantas_compras": len(bultos_por_compra),
-    }
+    compras = [
+        {
+            "compra_id": f[0],
+            "fecha_operacion": f[1],
+            "proveedor_id": f[2],
+            "proveedor_nombre": f[3],
+            "codigo_puesto": f[4],
+            "cajones_de_la_compra": float(f[5]) if f[5] is not None else None,
+            "bultos": round(bultos_por_compra[f[0]], 2),
+        }
+        for f in filas
+    ]
+    compras.sort(key=lambda c: (-c["bultos"], c["compra_id"]))
+    return compras
+
+
+def devoluciones_de_la_compra(compra_id: int) -> list[dict]:
+    """Qué se le devolvió al proveedor de ESTA compra, para el reclamo.
+
+    Es el otro extremo de `compra_devolucion_id`: la pantalla de reingreso lo
+    escribe y el detalle de la compra lo lee. Sin esto, el vínculo se guarda
+    y no se ve, que es la familia del campo que se escribe y nadie lee —
+    `proveedor_devolucion_id` estuvo así desde que se creó.
+
+    Solo las devoluciones VIVAS: una anulada no se reclama. Y devuelve las
+    filas, no un total, porque el reclamo se hace por fecha y motivo ("el
+    martes te devolví 8 por podrido"); el total lo suma la pantalla.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, m.fecha_operacion, m.cantidad, m.motivo, c.nombre, a.nombre
+                FROM movimientos_stock m
+                LEFT JOIN clientes c ON c.id = m.cliente_id
+                JOIN articulos a ON a.id = m.articulo_id
+                WHERE m.compra_devolucion_id = %s AND m.anulado_el IS NULL
+                ORDER BY m.fecha_operacion, m.id
+                """,
+                (compra_id,),
+            )
+            filas = cursor.fetchall()
+    finally:
+        conexion.close()
+
+    return [
+        {
+            "movimiento_id": f[0],
+            "fecha_operacion": f[1],
+            "bultos": float(f[2]),
+            "motivo": f[3],
+            "cliente_nombre": f[4],
+            "articulo_nombre": f[5],
+        }
+        for f in filas
+    ]
 
 
 def guardar_lotes_elegidos(renglon_id: int, lotes: list[dict]) -> None:
@@ -8046,6 +8096,7 @@ def crear_movimiento_stock(
     foto_ruta: str | None = None,
     ficha_id: int | None = None,
     proveedor_devolucion_id: int | None = None,
+    compra_devolucion_id: int | None = None,
 ) -> float:
     """Un movimiento de stock (ajuste/merma/reingreso): fila nueva, NUNCA pisa el stock. Devuelve el stock resultante.
 
@@ -8086,6 +8137,16 @@ def crear_movimiento_stock(
     El archivo se sube ANTES, así que un fallo del INSERT deja un huérfano
     en el bucket. Es el mismo trato que la foto de balanza, y lo barre la
     limpieza de 3 años.
+
+    `compra_devolucion_id` es DE QUÉ COMPRA salió lo que se le devolvió al
+    proveedor, elegido por la persona entre las que el FIFO dice que
+    alimentaron el renglón. Es lo que el reclamo necesita —"de la compra del
+    martes te devolví 8"— y por eso se GUARDA en vez de recalcularse: el FIFO
+    se rejuega en cada lectura y puede cambiar mañana; la compra elegida no.
+    Va SIEMPRE a una sola compra, sin reparto: nadie miró qué caja venía de
+    qué cajón, y repartir sería inventarlo. Los dos vínculos son excluyentes
+    (`movimientos_stock_compra_o_proveedor`): con compra, el proveedor sale
+    de ella y mandarlo aparte sería la misma cosa escrita dos veces.
     """
     conexion = obtener_conexion()
     try:
@@ -8096,13 +8157,13 @@ def crear_movimiento_stock(
                 INSERT INTO movimientos_stock
                     (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                      pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (articulo_id, tipo, cantidad, motivo, cliente_id, fecha_operacion, stock_sistema,
                  pedido_renglon_id, costo_por_bulto, destino_rechazo, bultos_segunda,
-                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id),
+                 lote_tipo, lote_origen_id, ficha_id, proveedor_devolucion_id, compra_devolucion_id),
             )
             if foto_ruta:
                 # RETURNING y no currval(pg_get_serial_sequence(...)): el
@@ -8606,8 +8667,20 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                        -- base y no salía por ninguna pantalla, que es el campo
                        -- sin consecuencia con otra ropa.
                        m.proveedor_devolucion_id,
-                       pd.nombre AS proveedor_devolucion_nombre,
-                       pd.codigo_puesto AS proveedor_devolucion_puesto,
+                       -- POR LOS DOS CAMINOS, y esto es del 12/09: desde que
+                       -- la devolución se puede vincular a la COMPRA, el
+                       -- proveedor suelto queda en NULL en ese caso (los dos
+                       -- juntos los rechaza `movimientos_stock_compra_o_
+                       -- proveedor`). Sin el COALESCE la pantalla volvía a
+                       -- decir "se le devolvió al proveedor" sin nombrarlo,
+                       -- que es el agujero que se acababa de tapar — el
+                       -- camino nuevo cayendo en la rama vieja.
+                       COALESCE(pd.nombre, pc.nombre) AS proveedor_devolucion_nombre,
+                       COALESCE(pd.codigo_puesto, pc.codigo_puesto) AS proveedor_devolucion_puesto,
+                       -- Y CUÁL COMPRA, que es lo que el reclamo necesita
+                       -- nombrar: "de la del martes te devolví 8".
+                       m.compra_devolucion_id,
+                       cd.fecha_operacion AS compra_devolucion_fecha,
                        p.fecha_operacion AS fecha_pedido, r.sucursal AS sucursal_pedido,
                        -- CUÁNTAS FOTOS TIENE, no si tiene: el listado lo
                        -- muestra como "sin foto" en gris cuando da 0, y eso
@@ -8622,6 +8695,8 @@ def listar_movimientos_stock_por_rango(fecha_desde, fecha_hasta) -> list[dict]:
                 LEFT JOIN pedidos_renglones r ON r.id = m.pedido_renglon_id
                 LEFT JOIN pedidos p ON p.id = r.pedido_id
                 LEFT JOIN proveedores pd ON pd.id = m.proveedor_devolucion_id
+                LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id
+                LEFT JOIN proveedores pc ON pc.id = cd.proveedor_id
                 WHERE m.fecha_operacion >= %s AND m.fecha_operacion <= %s
                 ORDER BY m.fecha_operacion DESC, m.creado_en DESC
                 """,

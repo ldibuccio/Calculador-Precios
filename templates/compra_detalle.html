@@ -119,6 +119,30 @@
     font-size: 0.85rem;
     text-decoration: none;
   }
+  /* La devolución al proveedor: el reclamo se arma acá, así que cada
+     renglón tiene que poder leerse solo (cuándo, cuántos, por qué). Lista
+     y no tabla: en 390px una tabla de cuatro columnas se corta, y acá
+     sobra el alto. */
+  .devoluciones { list-style: none; margin: 0; padding: 0; }
+  .devoluciones li {
+    padding: 0.55rem 0;
+    border-top: 1px solid #eee;
+    font-size: 0.92rem;
+  }
+  .devoluciones .dev-cabeza { display: block; font-weight: 700; }
+  .devoluciones .dev-detalle {
+    display: block;
+    margin-top: 0.15rem;
+    color: #555;
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
+  .nota-devolucion {
+    margin: 0.7rem 0 0;
+    color: #666;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
 </style>
 </head>
 <body>
@@ -238,9 +262,16 @@
       <span class="valor">{{ compra.contenido_por_cajon_real|kilos }}{{ compra.unidad_compra|sufijo_unidad }}</span>
     </div>
     {% endif %}
+    {# DICE "AL RECIBIR", y eso es del 12/09: desde que existe la devolución
+       del cliente, esta pantalla tiene DOS cosas que se le devuelven al
+       proveedor y estaban las dos escritas igual, a centímetros una de otra.
+
+       No son lo mismo ni se suman: ésta son CAJONES que nunca entraron —el
+       camión llegó y no se aceptaron— y la otra son BULTOS armados que
+       entraron, salieron a un cliente y volvieron. Sumarlas mezcla unidades. #}
     {% if compra.cantidad_cajones_rechazada is not none %}
     <div class="diferencia">
-      Rechazo parcial: {{ compra.cantidad_cajones_rechazada|numero }} bultos devueltos al proveedor{% if compra.motivo_rechazo %} — {{ compra.motivo_rechazo }}{% endif %}.
+      Rechazo parcial al recibir: {{ compra.cantidad_cajones_rechazada|numero }} cajones no se aceptaron y volvieron con el proveedor en el momento{% if compra.motivo_rechazo %} — {{ compra.motivo_rechazo }}{% endif %}.
       Los cajones reales de arriba son los aceptados.
     </div>
     {% endif %}
@@ -259,6 +290,37 @@
     <a class="boton-secundario" href="/gerencia/compras/{{ compra.id }}/corregir-recepcion">Corregir recepción (Gerencia)</a>
     {% endif %}
   </div>
+
+  {# LO QUE VOLVIÓ AL PROVEEDOR, que es el otro extremo del vínculo que
+     Depósito carga al devolver. La tarjeta solo aparece si hay algo: una
+     compra sin devoluciones es el caso normal y un "no se devolvió nada" en
+     todas sería ruido en la pantalla más larga que hay.
+
+     NO SE COMPARA CONTRA LOS CAJONES DE LA COMPRA, y es a propósito: lo
+     devuelto son BULTOS del renglón armado —cajas nuestras si el artículo se
+     reenvasa— y lo comprado son cajones. Un "8 de 25" ahí mezclaría
+     unidades y daría un porcentaje que no significa nada. #}
+  {% if devoluciones %}
+  <div class="tarjeta">
+    <h3>Volvió de un cliente y se le devolvió al proveedor</h3>
+    <div class="dato">
+      <span class="etiqueta">Bultos devueltos</span>
+      <span class="valor">{{ bultos_devueltos|numero }}</span>
+    </div>
+    <ul class="devoluciones">
+      {% for d in devoluciones %}
+      <li>
+        <span class="dev-cabeza">{{ d.fecha_operacion|fecha_corta }} — {{ d.bultos|numero }} bultos de {{ d.articulo_nombre }}</span>
+        <span class="dev-detalle">{% if d.cliente_nombre %}Los devolvió {{ d.cliente_nombre }}. {% endif %}Motivo: {{ d.motivo }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="nota-devolucion">Son bultos ya armados que salieron a un cliente y volvieron: no se suman al rechazo del
+      recibo, que son cajones que nunca entraron. Salieron del stock y no fueron al pool de segunda, así que
+      no cuentan como venta ni como pérdida. El descuento del pago se arregla afuera del sistema — esto es el
+      papel para reclamarlo.</p>
+  </div>
+  {% endif %}
 
   <div class="tarjeta">
     {% set fotos_volver = "detalle" %}

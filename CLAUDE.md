@@ -3114,3 +3114,69 @@ sustituir la función: un test, un modo de prueba, un reemplazo en caliente.
 Y lo agarró el test que las recorre TODAS, que es exactamente para lo que
 está: la entrada nueva era la única escrita distinto de las dieciocho, y esa
 inconsistencia no se ve leyendo la entrada sola — se ve al lado de las otras.
+
+## Corolario 50: `split("</style>")` no aísla el marcado — falla por DOS lados, y los dos aparecieron el mismo día
+
+Del 12/09. El corolario 38 dice anclar los asserts de HTML afuera del CSS y
+de los comentarios, y da la receta: `respuesta.text.split("</style>")[-1]`.
+La receta tiene dos agujeros y los dos mordieron en el mismo turno.
+
+1. **El `<script>` queda ADENTRO.** Un assert de `'name="compra_devolucion_id"
+   ' not in marcado` falló matcheando el selector del JS de la pantalla
+   (`marcarElegidas('input[name="compra_devolucion_id"]')`). El JS es una
+   tercera región de texto, igual que el CSS y los comentarios, y `[-1]` no
+   la saca.
+2. **Una plantilla INCLUIDA trae su propio `<style>`, y entonces `[-1]` corta
+   DE MÁS.** El detalle de la compra incluye `_fotos_guia.html`: el último
+   `</style>` del documento es el de la incluida, así que `[-1]` devuelve el
+   pedazo final y **se come entera** la tarjeta que se quería verificar. El
+   assert falló diciendo que la tarjeta no estaba, cuando estaba.
+
+Los dos fallan en direcciones opuestas —uno deja texto de más, el otro saca
+marcado de más— y por eso ninguna cantidad de `[-1]` los arregla. Lo que
+sirve es lo que el 38 ya decía en su última línea y conviene subir al
+principio: **anclar en algo que SOLO pueda ser marcado.** Una etiqueta
+cerrada (`<h3>…</h3>`), un atributo entero (`<select id="proveedor_id"`),
+una clase (`class="dev-cabeza"`). Eso no aparece en prosa, no aparece en CSS
+y no aparece en un selector de JS.
+
+**La señal de que hay que revisar el ancla, y es la misma que la del 38**:
+el test falla apenas se escribe y la primera lectura es "me equivoqué en el
+assert". Antes de aflojarlo, mirar QUÉ fragmento matcheó o QUÉ pedazo quedó
+en `marcado`. Si el texto está en el documento pero no en `marcado`, el
+problema es el corte; si está en `marcado` pero no en el marcado de verdad,
+es la región.
+
+## Un canario que MUTA archivos no se corre en segundo plano, y si se lo mata deja el código roto
+
+Del 12/09, y es de la herramienta, no del código. Los canarios de este
+proyecto rompen el código a propósito, corren la suite y restauran. Corrí uno
+en segundo plano y seguí trabajando en el mismo árbol. Dos daños, y el
+segundo es el caro:
+
+1. **Todo lo que corrí mientras tanto midió un árbol roto.** Dos tests
+   "fallaron" y me puse a arreglar tests que estaban bien: el archivo que
+   leían lo estaba pisando el canario. Es la familia del fixture inventado —
+   perseguir un hallazgo que no existe— con el agravante de que la causa no
+   está en ningún archivo, está en otro proceso.
+2. **Matarlo dejó una avería puesta.** El `finally` que restaura no corre con
+   un `SIGTERM` en el momento equivocado: el canario le había sacado el
+   `AND m.anulado_el IS NULL` a una consulta y ahí se quedó, sin diff
+   sospechoso —la línea se ve perfecta— y sin nada que avise. Lo encontró el
+   canario SIGUIENTE, que reportó "NO APLICA (0 veces)" porque el texto que
+   iba a romper ya no estaba.
+
+De acá en adelante:
+
+- **En primer plano, siempre.** Un canario que muta el árbol es incompatible
+  con cualquier otra cosa que lo lea.
+- **Después de matar uno, se mira qué quedó escrito**, no si el comando se
+  quejó. Es literalmente la regla del editor de Supabase que escribe a
+  medias, aplicada al repo: `git diff` leído contra lo que uno quiso
+  escribir, no contra la sensación de que se restauró.
+
+Y el detalle que lo volvió barato: **"NO APLICA (0 veces)" es información, no
+un problema del script.** Un canario que no encuentra qué romper está
+diciendo que el código no dice lo que uno cree. Vale tanto como uno que no
+hace caer ningún test (corolario 35), y por la misma razón: las dos veces lo
+que falla es la herramienta de verificar, que también es código.

@@ -3432,8 +3432,88 @@ def test_ver_detalle_compra_con_rechazo_parcial_muestra_el_registro():
         respuesta = cliente.get("/compras/30/detalle")
 
     assert respuesta.status_code == 200
-    assert "Rechazo parcial: 2 bultos devueltos al proveedor — podrido" in respuesta.text
+    # DICE "AL RECIBIR" y dice CAJONES: desde el 12/09 esta pantalla tiene
+    # dos cosas que se le devuelven al proveedor, a centímetros una de otra,
+    # y son de unidades distintas — cajones que nunca entraron contra bultos
+    # armados que volvieron de un cliente. Sin la palabra que las separa se
+    # leen como la misma y alguien las suma.
+    assert "Rechazo parcial al recibir: 2 cajones no se aceptaron" in respuesta.text
+    assert "volvieron con el proveedor en el momento — podrido" in respuesta.text
     assert "los aceptados" in respuesta.text
+
+
+
+DEVOLUCIONES_DE_PRUEBA = [
+    {"movimiento_id": 1, "fecha_operacion": date(2026, 8, 25), "bultos": 5.0,
+     "motivo": "llegó golpeado", "cliente_nombre": "Cliente de EJEMPLO",
+     "articulo_nombre": "Artículo de EJEMPLO"},
+    {"movimiento_id": 2, "fecha_operacion": date(2026, 8, 26), "bultos": 3.0,
+     "motivo": "fuera de calibre", "cliente_nombre": "Cliente de EJEMPLO",
+     "articulo_nombre": "Artículo de EJEMPLO"},
+]
+
+
+def test_el_detalle_de_la_compra_MUESTRA_lo_que_volvio_de_un_cliente():
+    """El otro extremo del vínculo que carga Depósito. Sin esto,
+    `compra_devolucion_id` sería un campo que se escribe y no lee ninguna
+    pantalla — exactamente lo que `proveedor_devolucion_id` fue desde que se
+    creó hasta el 11/09.
+
+    El TOTAL y el DETALLE: el total es lo que se reclama, y cada renglón
+    tiene que poder leerse solo porque el reclamo se hace por fecha y motivo.
+    """
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.devoluciones_de_la_compra", return_value=DEVOLUCIONES_DE_PRUEBA),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    # NO se usa `split("</style>")[-1]`: esta pantalla incluye otra plantilla
+    # con su propio `<style>`, así que el `[-1]` corta DESPUÉS de la tarjeta
+    # y se la come entera. Se ancla con la etiqueta o la clase completa, que
+    # es lo que no puede aparecer en prosa ni en CSS (corolario 38).
+    texto = respuesta.text
+    assert "<h3>Volvió de un cliente y se le devolvió al proveedor</h3>" in texto
+    assert '<span class="dev-cabeza">25/08 — 5 bultos de Artículo de EJEMPLO</span>' in texto
+    assert '<span class="dev-cabeza">26/08 — 3 bultos de Artículo de EJEMPLO</span>' in texto
+    assert "Motivo: llegó golpeado" in texto
+    assert "Motivo: fuera de calibre" in texto
+    # El total, sumado por el server y no por el que mira.
+    assert "8" in texto.split("Bultos devueltos")[1][:80]
+
+
+def test_el_detalle_SIN_devoluciones_no_muestra_la_tarjeta():
+    """Una compra sin devoluciones es el caso normal: un "no se devolvió
+    nada" en todas sería ruido en la pantalla más larga que hay."""
+    with (
+        patch("app.main.obtener_detalle_compra", return_value=COMPRA_DETALLE_DE_PRUEBA),
+        patch("app.main.devoluciones_de_la_compra", return_value=[]),
+        patch("app.main.listar_fotos_de_guia", return_value=[]),
+        patch("app.main.listar_fotos_de_recepcion", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras/30/detalle")
+
+    assert respuesta.status_code == 200
+    assert "<h3>Volvió de un cliente y se le devolvió al proveedor</h3>" not in respuesta.text
+
+
+def test_las_devoluciones_de_la_compra_EXCLUYEN_las_anuladas():
+    """Por el TEXTO del SQL: con un cursor falso las filas las entrega el
+    mock, así que la anulada llega igual con el `where` incompleto
+    (corolario 40).
+
+    Una devolución anulada no se reclama, y sumarla al total mandaría a
+    pedirle al proveedor bultos que volvieron al stock.
+    """
+    import inspect
+
+    import app.db as db
+
+    consulta = inspect.getsource(db.devoluciones_de_la_compra)
+    assert "WHERE m.compra_devolucion_id = %s AND m.anulado_el IS NULL" in consulta
 
 
 def test_ver_detalle_compra_sin_rechazo_parcial_no_muestra_el_registro():
@@ -19087,6 +19167,9 @@ def test_devolucion_al_proveedor_guarda_a_quien_y_no_toca_el_pool_de_segunda():
         patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
         patch("app.main.crear_movimiento_stock") as mock_crear,
         patch("app.main.obtener_proveedor", return_value={"id": 200, "nombre": "Saturno"}),
+        # SIN COMPRAS QUE OFRECER: este es el camino de abajo, el del
+        # proveedor suelto. El de la compra elegida tiene sus propios tests.
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=[]),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
@@ -19102,7 +19185,7 @@ def test_devolucion_al_proveedor_guarda_a_quien_y_no_toca_el_pool_de_segunda():
         2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="devolucion_proveedor", bultos_segunda=None,
-        proveedor_devolucion_id=200,
+        proveedor_devolucion_id=200, compra_devolucion_id=None,
     )
     # El aviso dice a quién y recuerda lo que el sistema NO hace.
     destino = respuesta.headers["location"]
@@ -19125,7 +19208,7 @@ def test_la_devolucion_al_proveedor_SIN_proveedor_no_se_guarda():
         patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
         patch("app.main.crear_movimiento_stock") as mock_crear,
         patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
-        patch("app.main.proveedor_sugerido_para_devolucion", return_value=None),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=[]),
         patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
     ):
         respuesta = cliente.post(
@@ -19139,6 +19222,231 @@ def test_la_devolucion_al_proveedor_SIN_proveedor_no_se_guarda():
     assert respuesta.status_code == 400
     assert "Elegí a qué proveedor" in respuesta.text
     mock_crear.assert_not_called()
+
+
+
+# Dos compras del MISMO renglón, de proveedores DISTINTOS: es el caso que
+# obliga a que la persona elija. Con una sola, cualquier código que agarre
+# "la primera" acierta por casualidad — es el rival del corolario del
+# fixture mínimo, plantado a propósito.
+COMPRAS_DEL_RENGLON_DE_PRUEBA = [
+    {
+        "compra_id": 501, "fecha_operacion": date(2026, 8, 22),
+        "proveedor_id": 200, "proveedor_nombre": "Proveedor de EJEMPLO Uno", "codigo_puesto": "N07P41",
+        "cajones_de_la_compra": 30.0, "bultos": 20.0,
+    },
+    {
+        "compra_id": 502, "fecha_operacion": date(2026, 8, 23),
+        "proveedor_id": 201, "proveedor_nombre": "Proveedor de EJEMPLO Dos", "codigo_puesto": "N09P37",
+        "cajones_de_la_compra": 10.0, "bultos": 5.0,
+    },
+]
+
+
+def test_la_devolucion_con_compra_elegida_la_guarda_y_NO_manda_el_proveedor():
+    """Los dos vínculos son excluyentes y la base los rechaza juntos
+    (`movimientos_stock_compra_o_proveedor`): con la compra elegida, el
+    proveedor sale de ella y mandarlo aparte sería la misma cosa dos veces.
+
+    El POST llega con los DOS —un formulario puede traer el select viejo
+    cacheado— y lo que se guarda es solo la compra.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "devolucion_proveedor",
+                  "compra_devolucion_id": "502", "proveedor_id": "200"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 303
+    mock_crear.assert_called_once_with(
+        2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
+        cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+        destino_rechazo="devolucion_proveedor", bultos_segunda=None,
+        proveedor_devolucion_id=None, compra_devolucion_id=502,
+    )
+    # LA SEGUNDA, no la primera de la lista: si el código agarrara la que más
+    # bultos puso, acá diría Saturno.
+    legible = urllib.parse.unquote_plus(respuesta.headers["location"])
+    assert "Proveedor de EJEMPLO Dos" in legible
+    assert "Proveedor de EJEMPLO Uno" not in legible
+    # Y con qué compra, que es con lo que se reclama.
+    assert "compra del 23/08" in legible
+
+
+def test_una_compra_que_NO_alimento_el_renglon_no_se_puede_elegir():
+    """La guarda va en el server: la pantalla ofrece solo las del renglón,
+    pero un POST armado a mano entra sin ver el HTML.
+
+    Una compra de otro artículo o de otro día dejaría el reclamo apuntando a
+    la compra equivocada, y eso NO SE VE después: el movimiento se guarda
+    igual y el número cierra.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "devolucion_proveedor",
+                  "compra_devolucion_id": "999"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí de qué compra" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_con_compras_el_proveedor_suelto_NO_alcanza_para_guardar():
+    """Con compras para elegir, mandar SOLO el proveedor no vale: el dato
+    que el reclamo necesita es la compra, y el proveedor suelto sería el
+    camino de abajo usado donde no corresponde.
+
+    Es la otra mitad del test de arriba: aquél rechaza una compra ajena,
+    éste rechaza que se saltee la pregunta.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock") as mock_crear,
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "rechazado por calidad",
+                  "fecha": "2026-08-24", "destino": "devolucion_proveedor",
+                  "compra_devolucion_id": "", "proveedor_id": "200"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "Elegí de qué compra" in respuesta.text
+    mock_crear.assert_not_called()
+
+
+def test_la_pantalla_de_devolucion_OFRECE_las_compras_con_sus_bultos_y_esconde_el_select():
+    """Lo que el operario tiene adelante. Las dos mitades hacen falta: que
+    las compras estén Y que el select suelto NO — dejarlo a la vista sería
+    ofrecer algo que el server rechaza, que es lo mismo que el cajón con
+    envase listado en el armado.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock"),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        # Sin motivo: rebota y rearma el formulario, que es donde se ve.
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "",
+                  "destino": "devolucion_proveedor"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    # Por el ATRIBUTO y no por el texto: un comentario que explique la
+    # pantalla nombra las mismas palabras (corolario 38).
+    assert 'name="compra_devolucion_id" value="501"' in marcado
+    assert 'name="compra_devolucion_id" value="502"' in marcado
+    # Con sus bultos a la vista, y contra el total armado: un "20" solo no
+    # se puede leer.
+    assert "puso 20 de los 25 bultos armados" in marcado
+    assert "puso 5 de los 25 bultos armados" in marcado
+    assert "Proveedor de EJEMPLO Uno (N07P41)" in marcado
+    assert "Proveedor de EJEMPLO Dos (N09P37)" in marcado
+    # Y el select suelto NO está: con compras, el proveedor sale de la compra.
+    # Con la etiqueta entera y no el name suelto: el `<script>` de la pantalla
+    # nombra los dos campos en sus selectores, y `split("</style>")` saca el
+    # CSS pero NO el JS (corolario 38, con el JS de tercera región).
+    assert '<select id="proveedor_id"' not in marcado
+
+
+def test_sin_compras_la_pantalla_cae_al_SELECT_de_proveedores():
+    """El caso vacío es información verdadera —el renglón salió sin lote, o
+    de guías R— y ahí el proveedor suelto es lo único que se sabe.
+
+    Sin esta mitad, cerrar el select dejaría las devoluciones de esos
+    renglones sin poder cargarse.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock"),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=[]),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "",
+                  "destino": "devolucion_proveedor"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    assert '<select id="proveedor_id"' in marcado
+    # Ídem: el JS la nombra en `marcarElegidas('input[name="compra_..."]')`,
+    # así que el assert pide la etiqueta que solo puede ser marcado.
+    assert '<input type="radio" name="compra_devolucion_id"' not in marcado
+
+
+def test_el_reintento_de_la_devolucion_NO_pierde_la_compra_elegida():
+    """Los once dicts del rearmado: el que corrige el campo que la pantalla
+    le señaló no vuelve a revisar los que ya llenó (corolario 43).
+
+    Acá el campo perdido no dejaría un hueco visible: la devolución se
+    guardaría sin compra y se vería igual de prolija.
+    """
+    with (
+        patch("app.main.obtener_renglon_para_reingreso", return_value=dict(RENGLON_REINGRESO_DE_PRUEBA)),
+        patch("app.main._costo_congelado_para_reingreso", return_value=2000.0),
+        patch("app.main.crear_movimiento_stock"),
+        patch("app.main.listar_todos_los_proveedores", return_value=PROVEEDORES_DE_PRUEBA),
+        patch("app.main.compras_que_alimentaron_el_renglon", return_value=COMPRAS_DEL_RENGLON_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=date(2026, 8, 25)),
+    ):
+        # La compra está bien elegida; lo que falta es el motivo.
+        respuesta = cliente.post(
+            "/deposito/stock/reingreso",
+            data={"renglon_id": "77", "cantidad": "4", "motivo": "",
+                  "destino": "devolucion_proveedor", "compra_devolucion_id": "502"},
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    marcado = respuesta.text.split("</style>")[-1]
+    # Por regex y no por substring: el `checked` va en la línea de abajo del
+    # value, y un assert que los pide pegados falla por el salto de línea.
+    assert re.search(r'value="502"\s+checked', marcado)
+    assert not re.search(r'value="501"\s+checked', marcado)
+    # Y el tilde llega a la TARJETA, no solo al radio: el estado de un
+    # control es CSS (corolario 32), y el borde azul es lo que se ve.
+    # Pegado al radio del 502, no un conteo: la tarjeta del DESTINO también
+    # está elegida, así que contar "elegido" a secas pasaría igual con el
+    # tilde puesto en la compra equivocada.
+    assert re.search(r'class="destino elegido"[^>]*>\s*<input type="radio" '
+                     r'name="compra_devolucion_id" value="502"', marcado)
 
 
 def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
@@ -19162,7 +19470,7 @@ def test_reingreso_a_segunda_manda_los_bultos_al_pool_y_lo_dice_en_el_aviso():
         2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="segunda", bultos_segunda=4.0,
-        proveedor_devolucion_id=None,
+        proveedor_devolucion_id=None, compra_devolucion_id=None,
     )
     destino = respuesta.headers["location"]
     assert "Pas%C3%B3+a+segunda+tal+cual" in destino
@@ -19434,7 +19742,7 @@ def test_reingreso_guarda_vinculado_con_costo_congelado_y_fecha_editable():
         2, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 24),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
         destino_rechazo="stock", bultos_segunda=None,
-        proveedor_devolucion_id=None,
+        proveedor_devolucion_id=None, compra_devolucion_id=None,
     )
     destino = respuesta.headers["location"]
     # El aviso repite lo cargado (fecha REAL del hecho incluida) y JAMÁS
@@ -19485,7 +19793,7 @@ def test_reingreso_sin_fecha_usa_hoy_y_sin_costo_posible_guarda_sin_costo():
         2, "reingreso_rechazo", 4.0, "rechazo", date(2026, 8, 25),
         cliente_id=1, pedido_renglon_id=77, costo_por_bulto=None,
         destino_rechazo="stock", bultos_segunda=None,
-        proveedor_devolucion_id=None,
+        proveedor_devolucion_id=None, compra_devolucion_id=None,
     )
 
 
@@ -26053,12 +26361,25 @@ def test_movimientos_DICE_A_QUIEN_se_le_devolvio_y_no_solo_que_se_devolvio():
 
 def test_la_consulta_de_movimientos_TRAE_el_proveedor_de_la_devolucion():
     """Por el TEXTO del SQL: con un cursor falso la fila la entrega el mock, así
-    que la columna llega igual con el SELECT equivocado (corolario 40)."""
+    que la columna llega igual con el SELECT equivocado (corolario 40).
+
+    Y POR LOS DOS CAMINOS (12/09). Desde que la devolución se puede vincular
+    a la compra, el proveedor suelto queda NULL en ese caso: leer solo `pd`
+    devolvería la pantalla al "se le devolvió al proveedor" sin nombre, que
+    es justo el agujero que esta consulta vino a tapar. El COALESCE es lo
+    único que hace que el camino nuevo no caiga en la rama vieja.
+    """
     import inspect
 
     import app.db as db
 
     consulta = inspect.getsource(db.listar_movimientos_stock_por_rango)
     assert "m.proveedor_devolucion_id" in consulta
-    assert "pd.nombre AS proveedor_devolucion_nombre" in consulta
+    assert "COALESCE(pd.nombre, pc.nombre) AS proveedor_devolucion_nombre" in consulta
+    assert "COALESCE(pd.codigo_puesto, pc.codigo_puesto) AS proveedor_devolucion_puesto" in consulta
     assert "LEFT JOIN proveedores pd ON pd.id = m.proveedor_devolucion_id" in consulta
+    assert "LEFT JOIN compras cd ON cd.id = m.compra_devolucion_id" in consulta
+    assert "LEFT JOIN proveedores pc ON pc.id = cd.proveedor_id" in consulta
+    # Y la compra misma, que es con lo que se reclama.
+    assert "m.compra_devolucion_id," in consulta
+    assert "cd.fecha_operacion AS compra_devolucion_fecha" in consulta

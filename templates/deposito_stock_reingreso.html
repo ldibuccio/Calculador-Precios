@@ -290,32 +290,53 @@
         </label>
       </div>
 
-      {# EL PROVEEDOR ES OBLIGATORIO y es lo único que esta operación deja
-         asentado: sin él, el registro no sirve para lo que existe. El
-         `required` acá es comodidad; la guarda que decide está en el POST.
+      {# DE DÓNDE SALIÓ ES OBLIGATORIO y es lo único que esta operación deja
+         asentado: sin eso, el registro no sirve para lo que existe, que es
+         el reclamo. La guarda que decide está en el POST, no acá: un
+         formulario armado a mano entra sin ver ningún atributo.
 
-         LA SUGERENCIA DEL FIFO NO VIENE PRESELECCIONADA, a propósito. Se
-         muestra al lado, con de dónde salió, y el operario elige igual. El
-         FIFO acá no manda: un renglón puede haberse servido de compras de
-         varios proveedores, o haber salido sin lote. Preseleccionar
-         convertiría una propuesta en un default — un toque menos que
-         pensar— y el que carga dejaría de mirarla. #}
-      <div id="campo-proveedor" style="display: {% if destino_elegido == 'devolucion_proveedor' %}block{% else %}none{% endif %};">
+         CON COMPRAS SE ELIGE LA COMPRA, y el proveedor NO se pregunta: sale
+         de ella. Los dos juntos son la misma cosa escrita dos veces y la
+         base los rechaza (`movimientos_stock_compra_o_proveedor`).
+
+         NINGUNA VIENE PRESELECCIONADA, ni la compra ni el proveedor. El
+         orden propone —la que más bultos puso arriba— y la persona decide.
+         Preseleccionar convertiría una propuesta en un default —un toque
+         menos que pensar— y el que carga dejaría de mirarla. #}
+      <div id="campo-devolucion" style="display: {% if destino_elegido == 'devolucion_proveedor' %}block{% else %}none{% endif %};">
+        {% if compras_del_renglon %}
+        <label>¿De qué compra salió la mercadería que se devolvió?</label>
+        <div class="destinos">
+          {% for c in compras_del_renglon %}
+          <label class="destino {% if precarga.compra_devolucion_id|string == c.compra_id|string %}elegido{% endif %}">
+            <input type="radio" name="compra_devolucion_id" value="{{ c.compra_id }}"
+                   {% if precarga.compra_devolucion_id|string == c.compra_id|string %}checked{% endif %}
+                   onchange="marcarCompra()">
+            <span class="titulo">{{ c.proveedor_nombre }} ({{ c.codigo_puesto }})</span>
+            <span class="detalle">Compra del {{ c.fecha_operacion.strftime("%d/%m") }} —
+              puso {{ c.bultos|numero }} de los {{ renglon.bultos_armados|numero }} bultos armados{% if c.cajones_de_la_compra %},
+              de {{ c.cajones_de_la_compra|numero }} cajones comprados{% endif %}.</span>
+          </label>
+          {% endfor %}
+        </div>
+        {# UNA SOLA, SIN REPARTO: nadie miró qué caja venía de qué cajón, y
+           repartir los devueltos entre dos compras sería inventar justo el
+           dato que se está yendo a buscar. #}
+        <p class="ayuda">Elegí una sola: la devolución queda asentada contra esa compra, que es la que le vas a reclamar. Si volvió mercadería de dos compras distintas, cargá un reingreso por cada una.</p>
+        {% else %}
+        {# SIN COMPRAS no hay a qué apuntar: el renglón salió sin lote, o de
+           guías R, que son cajas armadas acá y su proveedor está un escalón
+           más atrás. Queda el proveedor suelto, que es lo único que se sabe. #}
         <label for="proveedor_id">¿A qué proveedor se le devolvió?</label>
-        {% if proveedor_sugerido %}
-        <p class="ayuda-sugerencia">Por el FIFO, esta mercadería salió de
-          <strong>{{ proveedor_sugerido.nombre }}</strong> ({{ proveedor_sugerido.codigo_puesto }}):
-          puso {{ proveedor_sugerido.bultos|numero }} de {{ proveedor_sugerido.bultos_totales|numero }} bultos{% if proveedor_sugerido.cuantas_compras == 2 %},
-          repartidos con otra compra{% elif proveedor_sugerido.cuantas_compras > 2 %},
-          repartidos con otras {{ proveedor_sugerido.cuantas_compras - 1 }} compras{% endif %}.
-          Confirmalo o elegí otro.</p>
-        {% endif %}
+        <p class="ayuda-sugerencia">De este renglón no se puede decir de qué compra salió
+          —se armó sin lote o con cajas de guías R—, así que elegí el proveedor a mano.</p>
         <select id="proveedor_id" name="proveedor_id">
           <option value="">Elegí el proveedor...</option>
           {% for p in proveedores %}
           <option value="{{ p.id }}" {% if precarga.proveedor_id|string == p.id|string %}selected{% endif %}>{{ p.nombre }} ({{ p.codigo_puesto }})</option>
           {% endfor %}
         </select>
+        {% endif %}
       </div>
 
       <div id="campo-cajones" style="display: {% if destino_elegido == 'reproceso' %}block{% else %}none{% endif %};">
@@ -333,17 +354,28 @@
 
   <script>
     // El campo de cajones solo aparece con "Vuelve a cajón grande" y el de
-    // proveedor solo con la devolución: el resto de los destinos no tiene
+    // devolución solo con la devolución: el resto de los destinos no tiene
     // nada que preguntar.
     function mostrarCajones() {
       var elegido = document.querySelector('input[name="destino"]:checked');
       var campo = document.getElementById("campo-cajones");
       campo.style.display = elegido && elegido.value === "reproceso" ? "block" : "none";
-      var prov = document.getElementById("campo-proveedor");
-      prov.style.display = elegido && elegido.value === "devolucion_proveedor" ? "block" : "none";
-      document.querySelectorAll(".destino").forEach(function (tarjeta) {
-        var radio = tarjeta.querySelector('input[name="destino"]');
-        tarjeta.classList.toggle("elegido", radio.checked);
+      var dev = document.getElementById("campo-devolucion");
+      dev.style.display = elegido && elegido.value === "devolucion_proveedor" ? "block" : "none";
+      marcarElegidas('input[name="destino"]');
+    }
+
+    // Las tarjetas de compra se marcan igual que las de destino, y por eso
+    // el marcado va en UNA función: dos copias se separan el día que el
+    // borde cambia de color en una sola.
+    function marcarCompra() {
+      marcarElegidas('input[name="compra_devolucion_id"]');
+    }
+
+    function marcarElegidas(selector) {
+      document.querySelectorAll(selector).forEach(function (radio) {
+        var tarjeta = radio.closest(".destino");
+        if (tarjeta) { tarjeta.classList.toggle("elegido", radio.checked); }
       });
     }
   </script>

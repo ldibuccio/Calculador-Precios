@@ -4568,8 +4568,9 @@ def test_crear_movimiento_stock_guarda_la_foto_del_sistema_y_devuelve_el_resulta
     assert insert.args[1] == (
         7, "ajuste", -3.0, "rotura", None, date(2026, 8, 25), 12.0, None, None, None, None, None, None,
         None,
-        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
-        None,
+        # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
+        # devolución al proveedor, y NUNCA los dos juntos.
+        None, None,
     )
     assert resultado == 9.0
     conexion.commit.assert_called_once()
@@ -4585,8 +4586,9 @@ def test_crear_movimiento_stock_reingreso_lleva_cliente_y_fecha_propia():
     assert insert.args[1] == (
         7, "reingreso_rechazo", 4.0, "Devolvió Día", 1, date(2026, 8, 24), 0.0, None, None, None, None, None, None,
         None,
-        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
-        None,
+        # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
+        # devolución al proveedor, y NUNCA los dos juntos.
+        None, None,
     )
 
 
@@ -4605,8 +4607,9 @@ def test_crear_movimiento_stock_reingreso_vinculado_lleva_renglon_y_costo_congel
     assert insert.args[1] == (
         7, "reingreso_rechazo", 4.0, "rechazo por calidad", 1, date(2026, 8, 24), 0.0, 77, 2000.0,
         None, None, None, None, None,
-        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
-        None,
+        # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
+        # devolución al proveedor, y NUNCA los dos juntos.
+        None, None,
     )
 
 
@@ -4626,8 +4629,9 @@ def test_crear_movimiento_stock_rechazo_a_segunda_no_toca_el_stock_normal():
     assert insert.args[1] == (
         7, "reingreso_rechazo", 40.0, "rechazado por calidad", 1, date(2026, 8, 24), 30.0, 77, 2000.0,
         "reproceso", 12.0, None, None, None,
-        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
-        None,
+        # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
+        # devolución al proveedor, y NUNCA los dos juntos.
+        None, None,
     )
     assert resultado == 30.0
 
@@ -4645,9 +4649,45 @@ def test_crear_movimiento_stock_merma_dirigida_guarda_el_lote_elegido():
     assert insert.args[1] == (
         7, "merma", -3.0, "se pudrió", None, date(2026, 8, 26), 30.0, None, None,
         None, None, "reproceso", 9, None,
-        # proveedor_devolucion_id: solo lo usa la devolución al proveedor.
-        None,
+        # proveedor_devolucion_id y compra_devolucion_id: solo los usa la
+        # devolución al proveedor, y NUNCA los dos juntos.
+        None, None,
     )
+
+
+def test_crear_movimiento_stock_devolucion_ESCRIBE_la_compra_elegida():
+    """La columna nueva tiene que LLEGAR al INSERT, no solo a la firma.
+
+    Los otros cinco tests de esta familia la pasan en None, así que un
+    INSERT que escribiera NULL a la fuerza los deja a todos en verde — el
+    canario lo midió y no caía ninguno. Lo que distingue "el parámetro se
+    guarda" de "la columna está en la lista" es un caso con un valor.
+
+    Y el proveedor suelto va en None en el mismo caso: los dos juntos los
+    rechaza `movimientos_stock_compra_o_proveedor`, así que si alguna vez
+    se escribieran los dos, esto cae acá y no en la base.
+    """
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(30.0,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        crear_movimiento_stock(
+            7, "reingreso_rechazo", 4.0, "rechazado por calidad", date(2026, 8, 26),
+            cliente_id=1, pedido_renglon_id=77, costo_por_bulto=2000.0,
+            destino_rechazo="devolucion_proveedor", compra_devolucion_id=502,
+        )
+
+    insert = cursor.execute.call_args_list[-1]
+    assert insert.args[1] == (
+        7, "reingreso_rechazo", 4.0, "rechazado por calidad", 1, date(2026, 8, 26), 30.0,
+        77, 2000.0, "devolucion_proveedor", None,
+        None, None, None,
+        # El proveedor suelto NO viaja: con compra, sale de ella.
+        None, 502,
+    )
+    # Y la columna está nombrada en el INSERT, no solo el valor en la tupla:
+    # con un cursor falso la tupla llega igual con la columna equivocada
+    # (corolario 40).
+    assert "compra_devolucion_id)" in insert.args[0]
 
 
 def test_la_ficha_que_SOLO_TIENE_MERMA_no_se_cae_de_la_cuenta():

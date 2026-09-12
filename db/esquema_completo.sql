@@ -831,6 +831,19 @@ create table movimientos_stock (
     constraint movimientos_stock_proveedor_solo_devolucion
         check (proveedor_devolucion_id is null
                or destino_rechazo = 'devolucion_proveedor'),
+    -- De qué COMPRA salieron los bultos devueltos, ELEGIDA por la persona al
+    -- cargar: un renglón armado con dos compras no dice de cuáles volvieron
+    -- los 8, así que el sistema no reparte — guarda el declarado. Ver
+    -- db/devolucion_compra_1_columna.sql.
+    compra_devolucion_id bigint references compras (id),
+    constraint movimientos_stock_compra_solo_devolucion
+        check (compra_devolucion_id is null
+               or destino_rechazo = 'devolucion_proveedor'),
+    -- Y NO PUEDEN CONVIVIR: con la compra elegida el proveedor se lee de
+    -- ella; sin compra queda el proveedor suelto. Escritos los dos serían la
+    -- misma cosa dos veces, y se pueden contradecir.
+    constraint movimientos_stock_compra_o_proveedor
+        check (compra_devolucion_id is null or proveedor_devolucion_id is null),
     -- Merma dirigida a un lote puntual (NULL = FIFO, el default).
     lote_tipo text
         check (lote_tipo is null
