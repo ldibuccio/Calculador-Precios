@@ -143,7 +143,6 @@
         {% for a in articulos %}
         <option value="{{ a.id }}"
                 data-unidad-compra="{{ a.unidad_compra or '' }}"
-                data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"
                 {% if compra and compra.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
       </select>
@@ -205,7 +204,6 @@
     function actualizarContenidoPorCajon(select) {
       const opcion = select.selectedOptions[0];
       const ayuda = document.getElementById("ayuda-unidad-compra");
-      const contenidoInput = document.getElementById("contenido_por_cajon");
       const unidadCompra = opcion ? opcion.dataset.unidadCompra : "";
 
       if (!opcion || !unidadCompra) {
@@ -217,14 +215,24 @@
       ayuda.textContent = "Este artículo se compra por: " + NOMBRES_UNIDAD_COMPRA[unidadCompra];
       ayuda.classList.add("visible");
 
-      // EL ELSE ES OBLIGATORIO, no una prolijidad: sin él, cambiar a un
-      // artículo SIN referencia deja el número del artículo ANTERIOR en el
-      // campo — un valor de otra cosa, que es peor que el default y que el
-      // vacío. Y la referencia vacía va a dejar de ser rara: es lo que le
-      // corresponde a un artículo que viene en formatos distintos por
-      // diseño (Cherry), donde precargar acierta nunca.
-      const contenidoReferencia = opcion.dataset.contenidoReferencia;
-      contenidoInput.value = contenidoReferencia ? contenidoReferencia : "";
+      // ACÁ NO SE PRECARGA NADA, al revés que las cinco pantallas de compra,
+      // y no es un olvido:
+      //
+      // 1. El cartel de al lado dice "lo que ves y contás/pesás vos ahora —
+      //    no hay estimado previo, esto ya es el dato real". Un campo que
+      //    llega con un número puesto contradice a ese cartel en la misma
+      //    pantalla, y el que carga le cree al campo.
+      // 2. Y acá el número no tiene segunda oportunidad: el ingreso directo
+      //    escribe contenido_por_cajon EN LAS DOS COLUMNAS, la estimada y la
+      //    REAL (ver _insertar_compra_con_guia), porque nace recepcionado.
+      //    O sea que una referencia aceptada sin pesar no queda como un
+      //    estimado a corregir en Recepción: queda como "Depósito pesó esto"
+      //    para todo el sistema — y de ahí sale el promedio que después se
+      //    usa para juzgar si la referencia era buena. La referencia se
+      //    estaría confirmando a sí misma.
+      //
+      // El campo es `required`, así que vacío OBLIGA a mirar el bulto, que
+      // es lo único que esta pantalla pide.
     }
 
     // Evita que, al no ver ningún cambio en pantalla mientras guarda, se

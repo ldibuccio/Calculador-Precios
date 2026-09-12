@@ -11261,10 +11261,10 @@ def test_recalcular_alertas_usa_las_ventanas_de_cada_control():
 PANTALLAS_QUE_PRECARGAN_CONTENIDO = (
     "compra_form", "compra_manual", "compra_revision_foto",
     "compra_listado", "compra_fotos_multiples",
-    # La SEXTA, que no está en Compras y por eso no apareció grepeando las
-    # de compra_*: el ingreso directo del depósito precarga igual.
-    "deposito_ingresar",
 )
+
+# deposito_ingresar NO está en la lista, y es lo contrario de un olvido: ahí
+# se sacó la precarga ENTERA. Lo cuida su propio test, abajo.
 
 
 def test_cambiar_a_un_articulo_SIN_referencia_LIMPIA_el_contenido_precargado():
@@ -11288,6 +11288,33 @@ def test_cambiar_a_un_articulo_SIN_referencia_LIMPIA_el_contenido_precargado():
         # Y la forma vieja no puede quedar en ninguna: con las dos, gana la
         # que corra última y el arreglo depende del orden.
         assert "if (contenidoReferencia) {" not in js, nombre
+
+
+def test_el_ingreso_directo_NO_precarga_el_contenido_porque_ahi_ya_es_el_dato_real():
+    """La pantalla dice "esto ya es el dato real" y el campo llegaba con un número puesto.
+
+    Y acá el número no tiene segunda oportunidad: el ingreso directo escribe
+    contenido_por_cajon en LAS DOS columnas, la estimada y la REAL, porque
+    nace recepcionado. Una referencia aceptada sin pesar no queda como un
+    estimado a corregir en Recepción — queda como "Depósito pesó esto" para
+    todo el sistema, y de ahí sale el promedio con el que después se juzga
+    si la referencia era buena. La referencia se confirmaría a sí misma.
+
+    Se verifica que NO esté la precarga y que SÍ esté lo que la hace
+    innecesaria: el campo obligatorio y el cartel que lo explica.
+    """
+    js = io.open("templates/deposito_ingresar.html", encoding="utf-8").read()
+    assert "contenidoReferencia" not in js
+    assert "data-contenido-referencia" not in js
+
+    marcado = js.split("</style>")[-1]
+    assert 'id="contenido_por_cajon"' in marcado and "required" in marcado
+    assert "esto ya es el dato real" in marcado
+
+    # Y la razón de fondo, en el código que la crea: el ingreso directo
+    # escribe el mismo valor en la columna estimada y en la real.
+    db = io.open("app/db.py", encoding="utf-8").read()
+    assert "'ingreso_directo')" in db
 
 
 def test_no_hay_una_SEXTA_pantalla_que_precargue_el_contenido_sin_el_arreglo():
