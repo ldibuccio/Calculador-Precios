@@ -438,15 +438,21 @@ DIAS_ALERTA_CAJONES_FALTANTES = 7
 
 # FALTARON KILOS: los cajones llegaron, y pesaron menos de lo comprado.
 #
-# EL UMBRAL ES SOBRE EL TOTAL Y NO SOBRE EL CAJÓN. Un kilo por cajón no se
-# discute con nadie; ese mismo kilo sobre cincuenta y seis cajones son
-# cincuenta y seis kilos, que es plata. Medir por cajón dejaría afuera
-# exactamente los casos grandes de las compras grandes.
+# EL UMBRAL ES POR CAJÓN Y NO SOBRE EL TOTAL: **el total dimensiona y el por
+# cajón detecta.** Con el umbral sobre el total entraban Jugo con −0,6k por
+# cajón y Berenjena con −0,3k —ruido de balanza— solo porque tenían muchos
+# cajones: con treinta y tres, tres décimas llegan a diez kilos. O sea que la
+# alerta se llenaba de compras GRANDES con diferencias CHICAS, que es
+# exactamente lo que no se le reclama a nadie.
+#
+# El nombre lleva el alcance a propósito (corolario 8): este número no se
+# puede comparar contra un total, y un `UMBRAL_KILOS_FALTANTES` a secas se
+# presta a justo eso. El total se sigue mostrando y ordena la lista.
 #
 # La ventana es la misma que la de bultos —siete días móviles, porque una
 # compra de hace un mes ya no se reclama— y el piso de la foto lo pone la
 # consulta leyendo la base, no una fecha escrita acá.
-UMBRAL_KILOS_FALTANTES = 1
+UMBRAL_KILOS_FALTANTES_POR_CAJON = 1
 DIAS_ALERTA_KILOS_FALTANTES = 7
 
 from core.zona import ARGENTINA  # noqa: E402  (la zona va escrita en UN solo lugar)
@@ -11000,7 +11006,7 @@ def _detalle_kilos_faltantes() -> dict:
     filas = listar_diferencia_de_kilos(
         _hoy_argentina() - timedelta(days=DIAS_ALERTA_KILOS_FALTANTES),
         _hoy_argentina(),
-        UMBRAL_KILOS_FALTANTES,
+        UMBRAL_KILOS_FALTANTES_POR_CAJON,
     )
     # LOS DOS "NO HAY FECHA" SON HECHOS DISTINTOS y la pantalla no puede
     # decirles lo mismo: `None` de una lectura que salió bien significa que
@@ -11028,9 +11034,11 @@ def _detalle_kilos_faltantes() -> dict:
             f'{_formatear_numero(fila["contenido_comprado"])}{sufijo}',
             f'{_formatear_numero(fila["contenido_recibido"])}{sufijo}',
             f'−{_formatear_numero(fila["contenido_faltante_por_cajon"])}{sufijo}',
-            # EL NÚMERO QUE DECIDE, y por eso lleva de dónde sale en la misma
-            # celda: "−112k (56 cajones)". Un total sin los cajones al lado
-            # obliga a ir a buscar por cuánto se multiplicó, y nadie va.
+            # EL NÚMERO QUE DECIDE SI VALE EL RECLAMO —no el que decidió que
+            # esta compra entrara, que es el por cajón de la celda anterior— y
+            # por eso lleva de dónde sale en la misma celda: "−112k (56
+            # cajones)". Un total sin los cajones al lado obliga a ir a buscar
+            # por cuánto se multiplicó, y nadie va.
             f'−{_formatear_numero(fila["contenido_faltante_total"])}{sufijo}'
             f' ({_formatear_numero(fila["cajones_recibidos"])} cajones)',
         ])
@@ -11370,7 +11378,7 @@ ALERTAS = [
         contar=lambda: contar_diferencia_de_kilos(
             _hoy_argentina() - timedelta(days=DIAS_ALERTA_KILOS_FALTANTES),
             _hoy_argentina(),
-            UMBRAL_KILOS_FALTANTES,
+            UMBRAL_KILOS_FALTANTES_POR_CAJON,
         ),
         detallar=_detalle_kilos_faltantes,
     ),

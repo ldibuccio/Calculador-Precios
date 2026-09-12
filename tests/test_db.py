@@ -4303,7 +4303,13 @@ def test_kilos_faltantes_cuenta_los_que_pesaron_de_MENOS_y_no_los_de_mas():
         resultado = contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
 
     consulta = cursor.execute.call_args_list[0].args[0]
-    assert "* c.cantidad_cajones_real) >= %s" in consulta
+    # EL UMBRAL VA CONTRA EL POR CAJÓN, NO CONTRA EL TOTAL. Con el producto
+    # entraban Jugo (−0,6k por cajón) y Berenjena (−0,3k) por tener muchos
+    # cajones: el total dimensiona, el por cajón detecta. El `not in` es la
+    # mitad que importa — es la única forma de volver, y sin él este test lo
+    # pasa igual una consulta que multiplique.
+    assert "(c.contenido_por_cajon - c.contenido_por_cajon_real) >= %s" in consulta
+    assert "* c.cantidad_cajones_real) >= %s" not in consulta
     # SIN MAYÚSCULAS: el canario lo escribió en minúscula y el assert no lo
     # vio — un `abs` escrito de la otra forma rompe la regla exactamente
     # igual, y SQL no distingue. Un test que fija una grafía prueba la
@@ -4323,6 +4329,10 @@ def test_los_kilos_faltantes_se_miden_SOBRE_LOS_CAJONES_RECIBIDOS():
     los cajones que no llegaron — que son la alerta de bultos— y la misma
     compra aportaría el mismo kilo a las dos. Las dos son disjuntas por causa
     y este es el único lugar del código donde eso está escrito.
+
+    Es sobre el total que se MUESTRA y por el que se ordena, no sobre el
+    filtro: quién entra lo decide el por cajón (el test de arriba). El total
+    sigue saliendo de los cajones recibidos por esta misma razón.
     """
     from app.db import contar_diferencia_de_kilos, listar_diferencia_de_kilos
 
@@ -4335,10 +4345,13 @@ def test_los_kilos_faltantes_se_miden_SOBRE_LOS_CAJONES_RECIBIDOS():
         contar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
         listar_diferencia_de_kilos(date(2026, 9, 5), date(2026, 9, 12), 1)
 
-    for consulta in (cursor.execute.call_args_list[0].args[0],
-                     cursor.execute.call_args_list[1].args[0]):
-        assert "* c.cantidad_cajones_real)" in consulta
-        assert "* c.cantidad_cajones)" not in consulta
+    # SOLO LA LISTA, porque el total ya no filtra: la cuenta es un COUNT(*) y
+    # no lo calcula. Pedirlo en las dos era correcto cuando el producto estaba
+    # en el WHERE — el mismo arreglo que lo sacó de ahí volvió falso a este
+    # assert, y el test es parte del arreglo, no un espectador (corolario 22).
+    lista = cursor.execute.call_args_list[1].args[0]
+    assert "* c.cantidad_cajones_real)" in lista
+    assert "* c.cantidad_cajones)" not in lista
 
 
 def test_los_kilos_faltantes_SOLO_MIRAN_desde_que_hay_foto_de_balanza():
@@ -4426,7 +4439,7 @@ def test_la_cuenta_y_la_lista_de_kilos_faltantes_comparten_EL_MISMO_WHERE():
         "c.cantidad_cajones_real IS NOT NULL",
         "c.fecha_operacion >= %s AND c.fecha_operacion <= %s",
         "FROM fotos_recepcion f",
-        "* c.cantidad_cajones_real) >= %s",
+        "(c.contenido_por_cajon - c.contenido_por_cajon_real) >= %s",
     ):
         assert condicion in cuenta, ("falta en la cuenta", condicion)
         assert condicion in lista, ("falta en la lista", condicion)

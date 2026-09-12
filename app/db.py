@@ -6900,8 +6900,7 @@ _SQL_DIFERENCIA_DE_KILOS = """
       AND c.fecha_operacion >= %s AND c.fecha_operacion <= %s
       AND c.fecha_operacion >= (SELECT MIN(""" + _SQL_FECHA_DEL_LOTE_DE_COMPRA.format(col="f.creado_en") + """)
                                   FROM fotos_recepcion f)
-      AND ((c.contenido_por_cajon - c.contenido_por_cajon_real)
-           * c.cantidad_cajones_real) >= %s
+      AND (c.contenido_por_cajon - c.contenido_por_cajon_real) >= %s
 """
 
 # El piso, solo, para poder MOSTRARLO. Es la misma expresión que el `where`
@@ -6912,18 +6911,23 @@ _SQL_DESDE_QUE_HAY_FOTO = (
 )
 
 
-def contar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> dict:
-    """Compras cuyos cajones pesaron al menos `umbral_contenido` MENOS en total de lo comprado.
+def contar_diferencia_de_kilos(desde, hasta, umbral_por_cajon) -> dict:
+    """Compras donde CADA CAJÓN pesó al menos `umbral_por_cajon` menos de lo comprado.
 
     SOLO LO QUE FALTÓ, no la diferencia en valor absoluto: un cajón que vino
     más pesado no se le reclama a nadie. Es la misma dirección que la alerta
     de bultos, que también cuenta faltantes y no sobrantes.
 
-    EL TOTAL Y NO EL POR CAJÓN: dos kilos de menos por cajón sobre cincuenta
-    y seis cajones son ciento doce kilos, y lo que decide si vale reclamar es
-    el segundo número. Se multiplica por los cajones RECIBIDOS porque los
-    kilos que se perdieron por peso solo pudieron perderse en los cajones que
-    llegaron; los que no llegaron son la otra alerta y no se cuentan dos veces.
+    EL UMBRAL VA POR CAJÓN Y NO SOBRE EL TOTAL, y la distinción es la que
+    decide si la alerta sirve: **el total dimensiona y el por cajón detecta**.
+    Un total grande no dice que haya pasado algo — con treinta y tres cajones,
+    tres décimas de ruido de balanza llegan a diez kilos—, así que filtrar por
+    el total llena la pantalla de compras GRANDES con diferencias CHICAS. Lo
+    que se le reclama a alguien es un cajón que vino livianito de verdad, y eso
+    solo se ve en el número por cajón.
+
+    El total se sigue devolviendo y ordena la lista (es la plata, y es lo que
+    decide si vale el reclamo); lo que no hace es decidir quién entra.
 
     NO SE RECORTA POR EL CORTE, por lo mismo que la de bultos: el corte es del
     modelo de stock y esto es un cotejo entre dos números que alguien cargó.
@@ -6941,7 +6945,7 @@ def contar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> dict:
             cursor.execute(
                 "SELECT COUNT(*), MIN(c.fecha_operacion), (" + _SQL_DESDE_QUE_HAY_FOTO + ")"
                 + _SQL_DIFERENCIA_DE_KILOS,
-                (desde, hasta, umbral_contenido),
+                (desde, hasta, umbral_por_cajon),
             )
             casos, mas_viejo, desde_la_foto = cursor.fetchone()
         return {"casos": int(casos), "mas_viejo": mas_viejo, "desde_la_foto": desde_la_foto}
@@ -6949,16 +6953,17 @@ def contar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> dict:
         conexion.close()
 
 
-def listar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> list[dict]:
+def listar_diferencia_de_kilos(desde, hasta, umbral_por_cajon) -> list[dict]:
     """Las mismas compras que cuenta contar_diferencia_de_kilos, con su detalle.
 
     MISMO RECORTE, escrito UNA vez (_SQL_DIFERENCIA_DE_KILOS): si la cuenta y
     la lista tuvieran cada una su WHERE, el banner diría un número y la
     pantalla listaría otro.
 
-    Trae el contenido POR CAJÓN —que es lo que el comprador cargó y lo que
-    Depósito pesó, los dos números que se pueden ir a mirar— y el total
-    faltante al lado, que es lo que se reclama. Las más grandes primero.
+    Trae el contenido POR CAJÓN —que es lo que el comprador cargó, lo que
+    Depósito pesó, y lo que DECIDE si la compra entra— y el total faltante al
+    lado, que es lo que se reclama y por lo que se ordena. Las más grandes
+    primero: entrar lo decide el cajón, atender primero lo decide el total.
     """
     conexion = obtener_conexion()
     try:
@@ -6982,7 +6987,7 @@ def listar_diferencia_de_kilos(desde, hasta, umbral_contenido) -> list[dict]:
                           * c.cantidad_cajones_real) DESC,
                          c.fecha_operacion DESC
                 """,
-                (desde, hasta, umbral_contenido),
+                (desde, hasta, umbral_por_cajon),
             )
             columnas = [descripcion[0] for descripcion in cursor.description]
             return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
