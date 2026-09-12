@@ -1668,6 +1668,18 @@ Tres cosas que se llevan:
    búsqueda para el que lo lea en tres meses, y manda a construir el
    registro que ya existía.
 
+**Y "NO SE USA" es la misma negativa con otra ropa, con un daño distinto: en
+vez de mandar a construir, manda a BORRAR.** Del 12/09: se escribió que
+`_desambiguar_cajas` quedaba sin usar porque no se la aplicó a una pantalla
+nueva. Tiene **dos llamadores vivos** (el desglose de stock y el selector de
+ficha de la guía R), y un `grep` de un segundo lo dice.
+
+Lo que quedó sin usar era **aplicar el patrón en ese lugar**, que es otra
+cosa — y la diferencia entre las dos frases es una función borrada. Antes de
+escribir que algo no se usa, grepear el NOMBRE, que es el corolario 8 (el
+grep de la función, no el del concepto) usado para no romper en vez de para
+encontrar.
+
 **Y lo que SÍ está medido, dicho con precisión**, porque acá también se
 mezcla fácil: está medido que **no hay ni una merma ni un ajuste** desde el
 corte, así que ningún desvío del Cotejo se explica por ellos. Que los
