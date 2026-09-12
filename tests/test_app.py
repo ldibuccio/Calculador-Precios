@@ -11596,7 +11596,18 @@ FILA_ANALISIS = {
     "compras_sin_precio_excluidas": 0, "costo_envase_unidad_venta": 50.0,
     "denominador_tasas": 1.0, "importe_por_cajon": 16000.0, "contenido_por_cajon": 16.0,
 }
-TASAS_ANALISIS = {"tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": 0.25}
+# CON `detalle`, porque así viene de `_agrupar_conceptos` desde el 12/09: el
+# nombre de cada tasa existía en la base y se tiraba al agrupar. Un fixture
+# que no tiene la clave que produce la función deja al test defendiendo la
+# forma vieja (corolario 22).
+TASAS_ANALISIS = {
+    "tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": 0.25,
+    "detalle": [
+        {"nombre": "flete", "tipo": "suma", "valor": 0.105},
+        {"nombre": "descuento", "tipo": "resta", "valor": 0.23},
+    ],
+}
+SIN_TASAS_ANALISIS = {"tasas_suman": [], "tasas_restan": [], "utilidad": None, "detalle": []}
 
 
 def _analizar(url, fichas=None, fila=None, tasas=None):
@@ -11769,6 +11780,96 @@ def test_las_TASAS_del_cliente_se_muestran():
     marcado = _analizar("/compras/analizar?articulo_id=1")
     assert "+10.5%" in marcado
     assert "−23%" in marcado
+    # CADA UNA CON SU NOMBRE: hasta el 12/09 decía "Suma +10,5%" sin decir
+    # cuál era. Un porcentaje sin nombre manda a buscarlo a otra pantalla, y
+    # el que mira ésta está decidiendo si paga un cajón.
+    assert ">Flete<" in marcado
+    assert ">Descuento<" in marcado
+    assert ">Suma<" not in marcado and ">Resta<" not in marcado
+
+
+
+def test_el_aviso_de_SIN_TASAS_va_PEGADO_al_numero_y_no_en_la_tarjeta_de_abajo():
+    """Diecinueve puntos de diferencia, y el aviso estaba fuera de pantalla.
+
+    Medido el 12/09 con la ruta real: el mismo caso da 29,25% con tasas y 48%
+    sin ninguna. Lo único que lo decía vivía en la tarjeta "De dónde salen los
+    números", a 1039px del tope con el viewport en 844 — el número inflado se
+    leía entero sin ver nunca el aviso.
+
+    SE MIDE LA POSICIÓN EN EL MARCADO, no que el texto exista: existir ya
+    existía. Lo que cambió es que esté ANTES del cierre del formulario, o sea
+    adentro de la tarjeta donde se lee el número.
+    """
+    marcado = _analizar("/compras/analizar?articulo_id=1", tasas=SIN_TASAS_ANALISIS)
+
+    assert "no tiene ninguna tasa cargada" in marcado
+    # EL FORMULARIO DEL ANÁLISIS, no el primero que aparezca: arriba está el
+    # selector de artículo, que también es un `<form>`. Un `split("</form>")[0]`
+    # miraba ése y el assert fallaba por el lugar, no por el contenido.
+    del_analisis = marcado.split('id="form-analisis"')[1].split("</form>")[0]
+    assert 'class="sin-tasas"' in del_analisis, "el aviso quedó fuera de la tarjeta del número"
+    # Y ANTES del bloque de abajo, que es donde estaba hasta el 12/09.
+    assert marcado.index('class="sin-tasas"') < marcado.index("De dónde salen los números")
+    # Y dice PARA QUÉ LADO se equivoca: "no hay tasas" solo no dice si el
+    # número está alto o bajo, y el que lee decide con eso.
+    #
+    # CON LOS ESPACIOS NORMALIZADOS, porque la plantilla envuelve la prosa y
+    # un assert de una oración entera falla por el salto de línea y no por lo
+    # que se quiere probar. Pasó dos veces en este mismo test.
+    prosa = " ".join(marcado.split())
+    assert "va a dar más alta que la real" in prosa
+
+
+def test_con_tasas_NO_sale_el_aviso():
+    """La otra mitad. Un aviso que sale siempre es un aviso que no se mira."""
+    marcado = _analizar("/compras/analizar?articulo_id=1")
+    assert 'class="sin-tasas"' not in marcado
+
+
+def test_sin_utilidad_objetivo_el_renglon_DICE_POR_QUE_no_esta():
+    """Era un `if` sin `else`: el renglón desaparecía y nada lo explicaba.
+
+    Es la única lectura que contesta "¿hasta cuánto puedo pagar el cajón?", o
+    sea la pregunta del puesto. Un renglón que no está no se puede extrañar.
+    """
+    marcado = _analizar("/compras/analizar?articulo_id=1", tasas=SIN_TASAS_ANALISIS)
+
+    assert "podés pagar el cajón hasta" not in marcado
+    # Por la CLASE y por un fragmento que no cruza el salto de línea: la
+    # plantilla envuelve la frase y un assert de la oración entera falla por
+    # el `\n`, no por lo que se quiere probar.
+    assert 'class="objetivo objetivo-falta"' in marcado
+    prosa = " ".join(marcado.split())
+    assert "este cliente no tiene utilidad objetivo cargada" in prosa
+
+
+def test_el_detalle_de_tasas_NO_le_cambia_las_listas_al_motor():
+    """El nombre es de la pantalla; los números son el contrato con el motor.
+
+    Meter diccionarios en `tasas_suman` habría cambiado la firma de
+    core.motor_costeo por una razón de presentación — la regla de negocio
+    escrita dos veces, en la peor forma.
+    """
+    from app.db import _agrupar_conceptos
+
+    agrupado = _agrupar_conceptos([
+        {"nombre_parametro": "flete", "tipo": "suma", "valor": 0.105},
+        {"nombre_parametro": "descuento", "tipo": "resta", "valor": 0.23},
+        {"nombre_parametro": "utilidad_objetivo", "tipo": "utilidad", "valor": 0.25},
+    ])
+
+    assert agrupado["tasas_suman"] == [0.105]
+    assert agrupado["tasas_restan"] == [0.23]
+    assert agrupado["utilidad"] == 0.25
+    # Y el detalle trae los nombres, con las sumas primero.
+    assert agrupado["detalle"] == [
+        {"nombre": "flete", "tipo": "suma", "valor": 0.105},
+        {"nombre": "descuento", "tipo": "resta", "valor": 0.23},
+    ]
+    # La utilidad NO es una tasa: no se suma ni se resta al precio, es contra
+    # qué se compara. Listarla ahí la haría parecer un cargo más.
+    assert all(t["nombre"] != "utilidad_objetivo" for t in agrupado["detalle"])
 
 
 def test_la_pantalla_NO_tiene_NINGUNA_formula_en_JAVASCRIPT():

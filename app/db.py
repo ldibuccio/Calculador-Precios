@@ -211,6 +211,22 @@ def _agrupar_conceptos(filas) -> dict:
     tasas_suman = [float(fila["valor"]) for fila in filas if fila["tipo"] == "suma"]
     tasas_restan = [float(fila["valor"]) for fila in filas if fila["tipo"] == "resta"]
 
+    # EL NOMBRE DE CADA TASA, que hasta el 12/09 se tiraba acá. El motor
+    # necesita números sueltos y por eso las dos listas de arriba no cambian;
+    # pero una pantalla que muestra "Resta −23%" sin decir que ese 23 es el
+    # descuento obliga a ir a buscarlo a otra pantalla, y la que lo mira es
+    # justamente la que decide si paga o no paga un cajón.
+    #
+    # Va COMO TERCERA CLAVE y no reemplazando a las otras dos: las listas de
+    # floats son el contrato con core.motor_costeo y meterles diccionarios
+    # adentro sería cambiar la firma del motor por una razón de presentación.
+    detalle = [
+        {"nombre": fila["nombre_parametro"], "tipo": fila["tipo"], "valor": float(fila["valor"])}
+        for fila in filas
+        if fila["tipo"] in ("suma", "resta")
+    ]
+    detalle.sort(key=lambda t: (t["tipo"] != "suma", t["nombre"]))
+
     filas_utilidad = [fila for fila in filas if fila["tipo"] == "utilidad"]
     utilidad = None
     if filas_utilidad:
@@ -220,7 +236,8 @@ def _agrupar_conceptos(filas) -> dict:
         )
         utilidad = float(fila_utilidad["valor"])
 
-    return {"tasas_suman": tasas_suman, "tasas_restan": tasas_restan, "utilidad": utilidad}
+    return {"tasas_suman": tasas_suman, "tasas_restan": tasas_restan,
+            "utilidad": utilidad, "detalle": detalle}
 
 
 def listar_conceptos_vigentes_por_cliente_en_fechas(cliente_id: int, fechas) -> dict:

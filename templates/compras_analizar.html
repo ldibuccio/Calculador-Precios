@@ -105,6 +105,19 @@
   .tasas .resta { color: #991b1b; }
   .partida { color: #6b7280; font-size: 0.82rem; margin: 0.15rem 0 0; }
   .volver { display: block; text-align: center; padding: 0.9rem; color: #1d4ed8; font-weight: 700; text-decoration: none; }
+  /* El aviso pegado al número, no en la tarjeta de abajo: acá es donde se
+     lee el 48% que en realidad es 29. */
+  .sin-tasas {
+    margin: 0.5rem 0 0;
+    padding: 0.55rem 0.7rem;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    color: #92400e;
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+  .objetivo-falta { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
 </style>
 </head>
 <body>
@@ -192,6 +205,17 @@
         <input type="number" id="utilidad" name="utilidad" step="0.01"
                value="{{ analisis.utilidad|numero if analisis.utilidad is not none }}"
                onchange="marcarYEnviar('utilidad')">
+        {# PEGADO AL NÚMERO Y NO EN LA TARJETA DE ABAJO. Medido el 12/09: un
+           cliente sin condiciones mostraba 48% donde iban 29 —diecinueve
+           puntos— y lo único que lo decía estaba a 1039px del tope con el
+           viewport en 844. O sea: el número inflado se leía entero sin ver
+           nunca el aviso. Una salvaguarda que no se lee no sirve, y tiene
+           que estar donde se toma la decisión. #}
+        {% if not tasas.tasas_suman and not tasas.tasas_restan %}
+        <p class="sin-tasas">⚠ Este cliente no tiene ninguna tasa cargada, así que
+          esta rentabilidad sale SIN descuentos ni cargos: va a dar más alta que la
+          real. Se cargan en la ficha del cliente.</p>
+        {% endif %}
       </div>
     </form>
 
@@ -208,6 +232,15 @@
       podés pagar el cajón hasta
       <span class="numero">{{ analisis.objetivo_cajon|moneda }}</span>
     </p>
+    {# DICE POR QUÉ FALTA en vez de desaparecer. Era un `if` sin `else`: sin
+       utilidad objetivo cargada el renglón no salía y nada lo explicaba, así
+       que la única lectura que contesta "¿cuánto puedo pagar?" se iba en
+       silencio. Un renglón que no está no se puede extrañar. #}
+    {% elif analisis.objetivo_utilidad is none %}
+    <p class="objetivo objetivo-falta">
+      No se puede decir hasta cuánto pagar el cajón: este cliente no tiene
+      utilidad objetivo cargada, y es contra ella que se compara.
+    </p>
     {% endif %}
   </div>
 
@@ -221,10 +254,18 @@
        ojo", y una cuenta que parece mal estando bien se paga con que nadie
        vuelva a confiar en la pantalla. #}
     <h3>Tasas de {{ ficha.cliente_nombre }}</h3>
-    {% if tasas.tasas_suman or tasas.tasas_restan %}
+    {# CADA UNA CON SU NOMBRE. Hasta el 12/09 decía "Suma +10,5%" sin nombrar
+       cuál era: el nombre existía en la base y `_agrupar_conceptos` lo tiraba.
+       Un porcentaje sin nombre obliga a ir a buscarlo a la pantalla del
+       cliente, y el que mira ésta está decidiendo si paga un cajón. #}
+    {% if tasas.detalle %}
     <ul class="tasas">
-      {% for t in tasas.tasas_suman %}<li><span>Suma</span><span>+{{ (t * 100)|numero }}%</span></li>{% endfor %}
-      {% for t in tasas.tasas_restan %}<li class="resta"><span>Resta</span><span>−{{ (t * 100)|numero }}%</span></li>{% endfor %}
+      {% for t in tasas.detalle %}
+      <li{% if t.tipo == "resta" %} class="resta"{% endif %}>
+        <span>{{ t.nombre|replace("_", " ")|capitalize }}</span>
+        <span>{{ "+" if t.tipo == "suma" else "−" }}{{ (t.valor * 100)|numero }}%</span>
+      </li>
+      {% endfor %}
     </ul>
     {% else %}
     <p class="partida">Este cliente no tiene ninguna tasa cargada.</p>
