@@ -62,25 +62,6 @@
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
-  .derivado {
-    margin: 0.3rem 0 0;
-    padding: 0.7rem 0.9rem;
-    background: #f0fdf4;
-    border: 1px solid #86efac;
-    border-radius: 8px;
-    color: #14532d;
-    font-size: 1.15rem;
-    font-weight: 800;
-  }
-  .derivado .rotulo {
-    display: block;
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: #15803d;
-    margin-bottom: 0.1rem;
-  }
   .objetivo {
     margin-top: 1rem;
     padding: 0.9rem 1rem;
@@ -91,19 +72,41 @@
     line-height: 1.5;
   }
   .objetivo .numero { display: block; font-size: 1.35rem; font-weight: 800; margin-top: 0.2rem; }
-  .tasas { margin: 0.6rem 0 0; padding: 0; list-style: none; }
-  .tasas li {
+  /* LAS TASAS EN UNA LÍNEA Y PEGADAS AL NÚMERO QUE EXPLICAN. Eran una lista
+     adentro de la tarjeta "De dónde salen los números", que se fue entera por
+     ser la mitad de la pantalla en texto. De esa tarjeta esto es lo único que
+     se usaba: son las que hacen que la rentabilidad no cierre "a ojo", y una
+     cuenta que parece mal estando bien se paga con que nadie vuelva a confiar
+     en la pantalla. */
+  .tasas-linea { margin: 0.5rem 0 0; font-size: 0.8rem; color: #6b7280; line-height: 1.6; }
+  .tasas-linea .tasa { white-space: nowrap; }
+  .tasas-linea .resta { color: #991b1b; }
+  /* El plegado de los dos selectores. `summary` va a 44px de alto: es lo que
+     se toca con el pulgar, y una línea de texto sola no alcanza. */
+  .elegir {
+    background: #fff;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .elegir > summary {
     display: flex;
+    align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.3rem 0;
-    border-bottom: 1px solid #f1f1f1;
-    font-size: 0.88rem;
-    color: #444;
+    min-height: 44px;
+    padding: 0.7rem 1rem;
+    box-sizing: border-box;
+    cursor: pointer;
+    font-weight: 700;
+    list-style: none;
   }
-  .tasas li:last-child { border-bottom: none; }
-  .tasas .resta { color: #991b1b; }
-  .partida { color: #6b7280; font-size: 0.82rem; margin: 0.15rem 0 0; }
+  .elegir > summary::-webkit-details-marker { display: none; }
+  /* Sin esto el nombre largo no cede y empuja "Cambiar" fuera de la pantalla:
+     un hijo de flex no baja de su ancho intrínseco por sí solo. */
+  .elegir .elegido { min-width: 0; }
+  .elegir .cambiar { color: #1d4ed8; font-size: 0.85rem; font-weight: 800; white-space: nowrap; }
+  .elegir .cuerpo { padding: 0 1rem 1rem; }
   .volver { display: block; text-align: center; padding: 0.9rem; color: #1d4ed8; font-weight: 700; text-decoration: none; }
   /* El aviso pegado al número, no en la tarjeta de abajo: acá es donde se
      lee el 48% que en realidad es 29. */
@@ -126,7 +129,25 @@
   {% set barra_atras = "/compras" %}
   {% include "_barra_navegacion.html" %}
 
-  <div class="tarjeta">
+  {# PLEGADOS UNA VEZ QUE CUMPLIERON. Abiertos se llevaban toda la parte de
+     arriba de una pantalla que se mira parado en el puesto, y para lo que
+     sirven —elegir una vez— ya alcanzaron. Cerrados quedan en una línea que
+     dice quién y qué, tocable para cambiarla.
+
+     <details> Y NO JS: el navegador lleva el estado, y esta pantalla se manda
+     sola al cambiar un campo — un plegado en JavaScript se perdería en cada
+     recarga, que es todo el tiempo. Arranca ABIERTO mientras falte elegir,
+     que es exactamente cuando hay que usarlo.
+
+     Y la línea cerrada dice CLIENTE Y FICHA ENTERA, que es el trabajo que
+     hacía el <h2> del análisis: con dos fichas del mismo artículo, el select
+     cerrado corta el texto y ésta es la confirmación de cuál quedó. #}
+  <details class="elegir" {% if not ficha %}open{% endif %}>
+    <summary>
+      <span class="elegido">{% if ficha %}{{ cliente_nombre }} · {{ ficha.etiqueta }}{% else %}Elegí cliente y artículo{% endif %}</span>
+      <span class="cambiar">Cambiar</span>
+    </summary>
+    <div class="cuerpo">
     {# EL CLIENTE PRIMERO: las condiciones son suyas, así que es el contexto
        y el artículo es lo que cambia adentro. Este formulario NO arrastra la
        ficha elegida a propósito — si la llevara, cambiar de cliente no haría
@@ -162,7 +183,8 @@
       <p class="ayuda">Solo los artículos que {{ cliente_nombre }} tiene en ficha: el precio y las tasas son suyos.</p>
     </form>
     {% endif %}
-  </div>
+    </div>
+  </details>
 
   {% if sin_datos %}
   <div class="tarjeta"><p class="sin-datos">{{ sin_datos }}</p></div>
@@ -170,14 +192,10 @@
 
   {% if analisis %}
   <div class="tarjeta">
-    {# SIN EL CLIENTE: está en el selector tres centímetros más arriba y otra
-       vez en "Tasas de ...". Repetirlo acá hacía un título de tres líneas en
-       390px que empujaba los números abajo del pliegue.
-
-       La ficha SÍ va entera, y no es decoración: el selector cerrado corta el
-       texto ("EJEMPLO Uno · EJEMPLO UNO BO"), así que con dos fichas del
-       mismo artículo este título es dónde se confirma cuál quedó elegida. #}
-    <h2>{{ ficha.etiqueta }}</h2>
+    {# SIN TÍTULO: lo que decía —cuál ficha quedó elegida— ahora lo dice la
+       línea plegada de arriba, con el cliente adelante. Dos renglones
+       diciendo lo mismo a tres centímetros es justo lo que esta pantalla
+       tenía de más. #}
     <p class="ayuda">Cambiá cualquiera de los cuatro y los demás se recalculan. Lo verde lo calcula la pantalla.</p>
 
     {# Se manda solo al cambiar un campo, y el cálculo lo hace el SERVIDOR
@@ -189,7 +207,7 @@
       <input type="hidden" name="edite" id="campo-editado" value="">
 
       <div class="celda">
-        <label for="importe_cajon">Lo que cobra el puesto por cajón</label>
+        <label for="importe_cajon">Costo por cajón</label>
         <input type="number" id="importe_cajon" name="importe_cajon" step="0.01" min="0"
                value="{{ analisis.importe_cajon|numero if analisis.importe_cajon is not none }}"
                onchange="marcarYEnviar('importe_cajon')">
@@ -201,13 +219,6 @@
                value="{{ analisis.kilos_bulto|numero if analisis.kilos_bulto is not none }}"
                onchange="marcarYEnviar('kilos_bulto')">
       </div>
-
-      {# SIEMPRE calculado, nunca se tipea: es el cociente de los dos de
-         arriba, y por eso cambiar los kilos mueve la rentabilidad. #}
-      <p class="derivado">
-        <span class="rotulo">Costo por {{ ficha.unidad_venta }} — calculado</span>
-        {% if analisis.costo_unidad is not none %}{{ analisis.costo_unidad|moneda }}{% else %}—{% endif %}
-      </p>
 
       <div class="celda {% if 'precio' in analisis.calculados %}celda-calculada{% endif %}">
         <label for="precio">Precio de venta por {{ ficha.unidad_venta }}{% if 'precio' in analisis.calculados %}<span class="marca-calculado">calculado</span>{% endif %}</label>
@@ -231,6 +242,15 @@
         <p class="sin-tasas">⚠ Este cliente no tiene ninguna tasa cargada, así que
           esta rentabilidad sale SIN descuentos ni cargos: va a dar más alta que la
           real. Se cargan en la ficha del cliente.</p>
+        {% endif %}
+
+        {# CADA UNA CON SU NOMBRE, y acá abajo del número que explican. El
+           `if` es el de `detalle` y no la negación del de arriba: son
+           complementarios por construcción (`detalle` trae las de suma y
+           resta), y escribir la equivalencia a mano sería la misma regla dos
+           veces, separándose el día que `_agrupar_conceptos` cambie. #}
+        {% if tasas.detalle %}
+        <p class="tasas-linea">Tasas de {{ cliente_nombre }}: {% for t in tasas.detalle %}<span class="tasa{% if t.tipo == "resta" %} resta{% endif %}"><span>{{ t.nombre|replace("_", " ")|capitalize }}</span> {{ "+" if t.tipo == "suma" else "−" }}{{ (t.valor * 100)|numero }}%</span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
         {% endif %}
       </div>
     </form>
@@ -260,33 +280,6 @@
     {% endif %}
   </div>
 
-  <div class="tarjeta">
-    <h2>De dónde salen los números</h2>
-    <p class="partida">Última compra del {{ fila.fecha_ultima_compra.strftime("%d/%m/%Y") }} — promedio ponderado por cajones de ese día y el anterior.</p>
-    <p class="partida">Precio vigente de la ficha{% if fila.precio_vigente is none %}: no hay ninguno cargado{% endif %}.</p>
-    <p class="partida">Envase: {{ fila.costo_envase_unidad_venta|moneda }} por {{ ficha.unidad_venta }} — suma al costo, y la rentabilidad se gana solo sobre la mercadería.</p>
-
-    {# Las tasas A LA VISTA: son las que hacen que la cuenta no cierre "a
-       ojo", y una cuenta que parece mal estando bien se paga con que nadie
-       vuelva a confiar en la pantalla. #}
-    <h3>Tasas de {{ cliente_nombre }}</h3>
-    {# CADA UNA CON SU NOMBRE. Hasta el 12/09 decía "Suma +10,5%" sin nombrar
-       cuál era: el nombre existía en la base y `_agrupar_conceptos` lo tiraba.
-       Un porcentaje sin nombre obliga a ir a buscarlo a la pantalla del
-       cliente, y el que mira ésta está decidiendo si paga un cajón. #}
-    {% if tasas.detalle %}
-    <ul class="tasas">
-      {% for t in tasas.detalle %}
-      <li{% if t.tipo == "resta" %} class="resta"{% endif %}>
-        <span>{{ t.nombre|replace("_", " ")|capitalize }}</span>
-        <span>{{ "+" if t.tipo == "suma" else "−" }}{{ (t.valor * 100)|numero }}%</span>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="partida">Este cliente no tiene ninguna tasa cargada.</p>
-    {% endif %}
-  </div>
   {% endif %}
 
   <a class="volver" href="/compras">Volver a Compras</a>

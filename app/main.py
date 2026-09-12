@@ -11947,7 +11947,9 @@ def ver_analizar_articulo(
     contexto["analisis"] = _analizar_ficha(
         fila, tasas, edite if edite in CAMPOS_ANALISIS else "", valores
     )
-    contexto["fila"] = fila
+    # `fila` NO va al contexto: lo único que la usaba era la tarjeta "De dónde
+    # salen los números", que se fue el 12/09. Una clave que nadie lee es lo
+    # que queda de una reescritura y no se ve en ningún test.
     contexto["tasas"] = tasas
     return templates.TemplateResponse(request, "compras_analizar.html", contexto)
 

@@ -12013,8 +12013,9 @@ def _valor(marcado, campo):
 def test_analizar_parte_de_la_ULTIMA_COMPRA_y_calcula_la_rentabilidad():
     """Los tres valores de partida salen de la compra y del precio vigente.
 
-    Y el costo por kilo NO es un cuarto dato: es el cociente de los dos
-    primeros, que es lo que después deja preguntar "¿y si trae 14?".
+    El costo por kilo sigue siendo el cociente de los dos primeros —es lo que
+    deja preguntar "¿y si trae 14?"— pero desde el 12/09 NO SE MUESTRA: se
+    calcula igual, adentro. Este test mide los que se ven.
 
     Se entra por CLIENTE, que es el orden en que se piensa: las condiciones
     son suyas. Con una sola ficha no hay nada que preguntar y se cae directo
@@ -12025,9 +12026,8 @@ def test_analizar_parte_de_la_ULTIMA_COMPRA_y_calcula_la_rentabilidad():
     assert _valor(marcado, "importe_cajon") == "16000"
     assert _valor(marcado, "kilos_bulto") == "16"
     assert _valor(marcado, "precio") == "1500"
-    # 16000 / 16 = 1000 el kilo, calculado y nunca tipeado.
-    assert "$1.000" in marcado
-    # (1500 × 0,875 − 50 − 1000) / 1000 = 26,25%
+    # (1500 × 0,875 − 50 − 1000) / 1000 = 26,25%, con el costo por kilo
+    # (16000 / 16 = 1000) puesto por dentro.
     assert _valor(marcado, "utilidad") == "26.25"
 
 
@@ -12114,16 +12114,23 @@ def test_editar_los_KILOS_mueve_la_rentabilidad_que_es_la_pregunta_del_puesto():
     puede mover nada — el número ya los consumió. Partiendo del importe del
     cajón, el mismo cajón al mismo precio pasa de 26,25% a 10,47% si trae
     14 en vez de 16, que es exactamente la decisión parado en el puesto.
+
+    Y SE VERIFICAN LOS DOS NÚMEROS QUE SE MUEVEN, no solo la rentabilidad.
+    Desde que el costo por kilo dejó de mostrarse (12/09), el que explica el
+    movimiento en pesos es el del objetivo: con 14 kilos ese cajón da para
+    pagar $14.140 en vez de $16.160. Los dos se mueven por lo mismo, y si
+    alguno dejara de hacerlo el paso del medio quedaría de verdad invisible.
     """
     marcado = _analizar(
         "/compras/analizar?ficha_id=901"
         "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
     )
 
-    # 16000 / 14 = 1142,86 el kilo
-    assert "$1.143" in marcado
-    # (1312,50 − 50 − 1142,86) / 1142,86 = 10,47%
+    # (1312,50 − 50 − 1142,86) / 1142,86 = 10,47%, con 16000 / 14 = 1142,86
+    # el kilo calculado por dentro.
     assert _valor(marcado, "utilidad") == "10.47"
+    # Y lo que se puede pagar por ese cajón bajó en la misma jugada.
+    assert "$14.140" in marcado
     # El importe NO se movió: el costo es un dato, lo que cambió es cuántos
     # kilos trae.
     assert _valor(marcado, "importe_cajon") == "16000"
@@ -12270,8 +12277,11 @@ def test_el_aviso_de_SIN_TASAS_va_PEGADO_al_numero_y_no_en_la_tarjeta_de_abajo()
     # miraba ése y el assert fallaba por el lugar, no por el contenido.
     del_analisis = marcado.split('id="form-analisis"')[1].split("</form>")[0]
     assert 'class="sin-tasas"' in del_analisis, "el aviso quedó fuera de la tarjeta del número"
-    # Y ANTES del bloque de abajo, que es donde estaba hasta el 12/09.
-    assert marcado.index('class="sin-tasas"') < marcado.index("De dónde salen los números")
+    # Y ARRIBA del recuadro de solo lectura, o sea pegado al número. El ancla
+    # de este assert era "De dónde salen los números", el bloque donde el
+    # aviso vivía hasta el 12/09; ese bloque se fue entero ese mismo día, así
+    # que el ancla pasó a ser lo que hoy cierra la tarjeta.
+    assert marcado.index('class="sin-tasas"') < marcado.index('class="objetivo')
     # Y dice PARA QUÉ LADO se equivoca: "no hay tasas" solo no dice si el
     # número está alto o bajo, y el que lee decide con eso.
     #
@@ -12280,6 +12290,68 @@ def test_el_aviso_de_SIN_TASAS_va_PEGADO_al_numero_y_no_en_la_tarjeta_de_abajo()
     # que se quiere probar. Pasó dos veces en este mismo test.
     prosa = " ".join(marcado.split())
     assert "va a dar más alta que la real" in prosa
+
+
+def test_la_pantalla_es_CORTA_los_cuatro_numeros_y_las_tasas():
+    """Lo que se sacó el 12/09, y lo que NO se podía sacar con ello.
+
+    El pedido fue "una pantalla corta con cuatro números y nada más": se
+    fueron el recuadro del costo por kilo —que no se mira— y la tarjeta "De
+    dónde salen los números", que era la mitad de la pantalla en texto.
+
+    LAS TASAS SE QUEDAN, y son la única cosa de esa tarjeta que se salvó: son
+    las que hacen que la rentabilidad no cierre a ojo. Pasaron a una línea
+    chica pegada al número que explican.
+
+    Y el rótulo del primer campo dice COSTO POR CAJÓN, que es lo que el
+    puesto cobra y lo que se tipea.
+    """
+    marcado = _analizar("/compras/analizar?cliente_id=1")
+    prosa = " ".join(marcado.split())
+
+    # los cuatro que se tocan
+    for campo in ("importe_cajon", "kilos_bulto", "precio", "utilidad"):
+        assert f'id="{campo}"' in marcado, campo
+    assert ">Costo por cajón</label>" in marcado
+    # y el de solo lectura que se usa parado en el puesto
+    assert "podés pagar el cajón hasta" in prosa
+
+    # lo que se fue
+    assert "De dónde salen los números" not in marcado
+    assert 'class="derivado"' not in marcado
+    assert "Costo por kilo" not in prosa
+
+    # y lo que de eso se salvó, con los nombres
+    assert 'class="tasas-linea"' in marcado
+    assert ">Flete<" in marcado and ">Descuento<" in marcado
+
+
+def test_los_SELECTORES_se_pliegan_una_vez_elegido_y_la_linea_dice_cual():
+    """Abiertos ocupaban toda la parte de arriba y ya habían cumplido.
+
+    Plegados quedan en una línea con el cliente y la ficha, tocable para
+    cambiarla. El `open` va SOLO mientras falte elegir — que es exactamente
+    cuando el selector sirve—, y el caso de abajo es el que lo fija: con una
+    ficha elegida no puede venir abierto, o no se plegó nada.
+    """
+    def etiqueta_details(marcado):
+        """La etiqueta de apertura sola: comparar el string entero con el
+        espacio del `{% if %}` adentro haría fallar el test por un blanco."""
+        desde = marcado.index("<details")
+        return marcado[desde:marcado.index(">", desde) + 1]
+
+    elegido = _analizar("/compras/analizar?cliente_id=1")
+    assert "open" not in etiqueta_details(elegido), "quedó abierto con la ficha elegida"
+    assert "EJEMPLO Cli · EJEMPLO Uno" in elegido
+    assert 'class="cambiar"' in elegido
+    # el selector sigue estando, plegado y no borrado
+    assert '<select id="cliente_id"' in elegido
+
+    # Sin ficha —dos del mismo cliente, hay que elegir— arranca abierto.
+    sin_elegir = _analizar("/compras/analizar?cliente_id=1",
+                           fichas=[FICHA_ANALISIS, FICHA_ANALISIS_2])
+    assert "open" in etiqueta_details(sin_elegir)
+    assert "Elegí cliente y artículo" in sin_elegir
 
 
 def test_con_tasas_NO_sale_el_aviso():
