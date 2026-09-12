@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analizar Artículo</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body { margin: 0; padding: 1rem; background: #f5f5f5; color: #111; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .ayuda { color: #666; font-size: 0.88rem; line-height: 1.45; margin: 0.4rem 0 0; }
+  label { display: block; margin-top: 0.8rem; font-size: 0.9rem; color: #444; font-weight: 600; }
+  select, input[type="number"] {
+    width: 100%;
+    padding: 0.8rem;
+    margin-top: 0.3rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .sin-datos {
+    padding: 0.9rem 1rem;
+    background: #fef9c3;
+    border: 1px solid #fde047;
+    border-radius: 8px;
+    color: #713f12;
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+  .aviso-error {
+    margin: 0.8rem 0 0;
+    padding: 0.8rem 1rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    color: #991b1b;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+  /* Los dos que se TIPEAN y los dos que SALEN de la cuenta, separados por
+     color y por rótulo. Sin eso, en dos minutos nadie sabe qué puso a mano
+     y qué calculó la pantalla — que es justo lo que hay que poder leer. */
+  .celda { margin-top: 0.9rem; }
+  .celda-calculada input { background: #f0fdf4; border-color: #86efac; color: #14532d; font-weight: 700; }
+  .marca-calculado {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.45rem;
+    background: #dcfce7;
+    color: #14532d;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .derivado {
+    margin: 0.3rem 0 0;
+    padding: 0.7rem 0.9rem;
+    background: #f0fdf4;
+    border: 1px solid #86efac;
+    border-radius: 8px;
+    color: #14532d;
+    font-size: 1.15rem;
+    font-weight: 800;
+  }
+  .derivado .rotulo {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #15803d;
+    margin-bottom: 0.1rem;
+  }
+  .objetivo {
+    margin-top: 1rem;
+    padding: 0.9rem 1rem;
+    background: #eff6ff;
+    border: 1px solid #93c5fd;
+    border-radius: 8px;
+    color: #1e3a8a;
+    line-height: 1.5;
+  }
+  .objetivo .numero { display: block; font-size: 1.35rem; font-weight: 800; margin-top: 0.2rem; }
+  .tasas { margin: 0.6rem 0 0; padding: 0; list-style: none; }
+  .tasas li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid #f1f1f1;
+    font-size: 0.88rem;
+    color: #444;
+  }
+  .tasas li:last-child { border-bottom: none; }
+  .tasas .resta { color: #991b1b; }
+  .partida { color: #6b7280; font-size: 0.82rem; margin: 0.15rem 0 0; }
+  .volver { display: block; text-align: center; padding: 0.9rem; color: #1d4ed8; font-weight: 700; text-decoration: none; }
+</style>
+</head>
+<body>
+  {% set barra_sector = "compras" %}
+  {% set barra_titulo = "Analizar Artículo" %}
+  {% set barra_atras = "/compras" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form method="get" action="/compras/analizar">
+      <label for="articulo_id">Artículo</label>
+      <select id="articulo_id" name="articulo_id" onchange="this.form.submit()">
+        <option value="" {% if not articulo_id %}selected{% endif %} disabled>Elegí un artículo...</option>
+        {% for a in articulos %}
+        <option value="{{ a.id }}" {% if articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
+        {% endfor %}
+      </select>
+    </form>
+
+    {# LA FICHA, y solo cuando hay más de una: con una sola el paso se
+       saltea. No es un capricho de precio — las TASAS son por cliente, así
+       que la rentabilidad sin decir a quién se le vende no existe. #}
+    {% if fichas_del_articulo and fichas_del_articulo|length > 1 %}
+    <form method="get" action="/compras/analizar">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
+      <label for="ficha_id">Ficha de venta</label>
+      <select id="ficha_id" name="ficha_id" onchange="this.form.submit()">
+        <option value="" {% if not ficha %}selected{% endif %} disabled>Elegí la ficha...</option>
+        {% for f in fichas_del_articulo %}
+        <option value="{{ f.id }}" {% if ficha and ficha.id == f.id %}selected{% endif %}>{{ f.cliente_nombre }} · {{ f.nombre_cliente or f.articulo_nombre }}</option>
+        {% endfor %}
+      </select>
+      <p class="ayuda">El precio y las tasas son del cliente, así que cada ficha se analiza por separado.</p>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if sin_datos %}
+  <div class="tarjeta"><p class="sin-datos">{{ sin_datos }}</p></div>
+  {% endif %}
+
+  {% if analisis %}
+  <div class="tarjeta">
+    <h2>{{ ficha.cliente_nombre }} · {{ ficha.nombre_cliente or ficha.articulo_nombre }}</h2>
+    <p class="ayuda">Cambiá cualquiera de los cuatro y los demás se recalculan. Lo verde lo calcula la pantalla.</p>
+
+    {# Se manda solo al cambiar un campo, y el cálculo lo hace el SERVIDOR
+       con las funciones del motor. Escribir la fórmula en JavaScript sería
+       la rentabilidad por cuarta vez, en otro lenguaje y sin test. #}
+    <form method="get" action="/compras/analizar" id="form-analisis">
+      <input type="hidden" name="articulo_id" value="{{ articulo_id }}">
+      <input type="hidden" name="ficha_id" value="{{ ficha.id }}">
+      <input type="hidden" name="edite" id="campo-editado" value="">
+
+      <div class="celda">
+        <label for="importe_cajon">Lo que cobra el puesto por cajón</label>
+        <input type="number" id="importe_cajon" name="importe_cajon" step="0.01" min="0"
+               value="{{ analisis.importe_cajon|numero if analisis.importe_cajon is not none }}"
+               onchange="marcarYEnviar('importe_cajon')">
+      </div>
+
+      <div class="celda">
+        <label for="kilos_bulto">{{ {"kilo": "Kilos", "unidad": "Unidades", "cubeta": "Cubetas"}.get(ficha.unidad_venta, "Contenido") }} por bulto</label>
+        <input type="number" id="kilos_bulto" name="kilos_bulto" step="0.01" min="0"
+               value="{{ analisis.kilos_bulto|numero if analisis.kilos_bulto is not none }}"
+               onchange="marcarYEnviar('kilos_bulto')">
+      </div>
+
+      {# SIEMPRE calculado, nunca se tipea: es el cociente de los dos de
+         arriba, y por eso cambiar los kilos mueve la rentabilidad. #}
+      <p class="derivado">
+        <span class="rotulo">Costo por {{ ficha.unidad_venta }} — calculado</span>
+        {% if analisis.costo_unidad is not none %}{{ analisis.costo_unidad|moneda }}{% else %}—{% endif %}
+      </p>
+
+      <div class="celda {% if 'precio' in analisis.calculados %}celda-calculada{% endif %}">
+        <label for="precio">Precio de venta por {{ ficha.unidad_venta }}{% if 'precio' in analisis.calculados %}<span class="marca-calculado">calculado</span>{% endif %}</label>
+        <input type="number" id="precio" name="precio" step="0.01" min="0"
+               value="{{ analisis.precio|numero if analisis.precio is not none }}"
+               onchange="marcarYEnviar('precio')">
+      </div>
+
+      <div class="celda {% if 'utilidad' in analisis.calculados %}celda-calculada{% endif %}">
+        <label for="utilidad">Rentabilidad %{% if 'utilidad' in analisis.calculados %}<span class="marca-calculado">calculado</span>{% endif %}</label>
+        <input type="number" id="utilidad" name="utilidad" step="0.01"
+               value="{{ analisis.utilidad|numero if analisis.utilidad is not none }}"
+               onchange="marcarYEnviar('utilidad')">
+      </div>
+    </form>
+
+    {% if analisis.aviso %}
+    <p class="aviso-error">{{ analisis.aviso }}</p>
+    {% endif %}
+
+    {# SOLO LECTURA a propósito: como celda editable sería una cuarta regla
+       de recálculo y la rentabilidad terminaría moviendo el costo, que es
+       exactamente lo que la asimetría prohíbe. #}
+    {% if analisis.objetivo_cajon is not none %}
+    <p class="objetivo">
+      A ese precio, para ganar el {{ (analisis.objetivo_utilidad * 100)|numero }}% que tenés como objetivo,
+      podés pagar el cajón hasta
+      <span class="numero">{{ analisis.objetivo_cajon|moneda }}</span>
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="tarjeta">
+    <h2>De dónde salen los números</h2>
+    <p class="partida">Última compra del {{ fila.fecha_ultima_compra.strftime("%d/%m/%Y") }} — promedio ponderado por cajones de ese día y el anterior.</p>
+    <p class="partida">Precio vigente de la ficha{% if fila.precio_vigente is none %}: no hay ninguno cargado{% endif %}.</p>
+    <p class="partida">Envase: {{ fila.costo_envase_unidad_venta|moneda }} por {{ ficha.unidad_venta }} — suma al costo, y la rentabilidad se gana solo sobre la mercadería.</p>
+
+    {# Las tasas A LA VISTA: son las que hacen que la cuenta no cierre "a
+       ojo", y una cuenta que parece mal estando bien se paga con que nadie
+       vuelva a confiar en la pantalla. #}
+    <h3>Tasas de {{ ficha.cliente_nombre }}</h3>
+    {% if tasas.tasas_suman or tasas.tasas_restan %}
+    <ul class="tasas">
+      {% for t in tasas.tasas_suman %}<li><span>Suma</span><span>+{{ (t * 100)|numero }}%</span></li>{% endfor %}
+      {% for t in tasas.tasas_restan %}<li class="resta"><span>Resta</span><span>−{{ (t * 100)|numero }}%</span></li>{% endfor %}
+    </ul>
+    {% else %}
+    <p class="partida">Este cliente no tiene ninguna tasa cargada.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <a class="volver" href="/compras">Volver a Compras</a>
+
+  <script>
+    // Solo marca QUÉ se editó y manda el formulario: la cuenta la hace el
+    // servidor. Acá no hay ninguna fórmula, y no la puede haber — sería la
+    // rentabilidad escrita por cuarta vez.
+    function marcarYEnviar(campo) {
+      document.getElementById("campo-editado").value = campo;
+      document.getElementById("form-analisis").submit();
+    }
+  </script>
+{% include "_pie_version.html" %}
+</body>
+</html>

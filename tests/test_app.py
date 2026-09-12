@@ -11333,6 +11333,224 @@ def test_no_hay_una_SEXTA_pantalla_que_precargue_el_contenido_sin_el_arreglo():
     assert tocan == set(PANTALLAS_QUE_PRECARGAN_CONTENIDO), tocan
 
 
+# --- Analizar Artículo: la calculadora de "qué pasa si" (12/09) --------------
+# Los números del fixture están elegidos para que las cuentas se puedan
+# verificar a mano: costo $1.000/kilo (16.000 el cajón ÷ 16 kilos), envase
+# $50, tasas +10,5% y −23%, precio $1.500.
+#
+#   entra    = 1500 × (1 + 0,105 − 0,23) = 1312,50
+#   utilidad = (1312,50 − 50 − 1000) / 1000 = 26,25%
+
+FICHA_ANALISIS = {
+    "id": 901, "cliente_id": 1, "articulo_id": 1, "articulo_nombre": "EJEMPLO Uno",
+    "articulo_grupo": "fruta", "envase_id": 5, "envase_nombre": "EJEMPLO Caja",
+    "contenido_caja": 16, "unidad_venta": "kilo", "envase_variable": False,
+    "nombre_cliente": "EJEMPLO UNO BOLIVIA", "codigo_cliente": "90101",
+}
+# La SEGUNDA ficha del mismo artículo: es la que obliga a elegir, y está
+# acá porque con una sola el paso se saltea y el selector no se probaría.
+FICHA_ANALISIS_2 = dict(FICHA_ANALISIS, id=902, nombre_cliente="EJEMPLO UNO ECUADOR",
+                        codigo_cliente="90102", contenido_caja=10)
+
+FILA_ANALISIS = {
+    "ficha_id": 901, "articulo_id": 1, "articulo_nombre": "EJEMPLO Uno",
+    "ficha_nombre": "EJEMPLO UNO BOLIVIA", "unidad_venta": "kilo", "fresco": True,
+    "costo_actual": 1000.0, "costo_anterior": None, "variacion": None,
+    "fecha_ultima_compra": date(2026, 9, 11), "precio_vigente": 1500.0,
+    "precio_sugerido": None, "utilidad_aproximada": None,
+    "compras_sin_precio_excluidas": 0, "costo_envase_unidad_venta": 50.0,
+    "denominador_tasas": 1.0, "importe_por_cajon": 16000.0, "contenido_por_cajon": 16.0,
+}
+TASAS_ANALISIS = {"tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": 0.25}
+
+
+def _analizar(url, fichas=None, fila=None, tasas=None):
+    from unittest.mock import patch as _patch
+    with (
+        _patch("app.main.listar_articulos", return_value=[{"id": 1, "nombre": "EJEMPLO Uno"}]),
+        _patch("app.main.listar_fichas_de_todos_los_clientes",
+               return_value=[dict(f) for f in (fichas or [FICHA_ANALISIS])]),
+        _patch("app.main.listar_clientes", return_value=[{"id": 1, "nombre": "EJEMPLO Cli"}]),
+        _patch("app.main.calcular_listado_para_negociar_precios",
+               return_value=[dict(fila or FILA_ANALISIS)]),
+        _patch("app.main.listar_conceptos_vigentes_por_cliente",
+               return_value=tasas if tasas is not None else TASAS_ANALISIS),
+        _patch("app.main._hoy_argentina", return_value=date(2026, 9, 12)),
+    ):
+        respuesta = cliente.get(url)
+    assert respuesta.status_code == 200, respuesta.status_code
+    return respuesta.text.split("</style>")[-1]
+
+
+def _valor(marcado, campo):
+    encontrado = re.search(rf'id="{campo}"[^>]*value="([^"]*)"', marcado)
+    return encontrado.group(1) if encontrado else None
+
+
+def test_analizar_parte_de_la_ULTIMA_COMPRA_y_calcula_la_rentabilidad():
+    """Los tres valores de partida salen de la compra y del precio vigente.
+
+    Y el costo por kilo NO es un cuarto dato: es el cociente de los dos
+    primeros, que es lo que después deja preguntar "¿y si trae 14?".
+    """
+    marcado = _analizar("/compras/analizar?articulo_id=1")
+
+    assert _valor(marcado, "importe_cajon") == "16000"
+    assert _valor(marcado, "kilos_bulto") == "16"
+    assert _valor(marcado, "precio") == "1500"
+    # 16000 / 16 = 1000 el kilo, calculado y nunca tipeado.
+    assert "$1.000" in marcado
+    # (1500 × 0,875 − 50 − 1000) / 1000 = 26,25%
+    assert _valor(marcado, "utilidad") == "26.25"
+
+
+def test_editar_los_KILOS_mueve_la_rentabilidad_que_es_la_pregunta_del_puesto():
+    """El hallazgo que hizo posible la pantalla: el costo por kilo tiene los kilos como DIVISOR.
+
+    Mostrando el costo por kilo como dato editable, cambiar los kilos no
+    puede mover nada — el número ya los consumió. Partiendo del importe del
+    cajón, el mismo cajón al mismo precio pasa de 26,25% a 10,47% si trae
+    14 en vez de 16, que es exactamente la decisión parado en el puesto.
+    """
+    marcado = _analizar(
+        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
+    )
+
+    # 16000 / 14 = 1142,86 el kilo
+    assert "$1.143" in marcado
+    # (1312,50 − 50 − 1142,86) / 1142,86 = 10,47%
+    assert _valor(marcado, "utilidad") == "10.47"
+    # El importe NO se movió: el costo es un dato, lo que cambió es cuántos
+    # kilos trae.
+    assert _valor(marcado, "importe_cajon") == "16000"
+
+
+def test_editar_la_RENTABILIDAD_recalcula_el_PRECIO_y_nunca_el_costo():
+    """La asimetría del negocio: el costo es un dato y el precio es una decisión.
+
+    Y es la del motor: acá se llama a precio_sugerido en vez de a
+    utilidad_real, nada más.
+    """
+    marcado = _analizar(
+        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "&importe_cajon=16000&kilos_bulto=16&precio=1500&utilidad=25&edite=utilidad"
+    )
+
+    # (1000 × 1,25 + 50) / 0,875 = 1485,71
+    assert _valor(marcado, "precio") == "1485.71"
+    assert _valor(marcado, "utilidad") == "25"
+    # El costo quedó intacto: ni el importe ni los kilos se movieron.
+    assert _valor(marcado, "importe_cajon") == "16000"
+    assert _valor(marcado, "kilos_bulto") == "16"
+
+
+def test_se_ve_CUAL_se_movio_y_el_costo_por_kilo_nunca_se_tipea():
+    """Sin esto, en dos minutos nadie sabe qué puso a mano y qué calculó la pantalla."""
+    editando_kilos = _analizar(
+        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
+    )
+    editando_renta = _analizar(
+        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "&importe_cajon=16000&kilos_bulto=16&precio=1500&utilidad=25&edite=utilidad"
+    )
+
+    # Editando los kilos, el calculado es la rentabilidad.
+    assert 'id="utilidad"' in editando_renta
+    assert editando_kilos.count('class="marca-calculado"') == 1
+    assert editando_renta.count('class="marca-calculado"') == 1
+    # Y el bloque marcado NO es el mismo en los dos: en uno es la
+    # rentabilidad y en el otro el precio.
+    assert "Rentabilidad %<span" in editando_kilos
+    assert "Rentabilidad %<span" not in editando_renta
+    # El costo por kilo es un <p>, no un <input>: no se puede tipear.
+    assert 'id="costo_unidad"' not in editando_kilos
+    assert "calculado</span>" in editando_kilos
+
+
+def test_el_renglon_del_objetivo_va_contra_la_utilidad_OBJETIVO_y_no_contra_la_de_la_pantalla():
+    """Contra la de la pantalla el renglón es TAUTOLÓGICO: devuelve el importe ya puesto.
+
+    Lo descubrió correrlo, no leerlo: las tres funciones del motor son
+    inversas exactas, así que con la utilidad que la propia pantalla acaba
+    de calcular el costo objetivo da SIEMPRE lo que se está pagando. Contra
+    la utilidad objetivo del cliente sí contesta la pregunta del puesto.
+
+    Con 16 kilos: (1312,50 − 50) / 1,25 × 16 = $16.160 — piden 16.000, entra.
+    Con 14 kilos: (1312,50 − 50) / 1,25 × 14 = $14.140 — piden 16.000, NO entra.
+    """
+    con_16 = _analizar("/compras/analizar?articulo_id=1")
+    con_14 = _analizar(
+        "/compras/analizar?articulo_id=1&ficha_id=901"
+        "&importe_cajon=16000&kilos_bulto=14&precio=1500&utilidad=&edite=kilos_bulto"
+    )
+
+    assert "$16.160" in con_16
+    assert "$14.140" in con_14
+    # Y NO el importe que ya está puesto, que es lo que daría la versión
+    # tautológica en los dos casos.
+    assert "$16.000" not in con_14
+
+
+def test_sin_utilidad_objetivo_cargada_NO_hay_renglon_de_objetivo():
+    """No hay contra qué: un renglón que se inventa el objetivo sería peor que no tenerlo."""
+    marcado = _analizar(
+        "/compras/analizar?articulo_id=1",
+        tasas={"tasas_suman": [0.105], "tasas_restan": [0.23], "utilidad": None},
+    )
+    assert "podés pagar el cajón hasta" not in marcado
+    # Pero la rentabilidad se sigue calculando: no depende de la objetivo.
+    assert _valor(marcado, "utilidad") == "26.25"
+
+
+def test_con_DOS_fichas_del_articulo_hay_que_elegir_y_con_una_se_saltea():
+    """Las TASAS son por cliente, así que la rentabilidad sin decir la ficha no existe."""
+    dos = _analizar("/compras/analizar?articulo_id=1",
+                    fichas=[FICHA_ANALISIS, FICHA_ANALISIS_2])
+    assert 'id="ficha_id"' in dos
+    assert "EJEMPLO UNO BOLIVIA" in dos and "EJEMPLO UNO ECUADOR" in dos
+    # Sin ficha elegida todavía no hay análisis.
+    assert 'id="importe_cajon"' not in dos
+
+    una = _analizar("/compras/analizar?articulo_id=1")
+    assert 'id="ficha_id"' not in una
+    assert 'id="importe_cajon"' in una
+
+
+def test_sin_costo_reciente_lo_DICE_en_vez_de_mostrar_una_pantalla_vacia():
+    marcado = _analizar("/compras/analizar?articulo_id=1",
+                        fila=dict(FILA_ANALISIS, costo_actual=None))
+    assert "no hay costo del que partir" in marcado
+    assert 'id="importe_cajon"' not in marcado
+
+
+def test_las_TASAS_del_cliente_se_muestran():
+    """Son las que hacen que la cuenta no cierre "a ojo".
+
+    Una cuenta que parece mal estando bien se paga con que nadie vuelva a
+    confiar en la pantalla.
+    """
+    marcado = _analizar("/compras/analizar?articulo_id=1")
+    assert "+10.5%" in marcado
+    assert "−23%" in marcado
+
+
+def test_la_pantalla_NO_tiene_NINGUNA_formula_en_JAVASCRIPT():
+    """Sería la rentabilidad escrita por CUARTA vez, en otro lenguaje y sin test.
+
+    El JS solo marca qué campo se editó y manda el formulario; la cuenta la
+    hace el servidor con las tres funciones del motor. Es la primera regla
+    de este proyecto: una regla de negocio no puede estar escrita dos veces.
+    """
+    html = io.open("templates/compras_analizar.html", encoding="utf-8").read()
+    script = html.split("<script>")[-1].split("</script>")[0]
+
+    for termino in ("tasa", "envase", "utilidad", "costo", "precio",
+                    "parseFloat", "Number(", "Math."):
+        assert termino not in script, (termino, script)
+
+
 # --- La pantalla de Alertas del sector (12/09) -------------------------------
 # Auditoría muestra las dieciocho con su número; ésta muestra las del SECTOR
 # con una fila por caso. Los bloques salen del registro, no escritos a mano.

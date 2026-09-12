@@ -45,6 +45,17 @@ from app.costeo import (
     calcular_listados_para_negociar_precios,
     calcular_objetivos_de_compra,
 )
+# LAS TRES FUNCIONES DEL MOTOR, importadas directo y sin envolver. El
+# Análisis de Artículo no calcula ninguna rentabilidad propia: elige a cuál
+# de las tres llamar según qué campo se editó. La cuarta
+# (calcular_costo_por_unidad_medida) es la división importe / kilos, que
+# también es del motor y trae su propia guarda del cero.
+from core.motor_costeo import (
+    calcular_costo_por_unidad_medida,
+    costo_objetivo_multi_concepto as calcular_costo_objetivo,
+    precio_sugerido_multi_concepto as calcular_precio_sugerido,
+    utilidad_real_multi_concepto as calcular_utilidad_real,
+)
 from app.db import (
     actualizar_articulo,
     actualizar_cantidad_compra,
@@ -230,6 +241,7 @@ from app.db import (
     SenaYaCobrada,
     ValeNoCaducable,
     contar_fichas_por_articulo,
+    listar_conceptos_vigentes_por_cliente,
     listar_clientes,
     listar_clientes_puesto,
     listar_compras_pendientes_recepcion,
@@ -11123,6 +11135,234 @@ def _bloques_de_alertas(modulo: str) -> list[dict]:
                 bloque["en_vivo"] = True
         bloques.append(bloque)
     return bloques
+
+
+# Los cinco valores del Análisis de Artículo, y cuál mueve a cuál. La
+# asimetría es del negocio y no del código: EL COSTO ES UN DATO Y EL PRECIO
+# ES UNA DECISIÓN — el puesto cobra lo que cobra, y lo que se elige es a
+# cuánto se vende. Por eso editar la rentabilidad recalcula el PRECIO y
+# nunca el costo.
+#
+# Y resulta que esa asimetría es la del motor: las tres funciones de
+# core/motor_costeo.py son inversas exactas entre sí, con la vuelta fijada
+# por test. Acá no se calcula ninguna rentabilidad: se elige a cuál de las
+# tres llamar.
+CAMPOS_ANALISIS = ("importe_cajon", "kilos_bulto", "precio", "utilidad")
+
+
+def _numero_analisis(texto: str | None) -> float | None:
+    """Un número del formulario del Análisis, o None si no vino o no parsea."""
+    if texto is None or str(texto).strip() == "":
+        return None
+    try:
+        return float(str(texto).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _analizar_ficha(fila: dict, tasas: dict, editado: str, valores: dict) -> dict:
+    """Los cinco valores del análisis, recalculando el que corresponda según qué se editó.
+
+    LAS TRES FUNCIONES DEL MOTOR SE USAN TAL CUAL. Acá no hay ninguna
+    fórmula de rentabilidad: hay un `if` que elige cuál llamar, dos
+    conversiones de unidad que también son del motor
+    (`calcular_costo_por_unidad_medida` para pasar de cajón a kilo) y UNA
+    multiplicación —el costo objetivo por unidad × los kilos del bulto—
+    que el propio `costo_objetivo_multi_concepto` delega al que llama en su
+    docstring ("quien llama lo multiplica por el contenido del bulto").
+
+    LAS GUARDAS TAMBIÉN SON DEL MOTOR: kilos en cero, costo en cero,
+    denominador de tasas negativo y utilidad en -1 los rechaza él con su
+    ValueError. Acá se traducen a un aviso, no se re-implementan — si el
+    motor cambia una guarda, esta pantalla la acompaña sola.
+
+    Devuelve los cinco valores más `calculados`, que dice cuáles NO los
+    tipeó una persona: sin eso, en dos minutos nadie sabe qué puso a mano y
+    qué salió de la cuenta.
+
+    UNIDADES: el importe es del cajón (unidad de compra) y el precio es por
+    unidad de venta; la división por los kilos del bulto los une suponiendo
+    que las dos unidades son la misma. No hay conversión en ningún lado
+    —`_costear_compras` hace exactamente lo mismo— y esta pantalla HEREDA
+    ese supuesto a propósito: usar acá una regla distinta a la del resto
+    sería la regla escrita dos veces. Anotado en CLAUDE.md.
+    """
+    resultado = dict(valores)
+    # El costo por unidad SIEMPRE es calculado: es el cociente de los dos
+    # que sí se tipean, y por eso los kilos pueden mover la rentabilidad.
+    calculados = ["costo_unidad"]
+    aviso = None
+
+    envase = float(fila["costo_envase_unidad_venta"] or 0.0)
+    suman, restan = tasas["tasas_suman"], tasas["tasas_restan"]
+
+    costo_unidad = None
+    try:
+        if resultado["importe_cajon"] is not None and resultado["kilos_bulto"] is not None:
+            costo_unidad = calcular_costo_por_unidad_medida(
+                resultado["importe_cajon"], resultado["kilos_bulto"]
+            )
+    except ValueError:
+        aviso = "Los kilos por bulto no pueden ser cero: sin eso no hay costo por kilo."
+
+    try:
+        if editado == "utilidad" and resultado["utilidad"] is not None and costo_unidad is not None:
+            resultado["precio"] = calcular_precio_sugerido(
+                costo_producto=costo_unidad,
+                costo_envase=envase,
+                tasas_suman=suman,
+                tasas_restan=restan,
+                utilidad=resultado["utilidad"] / 100,
+            )
+            calculados.append("precio")
+        elif costo_unidad is not None and resultado["precio"] is not None:
+            resultado["utilidad"] = calcular_utilidad_real(
+                precio_vigente=resultado["precio"],
+                costo_producto=costo_unidad,
+                costo_envase=envase,
+                tasas_suman=suman,
+                tasas_restan=restan,
+            ) * 100
+            calculados.append("utilidad")
+    except ValueError as error:
+        aviso = str(error)
+
+    # "Hasta cuánto podés pagar el cajón": SOLO LECTURA, y a propósito. Como
+    # celda editable sería una cuarta regla de recálculo y la rentabilidad
+    # terminaría moviendo el costo, que es lo que la asimetría prohíbe.
+    #
+    # VA CONTRA LA UTILIDAD OBJETIVO DEL CLIENTE, NO CONTRA LA DE LA
+    # PANTALLA, y eso lo decidió correrlo: con la de la pantalla el renglón
+    # es TAUTOLÓGICO —siempre devuelve el importe que ya está puesto— porque
+    # precio y utilidad quedan en sincro con el costo por las reglas de
+    # arriba, y las tres funciones del motor son inversas exactas (su
+    # docstring lo dice: comprando a costo_objetivo, utilidad_real devuelve
+    # la utilidad objetivo, clavado). Un renglón que repite el input no es
+    # una lectura, es decoración.
+    #
+    # Contra la utilidad OBJETIVO sí contesta la pregunta del puesto: "a
+    # este precio, para ganar lo que quiero ganar, ¿cuánto puedo pagar?" —
+    # y ese número se compara contra lo que están pidiendo. Sin utilidad
+    # objetivo cargada para el cliente no hay renglón: no hay contra qué.
+    objetivo_cajon = None
+    objetivo_utilidad = tasas.get("utilidad")
+    try:
+        if resultado["precio"] is not None and objetivo_utilidad is not None and resultado["kilos_bulto"]:
+            objetivo_cajon = calcular_costo_objetivo(
+                precio_vigente=resultado["precio"],
+                costo_envase=envase,
+                tasas_suman=suman,
+                tasas_restan=restan,
+                utilidad=objetivo_utilidad,
+            ) * resultado["kilos_bulto"]
+    except ValueError:
+        objetivo_cajon = None
+    resultado["objetivo_utilidad"] = objetivo_utilidad
+
+    resultado["costo_unidad"] = costo_unidad
+    resultado["objetivo_cajon"] = objetivo_cajon
+    resultado["calculados"] = calculados
+    resultado["aviso"] = aviso
+    return resultado
+
+
+@app.get("/compras/analizar")
+def ver_analizar_articulo(
+    request: Request,
+    articulo_id: str | None = None,
+    ficha_id: str | None = None,
+    importe_cajon: str | None = None,
+    kilos_bulto: str | None = None,
+    precio: str | None = None,
+    utilidad: str | None = None,
+    edite: str | None = None,
+):
+    """Calculadora de "qué pasa si" para decidir antes de comprar.
+
+    POR GET Y SIN JS DE CÁLCULO, y las dos cosas son a propósito:
+
+    - Por GET porque no escribe nada: es una calculadora, se puede refrescar
+      y compartir el link con los números puestos.
+    - Sin fórmula en JavaScript porque eso sería la rentabilidad escrita por
+      CUARTA vez, en otro lenguaje y sin test — la primera regla de este
+      proyecto. El formulario se manda solo al cambiar un campo y el
+      servidor llama al motor. Cuesta un viaje por edición y es lo único que
+      garantiza que esta pantalla y Márgenes por Artículo no se separen.
+
+    ES POR FICHA, no por artículo, y el precio es la parte chica del motivo:
+    las TASAS son por cliente, así que "la rentabilidad de Mandarina" sin
+    decir a quién se le vende no existe. Con una sola ficha el paso se
+    saltea; con varias hay que elegir.
+    """
+    articulo_valor = _id_opcional_desde_query(articulo_id)
+    ficha_valor = _id_opcional_desde_query(ficha_id)
+
+    try:
+        articulos = listar_articulos()
+        fichas = listar_fichas_de_todos_los_clientes()
+        clientes = {c["id"]: c["nombre"] for c in listar_clientes()}
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    contexto = {
+        "articulos": articulos,
+        "articulo_id": articulo_valor,
+        "fichas_del_articulo": None,
+        "ficha": None,
+        "analisis": None,
+        "sin_datos": None,
+    }
+
+    if articulo_valor is None:
+        return templates.TemplateResponse(request, "compras_analizar.html", contexto)
+
+    del_articulo = [f for f in fichas if f["articulo_id"] == articulo_valor]
+    for ficha in del_articulo:
+        ficha["cliente_nombre"] = clientes.get(ficha["cliente_id"], f"#{ficha['cliente_id']}")
+    contexto["fichas_del_articulo"] = del_articulo
+
+    if ficha_valor is None and len(del_articulo) == 1:
+        ficha_valor = del_articulo[0]["id"]
+    if ficha_valor is None:
+        if not del_articulo:
+            contexto["sin_datos"] = ("Ese artículo no tiene ninguna ficha de venta, así que no hay "
+                                     "precio ni cliente contra los que calcular. Se carga en Fichas.")
+        return templates.TemplateResponse(request, "compras_analizar.html", contexto)
+
+    ficha = next((f for f in del_articulo if f["id"] == ficha_valor), None)
+    if ficha is None:
+        raise HTTPException(status_code=404, detail="Esa ficha no es de ese artículo")
+    contexto["ficha"] = ficha
+
+    try:
+        listado = calcular_listado_para_negociar_precios(ficha["cliente_id"])
+        tasas = listar_conceptos_vigentes_por_cliente(ficha["cliente_id"], _hoy_argentina())
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    fila = next((f for f in listado if f["ficha_id"] == ficha_valor), None)
+    if fila is None or fila["costo_actual"] is None:
+        # El listado deja afuera lo que no se compró en 15 días, y sin costo
+        # no hay nada que analizar. Se dice cuál de las dos cosas es.
+        contexto["sin_datos"] = ("No hay compras con precio de este artículo en los últimos 15 días, "
+                                 "así que no hay costo del que partir. Cargá el precio de la compra "
+                                 "y volvé.")
+        return templates.TemplateResponse(request, "compras_analizar.html", contexto)
+
+    # El punto de partida: los valores de la última compra y el precio
+    # vigente. Los tipeados pisan al de partida, uno por uno.
+    valores = {
+        "importe_cajon": _numero_analisis(importe_cajon) if importe_cajon is not None else _numero_o_none(fila["importe_por_cajon"]),
+        "kilos_bulto": _numero_analisis(kilos_bulto) if kilos_bulto is not None else _numero_o_none(fila["contenido_por_cajon"]),
+        "precio": _numero_analisis(precio) if precio is not None else _numero_o_none(fila["precio_vigente"]),
+        "utilidad": _numero_analisis(utilidad) if utilidad is not None else None,
+    }
+    contexto["analisis"] = _analizar_ficha(
+        fila, tasas, edite if edite in CAMPOS_ANALISIS else "", valores
+    )
+    contexto["fila"] = fila
+    contexto["tasas"] = tasas
+    return templates.TemplateResponse(request, "compras_analizar.html", contexto)
 
 
 @app.get("/compras/alertas")

@@ -426,7 +426,7 @@ def listar_fichas_de_todos_los_clientes() -> list[dict]:
     Misma consulta y mismo orden que listar_fichas_por_cliente, con el
     cliente_id adentro y agregado al ORDER BY para que cada cliente conserve
     exactamente el orden que tenía suelto. La usa el desglose de Stock del
-    Sistema, que antes pedía las fichas cliente por cliente.
+    Depósito, que antes pedía las fichas cliente por cliente.
     """
     conexion = obtener_conexion()
     try:

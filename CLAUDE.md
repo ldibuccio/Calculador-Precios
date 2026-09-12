@@ -2630,3 +2630,62 @@ Y la parte incómoda: el assert del valor **no está de más**. Cuida el cablead
 también se puede romper. Los dos asserts miran mitades distintas y hacen falta
 los dos. Sacar el del valor porque "el del texto ya cubre" sería cambiar un
 test ciego por otro.
+
+## Corolario 41: una lectura calculada a partir de lo que la pantalla acaba de calcular puede ser la vuelta completa
+
+Del 12/09. La pantalla de Analizar Artículo tiene un renglón que contesta
+*"¿hasta cuánto podés pagar el cajón?"*. Se calculaba así: con la
+rentabilidad que la pantalla acaba de calcular, `costo_objetivo_multi_
+concepto` devuelve el costo máximo por unidad, y ese costo por los kilos del
+bulto da el importe máximo del cajón.
+
+**Devuelve el importe que entró. Siempre, hasta el último centavo.** Las
+tres funciones del motor son inversas exactas entre sí: el precio y el costo
+produjeron esa utilidad, así que preguntarle a la utilidad por el costo
+devuelve el costo. La vuelta es completa y **está garantizada por diseño**,
+no por casualidad de los números.
+
+Y **un renglón que repite lo que entró parece una lectura y no lo es.** Ahí
+está el daño: no dice nada, pero no se ve vacío — se ve como un número
+calculado, con su etiqueta y su formato, al lado de otros que sí lo son.
+
+**Solo se vio corriéndolo con números.** Leyendo el código se veía perfecto:
+tres llamadas correctas al motor, con los argumentos correctos, cada una
+haciendo lo que su docstring promete. No hay nada mal escrito que señalar.
+
+**La señal, y es la del dueño**: si una lectura se calcula a partir de algo
+que la MISMA pantalla acaba de calcular, verificar que no sea la vuelta
+completa. Con funciones inversas exactas, la vuelta completa está
+garantizada por diseño.
+
+**El arreglo es cambiar contra qué se pregunta**, no cómo se calcula: el
+renglón va contra la **utilidad objetivo del CLIENTE** (`tasas["utilidad"]`),
+que es un dato de afuera y no salió de esta pantalla. Ahí sí contesta algo —
+16 kilos a $16.160 entra contra un objetivo de $16.000; 14 kilos a $14.140
+no.
+
+**Con qué engancha**: es pariente del corolario 9 —el test que parchea la
+función que verifica— pero en la pantalla en vez de en el test. Allá el
+andamio decide el resultado que después se afirma; acá **la pantalla se
+pregunta a sí misma y se contesta sola**. En los dos casos el círculo está
+adentro y no se ve desde afuera; en los dos, lo único que lo muestra es
+correrlo con un número que se pueda reconocer.
+
+## `unidad_compra` y `unidad_venta` se suponen la MISMA unidad (anotado, no tocado)
+
+Del 12/09, y va escrito porque una pantalla nueva lo heredó y conviene que
+se sepa que lo heredó.
+
+`_costear_compras` (app/costeo.py) divide `Σ(importe × cajones)` por
+`Σ(cajones × contenido_por_cajon)` y llama al resultado **costo por unidad
+de venta**. El numerador es plata y el denominador es contenido de compra,
+así que esa igualdad solo vale si la unidad en que se compra y la unidad en
+que se vende son la misma. **No hay ninguna conversión en ningún lado**:
+`grep conversion` sobre `app/costeo.py` y `core/motor_costeo.py` no devuelve
+nada, y `conversion_articulos_cliente` —que es lo único que se llama así—
+guarda **cómo llama cada cliente a cada artículo**, nombre y código propios,
+para interpretar sus pedidos por mail. No convierte unidades.
+
+Analizar Artículo hereda el supuesto y **eso es lo correcto**: lo peligroso
+sería que esta pantalla usara una regla distinta a las demás, que es la
+familia de la regla escrita dos veces. Queda anotado y no se tocó.

@@ -24,6 +24,7 @@ from app.db import (
 )
 from core.motor_costeo import (
     SIN_ENVASE,
+    calcular_promedio_ponderado,
     costo_objetivo_multi_concepto as calcular_costo_objetivo,
     precio_sugerido_multi_concepto as calcular_precio_sugerido,
     utilidad_real_multi_concepto as calcular_utilidad_real,
@@ -79,6 +80,52 @@ def _costear_compras(compras: list[dict]) -> tuple[float | None, float, int]:
         return None, 0.0, sin_precio
 
     return plata_total / cantidad_total, cantidad_total, sin_precio
+
+
+def _promedios_por_cajon(compras: list[dict]) -> tuple[float | None, float | None]:
+    """Importe y contenido PROMEDIO de un cajón, los dos ponderados por cantidad de cajones.
+
+    Son el punto de partida del Análisis de Artículo: lo que el puesto
+    cobra por cajón y lo que ese cajón trae. `_costear_compras` devuelve el
+    costo por unidad de venta, que ya tiene el contenido adentro COMO
+    DIVISOR — así que para poder preguntar "¿y si trae 14 en vez de 16?"
+    hacen falta los dos números por separado.
+
+    MISMO FILTRO que `_costear_compras`: solo las compras con importe. Sin
+    eso la identidad de abajo se rompe, y es lo único que mantiene a las dos
+    funciones atadas.
+
+    LA IDENTIDAD, y es la razón de que esto viva acá y no en una consulta
+    aparte:
+
+        importe_promedio / contenido_promedio == costo_actual   (exacto)
+
+    porque las dos son sumas sobre los mismos cajones:
+
+        Σ(importe×caj)/Σcaj  ÷  Σ(caj×cont)/Σcaj  =  Σ(importe×caj)/Σ(caj×cont)
+
+    que es literalmente lo que calcula `_costear_compras`. Por eso el
+    Análisis parte del MISMO número que Márgenes por Artículo sin recalcular
+    nada, y por eso hay un test que verifica la identidad: el día que los
+    dos filtros se separen, se rompe ahí y no en una pantalla.
+
+    Sin ninguna compra con importe devuelve (None, None) — no cero, que
+    sería decir "el cajón sale cero".
+    """
+    con_precio = [c for c in compras if c["importe"] is not None]
+    if not con_precio:
+        return None, None
+
+    cajones = [float(c["cantidad_cajones"]) for c in con_precio]
+    if sum(cajones) == 0:
+        return None, None
+
+    importes = [float(c["importe"]) for c in con_precio]
+    contenidos = [float(c["contenido_por_cajon"]) for c in con_precio]
+    return (
+        calcular_promedio_ponderado(importes, cajones),
+        calcular_promedio_ponderado(contenidos, cajones),
+    )
 
 
 def _envases_por_unidad_ponderado(compras: list[dict], contenido_ficha: float | None, envase_variable: bool) -> float:
@@ -402,6 +449,8 @@ def _listado_para_negociar_precios(
         ventana1_desde = f1 - timedelta(days=1)
         compras_ventana1 = [c for c in compras_articulo if ventana1_desde <= c["fecha_operacion"] <= f1]
         costo_actual, _, sin_precio = _costear_compras(compras_ventana1)
+        # Sobre compras_ventana1, la MISMA lista: ver _promedios_por_cajon.
+        importe_por_cajon, contenido_por_cajon = _promedios_por_cajon(compras_ventana1)
 
         fresco = f1 >= limite_fresco
 
@@ -496,6 +545,10 @@ def _listado_para_negociar_precios(
                 "compras_sin_precio_excluidas": sin_precio,
                 "costo_envase_unidad_venta": costo_envase_unidad_venta,
                 "denominador_tasas": denominador_tasas,
+                # El punto de partida del Análisis de Artículo. Su cociente
+                # ES costo_actual, exacto (ver _promedios_por_cajon).
+                "importe_por_cajon": importe_por_cajon,
+                "contenido_por_cajon": contenido_por_cajon,
             }
         )
 
