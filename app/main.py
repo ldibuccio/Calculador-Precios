@@ -673,12 +673,42 @@ PUERTA_ADMINISTRACION = Puerta(
     volver_texto="Volver a Inicio",
 )
 
+# COMPRAS, del 12/09. Clave PROPIA, y la cuarta del mismo molde. Acá se
+# decide LO QUE SE PAGA: se cargan las compras, se les pone el importe, se
+# negocia contra el costo y se mira la rentabilidad por cliente en Analizar.
+# Hasta hoy cualquiera que llegara a la app entraba sin nada.
+#
+# La línea entre las cuatro zonas, para que siga limpia: el Puesto controla
+# los vacíos, Compras decide lo que se PAGA, Administración registra lo que
+# se paga y le factura al proveedor, y Gerencia ve lo que se GANA.
+#
+# NO DESLIZA y dura la jornada, como Administración: se usa en el mercado,
+# de parado, y una clave que vence mientras se cargan compras interrumpe
+# justo cuando hay diez cajones esperando. Gerencia desliza porque es la
+# zona de la plata y se abre desde un teléfono suelto; ésta se cierra a mano
+# con "Bloquear".
+PUERTA_COMPRAS = Puerta(
+    env_var="CLAVE_COMPRAS",
+    cookie="acceso_compras",
+    mensaje=b"acceso-compras",
+    prefijo="/compras",
+    sector="compras",
+    titulo="Compras",
+    ayuda=("Acá se cargan las compras, se les pone el precio y se mira la rentabilidad "
+           'por cliente. La clave vale para toda la jornada; con "Bloquear" se corta '
+           "antes."),
+    volver_a="/inicio",
+    volver_texto="Volver a Inicio",
+)
+
 CLAVE_CONTROL_PUESTO_ENV_VAR = PUERTA_CONTROL.env_var
 COOKIE_ACCESO_CONTROL = PUERTA_CONTROL.cookie
 CLAVE_GERENCIA_ENV_VAR = PUERTA_GERENCIA.env_var
 COOKIE_ACCESO_GERENCIA = PUERTA_GERENCIA.cookie
 CLAVE_ADMINISTRACION_ENV_VAR = PUERTA_ADMINISTRACION.env_var
 COOKIE_ACCESO_ADMINISTRACION = PUERTA_ADMINISTRACION.cookie
+CLAVE_COMPRAS_ENV_VAR = PUERTA_COMPRAS.env_var
+COOKIE_ACCESO_COMPRAS = PUERTA_COMPRAS.cookie
 
 
 def _pantalla_clave(puerta: Puerta, request: Request, *, volver: str | None = None,
@@ -1197,22 +1227,24 @@ templates.env.globals["clave_gerencia_activa"] = lambda: _clave_gerencia() is no
 templates.env.globals["clave_administracion_activa"] = (
     lambda: PUERTA_ADMINISTRACION.clave() is not None
 )
+templates.env.globals["clave_compras_activa"] = lambda: PUERTA_COMPRAS.clave() is not None
 
 # LAS PUERTAS POR SECTOR, para que la barra de navegación sepa si la
 # pantalla que está dibujando pertenece a una zona con clave. Sale de las
-# mismas instancias y no de un diccionario escrito a mano: una cuarta zona
-# se suma sola el día que exista.
+# mismas instancias y no de un diccionario escrito a mano: la cuarta zona
+# —Compras, del 12/09— se sumó agregándola a esta tupla y nada más, que era
+# justo lo que este comentario prometía.
 PUERTAS_POR_SECTOR = {
     puerta.sector: puerta
-    for puerta in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)
+    for puerta in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION, PUERTA_COMPRAS)
 }
 
 
 def _bloqueo_del_sector(sector: str) -> str | None:
     """A dónde postea el candado de ESTE sector, o None si no va.
 
-    None cuando el sector no tiene clave (la mayoría: Compras, Depósito,
-    Comercial) o cuando la tiene pero no está configurada — sin clave no
+    None cuando el sector no tiene clave (Depósito, Comercial, Logística) o
+    cuando la tiene pero no está configurada — sin clave no
     hay nada que bloquear, y un candado que no cierra nada es peor que
     ninguno.
 
@@ -12650,6 +12682,58 @@ async def puerta_de_administracion(request: Request, call_next):
     elif not PUERTA_ADMINISTRACION.abierta(request):
         return _pantalla_clave(PUERTA_ADMINISTRACION, request)
     return await call_next(request)
+
+
+# COMPRAS: mismo molde. El prefijo cierra por construcción —una ruta nueva
+# bajo /compras nace cerrada— y el MÉTODO decide la dureza: todo POST acá
+# escribe (carga una compra, le pone el importe, la borra, da de baja un
+# proveedor), así que sin la variable cargada un POST no pasa y contesta 503
+# nombrándola; los GET se abren para que un deploy no trabe la consulta.
+#
+# QUEDA GATEADO EL 301 de /compras/{id}/corregir-recepcion, a propósito: la
+# pantalla se mudó a Gerencia y esto es solo el redirect para un favorito
+# viejo. Eximirlo pedía que la lista de excepciones entendiera rutas con
+# parámetro —maquinaria nueva por una URL que no linkea nadie— y además no
+# ahorraría nada: el botón que se usa de verdad vive en el detalle de la
+# compra, que también está bajo /compras. Corregir una recepción pide las
+# dos claves y eso es correcto: son dos zonas.
+RUTAS_COMPRAS_SIN_CLAVE = ("/compras/clave",)
+
+
+@app.middleware("http")
+async def puerta_de_compras(request: Request, call_next):
+    ruta = request.url.path
+    if not ruta.startswith(PUERTA_COMPRAS.prefijo):
+        return await call_next(request)
+    if ruta in RUTAS_COMPRAS_SIN_CLAVE:
+        return await call_next(request)
+
+    if request.method == "POST":
+        rechazo = _puerta_para_escribir(PUERTA_COMPRAS, request)
+        if rechazo is not None:
+            return rechazo
+    elif not PUERTA_COMPRAS.abierta(request):
+        return _pantalla_clave(PUERTA_COMPRAS, request)
+    return await call_next(request)
+
+
+@app.get("/compras/clave")
+def ver_clave_compras(request: Request, volver: str = "/compras"):
+    return _pantalla_clave(PUERTA_COMPRAS, request, volver=volver)
+
+
+@app.post("/compras/clave")
+def ingresar_clave_compras_ruta(request: Request, clave: str = Form(""),
+                                volver: str = Form("/compras")):
+    return _responder_clave(PUERTA_COMPRAS, request, clave, volver)
+
+
+@app.post("/compras/bloquear")
+def bloquear_compras_ruta(request: Request):
+    """Borra la cookie en el momento: para no dejar Compras abierta en un celular suelto."""
+    respuesta = RedirectResponse(url="/inicio", status_code=303)
+    respuesta.delete_cookie(PUERTA_COMPRAS.cookie, path=PUERTA_COMPRAS.prefijo)
+    return respuesta
 
 
 @app.get("/administracion/clave")

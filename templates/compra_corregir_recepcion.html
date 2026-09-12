@@ -110,7 +110,18 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "compras" %}
+  {# SECTOR GERENCIA, no Compras: esta pantalla vive en /gerencia y el sector
+     es lo que decide a dónde postea el candado 🔒 de la barra. Declarada como
+     "compras" cerraba COMPRAS desde una pantalla de Gerencia.
+
+     Estuvo latente hasta el 12/09 porque Compras no tenía puerta: sin clave,
+     `bloqueo_del_sector` devuelve None y el candado no se dibujaba. El día
+     que Compras la tuvo, la declaración vieja pasó a hacer algo — y algo
+     equivocado.
+
+     El "atrás" sí vuelve al detalle de la compra, que es de donde se llega, y
+     eso es otra cosa que el sector. #}
+  {% set barra_sector = "gerencia" %}
   {% set barra_titulo = "Corregir recepción" %}
   {% set barra_atras = "/compras/" ~ compra.id ~ "/detalle" %}
   {% include "_barra_navegacion.html" %}

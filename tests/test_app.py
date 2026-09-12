@@ -3802,25 +3802,34 @@ def test_la_puerta_de_administracion_vuelve_A_DONDE_IBA_y_no_a_cualquier_lado():
 
 
 def test_la_puerta_de_administracion_y_la_de_gerencia_son_LA_MISMA_mecanica():
-    """Tres zonas con clave, UNA implementación. Escrito tres veces, el día
-    que se arregle algo del HMAC dos quedan viejas y las dos siguen dejando
-    pasar — no hay síntoma.
+    """Las zonas con clave comparten UNA implementación. Escrita en cada una,
+    el día que se arregle algo del HMAC las otras quedan viejas y siguen
+    dejando pasar — no hay síntoma.
 
     Se compara la función, no el resultado: dos copias idénticas hoy dan el
     mismo hash y este test pasaría igual (es el corolario 16: una copia y una
     referencia se ven iguales hasta que se mira el objeto).
-    """
-    from app.main import PUERTA_ADMINISTRACION, PUERTA_CONTROL, PUERTA_GERENCIA, Puerta
 
-    for puerta in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION):
+    LA LISTA SALE DEL REGISTRO y no está escrita acá: enumeradas a mano eran
+    tres, y el 12/09 entró Compras — la cuarta habría quedado sin comparar
+    con nadie, en el test que existe justamente para que no se separen. Es el
+    corolario 3: cuando una estructura gana un miembro, lo que falta no se
+    nombra a sí mismo.
+    """
+    from app.main import PUERTAS_POR_SECTOR, Puerta
+
+    puertas = tuple(PUERTAS_POR_SECTOR.values())
+    assert len(puertas) >= 4, "las cuatro zonas con clave del 12/09"
+    for puerta in puertas:
         assert type(puerta) is Puerta
         assert puerta.firma.__func__ is Puerta.firma
         assert puerta.abierta.__func__ is Puerta.abierta
-    # Y los mensajes son DISTINTOS entre sí, que es lo que las separa.
-    mensajes = {p.mensaje for p in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)}
-    assert len(mensajes) == 3
-    claves = {p.env_var for p in (PUERTA_CONTROL, PUERTA_GERENCIA, PUERTA_ADMINISTRACION)}
-    assert len(claves) == 3, "tres zonas, tres variables: una sola clave las junta a todas"
+    # Y lo que las SEPARA es distinto en cada una: mismo mensaje o misma
+    # variable y una clave abriría dos zonas.
+    assert len({p.mensaje for p in puertas}) == len(puertas)
+    assert len({p.env_var for p in puertas}) == len(puertas), "una sola clave las junta a todas"
+    assert len({p.cookie for p in puertas}) == len(puertas)
+    assert len({p.prefijo for p in puertas}) == len(puertas)
 
 
 @pytest.fixture(autouse=True)
@@ -3850,6 +3859,128 @@ def _puerta_de_administracion_abierta(request):
             yield
         finally:
             cliente.cookies.delete(PUERTA_ADMINISTRACION.cookie)
+
+
+# --- LA PUERTA DE COMPRAS (12/09) -------------------------------------------
+# Se llaman "puerta_de_compras" a propósito: así la fixture de acá abajo NO
+# les pone la cookie y la cruzan solas. Con la cookie puesta probarían la
+# pantalla en vez del control, que es el corolario 9 —el andamio decidiendo
+# lo que después se afirma.
+
+def test_la_puerta_de_compras_sin_la_variable_NO_DEJA_ESCRIBIR_y_dice_cuál_falta():
+    """Default duro en los POST: sin CLAVE_COMPRAS cargada, no pasa.
+
+    Es la asimetría que ya tienen Gerencia y Administración: una consulta que
+    se ve de más es un problema, y cargar o borrar una compra abierto a
+    cualquiera que sepa la URL es otro. Y lo dice con nombre y apellido — un
+    "no autorizado" pelado manda a buscar un permiso que no existe.
+    """
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": ""}):
+        respuesta = cliente.post("/compras/eliminar-varias", data={})
+
+    assert respuesta.status_code == 503
+    assert "CLAVE_COMPRAS" in respuesta.text, "tiene que decir QUÉ variable falta"
+
+
+def test_la_puerta_de_compras_sin_la_variable_DEJA_MIRAR():
+    """Los GET se abren mientras la variable no esté cargada: un deploy no traba la consulta.
+
+    Es la otra mitad del default duro y hay que probar las dos — una guarda
+    que frena siempre pasa todos los casos negativos (corolario 30).
+    """
+    cliente.cookies.clear()
+    with (
+        patch.dict(os.environ, {"CLAVE_COMPRAS": ""}),
+        patch("app.main.listar_estado_alertas", return_value=[]),
+    ):
+        respuesta = cliente.get("/compras")
+
+    assert respuesta.status_code == 200
+
+
+def test_la_puerta_de_compras_con_la_variable_PIDE_LA_CLAVE_para_mirar():
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+        respuesta = cliente.get("/compras/buscar")
+
+    assert respuesta.status_code == 401
+    # Y vuelve a donde se quería ir, no al hub.
+    assert 'value="/compras/buscar"' in respuesta.text
+
+
+def test_la_puerta_de_compras_abre_con_la_clave_y_no_con_otra():
+    from app.main import PUERTA_COMPRAS
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+        mal = cliente.post("/compras/clave", data={"clave": "otra", "volver": "/compras"},
+                           follow_redirects=False)
+        assert mal.status_code == 401
+
+        bien = cliente.post("/compras/clave",
+                            data={"clave": "compras-secreta", "volver": "/compras"},
+                            follow_redirects=False)
+    assert bien.status_code == 303
+    assert PUERTA_COMPRAS.cookie in bien.cookies
+    cliente.cookies.clear()
+
+
+def test_la_puerta_de_compras_no_sirve_de_redirector_abierto():
+    """`?volver=` a cualquier lado sería un redirector firmado por nuestro dominio."""
+    from app.main import PUERTA_COMPRAS
+
+    assert PUERTA_COMPRAS.destino_seguro("https://otra-cosa.com") == "/compras"
+    assert PUERTA_COMPRAS.destino_seguro("/gerencia/rentabilidad") == "/compras"
+    assert PUERTA_COMPRAS.destino_seguro("/compras/buscar") == "/compras/buscar"
+
+
+def test_la_puerta_de_compras_emite_su_cookie_SOLO_PARA_SU_PREFIJO():
+    """El `path` es lo que hace que la clave de una zona no sirva en otra.
+
+    Y es la razón mecánica de por qué una pantalla que necesita esta clave
+    tiene que vivir bajo /compras: fuera del prefijo la cookie ni siquiera
+    viaja. Es lo que obligó a mudar Corregir Recepción a /gerencia en su
+    momento.
+    """
+    from app.main import PUERTA_COMPRAS
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+        respuesta = cliente.post("/compras/clave",
+                                 data={"clave": "compras-secreta", "volver": "/compras"},
+                                 follow_redirects=False)
+    cabecera = next(v for k, v in respuesta.headers.items() if k.lower() == "set-cookie")
+    assert "Path=/compras" in cabecera
+    cliente.cookies.clear()
+
+
+@pytest.fixture(autouse=True)
+def _puerta_de_compras_abierta(request):
+    """La suite cruza Compras como la cruza una persona: con la clave puesta.
+
+    Desde el 12/09 todo `/compras` está detrás de clave, y los POST tienen
+    el default duro de siempre: sin la variable cargada devuelven 503. Estos
+    tests prueban LAS PANTALLAS —cargar una compra, ponerle el importe,
+    analizarla—, así que entran con la cookie. Mismo molde que la fixture de
+    Administración de acá arriba.
+
+    EL RIESGO ES EL MISMO Y VALE REPETIRLO: una fixture así abre la puerta
+    para toda la suite, así que si la puerta se rompiera estos ciento y pico
+    de tests no se enterarían. Por eso los tests DE LA PUERTA se excluyen por
+    nombre y se la cruzan solos — son los únicos que prueban el control, y
+    con la cookie puesta estarían probando la pantalla.
+    """
+    if "puerta_de_compras" in request.node.name.lower():
+        yield
+        return
+    from app.main import PUERTA_COMPRAS
+    with patch.dict(os.environ, {"CLAVE_COMPRAS": "compras-secreta"}):
+        cliente.cookies.set(PUERTA_COMPRAS.cookie, PUERTA_COMPRAS.firma("compras-secreta"))
+        try:
+            yield
+        finally:
+            cliente.cookies.delete(PUERTA_COMPRAS.cookie)
 
 
 @pytest.fixture(autouse=True)
@@ -4425,7 +4556,12 @@ def test_ver_corregir_recepcion_compra_no_recepcionada_muestra_aviso_sin_formula
 
     assert respuesta.status_code == 200
     assert "no hay valores reales para corregir" in respuesta.text
-    assert "<form" not in respuesta.text
+    # EL FORMULARIO DE CORRECCIÓN, no "ningún form": la barra de navegación
+    # tiene el suyo (el candado 🔒) y desde que Compras tiene clave se dibuja
+    # siempre. Un `"<form" not in` matcheaba ése y fallaba por algo que no
+    # tiene nada que ver con esta pantalla — corolario 38, el assert se
+    # califica para que solo pueda matchear lo que se quiso probar.
+    assert "corregir-recepcion\"" not in respuesta.text
 
 
 def test_ver_corregir_recepcion_compra_inexistente_da_404():
