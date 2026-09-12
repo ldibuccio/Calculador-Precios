@@ -3610,3 +3610,63 @@ ella el test lo pasa igual una consulta que multiplique. Y la constante se
 llama `UMBRAL_KILOS_FALTANTES_POR_CAJON`: **el nombre lleva el alcance**
 (corolario 8), porque este número no se puede comparar contra un total y fue
 exactamente esa confusión la que produjo el bug.
+
+## Corolario 55: el código INALCANZABLE no lo ve ninguna suite, porque no hay test que pueda verlo
+
+Del 12/09. Reescribiendo la ruta de Analizar Artículo, el corte del reemplazo
+buscó el PRIMER `return templates.TemplateResponse(...)` en vez del último, y
+quedaron **cincuenta líneas de la ruta vieja debajo del `return` de la
+nueva**. La suite dio **2326 de 2326**.
+
+**Y no es que faltara un test: es que no puede existir.** Un test recorre
+caminos, y el código inalcanzable no tiene ninguno. Todas las otras trampas
+de este archivo son tests que se podían haber escrito —el fixture que fijaba
+el caso equivocado, el mock que no miraba el SQL, el canario que no rompía
+nada—. **Acá la categoría entera de evidencia no aplica**, y por eso el verde
+es sincero: la suite contestó bien la pregunta que sabe contestar.
+
+### Lo que sí lo ve, medido y no deducido
+
+`pyflakes` **no marca el código muerto como tal** —un bloque inalcanzable
+prolijo le sale en 0— pero **sí lo analiza por dentro**, y ahí está el
+enganche: el código que deja una reescritura nombra los IDENTIFICADORES
+VIEJOS, porque contra esos se escribió. El bloque de acá usaba
+`articulo_valor`, que la versión nueva ya no define.
+
+Reconstruido el caso real (la función nueva con la cola vieja abajo):
+
+```
+con la cola muerta   ->  undefined name 'articulo_valor'  (linea 17)
+sin la cola (control) ->  0
+```
+
+O sea que lo habría agarrado, **y no por detectar código muerto sino por
+detectar código VIEJO**. Es una segunda razón para el `pyflakes` que quedó
+*anotado y no construido* en el corolario 51: allá se propuso para el
+`NameError` que un `except` amplio se traga, y cubre también esto — dos
+agujeros distintos, la misma herramienta, y sigue siendo una dependencia que
+hay que decidir.
+
+### Lo que lo agarró de verdad, que fue más barato
+
+**Un `grep` de los nombres viejos después de la reescritura** (`articulo_id`,
+`del_articulo`). No es una técnica nueva: es la regla del canario que se mata
+—*se mira qué quedó escrito, no si el comando se quejó*— aplicada a un
+reemplazo grande. Después de cambiar una función entera, lo que hay que
+mirar es el archivo, no el resultado de la suite.
+
+**La señal**: si una reescritura cambia los nombres que la función usa
+—`articulo_valor` a `cliente_valor`—, esos nombres viejos son la sonda. Si
+alguno sobrevive, hay que ir a ver dónde quedó.
+
+### Y la guarda que sí disparó, que vale como práctica
+
+El script que borraba el bloque llevaba un assert de lo que esperaba
+encontrar (`TemplateResponse` cuatro veces). Encontró **tres**, falló, y **no
+escribió nada**. Recién contando bien se borró.
+
+Eso es lo que separa un borrado a ciegas de uno verificado: **un script que
+modifica código lleva escrito qué espera encontrar, y si no lo encuentra no
+toca el archivo.** Es la familia del corolario 35 —la herramienta de
+verificar también es código— del lado bueno: la suposición estaba mal, y el
+assert la convirtió en un error en vez de en un borrado de más.
