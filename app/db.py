@@ -6917,8 +6917,13 @@ def listar_cajones_faltantes(desde, hasta, umbral_cajones) -> list[dict]:
                 """
                 + _SQL_CAJONES_FALTANTES
                 + """
-                ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC,
-                         c.fecha_operacion DESC
+                -- POR FECHA DESCENDENTE, con la magnitud de desempate: es una
+                -- lista de reclamos y un reclamo tiene ventana. El porqué entero
+                -- está en `listar_diferencia_de_kilos`, que es su hermana y lleva
+                -- EL MISMO ORDEN a propósito — se muestran juntas y contestan la
+                -- misma pregunta.
+                ORDER BY c.fecha_operacion DESC,
+                         (c.cantidad_cajones - c.cantidad_cajones_real) DESC
                 """,
                 (desde, hasta, umbral_cajones),
             )
@@ -7038,9 +7043,21 @@ def listar_diferencia_de_kilos(desde, hasta, umbral_por_cajon) -> list[dict]:
                 """
                 + _SQL_DIFERENCIA_DE_KILOS
                 + """
-                ORDER BY ((c.contenido_por_cajon - c.contenido_por_cajon_real)
-                          * c.cantidad_cajones_real) DESC,
-                         c.fecha_operacion DESC
+                -- POR FECHA DESCENDENTE, y la magnitud es el desempate.
+                -- Esta lista contesta "¿qué compra reclamo?", y un reclamo tiene
+                -- ventana: la de hoy y la de ayer se reclaman, la de hace cuatro
+                -- días ya pasó. Ordenada por magnitud, el faltante más grande de
+                -- la semana quedaba arriba aunque ya no se pudiera hacer nada con
+                -- él, y el de hoy —accionable— caía al fondo. Dentro del mismo
+                -- día sí manda el tamaño.
+                --
+                -- MISMO CRITERIO QUE `listar_cajones_faltantes`, y es a
+                -- propósito: las dos alertas se muestran una al lado de la otra y
+                -- contestan la misma pregunta. Dos órdenes distintos ahí no son
+                -- dos estilos: uno de los dos está mal.
+                ORDER BY c.fecha_operacion DESC,
+                         ((c.contenido_por_cajon - c.contenido_por_cajon_real)
+                          * c.cantidad_cajones_real) DESC
                 """,
                 (desde, hasta, umbral_por_cajon),
             )

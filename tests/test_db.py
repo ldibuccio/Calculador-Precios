@@ -4335,8 +4335,51 @@ def test_la_lista_de_cajones_faltantes_trae_lo_que_REPRESENTA_el_faltante():
     consulta = cursor.execute.call_args_list[0].args[0]
     assert "COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon)" in consulta
     assert "AS contenido_faltante" in consulta
-    assert "ORDER BY (c.cantidad_cajones - c.cantidad_cajones_real) DESC" in consulta
+    assert "ORDER BY c.fecha_operacion DESC" in consulta
 
+
+
+def test_las_DOS_alertas_de_reclamo_van_POR_FECHA_DESCENDENTE_y_con_el_MISMO_orden():
+    """Un reclamo tiene ventana: la compra de hoy se reclama, la de hace cuatro días no.
+
+    Ordenadas por MAGNITUD —como estaban— el faltante más grande de la semana
+    quedaba arriba aunque ya no se pudiera hacer nada con él, y el de hoy caía
+    al fondo. El tamaño sigue mandando DENTRO del mismo día.
+
+    Y VA UN SOLO TEST PARA LAS DOS, no uno por consulta: se muestran una al
+    lado de la otra y contestan la misma pregunta —qué compra reclamar—, así
+    que dos órdenes distintos no son dos estilos, es que una está mal. Un test
+    por consulta deja que la próxima las separe sin que nada caiga; éste exige
+    que el criterio SEA EL MISMO y no solo que cada una tenga el suyo.
+
+    La de bultos tenía su test de orden y la de kilos NO tenía ninguno, que es
+    justamente cómo se separan dos cosas que tienen que ir juntas.
+    """
+    import re
+    from app.db import listar_cajones_faltantes, listar_diferencia_de_kilos
+
+    ordenes = {}
+    for funcion in (listar_cajones_faltantes, listar_diferencia_de_kilos):
+        conexion, cursor = _conexion_falsa()
+        cursor.fetchall.return_value = []
+        cursor.description = [("id",)]
+        with patch("app.db.obtener_conexion", return_value=conexion):
+            funcion(date(2026, 9, 4), date(2026, 9, 11), 1)
+        consulta = cursor.execute.call_args_list[0].args[0]
+        encontrado = re.search(r"ORDER BY(.*?)$", consulta, re.S)
+        assert encontrado, funcion.__name__
+        ordenes[funcion.__name__] = " ".join(encontrado.group(1).split())
+
+    for nombre, orden in ordenes.items():
+        # La fecha PRIMERO: que aparezca no alcanza — antes aparecía, de
+        # desempate, y ése era exactamente el bug.
+        assert orden.startswith("c.fecha_operacion DESC"), f"{nombre}: {orden}"
+        # Y la magnitud sigue estando, de desempate dentro del día.
+        assert "DESC" in orden.split("c.fecha_operacion DESC", 1)[1], nombre
+
+    # LAS DOS EMPIEZAN IGUAL. Es la mitad que impide que se vuelvan a separar.
+    primeras = {orden.split(",")[0] for orden in ordenes.values()}
+    assert len(primeras) == 1, f"las dos hermanas ordenan distinto: {ordenes}"
 
 
 def test_kilos_faltantes_cuenta_los_que_pesaron_de_MENOS_y_no_los_de_mas():
