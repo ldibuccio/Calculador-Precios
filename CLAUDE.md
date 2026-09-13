@@ -328,6 +328,40 @@ el día que se arregla: **buscar el mismo criterio en el resto del código
 antes de dar el arreglo por hecho.** Un `grep` del número, del operador o de
 la frase alcanza, y es más barato que la tercera vez.
 
+### Y la copia que más se olvida es la que está EN ESTE ARCHIVO
+
+Del 13/09, y es del dueño: **el que escribe la regla de buscar la otra copia
+es el que más olvida buscarla, porque corrige donde está trabajando, y el
+archivo de reglas nunca es donde está trabajando.**
+
+El caso: la cola del corolario 56 decía *"hoy Comercial recibe un número que
+no puede abrir"*. Era falso **desde el mismo día que se escribió** —esa misma
+tarde se construyó `/comercial/alertas` con su `detallar`— y la frase se
+corrigió en el comentario del test y no acá. O sea: se aplicó el corolario 2
+sobre el código, y la copia que quedó vieja fue la del archivo que lo
+explica.
+
+**Por qué pasa siempre, y no es descuido**: al arreglar algo, el `grep` sale
+sobre `app/`, `core/`, `templates/` y `tests/` — los lugares donde el arreglo
+puede romperse. CLAUDE.md no se rompe nunca, no falla ningún test, y no está
+abierto. Es exactamente la condición del comentario que envejece (corolario
+28), con el agravante de que **este archivo se lee como el estado del mundo**:
+un "hoy pasa X" viejo acá manda a construir lo que ya existe, o a no
+construir lo que falta.
+
+**Lo accionable, y es barato**: cuando un commit hace falsa una oración de
+CLAUDE.md, esa corrección va EN EL MISMO COMMIT. Para encontrarla, lo que
+sirve no es releer el archivo entero —nadie lo hace— sino grepear **el nombre
+de la cosa que se tocó** (la alerta, la función, la pantalla) acá adentro,
+igual que se grepea en el código.
+
+**Y las oraciones que expiran se reconocen por el tiempo verbal**: las que
+dicen *hoy*, *todavía no*, *no existe*, *no hay*, *queda anotado y no
+construido*. Un corolario sobre un MECANISMO no envejece —el `count(*)` va a
+seguir devolviendo una fila para siempre—; lo que envejece es el ESTADO que
+se anota al lado para ilustrarlo. Al escribir una de esas oraciones conviene
+saber que se está contrayendo una deuda, y al cerrarlas hay que volver.
+
 Corolario 22, del 08/09: **un fixture que fija el caso equivocado convierte
 al test en el GUARDIÁN del bug.** Y es distinto del corolario 9: allá el test
 no podía fallar; acá podía fallar, y fallaba por lo incorrecto.
@@ -3792,11 +3826,21 @@ resolvieron —cada sector tiene una pantalla donde actuar— y el tercero no:
 dónde mandarla**, porque la acción (cargar el precio de compra) vive en
 Compras y punto.
 
-Ése se cierra dando `detallar` a la alerta —para que Comercial vea CUÁLES
-son sin salir— o sacándole el sector. Las dos son decisiones de producto y
-quedan anotadas como deuda **en el test**, con la lista que falla si aparece
-una cuarta y también si una se arregla y queda en la lista (corolario 22: que
-la deuda no termine protegiendo algo que ya no pasa).
+**EL `detallar` SE HIZO el 12/09 y NO cerró el caso**, que es la parte que
+esta sección se equivocaba en predecir: Comercial ve cuáles son desde su
+propia pantalla —dejó de recibir un número que no puede abrir— y **el link
+sigue apuntando a `/compras/pendientes`**, porque ahí es donde se carga el
+precio y esa acción no se mueve. Achicó el daño; no sacó el choque.
+
+Cerrarlo del todo sigue siendo decisión de producto y ahora son dos:
+**sacarle el link a Comercial** o **sacarle el sector**. Queda anotado como
+deuda **en el test**, con la lista que falla si aparece una cuarta y también
+si una se arregla y queda en la lista (corolario 22: que la deuda no termine
+protegiendo algo que ya no pasa).
+
+Y vale como ejemplo de lo de arriba: *"ése se cierra dando `detallar`"* era
+una predicción escrita en presente, se cumplió a medias el mismo día, y
+quedó acá diciendo que faltaba hacer lo que ya estaba hecho.
 
 Y la razón por la que ese caso era el peor de los tres: **no tenía
 `detallar`, así que el link era su única forma de ver cuáles son.**
