@@ -3753,6 +3753,20 @@ def listar_compras_sin_precio() -> list[dict]:
                 JOIN proveedores p ON p.id = c.proveedor_id
                 """
                 + _SQL_COMPRAS_SIN_PRECIO_DONDE
+                # ASCENDENTE, Y ES A PROPÓSITO: acá lo viejo es lo urgente.
+                #
+                # Sus dos alertas vecinas —kilos faltantes y bultos faltantes—
+                # van por fecha DESCENDENTE, y la diferencia no es un descuido:
+                # es que contestan otra pregunta. Aquéllas son RECLAMOS y un
+                # reclamo tiene ventana —la compra de hace cuatro días ya no se
+                # reclama—, así que arriba va lo de hoy. Ésta es "¿a cuál le
+                # falta el precio?", que no vence: una compra sin costear hace
+                # cuatro días lleva cuatro días ensuciando la rentabilidad, así
+                # que arriba va la más vieja.
+                #
+                # Queda escrito porque el que vea las tres juntas va a ver dos
+                # descendentes y una ascendente, y sin esto no puede distinguir
+                # una decisión de un "salió así" — y la va a "corregir".
                 + " ORDER BY c.fecha_operacion, p.codigo_puesto, c.cargado_el"
             )
             columnas = [descripcion[0] for descripcion in cursor.description]

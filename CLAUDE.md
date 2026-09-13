@@ -3362,6 +3362,42 @@ diciendo que el código no dice lo que uno cree. Vale tanto como uno que no
 hace caer ningún test (corolario 35), y por la misma razón: las dos veces lo
 que falla es la herramienta de verificar, que también es código.
 
+### Y una vuelta más, del 13/09: el archivo en disco puede estar bien y PYTHON TENER CARGADO EL OTRO
+
+La regla de arriba dice mirar qué quedó ESCRITO después de un canario. No
+alcanza: el 13/09 el archivo estaba perfecto —`git diff` y el `grep` lo
+confirmaban— y la medición siguiente devolvió lo que decía el archivo
+MUTADO. **`__pycache__` servía el `.pyc` compilado durante el canario.**
+
+**El síntoma fue un canario en CERO**, que es el peor de todos porque ya
+tiene una lectura escrita en este archivo: el corolario 16 dice que un
+canario que no muerde significa que el test es flojo, y el 35 agrega que
+puede ser el canario el que está mal. **Ésta es una tercera causa que se ve
+idéntica a las dos** — el control y la corrida nueva daban EL MISMO
+resultado, o sea "el arreglo no cambia nada", cuando lo que pasaba era que
+las dos corridas midieron el mismo módulo viejo.
+
+Y la trampa es que la verificación que la regla manda hacer —leer el
+archivo— **sale en verde**. Lo confirma, incluso: el archivo dice lo
+correcto. Lo que está viejo no está en el disco, así que ningún `git diff`
+lo puede mostrar.
+
+**Las dos señales, y las dos son baratas:**
+
+1. **Después de un canario que muta archivos, borrar el pycache ANTES de
+   medir cualquier cosa** (`find . -path "*/__pycache__/*" -delete`), y en un
+   script de medición que corre varias veces, forzar la reimportación
+   sacando los módulos de `sys.modules`.
+2. **Si un canario da cero JUSTO DESPUÉS de otro canario, sospechar de esto
+   antes que del test.** El orden de sospecha cambia según lo que pasó
+   recién: en frío, un cero es el test o el canario (16 y 35); atrás de una
+   tanda de mutaciones, es primero el módulo cargado.
+
+Es exactamente la familia del corolario 47 —un cero que no puede dar
+distinto de cero no es una medición— con el mecanismo corrido un lugar:
+**allá el número no podía moverse porque medía lo que no era; acá no podía
+moverse porque el código que corría no era el que se acababa de escribir.**
+
 ## Corolario 51: un `except Exception` convierte un error de ARRANQUE en una degradación permanente y silenciosa
 
 Del 12/09. `_compras_del_renglon_para_devolucion` se traga el error a
