@@ -11922,8 +11922,9 @@ def ver_analizar_articulo(
     contexto["ficha"] = ficha
 
     try:
+        hoy = _hoy_argentina()
         listado = calcular_listado_para_negociar_precios(ficha["cliente_id"])
-        tasas = listar_conceptos_vigentes_por_cliente(ficha["cliente_id"], _hoy_argentina())
+        tasas = listar_conceptos_vigentes_por_cliente(ficha["cliente_id"], hoy)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -11947,9 +11948,12 @@ def ver_analizar_articulo(
     contexto["analisis"] = _analizar_ficha(
         fila, tasas, edite if edite in CAMPOS_ANALISIS else "", valores
     )
-    # `fila` NO va al contexto: lo único que la usaba era la tarjeta "De dónde
-    # salen los números", que se fue el 12/09. Una clave que nadie lee es lo
-    # que queda de una reescritura y no se ve en ningún test.
+    # DE `fila` VA SOLO LA FECHA, y no el diccionario entero: de las diecisiete
+    # claves la pantalla lee una. La tarjeta "De dónde salen los números" se
+    # fue el 12/09 y con ella se había ido esto, que sí hacía falta — un costo
+    # de partida de hace diez días no se usa igual que uno de ayer.
+    contexto["ultima_compra"] = fila["fecha_ultima_compra"]
+    contexto["hace_dias"] = (hoy - fila["fecha_ultima_compra"]).days
     contexto["tasas"] = tasas
     return templates.TemplateResponse(request, "compras_analizar.html", contexto)
 

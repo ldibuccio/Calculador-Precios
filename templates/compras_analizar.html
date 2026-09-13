@@ -78,6 +78,7 @@
      se usaba: son las que hacen que la rentabilidad no cierre "a ojo", y una
      cuenta que parece mal estando bien se paga con que nadie vuelva a confiar
      en la pantalla. */
+  .desde { margin: 0.3rem 0 0; font-size: 0.78rem; color: #6b7280; }
   .tasas-linea { margin: 0.5rem 0 0; font-size: 0.8rem; color: #6b7280; line-height: 1.6; }
   .tasas-linea .tasa { white-space: nowrap; }
   .tasas-linea .resta { color: #991b1b; }
@@ -211,6 +212,20 @@
         <input type="number" id="importe_cajon" name="importe_cajon" step="0.01" min="0"
                value="{{ analisis.importe_cajon|numero if analisis.importe_cajon is not none }}"
                onchange="marcarYEnviar('importe_cajon')">
+        {# DE CUÁNDO ES EL NÚMERO DE PARTIDA. Es lo único que hacía falta de la
+           tarjeta que se fue: uno de hace diez días no se usa igual que uno de
+           ayer, y la fecha sola obliga a contar con los dedos.
+
+           DICE "ÚLTIMA COMPRA" Y NO "DE DÓNDE SALE ESTE NÚMERO", por dos
+           razones que van juntas: el valor de partida es el promedio ponderado
+           de ese día Y EL ANTERIOR —no de una compra sola—, y apenas se tipea
+           otro importe el campo deja de venir de ahí. Una leyenda de
+           procedencia pegada a un campo editable empieza a mentir en cuanto
+           alguien lo edita; como hecho del artículo sigue siendo verdad, se
+           tipee lo que se tipee. #}
+        {% if ultima_compra %}
+        <p class="desde">Última compra: {{ ultima_compra|fecha_corta }} · {% if hace_dias == 0 %}hoy{% elif hace_dias == 1 %}ayer{% else %}hace {{ hace_dias }} días{% endif %}</p>
+        {% endif %}
       </div>
 
       <div class="celda">
@@ -271,7 +286,18 @@
     {# DICE POR QUÉ FALTA en vez de desaparecer. Era un `if` sin `else`: sin
        utilidad objetivo cargada el renglón no salía y nada lo explicaba, así
        que la única lectura que contesta "¿cuánto puedo pagar?" se iba en
-       silencio. Un renglón que no está no se puede extrañar. #}
+       silencio. Un renglón que no está no se puede extrañar.
+
+       ANOTADO Y NO CONSTRUIDO (12/09): ESTA ES LA RAMA DONDE SACAR EL COSTO
+       POR KILO SE PAGA. Con el recuadro puesto, mover los kilos mueve DOS
+       números —la rentabilidad y lo que se puede pagar por el cajón, que está
+       en pesos y es la unidad en la que se negocia—, así que el paso del medio
+       se sigue viendo. Acá el recuadro no está, y los kilos mueven uno solo
+       sin nada al lado que lo explique.
+
+       No se construye nada por ahora, por pedido: si aparece, se ve. Lo que
+       lo apaga es cargarle al cliente la utilidad objetivo, que es lo que este
+       mismo cartel manda a hacer. #}
     {% elif analisis.objetivo_utilidad is none %}
     <p class="objetivo objetivo-falta">
       No se puede decir hasta cuánto pagar el cajón: este cliente no tiene

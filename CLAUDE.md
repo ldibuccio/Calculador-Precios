@@ -3798,6 +3798,52 @@ quedan anotadas como deuda **en el test**, con la lista que falla si aparece
 una cuarta y también si una se arregla y queda en la lista (corolario 22: que
 la deuda no termine protegiendo algo que ya no pasa).
 
-Y la razón por la que ese caso es el peor de los tres: **no tiene `detallar`,
-así que el link era su única forma de ver cuáles son.** Hoy Comercial recibe
-un número que no puede abrir, que es peor que no tener la alerta.
+Y la razón por la que ese caso era el peor de los tres: **no tenía
+`detallar`, así que el link era su única forma de ver cuáles son.**
+
+**Eso se cerró el mismo 12/09** —Comercial tiene su pantalla de alertas y la
+alerta tiene `detallar`, así que ve cuáles son sin cruzar ninguna puerta— y el
+párrafo quedó afirmando lo contrario hasta el 13/09. Es el corolario 2 con el
+agravante de que el que se olvidó fue ÉSTE archivo: se corrigió la copia que
+estaba en el comentario del test y no la de acá, que es la que alguien va a
+leer en tres meses.
+
+Lo que sigue chocando es EL LINK, que apunta a donde se carga el precio y ahí
+se queda. La deuda se achicó; no se fue.
+
+## Corolario 57: si una medición sobre HTML dice que DOS cosas cumplen una condición excluyente, sospechar del RECORTE
+
+Del 12/09. Midiendo si la pantalla de Analizar marcaba bien cuál número
+calculó ella, el detector decía que estaban marcados **los dos** —el precio y
+la rentabilidad— en casos donde la pantalla marca uno solo. Por un momento
+pareció que la pantalla estaba mal.
+
+El regex era:
+
+```python
+re.search(rf'<label for="{campo}"[^>]*>.*?marca-calculado', cuerpo, re.S)
+```
+
+Con `re.S` el `.*?` **cruza de un `<label>` al siguiente**: desde el del
+precio barre hasta encontrar la marca en el de la rentabilidad, y contesta que
+sí. O sea que para el precio la respuesta era "sí" siempre, pasara lo que
+pasara, y la herramienta **no podía contestar "solo éste"** — que es
+exactamente la pregunta que se le estaba haciendo.
+
+Es el corolario 50 otra vez (`split("</style>")[-1]` cortando de más o de
+menos) y el 4 (calificar el assert para que solo matchee lo que se quiso
+probar), los dos por el mismo mecanismo: **en HTML todo vive en el mismo
+texto, así que un recorte mal puesto contesta por el vecino.** Se arregla
+acotando al elemento —`(.*?)</label>`— y preguntando adentro de eso.
+
+**LA SEÑAL, y es la que vale porque se puede usar sin haber sufrido el
+caso:** cuando una medición sobre HTML dice que **dos cosas cumplen una
+condición que es excluyente por diseño** —dos campos "calculados" cuando solo
+uno puede serlo, dos filas "seleccionadas", dos pestañas activas—, lo primero
+que hay que revisar es el RECORTE, no el código. El código tiene una razón
+para respetar la exclusión; el regex no sabe que existe.
+
+Y engancha con el 53 por el lado constructivo: un detector que devuelve "los
+dos" siempre es un detector que no puede dar la otra respuesta. La prueba
+barata es la de siempre — **correrlo sobre el caso que tiene que dar "solo
+éste"**, y si no lo da, el problema es la herramienta.

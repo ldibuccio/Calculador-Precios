@@ -12173,6 +12173,67 @@ def test_editar_el_PRECIO_recalcula_la_RENTABILIDAD_que_es_la_otra_mitad_de_la_r
     assert not marcado_como_calculado("precio")
 
 
+def test_la_FECHA_de_la_ultima_compra_va_PEGADA_al_costo_por_cajon():
+    """Un costo de partida de hace diez días no se usa igual que uno de ayer.
+
+    Se había ido con la tarjeta "De dónde salen los números" y volvió sola, en
+    una línea, porque es lo único de esa tarjeta que decide algo.
+
+    VA PEGADA AL CAMPO y no al pie: el que la necesita está mirando el número
+    del cajón. Se mide la POSICIÓN en el marcado, que es lo único que
+    distingue "está en la pantalla" de "está donde se lee".
+
+    Y LA FECHA SOLA OBLIGA A CONTAR CON LOS DEDOS: la pregunta es "¿es de ayer
+    o de hace diez días?", así que la respuesta va escrita.
+    """
+    marcado = _analizar("/compras/analizar?cliente_id=1")
+    prosa = " ".join(marcado.split())
+
+    assert "Última compra: 11/09 · ayer" in prosa
+    # Entre el campo del cajón y el de los kilos, o sea adentro de su celda.
+    assert (marcado.index('id="importe_cajon"')
+            < marcado.index('class="desde"')
+            < marcado.index('for="kilos_bulto"'))
+
+
+def test_la_linea_de_la_fecha_es_un_hecho_del_ARTICULO_y_no_del_campo():
+    """Por eso dice "Última compra" y no "de dónde sale este número".
+
+    Dos razones que van juntas y las dos la harían mentir: el valor de partida
+    es el promedio ponderado de ese día Y EL ANTERIOR —no de una compra sola—,
+    y apenas se tipea otro importe el campo deja de venir de ahí.
+
+    Acá se fuerza lo segundo: con un importe tipeado a mano, la línea tiene que
+    seguir diciendo cuándo fue la última compra, que sigue siendo verdad.
+    """
+    tipeado = _analizar(
+        "/compras/analizar?ficha_id=901"
+        "&importe_cajon=99999&kilos_bulto=16&precio=1500&utilidad=&edite=importe_cajon"
+    )
+    prosa = " ".join(tipeado.split())
+
+    assert _valor(tipeado, "importe_cajon") == "99999"
+    assert "Última compra: 11/09 · ayer" in prosa
+    # Y no se convirtió en una leyenda de procedencia del campo.
+    assert "sale de" not in prosa and "De la compra" not in prosa
+
+
+def test_la_fecha_dice_HOY_AYER_o_HACE_N_DIAS():
+    """Los tres casos, porque los tres se escriben distinto y uno solo no prueba la rama.
+
+    El de "hace N días" es el que importa —es el que manda a desconfiar del
+    costo de partida— y es justo el que un fixture con la compra de ayer no
+    ejercita nunca.
+    """
+    casos = {date(2026, 9, 12): "Última compra: 12/09 · hoy",
+             date(2026, 9, 11): "Última compra: 11/09 · ayer",
+             date(2026, 9, 2): "Última compra: 02/09 · hace 10 días"}
+    for fecha, esperado in casos.items():
+        marcado = _analizar("/compras/analizar?cliente_id=1",
+                            fila=dict(FILA_ANALISIS, fecha_ultima_compra=fecha))
+        assert esperado in " ".join(marcado.split()), fecha
+
+
 def test_LOS_CUATRO_se_pueden_tipear():
     """"Quedan cuatro, los cuatro editables". Un <p> de solo lectura no se puede tipear.
 
