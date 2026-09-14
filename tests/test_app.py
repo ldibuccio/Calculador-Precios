@@ -535,8 +535,20 @@ def test_ver_agregar_cliente_muestra_formulario_vacio():
     assert '+ Agregar tasa de Descuento' in respuesta.text
 
 
+# La fecha con la que el sistema fecha una carga: la ARGENTINA, calculada
+# por la aplicación. Va fijada en una fecha reconocible y NO en la de hoy
+# a propósito: si la ruta volviera al reloj del servidor de la base o a un
+# date.today(), con la fecha de hoy el assert pasaría igual casi siempre.
+VIGENCIA_DE_UNA_CARGA = date(2026, 8, 15)
+
+
+def _reloj_argentino():
+    """Fija _hoy_argentina en VIGENCIA_DE_UNA_CARGA para los tests de carga."""
+    return patch("app.main._hoy_argentina", return_value=VIGENCIA_DE_UNA_CARGA)
+
+
 def test_agregar_cliente_con_tasas_redirige_a_clientes():
-    with patch("app.main.crear_cliente", return_value=5) as mock_crear:
+    with _reloj_argentino(), patch("app.main.crear_cliente", return_value=5) as mock_crear:
         respuesta = cliente.post(
             "/clientes/nuevo",
             data={
@@ -559,14 +571,18 @@ def test_agregar_cliente_con_tasas_redirige_a_clientes():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/clientes"
     mock_crear.assert_called_once_with(
-        "Vea", [{"nombre": "IVA", "valor": 0.21}], [{"nombre": "Flete", "valor": 0.04}], 0.12
+        "Vea",
+        [{"nombre": "IVA", "valor": 0.21}],
+        [{"nombre": "Flete", "valor": 0.04}],
+        0.12,
+        VIGENCIA_DE_UNA_CARGA,
     )
 
 
 def test_agregar_cliente_sin_tasas_redirige_a_clientes():
     # Las tasas son opcionales: un cliente se puede cargar solo con nombre
     # y utilidad, sin ninguna tasa todavía.
-    with patch("app.main.crear_cliente", return_value=5) as mock_crear:
+    with _reloj_argentino(), patch("app.main.crear_cliente", return_value=5) as mock_crear:
         respuesta = cliente.post(
             "/clientes/nuevo",
             data={"nombre": "Vea", "utilidad_objetivo": "12"},
@@ -574,7 +590,7 @@ def test_agregar_cliente_sin_tasas_redirige_a_clientes():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Vea", [], [], 0.12)
+    mock_crear.assert_called_once_with("Vea", [], [], 0.12, VIGENCIA_DE_UNA_CARGA)
 
 
 def test_agregar_cliente_nombre_vacio_muestra_error():
@@ -627,7 +643,7 @@ def test_agregar_cliente_tasa_con_nombre_sin_porcentaje_muestra_error():
 def test_agregar_cliente_fila_de_tasa_completamente_vacia_se_ignora():
     # El usuario tocó "+ Agregar tasa" pero no llegó a cargar nada — no
     # tiene que bloquear el guardado.
-    with patch("app.main.crear_cliente", return_value=5) as mock_crear:
+    with _reloj_argentino(), patch("app.main.crear_cliente", return_value=5) as mock_crear:
         respuesta = cliente.post(
             "/clientes/nuevo",
             data={
@@ -641,7 +657,7 @@ def test_agregar_cliente_fila_de_tasa_completamente_vacia_se_ignora():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Vea", [], [], 0.12)
+    mock_crear.assert_called_once_with("Vea", [], [], 0.12, VIGENCIA_DE_UNA_CARGA)
 
 
 def test_agregar_cliente_error_de_base_muestra_mensaje_claro():
@@ -732,15 +748,15 @@ def _datos_editar_cliente(**overrides):
 def test_editar_cliente_sin_ningun_cambio_no_genera_filas_nuevas():
     # Regresión explícita: si nada se tocó, no hay que agregar filas de
     # historial de más.
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post("/clientes/1/editar", data=_datos_editar_cliente(), follow_redirects=False)
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Día", [])
+    mock_actualizar.assert_called_once_with(1, "Día", [], VIGENCIA_DE_UNA_CARGA)
 
 
 def test_editar_cliente_tasa_editada_genera_fila_nueva_sin_pisar_la_vieja():
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post(
             "/clientes/1/editar",
             data=_datos_editar_cliente(tasa_resta_0_valor="5"),
@@ -748,11 +764,13 @@ def test_editar_cliente_tasa_editada_genera_fila_nueva_sin_pisar_la_vieja():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.05}])
+    mock_actualizar.assert_called_once_with(
+        1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.05}], VIGENCIA_DE_UNA_CARGA
+    )
 
 
 def test_editar_cliente_tasa_nueva_se_agrega():
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post(
             "/clientes/1/editar",
             data=_datos_editar_cliente(
@@ -766,13 +784,15 @@ def test_editar_cliente_tasa_nueva_se_agrega():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Día", [{"nombre_parametro": "Premio", "tipo": "suma", "valor": 0.02}])
+    mock_actualizar.assert_called_once_with(
+        1, "Día", [{"nombre_parametro": "Premio", "tipo": "suma", "valor": 0.02}], VIGENCIA_DE_UNA_CARGA
+    )
 
 
 def test_editar_cliente_tasa_dada_de_baja_genera_fila_en_cero():
     # Regla de oro: nunca se borra el historial, se agrega una fila en 0
     # vigente desde hoy — los cálculos pasados siguen viendo el valor viejo.
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post(
             "/clientes/1/editar",
             data=_datos_editar_cliente(tasa_resta_0_baja="on"),
@@ -780,11 +800,13 @@ def test_editar_cliente_tasa_dada_de_baja_genera_fila_en_cero():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.0}])
+    mock_actualizar.assert_called_once_with(
+        1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.0}], VIGENCIA_DE_UNA_CARGA
+    )
 
 
 def test_editar_cliente_tasa_renombrada_da_de_baja_la_vieja_y_alta_la_nueva():
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post(
             "/clientes/1/editar",
             data=_datos_editar_cliente(tasa_resta_0_nombre="Flete y logística"),
@@ -799,11 +821,12 @@ def test_editar_cliente_tasa_renombrada_da_de_baja_la_vieja_y_alta_la_nueva():
             {"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.0},
             {"nombre_parametro": "Flete y logística", "tipo": "resta", "valor": 0.04},
         ],
+        VIGENCIA_DE_UNA_CARGA,
     )
 
 
 def test_editar_cliente_utilidad_editada_genera_fila_nueva():
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post(
             "/clientes/1/editar",
             data=_datos_editar_cliente(utilidad_objetivo="25"),
@@ -812,12 +835,12 @@ def test_editar_cliente_utilidad_editada_genera_fila_nueva():
 
     assert respuesta.status_code == 303
     mock_actualizar.assert_called_once_with(
-        1, "Día", [{"nombre_parametro": "utilidad_objetivo", "tipo": "utilidad", "valor": 0.25}]
+        1, "Día", [{"nombre_parametro": "utilidad_objetivo", "tipo": "utilidad", "valor": 0.25}], VIGENCIA_DE_UNA_CARGA
     )
 
 
 def test_editar_cliente_nombre_vacio_muestra_error():
-    with patch("app.main.actualizar_cliente") as mock_actualizar:
+    with _reloj_argentino(), patch("app.main.actualizar_cliente") as mock_actualizar:
         respuesta = cliente.post("/clientes/1/editar", data=_datos_editar_cliente(nombre="   "))
 
     assert respuesta.status_code == 400
@@ -13718,11 +13741,11 @@ def test_ver_envases_muestra_costo_vigente_historial_y_advertencia():
 
 
 def test_cambiar_costo_envase_registra_fila_nueva_y_vuelve_con_aviso():
-    with patch("app.main.registrar_costo_envase") as mock_registrar:
+    with _reloj_argentino(), patch("app.main.registrar_costo_envase") as mock_registrar:
         respuesta = cliente.post("/envases/7/costo", data={"costo": "800"}, follow_redirects=False)
 
     assert respuesta.status_code == 303
-    mock_registrar.assert_called_once_with(7, 800.0)
+    mock_registrar.assert_called_once_with(7, 800.0, VIGENCIA_DE_UNA_CARGA)
     assert "/envases?" in respuesta.headers["location"]
     assert "vigente+desde+hoy" in respuesta.headers["location"]
 
@@ -13738,19 +13761,19 @@ def test_cambiar_costo_envase_invalido_muestra_error_sin_registrar():
 
 
 def test_dar_de_baja_envase_registra_costo_cero_desde_hoy():
-    with patch("app.main.registrar_costo_envase") as mock_registrar:
+    with _reloj_argentino(), patch("app.main.registrar_costo_envase") as mock_registrar:
         respuesta = cliente.post("/envases/7/baja", follow_redirects=False)
 
     assert respuesta.status_code == 303
-    mock_registrar.assert_called_once_with(7, 0)
+    mock_registrar.assert_called_once_with(7, 0, VIGENCIA_DE_UNA_CARGA)
 
 
 def test_agregar_envase_crea_y_vuelve_con_aviso():
-    with patch("app.main.crear_envase") as mock_crear:
+    with _reloj_argentino(), patch("app.main.crear_envase") as mock_crear:
         respuesta = cliente.post("/envases/nuevo", data={"nombre": "Caja Mediana", "costo": "700"}, follow_redirects=False)
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Caja Mediana", 700.0)
+    mock_crear.assert_called_once_with("Caja Mediana", 700.0, VIGENCIA_DE_UNA_CARGA)
 
 
 def test_agregar_envase_con_nombre_repetido_muestra_el_error():

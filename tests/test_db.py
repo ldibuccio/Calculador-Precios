@@ -1945,6 +1945,11 @@ def test_listar_conceptos_editables_por_cliente_sin_utilidad_cargada_devuelve_no
     assert resultado["utilidad_pct"] is None
 
 
+# La fecha que los ESCRITORES reciben por parámetro. El nombre lleva el
+# alcance (no es "hoy" de todo el archivo): es la vigencia de una carga.
+VIGENCIA_DE_PRUEBA = date(2026, 8, 15)
+
+
 def test_crear_cliente_inserta_el_cliente_y_todos_los_conceptos_con_tipo():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(7,)])
 
@@ -1954,6 +1959,7 @@ def test_crear_cliente_inserta_el_cliente_y_todos_los_conceptos_con_tipo():
             [{"nombre": "IVA", "valor": 0.21}],
             [{"nombre": "Flete", "valor": 0.04}],
             0.20,
+            VIGENCIA_DE_PRUEBA,
         )
 
     assert cliente_id == 7
@@ -1965,12 +1971,15 @@ def test_crear_cliente_inserta_el_cliente_y_todos_los_conceptos_con_tipo():
         assert "INSERT INTO clientes_parametros_historial" in consulta_concepto
         assert "tipo" in consulta_concepto
         assert "vigente_desde" in consulta_concepto
-        assert "CURRENT_DATE" in consulta_concepto
+        # La fecha viaja como PARÁMETRO, no como el reloj del servidor de
+        # la base: CURRENT_DATE es UTC y pasadas las 21:00 de Argentina
+        # fecha un día adelante (ver _insertar_conceptos_cliente).
+        assert "CURRENT_DATE" not in consulta_concepto
 
     parametros_conceptos = [llamada.args[1] for llamada in cursor.execute.call_args_list[1:]]
-    assert (7, "IVA", 0.21, "suma") in parametros_conceptos
-    assert (7, "Flete", 0.04, "resta") in parametros_conceptos
-    assert (7, "utilidad_objetivo", 0.20, "utilidad") in parametros_conceptos
+    assert (7, "IVA", 0.21, "suma", VIGENCIA_DE_PRUEBA) in parametros_conceptos
+    assert (7, "Flete", 0.04, "resta", VIGENCIA_DE_PRUEBA) in parametros_conceptos
+    assert (7, "utilidad_objetivo", 0.20, "utilidad", VIGENCIA_DE_PRUEBA) in parametros_conceptos
     conexion.commit.assert_called_once()
 
 
@@ -1978,7 +1987,7 @@ def test_crear_cliente_sin_tasas_solo_inserta_la_utilidad():
     conexion, cursor = _conexion_falsa(filas_fetchone=[(7,)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_cliente("Vea", [], [], 0.20)
+        crear_cliente("Vea", [], [], 0.20, VIGENCIA_DE_PRUEBA)
 
     # 1 INSERT del cliente + 1 de la utilidad, sin tasas.
     assert cursor.execute.call_count == 2
@@ -1988,7 +1997,9 @@ def test_actualizar_cliente_pisa_el_nombre_y_agrega_solo_los_conceptos_que_cambi
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cliente(1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.05}])
+        actualizar_cliente(
+            1, "Día", [{"nombre_parametro": "Flete", "tipo": "resta", "valor": 0.05}], VIGENCIA_DE_PRUEBA
+        )
 
     assert cursor.execute.call_count == 2
     consulta_nombre, parametros_nombre = cursor.execute.call_args_list[0].args
@@ -1998,8 +2009,8 @@ def test_actualizar_cliente_pisa_el_nombre_y_agrega_solo_los_conceptos_que_cambi
     consulta_concepto, parametros_concepto = cursor.execute.call_args_list[1].args
     assert "ON CONFLICT (cliente_id, nombre_parametro, vigente_desde)" in consulta_concepto
     assert "DO UPDATE" in consulta_concepto
-    assert "CURRENT_DATE" in consulta_concepto
-    assert parametros_concepto == (1, "Flete", 0.05, "resta")
+    assert "CURRENT_DATE" not in consulta_concepto
+    assert parametros_concepto == (1, "Flete", 0.05, "resta", VIGENCIA_DE_PRUEBA)
     conexion.commit.assert_called_once()
 
 
@@ -2007,7 +2018,7 @@ def test_actualizar_cliente_sin_cambios_de_conceptos_solo_pisa_el_nombre():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        actualizar_cliente(1, "Día", [])
+        actualizar_cliente(1, "Día", [], VIGENCIA_DE_PRUEBA)
 
     # Ningún concepto cambió: solo el UPDATE del nombre, ninguna fila nueva
     # de historial de más.
@@ -2346,14 +2357,14 @@ def test_registrar_costo_envase_inserta_fila_nueva_sin_pisar_el_historial():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        registrar_costo_envase(7, 800.0)
+        registrar_costo_envase(7, 800.0, VIGENCIA_DE_PRUEBA)
 
     consulta, parametros = cursor.execute.call_args.args
     assert "INSERT INTO envases_costo_historial" in consulta
-    assert "CURRENT_DATE" in consulta
+    assert "CURRENT_DATE" not in consulta
     assert "ON CONFLICT (envase_id, vigente_desde) DO UPDATE" in consulta
     assert not consulta.strip().startswith("UPDATE")
-    assert parametros == (7, 800.0)
+    assert parametros == (7, 800.0, VIGENCIA_DE_PRUEBA)
     conexion.commit.assert_called_once()
 
 
@@ -2361,12 +2372,13 @@ def test_crear_envase_crea_con_costo_inicial_desde_hoy_en_una_transaccion():
     conexion, cursor = _conexion_falsa(filas_fetchone=[None, (33,)])  # no existe; RETURNING id
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        crear_envase("Caja Nueva", 700.0)
+        crear_envase("Caja Nueva", 700.0, VIGENCIA_DE_PRUEBA)
 
     consultas = [llamada.args[0] for llamada in cursor.execute.call_args_list]
     assert any("INSERT INTO envases " in consulta for consulta in consultas)
-    assert any("INSERT INTO envases_costo_historial" in consulta and "CURRENT_DATE" in consulta for consulta in consultas)
-    assert cursor.execute.call_args_list[-1].args[1] == (33, 700.0)
+    assert any("INSERT INTO envases_costo_historial" in consulta for consulta in consultas)
+    assert not any("CURRENT_DATE" in consulta for consulta in consultas)
+    assert cursor.execute.call_args_list[-1].args[1] == (33, 700.0, VIGENCIA_DE_PRUEBA)
     conexion.commit.assert_called_once()
 
 
@@ -2375,7 +2387,7 @@ def test_crear_envase_rechaza_nombre_repetido():
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         with pytest.raises(ValueError) as salida:
-            crear_envase("Caja Chica Día", 700.0)
+            crear_envase("Caja Chica Día", 700.0, VIGENCIA_DE_PRUEBA)
 
     assert "Ya existe un envase con ese nombre" in str(salida.value)
     conexion.commit.assert_not_called()
@@ -8421,3 +8433,142 @@ def test_toda_columna_que_agrega_una_MIGRACION_esta_en_el_esquema_completo():
         "Columnas que una migración agregó y no están en db/esquema_completo.sql: "
         f"{sorted(set(faltan))}"
     )
+
+
+# --- Los DOS relojes: el de la base (UTC) y el del negocio (Argentina) ---
+#
+# `CURRENT_DATE` es la fecha del SERVIDOR de la base, que corre en UTC, y a
+# partir de las 21:00 de Argentina adelanta un día. Todo lo demás del sistema
+# resuelve con la fecha argentina, así que eran dos reglas escritas para el
+# mismo hecho — y la que decidía no era la que el código creía.
+#
+# No es una hipótesis: el 14/09 se midieron las tres tablas de historial en
+# las dos bases y aparecieron CINCO tasas de un cliente, cargadas el 15/08 a
+# las 22:01 de Argentina, con `vigente_desde` del 16. No rigieron el día en
+# que se cargaron. Ver `db/precios_2_quienes_son_los_fechados_distinto.sql`,
+# que trae el baseline confirmado en el encabezado.
+#
+# Estos dos tests son por el LADO DEL TEXTO del SQL a propósito (corolario
+# 40): con un cursor falso la fila la entrega el mock, así que el valor
+# devuelto llega igual con la fecha equivocada. Lo único que distingue un
+# reloj del otro es qué PIDIÓ la consulta.
+#
+# Y van por PARSEO y no por una lista escrita a mano (corolario 42): una
+# lista protege los lectores de hoy; el parseo protege al próximo, que es el
+# que nadie va a recordar.
+
+TABLAS_CON_VIGENCIA = (
+    "precios_venta_historial",
+    "envases_costo_historial",
+    "clientes_parametros_historial",
+    "senas_valor_historial",
+)
+
+
+def _sql_del_nodo(nodo):
+    """El texto de un literal de SQL, sea string común o f-string.
+
+    Un f-string en el árbol no es un Constant sino un JoinedStr, así que
+    leer solo Constant deja afuera EXACTAMENTE las consultas que se
+    convirtieron para interpolar el reloj — o sea, las que hay que mirar.
+    De la parte interpolada devuelve el NOMBRE de la expresión
+    (`_SQL_HOY_ARGENTINA`), que es lo que se quiere afirmar.
+    """
+    import ast
+
+    if isinstance(nodo, ast.Constant) and isinstance(nodo.value, str):
+        return nodo.value
+    if isinstance(nodo, ast.JoinedStr):
+        partes = []
+        for trozo in nodo.values:
+            if isinstance(trozo, ast.Constant):
+                partes.append(str(trozo.value))
+            elif isinstance(trozo, ast.FormattedValue):
+                partes.append(ast.unparse(trozo.value))
+        return "".join(partes)
+    return None
+
+
+def _sql_de_las_tablas_con_vigencia():
+    """Todo literal de SQL de app/db.py que nombre una tabla de historial con vigencia."""
+    import ast
+    import io
+    import re
+
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+    encontradas = []
+    for nodo in ast.walk(arbol):
+        texto = _sql_del_nodo(nodo)
+        if not texto:
+            continue
+        # El ancla es la POSICIÓN DE TABLA, no el nombre suelto. La primera
+        # versión de esto pedía que el texto dijera "INSERT" y nombrara la
+        # tabla, y matcheó el docstring de guardar_precios_cliente — que
+        # explica este mismo bug, así que nombra la tabla, dice "dentro del
+        # INSERT" y escribe CURRENT_DATE para contar qué decía antes.
+        # Corolario 38 al pie de la letra: el comentario nombra justo lo que
+        # el test busca, y la colisión está garantizada por construcción.
+        if not any(re.search(rf"(?:FROM|INTO|JOIN|UPDATE)\s+{tabla}\b", texto) for tabla in TABLAS_CON_VIGENCIA):
+            continue
+        encontradas.append(texto)
+    return encontradas
+
+
+def test_ninguna_consulta_de_las_tablas_con_vigencia_usa_el_reloj_del_SERVIDOR():
+    consultas = _sql_de_las_tablas_con_vigencia()
+
+    # El denominador, en la misma aserción (corolario 45): sin él, "ninguna
+    # usa CURRENT_DATE" y "no se miró ninguna consulta" pasan las dos, y
+    # significan lo contrario.
+    assert len(consultas) >= 10, f"Se miraron solo {len(consultas)} consultas: el parseo dejó de encontrarlas."
+
+    con_reloj_del_servidor = [sql for sql in consultas if "CURRENT_DATE" in sql]
+    assert not con_reloj_del_servidor, (
+        "Consultas de una tabla con vigencia que resuelven con el reloj del servidor de la base (UTC) "
+        f"en vez de la hora argentina: {con_reloj_del_servidor}"
+    )
+
+
+def test_el_hoy_de_las_vigencias_se_pregunta_con_la_zona_NOMBRADA():
+    # La otra mitad: que no haya CURRENT_DATE no prueba que se pregunte
+    # bien. Un offset fijo de −3 horas también sacaría el CURRENT_DATE y no
+    # se enteraría el día que el país mueva el reloj (ver core/zona.py).
+    from app.db import _SQL_HOY_ARGENTINA
+
+    assert "America/Argentina/Buenos_Aires" in _SQL_HOY_ARGENTINA
+    assert "interval" not in _SQL_HOY_ARGENTINA.lower()
+
+    preguntan_por_hoy = [sql for sql in _sql_de_las_tablas_con_vigencia() if "_SQL_HOY_ARGENTINA" in sql]
+    assert len(preguntan_por_hoy) == 3, (
+        "Los lectores que preguntan qué rige AHORA son tres (los totales por cliente, el detalle del "
+        f"formulario y el valor de seña vigente); se encontraron {len(preguntan_por_hoy)}."
+    )
+
+
+def test_los_CINCO_caminos_que_fechan_una_carga_pasan_la_hora_ARGENTINA():
+    """Ningún llamador de los escritores de historial se fecha con otro reloj.
+
+    El parámetro sin default ya impide olvidarse de pasarlo — el que se
+    olvide se lleva un TypeError. Lo que esto cuida es lo otro: que el
+    valor que se pasa sea `_hoy_argentina()` y no un `date.today()`, que es
+    el reloj del contenedor y vuelve a ser dos relojes para el mismo hecho.
+    """
+    import ast
+    import io
+
+    escritores = {"crear_cliente", "actualizar_cliente", "crear_envase", "registrar_costo_envase"}
+    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+
+    llamadas = [
+        nodo
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name) and nodo.func.id in escritores
+    ]
+    assert len(llamadas) == 5, f"Los caminos que fechan una carga eran cinco; ahora son {len(llamadas)}."
+
+    sin_hora_argentina = [
+        f"{llamada.func.id} (línea {llamada.lineno})"
+        for llamada in llamadas
+        if not any(ast.unparse(argumento) == "_hoy_argentina()" for argumento in llamada.args)
+    ]
+    assert not sin_hora_argentina, f"Caminos que no fechan con la hora argentina: {sin_hora_argentina}"

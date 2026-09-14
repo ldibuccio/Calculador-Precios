@@ -1,26 +1,28 @@
 -- Las filas que `precios_1` cuenta: quiénes son y a qué HORA se escribieron.
 --
--- LA COLUMNA QUE DECIDE ES `creado_hora_arg`, y es la hora, no la fecha:
---   * 21:00 o más tarde  -> el reloj del servidor (UTC ya estaba en mañana).
---   * cualquier otra hora -> NO es el reloj. Es un seed o un SQL a mano.
+-- BASELINE CONFIRMADO el 14/09, corrido en las DOS bases y con los MISMOS
+-- números. No hay nada que volver a investigar acá:
+--   * 4 ATRÁS = EL SEED de db/migracion_clientes_final.sql: vigente_desde
+--     2020-01-01, creado_en 30/07 00:06, dias −2402, las cuatro del mismo
+--     timestamp. Nada que arreglar.
+--   * 5 ADELANTE = EL RELOJ: 15/08 a las 22:01 de Argentina, dias +1, las
+--     cinco del mismo creado_en — las cinco tasas de UN cliente (Grupo L en
+--     Frutamax, Taylem en Palmala) cargadas pasadas las diez de la noche.
+--     NO SE TOCARON: esas fechas ya pasaron y corregirlas reescribe historia
+--     a cambio de nada. El código no puede repetirlo desde el 14/09: los
+--     escritores reciben la fecha argentina por parámetro.
+--   * precios_venta_historial: LIMPIA, cero y cero en las dos bases.
 --
--- Y `dias` lo confirma: el reloj produce +1 EXACTO y nunca otra cosa. Un +3 o
--- un −900 no puede ser el reloj por más que la hora dé.
+-- Números iguales con distinta cantidad de filas no es uso:
+-- scripts/copiar_catalogo_empresa.py las copia con `SELECT *` — creado_en y
+-- vigente_desde viajan tal cual.
 --
--- DE LAS `fechadas_atras` YA SE SABE, sin correr nada:
--- `db/migracion_clientes_final.sql` siembra 2 conceptos de Día y 2 costos de
--- envase con vigente_desde '2020-01-01' y creado_en = now() de la migración.
--- No es el reloj ni hay nada que arreglar — una vigencia vieja cargada hoy es
--- lo que un seed hace. El seed NO explica las `fechadas_adelante`: su fecha es
--- pasada, así que no puede producir una fila fechada mañana.
+-- LA COLUMNA QUE DECIDE ES `creado_hora_arg`, la HORA y no la fecha: 21:00 o
+-- más tarde es el reloj (en UTC ya era mañana); otra hora es un seed o un SQL
+-- a mano. Y `dias` lo confirma: el reloj da +1 EXACTO y nunca otra cosa.
 --
--- Y LOS NÚMEROS DAN IGUAL EN LAS DOS BASES con distinta cantidad de filas
--- porque `scripts/copiar_catalogo_empresa.py` copia estas dos tablas con
--- `SELECT *`: `creado_en` y `vigente_desde` viajan TAL CUAL. No es uso.
---
--- El `values` + `left join` hace que una tabla LIMPIA devuelva su fila igual,
--- en NULL. Verificada contra db/esquema_completo.sql con tres casos plantados
--- (reloj, seed, y una fila sana que NO tiene que aparecer).
+-- Una tabla limpia devuelve su fila igual, en NULL. Verificada contra
+-- db/esquema_completo.sql con casos plantados.
 with tablas (tabla) as (
     values ('clientes_parametros_historial'), ('envases_costo_historial')
 ),

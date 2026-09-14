@@ -131,11 +131,32 @@ def desactivar_articulo(articulo_id: int) -> None:
         conexion.close()
 
 
-_CLIENTE_CON_TASAS_VIGENTES_SQL = """
+# El "hoy" con el que se resuelve una VIGENCIA, del lado de la base.
+#
+# `CURRENT_DATE` es la fecha del SERVIDOR, y la base corre en UTC: a partir de
+# las 21:00 de Argentina adelanta un día. Todo lo demás del sistema resuelve
+# con la fecha argentina, así que eran DOS relojes para el mismo hecho.
+#
+# Medido el 14/09 y no deducido: cinco tasas de un cliente cargadas el 15/08 a
+# las 22:01 quedaron con `vigente_desde` del 16 — no rigieron el día en que se
+# cargaron. Ver `db/precios_2_quienes_son_los_fechados_distinto.sql`.
+#
+# LOS QUE ESCRIBEN NO USAN ESTO: reciben la fecha por parámetro, igual que los
+# precios. Acá va solo donde se PREGUNTA qué rige ahora, que no es una decisión
+# de nadie y tiene 31 llamadores — meterles un parámetro serían 31 lugares
+# donde pasar el reloj equivocado.
+#
+# La zona va NOMBRADA, como las otras 34 veces de este archivo y como
+# `core/zona.py`: un offset fijo de −3 no se entera el día que el país mueva
+# el reloj, y lo haría en silencio.
+_SQL_HOY_ARGENTINA = "(now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
+
+
+_CLIENTE_CON_TASAS_VIGENTES_SQL = f"""
     WITH vigentes AS (
         SELECT DISTINCT ON (cliente_id, nombre_parametro) cliente_id, nombre_parametro, tipo, valor
         FROM clientes_parametros_historial
-        WHERE vigente_desde <= CURRENT_DATE
+        WHERE vigente_desde <= {_SQL_HOY_ARGENTINA}
         ORDER BY cliente_id, nombre_parametro, vigente_desde DESC
     ),
     totales AS (
@@ -329,10 +350,10 @@ def listar_conceptos_editables_por_cliente(cliente_id: int) -> dict:
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT DISTINCT ON (nombre_parametro) nombre_parametro, tipo, valor
                 FROM clientes_parametros_historial
-                WHERE cliente_id = %s AND vigente_desde <= CURRENT_DATE
+                WHERE cliente_id = %s AND vigente_desde <= {_SQL_HOY_ARGENTINA}
                 ORDER BY nombre_parametro, vigente_desde DESC
                 """,
                 (cliente_id,),
@@ -358,31 +379,45 @@ def listar_conceptos_editables_por_cliente(cliente_id: int) -> dict:
     return {"tasas_suma": tasas_suma, "tasas_resta": tasas_resta, "utilidad_pct": utilidad_pct}
 
 
-def _insertar_conceptos_cliente(cursor, cliente_id: int, conceptos: list[dict]) -> None:
-    """Inserta cada concepto con vigente_desde = hoy, sin pisar historial viejo.
+def _insertar_conceptos_cliente(cursor, cliente_id: int, conceptos: list[dict], vigente_desde) -> None:
+    """Inserta cada concepto con la vigencia que le PASAN, sin pisar historial viejo.
 
     conceptos: [{"nombre_parametro", "tipo", "valor"}, ...] (valor en
-    fracción). Si ya existe una fila de HOY para ese mismo (cliente_id,
-    nombre_parametro) -- segunda edición el mismo día -- la actualiza en
-    vez de duplicarla; nunca toca una fila de vigente_desde anterior.
+    fracción). Si ya existe una fila de esa MISMA fecha para ese mismo
+    (cliente_id, nombre_parametro) -- segunda edición el mismo día -- la
+    actualiza en vez de duplicarla; nunca toca una fila anterior.
+
+    vigente_desde va por PARÁMETRO y sin default, igual que en
+    guardar_precios_cliente: acá decía CURRENT_DATE, que es el reloj del
+    servidor de la base (UTC) y adelanta un día pasadas las 21:00 de
+    Argentina. Eso ya escribió cinco tasas fechadas mañana (15/08 22:01;
+    ver db/precios_2_quienes_son_los_fechados_distinto.sql). Sin default,
+    el que se olvide de pasarla se lleva un TypeError y no una fila con
+    la fecha equivocada.
     """
     for concepto in conceptos:
         cursor.execute(
             """
             INSERT INTO clientes_parametros_historial (cliente_id, nombre_parametro, valor, tipo, vigente_desde)
-            VALUES (%s, %s, %s, %s, CURRENT_DATE)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (cliente_id, nombre_parametro, vigente_desde)
             DO UPDATE SET valor = EXCLUDED.valor, tipo = EXCLUDED.tipo
             """,
-            (cliente_id, concepto["nombre_parametro"], concepto["valor"], concepto["tipo"]),
+            (cliente_id, concepto["nombre_parametro"], concepto["valor"], concepto["tipo"], vigente_desde),
         )
 
 
-def crear_cliente(nombre: str, tasas_suma: list[dict], tasas_resta: list[dict], utilidad_objetivo: float) -> int:
-    """Crea un cliente y su primer registro de historial (vigente_desde = hoy). Devuelve el id creado.
+def crear_cliente(
+    nombre: str, tasas_suma: list[dict], tasas_resta: list[dict], utilidad_objetivo: float, vigente_desde
+) -> int:
+    """Crea un cliente y su primer registro de historial, vigente desde la fecha que le pasan. Devuelve el id.
 
     tasas_suma/tasas_resta: [{"nombre", "valor"}, ...] con valor ya en
     fracción (0.21, no 21). utilidad_objetivo también en fracción.
+
+    vigente_desde sin default: quién es "hoy" lo decide la aplicación con
+    la hora argentina, no el reloj UTC del servidor de la base — ver
+    _insertar_conceptos_cliente.
     """
     conceptos = (
         [{"nombre_parametro": tasa["nombre"], "tipo": "suma", "valor": tasa["valor"]} for tasa in tasas_suma]
@@ -395,21 +430,23 @@ def crear_cliente(nombre: str, tasas_suma: list[dict], tasas_resta: list[dict], 
         with conexion.cursor() as cursor:
             cursor.execute("INSERT INTO clientes (nombre) VALUES (%s) RETURNING id", (nombre,))
             (cliente_id,) = cursor.fetchone()
-            _insertar_conceptos_cliente(cursor, cliente_id, conceptos)
+            _insertar_conceptos_cliente(cursor, cliente_id, conceptos, vigente_desde)
         conexion.commit()
         return cliente_id
     finally:
         conexion.close()
 
 
-def actualizar_cliente(cliente_id: int, nombre: str, conceptos_a_guardar: list[dict]) -> None:
+def actualizar_cliente(cliente_id: int, nombre: str, conceptos_a_guardar: list[dict], vigente_desde) -> None:
     """Actualiza el nombre del cliente y agrega SOLO las filas de historial que realmente cambiaron.
 
     conceptos_a_guardar: [{"nombre_parametro", "tipo", "valor"}, ...] — ya
     calculado por core.conceptos_cliente (calcular_cambios_de_tasas /
     calcular_cambio_de_utilidad) a partir de lo que cambió en el
     formulario. El nombre/utilidad/tasas viejos NUNCA se pisan: cada
-    cambio agrega una fila nueva con vigente_desde = hoy.
+    cambio agrega una fila nueva con la vigencia que le pasan.
+
+    vigente_desde sin default, por lo mismo que crear_cliente.
     """
     conexion = obtener_conexion()
     try:
@@ -417,7 +454,7 @@ def actualizar_cliente(cliente_id: int, nombre: str, conceptos_a_guardar: list[d
             cursor.execute(
                 "UPDATE clientes SET nombre = %s, actualizado_en = now() WHERE id = %s", (nombre, cliente_id)
             )
-            _insertar_conceptos_cliente(cursor, cliente_id, conceptos_a_guardar)
+            _insertar_conceptos_cliente(cursor, cliente_id, conceptos_a_guardar, vigente_desde)
         conexion.commit()
     finally:
         conexion.close()
@@ -623,11 +660,16 @@ def listar_historial_costos_envases() -> list[dict]:
         conexion.close()
 
 
-def crear_envase(nombre: str, costo: float) -> None:
-    """Crea un envase (del catálogo compartido) con su costo inicial vigente desde hoy — todo en una transacción.
+def crear_envase(nombre: str, costo: float, vigente_desde) -> None:
+    """Crea un envase (del catálogo compartido) con su costo inicial vigente desde la fecha que le pasan.
 
-    Nombre repetido: ValueError con mensaje para mostrar tal cual (chequeado
-    acá y además garantizado por el UNIQUE global de la tabla).
+    Todo en una transacción. Nombre repetido: ValueError con mensaje para
+    mostrar tal cual (chequeado acá y además garantizado por el UNIQUE
+    global de la tabla).
+
+    vigente_desde sin default: acá decía CURRENT_DATE, el reloj UTC del
+    servidor de la base, que pasadas las 21:00 de Argentina fecha un día
+    adelante — ver _insertar_conceptos_cliente.
     """
     conexion = obtener_conexion()
     try:
@@ -639,16 +681,16 @@ def crear_envase(nombre: str, costo: float) -> None:
             cursor.execute("INSERT INTO envases (nombre) VALUES (%s) RETURNING id", (nombre,))
             (envase_id,) = cursor.fetchone()
             cursor.execute(
-                "INSERT INTO envases_costo_historial (envase_id, costo, vigente_desde) VALUES (%s, %s, CURRENT_DATE)",
-                (envase_id, costo),
+                "INSERT INTO envases_costo_historial (envase_id, costo, vigente_desde) VALUES (%s, %s, %s)",
+                (envase_id, costo, vigente_desde),
             )
         conexion.commit()
     finally:
         conexion.close()
 
 
-def registrar_costo_envase(envase_id: int, costo: float) -> None:
-    """Registra un costo nuevo para un envase, vigente desde hoy — la regla de oro del historial.
+def registrar_costo_envase(envase_id: int, costo: float, vigente_desde) -> None:
+    """Registra un costo nuevo para un envase, vigente desde la fecha que le pasan — la regla de oro del historial.
 
     NUNCA pisa filas anteriores: inserta una fila nueva en
     envases_costo_historial (mismo criterio que los precios de venta y los
@@ -657,6 +699,8 @@ def registrar_costo_envase(envase_id: int, costo: float) -> None:
     el MISMO día: ahí se actualiza la fila de hoy (ON CONFLICT), igual que
     en precios_venta_historial. La baja de un envase es esto mismo con
     costo 0.
+
+    vigente_desde sin default, por lo mismo que crear_envase.
     """
     conexion = obtener_conexion()
     try:
@@ -664,10 +708,10 @@ def registrar_costo_envase(envase_id: int, costo: float) -> None:
             cursor.execute(
                 """
                 INSERT INTO envases_costo_historial (envase_id, costo, vigente_desde)
-                VALUES (%s, %s, CURRENT_DATE)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (envase_id, vigente_desde) DO UPDATE SET costo = EXCLUDED.costo
                 """,
-                (envase_id, costo),
+                (envase_id, costo, vigente_desde),
             )
         conexion.commit()
     finally:
@@ -5278,12 +5322,18 @@ def listar_valores_sena() -> list[dict]:
     Trae además ultima_vigencia (el vigente_desde más alto que tiene ese
     tipo, haya empezado a regir o no): es contra ese valor que se compara
     la fecha nueva para saber si hay que avisar por carga retroactiva.
+
+    EL "HOY" ES EL ARGENTINO, y hasta el 14/09 acá decía CURRENT_DATE
+    mientras VALOR_SENA_VIGENTE —el otro lector de esta misma tabla, cuatro
+    funciones más abajo— ya nombraba la zona. Era la misma regla escrita
+    dos veces con dos relojes: el que decidía en esta pantalla no era el
+    que decide en las otras.
     """
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT t.id AS tipo_envase_id, t.nombre AS tipo_nombre,
                        p.nombre AS proveedor_nombre,
                        vigente.monto, vigente.vigente_desde,
@@ -5294,7 +5344,7 @@ def listar_valores_sena() -> list[dict]:
                 LEFT JOIN LATERAL (
                     SELECT h.monto, h.vigente_desde
                     FROM senas_valor_historial h
-                    WHERE h.tipo_envase_id = t.id AND h.vigente_desde <= CURRENT_DATE
+                    WHERE h.tipo_envase_id = t.id AND h.vigente_desde <= {_SQL_HOY_ARGENTINA}
                     ORDER BY h.vigente_desde DESC, h.creado_en DESC
                     LIMIT 1
                 ) vigente ON true

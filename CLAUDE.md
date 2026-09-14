@@ -4222,3 +4222,45 @@ commitear es algo que uno puede rehacer.** En la tanda de canarios no lo era
 —ahí vivía el trabajo del turno—; en el renombre sí, porque los únicos
 cambios del archivo eran los cuatro que se acababan de aplicar con un script.
 Antes de usarlo: `git diff --stat` de ese archivo y preguntarse qué se pierde.
+
+## Corolario 59: un barrido del CÓDIGO FUENTE matchea el docstring que explica lo que busca
+
+Del 14/09, y es el corolario 38 fuera del HTML: allá el CSS, los comentarios
+y el marcado comparten el texto de la plantilla; acá **el SQL, los docstrings
+y los comentarios comparten el texto del `.py`**, y un test que barre el
+archivo buscando un criterio no distingue una consulta de la prosa que la
+explica.
+
+El caso. Arreglado el reloj de las tablas de historial, el test que lo cuida
+barre `app/db.py` y exige que ninguna consulta que nombre una de esas tablas
+diga `CURRENT_DATE`. Para dejar afuera la prosa, el filtro pedía que el texto
+dijera `SELECT`, `INSERT` o `UPDATE `. Y lo primero que encontró fue **el
+docstring de `guardar_precios_cliente`**, que explica este mismo bug: nombra
+la tabla, dice *"sale de la propia ficha dentro del INSERT"* y escribe
+`CURRENT_DATE` para contar qué decía antes. Los tres requisitos, en un texto
+que no es una consulta.
+
+Es el mecanismo del 38 al pie de la letra —**un comentario explica por qué
+algo es así, así que NOMBRA la cosa**, y el test busca la cosa— con la vuelta
+de que acá el filtro puesto para excluir prosa **era otra palabra que la
+prosa usa**. Un docstring sobre SQL habla de SELECT y de INSERT: no hay
+palabra del vocabulario del SQL que sirva para separar SQL de prosa sobre SQL.
+
+**Lo que sirve es la POSICIÓN GRAMATICAL, no el nombre**: en vez de "el texto
+nombra la tabla", `(?:FROM|INTO|JOIN|UPDATE)\s+<tabla>\b`. Una tabla en
+posición de tabla solo puede ser una consulta; la prosa la nombra suelta. Es
+la última línea del 38 —*anclar en algo que SOLO pueda ser marcado*— traducida
+de HTML a SQL: ahí una etiqueta cerrada o un atributo entero, acá la palabra
+clave que precede al nombre.
+
+**Y el ancla hay que elegirla ANTES en el árbol, no solo en el texto**: el
+barrido lee literales con `ast`, y una consulta que interpola el reloj ya no
+es un `Constant` sino un `JoinedStr`. Mirar solo `Constant` deja afuera
+**exactamente** las consultas que se convirtieron a f-string — o sea, las que
+el test viene a cuidar. El cero que devolvería sería el del corolario 47: no
+podría dar otra cosa.
+
+**La señal es la misma que la del 38 y por eso conviene reconocerla rápido**:
+el test falla apenas se escribe y la primera lectura es *"me equivoqué en el
+assert"*. Antes de aflojarlo, mirar QUÉ matcheó. Si lo que matcheó es un
+docstring, el test tenía razón en fallar y el equivocado era el ancla.

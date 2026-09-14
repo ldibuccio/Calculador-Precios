@@ -1857,7 +1857,7 @@ async def agregar_cliente(request: Request):
     tasas_resta = [{"nombre": fila["nombre"], "valor": fila["valor"]} for fila in filas_resta if fila["nombre"]]
 
     try:
-        crear_cliente(nombre, tasas_suma, tasas_resta, utilidad_valor_pct / 100)
+        crear_cliente(nombre, tasas_suma, tasas_resta, utilidad_valor_pct / 100, _hoy_argentina())
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
@@ -1940,7 +1940,7 @@ async def editar_cliente(request: Request, cliente_id: int):
         cambios.append(cambio_utilidad)
 
     try:
-        actualizar_cliente(cliente_id, nombre, cambios)
+        actualizar_cliente(cliente_id, nombre, cambios, _hoy_argentina())
     except Exception as error_db:
         return templates.TemplateResponse(
             request,
@@ -6771,7 +6771,7 @@ def agregar_envase(request: Request, nombre: str = Form(""), costo: str = Form("
         return _renderizar_pantalla_envases(request, error=error, status_code=400)
 
     try:
-        crear_envase(nombre_valor, costo_valor)
+        crear_envase(nombre_valor, costo_valor, _hoy_argentina())
     except ValueError as error_negocio:
         # Nombre repetido (el nombre es único global — ver crear_envase).
         return _renderizar_pantalla_envases(request, error=str(error_negocio), status_code=400)
@@ -6792,7 +6792,7 @@ def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")
         # Regla de oro del historial: registrar_costo_envase INSERTA una
         # fila nueva vigente desde hoy, nunca pisa las anteriores — los
         # cálculos pasados no cambian.
-        registrar_costo_envase(envase_id, costo_valor)
+        registrar_costo_envase(envase_id, costo_valor, _hoy_argentina())
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo registrar el costo: {error_db}") from error_db
 
@@ -6804,7 +6804,7 @@ def cambiar_costo_envase(request: Request, envase_id: int, costo: str = Form("")
 def dar_de_baja_envase(request: Request, envase_id: int):
     """Baja de un envase: fila nueva con costo 0 vigente desde hoy — mismo criterio de historial, nada se borra."""
     try:
-        registrar_costo_envase(envase_id, 0)
+        registrar_costo_envase(envase_id, 0, _hoy_argentina())
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudo dar de baja el envase: {error_db}") from error_db
 
