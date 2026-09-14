@@ -2091,34 +2091,65 @@ def test_listar_precios_anteriores_por_cliente_trae_la_fila_previa_a_la_vigente(
     assert parametros == (1, date(2026, 8, 16))
 
 
-def test_guardar_precios_cliente_inserta_con_vigente_desde_hoy_sin_pisar_lo_viejo():
+def test_guardar_precios_cliente_escribe_LA_FECHA_QUE_LE_PASAN_y_no_la_del_servidor():
+    """Hasta el 14/09 la consulta decía `CURRENT_DATE`, y ese test afirmaba eso.
+
+    `CURRENT_DATE` es la fecha del SERVIDOR de la base, y todas las lecturas
+    resuelven el vigente con la fecha ARGENTINA. Son dos relojes para el mismo
+    hecho: con la base en UTC se separan todas las noches a partir de las 21:00
+    de Argentina, y lo cargado a esa hora quedaba fechado MAÑANA — guardado sin
+    error y sin regir hoy.
+
+    Por eso el assert está dado vuelta: `CURRENT_DATE` no puede volver a
+    aparecer. Sin esa mitad, el test lo pasa igual una consulta que vuelva a
+    poner el reloj del servidor al lado del parámetro.
+    """
     conexion, cursor = _conexion_falsa()
+    vigencia = date(2026, 9, 5)
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_precios_cliente(1, [{"ficha_id": 907, "precio": 550.0}, {"ficha_id": 903, "precio": 900.0}])
+        guardar_precios_cliente(
+            1, [{"ficha_id": 907, "precio": 550.0}, {"ficha_id": 903, "precio": 900.0}], vigencia
+        )
 
     assert cursor.execute.call_count == 2
     for llamada in cursor.execute.call_args_list:
         consulta, parametros = llamada.args
         assert "INSERT INTO precios_venta_historial" in consulta
         assert "vigente_desde" in consulta
-        assert "CURRENT_DATE" in consulta
+        assert "CURRENT_DATE" not in consulta, "volvió el reloj del servidor"
         # El precio cuelga de la FICHA (dos fichas del mismo artículo y
         # cliente tienen precios distintos), y el artículo NO viaja desde
         # la pantalla: sale de la propia ficha adentro del INSERT.
         assert "ON CONFLICT (ficha_id, vigente_desde)" in consulta
         assert "SELECT fl.id, fl.articulo_id" in consulta
+        # DO UPDATE es lo que permite CORREGIR un precio ya cargado de una
+        # fecha pasada: la segunda carga de ese día pisa la primera en vez de
+        # duplicarla. Sin esto no habría forma de corregir sin borrar filas.
         assert "DO UPDATE" in consulta
-    assert cursor.execute.call_args_list[0].args[1] == (1, 550.0, None, 907, 1)
-    assert cursor.execute.call_args_list[1].args[1] == (1, 900.0, None, 903, 1)
+    assert cursor.execute.call_args_list[0].args[1] == (1, 550.0, vigencia, None, 907, 1)
+    assert cursor.execute.call_args_list[1].args[1] == (1, 900.0, vigencia, None, 903, 1)
     conexion.commit.assert_called_once()
+
+
+def test_guardar_precios_cliente_EXIGE_la_fecha_y_no_la_inventa():
+    """Sin default, el llamador que se olvide explota. Con uno, escribe hoy en silencio.
+
+    Es la diferencia entre un `NO ACTION` y un `SET NULL`: la guarda tiene que
+    estar donde la base grita, no donde acepta callada. Un precio retroactivo
+    fechado hoy no se distingue de uno normal.
+    """
+    import pytest
+
+    with pytest.raises(TypeError):
+        guardar_precios_cliente(1, [{"ficha_id": 907, "precio": 550.0}])
 
 
 def test_guardar_precios_cliente_sin_cambios_no_ejecuta_nada():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_precios_cliente(1, [])
+        guardar_precios_cliente(1, [], date(2026, 9, 14))
 
     cursor.execute.assert_not_called()
     conexion.commit.assert_not_called()
@@ -2128,12 +2159,14 @@ def test_guardar_precios_cliente_con_foto_ruta_la_guarda_en_cada_fila():
     conexion, cursor = _conexion_falsa()
 
     with patch("app.db.obtener_conexion", return_value=conexion):
-        guardar_precios_cliente(1, [{"ficha_id": 907, "precio": 550.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+        guardar_precios_cliente(
+            1, [{"ficha_id": 907, "precio": 550.0}], date(2026, 9, 14), foto_ruta="2026-08-16/dia-123-abc.jpg"
+        )
 
     consulta, parametros = cursor.execute.call_args_list[0].args
     assert "foto_ruta" in consulta
     assert "COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)" in consulta
-    assert parametros == (1, 550.0, "2026-08-16/dia-123-abc.jpg", 907, 1)
+    assert parametros == (1, 550.0, date(2026, 9, 14), "2026-08-16/dia-123-abc.jpg", 907, 1)
 
 
 def test_obtener_borrador_disponible_devuelve_la_fila():

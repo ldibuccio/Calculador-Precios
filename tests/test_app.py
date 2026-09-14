@@ -8503,6 +8503,20 @@ PRECIOS_VIGENTES_DE_PRUEBA = [
     {"ficha_id": 902, "articulo_id": 2, "precio": 350.0},
 ]
 
+# El reloj de la carga de precios. Se PARCHEA en vez de comparar contra
+# `_hoy_argentina()`: un test que llama a la misma función que verifica no
+# distingue "usó el reloj argentino" de "usó cualquier otro".
+#
+# EL NOMBRE LLEVA EL ALCANCE, y no es de estilo: la primera versión se llamó
+# `HOY_DE_PRUEBA`, que YA EXISTE arriba en este mismo archivo con otro valor.
+# Redefinirlo no da ningún error — le cambia el valor a todos los tests de ahí
+# para abajo, y rompió tres que no tienen nada que ver con precios. Se ve como
+# si lo hubiera roto la función nueva.
+HOY_DE_CARGA_DE_PRECIOS = date(2026, 9, 14)
+# La fecha anterior para probar la corrección retroactiva. Lejos de la de hoy
+# a propósito: confundirlas tiene que romper algo, no pasar desapercibido.
+VIGENCIA_ANTERIOR_DE_PRUEBA = date(2026, 9, 5)
+
 
 def test_ver_precios_consultar_sin_cliente_muestra_selector():
     with (
@@ -9181,7 +9195,10 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo(
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
-        patch("app.main.listar_precios_vigentes_por_cliente", return_value=precios_tras_guardar),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            side_effect=[PRECIOS_VIGENTES_DE_PRUEBA, precios_tras_guardar],
+        ),
         patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -9195,7 +9212,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_guarda_y_devuelve_archivo(
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.content.startswith(b"%PDF")
     assert respuesta.headers["x-cantidad-guardada"] == "1"
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 400.0}])
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 400.0}], HOY_DE_PRUEBA)
 
     # El archivo generado tiene que reflejar lo recién guardado: Mango
     # (el que se acaba de pactar) resaltado, Tomate Cherry (sin tocar) no.
@@ -9273,6 +9290,7 @@ def test_guardar_y_exportar_precios_cargar_manual_pdf_precio_invalido_da_400_y_n
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9537,6 +9555,8 @@ def test_cargar_precios_guarda_los_pendientes_y_redirige_con_cantidad():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9545,13 +9565,15 @@ def test_cargar_precios_guarda_los_pendientes_y_redirige_con_cantidad():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=1"
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 380.0}])
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 380.0}], HOY_DE_CARGA_DE_PRECIOS)
 
 
 def test_cargar_precios_varios_pendientes_se_guardan_todos_juntos():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9577,6 +9599,8 @@ def test_cargar_precios_articulo_sin_precio_previo_genera_alta():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9586,7 +9610,7 @@ def test_cargar_precios_articulo_sin_precio_previo_genera_alta():
         )
 
     assert respuesta.status_code == 303
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 380.0}])
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 902, "precio": 380.0}], HOY_DE_CARGA_DE_PRECIOS)
 
 
 def test_cargar_precios_pendiente_igual_al_vigente_no_genera_fila():
@@ -9596,6 +9620,8 @@ def test_cargar_precios_pendiente_igual_al_vigente_no_genera_fila():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9606,26 +9632,30 @@ def test_cargar_precios_pendiente_igual_al_vigente_no_genera_fila():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=0"
-    mock_guardar.assert_called_once_with(1, [])
+    mock_guardar.assert_called_once_with(1, [], HOY_DE_CARGA_DE_PRECIOS)
 
 
 def test_cargar_precios_sin_pendientes_no_guarda_nada():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post("/precios/cargar", data={"cliente_id": "1"}, follow_redirects=False)
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=0"
-    mock_guardar.assert_called_once_with(1, [])
+    mock_guardar.assert_called_once_with(1, [], HOY_DE_CARGA_DE_PRECIOS)
 
 
 def test_cargar_precios_invalido_da_400():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9640,6 +9670,8 @@ def test_cargar_precios_cero_o_negativo_da_400():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
         respuesta = cliente.post(
@@ -9654,6 +9686,8 @@ def test_cargar_precios_error_de_base_da_500():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.guardar_precios_cliente", side_effect=Exception("no se pudo conectar")),
     ):
         respuesta = cliente.post("/precios/cargar", data=_datos_pendientes_cargar_precios())
@@ -9860,6 +9894,8 @@ def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda", return_value="2026-08-16/dia-123-abc.jpg") as mock_subir,
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -9880,13 +9916,17 @@ def test_confirmar_carga_foto_precios_guarda_y_sube_el_archivo():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/precios?guardado=1"
     mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg", prefijo="precios")
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+    mock_guardar.assert_called_once_with(
+        1, [{"ficha_id": 901, "precio": 520.0}], HOY_DE_CARGA_DE_PRECIOS, foto_ruta="2026-08-16/dia-123-abc.jpg"
+    )
 
 
 def test_confirmar_carga_foto_precios_renglon_descartado_no_se_guarda():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda") as mock_subir,
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -9907,13 +9947,15 @@ def test_confirmar_carga_foto_precios_renglon_descartado_no_se_guarda():
 
     assert respuesta.status_code == 303
     mock_subir.assert_not_called()
-    mock_guardar.assert_called_once_with(1, [], foto_ruta=None)
+    mock_guardar.assert_called_once_with(1, [], HOY_DE_CARGA_DE_PRECIOS, foto_ruta=None)
 
 
 def test_confirmar_carga_foto_precios_error_al_subir_archivo_guarda_igual_sin_archivo():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda", side_effect=RuntimeError("Storage caído")),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -9932,13 +9974,15 @@ def test_confirmar_carga_foto_precios_error_al_subir_archivo_guarda_igual_sin_ar
         )
 
     assert respuesta.status_code == 303
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta=None)
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], HOY_DE_CARGA_DE_PRECIOS, foto_ruta=None)
 
 
 def test_confirmar_carga_foto_precios_pdf_sube_con_extension_y_content_type_correctos():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_CARGA_DE_PRECIOS),
         patch("app.main.subir_archivo_comanda", return_value="ruta.pdf") as mock_subir,
         patch("app.main.guardar_precios_cliente"),
     ):
@@ -9984,7 +10028,10 @@ def test_guardar_y_exportar_precios_cargar_foto_pdf_guarda_y_devuelve_archivo():
         patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_EXPORTACION_DE_PRUEBA),
         patch("app.main.listar_articulos", return_value=ARTICULOS_EXPORTACION_DE_PRUEBA),
-        patch("app.main.listar_precios_vigentes_por_cliente", return_value=precios_tras_guardar),
+        patch(
+            "app.main.listar_precios_vigentes_por_cliente",
+            side_effect=[PRECIOS_VIGENTES_DE_PRUEBA, precios_tras_guardar],
+        ),
         patch("app.main.listar_precios_anteriores_por_cliente", return_value=[]),
         patch("app.main.guardar_precios_cliente") as mock_guardar,
     ):
@@ -10005,7 +10052,7 @@ def test_guardar_y_exportar_precios_cargar_foto_pdf_guarda_y_devuelve_archivo():
     assert respuesta.headers["content-type"] == "application/pdf"
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.headers["x-cantidad-guardada"] == "1"
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta=None)
+    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], HOY_DE_PRUEBA, foto_ruta=None)
 
     texto = _texto_sin_leyenda_de_respuesta(respuesta.content)
     assert "Tomate Cherry" in texto
@@ -10044,7 +10091,9 @@ def test_guardar_y_exportar_precios_cargar_foto_excel_sube_el_archivo_y_devuelve
     assert "attachment" in respuesta.headers["content-disposition"]
     assert respuesta.headers["x-cantidad-guardada"] == "1"
     mock_subir.assert_called_once_with(b"ABC", "Día", "jpg", "image/jpeg", prefijo="precios")
-    mock_guardar.assert_called_once_with(1, [{"ficha_id": 901, "precio": 520.0}], foto_ruta="2026-08-16/dia-123-abc.jpg")
+    mock_guardar.assert_called_once_with(
+        1, [{"ficha_id": 901, "precio": 520.0}], HOY_DE_PRUEBA, foto_ruta="2026-08-16/dia-123-abc.jpg"
+    )
 
 
 def test_guardar_y_exportar_precios_cargar_foto_pdf_cliente_invalido_da_400():

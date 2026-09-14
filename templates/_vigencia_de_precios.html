@@ -1,0 +1,131 @@
+{# Desde cuándo rige lo que se está por guardar. UNA SOLA COPIA, incluida por
+   las dos pantallas de carga (manual y foto): el campo, el tilde, el estilo y
+   el JS que los ata viajan juntos. Separados en dos plantillas serían dos
+   reglas, y la que rechaza dejaría de ser la que el servidor cree que rechaza.
+
+   EL SERVIDOR ES EL QUE DECIDE (`_vigencia_de_la_carga`): esto es la forma de
+   cumplirlo cómodo, no la guarda. Un formulario armado a mano no ve nada de
+   esto y el servidor lo rechaza igual.
+
+   AVISO PARA EL QUE ESCRIBA UN TEST de las pantallas que incluyen esto: este
+   bloque trae su propio <style>, así que `split("</style>")[-1]` sobre la
+   pantalla anfitriona corta DE MÁS y se come el marcado de arriba (corolario
+   50). Anclá en la clase o en el atributo — `name="vigente_desde"`,
+   `class="vigencia-tilde"` — que no aparecen ni en prosa ni en CSS. #}
+<style>
+  /* El navegador trae `[hidden] { display: none }` SIN `!important`, así que
+     cualquier `display` propio le gana y el bloque queda a la vista con el
+     atributo puesto. Ya pasó con el tilde de las mermas: la guarda estaba
+     puesta y no hacía nada, y ningún test que lea el HTML puede verlo. */
+  [hidden] { display: none !important; }
+  .vigencia { margin-top: 1rem; }
+  .vigencia > label {
+    display: block;
+    font-size: 0.9rem;
+    color: #444;
+    margin-bottom: 0.25rem;
+  }
+  .vigencia input[type="date"] {
+    width: 100%;
+    padding: 0.65rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  /* El tilde es lo que convierte un reflejo en una decisión, así que se toca
+     con el pulgar: toda la fila es el área tocable, no solo el cuadradito. */
+  .vigencia-tilde {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.6rem;
+    padding: 0.7rem 0.75rem;
+    min-height: 44px;
+    box-sizing: border-box;
+    background: #fff3cd;
+    border: 1px solid #f0d089;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .vigencia-tilde input[type="checkbox"] {
+    width: 1.4rem;
+    height: 1.4rem;
+    flex: 0 0 auto;
+    margin: 0;
+  }
+  .vigencia-tilde label {
+    font-size: 0.9rem;
+    color: #92400e;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+
+<div class="vigencia">
+  <label for="vigente_desde">Rige desde</label>
+  {# `max` es la misma regla que el servidor aplica hacia adelante: el selector
+     no ofrece el futuro y el POST igual lo rechaza. #}
+  <input type="date" id="vigente_desde" name="vigente_desde"
+         value="{{ hoy }}" max="{{ hoy }}" onchange="revisarVigenciaDePrecios()">
+
+  <div class="vigencia-tilde" id="vigencia-tilde" hidden>
+    <input type="checkbox" id="confirmo_vigencia" name="confirmo_vigencia" value="si">
+    <label for="confirmo_vigencia">
+      Sí, este precio rige desde el <span id="vigencia-fecha-texto"></span> y no desde hoy.
+    </label>
+  </div>
+</div>
+
+<script>
+  const VIGENCIA_HOY = {{ hoy|tojson }};
+
+  function _campoVigencia() { return document.getElementById("vigente_desde"); }
+
+  function vigenciaElegida() {
+    const campo = _campoVigencia();
+    return campo && campo.value ? campo.value : VIGENCIA_HOY;
+  }
+
+  function vigenciaConfirmada() {
+    const tilde = document.getElementById("confirmo_vigencia");
+    return tilde ? tilde.checked : false;
+  }
+
+  function revisarVigenciaDePrecios() {
+    const bloque = document.getElementById("vigencia-tilde");
+    const tilde = document.getElementById("confirmo_vigencia");
+    const elegida = vigenciaElegida();
+    const esAnterior = elegida < VIGENCIA_HOY;
+
+    // EL TILDE SE DESTILDA EN CADA CAMBIO DE FECHA, incluso al pasar de una
+    // fecha anterior a otra. Si quedara tildado, la segunda fecha se
+    // confirmaría con el click que se hizo para la primera — que es
+    // exactamente lo que un tilde viene a impedir.
+    if (tilde) { tilde.checked = false; }
+    bloque.hidden = !esAnterior;
+    if (esAnterior) {
+      const [anio, mes, dia] = elegida.split("-");
+      document.getElementById("vigencia-fecha-texto").textContent = dia + "/" + mes + "/" + anio;
+    }
+  }
+
+  // Lo que las pantallas llaman ANTES de mandar. El servidor revalida todo
+  // esto; acá solo se evita que el que carga reciba un 400 crudo por algo que
+  // se puede decir en la misma pantalla.
+  function vigenciaListaParaGuardar() {
+    const elegida = vigenciaElegida();
+    if (elegida > VIGENCIA_HOY) {
+      alert("El precio no puede empezar a regir en el futuro: elegí hoy o una fecha anterior.");
+      return false;
+    }
+    if (elegida < VIGENCIA_HOY && !vigenciaConfirmada()) {
+      alert("Estás cargando un precio que rige desde antes de hoy. Confirmá la fecha con el tilde antes de guardar.");
+      return false;
+    }
+    return true;
+  }
+
+  document.addEventListener("DOMContentLoaded", revisarVigenciaDePrecios);
+</script>

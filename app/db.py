@@ -1469,7 +1469,7 @@ def listar_precios_anteriores_por_cliente(cliente_id: int, fecha_referencia) -> 
         conexion.close()
 
 
-def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str | None = None) -> None:
+def guardar_precios_cliente(cliente_id: int, cambios: list[dict], vigente_desde, foto_ruta: str | None = None) -> None:
     """Agrega a precios_venta_historial SOLO las filas de precio que realmente cambiaron.
 
     cambios: [{"ficha_id", "precio"}, ...] — ya calculado por
@@ -1481,16 +1481,35 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
     propia ficha dentro del INSERT, así no puede quedar apuntando a un
     artículo que no es el de su ficha.
 
-    Cada uno se inserta con vigente_desde = hoy; el precio viejo NUNCA se
-    pisa. Si ya existe una fila de HOY para esa misma ficha -- segunda
-    edición el mismo día -- se actualiza esa en vez de duplicarla.
+    `vigente_desde` ES OBLIGATORIO Y NO TIENE DEFAULT, aunque casi siempre
+    sea hoy. Con un default, el llamador que se olvide de pasarlo escribe
+    con fecha de hoy **en silencio** y el precio retroactivo queda fechado
+    mal: nadie se entera, porque una fila con la fecha de hoy es
+    exactamente lo que se veía antes. Sin default, olvidarlo es un
+    TypeError — la misma razón por la que la guarda de una estructura que
+    gana un campo se pone donde rompe y no donde calla.
+
+    **Y VIENE EN HORA ARGENTINA, calculado por quien llama.** Hasta el
+    14/09 esta consulta decía `CURRENT_DATE`, que es la fecha del SERVIDOR
+    de la base — mientras que todas las lecturas resuelven el vigente con
+    `_hoy_argentina()`. Son dos relojes para el mismo hecho, y con la base
+    en UTC se separan todas las noches a partir de las 21:00 de Argentina:
+    lo cargado a esa hora quedaba fechado MAÑANA y no regía hoy. Ahora la
+    fecha entra como parámetro y la decide el mismo reloj que la lee.
+
+    El precio viejo NUNCA se pisa: cada carga agrega su fila. Si ya existe
+    una para esa misma ficha Y esa misma fecha —segunda edición del mismo
+    día, o una corrección con fecha anterior sobre un día ya cargado— se
+    actualiza esa en vez de duplicarla. Eso último no es un efecto
+    colateral: **es el mecanismo con el que se corrige un precio mal
+    cargado de un día pasado**, y es la única forma de hacerlo sin borrar
+    filas.
 
     foto_ruta es la ruta del archivo (foto/PDF/Excel) del bucket "comandas"
     del que salieron estos precios (ver "Cargar Foto Precios") — None para
-    la Carga Manual, que no tiene archivo. En un conflicto (segunda edición
-    el mismo día), solo se pisa foto_ruta si el nuevo valor no es None: una
-    corrección manual del mismo día no debe borrar la trazabilidad de una
-    carga por archivo anterior de ese mismo día.
+    la Carga Manual, que no tiene archivo. En un conflicto, solo se pisa
+    foto_ruta si el nuevo valor no es None: una corrección manual no debe
+    borrar la trazabilidad de una carga por archivo anterior de esa fecha.
     """
     if not cambios:
         return
@@ -1503,7 +1522,7 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
                     """
                     INSERT INTO precios_venta_historial
                         (ficha_id, articulo_id, cliente_id, precio, vigente_desde, foto_ruta)
-                    SELECT fl.id, fl.articulo_id, %s, %s, CURRENT_DATE, %s
+                    SELECT fl.id, fl.articulo_id, %s, %s, %s, %s
                     FROM fichas_logistica fl
                     WHERE fl.id = %s AND fl.cliente_id = %s
                     ON CONFLICT (ficha_id, vigente_desde)
@@ -1511,7 +1530,7 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
                         precio = EXCLUDED.precio,
                         foto_ruta = COALESCE(EXCLUDED.foto_ruta, precios_venta_historial.foto_ruta)
                     """,
-                    (cliente_id, cambio["precio"], foto_ruta, cambio["ficha_id"], cliente_id),
+                    (cliente_id, cambio["precio"], vigente_desde, foto_ruta, cambio["ficha_id"], cliente_id),
                 )
         conexion.commit()
     finally:
@@ -1527,10 +1546,11 @@ def listar_historial_de_precios_de_ficha(ficha_id: int, cliente_id: int) -> list
     corregir — sin esto se corrige a ciegas.
 
     DEVUELVE `creado_en` AL LADO DE `vigente_desde`, y ésas son dos cosas
-    distintas: cuándo se escribió la fila y desde cuándo rige. Hoy coinciden
-    siempre porque el INSERT usa CURRENT_DATE fijo; el día que se pueda
-    cargar con fecha, la diferencia entre las dos es lo que delata una carga
-    retroactiva, y es la única marca que queda de que la hubo.
+    distintas: cuándo se escribió la fila y desde cuándo rige. **Desde el
+    14/09 se pueden separar de verdad** —la carga elige la fecha— y la
+    diferencia entre las dos es lo que delata una carga retroactiva: es la
+    única marca que queda de que la hubo. (Hasta ese día coincidían siempre
+    porque el INSERT escribía una fecha fija, y esta frase decía eso.)
 
     VA CON cliente_id aunque `ficha_id` ya sea único: la ficha viene de la
     query string, y sin esa condición un id de otro cliente devolvería su

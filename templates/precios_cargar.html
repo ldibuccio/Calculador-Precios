@@ -399,6 +399,9 @@
   <div class="tarjeta" id="seccion-revision" style="display:none;">
     <h2>Revisión de precios cargados</h2>
     <div id="filas-pendientes-revision"></div>
+    {# Acá y no arriba: la fecha se decide mirando lo que se va a guardar, que
+       es el momento en que alguien se acuerda de que el precio es de ayer. #}
+    {% include "_vigencia_de_precios.html" %}
     <button type="button" class="boton-exito" id="boton-guardar-revision" onclick="guardarTodo()">Guardar</button>
     <button type="button" class="boton" id="boton-guardar-y-generar" onclick="mostrarOpcionesGenerarListado()">Guardar y generar listado</button>
     <div id="opciones-generar-listado" style="display:none;">
@@ -662,6 +665,8 @@
     }
 
     function guardarTodo() {
+      if (!vigenciaListaParaGuardar()) { return; }
+
       const formOculto = document.createElement("form");
       formOculto.method = "post";
       formOculto.action = "/precios/cargar";
@@ -675,6 +680,13 @@
       }
 
       agregarCampoOculto("cliente_id", CLIENTE_ID);
+      // Los DOS caminos de esta pantalla mandan la vigencia, y los dos la leen
+      // del mismo lugar. Uno solo con la fecha es un camino que guarda con
+      // fecha de hoy sin que nada avise — la forma de bug que más veces se
+      // repitió acá (una lista de lugares que tienen que hacer todos lo mismo
+      // y uno se olvida).
+      agregarCampoOculto("vigente_desde", vigenciaElegida());
+      if (vigenciaConfirmada()) { agregarCampoOculto("confirmo_vigencia", "si"); }
       pendientes.forEach(function (p) {
         agregarCampoOculto("pendiente_precio_" + p.fichaId, p.precioNuevo);
         agregarCampoOculto("pendiente_original_" + p.fichaId, p.precioOriginal !== null ? p.precioOriginal : "");
@@ -704,6 +716,8 @@
     // con un blob temporal; recién cuando la descarga arrancó se navega a
     // la botonera de Precios con el mensaje de confirmación.
     async function guardarYGenerarListado(tipo) {
+      if (!vigenciaListaParaGuardar()) { return; }
+
       const boton = document.getElementById(tipo === "pdf" ? "boton-generar-pdf" : "boton-generar-excel");
       const textoOriginal = boton ? boton.textContent : "";
       const botonGuardar = document.getElementById("boton-guardar-revision");
@@ -717,6 +731,8 @@
 
       const datos = new URLSearchParams();
       datos.set("cliente_id", CLIENTE_ID);
+      datos.set("vigente_desde", vigenciaElegida());
+      if (vigenciaConfirmada()) { datos.set("confirmo_vigencia", "si"); }
       pendientes.forEach(function (p) {
         datos.set("pendiente_precio_" + p.fichaId, p.precioNuevo);
         datos.set("pendiente_original_" + p.fichaId, p.precioOriginal !== null ? p.precioOriginal : "");

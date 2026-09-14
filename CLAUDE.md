@@ -3778,11 +3778,13 @@ pasaban, y la herramienta estaba ciega en la mitad de las pantallas. **Los
 dos casos del par eran TABLAS.** Un detector puede ser correcto para todo lo
 que sus casos plantados saben expresar y no ver nada afuera de eso.
 
-O sea: el par es necesario y **no** suficiente. Lo que le faltaba es una
-pregunta más, y se hace en el momento de escribir el test: **¿los casos
-plantados se PARECEN a las pantallas donde lo voy a usar?** Si todas las
-pruebas de una herramienta comparten una forma —tabla, un solo cliente, un
-archivo chico—, lo que está probado es esa forma.
+O sea, dicho como corresponde: **un par de casos que no se parecen a donde
+la herramienta se va a usar no prueba nada.** El par es necesario y **no**
+suficiente, y lo que le faltaba es una pregunta más, que se hace en el
+momento de escribir el test: **¿los casos plantados se PARECEN a las
+pantallas donde lo voy a usar?** Si todas las pruebas de una herramienta
+comparten una forma —tabla, un solo cliente, un archivo chico—, lo que está
+probado es esa forma.
 
 **Lo que lo deja ver para siempre no es el arreglo: es el DENOMINADOR.**
 `medir` devuelve ahora `celdas`, e `imprimir` escribe `quebradas: 0 de 160
@@ -4080,3 +4082,76 @@ Y engancha con el 53 por el lado constructivo: un detector que devuelve "los
 dos" siempre es un detector que no puede dar la otra respuesta. La prueba
 barata es la de siempre — **correrlo sobre el caso que tiene que dar "solo
 éste"**, y si no lo da, el problema es la herramienta.
+
+## Corolario 58: un `return_value` contesta TODAS las llamadas, así que el día que aparece una segunda pregunta contesta las dos
+
+Del 14/09. `listar_precios_vigentes_por_cliente` se parcheaba así en los
+tests de "Guardar y generar listado":
+
+```python
+patch("app.main.listar_precios_vigentes_por_cliente", return_value=precios_tras_guardar)
+```
+
+Y estaba **bien**: la ruta la llamaba UNA vez, para armar el archivo con lo
+que quedó después de guardar. El nombre de la variable dice exactamente qué
+es y el test pasaba por la razón correcta.
+
+La carga con fecha de vigencia le agregó una SEGUNDA llamada a la misma
+función, antes de guardar, para saber contra qué comparar. Con un
+`return_value`, las dos preguntas —*¿qué regía ANTES?* y *¿qué quedó
+DESPUÉS?*— reciben la misma respuesta: la de después. Y entonces el diff
+concluye que lo tipeado ya regía, no escribe nada, y el test cae con
+`x-cantidad-guardada == 0`.
+
+**Nadie tocó el test, y el test dejó de decir lo que decía.** Es la familia
+del comentario que envejece en el commit que lo vuelve falso (corolario 28)
+y la del flag derivado que deja de significar su nombre (corolario 39),
+corrida al andamio: **un doble de prueba también AFIRMA algo, y lo que
+afirma vale solo mientras el código le haga las preguntas que tenía cuando
+se escribió.**
+
+**La señal, y se hace en el momento de agregar la llamada**: cuando una
+función gana un llamador nuevo en un camino que ya tenía tests, preguntarse
+**si los mocks de esa función están contestando ahora dos preguntas
+distintas**. No hace falta leerlos todos: basta con mirar si el valor
+parcheado tiene nombre de respuesta a UNA de las dos (`precios_tras_guardar`
+lo tenía escrito en el nombre).
+
+**El arreglo es `side_effect` con la lista en ORDEN**, y de paso el orden
+queda afirmado: `[VIGENTES_ANTES, precios_tras_guardar]` dice que la ruta
+primero resuelve contra qué comparar, después guarda, y recién al final arma
+el archivo. Un `return_value` no puede expresar eso — y por eso tampoco
+puede fallar cuando el orden se rompe.
+
+### Y el hermano del mismo turno: redefinir una constante de módulo no da error
+
+`HOY_DE_PRUEBA` ya existía en `tests/test_app.py` (línea 1478, `2026-08-06`).
+Se definió de nuevo más abajo con otro valor para los tests de precios, y eso
+**le cambió el valor a todos los tests posteriores del archivo**: cayeron tres
+que no tienen nada que ver con precios —Logística, Auditoría y el recálculo de
+alertas—, y el rojo se lee como "lo rompió la función nueva".
+
+Es el corolario 14 (revisar si el nombre que se estrena ya está usado cerca)
+con el agravante de que en un módulo de Python **la segunda definición gana en
+silencio y solo para una parte del archivo**, así que el daño es parcial y no
+se parece a su causa. El `grep` que lo evita cuesta un segundo y es el del
+nombre, no el del concepto:
+
+    grep -n "^HOY_DE_PRUEBA" tests/test_app.py
+
+Y el arreglo es el corolario 8: el nombre lleva el alcance
+(`HOY_DE_CARGA_DE_PRECIOS`), porque ese valor **no es** "hoy" para todo el
+archivo — es el reloj de una pantalla.
+
+### Y una precisión sobre `git checkout --`, que acá SÍ era la herramienta
+
+El 14/09 se escribió que `git checkout --` restaura el canario y se lleva el
+trabajo. Sigue siendo cierto **en el medio de una tanda de canarios**. El
+mismo día, un renombre masivo mal hecho tocó 107 líneas que no eran suyas y
+`git checkout -- tests/test_app.py` fue exactamente lo correcto.
+
+La diferencia no es el comando: es **si todo lo que el archivo tiene sin
+commitear es algo que uno puede rehacer.** En la tanda de canarios no lo era
+—ahí vivía el trabajo del turno—; en el renombre sí, porque los únicos
+cambios del archivo eran los cuatro que se acababan de aplicar con un script.
+Antes de usarlo: `git diff --stat` de ese archivo y preguntarse qué se pierde.

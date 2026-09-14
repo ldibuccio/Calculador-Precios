@@ -5911,11 +5911,111 @@ def _nombre_de_ficha(ficha: dict) -> str:
     return (ficha.get("nombre_cliente") or "").strip() or ficha["articulo_nombre"]
 
 
-def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
-    """Valida cada precio tipeado (número positivo) y arma las filas para calcular_cambios_de_precios."""
+# Los dos campos con los que la carga de precios declara desde cuándo rige
+# lo que se está guardando. Escritos una sola vez acá y usados por las dos
+# pantallas y por las dos funciones de guardado: son parte del contrato
+# entre el HTML y el servidor, y copiados a mano se separan.
+CAMPO_VIGENCIA = "vigente_desde"
+CAMPO_TILDE_VIGENCIA = "confirmo_vigencia"
+
+
+def _vigencia_de_la_carga(form):
+    """Desde cuándo rige lo que se está por guardar. LA GUARDA VIVE ACÁ, donde se ESCRIBE.
+
+    El precio puede regir desde antes de que alguien lo cargue —se pactó
+    el lunes y se tipea el jueves— así que la fecha la elige quien carga.
+    Pero una fecha equivocada no avisa nunca: escribe una fila prolija en
+    un día que no es, y el error recién aparece cuando alguien factura ese
+    día. Por eso van las tres reglas de abajo, y van EN EL SERVIDOR: el
+    `required` del HTML no lo ve un formulario armado a mano, y esta
+    función es la única por la que pasan los dos caminos de carga.
+
+    1. **Sin el campo, es HOY.** Es el caso normal y no pide nada — la
+       fecha por defecto no puede costar un paso.
+    2. **Hacia adelante NO.** Nadie pidió cargar el precio de mañana, y
+       aceptarlo dejaría "vigentes" precios que todavía no rigen: la
+       pantalla mostraría un precio que nadie pactó. Un dedo que tipea el
+       año que viene en el selector de fecha es mucho más probable que un
+       precio futuro de verdad.
+    3. **Hacia atrás, con TILDE.** No se traba, porque la fecha anterior
+       es exactamente lo que esta función viene a habilitar, y avisar solo
+       ya se probó que no alcanza: un cartel que se pasa con el mismo
+       click que ya se iba a hacer no es una revisión. El tilde convierte
+       el reflejo en una decisión sin quitarle el poder al que sabe.
+
+    **NO HAY LÍMITE DE CUÁNTO PARA ATRÁS**, a propósito. Un mes atrás es
+    tan legítimo como tres días —una factura vieja se corrige cuando
+    aparece— y un tope inventado acá frenaría el caso real sin evitar el
+    error de tipeo, que el tilde ya cubre.
+    """
+    hoy = _hoy_argentina()
+    texto = str(form.get(CAMPO_VIGENCIA, "")).strip()
+    if not texto:
+        return hoy
+
+    try:
+        fecha = date.fromisoformat(texto)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="La fecha desde la que rige el precio no es válida.")
+
+    if fecha == hoy:
+        return hoy
+    if fecha > hoy:
+        raise HTTPException(
+            status_code=400,
+            detail="El precio no puede empezar a regir en el futuro: elegí hoy o una fecha anterior.",
+        )
+    if not str(form.get(CAMPO_TILDE_VIGENCIA, "")).strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Estás cargando un precio que rige desde el {fecha.strftime('%d/%m/%Y')}. "
+                "Confirmá que la fecha es correcta antes de guardar."
+            ),
+        )
+    return fecha
+
+
+def _precios_vigentes_a_la_fecha(cliente_id: int, vigente_desde) -> dict:
+    """{ficha_id: precio} con lo que YA REGÍA en la fecha de vigencia elegida.
+
+    Es contra esto que se compara lo tipeado, y NO contra el precio que la
+    pantalla mostró (que es el de hoy). Ver el docstring de
+    `calcular_cambios_de_precios`: comparar contra el de hoy hace que una
+    corrección retroactiva al mismo valor que rige hoy se descarte como
+    "no cambió nada", sin escribir nada y sin decirlo.
+
+    Con fecha de hoy devuelve exactamente lo que la pantalla mostró, así
+    que el camino normal no cambia — la diferencia solo existe cuando la
+    fecha es anterior.
+    """
+    return {
+        precio["ficha_id"]: precio["precio"]
+        for precio in listar_precios_vigentes_por_cliente(cliente_id, vigente_desde)
+    }
+
+def _validar_precios(filas: list[dict], vigentes_a_la_fecha: dict) -> tuple[str | None, list[dict]]:
+    """Valida cada precio tipeado (número positivo) y arma las filas para calcular_cambios_de_precios.
+
+    `vigentes_a_la_fecha` es {ficha_id: precio} a la FECHA DE VIGENCIA
+    ELEGIDA (ver `_precios_vigentes_a_la_fecha`), y es lo único contra lo
+    que se compara.
+
+    **EL `original_texto` DEL FORMULARIO YA NO ENTRA EN LA COMPARACIÓN**, y
+    eso es el arreglo: ese campo es el precio que la PANTALLA MOSTRÓ, o
+    sea el vigente HOY. Con una fecha anterior elegida, los dos valores se
+    separan y el del formulario contesta otra pregunta. Sigue viajando
+    porque la pantalla de revisión de Carga Foto lo muestra ("Precio
+    vigente: $X"), pero mostrar y decidir son dos cosas.
+
+    El parámetro NO tiene default a propósito: con uno, el llamador que se
+    olvide vuelve a comparar contra lo que venía en el formulario y la
+    corrección retroactiva se pierde en silencio, que es exactamente el
+    bug que esto viene a cerrar.
+    """
     filas_validas = []
     for fila in filas:
-        precio_original = float(fila["original_texto"]) if fila["original_texto"] else None
+        precio_vigente = vigentes_a_la_fecha.get(fila["ficha_id"])
 
         precio_nuevo = None
         if fila["nuevo_texto"]:
@@ -5927,7 +6027,11 @@ def _validar_precios(filas: list[dict]) -> tuple[str | None, list[dict]]:
                 return f'El precio de "{fila["articulo_nombre"]}" tiene que ser mayor a 0.', []
 
         filas_validas.append(
-            {"ficha_id": fila["ficha_id"], "precio_original": precio_original, "precio_nuevo": precio_nuevo}
+            {
+                "ficha_id": fila["ficha_id"],
+                "precio_vigente_a_la_fecha": float(precio_vigente) if precio_vigente is not None else None,
+                "precio_nuevo": precio_nuevo,
+            }
         )
     return None, filas_validas
 
@@ -6009,6 +6113,7 @@ def ver_cargar_precios(request: Request, cliente_id: str | None = None):
             "clientes": clientes,
             "cliente_id": cliente_id,
             "fichas_cliente": fichas_cliente,
+            "hoy": _hoy_argentina().isoformat(),
             **contexto_negociacion,
         },
     )
@@ -6085,14 +6190,22 @@ def _guardar_pendientes_carga_manual(form) -> tuple[dict, list[dict]]:
     # navegador tenía el pendiente cargado) se ignora en vez de romper.
     filas_crudas = [fila for fila in filas_crudas if fila["articulo_id"] is not None]
 
-    error, filas_para_diff = _validar_precios(filas_crudas)
+    # La fecha primero: decide contra qué se compara todo lo de abajo.
+    vigente_desde = _vigencia_de_la_carga(form)
+
+    try:
+        vigentes = _precios_vigentes_a_la_fecha(cliente_id, vigente_desde)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    error, filas_para_diff = _validar_precios(filas_crudas, vigentes)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
     cambios = calcular_cambios_de_precios(filas_para_diff)
 
     try:
-        guardar_precios_cliente(cliente_id, cambios)
+        guardar_precios_cliente(cliente_id, cambios, vigente_desde)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar los precios: {error_db}") from error_db
 
@@ -6365,6 +6478,7 @@ async def leer_foto_precios(request: Request, cliente_id: str = Form(...), archi
             "archivo_preview": archivo_preview,
             "nombre_archivo": archivo.filename,
             "error": None,
+            "hoy": _hoy_argentina().isoformat(),
         },
     )
 
@@ -6425,7 +6539,14 @@ def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
             }
         )
 
-    error, filas_para_diff = _validar_precios(filas_crudas)
+    vigente_desde = _vigencia_de_la_carga(form)
+
+    try:
+        vigentes = _precios_vigentes_a_la_fecha(cliente_id, vigente_desde)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    error, filas_para_diff = _validar_precios(filas_crudas, vigentes)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
@@ -6451,7 +6572,7 @@ def _guardar_pendientes_carga_foto(form) -> tuple[dict, list[dict]]:
             foto_ruta = None
 
     try:
-        guardar_precios_cliente(cliente_id, cambios, foto_ruta=foto_ruta)
+        guardar_precios_cliente(cliente_id, cambios, vigente_desde, foto_ruta=foto_ruta)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar los precios: {error_db}") from error_db
 
