@@ -4143,6 +4143,73 @@ Y el arreglo es el corolario 8: el nombre lleva el alcance
 (`HOY_DE_CARGA_DE_PRECIOS`), porque ese valor **no es** "hoy" para todo el
 archivo — es el reloj de una pantalla.
 
+### Cuando un canario se va igual a SEGUNDO PLANO: no se lo mata, se lo espera
+
+Del 14/09, y es la continuación práctica de la regla de arriba. La regla dice
+*en primer plano, siempre*, y el 14/09 **se fue a segundo plano solo**: la
+herramienta lo movió ahí al pasar su tiempo de espera, con diez canarios por
+delante y la suite entera en cada uno.
+
+Lo que hay que hacer ahí no es lo que el reflejo pide, y son tres cosas:
+
+1. **NO matarlo.** Matarlo deja la avería puesta —el `finally` no corre con
+   un `SIGTERM` en el momento equivocado— y eso ya pasó una vez. Un canario a
+   medias en segundo plano es molesto; un canario muerto a la mitad deja el
+   repo roto sin diff sospechoso.
+2. **No correr NADA contra el árbol mientras tanto.** Todo resultado de ahí
+   es inválido y no hay forma de saber cuál. Lo único que sí se puede hacer
+   es trabajo que no toca el repo: redactar, o —como esa vez— levantar una
+   base de prueba y verificar una consulta contra `db/esquema_completo.sql`,
+   que no comparte un solo archivo con lo que el canario está mutando.
+3. **Esperarlo por su PID**, no por un reloj: `tail --pid=<PID> -f /dev/null`
+   bloquea hasta que el proceso termina de verdad y no necesita adivinar
+   cuánto falta.
+
+**Y al terminar se mira qué quedó ESCRITO**, que es la parte que se olvida
+porque el canario "salió bien": cero `.bak` sueltos, y un `grep` de cada
+mutación para confirmar que ninguna quedó puesta. Que el comando haya salido
+con código 0 no dice nada sobre el estado del árbol — es literalmente la
+regla del editor de Supabase que escribe a medias, aplicada al repo.
+
+### Un chequeo que se CUENTA A SÍ MISMO no puede contestar "ya no está"
+
+Del 14/09, y no es de este proyecto: es de cualquier espera.
+
+Para esperar al canario de arriba se armó un monitor con esta condición:
+
+```
+until ! pgrep -f "canario_b.py" > /dev/null; do sleep 5; done
+```
+
+**Nunca sale.** El `until` corre adentro de un bash cuya LÍNEA DE COMANDO
+contiene el texto `canario_b.py`, así que `pgrep -f` se encuentra a sí mismo:
+la condición es verdadera para siempre, el canario podía estar muerto hacía
+diez minutos y el loop seguía girando igual.
+
+Y el modo de falla es el peor de los baratos: **se ve idéntico a "todavía
+está corriendo".** No hay error, el proceso existe de verdad, y el que espera
+concluye lo contrario de lo que pasa. La espera no falla ruidosamente —
+simplemente no termina nunca, que es lo que uno esperaría de un proceso que
+sigue vivo.
+
+**La señal, y se aplica sin haberlo sufrido**: si la condición de espera
+BUSCA UN TEXTO, preguntarse si ese texto está en la línea de comando del que
+busca. Con `pgrep -f`, con `ps | grep`, con un `grep` sobre una lista de
+procesos: las tres se cuentan a sí mismas.
+
+Las dos formas que sí contestan:
+
+- **Por PID concreto**: `tail --pid=<PID> -f /dev/null`. No hay patrón que
+  pueda matchear de más.
+- **Si hay que buscar por nombre**, excluir el propio proceso
+  (`pgrep -f X | grep -v $$`) o usar `pgrep -x` sobre el ejecutable, que
+  mira el comando y no los argumentos.
+
+Es la familia del corolario 47 —un número que no puede dar el otro valor— con
+el mecanismo corrido a la espera: allá el cero no podía crecer, **acá la
+condición no puede volverse falsa.** Y como siempre, lo que lo separa de una
+espera sana es una sola pregunta: *¿esto que estoy contando me incluye?*
+
 ### Y una precisión sobre `git checkout --`, que acá SÍ era la herramienta
 
 El 14/09 se escribió que `git checkout --` restaura el canario y se lleva el

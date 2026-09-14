@@ -1,40 +1,51 @@
--- ¿Hay precios fechados con el reloj del SERVIDOR en vez del argentino?
+-- ¿Quedaron filas de vigencia fechadas con el reloj del SERVIDOR de la base?
 --
--- Hasta el 14/09 el INSERT de precios_venta_historial decía CURRENT_DATE, que
--- es la fecha del servidor de la base, mientras que TODAS las lecturas
--- resuelven el vigente con la fecha argentina. Son dos relojes para el mismo
--- hecho: con la base en UTC se separan a partir de las 21:00 de Argentina, y
--- lo cargado a esa hora quedaba fechado MAÑANA — guardado sin error y sin
--- regir hoy.
+-- Hasta el 14/09 los INSERT de las tres tablas de historial decían
+-- CURRENT_DATE (fecha del servidor) y las lecturas resuelven el vigente con
+-- la fecha ARGENTINA. Con la base en UTC se separan a partir de las 21:00 de
+-- Argentina: lo cargado a esa hora quedaba fechado MAÑANA, sin error y sin
+-- regir el día en que se cargó.
 --
--- Devuelve CONTEOS y no una lista: así siempre vuelve una fila y el cero se
--- ve. Con la población al lado (precios_total) y un testigo de actividad
--- (ultimo_precio_cargado), para que un cero sobre una base quieta no se lea
--- como "acá no hay problema".
+-- LA COLUMNA QUE DECIDE ES `fechadas_adelante`. Las dos de contexto solo
+-- difieren entre las 21:00 y la medianoche, así que verlas iguales no prueba
+-- nada. `fechadas_atras` en PRECIOS es la carga retroactiva, legítima desde
+-- el 14/09; en las otras dos no hay forma de cargar con fecha, así que ahí
+-- cualquier número distinto de cero es otra cosa.
 --
--- VERIFICADA CONTRA `db/esquema_completo.sql` EN POSTGRES 16, con el caso
--- plantado (una fila cargada 22:00 de Argentina y fechada al día siguiente)
--- y con el control vacío: da 0 sobre la base limpia y 1 con el caso puesto.
--- Un cero sin eso no se distingue de una consulta que no sabe ver el caso.
---
--- `fechados_atras` es la carga RETROACTIVA, que desde el 14/09 es legítima
--- (ver /precios/cargar): si crece, no es un bug — es la función nueva.
---
--- LA COLUMNA QUE DECIDE ES `fechados_adelante`. Las dos de arriba son el
--- contexto del momento en que se corre: solo difieren entre las 21:00 y la
--- medianoche de Argentina, así que verlas iguales no prueba nada.
+-- El `values` + `left join` está para que una tabla VACÍA devuelva su fila en
+-- cero en vez de desaparecer. Verificada contra db/esquema_completo.sql en
+-- Postgres 16, con el caso plantado en las tres y con el control vacío.
+with tablas (tabla) as (
+    values ('precios_venta_historial'),
+           ('envases_costo_historial'),
+           ('clientes_parametros_historial')
+),
+filas as (
+    select 'precios_venta_historial' as tabla, vigente_desde, creado_en
+    from precios_venta_historial
+    union all
+    select 'envases_costo_historial', vigente_desde, creado_en
+    from envases_costo_historial
+    union all
+    select 'clientes_parametros_historial', vigente_desde, creado_en
+    from clientes_parametros_historial
+)
 select
-    (now() at time zone 'America/Argentina/Buenos_Aires')::date   as hoy_argentina,
-    current_date                                                  as hoy_del_servidor,
-    count(*)                                                      as precios_total,
+    t.tabla,
+    (now() at time zone 'America/Argentina/Buenos_Aires')::date as hoy_argentina,
+    current_date                                                as hoy_del_servidor,
+    count(f.vigente_desde)                                      as filas_total,
     count(*) filter (
-        where vigente_desde
-              > (creado_en at time zone 'America/Argentina/Buenos_Aires')::date
-    )                                                             as fechados_adelante,
+        where f.vigente_desde
+              > (f.creado_en at time zone 'America/Argentina/Buenos_Aires')::date
+    )                                                           as fechadas_adelante,
     count(*) filter (
-        where vigente_desde
-              < (creado_en at time zone 'America/Argentina/Buenos_Aires')::date
-    )                                                             as fechados_atras,
-    max((creado_en at time zone 'America/Argentina/Buenos_Aires')::date)
-                                                                  as ultimo_precio_cargado
-from precios_venta_historial;
+        where f.vigente_desde
+              < (f.creado_en at time zone 'America/Argentina/Buenos_Aires')::date
+    )                                                           as fechadas_atras,
+    max((f.creado_en at time zone 'America/Argentina/Buenos_Aires')::date)
+                                                                as ultima_carga
+from tablas t
+left join filas f on f.tabla = t.tabla
+group by t.tabla
+order by t.tabla;
