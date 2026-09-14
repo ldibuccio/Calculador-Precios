@@ -31,8 +31,15 @@ def test_el_quiebre_se_mide_contra_el_LINE_HEIGHT_REAL_de_cada_celda():
     que hace un mock de navegador (corolario 40): con un número escrito a
     mano el detector seguiría devolviendo listas, solo que mal.
     """
-    assert 'getComputedStyle(celda).lineHeight' in _MEDICION
+    # Las dos mitades por separado: el 14/09 el `getComputedStyle(celda)` se
+    # sacó a una variable para poder leer también el padding, y un assert
+    # sobre la expresión pegada cayó por un refactor que no cambió la regla.
+    assert "getComputedStyle(celda)" in _MEDICION
+    assert "lineHeight" in _MEDICION
     assert "linea * opciones.tolerancia" in _MEDICION
+    # Y el relleno se descuenta antes de comparar: un botón de 44px mide el
+    # doble que su línea sin haber envuelto nada.
+    assert "paddingTop" in _MEDICION and "paddingBottom" in _MEDICION
     # La tolerancia existe para que el padding no cuente como quiebre, y no
     # puede ser 1.0: con eso TODA celda daría quebrada y el detector no
     # distinguiría nada — sería un número que no puede dar distinto.
@@ -146,4 +153,95 @@ def test_sin_filas_NO_explota_y_lo_dice():
 
     assert medicion["filas"] == 0
     assert medicion["alto_fila"] is None
+    assert medicion["quebradas"] == []
+
+
+# --- La celda que no es un <td>: las pantallas de TARJETAS -----------------
+
+_TARJETAS = """
+<style>
+  body { margin: 0; font: 16px/20px sans-serif; }
+  .ficha { padding: 8px 0; }
+  .nombre { margin: 0; font-weight: 600; }
+  .vigencia { display: flex; justify-content: space-between; gap: 8px; }
+  .rango { min-width: 0; }
+</style>
+<div class="ficha">
+  <p class="nombre">PRIMERA_CELDA</p>
+  <div class="vigencia"><span class="precio">$ 12.345</span><span class="rango">01/07/2026 &rarr; sigue vigente</span></div>
+</div>
+<div class="ficha">
+  <p class="nombre">Otra</p>
+  <div class="vigencia"><span class="precio">$ 900</span><span class="rango">05/09/2026 &rarr; sigue vigente</span></div>
+</div>
+"""
+
+
+def test_en_una_pantalla_de_TARJETAS_tambien_detecta_el_quiebre():
+    """Mirando solo "td, th", toda pantalla sin tabla daba `quebradas: 0` SIEMPRE.
+
+    Es el corolario 47 adentro de la herramienta que salió del corolario 47:
+    un cero que no puede dar distinto de cero. Se descubrió el 14/09 midiendo
+    Precios por Período —un nombre plantado hizo subir el alto de 69,8 a
+    123,8px, o sea que envolvió, y `quebradas` siguió en 0— y en este
+    proyecto la mayoría de las pantallas de celular son tarjetas.
+    """
+    medicion = _medir(_TARJETAS.replace("PRIMERA_CELDA", _ANCHA), ancho=390, selector_filas=".ficha")
+
+    assert medicion["quebradas"], "el detector no ve el quiebre fuera de una tabla"
+    assert medicion["quebradas"][0].startswith("palabra larga")
+
+
+def test_en_una_pantalla_de_TARJETAS_lo_que_entra_NO_se_marca():
+    """La otra mitad: sin ésta, un detector que marcara todo pasa la de arriba."""
+    medicion = _medir(_TARJETAS.replace("PRIMERA_CELDA", "Banana"), ancho=390, selector_filas=".ficha")
+
+    assert medicion["quebradas"] == []
+    assert medicion["filas"] == 2
+
+
+def test_la_medicion_dice_CONTRA_CUANTAS_CELDAS_conto():
+    """Sin el denominador, "quebradas: 0" no distingue ninguna envolvió de no se miró ninguna.
+
+    Las dos se imprimen igual y significan lo contrario. Es el mismo
+    denominador que condena una heurística con más hallazgos que población,
+    usado acá para saber si la medición llegó a mirar algo.
+    """
+    tarjetas = _medir(_TARJETAS.replace("PRIMERA_CELDA", "Banana"), ancho=390, selector_filas=".ficha")
+    tabla = _medir(_PAGINA.replace("PRIMERA_CELDA", "corta"), ancho=390)
+
+    assert tarjetas["celdas"] > 0, "una pantalla de tarjetas tiene que contar celdas miradas"
+    assert tabla["celdas"] == 4  # dos filas de dos <td>: las tablas se miden igual que antes
+
+
+def test_una_fila_SIN_NADA_ADENTRO_cuenta_cero_celdas_y_no_finge_que_miro():
+    medicion = _medir(
+        '<style>.f{height:20px}</style><div class="f"></div><div class="f"></div>',
+        ancho=390, selector_filas=".f",
+    )
+
+    assert medicion["filas"] == 2
+    assert medicion["celdas"] == 0
+    assert medicion["quebradas"] == []
+
+
+def test_un_BOTON_de_44px_no_cuenta_como_quebrado():
+    """El mínimo para tocar con el pulgar es regla de este proyecto, no una excepción.
+
+    Sin descontar el relleno, toda pantalla con botones sale llena de
+    quebradas que están bien — y un detector que marca lo que está bien no se
+    vuelve a mirar (corolario 53). Medido el 14/09: en Precios por Período
+    marcaba "Ver" y "Exportar Excel".
+    """
+    pagina = """
+    <style>
+      body { margin: 0; font: 16px/20px sans-serif; }
+      .fila { padding: 0; }
+      .boton { display: block; padding: 13px 0; font-size: 16px; }
+    </style>
+    <div class="fila"><a class="boton">Ver</a></div>
+    """
+    medicion = _medir(pagina, ancho=390, selector_filas=".fila")
+
+    assert medicion["celdas"] == 1, "tiene que haber mirado el botón"
     assert medicion["quebradas"] == []

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Precios por período</title>
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: #f5f5f5;
+    color: #222;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
+  .tarjeta {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+  .error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+  }
+  .ayuda {
+    color: #888;
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  form label {
+    display: block;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  form select, form input[type="date"] {
+    width: 100%;
+    padding: 0.65rem;
+    margin-top: 0.25rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  button, .boton {
+    margin-top: 1.1rem;
+    width: 100%;
+    padding: 0.8rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  .boton-secundario { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+  .vacio { color: #888; font-style: italic; }
+  /* Una ficha es un bloque con su nombre arriba y sus vigencias debajo: el
+     nombre es lo que se busca y las vigencias lo que se lee después. En
+     390px no hay ancho para poner el nombre al lado del precio. */
+  .ficha {
+    padding: 0.7rem 0;
+    border-bottom: 1px solid #eee;
+  }
+  .ficha:last-child { border-bottom: none; }
+  .ficha .nombre {
+    margin: 0 0 0.35rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .vigencia {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.15rem 0;
+  }
+  .vigencia .precio { font-weight: 700; font-size: 1.02rem; }
+  /* Sin el min-width el rango no cede y empuja al precio fuera de la
+     pantalla — el mismo caso del input adentro de un flex. */
+  .vigencia .rango {
+    min-width: 0;
+    color: #555;
+    font-size: 0.85rem;
+    text-align: right;
+  }
+  /* El "sin precio" NO se esconde ni se manda al final: se factura por
+     nombre, así que va en su lugar alfabético, marcado para que no se
+     pase de largo. */
+  .sin-precio {
+    margin: 0;
+    color: #92400e;
+    background: #fff3cd;
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+  .aviso-sin-precio {
+    background: #fff3cd;
+    color: #92400e;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+  {% set barra_sector = "comercial" %}
+  {% set barra_titulo = "Precios por período" %}
+  {% set barra_atras = "/precios" %}
+  {% include "_barra_navegacion.html" %}
+
+  <div class="tarjeta">
+    <form method="get" action="/precios/vigencias" id="form-vigencias">
+      <label for="cliente_id">Cliente</label>
+      <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
+        <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="desde">Desde</label>
+      <input type="date" id="desde" name="desde" value="{{ desde }}">
+
+      <label for="hasta">Hasta</label>
+      <input type="date" id="hasta" name="hasta" value="{{ hasta }}">
+
+      <button type="submit">Ver</button>
+    </form>
+  </div>
+
+  {% if rango_error %}
+  <div class="error">{{ rango_error }}</div>
+  {% endif %}
+
+  {% if not cliente_id %}
+  <div class="tarjeta">
+    <p class="vacio">Elegí un cliente y el período que vas a facturar.</p>
+  </div>
+  {% else %}
+
+  {% if filas %}
+  <div class="tarjeta">
+    <a class="boton" href="/precios/vigencias/exportar-excel?cliente_id={{ cliente_id }}&desde={{ desde }}&hasta={{ hasta }}">Exportar Excel</a>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h2>{{ cliente_nombre }} · del {{ desde_mostrar }} al {{ hasta_mostrar }}</h2>
+    {% if filas %}
+    <p class="ayuda">Cada renglón dice desde cuándo y hasta cuándo rigió ese precio. Para facturar un día, buscá el renglón que lo contenga.</p>
+    {% if sin_precio %}
+    <div class="aviso-sin-precio">
+      {% if sin_precio == 1 %}1 ficha no tiene precio{% else %}{{ sin_precio }} fichas no tienen precio{% endif %}
+      en este período: si se {% if sin_precio == 1 %}factura{% else %}facturan{% endif %}, no hay con qué.
+    </div>
+    {% endif %}
+    {% for fila in filas %}
+    <div class="ficha">
+      <p class="nombre">{{ fila.nombre }}</p>
+      {% if fila.vigencias %}
+      {% for v in fila.vigencias %}
+      <div class="vigencia">
+        <span class="precio">{{ v.precio|moneda }}</span>
+        <span class="rango">{{ v.desde_texto }} → {{ v.hasta_texto }}</span>
+      </div>
+      {% endfor %}
+      {% else %}
+      <p class="sin-precio">Sin precio en el período</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="vacio">{{ cliente_nombre }} no tiene ninguna ficha cargada.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+{% include "_pie_version.html" %}
+</body>
+</html>

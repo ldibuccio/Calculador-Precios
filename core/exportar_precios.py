@@ -1,4 +1,13 @@
-"""Genera la Lista de Precios en PDF y Excel — puro, sin tocar la base ni la red.
+"""Genera los archivos de precios — puro, sin tocar la base ni la red.
+
+Son DOS documentos distintos, para dos lectores distintos, y por eso están
+en el mismo módulo: comparten el formato de la plata y el de la unidad, que
+escritos dos veces se separan.
+
+- La **Lista de Precios** (PDF y Excel) es la que se le manda AL CLIENTE:
+  los precios vigentes a una fecha, con el nombre que el cliente usa.
+- El **listado de vigencias** (Excel) es interno, para FACTURAR PARA ATRÁS:
+  desde cuándo y hasta cuándo rigió cada precio en un período.
 
 Recibe los datos ya armados (ver "filas" en cada función) y devuelve los
 bytes del archivo. No sabe nada de clientes, fichas ni de la base — eso lo
@@ -359,6 +368,114 @@ def generar_excel_lista_precios(
     hoja.column_dimensions[get_column_letter(1)].width = 24
     hoja.column_dimensions[get_column_letter(2)].width = 17
     hoja.column_dimensions[get_column_letter(3)].width = 17
+
+    buffer = BytesIO()
+    libro.save(buffer)
+    return buffer.getvalue()
+
+
+AMARILLO_SIN_PRECIO_HEX = "FFF3CD"
+MARRON_SIN_PRECIO_HEX = "92400E"
+TEXTO_SIGUE_VIGENTE = "sigue vigente"
+TEXTO_SIN_PRECIO = "SIN PRECIO"
+
+
+def generar_excel_vigencias(
+    cliente_nombre: str, desde: date, hasta: date, filas: list[dict], nombre_empresa: str
+) -> bytes:
+    """El listado de vigencias de un período, para facturar para atrás.
+
+    filas: [{"nombre", "vigencias": [{"precio", "desde_texto", "hasta_texto"}, ...]}, ...]
+    ya ordenadas por quien llama. Una ficha SIN vigencias en el período se
+    escribe igual, con "SIN PRECIO" en amarillo: si desaparece, el que
+    factura no tiene cómo darse cuenta de que esa ficha existe y no tiene
+    precio con qué facturarse — que es justamente el caso que hay que ver.
+
+    UNA FILA POR VIGENCIA, CON EL NOMBRE DE LA FICHA REPETIDO EN CADA UNA.
+    No se combinan celdas ni se deja el nombre en blanco en las filas de
+    abajo: quien factura filtra por producto, y una celda vacía se queda
+    afuera del filtro — la fila existiría en la planilla y no aparecería en
+    la búsqueda, que es peor que no estar.
+
+    "Hasta" dice `sigue vigente` con todas las letras en vez de quedar
+    vacía. Una celda vacía se lee como un dato que falta; acá el dato no
+    falta — el precio no terminó.
+
+    LAS FECHAS LLEGAN YA ESCRITAS (`desde_texto`/`hasta_texto`), no se
+    formatean acá: son las mismas que muestra la pantalla. Formateadas en
+    cada lado serían dos reglas, y el que compara la planilla contra la
+    pantalla vería dos fechas para el mismo hecho el día que una cambie.
+    """
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Vigencias"
+
+    borde_fino = Side(style="thin", color="000000")
+    borde = Border(left=borde_fino, right=borde_fino, top=borde_fino, bottom=borde_fino)
+    centrado = Alignment(horizontal="center", vertical="center")
+    fuente_encabezado = Font(bold=True, size=11)
+    relleno_amarillo = PatternFill(
+        start_color=AMARILLO_SIN_PRECIO_HEX, end_color=AMARILLO_SIN_PRECIO_HEX, fill_type="solid"
+    )
+    fuente_sin_precio = Font(bold=True, color=MARRON_SIN_PRECIO_HEX)
+
+    # El título lleva la empresa y el cliente: el mismo período de dos
+    # empresas o de dos clientes son cuatro planillas que se ven iguales.
+    hoja.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    celda_titulo = hoja.cell(
+        row=1,
+        column=1,
+        value=f"Precios por período — {nombre_empresa} · {cliente_nombre} · "
+        f"del {desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}",
+    )
+    celda_titulo.alignment = centrado
+    celda_titulo.font = fuente_encabezado
+    for columna in range(1, 5):
+        hoja.cell(row=1, column=columna).border = borde
+
+    for columna, encabezado in enumerate(("Producto", "Precio", "Desde", "Hasta"), start=1):
+        celda = hoja.cell(row=2, column=columna, value=encabezado)
+        celda.font = fuente_encabezado
+        celda.border = borde
+
+    fila_actual = 3
+    for fila in filas:
+        vigencias = fila.get("vigencias") or []
+        if not vigencias:
+            celda_nombre = hoja.cell(row=fila_actual, column=1, value=fila["nombre"])
+            celda_nombre.border = borde
+            celda_sin = hoja.cell(row=fila_actual, column=2, value=TEXTO_SIN_PRECIO)
+            celda_sin.border = borde
+            celda_sin.fill = relleno_amarillo
+            celda_sin.font = fuente_sin_precio
+            for columna in (3, 4):
+                hoja.cell(row=fila_actual, column=columna).border = borde
+            fila_actual += 1
+            continue
+
+        for vigencia in vigencias:
+            celda_nombre = hoja.cell(row=fila_actual, column=1, value=fila["nombre"])
+            celda_nombre.border = borde
+
+            celda_precio = hoja.cell(row=fila_actual, column=2, value=float(vigencia["precio"]))
+            celda_precio.number_format = FORMATO_CONTABLE
+            celda_precio.border = borde
+
+            celda_desde = hoja.cell(row=fila_actual, column=3, value=vigencia["desde_texto"])
+            celda_desde.border = borde
+
+            celda_hasta = hoja.cell(row=fila_actual, column=4, value=vigencia["hasta_texto"])
+            celda_hasta.border = borde
+
+            fila_actual += 1
+
+    hoja.column_dimensions[get_column_letter(1)].width = 34
+    hoja.column_dimensions[get_column_letter(2)].width = 16
+    hoja.column_dimensions[get_column_letter(3)].width = 14
+    hoja.column_dimensions[get_column_letter(4)].width = 14
+    # Congelar el encabezado: con 43 fichas y 63 cambios, la planilla se
+    # scrollea y sin esto no se sabe qué columna se está mirando.
+    hoja.freeze_panes = "A3"
 
     buffer = BytesIO()
     libro.save(buffer)

@@ -3501,6 +3501,14 @@ usara para cotizar HOY, un precio huérfano no le faltaba a nadie. Con
 facturación retroactiva, cada fila desconectada es una pregunta que el sistema
 no puede contestar.
 
+Y esa condición **ya no es hipotética**: el 14/09 se construyó
+`/precios/vigencias`, que es la pantalla de facturar para atrás. Un precio
+huérfano no aparece ahí —la consulta pide `ficha_id IS NOT NULL`, porque sin
+ficha no hay a qué producto pegarlo— así que la ficha borrada se ve como una
+que nunca tuvo precio. Eso NO sube la prioridad por sí solo: sigue haciendo
+falta el número de `db/fichas_borradas_y_precios_huerfanos.sql`, y hasta
+que alguien lo corra el tamaño no se sabe.
+
 ## Corolario 51: un `except Exception` convierte un error de ARRANQUE en una degradación permanente y silenciosa
 
 Del 12/09. `_compras_del_renglon_para_devolucion` se traga el error a
@@ -3748,6 +3756,48 @@ El módulo **no lo adivina**: hay que mirar si la pantalla tiene alguno y, si
 lo tiene, medir la tabla contra su caja (`tabla.scrollWidth −
 caja.clientWidth`). Está en el docstring de `medir`, y se repite acá porque
 el que va a creerle a ese cero es el que leyó este archivo y no el módulo.
+
+### El segundo límite, y estuvo DOS DÍAS sin que nadie lo viera (14/09)
+
+El detector miraba `fila.querySelectorAll("td, th")`. En una pantalla de
+**tarjetas** —que en celular son la mayoría de este proyecto— eso no
+devuelve nada, así que `quebradas` salía **0 sin haber inspeccionado una
+sola celda**. El cero del corolario 47, adentro de la herramienta escrita
+para el corolario 47, escrito el mismo día que el 53.
+
+Se destapó midiendo Precios por Período: plantado un nombre de ficha que no
+entra en 390px, el alto de la tarjeta subió **de 69,8 a 123,8px** —envolvió,
+no hay otra forma de que suba— y `quebradas` siguió en **0**. El alto y el
+detector decían cosas incompatibles en la misma línea, y sin el alto al lado
+no había nada que se viera raro.
+
+**Y la parte que corrige lo que el 53 dice de sí mismo**: el 53 afirma que
+el par de casos plantados —el que tiene que encontrar y el que no— es *"lo
+único que lo separa de una herramienta rota"*. El par estaba puesto, los dos
+pasaban, y la herramienta estaba ciega en la mitad de las pantallas. **Los
+dos casos del par eran TABLAS.** Un detector puede ser correcto para todo lo
+que sus casos plantados saben expresar y no ver nada afuera de eso.
+
+O sea: el par es necesario y **no** suficiente. Lo que le faltaba es una
+pregunta más, y se hace en el momento de escribir el test: **¿los casos
+plantados se PARECEN a las pantallas donde lo voy a usar?** Si todas las
+pruebas de una herramienta comparten una forma —tabla, un solo cliente, un
+archivo chico—, lo que está probado es esa forma.
+
+**Lo que lo deja ver para siempre no es el arreglo: es el DENOMINADOR.**
+`medir` devuelve ahora `celdas`, e `imprimir` escribe `quebradas: 0 de 160
+celdas` — y `SIN CELDAS QUE MIRAR` cuando no miró ninguna. Es el corolario
+45 (una medición que devuelve un total trae al lado el total esperado)
+aplicado a la herramienta de medir: sin el denominador, *"ninguna envolvió"*
+y *"no se miró ninguna"* se imprimen **exactamente igual** y significan lo
+contrario.
+
+**Y de yapa, el detector marcaba lo que estaba bien**: un botón de 44px
+—el mínimo para tocarlo con el pulgar, que es regla de este proyecto— mide
+el doble que su `line-height` sin haber envuelto nada, así que la medición
+de página entera salía llena de "quebradas" que eran botones. Comparar
+descontando el relleno lo arregla, y es el 53 al pie de la letra: un
+detector que marca todo se ve igual de trabajador que uno que funciona.
 
 ## Corolario 54: el total DIMENSIONA, la magnitud unitaria DETECTA
 

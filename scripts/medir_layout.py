@@ -27,6 +27,13 @@ sale creerle.
 Y de ahí sale la regla de uso: **el alto solo nunca alcanzó.** Cualquier
 medición de layout de acá en adelante devuelve los tres números juntos.
 
+Y `quebradas` viene con su DENOMINADOR (`celdas`), que es el cuarto y llegó
+el 14/09: el detector miraba solo `td, th`, así que en una pantalla de
+TARJETAS devolvía `0` sin haber inspeccionado una sola celda. Un cero sin
+decir contra cuántas se contó no distingue "ninguna envolvió" de "no se miró
+ninguna", y las dos se imprimen igual. `imprimir` escribe `quebradas: 0 de
+160 celdas`, y `SIN CELDAS QUE MIRAR` cuando el número es de la nada.
+
 La tercera pieza de ese rediseño —compactar la tarjeta— se descartó con esto:
 ganaba 1,2 filas rompiendo texto con los nombres de hoy y era PEOR que el
 diseño vigente con nombres largos. El largo de los nombres no lo controlamos.
@@ -68,7 +75,7 @@ TOLERANCIA_LINEA = 1.6
 _MEDICION = """(opciones) => {
   const filas = [...document.querySelectorAll(opciones.selectorFilas)];
   if (!filas.length) { return {filas: 0, alto_fila: null, por_pantalla: null,
-                               quebradas: [], desborde: 0, arriba: null}; }
+                               quebradas: [], celdas: 0, desborde: 0, arriba: null}; }
 
   const alto = filas.reduce((a, f) => a + f.getBoundingClientRect().height, 0) / filas.length;
 
@@ -76,13 +83,43 @@ _MEDICION = """(opciones) => {
   // contra el line-height REAL de esa celda y no contra un número escrito
   // acá: cada pantalla tiene su tipografía, y un umbral fijo mediría la
   // tipografía en vez del quiebre.
+  //
+  // LA CELDA NO ES SIEMPRE UN <td>. Mirando solo "td, th", toda pantalla de
+  // TARJETAS —que en este proyecto son la mayoría en celular— devolvía
+  // `quebradas: 0` SIEMPRE, sin una sola celda inspeccionada: el cero del
+  // corolario 47, el que no puede dar distinto de cero. Se descubrió el
+  // 14/09 midiendo Precios por Período, plantando un nombre que no entraba:
+  // el alto de la ficha subió de 69,8 a 123,8px —envolvió— y `quebradas`
+  // siguió en 0.
+  //
+  // Así que si la fila no tiene celdas de tabla, la celda es cada HOJA con
+  // texto: el elemento que no tiene elementos adentro, que es donde el texto
+  // de verdad envuelve. Las tablas siguen midiéndose igual que antes.
   const quebradas = [];
+  let celdas_miradas = 0;
   filas.forEach(fila => {
-    [...fila.querySelectorAll("td, th")].forEach(celda => {
+    let celdas = [...fila.querySelectorAll("td, th")];
+    if (!celdas.length) {
+      celdas = [...fila.querySelectorAll("*")].filter(
+        elemento => elemento.children.length === 0 && elemento.textContent.trim()
+      );
+    }
+    if (!celdas.length && fila.textContent.trim()) { celdas = [fila]; }
+    celdas.forEach(celda => {
       // Lo que se despliega no cuenta: un menú abierto es alto a propósito.
       if (celda.querySelector("details, ul, ol, table")) { return; }
-      const linea = parseFloat(getComputedStyle(celda).lineHeight) || 16;
-      if (celda.getBoundingClientRect().height > linea * opciones.tolerancia) {
+      celdas_miradas += 1;
+      const estilo = getComputedStyle(celda);
+      const linea = parseFloat(estilo.lineHeight) || 16;
+      // SE DESCUENTA EL RELLENO antes de comparar. Un botón de 44px —el
+      // mínimo para tocarlo con el pulgar, que es regla de este proyecto—
+      // mide el doble que su línea SIN haber envuelto nada, y sin descontarlo
+      // toda pantalla con botones sale llena de quebradas que están bien. Un
+      // detector que marca lo que está bien se ve igual de trabajador que uno
+      // que funciona, y es el que nadie vuelve a mirar (corolario 53).
+      const relleno = parseFloat(estilo.paddingTop) + parseFloat(estilo.paddingBottom)
+                    + parseFloat(estilo.borderTopWidth) + parseFloat(estilo.borderBottomWidth);
+      if (celda.getBoundingClientRect().height - relleno > linea * opciones.tolerancia) {
         quebradas.push(celda.textContent.trim().replace(/\\s+/g, " ").slice(0, 40));
       }
     });
@@ -100,6 +137,10 @@ _MEDICION = """(opciones) => {
     }).length,
     arriba: Math.round(filas[0].getBoundingClientRect().top),
     quebradas: [...new Set(quebradas)],
+    // CONTRA CUÁNTO se contó. Sin esto, "quebradas: 0" no distingue "ninguna
+    // envolvió" de "no se miró ninguna" — que son la misma pantalla y
+    // significan lo contrario (corolarios 45 y 24).
+    celdas: celdas_miradas,
     desborde: doc.scrollWidth - doc.clientWidth,
   };
 }"""
@@ -160,11 +201,16 @@ def imprimir(etiqueta: str, medicion: dict) -> None:
         print(f"{etiqueta:<34} SIN FILAS (¿el selector es el correcto?)")
         return
     quebradas = medicion["quebradas"]
+    celdas = medicion.get("celdas", 0)
+    # El conteo de celdas VA PEGADO al de quebradas, en la misma línea: es su
+    # denominador. "quebradas: 0" solo no distingue "ninguna envolvió" de "no
+    # se miró ninguna", y las dos se imprimen igual.
+    detalle = f"quebradas: {len(quebradas)} de {celdas} celdas" if celdas else "SIN CELDAS QUE MIRAR"
     print(
         f'{etiqueta:<34} {medicion["alto_fila"]:>6}px/fila · '
         f'{medicion["por_pantalla"]:>4} por pantalla · '
         f'{medicion["al_llegar"]} al llegar · '
         f'desborde {medicion["desborde"]}px · '
-        f'quebradas: {len(quebradas)}'
+        + detalle
         + (f' {quebradas[:3]}' if quebradas else "")
     )

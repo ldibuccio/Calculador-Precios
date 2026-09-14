@@ -1558,6 +1558,66 @@ def listar_historial_de_precios_de_ficha(ficha_id: int, cliente_id: int) -> list
         conexion.close()
 
 
+def listar_vigencias_de_precios(cliente_id: int, desde, hasta) -> list[dict]:
+    """Una fila por CAMBIO de precio que estuvo rigiendo en la ventana, con desde y hasta.
+
+    Es el listado para facturar para atrás: la que factura busca la fecha
+    ADENTRO de un rango en vez de leer una grilla de treinta columnas.
+    Medido el 14/09 sobre las dos bases: de 43 fichas del cliente grande,
+    18 cambiaron de precio en 30 días — o sea que una grilla por día serían
+    25 filas de treinta columnas idénticas.
+
+    EL PRECIO QUE YA REGÍA ANTES DE `desde` ENTRA, y es el error natural de
+    esta forma: con un `vigente_desde BETWEEN` esas 25 fichas desaparecerían
+    del listado y el primer día del rango quedaría vacío para más de la
+    mitad. Acá no hay un caso especial que se pueda olvidar — sale de la
+    condición de INTERSECCIÓN, que es la que de verdad se está preguntando:
+
+        la vigencia [vigente_desde, proximo - 1] toca [desde, hasta]
+          <=>  vigente_desde <= hasta   Y   (proximo es NULL  o  proximo > desde)
+
+    `vigente_hasta` es el día ANTERIOR al próximo cambio, o NULL cuando no
+    hay próximo — eso es "sigue vigente" y no "no se sabe". Sin esa columna,
+    para saber hasta cuándo rigió un precio hay que mirar la fila siguiente,
+    que es justo lo que un listado impreso hace incómodo.
+
+    NO SE RECORTA `vigente_hasta` a la ventana a propósito: que una vigencia
+    diga que termina después del rango es información verdadera —cubre lo que
+    sigue— y recortarla haría que dos rangos distintos muestren fechas
+    distintas para el mismo hecho.
+
+    El orden es por ficha y, adentro de cada una, CRONOLÓGICO: se busca la
+    ficha y después se recorre el tiempo. Es al revés que las alertas de
+    reclamo, que van de lo más nuevo a lo más viejo porque ahí lo viejo ya no
+    se puede reclamar; acá ninguna fila vence, se busca una fecha.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH vigencias AS (
+                    SELECT ficha_id, precio, vigente_desde,
+                           LEAD(vigente_desde) OVER (
+                               PARTITION BY ficha_id ORDER BY vigente_desde
+                           ) AS proximo
+                    FROM precios_venta_historial
+                    WHERE cliente_id = %s AND ficha_id IS NOT NULL
+                      AND vigente_desde <= %s
+                )
+                SELECT ficha_id, precio, vigente_desde, (proximo - 1) AS vigente_hasta
+                FROM vigencias
+                WHERE proximo IS NULL OR proximo > %s
+                ORDER BY ficha_id, vigente_desde
+                """,
+                (cliente_id, hasta, desde),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def listar_costos_envases_vigentes_en_fechas(fechas) -> dict:
     """El costo vigente de cada envase a VARIAS fechas, en una consulta.
 

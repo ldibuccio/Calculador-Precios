@@ -277,6 +277,7 @@ from app.db import (
     listar_precios_anteriores_por_cliente,
     listar_historial_de_precios_de_ficha,
     listar_precios_vigentes_por_cliente,
+    listar_vigencias_de_precios,
     listar_proveedores,
     listar_proveedores_para_abm,
     listar_proveedores_puesto,
@@ -327,7 +328,12 @@ from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_remanente import generar_excel_remanente
-from core.exportar_precios import generar_excel_lista_precios, generar_pdf_lista_precios
+from core.exportar_precios import (
+    TEXTO_SIGUE_VIGENTE,
+    generar_excel_lista_precios,
+    generar_excel_vigencias,
+    generar_pdf_lista_precios,
+)
 from core.exportar_ingresos import generar_excel_ingresos_deposito, generar_pdf_ingresos_deposito
 from core.exportar_retiros import generar_excel_listado_retiros, generar_pdf_listado_retiros
 from core.exportar_vacios import (
@@ -5613,10 +5619,15 @@ def _validar_cliente_y_fecha_para_exportar(cliente_id_texto: str, fecha_texto: s
     return cliente, fecha_valor
 
 
+def _cliente_para_nombre_archivo(cliente_nombre: str) -> str:
+    """El nombre del cliente sin nada que un sistema de archivos pueda leer mal."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", cliente_nombre).strip("_") or "cliente"
+
+
 def _nombre_archivo_exportacion(cliente_nombre: str, fecha, extension: str) -> str:
     # Con más de una empresa mandándole listas al mismo cliente, el nombre
     # del archivo tiene que decir de cuál es — igual que el encabezado.
-    base = re.sub(r"[^A-Za-z0-9]+", "_", cliente_nombre).strip("_") or "cliente"
+    base = _cliente_para_nombre_archivo(cliente_nombre)
     return f"Lista_Precios_{_nombre_empresa_para_archivo()}_{base}_{fecha.isoformat()}.{extension}"
 
 
@@ -5652,6 +5663,197 @@ def exportar_precios_excel(cliente_id: str = "", fecha: str = ""):
 
     excel_bytes = generar_excel_lista_precios(cliente["nombre"], fecha_valor, filas, es_hoy, NOMBRE_EMPRESA)
     nombre_archivo = _nombre_archivo_exportacion(cliente["nombre"], fecha_valor, "xlsx")
+
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
+
+
+def _rango_de_vigencias_desde_query(desde: str | None, hasta: str | None) -> tuple[date, date, str | None]:
+    """Interpreta el rango de la pantalla de vigencias. Devuelve (desde, hasta, error).
+
+    POR DEFECTO EL MES CORRIENTE hasta hoy, porque el período que se
+    factura es el mes: llegar a la pantalla y tener que elegir las dos
+    fechas antes de ver nada es un paso que casi siempre termina en el
+    mismo valor.
+
+    Una fecha inválida NO deja la pantalla sin datos: se avisa y se usa el
+    rango por defecto. Y si vienen al revés, se avisa y NO se dan vuelta
+    solas — el que pidió del 30 al 1 quiso decir otra cosa, y darlas vuelta
+    en silencio devuelve un listado correcto de un período que nadie pidió.
+    """
+    hoy = _hoy_argentina()
+    desde_valor = hoy.replace(day=1)
+    hasta_valor = hoy
+    error = None
+
+    try:
+        if desde:
+            desde_valor = date.fromisoformat(desde)
+        if hasta:
+            hasta_valor = date.fromisoformat(hasta)
+    except ValueError:
+        return hoy.replace(day=1), hoy, "La fecha no es válida."
+
+    if desde_valor > hasta_valor:
+        return hoy.replace(day=1), hoy, "El desde no puede ser posterior al hasta."
+
+    return desde_valor, hasta_valor, error
+
+
+def _armar_filas_vigencias(cliente_id: int, desde: date, hasta: date) -> list[dict]:
+    """Una fila por FICHA del cliente, con las vigencias que tocaron el período.
+
+    LAS FICHAS SIN NINGUNA VIGENCIA VAN IGUAL, con la lista vacía. Son dos
+    casos que desde acá se ven iguales y para facturar significan lo mismo
+    —no hay precio con qué facturar esos días—: la ficha a la que nunca se
+    le cargó un precio (medido el 14/09: 8 fichas entre Cook Master y Grupo
+    L) y la que tiene el primero DESPUÉS del período. Por eso la pantalla
+    dice "sin precio en el período" y no "nunca se le cargó": lo segundo es
+    una afirmación negativa que estos datos no alcanzan para sostener.
+
+    El nombre sale de `_etiqueta_de_ficha`, el mismo que usa Analizar
+    Artículo, y no de una regla propia: dos fichas del mismo artículo se
+    tienen que leer igual en las dos pantallas o el que busca una la
+    encuentra escrita distinto en cada una.
+
+    Se ordena por NOMBRE y no por ficha_id: acá se busca un producto, y el
+    id no se parece a nada de lo que el que factura tiene en la mano.
+    """
+    fichas = listar_fichas_por_cliente(cliente_id)
+    vigencias = listar_vigencias_de_precios(cliente_id, desde, hasta)
+
+    por_ficha: dict[int, list[dict]] = {}
+    for vigencia in vigencias:
+        # LAS DOS FECHAS SE ESCRIBEN ACÁ, UNA SOLA VEZ, y de acá las toman la
+        # pantalla y el Excel. Formateada en cada una serían dos reglas para
+        # el mismo hecho, y el día que una cambie de formato el que compare
+        # la planilla contra la pantalla va a ver dos fechas distintas.
+        #
+        # CON AÑO, aunque ocupe más: una vigencia puede haber empezado mucho
+        # antes del período —el precio que ya regía—, y "15/12" leído en
+        # septiembre parece de este año.
+        vigencia["desde_texto"] = vigencia["vigente_desde"].strftime("%d/%m/%Y")
+        vigencia["hasta_texto"] = (
+            vigencia["vigente_hasta"].strftime("%d/%m/%Y") if vigencia["vigente_hasta"] else TEXTO_SIGUE_VIGENTE
+        )
+        por_ficha.setdefault(vigencia["ficha_id"], []).append(vigencia)
+
+    filas = [
+        {
+            "ficha_id": ficha["id"],
+            "nombre": _etiqueta_de_ficha(ficha),
+            "vigencias": por_ficha.get(ficha["id"], []),
+        }
+        for ficha in fichas
+    ]
+    filas.sort(key=lambda fila: fila["nombre"].lower())
+    return filas
+
+
+@app.get("/precios/vigencias")
+def ver_precios_vigencias(
+    request: Request, cliente_id: str | None = None, desde: str | None = None, hasta: str | None = None
+):
+    """Desde cuándo y hasta cuándo rigió cada precio de un cliente en un período. Solo lectura.
+
+    ES LA PANTALLA PARA FACTURAR PARA ATRÁS, y por eso no es una grilla de
+    días. Medido el 14/09 sobre las dos bases: de las 43 fichas del cliente
+    grande, 18 cambiaron de precio en 30 días. Una grilla de artículos por
+    fechas sería, para 25 de esas 43 fichas, treinta columnas con el mismo
+    número — y en un celular no entra ni se lee. Con vigencias, la que
+    factura busca la fecha ADENTRO de un rango.
+
+    El `vigente_hasta` viene calculado de la consulta (el día anterior al
+    próximo cambio) justamente para que no haya que mirar la fila siguiente
+    para saber hasta cuándo rigió un precio.
+    """
+    cliente_id = _id_opcional_desde_query(cliente_id)
+
+    try:
+        clientes = listar_clientes()
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    desde_valor, hasta_valor, rango_error = _rango_de_vigencias_desde_query(desde, hasta)
+
+    if cliente_id is None:
+        return templates.TemplateResponse(
+            request,
+            "precios_vigencias.html",
+            {
+                "clientes": clientes,
+                "cliente_id": None,
+                "desde": desde_valor.isoformat(),
+                "hasta": hasta_valor.isoformat(),
+                "rango_error": rango_error,
+            },
+        )
+
+    cliente = next((c for c in clientes if c["id"] == cliente_id), None)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    try:
+        filas = _armar_filas_vigencias(cliente_id, desde_valor, hasta_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    return templates.TemplateResponse(
+        request,
+        "precios_vigencias.html",
+        {
+            "clientes": clientes,
+            "cliente_id": cliente_id,
+            "cliente_nombre": cliente["nombre"],
+            "desde": desde_valor.isoformat(),
+            "hasta": hasta_valor.isoformat(),
+            "desde_mostrar": desde_valor.strftime("%d/%m/%Y"),
+            "hasta_mostrar": hasta_valor.strftime("%d/%m/%Y"),
+            "rango_error": rango_error,
+            "filas": filas,
+            "sin_precio": sum(1 for fila in filas if not fila["vigencias"]),
+        },
+    )
+
+
+@app.get("/precios/vigencias/exportar-excel")
+def exportar_vigencias_excel(cliente_id: str = "", desde: str = "", hasta: str = ""):
+    """Genera el listado de vigencias del período en Excel y lo devuelve para descargar.
+
+    SOLO EXCEL, y es a propósito: este listado no se le manda a nadie, se
+    BUSCA en él —qué precio regía el 8— y para eso sirve el filtro de una
+    planilla, no una hoja impresa. La Lista de Precios, que sí se manda, es
+    la que tiene PDF.
+
+    A diferencia de la pantalla, un rango inválido acá es 400 y no un aviso:
+    el link lo arma la propia pantalla con valores ya válidos, así que llegar
+    con otra cosa es una URL tocada a mano (mismo criterio que las otras dos
+    exportaciones de precios).
+    """
+    cliente, desde_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, desde)
+
+    try:
+        hasta_valor = date.fromisoformat(hasta)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida")
+    if desde_valor > hasta_valor:
+        raise HTTPException(status_code=400, detail="El desde no puede ser posterior al hasta")
+
+    try:
+        filas = _armar_filas_vigencias(cliente["id"], desde_valor, hasta_valor)
+    except Exception as error_db:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+
+    excel_bytes = generar_excel_vigencias(cliente["nombre"], desde_valor, hasta_valor, filas, NOMBRE_EMPRESA)
+
+    base = _cliente_para_nombre_archivo(cliente["nombre"])
+    nombre_archivo = (
+        f"Precios_Por_Periodo_{_nombre_empresa_para_archivo()}_{base}_"
+        f"{desde_valor.isoformat()}_a_{hasta_valor.isoformat()}.xlsx"
+    )
 
     return Response(
         content=excel_bytes,
