@@ -338,7 +338,12 @@ create table precios_venta_historial (
     vigente_desde   date not null,
     creado_en       timestamptz not null default now(),
     foto_ruta       text,
-    ficha_id        bigint references fichas_logistica (id) on delete set null,
+    -- SIN `on delete set null`, y es la regla y no un olvido: con SET NULL,
+    -- borrar una ficha le ponía ficha_id en NULL a sus precios y todas las
+    -- lecturas filtran `ficha_id is not null` — el precio no se perdía, se
+    -- DESCONECTABA, que para el sistema es lo mismo y no deja rastro. Ver
+    -- db/precios_no_se_desconectan_al_borrar_la_ficha.sql (14/09).
+    ficha_id        bigint references fichas_logistica (id),
     constraint precios_venta_historial_ficha_vigente_key unique (ficha_id, vigente_desde)
 );
 

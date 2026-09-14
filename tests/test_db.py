@@ -8687,3 +8687,95 @@ def test_la_guarda_cuenta_los_precios_DE_ESA_FICHA_y_no_los_del_cliente():
     assert "FROM precios_venta_historial" in consulta
     assert "WHERE ficha_id = %s" in consulta
     assert parametros == (901,)
+
+
+def test_el_ON_DELETE_de_las_FK_a_fichas_esta_DECIDIDO_una_por_una():
+    """Qué pasa con lo que apunta a una ficha cuando la ficha se borra.
+
+    El test de arriba cuida las COLUMNAS que agrega una migración y no ve
+    esto: cambiar un `on delete` no agrega ninguna columna, así que la
+    migración del 14/09 corrió en las dos bases y el esquema del repo se
+    quedó diciendo `set null` sin que nada cayera. Una base nueva —la
+    empresa siguiente— habría nacido con el bug ya adentro.
+
+    Las SIETE están enumeradas juntas a propósito, la deliberada incluida:
+    separarlas es cómo se olvida la octava, y dejar afuera la que SÍ va en
+    SET NULL es cómo alguien le copia el arreglo a las otras creyendo que
+    faltaba. Buscar la otra copia es obligatorio; copiarle el arreglo, no.
+
+    Y siete es el número que dijo el test, no el que yo conté: la primera
+    versión listaba CUATRO, que eran las que había mirado al arreglar los
+    precios. Las otras tres estaban bien desde antes y no se nombraban en
+    ningún lado junto a éstas — o sea que la lista escrita de memoria ya
+    nacía incompleta, que es exactamente lo que un test con denominador
+    encuentra y una lectura no.
+    """
+    import io
+    import re
+
+    # Sin los comentarios. El renglón de precios_venta_historial lleva arriba
+    # uno que EXPLICA por qué no va en SET NULL, así que dice "on delete set
+    # null" en prosa a cinco líneas del `references` — corolario 59 por
+    # tercera vez en el turno.
+    #
+    # MEDIDO, y el resultado corrige la intuición: con el comentario tal como
+    # está hoy, sacar el descarte NO hace caer nada, porque el parseo pide
+    # las dos cosas EN EL MISMO RENGLÓN y esa prosa no dice "references
+    # fichas_logistica". O sea que el ancla de verdad es el renglón, no el
+    # descarte. Pero plantando el comentario que alguien escribiría de
+    # verdad —`-- antes: ficha_id bigint references fichas_logistica (id) on
+    # delete set null`, que es cómo se anota un cambio— con descarte pasa y
+    # sin descarte CAE. Se queda por eso, no por si acaso.
+    esquema = io.open("db/esquema_completo.sql", encoding="utf-8").read()
+    sin_comentarios = "\n".join(
+        linea for linea in esquema.splitlines() if not linea.lstrip().startswith("--")
+    )
+
+    # El motivo de cada una sale de su comentario en el esquema, no de acá:
+    # esta lista dice QUÉ se decidió, y el esquema POR QUÉ.
+    NO_SE_NULEAN = {
+        # El NULL significa "sin asignar": nulear volvería un reproceso
+        # asignado indistinguible de uno que el operario dejó sin asignar.
+        "reprocesos",
+        # Una compra que viene armada quedaría apuntando a la nada.
+        "compras",
+        # El precio al que se facturó (14/09). Era la única en SET NULL.
+        "precios_venta_historial",
+        # Acá el NULL ya significa otra cosa —"los sueltos"—, así que nulear
+        # convertiría un conteo de cajas en uno de sueltos.
+        "conteos_stock",
+        # FK COMPUESTA (ficha_id, articulo_id): una merma dice artículo Y
+        # ficha, y una ficha de otro artículo ensuciaría la cuenta por ficha.
+        "movimientos_stock",
+        # NOT NULL: es el respaldo que hace posible deshacer el corte.
+        "corte_respaldo_fichas_reprocesos",
+    }
+    # Ésta SÍ va en SET NULL, y es a propósito: un renglón viejo describe una
+    # entrega que ya pasó y nadie la consulta hacia atrás POR FICHA.
+    SE_NULEAN = {"pedidos_renglones"}
+
+    bloques = re.findall(r"create table (\w+) \((.*?)\n\);", sin_comentarios, re.S)
+    en_set_null, en_no_action = set(), set()
+    for tabla, cuerpo in bloques:
+        for renglon in cuerpo.splitlines():
+            if not re.search(r"references fichas_logistica\b", renglon):
+                continue
+            (en_set_null if "on delete set null" in renglon else en_no_action).add(tabla)
+
+    # El denominador (corolario 45): sin esto, "ninguna quedó mal" y "el regex
+    # no encontró ninguna FK" se leen igual.
+    encontradas = en_set_null | en_no_action
+    assert encontradas == NO_SE_NULEAN | SE_NULEAN, (
+        f"Las FK a fichas_logistica cambiaron: se encontraron {sorted(encontradas)}, "
+        f"y las decididas son {sorted(NO_SE_NULEAN | SE_NULEAN)}. Decidí la nueva, no borres la lista."
+    )
+
+    se_nulean_y_no_deberian = sorted(en_set_null & NO_SE_NULEAN)
+    assert not se_nulean_y_no_deberian, (
+        "Borrar una ficha las dejaría en NULL en silencio: " f"{se_nulean_y_no_deberian}"
+    )
+    dejaron_de_nulearse = sorted(SE_NULEAN - en_set_null)
+    assert not dejaron_de_nulearse, (
+        "Éstas van en SET NULL a propósito y alguien les copió el arreglo de las otras: "
+        f"{dejaron_de_nulearse}"
+    )

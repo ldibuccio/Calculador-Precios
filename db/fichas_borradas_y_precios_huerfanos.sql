@@ -1,25 +1,26 @@
 -- ¿Cuánto historial de precios quedó desconectado de su ficha, y por qué puerta?
 --
--- POR QUÉ EXISTE (14/09). Los precios cuelgan de la FICHA, y esa FK es
--- `on delete set null`: borrar una ficha NO borra sus precios, les pone
--- `ficha_id` en NULL. Y todas las lecturas filtran `ficha_id IS NOT NULL`,
--- así que esos precios dejan de existir para el sistema — incluida cualquier
--- consulta retroactiva de "¿a qué precio se le facturó esto en julio?".
+-- CONTESTADA EL 14/09, Y LA PUERTA YA ESTÁ TAPADA. `huerfanos_viejos 0` en las
+-- DOS bases (Frutamax 75 precios, Palmala 86): nunca se desconectó un precio,
+-- no hubo nada que rescatar.
 --
--- EL DATO NO SE PIERDE, SE DESCONECTA: la fila conserva `cliente_id`,
--- `articulo_id`, `precio` y `vigente_desde`. Lo único que se va es de QUÉ
--- ficha era. Por eso esto se puede contar, y por eso un rescate es posible.
+-- SU CERO YA NO INFORMA. Desde
+-- db/precios_no_se_desconectan_al_borrar_la_ficha.sql la FK es NO ACTION, así
+-- que el número no puede crecer: correrla de nuevo da cero POR CONSTRUCCIÓN,
+-- no porque se haya verificado algo — el cero del corolario 47. Si se sospecha
+-- que la FK se movió, eso lo contesta
+-- db/precios_no_se_desconectan_verificacion.sql, que separa los dos
+-- comportamientos en dos columnas; un "¿existe algún FK?" da 1 igual.
 --
--- SON DOS PUERTAS Y LA SEGUNDA NO PARECE UNA PUERTA:
---   1. Eliminar la ficha (Fichas > Eliminar).
---   2. CAMBIARLE EL ARTÍCULO, que por dentro es un DELETE + INSERT con id
---      nuevo — desde la pantalla se ve como editar. Su propio docstring lo
---      dice: "Cambiar el artículo DESCONECTA el historial de precios".
--- Las dos dejan un evento 'borrado' en fichas_logistica_historial, así que
--- las dos se cuentan acá.
+-- QUÉ MEDÍA. Esa FK ERA `on delete set null`: borrar una ficha no borraba sus
+-- precios, les ponía `ficha_id` en NULL, y como todas las lecturas filtran
+-- `ficha_id is not null` dejaban de existir para el sistema. El dato no se
+-- perdía, se DESCONECTABA: por eso se podía contar.
 --
--- Devuelve UNA fila con conteos y su población al lado. Se corre en las DOS
--- bases y se pega con el nombre de la base adelante.
+-- ERAN DOS PUERTAS Y LA SEGUNDA NO PARECÍA UNA: eliminar la ficha, y CAMBIARLE
+-- EL ARTÍCULO (por dentro un DELETE + INSERT con id nuevo). Las dos dejan un
+-- evento 'borrado' en fichas_logistica_historial, y hoy las cierra la guarda
+-- de app/db.py.
 select (select count(*) from precios_venta_historial)                     as precios_total,
        (select count(*) from precios_venta_historial
          where ficha_id is null)                                          as precios_huerfanos,

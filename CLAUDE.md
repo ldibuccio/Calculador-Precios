@@ -3520,13 +3520,43 @@ venía a cerrar.
   preguntar. **Buscar la otra copia es obligatorio; copiarle el arreglo,
   no** — mismo criterio que el Cotejo de vacíos.
 
-### El tamaño, que sigue sin saberse
+### CERRADO: la migración corrió en las dos y no hubo nada que rescatar
 
-`db/fichas_borradas_y_precios_huerfanos.sql`
-cuenta las dos cosas —precios huérfanos y fichas borradas, con su población al
-lado— y hasta que eso dé un número, cualquier arreglo es para un problema de
-tamaño desconocido. Probada contra `db/esquema_completo.sql`, con el caso
-plantado y con el control vacío.
+Corrida el 14/09 en las DOS bases, con la fila de cada una al lado:
+
+```
+FRUTAMAX  guarda_no_action 1 · set_null 0 · huerfanos_viejos 0 · precios 75
+PALMALA   guarda_no_action 1 · set_null 0 · huerfanos_viejos 0 · precios 86
+```
+
+**Cero huérfanos en las dos: nunca se desconectó un precio.** No hay
+rescate que hacer, y la puerta quedó tapada antes de que pasara.
+
+Y las dos columnas separadas hicieron el trabajo para el que estaban: un
+*"¿existe algún FK?"* habría dado 1 con `set null` puesto y habría tapado
+el caso. Es el corolario de contar POR NOMBRE, con una vuelta más — acá no
+alcanzaba el nombre, porque el constraint existe en los dos estados y lo
+que cambia es su COMPORTAMIENTO. Por eso son dos columnas y no una.
+
+**El cero de huérfanos no dice que nadie haya borrado una ficha**: dice
+que ninguna ficha borrada tenía precios. La diferencia no cambia la
+decisión —cero desconectados es cero, se hayan borrado muchas o ninguna—
+pero sí cambia cuánto sabemos de si la guarda va a molestar: si en este
+sistema no se borran fichas, no se va a disparar nunca, y eso todavía no
+está medido.
+
+### La consulta que queda, y por qué su cero ya no informa
+
+`db/fichas_borradas_y_precios_huerfanos.sql` cuenta las dos cosas —precios
+huérfanos y fichas borradas, con su población al lado—. Contestó, y **con la FK
+en NO ACTION su número ya no puede crecer**: correrla de nuevo devuelve cero por
+construcción, que es el corolario 47 exacto. Eso va escrito EN SU ENCABEZADO, no
+acá: el que la corra dentro de tres meses va a leer el archivo, no este
+documento, y un cero prolijo sin esa advertencia se lee como una verificación
+que se pasó.
+
+La que sí sigue contestando algo es `..._verificacion.sql`, porque pregunta por
+el estado del constraint y no por sus consecuencias.
 
 **Y hay una asimetría que conviene tener en la cabeza al decidir**: esto es
 viejo en el sistema y nuevo en las consecuencias. Mientras el precio solo se
@@ -4346,3 +4376,51 @@ puede aparecer en prosa —y el nombre de una guarda SIEMPRE puede, porque el
 comentario de al lado la explica— el test tiene que preguntar por la
 ESTRUCTURA: una llamada en el árbol, una tabla en posición de tabla. Nunca
 por el nombre suelto.
+
+## Corolario 60: una migración que cambia un COMPORTAMIENTO no agrega ninguna columna, y el esquema del repo se queda viejo en silencio
+
+Del 14/09. La FK de los precios pasó a NO ACTION, corrió en las dos bases, y
+`db/esquema_completo.sql` **siguió diciendo `on delete set null`**. La suite
+entera en verde.
+
+No es que faltara el paso: existe, es manual, y hay un test que lo cuida —
+`test_toda_columna_que_agrega_una_MIGRACION_esta_en_el_esquema_completo`, puesto
+el 12/09 justamente para sacar ese paso de la memoria. **Lo que pasa es que ese
+test mira COLUMNAS**, y un `on delete` no agrega ninguna. La guarda estaba
+puesta, estaba bien escrita, y este cambio le pasa por al lado por
+construcción.
+
+**Y el daño no se ve en las bases que corrieron la migración**, que es lo que lo
+hace durar: las dos quedaron bien, la pantalla anda, la verificación da 1/0. El
+archivo viejo se cobra en **la base que todavía no existe** — la empresa
+siguiente nace con el bug ya adentro, meses después, sin que nadie relacione una
+cosa con la otra. Es la familia de *"una regla de unicidad no puede depender de
+una extensión de Postgres"*: lo que se pierde el día que se crea la base
+siguiente no es una regla.
+
+**La pregunta que lo encuentra, y es una sola**: después de una migración,
+*¿esto agrega una columna, o cambia un comportamiento?* Si es lo segundo —un
+`on delete`, un `check`, un `default`, un `unique`, un índice parcial— **ningún
+test de columnas lo va a ver**, y el archivo hay que tocarlo a mano en el mismo
+commit.
+
+### Y la lista escrita de memoria ya nacía incompleta
+
+El test nuevo que pina el `on delete` de cada FK a `fichas_logistica` se escribió
+con **cuatro** tablas: las que yo había mirado al arreglar los precios. El test
+falló al primer intento y dijo que eran **siete** — `conteos_stock`,
+`movimientos_stock` y `corte_respaldo_fichas_reprocesos` estaban bien desde
+antes y no se nombran en ningún lado junto a las otras.
+
+Las tres estaban correctas, así que no había bug. Lo que importa es el
+mecanismo: **la lista la escribí mirando lo que acababa de tocar**, y eso es
+exactamente el recorte que el corolario 5 describe —enumerar todas las cuentas
+que leen el dato, no las que uno tiene en la cabeza—. Lo agarró el denominador
+(corolario 45): el test compara el conjunto ENCONTRADO contra el DECIDIDO en vez
+de recorrer solo los decididos. Recorriendo la lista propia habría pasado en
+verde con tres afuera.
+
+**Y la deliberada va EN la lista**, no afuera: `pedidos_renglones.ficha_id` sigue
+en SET NULL a propósito, y el test lo exige. Dejarla afuera es cómo alguien le
+copia el arreglo creyendo que se había olvidado — *buscar la otra copia es
+obligatorio; copiarle el arreglo, no*.
