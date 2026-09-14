@@ -860,6 +860,44 @@ def actualizar_ficha(
         conexion.close()
 
 
+def _negar_si_tiene_precios(cursor, ficha_id: int, accion: str) -> None:
+    """Frena las DOS puertas que borran una ficha si esa ficha tiene precios cargados.
+
+    accion es "borrar" o "cambiarle el artículo": son dos pantallas
+    distintas y la salida que se le ofrece a cada una es distinta, pero
+    la REGLA es una sola y por eso vive en una sola función. Escrita dos
+    veces se separaría, y la que quedara vieja seguiría desconectando
+    precios sin que nada avise — que es justo el modo de falla que esto
+    viene a cerrar.
+
+    Cambiar el artículo no parece una puerta y lo es: por dentro es un
+    DELETE + INSERT con id nuevo (ver cambiar_articulo_de_ficha), así que
+    la ficha vieja se borra igual que con Eliminar.
+    """
+    cursor.execute(
+        "SELECT count(*) FROM precios_venta_historial WHERE ficha_id = %s",
+        (ficha_id,),
+    )
+    precios = cursor.fetchone()[0]
+    if not precios:
+        return
+
+    uno = precios == 1
+    cuantos = f"{precios} {'precio cargado' if uno else 'precios cargados'}"
+    if accion == "borrar":
+        raise ValueError(
+            f"Esa ficha tiene {cuantos}: no se puede borrar. El historial de precios cuelga de "
+            "la ficha, así que borrarla dejaría sin respuesta a qué precio se le facturó a este "
+            "cliente. Si ya no se usa, dejala: una ficha quieta no ensucia ninguna cuenta."
+        )
+    raise ValueError(
+        f"Esa ficha tiene {cuantos}: no se le puede cambiar el artículo. Cambiarlo borra esta "
+        "ficha y abre otra con id nuevo, y el historial de precios quedaría colgado del id "
+        "viejo. Creá una ficha nueva para el artículo que buscás — un cliente puede tener "
+        "varias fichas del mismo artículo."
+    )
+
+
 def eliminar_ficha(ficha_id: int) -> None:
     """Borra una ficha de logística (borrado real). El estado final queda en la bitácora.
 
@@ -877,9 +915,26 @@ def eliminar_ficha(ficha_id: int) -> None:
     compra que viene ya armada en caja nuestra y todavía no se recepcionó
     apunta a su ficha desde ahí. Sin esta guarda el DELETE reventaría con el
     error crudo de la foreign key —que no dice qué compra lo retiene— en vez
-    del mensaje. Las dos guardas se enumeran juntas a propósito: son la misma
+    del mensaje. Las tres guardas se enumeran juntas a propósito: son la misma
     pregunta ("¿quién apunta a esta ficha?") y separarlas es cómo se olvida
-    la tercera.
+    la siguiente.
+
+    Y LA TERCERA ES `precios_venta_historial`, que el docstring de arriba
+    anunciaba sin tenerla. No se había olvidado por descuido: NO PODÍA
+    AVISAR. Las otras dos son NO ACTION y revientan la foreign key si
+    alguien borra igual —la guarda solo cambia el error crudo por un
+    mensaje—; ésta era SET NULL y ACEPTABA EN SILENCIO, dejando los
+    precios con ficha_id en NULL. Y como todas las lecturas filtran
+    `ficha_id IS NOT NULL`, esos precios dejan de existir para el
+    sistema: un listado de julio no puede contestar por una ficha
+    borrada en agosto. La guarda existía donde la base grita y faltaba
+    exactamente donde la base calla.
+
+    El argumento es el mismo que el de las guías R, trasladado: borrar
+    una ficha no puede mover el stock, y tampoco puede borrar el precio
+    al que se facturó. `db/precios_no_se_desconectan_al_borrar_la_ficha.sql`
+    pone la FK en NO ACTION y deja a las tres del mismo lado; hasta que
+    corra en las dos bases, esta guarda es lo único que lo impide.
     """
     conexion = obtener_conexion()
     try:
@@ -914,6 +969,8 @@ def eliminar_ficha(ficha_id: int) -> None:
                     f"{'Sacale la marca' if una else 'Sacales la marca'} a "
                     f"{'esa compra' if una else 'esas compras'} primero."
                 )
+
+            _negar_si_tiene_precios(cursor, ficha_id, "borrar")
 
             cursor.execute(
                 """
@@ -960,15 +1017,27 @@ def cambiar_articulo_de_ficha(
     En la bitácora quedan los dos eventos, así se ve a qué artículo (y con
     qué alias) apuntaba antes.
 
-    OJO, y por eso este camino ya casi no hace falta: la ficha nueva tiene
-    id NUEVO, y los precios y los renglones de pedido cuelgan de la ficha
-    con ON DELETE SET NULL. Cambiar el artículo DESCONECTA el historial de
-    precios y los renglones viejos de esa ficha. Para tener dos
-    presentaciones del mismo artículo (Banana Bolivia y Banana Ecuador) ya
-    NO se muda esta ficha: se CREA una segunda, que es exactamente lo que
-    habilitó sacar el unique (ver db/permitir_varias_fichas_por_articulo.sql).
+    ESTE CAMINO ES LA SEGUNDA PUERTA DEL BORRADO, y no lo parece: la ficha
+    nueva tiene id NUEVO, así que desconectaba el historial de precios y los
+    renglones viejos de la ficha vieja igual que Eliminar. Con precios
+    cargados ahora se NIEGA (_negar_si_tiene_precios): la regla es una sola
+    y vive en una sola función, porque escrita dos veces se separa y la
+    copia vieja sigue desconectando sin que nada avise.
 
-    Devuelve el id de la ficha nueva, o None si la ficha no existe. Desde
+    Los renglones de pedido SIGUEN con ON DELETE SET NULL y siguen
+    desconectándose. Es a propósito y no es lo mismo: un renglón viejo
+    describe una entrega que ya pasó y no se consulta hacia atrás por
+    ficha; un precio sí, y eso es lo que la pantalla de Precios por
+    Período vino a preguntar.
+
+    Para tener dos presentaciones del mismo artículo (Banana Bolivia y
+    Banana Ecuador) no se muda esta ficha: se CREA una segunda, que es
+    exactamente lo que habilitó sacar el unique (ver
+    db/permitir_varias_fichas_por_articulo.sql) y es también la salida que
+    el mensaje de la guarda le ofrece al que llega hasta acá.
+
+    Devuelve el id de la ficha nueva, o None si la ficha no existe (con
+    precios cargados no devuelve: levanta ValueError). Desde
     que un cliente puede tener varias fichas del mismo artículo, apuntar a
     un artículo que ya tiene otra ficha ya no lo corta la base — queda como
     dos fichas de ese artículo, que puede ser justo lo buscado.
@@ -976,6 +1045,8 @@ def cambiar_articulo_de_ficha(
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
+            _negar_si_tiene_precios(cursor, ficha_id, "cambiarle el artículo")
+
             cursor.execute(
                 """
                 DELETE FROM fichas_logistica WHERE id = %s

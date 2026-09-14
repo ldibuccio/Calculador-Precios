@@ -1339,6 +1339,33 @@ def test_eliminar_ficha_error_de_base_da_500():
     assert respuesta.status_code == 500
 
 
+def test_las_DOS_puertas_muestran_el_freno_de_los_precios_en_la_PANTALLA():
+    """Dato mal pedido, no una falla del sistema: mensaje en la pantalla, nunca un 500.
+
+    Y el de cambiar-artículo va SIN el prefijo "No se pudo cambiar el
+    artículo:" adelante — la guarda ya explica el caso y ofrece la salida,
+    y el prefijo lo leería como que algo se rompió.
+    """
+    freno = ValueError("Esa ficha tiene 2 precios cargados: no se puede borrar.")
+
+    with patch("app.main.eliminar_ficha", side_effect=freno):
+        borrar = cliente.post("/fichas/10/eliminar", data={"cliente_id": "1"}, follow_redirects=False)
+
+    assert borrar.status_code == 303
+    assert "2+precios+cargados" in borrar.headers["location"]
+
+    with patch("app.main.cambiar_articulo_de_ficha", side_effect=freno):
+        mudar = cliente.post(
+            "/fichas/10/cambiar-articulo",
+            data={"cliente_id": "1", "articulo_nuevo_id": "5", "nombre_cliente": "", "codigo_cliente": ""},
+            follow_redirects=False,
+        )
+
+    assert mudar.status_code == 303
+    assert "2+precios+cargados" in mudar.headers["location"]
+    assert "No+se+pudo+cambiar" not in mudar.headers["location"]
+
+
 def test_cambiar_articulo_de_ficha_redirige_a_fichas_con_aviso():
     with patch("app.main.cambiar_articulo_de_ficha", return_value=33) as mock_cambiar:
         respuesta = cliente.post(

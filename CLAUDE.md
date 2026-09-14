@@ -3444,11 +3444,20 @@ Engancha con el corolario 45 —una medición que devuelve un total trae el tota
 esperado al lado—: `47 passed` sobre un `-k` se lee igual de verde que
 `2358 passed`, y no dice lo mismo.
 
-## Borrar una ficha DESCONECTA su historial de precios (anotado, no construido)
+## Borrar una ficha DESCONECTABA su historial de precios (CERRADO el 14/09)
 
 Del 14/09, y sale de mirar el sistema con un uso nuevo encima: facturar para
-atrás. **Anotado y NO construido**, por pedido, hasta saber cuántas fichas se
-borraron.
+atrás. Estuvo anotado y no construido unas horas; **se construyó el mismo
+día, y la decisión de no esperar al número fue del dueño**: el problema es
+real igual, y si hoy son cero, mejor — se arregla antes de que pase.
+
+**Eso vale como criterio y no como excepción.** La regla de medir antes de
+construir (corolario 23) existe para no inventar pantallas que nadie va a
+mirar: ahí el número decide SI el problema existe. Acá el problema no
+dependía del número — la FK dice `set null` y eso desconecta, haya pasado
+una vez o ninguna. El número dimensiona el RESCATE de lo ya roto, que es
+otra decisión y sigue abierta. **Medir antes de construir la CURA; no antes
+de cerrar la PUERTA.**
 
 Los precios cuelgan de la FICHA, y esa FK es `on delete set null`. Así que
 borrar una ficha **no borra sus precios: les pone `ficha_id` en NULL.** Y
@@ -3487,9 +3496,33 @@ en el mismo docstring —*"con SET NULL, borrar una ficha nulearía sus guías R
 en silencio (...) Borrar una ficha no puede mover el stock"*— y se traslada
 solo: **borrar una ficha tampoco puede borrar el precio al que se facturó.**
 
-### Por qué no se construyó, y qué se mide primero
+### Lo que se hizo, y lo que NO
 
-Porque el tamaño no se sabe. `db/fichas_borradas_y_precios_huerfanos.sql`
+**La FK pasa a NO ACTION** (`db/precios_no_se_desconectan_al_borrar_la_ficha.sql`),
+que deja a las tres del mismo lado: guías R, compras armadas y precios. Y las
+**dos puertas** —Eliminar y Cambiar el artículo— preguntan por los precios
+antes de borrar, con un `ValueError` que la pantalla muestra como dato mal
+pedido y no como un 500.
+
+La guarda vive en **UNA** función (`_negar_si_tiene_precios`) que las dos
+llaman. Escrita dos veces se separa, y la copia que quedara vieja seguiría
+desconectando sin que nada avise — que es exactamente el modo de falla que
+venía a cerrar.
+
+**Lo que NO se tocó, y las dos razones son distintas:**
+
+- **Las filas que ya quedaron huérfanas.** Rescatarlas es otra decisión y
+  necesita el número. La verificación de la migración lo devuelve como
+  `huerfanos_viejos`, al lado del resto.
+- **`pedidos_renglones.ficha_id` sigue en SET NULL**, y es a propósito: un
+  renglón viejo describe una entrega que ya pasó y nadie la consulta hacia
+  atrás POR FICHA. Un precio sí, y eso es lo que Precios por Período vino a
+  preguntar. **Buscar la otra copia es obligatorio; copiarle el arreglo,
+  no** — mismo criterio que el Cotejo de vacíos.
+
+### El tamaño, que sigue sin saberse
+
+`db/fichas_borradas_y_precios_huerfanos.sql`
 cuenta las dos cosas —precios huérfanos y fichas borradas, con su población al
 lado— y hasta que eso dé un número, cualquier arreglo es para un problema de
 tamaño desconocido. Probada contra `db/esquema_completo.sql`, con el caso
@@ -3505,9 +3538,30 @@ Y esa condición **ya no es hipotética**: el 14/09 se construyó
 `/precios/vigencias`, que es la pantalla de facturar para atrás. Un precio
 huérfano no aparece ahí —la consulta pide `ficha_id IS NOT NULL`, porque sin
 ficha no hay a qué producto pegarlo— así que la ficha borrada se ve como una
-que nunca tuvo precio. Eso NO sube la prioridad por sí solo: sigue haciendo
-falta el número de `db/fichas_borradas_y_precios_huerfanos.sql`, y hasta
-que alguien lo corra el tamaño no se sabe.
+que nunca tuvo precio. La PUERTA ya está cerrada; lo que ese número decide
+es si hace falta un rescate de lo que quedó roto antes, y hasta que alguien
+lo corra el tamaño no se sabe.
+
+### Y el docstring de la ruta decía lo CONTRARIO que el de la función
+
+`cambiar_articulo_de_ficha_ruta` afirmaba: *"Los precios ya negociados no
+cambian: quedan cargados por artículo en precios_venta_historial"*. Falso —
+cuelgan de la FICHA— y **cuatrocientas líneas más allá el docstring de la
+función que esa ruta llama avisaba que DESCONECTA el historial**. Las dos
+sobre la misma operación, diciendo lo opuesto, sin nombrarse.
+
+No es el comentario que envejece del corolario 28, donde hay UNA afirmación
+que dejó de ser cierta: acá había dos, y la que el lector encuentra depende
+de por dónde entró. El que abre la ruta lee que no pasa nada; el que abre la
+función lee que se pierde el historial. **Y la que tranquiliza es la que
+está más cerca de la pantalla**, que es por donde se entra cuando se está
+revisando si algo es seguro.
+
+La misma frase afirmaba además que un artículo repetido *"lo corta el unique
+de la tabla"*. Ese unique no existe desde
+`db/permitir_varias_fichas_por_articulo.sql`. Dos afirmaciones falsas en un
+párrafo de cuatro líneas, las dos envejecidas por cambios que no tocaron esa
+ruta.
 
 ## Corolario 51: un `except Exception` convierte un error de ARRANQUE en una degradación permanente y silenciosa
 
@@ -4264,3 +4318,31 @@ podría dar otra cosa.
 el test falla apenas se escribe y la primera lectura es *"me equivoqué en el
 assert"*. Antes de aflojarlo, mirar QUÉ matcheó. Si lo que matcheó es un
 docstring, el test tenía razón en fallar y el equivocado era el ancla.
+
+### Volvió EN EL MISMO TURNO, y la segunda vez no falló: pasó
+
+Horas después, el test que exige que las dos puertas del borrado de fichas
+llamen a la MISMA guarda. Preguntaba
+`"_negar_si_tiene_precios" in ast.unparse(nodo)`. El canario que le saca la
+llamada a una de las dos y le pone una condición propia **hizo caer CERO**: el
+docstring de esa función NOMBRA la guarda para explicar por qué está, así que
+el texto seguía ahí con la llamada sacada.
+
+**Y por eso la segunda vez es peor que la primera.** La del SQL falló en rojo
+apenas se escribió, que es la señal del 38 y se lee sola. Ésta **pasó en
+verde**: un test que afirma "las dos puertas están cerradas" sobre una puerta
+abierta. No había nada que mirar — solo el canario lo dijo.
+
+**El ancla, en un árbol, es exacta y no hay que inventarla**: un nodo `Call`
+cuyo `func` es el `Name` de la guarda. Eso es la posición gramatical del 59
+en su forma literal — una llamada en posición de llamada, no una palabra
+adentro de una cadena. `ast.unparse` sobre una función devuelve su texto
+ENTERO, docstring incluido, así que preguntarle por una subcadena es hacer
+`grep` con pasos de más: el árbol ya distingue lo que el texto confunde, y
+buscar en el texto lo vuelve a mezclar.
+
+**La regla corta, para las dos apariciones**: si el nombre que busca el test
+puede aparecer en prosa —y el nombre de una guarda SIEMPRE puede, porque el
+comentario de al lado la explica— el test tiene que preguntar por la
+ESTRUCTURA: una llamada en el árbol, una tabla en posición de tabla. Nunca
+por el nombre suelto.

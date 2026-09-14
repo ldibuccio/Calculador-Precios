@@ -3167,10 +3167,10 @@ def test_una_ficha_con_guias_R_NO_se_borra_y_lo_dice_con_el_numero():
 
 
 def test_una_ficha_sin_guias_R_se_borra_como_siempre():
-    # Dos conteos: guías R y compras que la marcan como "viene armada".
-    # Los dos en cero es el caso feliz, y es el único que distingue una
-    # guarda que funciona de una que siempre frena.
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), None])
+    # TRES conteos: guías R, compras que la marcan como "viene armada", y
+    # precios cargados. Los tres en cero es el caso feliz, y es el único
+    # que distingue una guarda que funciona de una que siempre frena.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(901)
@@ -3553,10 +3553,10 @@ def test_actualizar_ficha_inexistente_no_escribe_bitacora():
 
 
 def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
-    # El primer fetchone es el conteo de guías R: sin guías, sigue de largo
-    # y borra como siempre.
+    # Los tres primeros fetchone son las guardas (guías R, compras armadas,
+    # precios): en cero, sigue de largo y borra como siempre.
     conexion, cursor = _conexion_falsa(
-        [(0,), (0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)]
+        [(0,), (0,), (0,), (1, 5, 100, 6, "kilo", False, "BERENJENA", None)]
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -3578,6 +3578,7 @@ def test_eliminar_ficha_deja_el_estado_final_en_la_bitacora():
 def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantalla():
     conexion, cursor = _conexion_falsa(
         [
+            (0,),  # la guarda de precios: sin precios, sigue de largo
             (1, 4, 100, 6, "kilo", False, "ANANA", "90137"),  # DELETE RETURNING (ficha vieja)
             (33,),  # RETURNING id de la ficha nueva
         ]
@@ -3590,29 +3591,32 @@ def test_cambiar_articulo_de_ficha_es_borrado_mas_alta_con_el_alias_de_la_pantal
         ficha_nueva_id = cambiar_articulo_de_ficha(10, 5, "ANCO", "90200")
 
     assert ficha_nueva_id == 33
-    # 4 pasos en UNA transacción: delete + foto borrado + insert + foto alta.
-    assert cursor.execute.call_count == 4
+    # La guarda de precios + 4 pasos en UNA transacción: delete + foto
+    # borrado + insert + foto alta.
+    assert cursor.execute.call_count == 5
     # La foto del borrado conserva el alias VIEJO (es el estado que se cerró).
-    _, parametros_borrado = cursor.execute.call_args_list[1].args
+    _, parametros_borrado = cursor.execute.call_args_list[2].args
     assert parametros_borrado == (10, 1, 4, 100, 6, "kilo", False, "ANANA", "90137", "borrado")
-    consulta_insert, parametros_insert = cursor.execute.call_args_list[2].args
+    consulta_insert, parametros_insert = cursor.execute.call_args_list[3].args
     assert "INSERT INTO fichas_logistica" in consulta_insert
     # La ficha nueva apunta al artículo nuevo, conserva envase/contenido/
     # unidad, y lleva el alias que vino de la pantalla.
     assert parametros_insert == (5, 1, 100, 6, "kilo", False, "ANCO", "90200")
-    _, parametros_alta = cursor.execute.call_args_list[3].args
+    _, parametros_alta = cursor.execute.call_args_list[4].args
     assert parametros_alta == (33, 1, 5, 100, 6, "kilo", False, "ANCO", "90200", "alta")
     conexion.commit.assert_called_once()
 
 
 def test_cambiar_articulo_de_ficha_inexistente_devuelve_none_sin_escribir():
-    conexion, cursor = _conexion_falsa([None])
+    # Una ficha que no existe no tiene precios, así que la guarda la deja
+    # pasar y el DELETE no encuentra nada.
+    conexion, cursor = _conexion_falsa([(0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         resultado = cambiar_articulo_de_ficha(999, 5, None, None)
 
     assert resultado is None
-    assert cursor.execute.call_count == 1
+    assert cursor.execute.call_count == 2
 
 
 def test_listar_historial_fichas_va_de_lo_mas_nuevo_a_lo_mas_viejo():
@@ -8025,7 +8029,8 @@ def test_la_guarda_de_la_ficha_NO_cuenta_las_compras_RECHAZADAS():
 
     El filtro va en la consulta y no en Python — la regla la decide la base.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), None])
+    # Tres conteos: guías R, compras armadas y precios.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (0,), None])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         eliminar_ficha(901)
@@ -8572,3 +8577,113 @@ def test_los_CINCO_caminos_que_fechan_una_carga_pasan_la_hora_ARGENTINA():
         if not any(ast.unparse(argumento) == "_hoy_argentina()" for argumento in llamada.args)
     ]
     assert not sin_hora_argentina, f"Caminos que no fechan con la hora argentina: {sin_hora_argentina}"
+
+
+# --- Borrar una ficha no puede borrar el precio al que se facturó ---
+#
+# El historial de precios cuelga de la FICHA, y esa FK era `on delete set
+# null`: borrar una ficha —o cambiarle el artículo, que por dentro es un
+# DELETE + INSERT con id nuevo— le ponía `ficha_id` en NULL a sus precios, y
+# todas las lecturas filtran `ficha_id IS NOT NULL`. El precio no se perdía:
+# se DESCONECTABA, que para el sistema es lo mismo y encima no deja rastro.
+#
+# Medido sobre db/esquema_completo.sql el 14/09, no deducido: borrar una
+# ficha con un precio cargado dejaba `precios_huerfanos 1` y ningún error.
+
+
+def test_una_ficha_con_PRECIOS_no_se_borra_y_lo_dice_con_el_numero():
+    # Las tres guardas de eliminar_ficha son la misma pregunta ("¿quién
+    # apunta a esta ficha?"), pero ésta tapaba un agujero DISTINTO: las otras
+    # dos son NO ACTION y la foreign key reventaba igual — la guarda solo
+    # cambia el error crudo por un mensaje. Ésta era SET NULL y aceptaba en
+    # silencio.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (4,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            eliminar_ficha(901)
+
+    assert "4 precios cargados" in str(error.value)
+    assert not any("DELETE" in llamada.args[0] for llamada in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_cambiarle_el_ARTICULO_a_una_ficha_con_precios_tampoco_se_puede():
+    # La segunda puerta, y no parece una puerta: desde la pantalla se ve como
+    # editar. Si esta guarda falta, Eliminar queda cerrado y el historial se
+    # sigue desconectando por el camino de al lado.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(1,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError) as error:
+            cambiar_articulo_de_ficha(10, 5, "ANCO", "90200")
+
+    assert "1 precio cargado" in str(error.value)
+    # Y ofrece la salida que existe: un cliente puede tener varias fichas del
+    # mismo artículo desde db/permitir_varias_fichas_por_articulo.sql.
+    assert "Creá una ficha nueva" in str(error.value)
+    assert not any("DELETE" in llamada.args[0] for llamada in cursor.execute.call_args_list)
+    conexion.commit.assert_not_called()
+
+
+def test_la_guarda_de_precios_es_UNA_sola_y_las_dos_puertas_llaman_A_ESA():
+    """Las dos puertas preguntan por la MISMA función, no cada una por su cuenta.
+
+    Escrita dos veces se separa, y la copia que quede vieja sigue
+    desconectando precios sin que nada avise — que es el modo de falla que
+    esto viene a cerrar. Va por PARSEO y no por una lista escrita a mano
+    (corolario 42): la lista protege las dos puertas de hoy; el parseo
+    protege la tercera, que es la que nadie va a recordar.
+
+    Y busca una LLAMADA en el árbol, no el nombre en el texto. La primera
+    versión preguntaba `"_negar_si_tiene_precios" in ast.unparse(nodo)` y el
+    canario que reemplaza la llamada por una condición propia NO la hacía
+    caer: el docstring de cambiar_articulo_de_ficha NOMBRA la guarda para
+    explicar por qué está, así que el texto seguía ahí con la llamada
+    sacada. Corolario 59 sin salir del mismo turno — un comentario explica
+    por qué algo es así, o sea que nombra la cosa, y el test busca la cosa.
+    La posición gramatical del 59 acá es literal: un nodo Call, no una
+    palabra adentro de una cadena.
+    """
+    import ast
+    import io
+
+    arbol = ast.parse(io.open("app/db.py", encoding="utf-8").read())
+
+    def llama_a_la_guarda(nodo) -> bool:
+        return any(
+            isinstance(hijo, ast.Call)
+            and isinstance(hijo.func, ast.Name)
+            and hijo.func.id == "_negar_si_tiene_precios"
+            for hijo in ast.walk(nodo)
+        )
+
+    puertas = {}
+    for nodo in ast.walk(arbol):
+        if not isinstance(nodo, ast.FunctionDef):
+            continue
+        if "DELETE FROM fichas_logistica" in ast.unparse(nodo):
+            puertas[nodo.name] = llama_a_la_guarda(nodo)
+
+    # El denominador, en la misma aserción (corolario 45): sin él, "ninguna
+    # puerta sin guarda" y "no se encontró ninguna puerta" pasan las dos.
+    assert len(puertas) == 2, f"Las puertas que borran una ficha eran dos; ahora son {sorted(puertas)}."
+
+    sin_guarda = sorted(nombre for nombre, tiene in puertas.items() if not tiene)
+    assert not sin_guarda, f"Puertas que borran una ficha sin preguntar por sus precios: {sin_guarda}"
+
+
+def test_la_guarda_cuenta_los_precios_DE_ESA_FICHA_y_no_los_del_cliente():
+    # Por el TEXTO del SQL y no por el valor (corolario 40): con un cursor
+    # falso el conteo lo entrega el mock, así que un `WHERE cliente_id = %s`
+    # devolvería el mismo 4 y el test no vería nada.
+    conexion, cursor = _conexion_falsa(filas_fetchone=[(0,), (0,), (4,)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        with pytest.raises(ValueError):
+            eliminar_ficha(901)
+
+    consulta, parametros = cursor.execute.call_args_list[-1].args
+    assert "FROM precios_venta_historial" in consulta
+    assert "WHERE ficha_id = %s" in consulta
+    assert parametros == (901,)

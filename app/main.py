@@ -2296,12 +2296,14 @@ def editar_ficha(
 
 @app.post("/fichas/{ficha_id}/eliminar")
 def eliminar_ficha_ruta(ficha_id: int, cliente_id: int = Form(...)):
-    """Borra una ficha. Si tiene guías R cargadas, se niega y lo dice con el número.
+    """Borra una ficha. Si algo apunta a ella, se niega y lo dice con el número.
 
-    Una ficha con guías R no se borra: el reproceso guarda a qué ficha
-    fueron sus cajas, y borrarla dejaría ese dato en la nada. Es dato mal
-    pedido, no una falla del sistema — se muestra en la pantalla, nunca
-    como un 500.
+    Tres cosas la retienen y las tres dan el mismo tipo de mensaje: guías
+    R cargadas, compras que vienen armadas en caja nuestra, y PRECIOS
+    cargados. Las razones son la misma razón: el reproceso guarda a qué
+    ficha fueron sus cajas y el precio a qué ficha se le facturó, así que
+    borrarla dejaría ese dato en la nada. Es dato mal pedido, no una falla
+    del sistema — se muestra en la pantalla, nunca como un 500.
     """
     try:
         eliminar_ficha(ficha_id)
@@ -2329,11 +2331,18 @@ def cambiar_articulo_de_ficha_ruta(
     presentación) pero se puede editar antes de confirmar, porque si el
     destino es otro producto el alias viejo quedaría mal.
 
-    Los precios ya negociados no cambian: quedan cargados por artículo en
-    precios_venta_historial. De acá en adelante se cotiza contra el
-    artículo nuevo. La pantalla solo ofrece artículos sin ficha del
-    cliente; si igual llega uno repetido (carrera entre dos pestañas), el
-    unique de la tabla corta todo y no se pierde nada.
+    CON PRECIOS CARGADOS NO SE PUEDE, y se dice en la pantalla. Este
+    docstring decía hasta el 14/09 que "los precios ya negociados no
+    cambian: quedan cargados por artículo", y era falso: cuelgan de la
+    FICHA, y este camino borra la ficha vieja para abrir una con id nuevo.
+    Decía lo contrario que el docstring de cambiar_articulo_de_ficha, que
+    cuatrocientas líneas más allá avisaba que DESCONECTA el historial.
+
+    (La misma frase afirmaba que un artículo repetido "lo corta el unique
+    de la tabla". Ese unique no existe desde
+    db/permitir_varias_fichas_por_articulo.sql: un cliente puede tener
+    varias fichas del mismo artículo, y eso es justamente la salida que
+    la guarda le ofrece al que quería mudar ésta.)
     """
     try:
         articulo_nuevo = int(articulo_nuevo_id)
@@ -2345,6 +2354,15 @@ def cambiar_articulo_de_ficha_ruta(
     try:
         ficha_nueva_id = cambiar_articulo_de_ficha(
             ficha_id, articulo_nuevo, nombre_cliente.strip() or None, codigo_cliente.strip() or None
+        )
+    except ValueError as error_negocio:
+        # La guarda de los precios ya explica el caso y ofrece la salida:
+        # va tal cual, sin el "No se pudo cambiar el artículo:" adelante,
+        # que la leería como una falla del sistema y no como dato mal
+        # pedido (mismo criterio que la ruta de eliminar).
+        return RedirectResponse(
+            url=f"/fichas/{ficha_id}/editar?{urlencode({'error': str(error_negocio)})}",
+            status_code=303,
         )
     except Exception as error_db:
         return RedirectResponse(
