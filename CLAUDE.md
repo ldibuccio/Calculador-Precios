@@ -4424,3 +4424,73 @@ verde con tres afuera.
 en SET NULL a propósito, y el test lo exige. Dejarla afuera es cómo alguien le
 copia el arreglo creyendo que se había olvidado — *buscar la otra copia es
 obligatorio; copiarle el arreglo, no*.
+
+**Y esto vale para CUALQUIER test que enumere**, no solo para éste: un test que
+recorre SU PROPIA lista solo puede confirmar lo que ya sabía. Comparar el
+conjunto **ENCONTRADO** contra el **DECIDIDO** falla en las dos direcciones
+—cuando aparece algo que nadie decidió, y cuando desaparece algo que sí estaba
+decidido— y las dos son hallazgos. Cuesta lo mismo escribirlo de una forma que
+de la otra, y solo una encuentra lo que uno no fue a buscar.
+
+## Corolario 61: una verificación que silencia `stderr` convierte un fallo en un resultado VACÍO, y un vacío se lee como cero
+
+Del 14/09, cerrando el turno. Para confirmar que no hubieran quedado bases de
+prueba fabricadas corrí esto:
+
+```
+echo "bases de prueba: $(su postgres -c "psql ... count(*) ..." 2>/dev/null)"
+```
+
+Imprimió **`bases de prueba: `** y por un segundo lo leí como cero. Postgres no
+estaba levantado: el comando falló con `Connection refused` y salió con **2**.
+
+**El `2>/dev/null` lo puse yo**, casi sin pensarlo, para que no ensuciara la
+salida. Y eso es exactamente lo que hizo: le tapó la boca al único canal por el
+que el fallo podía avisar. La verificación no se rompió ruidosamente — **devolvió
+el resultado que yo esperaba ver.**
+
+Las dos respuestas, corridas y no deducidas:
+
+```
+A) servidor CAIDO      stdout: []    $? = 2     <- lo que leí como cero
+B) servidor ARRIBA,
+   sin ninguna base     stdout: [0]   $? = 0     <- el cero de verdad
+```
+
+**El vacío y el cero no se parecen: son distintos en las DOS columnas.** Lo que
+los volvió indistinguibles fue interpolar la salida adentro de un `echo`, que
+imprime la línea igual esté vacía o no, y tirar el `stderr` al mismo tiempo.
+
+### Por qué era diagnosticable sin saber nada del servidor
+
+La consulta era `select count(*)`, y el corolario 27 dice que **un agregado sin
+`group by` devuelve SIEMPRE exactamente una fila**. O sea que un `count` que sale
+bien no puede imprimir una línea vacía: **el vacío era la prueba de que la
+consulta no corrió**, y eso se ve sin saber si la base estaba arriba.
+
+Es el 27 usado al revés y conviene tenerlo así: allá esa propiedad arruinaba una
+guarda —`not found` nunca dispara— y acá **la misma propiedad es lo que delata el
+fallo**. Una propiedad no es buena ni mala: lo es para un uso.
+
+### La regla
+
+**Una verificación no descarta `stderr` y no ignora `$?`.** Si hay ruido que
+esconder, se esconde `stdout`, nunca el canal por el que llega el error. Y
+cuando una verificación imprime un valor VACÍO donde se esperaba un número, se
+mira el código de salida ANTES de leer ese vacío como un cero.
+
+### Con qué engancha, y dónde es peor
+
+Es el corolario 44 con el culpable cambiado: allá `pytest | tail -1 && git
+commit` se comía el código de salida y **el pipe** tapaba el rojo; acá lo tapé
+yo a mano. Las dos veces el error EXISTÍA y el comando lo hizo desaparecer.
+
+Y es la familia del cero que no informa, **un escalón más abajo**: en el
+corolario 47 el cero era un número real que no podía ser otro, y en el 24 era
+verdadero pero sobre una base parada. **Acá no hubo medición ninguna** — y el
+resultado se lee igual de prolijo que los otros dos.
+
+**Lo único que lo frenó fue volver a correrlo antes de dejarlo escrito**, que es
+lo mismo que frenó el corolario 33: una afirmación destinada a quedar por escrito
+se relee distinto que una dicha al pasar. La regla no me protegió; el reflejo de
+verificar de más, sí.
