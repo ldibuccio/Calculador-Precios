@@ -61,7 +61,7 @@ def _filas():
         patch("app.main.listar_fichas_por_cliente", return_value=TRES_FICHAS),
         patch("app.main.listar_vigencias_de_precios", return_value=[dict(v) for v in VIGENCIAS]),
     ):
-        return _armar_filas_vigencias(1, date(2026, 9, 1), date(2026, 9, 14))
+        return _armar_filas_vigencias(1, date(2026, 9, 1), date(2026, 9, 14))[0]
 
 
 def _pantalla(url="/precios/vigencias?cliente_id=1&desde=2026-09-01&hasta=2026-09-14"):
@@ -129,21 +129,50 @@ def test_la_consulta_NO_recorta_por_vigente_desde_mayor_que_el_desde():
     assert "ficha_id IS NOT NULL" in plana
 
 
-# --- las filas: la ficha sin precio va IGUAL, y el nombre es el de Analizar ---
+# --- las filas: la ficha SIN precio no va, y el nombre es el de Analizar ---
 
 
-def test_la_ficha_sin_ningun_precio_aparece_con_la_lista_vacia():
-    """Es el hueco medido el 14/09: 8 fichas entre Cook Master y Grupo L.
+def test_la_ficha_sin_ningun_precio_NO_aparece():
+    """Decisión del dueño del 14/09, que revierte la de la mañana.
 
-    Si se filtraran las que no tienen vigencias, el listado saldría completo
-    y correcto salvo por las fichas que son justamente el problema — y nada
-    en la pantalla diría que faltan.
+    Esta pantalla es para FACTURAR y una ficha sin precio no produce
+    ningún renglón de factura: lo único que hacía era ocupar lugar entre
+    las que sí se facturan. El argumento que las incluía —que si
+    desaparecen nadie se entera de que esa ficha no tiene precio— sigue
+    siendo cierto y es OTRA pantalla; ver el docstring de
+    `_armar_filas_vigencias`.
+
+    El assert de la ausencia está a propósito además del de la lista: sin
+    él, agregar la ficha de vuelta con cualquier otro id pasaría en verde.
     """
     filas = _filas()
 
-    assert [fila["ficha_id"] for fila in filas] == [903, 901, 902]  # alfabético: Ananá, Banana·BOLIVIA, Banana·ECUADOR
-    sin_precio = [fila for fila in filas if not fila["vigencias"]]
-    assert [fila["ficha_id"] for fila in sin_precio] == [903]
+    assert [fila["ficha_id"] for fila in filas] == [901, 902]  # alfabético: Banana·BOLIVIA, Banana·ECUADOR
+    assert 903 not in [fila["ficha_id"] for fila in filas]
+    assert all(fila["vigencias"] for fila in filas), "ninguna fila puede venir con la lista vacía"
+
+
+def test_el_SEGUNDO_valor_dice_si_el_cliente_TIENE_fichas_aunque_no_tengan_precio():
+    """Es lo único que separa los dos vacíos, y cada uno manda a otro lado.
+
+    Sin fichas hay que cargarlas; con fichas y sin precios, o se carga el
+    precio o el período elegido no es el que se busca. El cartel que había
+    —"no tiene ninguna ficha cargada"— pasaría a ser falso casi siempre
+    ahora que las fichas sin precio no llegan a `filas`.
+    """
+    with (
+        patch("app.main.listar_fichas_por_cliente", return_value=[dict(f) for f in TRES_FICHAS]),
+        patch("app.main.listar_vigencias_de_precios", return_value=[]),
+    ):
+        filas, hay_fichas = _armar_filas_vigencias(1, date(2026, 9, 1), date(2026, 9, 14))
+    assert filas == [] and hay_fichas is True
+
+    with (
+        patch("app.main.listar_fichas_por_cliente", return_value=[]),
+        patch("app.main.listar_vigencias_de_precios", return_value=[]),
+    ):
+        filas, hay_fichas = _armar_filas_vigencias(1, date(2026, 9, 1), date(2026, 9, 14))
+    assert filas == [] and hay_fichas is False
 
 
 def test_el_nombre_sale_de_etiqueta_de_ficha_y_no_de_una_regla_propia():
@@ -155,7 +184,19 @@ def test_el_nombre_sale_de_etiqueta_de_ficha_y_no_de_una_regla_propia():
     """
     from app.main import _etiqueta_de_ficha
 
-    filas = _filas()
+    # Fixture propio: a la Ananá se le da un precio para que LLEGUE a las
+    # filas. Desde el 14/09 las fichas sin precio no entran, y sin este
+    # renglón el caso "ficha sin nombre propio" se quedaría sin probar —
+    # que es distinto de probarlo y que dé bien.
+    with (
+        patch("app.main.listar_fichas_por_cliente", return_value=[dict(f) for f in TRES_FICHAS]),
+        patch(
+            "app.main.listar_vigencias_de_precios",
+            return_value=[dict(v) for v in VIGENCIAS]
+            + [{"ficha_id": 903, "precio": 500.0, "vigente_desde": date(2026, 9, 2), "vigente_hasta": None}],
+        ),
+    ):
+        filas, _ = _armar_filas_vigencias(1, date(2026, 9, 1), date(2026, 9, 14))
     por_id = {fila["ficha_id"]: fila["nombre"] for fila in filas}
 
     assert por_id[901] == _etiqueta_de_ficha(BANANA_BOLIVIA) == "Banana · BANANA BOLIVIA"
@@ -210,7 +251,7 @@ def test_una_fecha_invalida_avisa_pero_NO_deja_la_pantalla_sin_datos():
 # --- la pantalla ---
 
 
-def test_la_pantalla_muestra_cada_precio_con_su_rango_y_marca_la_que_no_tiene():
+def test_la_pantalla_muestra_cada_precio_con_su_rango_y_NO_la_ficha_sin_precio():
     respuesta = _pantalla()
     assert respuesta.status_code == 200
     marcado = _marcado(respuesta)
@@ -221,10 +262,44 @@ def test_la_pantalla_muestra_cada_precio_con_su_rango_y_marca_la_que_no_tiene():
     assert "20/08/2026 → 04/09/2026" in marcado
     assert "05/09/2026 → sigue vigente" in marcado
 
-    # Y la ficha sin precio, en su lugar alfabético y marcada.
-    assert 'class="sin-precio"' in marcado
-    assert "Sin precio en el período" in marcado
-    assert "1 ficha no tiene precio" in marcado
+    # Y la ficha sin precio no está, ni ella ni el aviso con la cuenta.
+    # Por la CLASE y no por el texto visible (corolario 38): un comentario
+    # que explique por qué no va nombraría la frase y el assert matchearía
+    # su propia explicación.
+    assert 'class="sin-precio"' not in marcado
+    assert 'class="aviso-sin-precio"' not in marcado
+    assert "Ananá" not in marcado
+
+
+def test_los_DOS_vacios_de_la_pantalla_dicen_cosas_DISTINTAS():
+    """Sacar las fichas sin precio crea un vacío que antes no existía.
+
+    Hasta el 14/09 un cliente con fichas y sin precios igual llenaba la
+    pantalla —todas sus fichas con "Sin precio en el período"—, así que el
+    único vacío posible era no tener ninguna ficha, y el cartel lo decía. Con
+    las fichas filtradas ese cartel pasaría a salir para un cliente que SÍ
+    tiene fichas, y mandaría a cargar lo que ya está cargado.
+
+    Son dos acciones distintas: cargar fichas, o cargar el precio / mirar
+    otro período. Por eso son dos carteles y no uno.
+    """
+    def pantalla_con(fichas, vigencias):
+        with (
+            patch("app.main.listar_clientes", return_value=CLIENTES),
+            patch("app.main.listar_fichas_por_cliente", return_value=fichas),
+            patch("app.main.listar_vigencias_de_precios", return_value=vigencias),
+        ):
+            return _marcado(cliente.get("/precios/vigencias?cliente_id=1&desde=2026-09-01&hasta=2026-09-14"))
+
+    con_fichas = pantalla_con([dict(f) for f in TRES_FICHAS], [])
+    assert "no tiene ningún precio en este período" in con_fichas
+    assert "no tiene ninguna ficha cargada" not in con_fichas
+    # Y sin filas no se ofrece exportar: un Excel vacío no se descarga por gusto.
+    assert "/precios/vigencias/exportar-excel" not in con_fichas
+
+    sin_fichas = pantalla_con([], [])
+    assert "no tiene ninguna ficha cargada" in sin_fichas
+    assert "no tiene ningún precio en este período" not in sin_fichas
 
 
 def test_la_pantalla_ofrece_el_Excel_con_el_MISMO_rango_que_se_esta_viendo():
@@ -290,20 +365,62 @@ def test_el_Excel_repite_el_nombre_de_la_ficha_en_CADA_fila():
     filas = [[celda.value for celda in fila] for fila in hoja.iter_rows(min_row=3, max_col=4)]
     nombres = [fila[0] for fila in filas]
 
-    assert nombres == ["Ananá", "Banana · BANANA BOLIVIA", "Banana · BANANA ECUADOR", "Banana · BANANA ECUADOR"]
+    assert nombres == ["Banana · BANANA BOLIVIA", "Banana · BANANA ECUADOR", "Banana · BANANA ECUADOR"]
     assert None not in nombres
     assert hoja.merged_cells.ranges == [] or all(
         rango.min_row < 3 for rango in hoja.merged_cells.ranges
     ), "no se combinan celdas del cuerpo"
 
 
-def test_el_Excel_dice_SIN_PRECIO_y_sigue_vigente_con_todas_las_letras():
-    """Una celda vacía se lee como un dato que falta. Acá no falta: el precio no terminó."""
+def test_el_Excel_dice_sigue_vigente_con_todas_las_letras_y_NO_lleva_la_ficha_sin_precio():
+    """Una celda vacía se lee como un dato que falta. Acá no falta: el precio no terminó.
+
+    Y la ficha sin precio no aparece: hasta el 14/09 iba con "SIN PRECIO"
+    en amarillo, y el dueño la sacó — esta planilla es para facturar.
+    """
     _, hoja = _hoja_exportada()
     filas = {fila[0].value: [celda.value for celda in fila] for fila in hoja.iter_rows(min_row=3, max_col=4)}
 
-    assert filas["Ananá"][1] == "SIN PRECIO"
+    assert "Ananá" not in filas
+    assert "SIN PRECIO" not in [celda for valores in filas.values() for celda in valores]
     assert filas["Banana · BANANA BOLIVIA"][2:] == ["01/07/2026", "sigue vigente"]
+
+
+def test_el_Excel_SIN_NINGUNA_vigencia_lo_DICE_en_vez_de_salir_con_los_encabezados_solos():
+    """Una planilla con encabezados y nada abajo se ve igual que una que se generó mal.
+
+    Es el vacío que no se distingue del error, en un archivo que alguien
+    abre solo: la pantalla esconde el botón cuando no hay filas, pero la
+    URL se puede pedir igual.
+    """
+    bytes_excel = generar_excel_vigencias("Día", date(2026, 9, 1), date(2026, 9, 14), [], "Frutamax")
+    hoja = load_workbook(BytesIO(bytes_excel)).active
+
+    assert hoja.cell(row=3, column=1).value == "No hay precios en este período."
+    assert hoja.cell(row=4, column=1).value is None
+
+
+def test_el_Excel_SALTA_una_fila_sin_vigencias_aunque_le_llegue():
+    """El contrato de la función, aparte de quien la llame.
+
+    `_armar_filas_vigencias` ya las filtra, así que en el sistema esto no
+    pasa — y por eso mismo el canario que le devuelve el renglón "SIN
+    PRECIO" no hacía caer nada: con el filtro puesto esa rama es
+    inalcanzable desde la ruta. Este test la ejercita DIRECTO, que es la
+    única forma de que la regla quede cuidada en los dos lados y no solo en
+    el de arriba.
+    """
+    filas = [
+        {"nombre": "EJEMPLO Con Precio", "vigencias": [
+            {"precio": 100.0, "desde_texto": "01/09/2026", "hasta_texto": "sigue vigente"}]},
+        {"nombre": "EJEMPLO Sin Precio", "vigencias": []},
+    ]
+    bytes_excel = generar_excel_vigencias("Día", date(2026, 9, 1), date(2026, 9, 14), filas, "Frutamax")
+    hoja = load_workbook(BytesIO(bytes_excel)).active
+
+    cuerpo = [[celda.value for celda in fila] for fila in hoja.iter_rows(min_row=3, max_col=2)]
+    assert cuerpo == [["EJEMPLO Con Precio", 100]]
+    assert "EJEMPLO Sin Precio" not in [fila[0] for fila in cuerpo]
 
 
 def test_el_Excel_NO_reformatea_las_fechas_por_su_cuenta():

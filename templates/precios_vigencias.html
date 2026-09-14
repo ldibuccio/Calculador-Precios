@@ -96,26 +96,6 @@
     font-size: 0.85rem;
     text-align: right;
   }
-  /* El "sin precio" NO se esconde ni se manda al final: se factura por
-     nombre, así que va en su lugar alfabético, marcado para que no se
-     pase de largo. */
-  .sin-precio {
-    margin: 0;
-    color: #92400e;
-    background: #fff3cd;
-    border-radius: 6px;
-    padding: 0.35rem 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 700;
-  }
-  .aviso-sin-precio {
-    background: #fff3cd;
-    color: #92400e;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    font-size: 0.9rem;
-  }
 </style>
 </head>
 <body>
@@ -164,29 +144,27 @@
     <h2>{{ cliente_nombre }} · del {{ desde_mostrar }} al {{ hasta_mostrar }}</h2>
     {% if filas %}
     <p class="ayuda">Cada renglón dice desde cuándo y hasta cuándo rigió ese precio. Para facturar un día, buscá el renglón que lo contenga.</p>
-    {% if sin_precio %}
-    <div class="aviso-sin-precio">
-      {% if sin_precio == 1 %}1 ficha no tiene precio{% else %}{{ sin_precio }} fichas no tienen precio{% endif %}
-      en este período: si se {% if sin_precio == 1 %}factura{% else %}facturan{% endif %}, no hay con qué.
-    </div>
-    {% endif %}
     {% for fila in filas %}
     <div class="ficha">
       <p class="nombre">{{ fila.nombre }}</p>
-      {% if fila.vigencias %}
       {% for v in fila.vigencias %}
       <div class="vigencia">
         <span class="precio">{{ v.precio|moneda }}</span>
         <span class="rango">{{ v.desde_texto }} → {{ v.hasta_texto }}</span>
       </div>
       {% endfor %}
-      {% else %}
-      <p class="sin-precio">Sin precio en el período</p>
-      {% endif %}
     </div>
     {% endfor %}
     {% else %}
+    {# Dos vacíos distintos, y cada uno manda a otro lado: sin fichas hay que
+       cargarlas; con fichas y sin precios, o se carga el precio o el período
+       elegido no es el que se busca. Un solo cartel para los dos afirmaría
+       de más en uno de los dos casos. #}
+    {% if hay_fichas %}
+    <p class="vacio">{{ cliente_nombre }} no tiene ningún precio en este período. Probá con otras fechas, o cargale el precio desde Cargar Precios.</p>
+    {% else %}
     <p class="vacio">{{ cliente_nombre }} no tiene ninguna ficha cargada.</p>
+    {% endif %}
     {% endif %}
   </div>
   {% endif %}

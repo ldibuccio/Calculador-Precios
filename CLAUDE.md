@@ -3567,10 +3567,18 @@ no puede contestar.
 Y esa condición **ya no es hipotética**: el 14/09 se construyó
 `/precios/vigencias`, que es la pantalla de facturar para atrás. Un precio
 huérfano no aparece ahí —la consulta pide `ficha_id IS NOT NULL`, porque sin
-ficha no hay a qué producto pegarlo— así que la ficha borrada se ve como una
-que nunca tuvo precio. La PUERTA ya está cerrada; lo que ese número decide
-es si hace falta un rescate de lo que quedó roto antes, y hasta que alguien
-lo corra el tamaño no se sabe.
+ficha no hay a qué producto pegarlo—, así que **esa ficha no aparece en el
+listado en absoluto.**
+
+(Esta línea decía que la ficha borrada "se ve como una que nunca tuvo
+precio". Era cierto hasta esa misma tarde, cuando el dueño sacó de la
+pantalla las fichas sin precio: antes salía marcada en amarillo y ahora no
+sale. La diferencia importa para el que lea esto buscando el síntoma —
+pasó de estar mal etiquetada a ser invisible.)
+
+La PUERTA ya está cerrada; lo que ese número decide es si hace falta un
+rescate de lo que quedó roto antes, y hasta que alguien lo corra el tamaño
+no se sabe.
 
 ### Y el docstring de la ruta decía lo CONTRARIO que el de la función
 
@@ -4494,3 +4502,45 @@ resultado se lee igual de prolijo que los otros dos.
 lo mismo que frenó el corolario 33: una afirmación destinada a quedar por escrito
 se relee distinto que una dicha al pasar. La regla no me protegió; el reflejo de
 verificar de más, sí.
+
+## Corolario 62: cuando un caso se elimina EN EL ORIGEN, las ramas que lo atendían quedan inalcanzables — y un canario sobre ellas no muerde
+
+Del 14/09. Precios por Período dejó de listar las fichas sin precio: el
+filtro vive en UN lugar (`_armar_filas_vigencias`) y desde ahí no sale ninguna
+fila con la lista vacía. Los canarios que le devolvían el renglón amarillo a
+la plantilla y el `SIN PRECIO` al Excel **hicieron caer CERO los dos.**
+
+Y el cero era correcto: **con el filtro puesto, esas dos ramas no se alcanzan
+desde ninguna pantalla.** El código quedaba roto de una forma que no tiene
+efecto — que es la pregunta exacta del corolario 35 (*"¿el código quedó roto
+de la forma que me importa, o quedó roto de otra?"*), contestada por una causa
+que ese corolario no enumera.
+
+**Es una CUARTA lectura del canario en cero**, y conviene tenerla al lado de
+las tres que ya están: el test flojo (16), el canario mal puesto (35), el
+módulo viejo en el pycache (13/09). Ésta se distingue de todas por una
+pregunta que no habla ni del test ni del canario: **¿el caso que estoy
+reintroduciendo puede llegar hasta acá?**
+
+### Lo accionable, y son dos cosas distintas
+
+1. **La protección vive donde está el filtro, no donde estaba la rama.** El
+   canario que sí muerde es el que revierte EL ORIGEN — y ahí cayeron cuatro
+   tests, incluido el de la pantalla. Poner un canario sobre una rama muerta
+   mide la rama, no la regla.
+2. **Si la función de abajo es pública, su CONTRATO se prueba igual.**
+   `generar_excel_vigencias` salta sola una fila sin vigencias, y eso no lo
+   cuidaba nadie: el único test que la ejercitaba le pasaba filas armadas por
+   el filtro. Un test que la llama DIRECTO con el caso prohibido deja la regla
+   cuidada de los dos lados, y es lo que hizo que el canario del Excel pasara
+   de 0 a 1.
+
+**La señal para reconocerlo sin sufrirlo**: si el cambio SACA un caso de la
+entrada, todo lo que estaba escrito río abajo para atenderlo pasa a ser
+inalcanzable el mismo día. Eso no es un problema —el código muerto prolijo no
+molesta— pero **cambia dónde se puede medir**: el canario tiene que apuntar al
+filtro, y lo de abajo se prueba llamándolo a mano o no se prueba.
+
+Y engancha con el corolario 55 por el otro lado: allá el código inalcanzable
+era el BUG y ninguna suite podía verlo; acá es la CONSECUENCIA correcta de un
+arreglo, y lo que ninguna suite puede ver es el canario que lo ataca.

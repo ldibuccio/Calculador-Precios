@@ -5721,16 +5721,31 @@ def _rango_de_vigencias_desde_query(desde: str | None, hasta: str | None) -> tup
     return desde_valor, hasta_valor, error
 
 
-def _armar_filas_vigencias(cliente_id: int, desde: date, hasta: date) -> list[dict]:
-    """Una fila por FICHA del cliente, con las vigencias que tocaron el período.
+def _armar_filas_vigencias(cliente_id: int, desde: date, hasta: date) -> tuple[list[dict], bool]:
+    """Una fila por ficha CON PRECIO en el período. Devuelve (filas, el cliente tiene fichas).
 
-    LAS FICHAS SIN NINGUNA VIGENCIA VAN IGUAL, con la lista vacía. Son dos
-    casos que desde acá se ven iguales y para facturar significan lo mismo
-    —no hay precio con qué facturar esos días—: la ficha a la que nunca se
-    le cargó un precio (medido el 14/09: 8 fichas entre Cook Master y Grupo
-    L) y la que tiene el primero DESPUÉS del período. Por eso la pantalla
-    dice "sin precio en el período" y no "nunca se le cargó": lo segundo es
-    una afirmación negativa que estos datos no alcanzan para sostener.
+    LAS FICHAS SIN NINGUNA VIGENCIA NO VAN, y es una decisión del dueño del
+    14/09 que revierte la de la mañana: *"si no tienen precio, no hay nada
+    que facturar y no me interesa verlas"*. Esta pantalla es para FACTURAR,
+    y una ficha sin precio no produce ningún renglón de factura — lo único
+    que hacía era ocupar lugar entre las que sí se facturan.
+
+    El argumento que las incluía está acá para que nadie lo redescubra y
+    las devuelva creyendo que arregla un bug: decía que si desaparecen,
+    nadie se entera de que esa ficha no tiene precio. **Sigue siendo
+    cierto y es otra pantalla.** Facturar y auditar el catálogo son dos
+    tareas, y meter la segunda adentro de la primera es lo que hace que un
+    aviso se mire dos semanas y después no: el que factura no viene a
+    revisar fichas. Si algún día hace falta vigilar las fichas sin precio,
+    va como alerta —que se apaga sola cuando se cargan— y no como ruido
+    permanente en el listado que se usa todos los meses.
+
+    EL SEGUNDO VALOR EXISTE PARA QUE EL VACÍO NO AFIRME DE MÁS. Sin él la
+    pantalla no puede distinguir "este cliente no tiene ninguna ficha"
+    —que es un problema de carga— de "tiene fichas y ninguna con precio en
+    estos días" —que se arregla cargando el precio o mirando otro período—,
+    y el cartel que había decía lo primero, que a partir de ahora sería
+    falso casi siempre.
 
     El nombre sale de `_etiqueta_de_ficha`, el mismo que usa Analizar
     Artículo, y no de una regla propia: dos fichas del mismo artículo se
@@ -5763,12 +5778,13 @@ def _armar_filas_vigencias(cliente_id: int, desde: date, hasta: date) -> list[di
         {
             "ficha_id": ficha["id"],
             "nombre": _etiqueta_de_ficha(ficha),
-            "vigencias": por_ficha.get(ficha["id"], []),
+            "vigencias": por_ficha[ficha["id"]],
         }
         for ficha in fichas
+        if ficha["id"] in por_ficha
     ]
     filas.sort(key=lambda fila: fila["nombre"].lower())
-    return filas
+    return filas, bool(fichas)
 
 
 @app.get("/precios/vigencias")
@@ -5815,7 +5831,7 @@ def ver_precios_vigencias(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     try:
-        filas = _armar_filas_vigencias(cliente_id, desde_valor, hasta_valor)
+        filas, hay_fichas = _armar_filas_vigencias(cliente_id, desde_valor, hasta_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 
@@ -5832,7 +5848,7 @@ def ver_precios_vigencias(
             "hasta_mostrar": hasta_valor.strftime("%d/%m/%Y"),
             "rango_error": rango_error,
             "filas": filas,
-            "sin_precio": sum(1 for fila in filas if not fila["vigencias"]),
+            "hay_fichas": hay_fichas,
         },
     )
 
@@ -5861,7 +5877,7 @@ def exportar_vigencias_excel(cliente_id: str = "", desde: str = "", hasta: str =
         raise HTTPException(status_code=400, detail="El desde no puede ser posterior al hasta")
 
     try:
-        filas = _armar_filas_vigencias(cliente["id"], desde_valor, hasta_valor)
+        filas, _hay_fichas = _armar_filas_vigencias(cliente["id"], desde_valor, hasta_valor)
     except Exception as error_db:
         raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
 

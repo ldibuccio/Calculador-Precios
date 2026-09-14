@@ -374,10 +374,11 @@ def generar_excel_lista_precios(
     return buffer.getvalue()
 
 
-AMARILLO_SIN_PRECIO_HEX = "FFF3CD"
-MARRON_SIN_PRECIO_HEX = "92400E"
 TEXTO_SIGUE_VIGENTE = "sigue vigente"
-TEXTO_SIN_PRECIO = "SIN PRECIO"
+# El archivo sin un solo renglón tiene que DECIR que está vacío. Una
+# planilla con encabezados y nada abajo se ve igual que una que se generó
+# mal, y el que la abre no sabe cuál de las dos tiene.
+TEXTO_SIN_VIGENCIAS = "No hay precios en este período."
 
 
 def generar_excel_vigencias(
@@ -386,10 +387,15 @@ def generar_excel_vigencias(
     """El listado de vigencias de un período, para facturar para atrás.
 
     filas: [{"nombre", "vigencias": [{"precio", "desde_texto", "hasta_texto"}, ...]}, ...]
-    ya ordenadas por quien llama. Una ficha SIN vigencias en el período se
-    escribe igual, con "SIN PRECIO" en amarillo: si desaparece, el que
-    factura no tiene cómo darse cuenta de que esa ficha existe y no tiene
-    precio con qué facturarse — que es justamente el caso que hay que ver.
+    ya ordenadas por quien llama, y TODAS con al menos una vigencia: las
+    fichas sin precio las filtra `_armar_filas_vigencias` antes de llegar
+    acá. Hasta el 14/09 se escribían con "SIN PRECIO" en amarillo, y el
+    dueño lo sacó: esta planilla es para facturar, y una ficha sin precio
+    no produce ningún renglón de factura. Ver el docstring de esa función
+    para el argumento que las incluía y por qué no se perdió nada.
+
+    Si NO queda ninguna fila, el archivo lo dice con todas las letras en
+    vez de salir con los encabezados solos — ver TEXTO_SIN_VIGENCIAS.
 
     UNA FILA POR VIGENCIA, CON EL NOMBRE DE LA FICHA REPETIDO EN CADA UNA.
     No se combinan celdas ni se deja el nombre en blanco en las filas de
@@ -414,11 +420,6 @@ def generar_excel_vigencias(
     borde = Border(left=borde_fino, right=borde_fino, top=borde_fino, bottom=borde_fino)
     centrado = Alignment(horizontal="center", vertical="center")
     fuente_encabezado = Font(bold=True, size=11)
-    relleno_amarillo = PatternFill(
-        start_color=AMARILLO_SIN_PRECIO_HEX, end_color=AMARILLO_SIN_PRECIO_HEX, fill_type="solid"
-    )
-    fuente_sin_precio = Font(bold=True, color=MARRON_SIN_PRECIO_HEX)
-
     # El título lleva la empresa y el cliente: el mismo período de dos
     # empresas o de dos clientes son cuatro planillas que se ven iguales.
     hoja.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
@@ -439,21 +440,15 @@ def generar_excel_vigencias(
         celda.border = borde
 
     fila_actual = 3
-    for fila in filas:
-        vigencias = fila.get("vigencias") or []
-        if not vigencias:
-            celda_nombre = hoja.cell(row=fila_actual, column=1, value=fila["nombre"])
-            celda_nombre.border = borde
-            celda_sin = hoja.cell(row=fila_actual, column=2, value=TEXTO_SIN_PRECIO)
-            celda_sin.border = borde
-            celda_sin.fill = relleno_amarillo
-            celda_sin.font = fuente_sin_precio
-            for columna in (3, 4):
-                hoja.cell(row=fila_actual, column=columna).border = borde
-            fila_actual += 1
-            continue
+    if not any(fila.get("vigencias") for fila in filas):
+        celda_vacia = hoja.cell(row=fila_actual, column=1, value=TEXTO_SIN_VIGENCIAS)
+        celda_vacia.border = borde
+        for columna in (2, 3, 4):
+            hoja.cell(row=fila_actual, column=columna).border = borde
+        fila_actual += 1
 
-        for vigencia in vigencias:
+    for fila in filas:
+        for vigencia in fila.get("vigencias") or []:
             celda_nombre = hoja.cell(row=fila_actual, column=1, value=fila["nombre"])
             celda_nombre.border = borde
 
