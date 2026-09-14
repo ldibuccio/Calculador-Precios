@@ -275,6 +275,7 @@ from app.db import (
     listar_sucursales_pedido,
     listar_fotos_para_limpiar,
     listar_precios_anteriores_por_cliente,
+    listar_historial_de_precios_de_ficha,
     listar_precios_vigentes_por_cliente,
     listar_proveedores,
     listar_proveedores_para_abm,
@@ -5496,6 +5497,29 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
         filas = [fila for fila in filas if fila["ficha_id"] == ficha_id]
     filas.sort(key=lambda fila: fila["articulo_nombre"])
 
+    # EL HISTORIAL DE LA FICHA ELEGIDA. Solo con una ficha puntual: con todas
+    # sería un muro de filas y la pregunta que contesta —"¿qué se cargó acá y
+    # cuándo?"— es de a una.
+    #
+    # Se pide solo si la ficha es de ESTE cliente. La condición está además en
+    # el SELECT; acá evita el viaje a la base para un id que no va a devolver
+    # nada.
+    historial = []
+    if ficha_id is not None and ficha_id in ficha_por_id:
+        try:
+            historial = listar_historial_de_precios_de_ficha(ficha_id, cliente_id)
+        except Exception as error_db:
+            raise HTTPException(status_code=500, detail=f"Error al conectar con la base de datos: {error_db}") from error_db
+        for fila in historial:
+            # LA CONVERSIÓN A HORA ARGENTINA LA HACE EL QUE MUESTRA, aunque el
+            # filtro `fecha_hora` la vuelva a hacer para el texto (corolario
+            # 21): `creado_en` viene en UTC y comparar su día crudo contra
+            # `vigente_desde` daría "cargado un día después" para todo lo que
+            # se cargue de tarde.
+            cargado_el_dia = fila["creado_en"].astimezone(ARGENTINA).date()
+            fila["dias_despues"] = (cargado_el_dia - fila["vigente_desde"]).days
+            fila["de_archivo"] = fila["foto_ruta"] is not None
+
     return templates.TemplateResponse(
         request,
         "precios_consulta.html",
@@ -5510,6 +5534,7 @@ def ver_precios_consultar(request: Request, cliente_id: str | None = None, fecha
             "fecha_mostrar": fecha_consulta.strftime("%d/%m/%Y"),
             "fecha_error": fecha_error,
             "filas": filas,
+            "historial": historial,
         },
     )
 

@@ -89,6 +89,30 @@
     flex-wrap: wrap;
   }
   .fila-precio.nueva .precio { color: #cc1a1a; }
+  /* El historial de UNA ficha: dos renglones por fila porque el segundo
+     —cuándo se cargó y de dónde salió— es letra chica que no compite con el
+     precio, y en 390px una sola línea con todo se parte en cualquier lado. */
+  .fila-historial {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #eee;
+  }
+  .fila-historial:last-child { border-bottom: none; }
+  .fila-historial .renglon {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .fila-historial .precio { font-weight: 700; font-size: 1.05rem; }
+  /* Sin esto la fecha no cede y empuja al precio fuera de la pantalla. */
+  .fila-historial .desde { min-width: 0; color: #444; font-size: 0.9rem; }
+  .fila-historial .origen {
+    margin: 0.2rem 0 0;
+    color: #6b7280;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+  .fila-historial .retroactivo { color: #92400e; font-weight: 700; }
   .badge-nuevo {
     display: block;
     width: 100%;
@@ -212,6 +236,35 @@
     </p>
     {% endif %}
   </div>
+
+  {# EL HISTORIAL, SOLO CON UNA FICHA ELEGIDA. Es la única pantalla que muestra
+     la tabla como es en vez de resolverla a una fecha: el resto contesta "qué
+     precio regía el día X" y se queda con una fila. Para poder corregir hay
+     que ver las filas.
+
+     NO DICE que "desde" y "cargado" hoy coinciden siempre —que es cierto,
+     porque el INSERT usa CURRENT_DATE fijo— justamente porque eso deja de ser
+     cierto el día que se pueda elegir la fecha, y una frase así envejece en el
+     commit que la vuelve falsa. Dicho como condición, vale antes y después. #}
+  {% if ficha_id and ficha_nombre_actual %}
+  <div class="tarjeta">
+    <h2>Historial de {{ ficha_nombre_actual }}</h2>
+    {% if historial %}
+    <p class="ayuda">Una fila por carga. <strong>Desde</strong> es a partir de cuándo rige ese precio; <strong>cargado</strong> es cuándo se escribió. Si no coinciden, el precio se cargó después de haber empezado a regir.</p>
+    {% for h in historial %}
+    <div class="fila-historial">
+      <div class="renglon">
+        <span class="precio">{{ h.precio|moneda }}</span>
+        <span class="desde">desde el {{ h.vigente_desde|fecha_corta }}</span>
+      </div>
+      <p class="origen">Cargado el {{ h.creado_en|fecha_hora }} · {% if h.de_archivo %}de un archivo{% else %}a mano{% endif %}{% if h.dias_despues > 0 %} · <span class="retroactivo">{{ h.dias_despues }} día{{ "s" if h.dias_despues != 1 }} después de empezar a regir</span>{% endif %}</p>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="vacio">Esta ficha no tiene ningún precio cargado — no se le puede facturar hasta que tenga uno.</p>
+    {% endif %}
+  </div>
+  {% endif %}
   {% endif %}
 
   {% if cliente_id %}

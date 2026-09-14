@@ -1404,6 +1404,35 @@ def test_contar_stock_vacios_negativos_usa_la_misma_cuenta_que_el_stock():
     assert "< 0" in consulta
 
 
+def test_el_historial_de_precios_FILTRA_POR_CLIENTE_y_ordena_por_vigencia():
+    """La ficha viene de la query string, así que la guarda va en el SELECT.
+
+    Sin `cliente_id` en el WHERE, un id de otra ficha devuelve el historial de
+    precios de otro cliente — y la pantalla no puede ser la única que lo
+    impida, porque el que arma la URL no pasa por la pantalla.
+
+    EL ORDEN NO LLEVA DESEMPATE y eso es correcto: el unique
+    (ficha_id, vigente_desde) garantiza que no haya dos filas del mismo día
+    para la misma ficha, así que `vigente_desde DESC` ya es determinista.
+    """
+    from app.db import listar_historial_de_precios_de_ficha
+
+    conexion, cursor = _conexion_falsa(filas_fetchall=[])
+    cursor.description = [("precio",), ("vigente_desde",), ("creado_en",), ("foto_ruta",)]
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        listar_historial_de_precios_de_ficha(901, 7)
+
+    consulta, parametros = cursor.execute.call_args.args
+    assert "WHERE ficha_id = %s AND cliente_id = %s" in " ".join(consulta.split())
+    assert parametros == (901, 7)
+    # Y las CUATRO columnas: `creado_en` al lado de `vigente_desde` es todo el
+    # punto de esta consulta — una sola de las dos no dice si hubo retroactivo.
+    for columna in ("precio", "vigente_desde", "creado_en", "foto_ruta"):
+        assert columna in consulta, columna
+    assert "ORDER BY vigente_desde DESC" in " ".join(consulta.split())
+
+
 def test_contar_articulos_comprados_incotizables_pide_ficha_y_precio_vigente():
     conexion, cursor = _conexion_falsa([(4,)])
 

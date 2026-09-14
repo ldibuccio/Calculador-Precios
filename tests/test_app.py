@@ -8535,6 +8535,110 @@ def test_ver_precios_consultar_con_cliente_lista_todos_los_precios_vigentes():
     assert mock_precios.call_args[0] == (1, HOY_DE_PRUEBA)
 
 
+# --- El historial de precios de UNA ficha (14/09) ------------------------
+# Es la única lectura que muestra la tabla como es en vez de resolverla a una
+# fecha, y es el prerrequisito para poder corregir: sin ver las filas, se
+# corrige a ciegas.
+
+def _hora_arg(dia, hora=14, minuto=35, mes=9):
+    from zoneinfo import ZoneInfo
+    return datetime(2026, mes, dia, hora, minuto, tzinfo=ZoneInfo("America/Argentina/Buenos_Aires"))
+
+
+# LOS TRES RETRASOS SON DISTINTOS A PROPÓSITO —mismo día, tres días, un día—:
+# con todos iguales no se vería si la marca depende de la diferencia o sale
+# siempre. El de un día además fija el singular.
+HISTORIAL_DE_PRUEBA = [
+    {"precio": 1200.0, "vigente_desde": date(2026, 9, 12), "creado_en": _hora_arg(12), "foto_ruta": None},
+    {"precio": 1000.0, "vigente_desde": date(2026, 9, 5), "creado_en": _hora_arg(8),
+     "foto_ruta": "2026-09-08/lista.pdf"},
+    {"precio": 900.0, "vigente_desde": date(2026, 8, 30), "creado_en": _hora_arg(31, 9, 5, mes=8), "foto_ruta": None},
+]
+
+
+def _consultar_con_historial(url, historial=None, fichas=None):
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.listar_fichas_por_cliente", return_value=fichas or FICHAS_PRECIOS_DE_PRUEBA),
+        patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_historial_de_precios_de_ficha",
+              return_value=[dict(h) for h in (HISTORIAL_DE_PRUEBA if historial is None else historial)]) as mock_hist,
+    ):
+        respuesta = cliente.get(url)
+    assert respuesta.status_code == 200, respuesta.status_code
+    return respuesta.text, mock_hist
+
+
+def test_el_historial_de_una_ficha_muestra_CADA_CARGA_con_su_fecha_y_de_donde_salio():
+    """Las dos fechas son distintas y las dos hacen falta: desde cuándo rige y cuándo se escribió.
+
+    Hoy coinciden siempre —el INSERT usa CURRENT_DATE fijo— así que la marca
+    de "cargado después" no se puede ver en producción todavía: el caso hay
+    que PLANTARLO, y por eso el fixture trae tres retrasos distintos.
+    """
+    marcado, _ = _consultar_con_historial("/precios/consultar?cliente_id=1&ficha_id=901")
+    prosa = " ".join(marcado.split())
+
+    assert "$1.200" in prosa and "desde el 12/09" in prosa
+    assert "$1.000" in prosa and "desde el 05/09" in prosa
+    # De dónde salió cada una: una por archivo, las otras a mano.
+    assert "de un archivo" in prosa and "a mano" in prosa
+    # Y el retraso, con su singular y su plural.
+    assert "3 días después de empezar a regir" in prosa
+    assert "1 día después de empezar a regir" in prosa
+
+
+def test_la_carga_DEL_MISMO_DIA_no_se_marca_como_retroactiva():
+    """La otra mitad: un detector que marca todo se ve igual de trabajador que uno que funciona.
+
+    Es el caso de HOY —todas las filas de producción son así— así que si esto
+    fallara, la pantalla acusaría de retroactiva a cada carga que existe.
+    """
+    sola = [{"precio": 1200.0, "vigente_desde": date(2026, 9, 12),
+             "creado_en": _hora_arg(12), "foto_ruta": None}]
+    marcado, _ = _consultar_con_historial("/precios/consultar?cliente_id=1&ficha_id=901", historial=sola)
+
+    assert "$1.200" in marcado
+    assert "después de empezar a regir" not in marcado
+
+
+def test_una_carga_DE_LA_NOCHE_no_se_lee_como_retroactiva():
+    """22:00 en Argentina ya es el día siguiente en UTC, y `creado_en` viene en UTC.
+
+    Sin `astimezone` antes de comparar, esta fila diría "1 día después de
+    empezar a regir" — una acusación falsa, y con la hora correcta impresa al
+    lado. La conversión la hace el que MUESTRA (corolario 21).
+    """
+    from datetime import timezone
+    de_noche = [{"precio": 1200.0, "vigente_desde": date(2026, 9, 12),
+                 "creado_en": datetime(2026, 9, 13, 1, 0, tzinfo=timezone.utc), "foto_ruta": None}]
+    marcado, _ = _consultar_con_historial("/precios/consultar?cliente_id=1&ficha_id=901", historial=de_noche)
+
+    assert "12/09/2026 22:00" in marcado, "no se mostró en hora argentina"
+    assert "después de empezar a regir" not in marcado
+
+
+def test_SIN_ficha_elegida_el_historial_ni_se_pide():
+    """Con todas las fichas sería un muro de filas, y la pregunta que contesta es de a una."""
+    marcado, mock_hist = _consultar_con_historial("/precios/consultar?cliente_id=1")
+
+    mock_hist.assert_not_called()
+    assert "Historial de" not in marcado
+
+
+def test_la_ficha_de_OTRO_CLIENTE_no_trae_su_historial():
+    """La ficha viene de la query string: sin guarda, un id ajeno muestra los precios de otro cliente.
+
+    La condición está además en el SELECT (`cliente_id`), que es donde tiene
+    que estar; acá se fija que la pantalla ni siquiera haga el viaje.
+    """
+    marcado, mock_hist = _consultar_con_historial("/precios/consultar?cliente_id=1&ficha_id=999")
+
+    mock_hist.assert_not_called()
+    assert "Historial de" not in marcado
+
+
 def test_ver_precios_consultar_fecha_pasada_usa_esa_fecha():
     with (
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
@@ -8633,6 +8737,7 @@ def test_ver_precios_consultar_articulo_puntual_filtra_a_ese_solo():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_historial_de_precios_de_ficha", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
 
@@ -8651,6 +8756,7 @@ def test_ver_precios_consultar_articulo_puntual_sin_precio_vigente_muestra_mensa
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=[]),
+        patch("app.main.listar_historial_de_precios_de_ficha", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
 
@@ -8767,6 +8873,7 @@ def test_ver_precios_consultar_articulo_elegido_muestra_boton_para_limpiar():
         patch("app.main.listar_clientes", return_value=CLIENTES_DE_PRUEBA),
         patch("app.main.listar_fichas_por_cliente", return_value=FICHAS_PRECIOS_DE_PRUEBA),
         patch("app.main.listar_precios_vigentes_por_cliente", return_value=PRECIOS_VIGENTES_DE_PRUEBA),
+        patch("app.main.listar_historial_de_precios_de_ficha", return_value=[]),
     ):
         respuesta = cliente.get("/precios/consultar?cliente_id=1&ficha_id=902")
 

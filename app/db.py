@@ -1518,6 +1518,46 @@ def guardar_precios_cliente(cliente_id: int, cambios: list[dict], foto_ruta: str
         conexion.close()
 
 
+def listar_historial_de_precios_de_ficha(ficha_id: int, cliente_id: int) -> list[dict]:
+    """TODAS las filas de precio de una ficha, de la vigencia más nueva a la más vieja.
+
+    Es la única lectura que muestra la tabla como es en vez de resolverla:
+    el resto del sistema pregunta "¿qué precio regía el día X?" y se queda
+    con una fila. Acá se ven las filas, que es lo que hace falta para poder
+    corregir — sin esto se corrige a ciegas.
+
+    DEVUELVE `creado_en` AL LADO DE `vigente_desde`, y ésas son dos cosas
+    distintas: cuándo se escribió la fila y desde cuándo rige. Hoy coinciden
+    siempre porque el INSERT usa CURRENT_DATE fijo; el día que se pueda
+    cargar con fecha, la diferencia entre las dos es lo que delata una carga
+    retroactiva, y es la única marca que queda de que la hubo.
+
+    VA CON cliente_id aunque `ficha_id` ya sea único: la ficha viene de la
+    query string, y sin esa condición un id de otro cliente devolvería su
+    historial de precios. La guarda va en el SELECT y no en el llamador.
+
+    El orden es por `vigente_desde` y no hace falta desempate: el unique
+    (ficha_id, vigente_desde) garantiza que no haya dos filas del mismo día
+    para la misma ficha.
+    """
+    conexion = obtener_conexion()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT precio, vigente_desde, creado_en, foto_ruta
+                FROM precios_venta_historial
+                WHERE ficha_id = %s AND cliente_id = %s
+                ORDER BY vigente_desde DESC
+                """,
+                (ficha_id, cliente_id),
+            )
+            columnas = [descripcion[0] for descripcion in cursor.description]
+            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+    finally:
+        conexion.close()
+
+
 def listar_costos_envases_vigentes_en_fechas(fechas) -> dict:
     """El costo vigente de cada envase a VARIAS fechas, en una consulta.
 
