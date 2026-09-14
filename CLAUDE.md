@@ -3398,6 +3398,109 @@ distinto de cero no es una medición— con el mecanismo corrido un lugar:
 **allá el número no podía moverse porque medía lo que no era; acá no podía
 moverse porque el código que corría no era el que se acababa de escribir.**
 
+### Y el tercer daño, del 14/09: `git checkout --` restaura el CANARIO y se lleva el TRABAJO
+
+Cuatro canarios en una tanda, tres restaurados con `.bak` y **el cuarto con
+`git checkout -- templates/...`**. Los tres primeros quedaron bien. El cuarto
+**borró el bloque entero de la plantilla**, que era el trabajo del turno.
+
+Y es obvio dicho así: **`git checkout --` restaura a lo COMMITEADO**, y en el
+medio de una tanda de canarios lo que se está probando es justamente lo que
+todavía no está commiteado. El comando hizo exactamente lo que promete; lo que
+estaba mal era pedírselo.
+
+**Lo peor es que se ve como un éxito.** El canario había mordido —los dos
+tests correctos cayeron— así que la parte que uno estaba mirando salió bien, y
+el archivo volvió "a como estaba" en el único sentido que git conoce. El
+síntoma llegó después y disfrazado: tres tests en rojo que parecían de otra
+cosa.
+
+**La regla es una sola y no admite mezcla: el método de restauración es el
+MISMO para todos los archivos de la tanda.** Si es `.bak`, es `.bak` para
+todos. Mezclar dos métodos es tener uno que funciona y uno que destruye, y
+nada al mirar el comando dice cuál es cuál.
+
+### La otra mitad: un `-k` corre lo que NOMBRASTE, no lo que TOCASTE
+
+El mismo día, y las dos veces la herramienta contestó bien otra pregunta.
+
+Los canarios se corrieron con `pytest -k "historial or ..."`, y ese filtro
+tuvo los dos errores posibles a la vez:
+
+- **Barrió de más**: matcheó un test viejo que no tenía nada que ver, y su
+  nombre apareció en la salida como si fuera uno de los nuevos. Tres minutos
+  buscando de dónde salía un test que yo no había escrito.
+- **Y de menos, que es el caro**: **tres tests viejos de la pantalla que
+  estaba tocando se estaban cayendo y el filtro no los veía.** Eligen una
+  ficha —el camino que acababa de ganar una lectura más— y sin el parche
+  nuevo se iban a la base de verdad.
+
+**Lo que se rompe casi nunca es lo que nombraste**: es lo de al lado, que
+comparte la pantalla o la función. Un `-k` sirve para iterar rápido sobre un
+test que se está escribiendo; **no sirve para decidir que un cambio está
+bien.** Eso lo decide la suite entera, y cuesta cuarenta segundos.
+
+Engancha con el corolario 45 —una medición que devuelve un total trae el total
+esperado al lado—: `47 passed` sobre un `-k` se lee igual de verde que
+`2358 passed`, y no dice lo mismo.
+
+## Borrar una ficha DESCONECTA su historial de precios (anotado, no construido)
+
+Del 14/09, y sale de mirar el sistema con un uso nuevo encima: facturar para
+atrás. **Anotado y NO construido**, por pedido, hasta saber cuántas fichas se
+borraron.
+
+Los precios cuelgan de la FICHA, y esa FK es `on delete set null`. Así que
+borrar una ficha **no borra sus precios: les pone `ficha_id` en NULL.** Y
+todas las lecturas filtran `ficha_id IS NOT NULL`, así que esos precios dejan
+de existir para el sistema.
+
+**EL DATO NO SE PIERDE, SE DESCONECTA**, y la diferencia decide qué se hace
+después: la fila conserva `cliente_id`, `articulo_id`, `precio` y
+`vigente_desde` — lo único que se va es de qué ficha era. Verificado corriendo
+el borrado contra el esquema real: `precios_total 3 · precios_huerfanos 2 ·
+articulos_afectados 1`. Un rescate es posible; una pérdida no tendría arreglo.
+
+**SON DOS PUERTAS Y LA SEGUNDA NO PARECE UNA PUERTA:**
+
+1. Eliminar la ficha.
+2. **Cambiarle el ARTÍCULO**, que por dentro es un `DELETE` + `INSERT` con id
+   nuevo. Desde la pantalla se ve como editar. Su propio docstring ya lo
+   avisa: *"Cambiar el artículo DESCONECTA el historial de precios y los
+   renglones viejos de esa ficha"*.
+
+### Lo que hace que esto valga como corolario: el comentario lo predijo
+
+`eliminar_ficha` tiene dos guardas —guías R y compras armadas— y su docstring
+dice, textual: *"Las dos guardas se enumeran juntas a propósito: son la misma
+pregunta ('¿quién apunta a esta ficha?') y separarlas es cómo se olvida la
+tercera"*.
+
+**La tercera es `precios_venta_historial`, y no está.** No se olvidó por
+descuido: **no podía avisar.** Las dos que están son `NO ACTION` y revientan
+la foreign key si alguien intenta borrar; la de precios es `SET NULL` y
+**acepta en silencio**. La guarda existe donde la base grita y falta
+exactamente donde la base calla.
+
+Y el argumento que justifica el `NO ACTION` de las guías R está escrito arriba
+en el mismo docstring —*"con SET NULL, borrar una ficha nulearía sus guías R
+en silencio (...) Borrar una ficha no puede mover el stock"*— y se traslada
+solo: **borrar una ficha tampoco puede borrar el precio al que se facturó.**
+
+### Por qué no se construyó, y qué se mide primero
+
+Porque el tamaño no se sabe. `db/fichas_borradas_y_precios_huerfanos.sql`
+cuenta las dos cosas —precios huérfanos y fichas borradas, con su población al
+lado— y hasta que eso dé un número, cualquier arreglo es para un problema de
+tamaño desconocido. Probada contra `db/esquema_completo.sql`, con el caso
+plantado y con el control vacío.
+
+**Y hay una asimetría que conviene tener en la cabeza al decidir**: esto es
+viejo en el sistema y nuevo en las consecuencias. Mientras el precio solo se
+usara para cotizar HOY, un precio huérfano no le faltaba a nadie. Con
+facturación retroactiva, cada fila desconectada es una pregunta que el sistema
+no puede contestar.
+
 ## Corolario 51: un `except Exception` convierte un error de ARRANQUE en una degradación permanente y silenciosa
 
 Del 12/09. `_compras_del_renglon_para_devolucion` se traga el error a
