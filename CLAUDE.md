@@ -4666,3 +4666,107 @@ así:
   mandarla a hacer el trabajo de otro. Es lo que el 56 ya decía —el mecanismo
   da dónde poner un destino, no inventa uno— usado esta vez ANTES y no
   después de que choque.
+
+## La unidad de compra contra la de venta: ABIERTO, y la alerta invita al arreglo que DESTRUYE el dato
+
+Del 15/09, y queda **anotado y no construido a propósito** — el dueño pidió
+analizar antes de tocar. Lo que sigue separa lo MEDIDO de lo que falta medir,
+porque mezclarlos es cómo se decide con una hipótesis.
+
+El hecho del negocio, dicho por el dueño: **kiwi, mango y palta se compran una
+sola vez y van a dos clientes que los quieren en unidades distintas.** A Día
+por unidad, a Coto por kilo. La compra es una; las unidades de venta, dos.
+
+### Lo que eso le hace a la alerta `unidades_que_difieren`
+
+La alerta cuenta pares donde `articulos.unidad_compra <> fichas.unidad_venta`,
+y su docstring dice que es *"una configuración que queda mal hasta que alguien
+la arregla"*. **Esa premisa es la que está en revisión**: si un artículo va a
+dos clientes en dos unidades, los pares difieren porque el mundo es así, no
+porque alguien haya cargado mal.
+
+Y la consecuencia es peor que un aviso de más: **el link manda a alinear, y
+alinear es exactamente lo que no hay que hacer.** Cambiar la ficha de Coto
+para que diga "unidad" no arregla nada — hace que la ficha MIENTA sobre lo que
+ese cliente compra, y apaga el aviso. **El arreglo que la alerta propone borra
+la información que hace falta para arreglarlo de verdad.**
+
+Es la familia del corolario 25 —un argumento válido defendiendo una premisa
+que nadie midió— con un agravante que no habíamos visto: acá la premisa no
+solo está mal, **está cableada en el destino del link**.
+
+**HAY QUE IR A MIRAR EL KIWI DEL 12/09.** Está escrito arriba como
+*"ARREGLADO: Lionel alineó la ficha desde la pantalla de Fichas"*, y en un
+turno posterior el dueño dijo *"no había nada que alinear"* y *"puede estar
+señalando algo que es correcto"*. Las dos cosas no pueden ser ciertas. Como
+Kiwi estaba DORMIDO (cero compras en las dos bases), no hay plata mal
+calculada en ningún caso — lo que puede haberse perdido es el dato de en qué
+unidad lo compra ese cliente.
+
+### Lo que SÍ está medido (código y esquema, este turno)
+
+1. **El stock NO se toca.** `movimientos_stock.cantidad` está **en BULTOS**
+   —lo dice el comment de la tabla— y lo mismo el armado y el FIFO. La unidad
+   de compra/venta no entra en el stock, el cotejo, el remanente ni las guías
+   R. **Todo el asunto es del camino de la PLATA**, y eso achica el problema
+   más que cualquier otra cosa que se pueda decir de él.
+2. **Todos los costos salen de UNA función**: `_costear_compras`
+   (app/costeo.py), con cuatro llamadores. Calcula
+   `plata / (cajones × contenido_por_cajon)` — o sea **el denominador está en
+   unidad de COMPRA** — y devuelve eso bajo el nombre
+   `costo_por_unidad_de_venta`. **El nombre ya afirma la conversión que nadie
+   hace.**
+3. **`contenido_caja` de la ficha NO es el puente.** Se usa para mostrar
+   "por bulto", y su propio comentario dice que *"el resultado da igual por
+   kilo — es un cociente, la unidad se cancela"*. Se multiplica por el costo
+   Y por el precio, así que se cancela: lo que queda es
+   `precio(venta) / costo(compra)`, con las unidades mezcladas y sin que nada
+   avise.
+4. **No hay ninguna conversión en ningún lado** — ya estaba escrito arriba y
+   se volvió a verificar. `conversion_articulos_cliente` es el alias del
+   cliente (nombre y código), no convierte unidades.
+5. **La alerta no puede distinguir los dos casos**, y por eso se escribió
+   `db/kiwi_1_error_de_carga_o_dos_clientes.sql`: parte por ARTÍCULO entre el
+   que tiene fichas que **no se ponen de acuerdo entre sí** (multiunidad:
+   ninguna alineación lo arregla) y el que tiene **una sola** unidad de venta
+   distinta de la de compra (ahí sí hay algo mal cargado). Probada contra
+   `db/esquema_completo.sql` con los tres casos plantados y con el control de
+   todo alineado: devuelve las dos respuestas, y la población queda en la
+   fila para que el cero se pueda leer.
+
+### Lo que NO está medido, y decide el diseño
+
+**Dónde vive el factor de conversión**, y es una bifurcación con UN solo dato
+que la resuelve — y no sale de una consulta, sale del galpón:
+
+| | dónde va | cuándo es la correcta |
+|---|---|---|
+| **Dos números por COMPRA** (lo que propuso el dueño) | cada compra declara kilos Y unidades | si los kilos por unidad se mueven compra a compra |
+| **Un número por ARTÍCULO** (kg por unidad) | una vez, en el artículo | si un mango pesa más o menos siempre lo mismo |
+
+**La pregunta es si el kilaje POR UNIDAD es estable**, y hay una razón para
+sospechar que sí que conviene tener escrita: **lo que ya sabemos que es
+multiformato es la CAJA, no la FRUTA.** Está arriba, medido: el mango viene en
+cajas de 40, de 12 y de 10 unidades, y por eso su `contenido_referencia` se
+vació. Pero un mango pesa lo que pesa un mango — el formato que varía es el
+envase, no el fruto. Si eso se confirma, **kg-por-unidad es exactamente el
+número que el problema del multiformato NO toca**, y entonces alcanza con uno
+por artículo en vez de dos por compra.
+
+**ES UNA HIPÓTESIS Y SE PREGUNTA, NO SE MIDE.** Los datos no la pueden
+contestar: `unidad_compra` es por ARTÍCULO, así que todas las compras de mango
+están en la misma unidad y el cociente entre las dos nunca aparece en la base.
+Es el mismo caso de Mango y Cherry multiformato, que se resolvió preguntando
+en el galpón y no midiendo de nuevo.
+
+**Y si la respuesta es "depende del día", la propuesta del dueño es la
+correcta** y esta tabla no la contradice — dice cuándo cada una.
+
+### El orden que queda
+
+1. Correr `kiwi_1` en las dos bases. Si `arts_multiunidad` es 0, no hay nada
+   que construir y la alerta está bien como está.
+2. Preguntar en el galpón si el kilaje por unidad es estable. Eso elige la
+   columna de la tabla.
+3. Recién ahí decidir. **Y antes de tocar la alerta**, acordarse de que su
+   problema no es que cuente de más: es que su LINK manda a romper el dato.
