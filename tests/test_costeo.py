@@ -10,6 +10,8 @@ import pytest
 
 from app.costeo import (
     ARGENTINA,
+    MAGNITUD_CONTEO,
+    MAGNITUD_KILOS,
     _envases_por_unidad_ponderado,
     agregar_incidencia,
     agrupar_para_negociar,
@@ -24,13 +26,24 @@ CLIENTE_ID_DE_PRUEBA = 1
 
 # Cherry (articulo_id 21) y Mango (22) tienen ficha para este cliente.
 # Morrón Rojo (29) NO tiene ficha — a propósito, para probar "sin ficha".
+# `unidad_conteo` va en las DOS fichas y no solo en la del Mango: es lo que
+# trae la consulta en producción, y una ficha sin esa clave no se puede
+# costear (magnitud_de_la_ficha devuelve None) — un fixture al que le falte
+# escondería el caso en vez de probarlo.
 FICHAS_DE_PRUEBA = [
-    {"id": 921, "articulo_id": 21, "articulo_nombre": "Tomate Cherry", "unidad_venta": "kilo"},
-    {"id": 922, "articulo_id": 22, "articulo_nombre": "Mango", "unidad_venta": "unidad"},
+    {"id": 921, "articulo_id": 21, "articulo_nombre": "Tomate Cherry",
+     "unidad_venta": "kilo", "unidad_conteo": None},
+    {"id": 922, "articulo_id": 22, "articulo_nombre": "Mango",
+     "unidad_venta": "unidad", "unidad_conteo": "unidad"},
 ]
 
 COMPRAS_DE_PRUEBA = [
-    # Cherry: 2 compras con distinto contenido_por_cajon (5kg y 8kg) y
+    # Las compras traen LAS DOS MAGNITUDES como en producción: los kilos
+    # siempre, y el conteo cuando el artículo lo declara. La que el artículo
+    # no declara va en None, que no es cero — es "esta compra no se puede
+    # costear en esa unidad".
+    #
+    # Cherry: 2 compras con distinto contenido por cajón (5kg y 8kg) y
     # distinto precio por cajón, más 1 sin precio.
     {
         "articulo_id": 21,
@@ -38,6 +51,7 @@ COMPRAS_DE_PRUEBA = [
         "cantidad_cajones": 10,
         "contenido_por_cajon": 5,
         "cantidad_kilos": 50,
+        "cantidad_fraccion": None,
         "importe": 3000,
     },
     {
@@ -46,6 +60,7 @@ COMPRAS_DE_PRUEBA = [
         "cantidad_cajones": 4,
         "contenido_por_cajon": 8,
         "cantidad_kilos": 32,
+        "cantidad_fraccion": None,
         "importe": 4000,
     },
     {
@@ -54,15 +69,18 @@ COMPRAS_DE_PRUEBA = [
         "cantidad_cajones": 2,
         "contenido_por_cajon": 6,
         "cantidad_kilos": 12,
+        "cantidad_fraccion": None,
         "importe": None,
     },
-    # Mango: una sola compra por unidad.
+    # Mango: una sola compra, con las dos magnitudes (3 cajones de 10
+    # unidades y 16 kilos cada uno).
     {
         "articulo_id": 22,
         "articulo_nombre": "Mango",
         "cantidad_cajones": 3,
         "contenido_por_cajon": 10,
-        "cantidad_kilos": None,
+        "cantidad_kilos": 48,
+        "cantidad_fraccion": 30,
         "importe": 4000,
     },
     # Morrón Rojo: tiene compra con precio, pero SIN ficha para este cliente.
@@ -72,6 +90,7 @@ COMPRAS_DE_PRUEBA = [
         "cantidad_cajones": 40,
         "contenido_por_cajon": 8,
         "cantidad_kilos": 320,
+        "cantidad_fraccion": None,
         "importe": 27000,
     },
     # Palta: todas sus compras están sin precio, no debería aparecer en ningún lado.
@@ -80,7 +99,8 @@ COMPRAS_DE_PRUEBA = [
         "articulo_nombre": "Palta",
         "cantidad_cajones": 6,
         "contenido_por_cajon": 50,
-        "cantidad_kilos": None,
+        "cantidad_kilos": 300,
+        "cantidad_fraccion": None,
         "importe": None,
     },
 ]
@@ -197,6 +217,7 @@ FICHAS_NEGOCIACION = [
         "id": 901, "articulo_id": 1,
         "articulo_nombre": "Articulo A",
         "unidad_venta": "kilo",
+        "unidad_conteo": None,
         "envase_id": None,
         "contenido_caja": None,
         "envase_variable": False,
@@ -205,6 +226,7 @@ FICHAS_NEGOCIACION = [
         "id": 902, "articulo_id": 2,
         "articulo_nombre": "Articulo B",
         "unidad_venta": "kilo",
+        "unidad_conteo": None,
         "envase_id": None,
         "contenido_caja": None,
         "envase_variable": False,
@@ -213,6 +235,7 @@ FICHAS_NEGOCIACION = [
         "id": 903, "articulo_id": 3,
         "articulo_nombre": "Articulo C",
         "unidad_venta": "kilo",
+        "unidad_conteo": None,
         "envase_id": None,
         "contenido_caja": None,
         "envase_variable": False,
@@ -221,6 +244,7 @@ FICHAS_NEGOCIACION = [
         "id": 904, "articulo_id": 4,
         "articulo_nombre": "Articulo D",
         "unidad_venta": "kilo",
+        "unidad_conteo": None,
         "envase_id": None,
         "contenido_caja": None,
         "envase_variable": False,
@@ -229,6 +253,7 @@ FICHAS_NEGOCIACION = [
         "id": 905, "articulo_id": 5,
         "articulo_nombre": "Articulo E",
         "unidad_venta": "kilo",
+        "unidad_conteo": None,
         "envase_id": None,
         "contenido_caja": None,
         "envase_variable": False,
@@ -520,53 +545,114 @@ def test_negociacion_sin_fichas_devuelve_lista_vacia():
 
 
 # --- _envases_por_unidad_ponderado: decisión descartable vs. caja chica ---
+#
+# LAS COMPRAS TRAEN EL TOTAL DE CADA MAGNITUD, como en producción: el
+# contenido del cajón EN LA UNIDAD QUE LA FICHA USA sale de ahí (total /
+# cajones), no de `contenido_por_cajon`, que está en unidad de compra. Ésa es
+# justamente la cuenta escondida: `contenido_ficha` está en unidad de VENTA,
+# así que los dos lados de la comparación tienen que salir de la misma
+# magnitud o se comparan kilos contra unidades.
 
 def test_envases_ponderado_envase_fijo_siempre_uno_cada_contenido_de_ficha():
-    compras = [{"importe": 100, "cantidad_cajones": 5, "contenido_por_cajon": 8}]
-    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=8, envase_variable=False)
+    compras = [{"importe": 100, "cantidad_cajones": 5, "cantidad_kilos": 40, "cantidad_fraccion": None}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=8, envase_variable=False, magnitud=MAGNITUD_KILOS)
     assert resultado == pytest.approx(1 / 8)
 
 
 def test_envases_ponderado_cherry_cajon_5kg_ficha_5kg_es_descartable():
-    compras = [{"importe": 100, "cantidad_cajones": 10, "contenido_por_cajon": 5}]
-    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=5, envase_variable=True)
+    compras = [{"importe": 100, "cantidad_cajones": 10, "cantidad_kilos": 50, "cantidad_fraccion": None}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=5, envase_variable=True, magnitud=MAGNITUD_KILOS)
     assert resultado == 0.0
 
 
 def test_envases_ponderado_cherry_cajon_10kg_ficha_5kg_es_caja_chica_dos_cartones():
     # Cajón de 10kg, ficha 5kg -> 2 cartones por cajón -> 1 cartón cada 5kg.
-    compras = [{"importe": 100, "cantidad_cajones": 4, "contenido_por_cajon": 10}]
-    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=5, envase_variable=True)
+    compras = [{"importe": 100, "cantidad_cajones": 4, "cantidad_kilos": 40, "cantidad_fraccion": None}]
+    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=5, envase_variable=True, magnitud=MAGNITUD_KILOS)
     assert resultado == pytest.approx(1 / 5)
     # 40 kg comprados (4 cajones de 10kg) -> 8 cartones en total.
     assert resultado * (4 * 10) == pytest.approx(8)
 
 
 def test_envases_ponderado_mango_cajon_10u_ficha_10u_es_descartable():
-    compras = [{"importe": 100, "cantidad_cajones": 3, "contenido_por_cajon": 10}]
-    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=10, envase_variable=True)
+    compras = [{"importe": 100, "cantidad_cajones": 3, "cantidad_kilos": 48, "cantidad_fraccion": 30}]
+    resultado = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
     assert resultado == 0.0
 
 
 def test_envases_ponderado_mango_cajon_20u_ficha_10u_es_caja_chica_dos_cartones():
-    compras = [{"importe": 100, "cantidad_cajones": 2, "contenido_por_cajon": 20}]
-    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=10, envase_variable=True)
+    compras = [{"importe": 100, "cantidad_cajones": 2, "cantidad_kilos": 32, "cantidad_fraccion": 40}]
+    resultado = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
     assert resultado == pytest.approx(1 / 10)
     # 40 unidades compradas (2 cajones de 20u) -> 4 cartones en total.
     assert resultado * (2 * 20) == pytest.approx(4)
+
+
+def test_envases_ponderado_LA_MISMA_COMPRA_da_distinto_segun_la_MAGNITUD_de_la_ficha():
+    """LA CUENTA ESCONDIDA, con la cuenta puesta al lado.
+
+    Un cajón de mango que trae 18 kilos y 9 unidades, contra una ficha cuyo
+    contenido_caja es 10. Con la magnitud del CONTEO el cajón trae 9, que
+    entra en la caja de 10: es descartable. Con la de los KILOS trae 18, que
+    no entra: es caja chica. Es la MISMA compra y la MISMA ficha — lo único
+    que cambia es en qué unidad vende el cliente.
+
+    Por eso este test no pasa por el costo: si mañana alguien mueve la
+    magnitud y el envase vuelve a leer `contenido_por_cajon`, el costo va a
+    seguir dando bien y esto es lo único que cae.
+    """
+    compras = [{"importe": 100, "cantidad_cajones": 2, "cantidad_kilos": 36, "cantidad_fraccion": 18}]
+
+    por_conteo = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
+    por_kilos = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_KILOS
+    )
+
+    assert por_conteo == 0.0
+    assert por_kilos == pytest.approx(1 / 10)
 
 
 def test_envases_ponderado_el_corte_sigue_a_la_ficha_no_esta_hardcodeado():
     # Mismo cajón de 9 unidades: con ficha=10 es descartable (9<=10); con
     # ficha=8 pasa a ser caja chica (9>8). El corte y el "cada cuánto"
     # tienen que salir siempre de la ficha, nunca de un número fijo.
-    compras = [{"importe": 100, "cantidad_cajones": 2, "contenido_por_cajon": 9}]
+    compras = [{"importe": 100, "cantidad_cajones": 2, "cantidad_kilos": None, "cantidad_fraccion": 18}]
 
-    con_ficha_10 = _envases_por_unidad_ponderado(compras, contenido_ficha=10, envase_variable=True)
-    con_ficha_8 = _envases_por_unidad_ponderado(compras, contenido_ficha=8, envase_variable=True)
+    con_ficha_10 = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
+    con_ficha_8 = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=8, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
 
     assert con_ficha_10 == 0.0
     assert con_ficha_8 == pytest.approx(1 / 8)
+
+
+def test_envases_ponderado_la_compra_que_NO_declaro_la_magnitud_no_pesa():
+    """Una compra vieja —con una sola magnitud— no entra en el ponderado.
+
+    Y no entra de las dos formas: ni aporta envases ni aporta cantidad. Si
+    aportara cantidad sin envases, diluiría el promedio hacia cero y el costo
+    de envase saldría más barato de lo que es, sin que nada avise.
+    """
+    vieja = {"importe": 100, "cantidad_cajones": 10, "cantidad_kilos": 200, "cantidad_fraccion": None}
+    nueva = {"importe": 100, "cantidad_cajones": 2, "cantidad_kilos": 32, "cantidad_fraccion": 40}
+
+    solo_la_nueva = _envases_por_unidad_ponderado(
+        [nueva], contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
+    con_la_vieja = _envases_por_unidad_ponderado(
+        [vieja, nueva], contenido_ficha=10, envase_variable=True, magnitud=MAGNITUD_CONTEO
+    )
+
+    assert con_la_vieja == solo_la_nueva
 
 
 def test_envases_ponderado_funciona_con_decimal_como_devuelve_psycopg2():
@@ -577,10 +663,13 @@ def test_envases_ponderado_funciona_con_decimal_como_devuelve_psycopg2():
         {
             "importe": Decimal("100"),
             "cantidad_cajones": Decimal("5"),
-            "contenido_por_cajon": Decimal("8"),
+            "cantidad_kilos": Decimal("40"),
+            "cantidad_fraccion": None,
         }
     ]
-    resultado = _envases_por_unidad_ponderado(compras, contenido_ficha=Decimal("8"), envase_variable=False)
+    resultado = _envases_por_unidad_ponderado(
+        compras, contenido_ficha=Decimal("8"), envase_variable=False, magnitud=MAGNITUD_KILOS
+    )
     assert resultado == pytest.approx(1 / 8)
 
 
@@ -1347,78 +1436,144 @@ def test_incidencia_queda_en_los_cuatro_cuadros_con_el_mismo_numero():
 # NO EXISTE en la base. Un test que no lo planta pasa en verde sin haber
 # ejercitado una sola línea de esto (corolario 36).
 
+# EL CASO DEL MODELO, y son tres fichas del MISMO artículo: un mango que se
+# compra una sola vez declarando las dos magnitudes —16 kilos y 10 unidades
+# por cajón— y va a tres clientes.
+COMPRAS_CON_LAS_DOS_MAGNITUDES = [
+    {
+        "articulo_id": 1,
+        "articulo_nombre": "Articulo A",
+        "fecha_operacion": date(2026, 8, 10),
+        "cantidad_cajones": 10,
+        "contenido_por_cajon": 10,
+        "cantidad_kilos": 160,
+        "cantidad_fraccion": 100,
+        "importe": 1000,
+    },
+]
+# Se le vende por UNIDAD, que es el conteo del artículo: costea contra las 100.
 FICHA_MANGO_POR_UNIDAD = {
     "id": 950, "articulo_id": 1, "articulo_nombre": "Articulo A",
-    "unidad_venta": "unidad", "unidad_compra": "unidad",
+    "unidad_venta": "unidad", "unidad_compra": "unidad", "unidad_conteo": "unidad",
     "envase_id": None, "contenido_caja": 6, "envase_variable": False,
 }
-# LA MISMA ficha con una sola cosa cambiada: se le vende por kilo. Cambiar una
-# sola cosa por vez es lo que deja atribuir la diferencia a la unidad y no a
-# otra parte del fixture.
-FICHA_MANGO_VENDIDO_POR_KILO = {**FICHA_MANGO_POR_UNIDAD, "unidad_venta": "kilo"}
-# Y la tercera: el artículo viejo al que nadie le cargó la unidad de compra.
-FICHA_SIN_UNIDAD_DE_COMPRA = {**FICHA_MANGO_VENDIDO_POR_KILO, "unidad_compra": None}
+# LA MISMA ficha con una sola cosa cambiada: se le vende por KILO. Costea
+# contra los 160, de la misma compra y sin convertir nada — es exactamente
+# para esto que la compra declara las dos.
+FICHA_MANGO_POR_KILO = {**FICHA_MANGO_POR_UNIDAD, "unidad_venta": "kilo"}
+# Y la tercera: le vende por CUBETA, que este artículo no declara ni puede
+# declarar (ya cuenta en unidades, y la compra guarda dos magnitudes, no
+# tres). Ésa no se costea.
+FICHA_MANGO_POR_CUBETA = {**FICHA_MANGO_POR_UNIDAD, "unidad_venta": "cubeta"}
+# El artículo que se compra solo por kilo y a nadie le cargó conteo.
+FICHA_SIN_CONTEO_VENDIDA_POR_KILO = {
+    **FICHA_MANGO_POR_KILO, "unidad_compra": "kilo", "unidad_conteo": None
+}
 
 
-def _fila_de(ficha):
-    filas, _, _ = _calcular_negociacion(fichas=[ficha])
+def _fila_de(ficha, compras=COMPRAS_CON_LAS_DOS_MAGNITUDES):
+    filas, _, _ = _calcular_negociacion(fichas=[ficha], compras=compras)
     assert len(filas) == 1, "el fixture tiene que dar exactamente una fila"
     return filas[0]
 
 
-def test_la_ficha_que_se_vende_en_OTRA_unidad_NO_SE_COSTEA():
+def test_LA_MISMA_COMPRA_costea_las_DOS_fichas_cada_una_en_SU_unidad():
+    """El caso entero del modelo, en un test.
+
+    Una sola compra —10 cajones, 160 kilos y 100 unidades, a $1000 el
+    cajón— y dos clientes que compran el mismo mango en unidades distintas.
+    Los dos tienen costo, y cada uno en su unidad:
+
+        por unidad: 10 × 1000 / 100 = $100 la unidad
+        por kilo:   10 × 1000 / 160 = $62,50 el kilo
+
+    Que los dos números SEAN DISTINTOS es lo que prueba que cada ficha
+    dividió por su magnitud. Si el costeo volviera a leer un contenido
+    único, los dos darían lo mismo y este test sería el único que lo ve.
+    """
+    por_unidad = _fila_de(FICHA_MANGO_POR_UNIDAD)
+    por_kilo = _fila_de(FICHA_MANGO_POR_KILO)
+
+    assert por_unidad["costo_actual"] == pytest.approx(100.0)
+    assert por_kilo["costo_actual"] == pytest.approx(62.5)
+    assert por_unidad["sin_conversion_de_unidad"] is False
+    assert por_kilo["sin_conversion_de_unidad"] is False
+
+
+def test_la_ficha_que_pide_una_unidad_que_el_ARTICULO_NO_DECLARA_no_se_costea():
     """Y el control al lado, que es lo único que lo vuelve legible.
 
     Las dos fichas son idénticas salvo `unidad_venta`. Sin el control, un
     `costo_actual is None` se lee igual que un fixture sin compras — es el
     detector que no puede dar las dos respuestas (corolario 53).
     """
-    coincide = _fila_de(FICHA_MANGO_POR_UNIDAD)
-    difiere = _fila_de(FICHA_MANGO_VENDIDO_POR_KILO)
+    declarable = _fila_de(FICHA_MANGO_POR_UNIDAD)
+    imposible = _fila_de(FICHA_MANGO_POR_CUBETA)
 
-    assert coincide["costo_actual"] is not None, "la que coincide se costea como siempre"
-    assert coincide["sin_conversion_de_unidad"] is False
+    assert declarable["costo_actual"] is not None, "la que el artículo declara se costea"
+    assert declarable["sin_conversion_de_unidad"] is False
 
-    assert difiere["costo_actual"] is None
-    assert difiere["precio_sugerido"] is None
-    assert difiere["utilidad_aproximada"] is None
-    assert difiere["costo_anterior"] is None, "tampoco el anterior: está en la misma unidad equivocada"
-    assert difiere["sin_conversion_de_unidad"] is True
+    assert imposible["costo_actual"] is None
+    assert imposible["precio_sugerido"] is None
+    assert imposible["utilidad_aproximada"] is None
+    assert imposible["costo_anterior"] is None, "tampoco el anterior: la unidad no existe para este artículo"
+    assert imposible["sin_conversion_de_unidad"] is True
+
+
+def test_la_compra_VIEJA_de_una_sola_magnitud_deja_sin_costo_a_la_otra_ficha():
+    """Las compras anteriores al modelo no se deducen, y eso se ve distinto.
+
+    La compra trajo kilos y nada más. La ficha que vende por kilo costea
+    igual; la que vende por unidad no, y NO porque el artículo no declare el
+    conteo —lo declara— sino porque esa compra no lo trajo. Es la negativa
+    que se apaga sola en cuanto entre una compra con las dos, y por eso
+    viaja con su propia cuenta al lado.
+    """
+    vieja = [{**COMPRAS_CON_LAS_DOS_MAGNITUDES[0], "cantidad_fraccion": None}]
+
+    por_kilo = _fila_de(FICHA_MANGO_POR_KILO, compras=vieja)
+    por_unidad = _fila_de(FICHA_MANGO_POR_UNIDAD, compras=vieja)
+
+    assert por_kilo["costo_actual"] == pytest.approx(62.5)
+    assert por_unidad["costo_actual"] is None
+    # Y las dos negativas se distinguen: ésta NO es la estructural.
+    assert por_unidad["sin_conversion_de_unidad"] is False
+    assert por_unidad["compras_sin_la_magnitud"] == 1
 
 
 def test_el_COSTO_DE_ENVASE_tampoco_se_calcula_y_esa_es_la_cuenta_ESCONDIDA():
     """La segunda cuenta que mezcla las unidades, y no está en el camino del costo.
 
-    `_envases_por_unidad_ponderado` decide descartable o caja chica con
-    `contenido_compra <= contenido_ficha` — el primero en unidad de compra y
-    el segundo en unidad de venta. Con las unidades distintas eso compara
-    kilos contra unidades, y de ahí sale un COSTO, no un cartel.
+    `_envases_por_unidad_ponderado` decide descartable o caja chica
+    comparando lo que trae el cajón contra `contenido_caja` de la ficha, que
+    está en unidad de VENTA. Si los dos lados no salen de la misma magnitud,
+    de ahí sale un COSTO, no un cartel.
 
     Buscando "el problema de las unidades" nadie grepea la función de los
     envases: se encuentra preguntando dónde se DIVIDE o se COMPARA un número
     de la compra contra uno de la ficha.
     """
-    difiere = _fila_de({**FICHA_MANGO_VENDIDO_POR_KILO, "envase_variable": True})
-    assert difiere["costo_envase_unidad_venta"] is None
+    imposible = _fila_de({**FICHA_MANGO_POR_CUBETA, "envase_variable": True})
+    assert imposible["costo_envase_unidad_venta"] is None
 
 
-def test_sin_unidad_de_compra_cargada_se_costea_COMO_SIEMPRE():
-    """"No se sabe en qué se compra" no es un conflicto.
+def test_sin_conteo_cargado_la_ficha_POR_KILO_se_costea_COMO_SIEMPRE():
+    """Un artículo sin `unidad_conteo` es el caso normal, no un conflicto.
 
-    Es la misma condición que la alerta (`unidad_compra IS NOT NULL`), y
-    tratarlo como conflicto dejaría sin costo a todo artículo viejo al que
-    nadie le completó la unidad — un apagón masivo por un campo vacío.
+    Los kilos van siempre, así que la ficha que vende por kilo costea sin
+    que nadie le cargue nada. Tratarlo como conflicto dejaría sin costo a
+    casi todo el catálogo.
     """
-    fila = _fila_de(FICHA_SIN_UNIDAD_DE_COMPRA)
+    fila = _fila_de(FICHA_SIN_CONTEO_VENDIDA_POR_KILO)
     assert fila["costo_actual"] is not None
     assert fila["sin_conversion_de_unidad"] is False
 
 
 def test_la_fila_lleva_LAS_DOS_unidades_para_poder_decir_por_que():
     """Sin las dos, la pantalla no puede nombrar el motivo sin ir a buscar el artículo."""
-    fila = _fila_de(FICHA_MANGO_VENDIDO_POR_KILO)
+    fila = _fila_de(FICHA_MANGO_POR_CUBETA)
     assert fila["unidad_compra"] == "unidad"
-    assert fila["unidad_venta"] == "kilo"
+    assert fila["unidad_venta"] == "cubeta"
 
 
 def test_la_regla_de_PYTHON_y_la_de_la_ALERTA_son_LA_MISMA(  ):
@@ -1442,15 +1597,17 @@ def test_la_regla_de_PYTHON_y_la_de_la_ALERTA_son_LA_MISMA(  ):
     from app.costeo import unidades_incompatibles
     from app.db import _SQL_UNIDADES_QUE_DIFIEREN
 
-    # Las NUEVE combinaciones, más las dos que no son un conflicto. Que estén
-    # las nueve es lo que impide un predicado que acierte de casualidad sobre
-    # el par que a uno se le ocurrió.
+    # Las NUEVE combinaciones de (conteo del artículo, unidad de la ficha).
+    # Que estén las nueve es lo que impide un predicado que acierte de
+    # casualidad sobre el par que a uno se le ocurrió. La regla: se puede
+    # costear si la ficha vende por kilo —van siempre— o en el conteo que el
+    # artículo declara.
     UNIDADES = ("kilo", "unidad", "cubeta")
-    for compra in UNIDADES:
+    for conteo in ("unidad", "cubeta", None):
         for venta in UNIDADES:
-            ficha = {"unidad_compra": compra, "unidad_venta": venta}
-            assert unidades_incompatibles(ficha) is (compra != venta), (compra, venta)
-    assert unidades_incompatibles({"unidad_compra": None, "unidad_venta": "kilo"}) is False
+            ficha = {"unidad_conteo": conteo, "unidad_venta": venta}
+            esperado = not (venta == "kilo" or venta == conteo)
+            assert unidades_incompatibles(ficha) is esperado, (conteo, venta)
     assert unidades_incompatibles({"unidad_venta": "kilo"}) is False, "sin la clave tampoco"
 
     # Y el SQL dice las mismas dos cosas. Se compara sobre el texto sin
@@ -1461,8 +1618,8 @@ def test_la_regla_de_PYTHON_y_la_de_la_ALERTA_son_LA_MISMA(  ):
         for linea in _SQL_UNIDADES_QUE_DIFIEREN.splitlines()
     )
     condicion = re.sub(r"\s+", " ", condicion).lower()
-    assert "a.unidad_compra is not null" in condicion
-    assert "a.unidad_compra is distinct from f.unidad_venta" in condicion
+    assert "f.unidad_venta <> 'kilo'" in condicion
+    assert "f.unidad_venta is distinct from a.unidad_conteo" in condicion
     # La diferencia decidida está, y está NOMBRADA como tal en el docstring
     # del predicado: si alguien la saca de uno de los dos lados, que tenga
     # que venir a mirar acá.

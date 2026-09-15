@@ -72,12 +72,14 @@ create table articulos (
     actualizado_en        timestamptz not null default now(),
     merma_porcentaje      numeric not null default 0,
     unidad_compra         text check (unidad_compra in ('kilo', 'unidad', 'cubeta')),
+    unidad_conteo         text check (unidad_conteo is null or unidad_conteo in ('unidad', 'cubeta')),
     contenido_referencia  numeric,
     grupo                 text
 );
 
 comment on table articulos is 'Catálogo de artículos. La logística por cliente (unidad de venta, envase, contenido) vive en fichas_logistica.';
-comment on column articulos.unidad_compra is 'Unidad en la que se compra el artículo al proveedor (kilo, unidad o cubeta). Nulo hasta completarlo desde /articulos; sin esto no se puede cargar una compra nueva de ese artículo.';
+comment on column articulos.unidad_compra is 'DEPRECADA desde el 15/09 (modelo de dos magnitudes). Decía en qué unidad venía expresada la compra, cuando era una sola. Ahora los kilos van siempre y la segunda magnitud la dice unidad_conteo. Lo único que sigue diciendo es en qué unidad está expresado compras.contenido_por_cajon. NO escribir lógica nueva contra esta columna.';
+comment on column articulos.unidad_conteo is 'Qué es la SEGUNDA magnitud de este artículo, la que acompaña a los kilos en cada compra: unidad o cubeta. NULO = no tiene conteo, se compra solo por kilo. Reemplaza a unidad_compra para esto: los kilos van SIEMPRE, así que unidad_compra dejó de decir en qué viene la compra.';
 comment on column articulos.contenido_referencia is 'Cuánto trae habitualmente el cajón/caja que se compra (ej. Mango: 10 unidades). Solo referencia: se puede editar en cada compra si ese día vino distinto.';
 comment on column articulos.grupo is 'Clasificación del artículo (fruta, hortaliza, ...) — solo para separar listados, no afecta ningún cálculo. Sin CHECK: la lista de valores válidos vive en el código (GRUPOS_ARTICULO_VALIDOS).';
 comment on column articulos.merma_porcentaje is 'Porcentaje de merma esperado del articulo (0 = sin merma).';

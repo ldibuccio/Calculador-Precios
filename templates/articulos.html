@@ -135,6 +135,7 @@
       text-align: center;
     }
   }
+  .ayuda-conteo { color: #555; font-size: 0.85rem; margin: -0.4rem 0 0.9rem; line-height: 1.35; }
 </style>
 </head>
 <body>
@@ -161,6 +162,14 @@
         <option value="cubeta">Cubeta</option>
       </select>
 
+      <label for="unidad_conteo">Se cuenta además en (opcional)</label>
+      <select id="unidad_conteo" name="unidad_conteo">
+        <option value="" selected>Sin conteo: solo kilos</option>
+        <option value="unidad">Unidad</option>
+        <option value="cubeta">Cubeta</option>
+      </select>
+      <p class="ayuda-conteo">Además de los kilos, que van siempre. Dejalo vacío si este artículo se compra solo por kilo. Con conteo cargado, cada compra va a pedir las dos magnitudes — y las fichas que vendan así van a poder costear.</p>
+
       <label for="contenido_referencia">Contenido de referencia del cajón (opcional)</label>
       <input type="number" id="contenido_referencia" name="contenido_referencia" min="0" step="0.01">
 
@@ -186,6 +195,7 @@
           <tr>
             <th>Nombre</th>
             <th>Unidad de compra</th>
+            <th>Cuenta en</th>
             <th>Contenido ref.</th>
             <th>Grupo</th>
             <th>Acciones</th>
@@ -196,6 +206,7 @@
           <tr>
             <td>{{ articulo.nombre }}</td>
             <td>{{ articulo.unidad_compra or "-" }}</td>
+            <td>{% if articulo.unidad_conteo %}{{ articulo.unidad_conteo }}{% else %}<span class="vacio">solo kilos</span>{% endif %}</td>
             <td>{{ articulo.contenido_referencia|kilos if articulo.contenido_referencia is not none else "-" }}</td>
             <td>
               {% if articulo.grupo == "fruta" %}Fruta

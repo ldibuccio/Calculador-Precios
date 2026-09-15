@@ -325,6 +325,7 @@ from app.db import (
     total_reingresos_rechazo,
 )
 from core.conceptos_cliente import calcular_cambio_de_utilidad, calcular_cambios_de_tasas
+from core.magnitudes import repartir_magnitudes
 from core.exportar_compras import generar_excel_listado_compras, generar_pdf_listado_compras
 from core.exportar_disponibles import generar_excel_disponibles
 from core.exportar_remanente import generar_excel_remanente
@@ -1443,6 +1444,33 @@ def _validar_unidad_compra(valor: str) -> str | None:
     return None
 
 
+# Las unidades en las que se puede CONTAR, que son las de venta menos el kilo:
+# los kilos son la magnitud que va siempre, así que "contar en kilos" no es un
+# conteo — es la otra columna.
+UNIDADES_CONTEO_VALIDAS = ("unidad", "cubeta")
+
+
+def _validar_unidad_conteo(valor: str) -> tuple[str | None, str | None]:
+    """Valida la unidad de conteo del artículo. VACÍO ES VÁLIDO y significa algo.
+
+    Devuelve (error, valor) — el valor es None cuando viene vacío, y eso NO
+    es un dato que falta: es "este artículo se compra solo por kilo, no hay
+    segunda magnitud que declarar". Un artículo sin conteo es el caso normal
+    (la mayoría), y por eso el campo no se exige.
+
+    Cargarlo tiene una consecuencia inmediata y conviene saberla: desde la
+    compra siguiente el comprador va a tener que declarar TAMBIÉN cuántas
+    unidades (o cubetas) trae cada cajón, porque ésa es la magnitud con la
+    que van a costear las fichas que vendan así.
+    """
+    valor = (valor or "").strip()
+    if not valor:
+        return None, None
+    if valor not in UNIDADES_CONTEO_VALIDAS:
+        return "Elegí una unidad de conteo válida (unidad o cubeta), o dejala vacía.", None
+    return None, valor
+
+
 def _validar_grupo(valor: str) -> tuple[str | None, str | None]:
     """Valida el grupo del artículo (fruta, hortaliza, ...). Vacío es válido: sin clasificar todavía."""
     valor = valor.strip()
@@ -1620,6 +1648,97 @@ def _validar_contenido_por_cajon(texto: str) -> tuple[str | None, float | None]:
     return None, valor
 
 
+# ----------------------------------------------------------------------------
+# LAS DOS MAGNITUDES DE UNA COMPRA
+# ----------------------------------------------------------------------------
+# Una compra declara KILOS —siempre— y, cuando el artículo tiene
+# `unidad_conteo`, también un CONTEO (unidades o cubetas). La misma caja de
+# mango se carga UNA vez con las dos, y después cada ficha costea contra la
+# que su cliente compra (ver app.costeo.magnitud_de_la_ficha). No hay
+# conversión entre las dos y no la va a haber: un kilaje por unidad nunca es
+# exacto, así que un factor sería un promedio disfrazado de dato.
+#
+# EN EL FORMULARIO SON DOS CONTENIDOS POR CAJÓN, no dos totales: el que carga
+# sabe que el cajón trae 40 mangos y pesa 16 kilos, no que la compra entera
+# son 1000 mangos. La multiplicación por los cajones la hace el server.
+#
+# `compras.contenido_por_cajon` es el PRIMERO de los dos y no cambió de
+# significado: sigue expresado en `unidad_compra`, que es lo único que esa
+# columna deprecada todavía dice. El campo nuevo es el OTRO.
+
+
+def segunda_magnitud_del_articulo(articulo: dict) -> str | None:
+    """Qué magnitud hay que pedirle de MÁS a una compra de este artículo, o None.
+
+    `contenido_por_cajon` ya trae una de las dos —la de `unidad_compra`— así
+    que la que falta es la otra:
+
+      - artículo que se compra por kilo y CUENTA en unidades  -> el conteo
+      - artículo que se compra por unidad o cubeta            -> los kilos
+      - artículo que se compra por kilo y no cuenta           -> ninguna
+
+    El tercer caso es el normal y es la mayoría: ahí el formulario no pide
+    nada nuevo y la pantalla queda como estaba.
+    """
+    if articulo.get("unidad_compra") != "kilo":
+        return "kilo"
+    return articulo.get("unidad_conteo")
+
+
+def _validar_segunda_magnitud(texto: str, segunda: str | None) -> tuple[str | None, float | None]:
+    """Valida el contenido por cajón de la SEGUNDA magnitud. Obligatorio cuando la hay.
+
+    OBLIGATORIO Y NO OPCIONAL, y está decidido: un artículo tiene
+    `unidad_conteo` solamente porque alguien se lo cargó, y se lo cargó
+    porque una ficha vende así. Si el campo se puede saltear, se saltea —
+    eso ya se midió con `reprocesos.bultos_merma`, que se llenó 1 vez de 72—
+    y la ficha del cliente se queda sin costo sin que el que cargó se entere.
+    El único que puede declarar las dos magnitudes es el que tiene el cajón
+    adelante.
+
+    Sin segunda magnitud devuelve (None, None) sin mirar el texto: no hay
+    nada que pedir.
+    """
+    if segunda is None:
+        return None, None
+
+    texto = (texto or "").strip()
+    nombre = "Los kilos por cajón" if segunda == "kilo" else f"Las {segunda}s por cajón"
+    if not texto:
+        return f"{nombre} son obligatorios: este artículo se carga con las dos magnitudes.", None
+    try:
+        valor = float(texto)
+    except ValueError:
+        return f"{nombre} tienen que ser un número.", None
+    if valor <= 0:
+        return f"{nombre} tienen que ser mayores a cero.", None
+    return None, valor
+
+
+def magnitudes_de_la_compra(
+    articulo: dict, cantidad_cajones: float, contenido_por_cajon: float, segunda_por_cajon: float | None
+) -> tuple[float | None, float | None]:
+    """(cantidad_kilos, cantidad_fraccion) de una compra, a partir de sus dos contenidos por cajón.
+
+    UNA SOLA FUNCIÓN PARA LOS SEIS CAMINOS DE CARGA, y ése es el punto: el
+    reparto entre las dos columnas es la clase de cosa que escrita seis
+    veces se separa en cinco. Hay un test que parsea app/main.py y exige que
+    toda llamada a crear_compra / crear_compras_de_comanda saque sus
+    cantidades de acá — porque el que se olvide, por definición, no nombra
+    ninguna de las dos columnas.
+
+    La que la compra no declaró queda en None, y eso NO es un cero: es "esta
+    compra no se puede costear en esa unidad". Es el estado de todas las
+    compras anteriores a este modelo, y no se puede deducir.
+    """
+    principal = cantidad_cajones * contenido_por_cajon
+    segunda = cantidad_cajones * segunda_por_cajon if segunda_por_cajon is not None else None
+    # El reparto entre las dos columnas vive en core/magnitudes.py, no acá:
+    # Depósito hace exactamente el mismo con lo que pesó y contó, y escrito
+    # dos veces son dos reglas.
+    return repartir_magnitudes(articulo.get("unidad_compra"), principal, segunda)
+
+
 def _validar_codigo_puesto(texto: str) -> tuple[str | None, str | None]:
     """Valida el código de puesto: obligatorio, formato letra N/L + 2 dígitos + P + 2 dígitos."""
     codigo = texto.strip().upper()
@@ -1677,6 +1796,7 @@ def agregar_articulo(
     request: Request,
     nombre: str = Form(""),
     unidad_compra: str = Form(""),
+    unidad_conteo: str = Form(""),
     contenido_referencia: str = Form(""),
     grupo: str = Form(""),
 ):
@@ -1684,6 +1804,10 @@ def agregar_articulo(
 
     if not error:
         error = _validar_unidad_compra(unidad_compra)
+
+    unidad_conteo_valor = None
+    if not error:
+        error, unidad_conteo_valor = _validar_unidad_conteo(unidad_conteo)
 
     contenido_referencia_valor = None
     if not error:
@@ -1703,7 +1827,7 @@ def agregar_articulo(
         )
 
     try:
-        crear_articulo(nombre, unidad_compra, contenido_referencia_valor, grupo_valor)
+        crear_articulo(nombre, unidad_compra, contenido_referencia_valor, grupo_valor, unidad_conteo_valor)
     except Exception as error:
         articulos = listar_articulos()
         return templates.TemplateResponse(
@@ -1737,6 +1861,7 @@ def editar_articulo(
     articulo_id: int,
     nombre: str = Form(""),
     unidad_compra: str = Form(""),
+    unidad_conteo: str = Form(""),
     contenido_referencia: str = Form(""),
     grupo: str = Form(""),
 ):
@@ -1744,6 +1869,10 @@ def editar_articulo(
 
     if not error:
         error = _validar_unidad_compra(unidad_compra)
+
+    unidad_conteo_valor = None
+    if not error:
+        error, unidad_conteo_valor = _validar_unidad_conteo(unidad_conteo)
 
     contenido_referencia_valor = None
     if not error:
@@ -1762,6 +1891,7 @@ def editar_articulo(
                     "id": articulo_id,
                     "nombre": nombre,
                     "unidad_compra": unidad_compra,
+                    "unidad_conteo": unidad_conteo,
                     "contenido_referencia": contenido_referencia,
                     "grupo": grupo,
                 },
@@ -1771,7 +1901,9 @@ def editar_articulo(
         )
 
     try:
-        actualizar_articulo(articulo_id, nombre, unidad_compra, contenido_referencia_valor, grupo_valor)
+        actualizar_articulo(
+            articulo_id, nombre, unidad_compra, contenido_referencia_valor, grupo_valor, unidad_conteo_valor
+        )
     except Exception as error:
         return templates.TemplateResponse(
             request,
@@ -1781,6 +1913,7 @@ def editar_articulo(
                     "id": articulo_id,
                     "nombre": nombre,
                     "unidad_compra": unidad_compra,
+                    "unidad_conteo": unidad_conteo_valor,
                     "contenido_referencia": contenido_referencia_valor,
                     "grupo": grupo_valor,
                 },
@@ -2382,7 +2515,7 @@ def cambiar_articulo_de_ficha_ruta(
 
 def _validar_compra_nueva_form(
     articulo_id: str, cantidad_cajones: str, contenido_por_cajon: str, importe: str, sena: str,
-    tipo_retiro: str, ficha_en_origen_id: str,
+    tipo_retiro: str, ficha_en_origen_id: str, segunda_por_cajon: str,
 ) -> tuple[str | None, dict]:
     """Valida los campos del alta de una compra (cajones × contenido por cajón).
 
@@ -2390,6 +2523,14 @@ def _validar_compra_nueva_form(
     y tipo_retiro ya convertidos (o None/placeholder si hubo error antes de llegar a ese campo). No
     valida acá si el artículo tiene unidad_compra configurada: eso requiere leerlo de la base, y lo
     hace la ruta después de esta validación.
+
+    `segunda_por_cajon` es la SEGUNDA magnitud —los kilos, o el conteo— y
+    acá viaja COMO TEXTO, sin validar, por la misma razón: si hace falta y
+    en qué unidad está lo dice el artículo, que todavía no se leyó. La ruta
+    la valida con _validar_segunda_magnitud apenas lo tiene, y deja el
+    número en `valores["segunda_por_cajon"]`. Hasta entonces ese campo vale
+    None, que es exactamente lo que significa "esta compra no declaró la
+    segunda magnitud".
 
     ficha_en_origen_id es la marca de "viene YA ARMADA en caja nuestra": vacío
     = compra normal, llega el cajón del proveedor. Acá se valida SOLO LA FORMA
@@ -2411,6 +2552,8 @@ def _validar_compra_nueva_form(
         "sena": None,
         "tipo_retiro": tipo_retiro,
         "ficha_en_origen_id": None,
+        "segunda_por_cajon_texto": segunda_por_cajon,
+        "segunda_por_cajon": None,
     }
 
     articulo_id = articulo_id.strip()
@@ -3055,6 +3198,7 @@ async def agregar_compra_manual(
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
+    segunda_por_cajon: str = Form(""),
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
@@ -3089,6 +3233,7 @@ async def agregar_compra_manual(
             "articulo_id": valores["articulo_id"] if valores else None,
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
@@ -3113,7 +3258,7 @@ async def agregar_compra_manual(
     if not error:
         error, valores = _validar_compra_nueva_form(
             articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
-            ficha_en_origen_id,
+            ficha_en_origen_id, segunda_por_cajon,
         )
 
     comprimida = None
@@ -3133,6 +3278,14 @@ async def agregar_compra_manual(
         elif not articulo["unidad_compra"]:
             error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
 
+    # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
+    # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
+    # ahora está leído (ver segunda_magnitud_del_articulo).
+    if not error:
+        error, valores["segunda_por_cajon"] = _validar_segunda_magnitud(
+            valores["segunda_por_cajon_texto"], segunda_magnitud_del_articulo(articulo)
+        )
+
     if error:
         return _reintentar(error, 400)
 
@@ -3146,11 +3299,9 @@ async def agregar_compra_manual(
 
     foto_ruta = _subir_comanda_adjunta(comprimida, codigo_valor) if comprimida is not None else None
 
-    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-    if articulo["unidad_compra"] == "kilo":
-        cantidad_kilos, cantidad_fraccion = total, None
-    else:
-        cantidad_kilos, cantidad_fraccion = None, total
+    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+        articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
+    )
 
     try:
         crear_compra(
@@ -3184,6 +3335,7 @@ async def agregar_compra(
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
+    segunda_por_cajon: str = Form(""),
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
@@ -3249,7 +3401,7 @@ async def agregar_compra(
 
     error, valores = _validar_compra_nueva_form(
         articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
-        ficha_en_origen_id,
+        ficha_en_origen_id, segunda_por_cajon,
     )
     if error and bytes_foto:
         error += AVISO_READJUNTAR_COMANDA
@@ -3266,6 +3418,7 @@ async def agregar_compra(
                 "articulo_id": valores["articulo_id"],
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
+                "segunda_por_cajon": segunda_por_cajon,
                 "importe": importe,
                 "sena": sena,
                 "tipo_retiro": tipo_retiro,
@@ -3290,6 +3443,14 @@ async def agregar_compra(
         elif not articulo["unidad_compra"]:
             error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
 
+    # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
+    # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
+    # ahora está leído (ver segunda_magnitud_del_articulo).
+    if not error:
+        error, valores["segunda_por_cajon"] = _validar_segunda_magnitud(
+            valores["segunda_por_cajon_texto"], segunda_magnitud_del_articulo(articulo)
+        )
+
     if error:
         articulos = listar_articulos()
         renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
@@ -3298,6 +3459,7 @@ async def agregar_compra(
             "articulo_id": valores["articulo_id"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
@@ -3317,11 +3479,9 @@ async def agregar_compra(
             status_code=400,
         )
 
-    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-    if articulo["unidad_compra"] == "kilo":
-        cantidad_kilos, cantidad_fraccion = total, None
-    else:
-        cantidad_kilos, cantidad_fraccion = None, total
+    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+        articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
+    )
 
     foto_ruta = _subir_comanda_adjunta(comprimida, proveedor["codigo_puesto"]) if comprimida is not None else None
 
@@ -3348,6 +3508,7 @@ async def agregar_compra(
             "articulo_id": valores["articulo_id"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
@@ -3542,6 +3703,11 @@ def _armar_sugerencias_desde_datos_leidos(
                 "articulo_id": articulo_id_sugerido,
                 "cantidad_cajones": _numero_o_none(item.get("cantidad")),
                 "contenido_por_cajon": _contenido_referencia_de(articulo_id_sugerido, articulos_existentes),
+                # La segunda magnitud NO se sugiere: la foto de la comanda
+                # trae un solo número por renglón, y precargar el otro con
+                # algo plausible es justo lo que invita a aceptarlo sin
+                # mirar. Vacío, el campo pregunta en vez de proponer.
+                "segunda_por_cajon": "",
                 "importe": _numero_o_none(item.get("importe")),
                 "sena": _numero_o_none(item.get("sena")),
                 "nota_margen": item.get("nota_margen") or "",
@@ -3632,6 +3798,7 @@ async def leer_foto_comanda_multiple(foto: UploadFile = File(...)):
             "articulo_id": None,
             "cantidad_cajones": None,
             "contenido_por_cajon": None,
+            "segunda_por_cajon": "",
             "importe": None,
             "sena": None,
             "nota_margen": "",
@@ -3720,6 +3887,7 @@ async def leer_listado_consolidado(foto: UploadFile = File(...)):
                 "articulo_id": None,
                 "cantidad_cajones": None,
                 "contenido_por_cajon": None,
+                "segunda_por_cajon": "",
                 "importe": None,
                 "sena": None,
                 "nota_margen": "",
@@ -3819,6 +3987,7 @@ async def confirmar_compra_foto(request: Request):
         articulo_id_texto = str(form.get(prefijo + "articulo_id", "")).strip()
         cantidad_cajones_texto = str(form.get(prefijo + "cantidad_cajones", ""))
         contenido_por_cajon_texto = str(form.get(prefijo + "contenido_por_cajon", ""))
+        segunda_por_cajon_texto = str(form.get(prefijo + "segunda_por_cajon", ""))
         importe_texto = str(form.get(prefijo + "importe", ""))
         sena_texto = str(form.get(prefijo + "sena", ""))
         tipo_retiro_texto = str(form.get(prefijo + "tipo_retiro", ""))
@@ -3832,6 +4001,7 @@ async def confirmar_compra_foto(request: Request):
                 "articulo_id": int(articulo_id_texto) if articulo_id_texto.isdigit() else None,
                 "cantidad_cajones": cantidad_cajones_texto,
                 "contenido_por_cajon": contenido_por_cajon_texto,
+                "segunda_por_cajon": segunda_por_cajon_texto,
                 "importe": importe_texto,
                 "sena": sena_texto,
                 "tipo_retiro": tipo_retiro_texto,
@@ -3851,6 +4021,7 @@ async def confirmar_compra_foto(request: Request):
         error_renglon, valores_renglon = _validar_compra_nueva_form(
             articulo_id_texto, cantidad_cajones_texto, contenido_por_cajon_texto,
             importe_texto, sena_texto, tipo_retiro_texto, ficha_en_origen_texto,
+            segunda_por_cajon_texto,
         )
 
         articulo = None
@@ -3860,6 +4031,13 @@ async def confirmar_compra_foto(request: Request):
                 error_renglon = "El artículo elegido no es válido."
             elif not articulo["unidad_compra"]:
                 error_renglon = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
+
+            # Ver el comentario gemelo en los otros caminos: la segunda
+            # magnitud la define el artículo, así que se valida recién acá.
+            if not error_renglon:
+                error_renglon, valores_renglon["segunda_por_cajon"] = _validar_segunda_magnitud(
+                    valores_renglon["segunda_por_cajon_texto"], segunda_magnitud_del_articulo(articulo)
+                )
 
         if error_renglon:
             error = f"Renglón {indice + 1}: {error_renglon}"
@@ -3928,11 +4106,12 @@ async def confirmar_compra_foto(request: Request):
             hoy = _hoy_argentina()
             renglones_comanda = []
             for texto_leido, valores, articulo in renglones_a_guardar:
-                total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-                if articulo["unidad_compra"] == "kilo":
-                    cantidad_kilos, cantidad_fraccion = total, None
-                else:
-                    cantidad_kilos, cantidad_fraccion = None, total
+                cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+                    articulo,
+                    valores["cantidad_cajones"],
+                    valores["contenido_por_cajon"],
+                    valores["segunda_por_cajon"],
+                )
                 renglones_comanda.append(
                     {
                         "articulo_id": valores["articulo_id"],
@@ -4166,6 +4345,7 @@ def editar_compra(
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
+    segunda_por_cajon: str = Form(""),
     importe: str = Form(""),
     sena: str = Form(""),
     tipo_retiro: str = Form(""),
@@ -4193,7 +4373,7 @@ def editar_compra(
 
     error, valores = _validar_compra_nueva_form(
         articulo_id, cantidad_cajones, contenido_por_cajon, importe, sena, tipo_retiro,
-        ficha_en_origen_id,
+        ficha_en_origen_id, segunda_por_cajon,
     )
 
     articulo = None
@@ -4209,6 +4389,7 @@ def editar_compra(
                 "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
+                "segunda_por_cajon": segunda_por_cajon,
                 "importe": importe,
                 "sena": sena,
                 "tipo_retiro": tipo_retiro,
@@ -4231,6 +4412,14 @@ def editar_compra(
         elif not articulo["unidad_compra"]:
             error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
 
+    # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
+    # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
+    # ahora está leído (ver segunda_magnitud_del_articulo).
+    if not error:
+        error, valores["segunda_por_cajon"] = _validar_segunda_magnitud(
+            valores["segunda_por_cajon_texto"], segunda_magnitud_del_articulo(articulo)
+        )
+
     if error:
         articulos = listar_articulos()
         compra = {
@@ -4240,6 +4429,7 @@ def editar_compra(
             "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
@@ -4252,11 +4442,9 @@ def editar_compra(
             status_code=400,
         )
 
-    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-    if articulo["unidad_compra"] == "kilo":
-        cantidad_kilos, cantidad_fraccion = total, None
-    else:
-        cantidad_kilos, cantidad_fraccion = None, total
+    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+        articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
+    )
 
     if accion == "agregar":
         try:
@@ -4282,6 +4470,7 @@ def editar_compra(
                 "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
+                "segunda_por_cajon": segunda_por_cajon,
                 "importe": importe,
                 "sena": sena,
                 "tipo_retiro": tipo_retiro,
@@ -4341,6 +4530,7 @@ def editar_compra(
             "proveedor_codigo_puesto": compra_actual["proveedor_codigo_puesto"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "importe": importe,
             "sena": sena,
             "tipo_retiro": tipo_retiro,
@@ -4927,6 +5117,7 @@ def cargar_ingreso_retroactivo(
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
+    segunda_por_cajon: str = Form(""),
     importe: str = Form(""),
     fecha_recepcion: str = Form(""),
     ficha_en_origen_id: str = Form(""),
@@ -4955,6 +5146,7 @@ def cargar_ingreso_retroactivo(
     precarga = {
         "proveedor_id": proveedor_id, "articulo_id": articulo_id,
         "cantidad_cajones": cantidad_cajones, "contenido_por_cajon": contenido_por_cajon,
+        "segunda_por_cajon": segunda_por_cajon,
         "importe": importe, "fecha_recepcion": fecha_recepcion,
         # Va a la precarga como TEXTO, igual que los demás: al re-renderizar
         # por un error, el selector tiene que volver con la caja que se había
@@ -5005,11 +5197,16 @@ def cargar_ingreso_retroactivo(
             else:
                 ficha_marcada = int(ficha_texto)
 
+    # Igual que en los otros cinco caminos: la segunda magnitud la define el
+    # ARTÍCULO, así que se valida recién con el artículo leído.
+    segunda = None
+    if error is None:
+        error, segunda = _validar_segunda_magnitud(segunda_por_cajon, segunda_magnitud_del_articulo(articulo))
+
     if error:
         return _renderizar_ingreso_retroactivo(request, precarga=precarga, error=error, status_code=400)
 
-    total = cajones * contenido
-    cantidad_kilos, cantidad_fraccion = (total, None) if articulo["unidad_compra"] == "kilo" else (None, total)
+    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(articulo, cajones, contenido, segunda)
     # Mediodía y no medianoche: la fecha que importa es el DÍA, y las dos
     # cuentas la pasan a hora argentina antes de mirarla. A las 00:00 de
     # Buenos Aires, un corrimiento de zona la tira al día anterior.
@@ -7469,6 +7666,7 @@ def ingresar_mercaderia(
     articulo_id: str = Form(""),
     cantidad_cajones: str = Form(""),
     contenido_por_cajon: str = Form(""),
+    segunda_por_cajon: str = Form(""),
     tipo_retiro: str = Form("Clark"),
     ficha_en_origen_id: str = Form(""),
 ):
@@ -7493,7 +7691,8 @@ def ingresar_mercaderia(
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
 
     error, valores = _validar_compra_nueva_form(
-        articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro, ficha_en_origen_id
+        articulo_id, cantidad_cajones, contenido_por_cajon, "", "", tipo_retiro, ficha_en_origen_id,
+        segunda_por_cajon,
     )
 
     articulo = None
@@ -7508,6 +7707,7 @@ def ingresar_mercaderia(
                 "articulo_id": valores["articulo_id"],
                 "cantidad_cajones": cantidad_cajones,
                 "contenido_por_cajon": contenido_por_cajon,
+                "segunda_por_cajon": segunda_por_cajon,
                 "tipo_retiro": tipo_retiro,
                 "ficha_en_origen_id": ficha_en_origen_id,
             }
@@ -7529,6 +7729,14 @@ def ingresar_mercaderia(
         elif not articulo["unidad_compra"]:
             error = "Este artículo no tiene la unidad de compra configurada. Cargala en /articulos primero."
 
+    # LA SEGUNDA MAGNITUD SE VALIDA ACÁ Y NO EN EL FORM, y es por el orden:
+    # si hace falta, y en qué unidad está, lo dice el ARTÍCULO, que recién
+    # ahora está leído (ver segunda_magnitud_del_articulo).
+    if not error:
+        error, valores["segunda_por_cajon"] = _validar_segunda_magnitud(
+            valores["segunda_por_cajon_texto"], segunda_magnitud_del_articulo(articulo)
+        )
+
     if error:
         articulos = listar_articulos()
         renglones_hoy = listar_compras_por_fecha_y_proveedor(_hoy_argentina(), proveedor_id)
@@ -7537,6 +7745,7 @@ def ingresar_mercaderia(
             "articulo_id": valores["articulo_id"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "tipo_retiro": tipo_retiro,
             "ficha_en_origen_id": ficha_en_origen_id,
         }
@@ -7553,11 +7762,9 @@ def ingresar_mercaderia(
             status_code=400,
         )
 
-    total = valores["cantidad_cajones"] * valores["contenido_por_cajon"]
-    if articulo["unidad_compra"] == "kilo":
-        cantidad_kilos, cantidad_fraccion = total, None
-    else:
-        cantidad_kilos, cantidad_fraccion = None, total
+    cantidad_kilos, cantidad_fraccion = magnitudes_de_la_compra(
+        articulo, valores["cantidad_cajones"], valores["contenido_por_cajon"], valores["segunda_por_cajon"]
+    )
 
     try:
         crear_compra(
@@ -7586,6 +7793,7 @@ def ingresar_mercaderia(
             "articulo_id": valores["articulo_id"],
             "cantidad_cajones": cantidad_cajones,
             "contenido_por_cajon": contenido_por_cajon,
+            "segunda_por_cajon": segunda_por_cajon,
             "tipo_retiro": tipo_retiro,
             "ficha_en_origen_id": ficha_en_origen_id,
         }
@@ -7627,6 +7835,27 @@ def _validar_cantidad_cajones_real(texto: str) -> tuple[str | None, float | None
     error = _entero_o_error(valor, "cajones real")
     if error:
         return error, None
+    return None, valor
+
+
+def _validar_segunda_real_recepcion(texto: str) -> tuple[str | None, float | None]:
+    """La SEGUNDA magnitud que pesó/contó Depósito, por bulto. VACÍO ES VÁLIDO acá.
+
+    Vacío significa "esta compra trajo una sola magnitud", y en ese caso es
+    lo correcto: pedirle a Depósito la que la compra no declaró es pedirle
+    que invente. Si la compra SÍ declaró las dos, el vacío lo rechaza la
+    base — la guarda va donde se escribe, no donde se muestra (ver
+    _exigir_la_segunda_si_la_compra_la_declaro en app/db.py).
+    """
+    texto = (texto or "").strip()
+    if not texto:
+        return None, None
+    try:
+        valor = float(texto)
+    except ValueError:
+        return "La otra magnitud tiene que ser un número.", None
+    if valor <= 0:
+        return "La otra magnitud tiene que ser mayor a cero.", None
     return None, valor
 
 
@@ -7923,16 +8152,21 @@ def recepcionar_compra_ruta(
     compra_id: int,
     cantidad_cajones_real: str = Form(""),
     cantidad_total_real: str = Form(""),
+    segunda_real: str = Form(""),
 ):
     error, cajones_valor = _validar_cantidad_cajones_real(cantidad_cajones_real)
     if not error:
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
+    if not error:
+        error, segunda_valor = _validar_segunda_real_recepcion(segunda_real)
 
     if error:
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
 
     try:
-        aviso_retiro, numero_guia = recepcionar_compra(compra_id, cajones_valor, valor_real)
+        aviso_retiro, numero_guia = recepcionar_compra(
+            compra_id, cajones_valor, valor_real, segunda_real=segunda_valor
+        )
     except Exception as error_db:
         motivo = _error_de_la_guia_en_origen(error_db)
         if motivo:
@@ -7967,6 +8201,7 @@ def rechazo_parcial_compra_ruta(
     cantidad_cajones_rechazada: str = Form(""),
     cantidad_total_real: str = Form(""),
     motivo_rechazo: str = Form(""),
+    segunda_real: str = Form(""),
 ):
     """Llegó la carga pero Depósito devuelve parte al proveedor (ej. 2 de 10 por calidad).
 
@@ -7981,6 +8216,8 @@ def rechazo_parcial_compra_ruta(
     )
     if not error:
         error, valor_real = _validar_valor_real_recepcion(cantidad_total_real)
+    if not error:
+        error, segunda_valor = _validar_segunda_real_recepcion(segunda_real)
 
     if error:
         return _renderizar_pantalla_recepcion(request, error=error, status_code=400)
@@ -7992,6 +8229,7 @@ def rechazo_parcial_compra_ruta(
             valor_real,
             cantidad_cajones_rechazada=cajones_rechazados,
             motivo_rechazo=motivo_rechazo.strip() or None,
+            segunda_real=segunda_valor,
         )
     except Exception as error_db:
         motivo = _error_de_la_guia_en_origen(error_db)
@@ -11663,48 +11901,56 @@ def _detalle_kilos_faltantes() -> dict:
 # CONTRARIO una de la otra. El texto va acá y no suelto en la función para
 # que el que lo cambie vea los dos al lado y no pueda dejarlos diciendo lo
 # mismo — que es como se volvería a leer "alinear" en los dos casos.
-QUE_ES_MULTIUNIDAD = "Dos unidades en este artículo: NO alinear"
-QUE_ES_ALINEABLE = "Una sola unidad de venta: revisar cuál está mal"
+QUE_ES_FALTA_CONTEO = "Al artículo le falta el conteo: cargalo"
+QUE_ES_TERCERA_UNIDAD = "Ya cuenta en otra unidad: no entra"
 
 
 def _detalle_unidades_que_diferen() -> dict:
-    """Los pares donde la unidad de compra y la de venta no coinciden.
+    """Las fichas que venden en una unidad que su artículo no puede declarar.
 
     LA COLUMNA "QUÉ ES" ES LA QUE EVITA EL DAÑO, y es del 15/09. Hasta ese
     día los dos casos se veían idénticos y el link mandaba a los dos al
-    mismo lado, a alinear:
+    mismo lado, a alinear — que borra el dato. Con el modelo de dos
+    magnitudes los casos cambiaron, y los que quedan son estos dos:
 
-    - **Dos unidades en el artículo** (a un cliente por unidad y a otro por
-      kilo): es real. Alinear una de las dos fichas le hace decir que ese
-      cliente compra en una unidad en la que no compra, apaga el aviso y
-      borra el dato. No hay nada que alinear — queda sin costear hasta que
-      el sistema sepa convertir.
-    - **Una sola unidad de venta** y distinta de la de compra: ahí sí hay
-      UNA cosa mal cargada, y se revisa cuál de las dos.
+    - **Al artículo le falta el conteo**: se compra solo por kilo y esta
+      ficha vende por unidad (o cubeta). Se arregla cargándole
+      `unidad_conteo` al artículo, y desde la compra siguiente el
+      comprador declara las dos magnitudes y la ficha costea. NO se toca
+      la ficha: la ficha dice la verdad.
+    - **Ya cuenta en otra unidad**: el artículo cuenta en unidades y esta
+      ficha pide cubetas (o al revés). Ahí no hay nada que cargar — la
+      compra guarda DOS magnitudes, no tres, y ésta es la tercera. Queda
+      sin costear, y decirlo así es más honesto que mandar a tocar algo
+      que no va a alcanzar.
+
+    EL CASO DE LAS DOS UNIDADES YA NO LLEGA ACÁ, y ése es el cambio: un
+    mango con ficha en kilo y ficha en unidad costea las dos y no aparece
+    en la alerta. Lo que llega es lo que de verdad no tiene salida sola.
 
     LA COLUMNA "USO" DECIDE EL ORDEN, que es otra pregunta: un par dormido
     no le falta a nadie hoy; uno con compras o precios encima es una ficha
-    que HOY no tiene costo ni precio sugerido. (Hasta el 15/09 este
-    docstring decía que era "plata ya calculada dividiendo entre unidades
-    distintas". Dejó de serlo el mismo día: el costeo ahora se niega, así
-    que ya no hay número mal — hay número que falta.)
+    que HOY no tiene costo ni precio sugerido.
     """
     renglones = []
     for fila in listar_unidades_que_diferen():
         usado = fila["compras"] or fila["precios"] or fila["renglones"]
         renglones.append([
             fila["articulo"],
-            fila["unidad_compra"],
+            # El conteo que el artículo declara hoy, que es contra lo que la
+            # ficha no coincide. NULL se dice "sin conteo" y no "—": es el
+            # dato que falta, no un dato que no aplica.
+            fila["unidad_conteo"] or "sin conteo",
             fila["cliente"],
             fila["unidad_venta"],
-            QUE_ES_MULTIUNIDAD if (fila["unidades_de_venta"] or 0) > 1 else QUE_ES_ALINEABLE,
+            QUE_ES_TERCERA_UNIDAD if fila["unidad_conteo"] else QUE_ES_FALTA_CONTEO,
             (f'{fila["compras"]} compras · {fila["precios"]} precios · '
              f'{fila["renglones"]} renglones') if usado else "sin usar",
         ])
     return {
-        "columnas": ["Artículo", "Se compra por", "Cliente", "Se vende por", "Qué es", "Uso"],
+        "columnas": ["Artículo", "Cuenta en", "Cliente", "Se vende por", "Qué es", "Uso"],
         "filas": renglones,
-        "resumen": f"{len(renglones)} par{'es' if len(renglones) != 1 else ''}",
+        "resumen": f"{len(renglones)} ficha{'s' if len(renglones) != 1 else ''}",
     }
 
 
@@ -12040,27 +12286,25 @@ ALERTAS = [
         # título solo se lee como "esto está mal". Lo que sí es un hecho es
         # que esas fichas no se costean, y eso es lo que el que mira
         # necesita saber.
-        titulo="Fichas sin costear: se compran en una unidad y se venden en otra",
+        titulo="Fichas sin costear: el artículo no declara esa unidad",
         titulo_corto="Fichas sin costear por la unidad",
-        # A LOS DOS SECTORES porque la mitad la arregla cada uno: la unidad de
-        # compra se edita en Artículos (Compras) y la de venta en Fichas
-        # (Comercial). En uno solo, el que la ve no siempre puede tocarla.
-        modulos=("compras", "comercial"),
-        # CADA SECTOR A SU MITAD, que es para lo que existe urls_por_sector:
-        # la unidad de compra se edita en Artículos (bajo /compras, con su
-        # clave) y la de venta en Fichas (Comercial, sin puerta). Con una url
-        # sola, el que no era dueño del destino terminaba contra una clave
-        # ajena — pasó el 12/09 con Comercial cuando Artículos se mudó.
+        # A COMPRAS Y NADA MÁS, y hasta el 15/09 iba también a Comercial
+        # "porque la mitad la arregla cada uno". Con el modelo de dos
+        # magnitudes esa premisa se cayó: YA NO HAY DOS MITADES. La ficha
+        # dice la verdad —ese cliente compra así— y lo que falta es que el
+        # artículo declare el conteo, que se edita en Artículos. Mandar a
+        # Comercial a Fichas era mandarlo a tocar lo único que está bien.
         #
-        # El default va a Fichas y no a Artículos porque lo usa Auditoría,
-        # que no es un sector y la mira cualquiera: de las dos mitades, la
-        # que no tiene puerta es la que nunca deja a nadie afuera.
-        url="/fichas",
-        destinos_por_sector={
-            "compras": ("/compras/articulos", "Ver en Artículos"),
-            "comercial": ("/fichas", "Ver en Fichas"),
-        },
-        texto_link="Ver en Fichas",
+        # Comercial no queda ciego: la ficha sin costo se ve en el cuadro de
+        # negociación, con el motivo al lado, que es donde Comercial trabaja.
+        modulos=("compras",),
+        # UNA SOLA URL porque hay un solo lugar donde actuar. Auditoría —que
+        # no es un sector y la mira cualquiera— llega a la puerta de Compras
+        # si no tiene la clave, y eso es cierto, no un rodeo: el arreglo está
+        # de ese lado. Para VER cuáles son no hace falta cruzarla, que para
+        # eso está el detalle.
+        url="/compras/articulos",
+        texto_link="Ver en Artículos",
         # EN LAMBDA como las otras dieciocho, y no una referencia directa: el
         # registro se arma al importar, así que una referencia captura el
         # objeto de ese momento y deja de seguir al nombre. La lambda lo

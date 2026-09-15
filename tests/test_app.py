@@ -214,7 +214,7 @@ def test_agregar_articulo_exitoso_redirige_a_articulos():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/articulos"
-    mock_crear.assert_called_once_with("Kiwi", "unidad", 10.0, None)
+    mock_crear.assert_called_once_with("Kiwi", "unidad", 10.0, None, None)
 
 
 def test_agregar_articulo_sin_contenido_referencia_guarda_none():
@@ -226,7 +226,7 @@ def test_agregar_articulo_sin_contenido_referencia_guarda_none():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Kiwi", "kilo", None, None)
+    mock_crear.assert_called_once_with("Kiwi", "kilo", None, None, None)
 
 
 def test_agregar_articulo_con_grupo_valido_lo_guarda():
@@ -238,7 +238,7 @@ def test_agregar_articulo_con_grupo_valido_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Kiwi", "kilo", None, "fruta")
+    mock_crear.assert_called_once_with("Kiwi", "kilo", None, "fruta", None)
 
 
 def test_agregar_articulo_con_grupo_hoja_lo_guarda():
@@ -250,7 +250,7 @@ def test_agregar_articulo_con_grupo_hoja_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Rúcula", "unidad", None, "hoja")
+    mock_crear.assert_called_once_with("Rúcula", "unidad", None, "hoja", None)
 
 
 def test_agregar_articulo_con_grupo_pesada_lo_guarda():
@@ -262,7 +262,7 @@ def test_agregar_articulo_con_grupo_pesada_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_crear.assert_called_once_with("Zapallo", "kilo", None, "pesada")
+    mock_crear.assert_called_once_with("Zapallo", "kilo", None, "pesada", None)
 
 
 def test_agregar_articulo_grupo_invalido_muestra_error():
@@ -321,6 +321,9 @@ ARTICULO_DE_PRUEBA = {
     "id": 1,
     "nombre": "Frutilla",
     "unidad_compra": "cubeta",
+    # Como en producción: el artículo que se compra contado declara ese
+    # conteo, y por eso sus compras llevan TAMBIÉN los kilos.
+    "unidad_conteo": "cubeta",
     "contenido_referencia": 12,
     "grupo": "fruta",
 }
@@ -361,7 +364,7 @@ def test_editar_articulo_exitoso_redirige_a_articulos():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/compras/articulos"
-    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0, None)
+    mock_actualizar.assert_called_once_with(1, "Frutilla Premium", "cubeta", 12.0, None, None)
 
 
 def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
@@ -385,7 +388,7 @@ def test_editar_articulo_con_el_contenido_VACIO_borra_la_referencia():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Mango", "unidad", None, None)
+    mock_actualizar.assert_called_once_with(1, "Mango", "unidad", None, None, None)
 
 
 def test_editar_articulo_con_grupo_valido_lo_guarda():
@@ -397,7 +400,7 @@ def test_editar_articulo_con_grupo_valido_lo_guarda():
         )
 
     assert respuesta.status_code == 303
-    mock_actualizar.assert_called_once_with(1, "Frutilla", "cubeta", 12.0, "hortaliza")
+    mock_actualizar.assert_called_once_with(1, "Frutilla", "cubeta", 12.0, "hortaliza", None)
 
 
 def test_editar_articulo_grupo_invalido_muestra_error():
@@ -1762,8 +1765,14 @@ ARTICULOS_CON_UNIDAD_COMPRA = [
 ]
 
 ARTICULO_KILO_DE_PRUEBA = {"id": 5, "nombre": "Kiwi", "unidad_compra": "kilo", "contenido_referencia": 18}
-ARTICULO_UNIDAD_DE_PRUEBA = {"id": 6, "nombre": "Mango", "unidad_compra": "unidad", "contenido_referencia": 10}
-ARTICULO_SIN_UNIDAD_COMPRA = {"id": 7, "nombre": "Kiwi", "unidad_compra": None, "contenido_referencia": None}
+ARTICULO_UNIDAD_DE_PRUEBA = {
+    "id": 6, "nombre": "Mango", "unidad_compra": "unidad",
+    "unidad_conteo": "unidad", "contenido_referencia": 10,
+}
+ARTICULO_SIN_UNIDAD_COMPRA = {
+    "id": 7, "nombre": "Kiwi", "unidad_compra": None,
+    "unidad_conteo": None, "contenido_referencia": None,
+}
 
 
 def test_ver_nueva_compra_sin_proveedor_muestra_formulario_de_proveedor():
@@ -2921,6 +2930,7 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
                 "articulo_id": "6",
                 "cantidad_cajones": "5",
                 "contenido_por_cajon": "10",
+                "segunda_por_cajon": "16",
                 "importe": "30000",
                 "sena": "",
                 "tipo_retiro": "Carro",
@@ -2929,8 +2939,46 @@ def test_agregar_compra_calcula_fraccion_para_articulo_por_unidad():
         )
 
     assert respuesta.status_code == 303
-    # 5 cajones × 10 unidades = 50 unidades (unidad_compra del artículo = unidad)
-    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, None, 50.0, 30000.0, None, "Carro", None, ficha_en_origen_id=None)
+    # LAS DOS MAGNITUDES de una sola carga: 5 cajones de 10 unidades y 16
+    # kilos cada uno -> 50 unidades y 80 kilos. El contenido por cajón está
+    # en unidad_compra (unidad) y el campo nuevo trae la otra.
+    mock_crear.assert_called_once_with(HOY_DE_PRUEBA, 6, 200, 5.0, 10.0, 80.0, 50.0, 30000.0, None, "Carro", None, ficha_en_origen_id=None)
+
+
+def test_agregar_compra_SIN_la_segunda_magnitud_no_guarda_y_lo_dice():
+    """El artículo declara las dos, así que con una sola no se guarda.
+
+    Obligatorio y no opcional: un artículo tiene conteo solo porque alguien
+    se lo cargó, y se lo cargó porque una ficha vende así. Si el campo se
+    pudiera saltear, se saltearía —ya se midió con `bultos_merma`, 1 de 72—
+    y la ficha del cliente quedaría sin costo sin que el que cargó se entere.
+    """
+    with (
+        patch("app.main._hoy_argentina", return_value=HOY_DE_PRUEBA),
+        patch("app.main.obtener_proveedor", return_value=PROVEEDOR_DE_PRUEBA),
+        patch("app.main.obtener_articulo", return_value=ARTICULO_UNIDAD_DE_PRUEBA),
+        patch("app.main.listar_articulos", return_value=[ARTICULO_UNIDAD_DE_PRUEBA]),
+        patch("app.main.listar_compras_por_fecha_y_proveedor", return_value=[]),
+        patch("app.main.crear_compra") as mock_crear,
+    ):
+        respuesta = cliente.post(
+            "/compras/nueva",
+            data={
+                "proveedor_id": "200",
+                "articulo_id": "6",
+                "cantidad_cajones": "5",
+                "contenido_por_cajon": "10",
+                "segunda_por_cajon": "",
+                "importe": "30000",
+                "sena": "",
+                "tipo_retiro": "Carro",
+            },
+            follow_redirects=False,
+        )
+
+    assert respuesta.status_code == 400
+    assert "kilos por cajón" in respuesta.text.lower()
+    mock_crear.assert_not_called()
 
 
 def test_agregar_compra_proveedor_inexistente_da_404():
@@ -4143,19 +4191,26 @@ def test_las_alertas_de_COMERCIAL_ahora_TRAEN_SU_DETALLE():
     from app.main import ALERTAS
 
     por_codigo = {a.codigo: a for a in ALERTAS}
-    for codigo in ("compras_sin_precio", "articulos_incotizables", "unidades_que_difieren"):
+    for codigo in ("compras_sin_precio", "articulos_incotizables"):
         assert por_codigo[codigo].detallar is not None, codigo
         assert "comercial" in por_codigo[codigo].modulos, codigo
 
+    # `unidades_que_difieren` estaba en esta lista hasta el 15/09 y salió, no
+    # por perder el detalle sino por perder el SECTOR: con el modelo de dos
+    # magnitudes el arreglo vive entero en Artículos (Compras) — la ficha
+    # dice la verdad y no hay nada que tocarle. Mandar a Comercial a Fichas
+    # era mandarlo a romper lo único que está bien.
+    assert por_codigo["unidades_que_difieren"].modulos == ("compras",)
+    assert por_codigo["unidades_que_difieren"].detallar is not None
 
-# `unidades_de_venta` va porque en producción va: es el conteo de unidades
-# distintas entre TODAS las fichas del artículo, y es lo que separa el caso
-# real (dos clientes, dos unidades) del mal cargado. Uno solo = alineable,
-# que es la forma del Kiwi de Palmala.
-FILA_UNIDADES = {"articulo": "EJEMPLO Kiwi", "unidad_compra": "kilo",
+
+# `unidad_conteo` va porque en producción va: es lo que el artículo declara
+# hoy, y es lo que separa "cargale el conteo" de "ya cuenta en otra unidad".
+# En None, como acá, el caso es el primero.
+FILA_UNIDADES = {"articulo": "EJEMPLO Kiwi", "unidad_conteo": None,
                  "cliente": "EJEMPLO Cliente", "unidad_venta": "cubeta",
-                 "compras": 0, "precios": 0, "renglones": 0, "unidades_de_venta": 1}
-TITULO_UNIDADES = "Fichas sin costear: se compran en una unidad y se venden en otra"
+                 "compras": 0, "precios": 0, "renglones": 0}
+TITULO_UNIDADES = "Fichas sin costear: el artículo no declara esa unidad"
 
 
 def _bloque_de(marcado, titulo):
@@ -4186,12 +4241,12 @@ def test_un_bloque_CON_TABLA_igual_muestra_su_link():
     Se afirma sobre el marcado y no sobre el texto visible: el `href` no
     puede aparecer en prosa ni en el CSS (corolarios 38 y 50).
     """
-    marcado = _alertas_de("/comercial/alertas", ["unidades_que_difieren"],
+    marcado = _alertas_de("/compras/alertas", ["unidades_que_difieren"],
                           unidades=[FILA_UNIDADES])
     bloque = _bloque_de(marcado, TITULO_UNIDADES)
 
     assert "EJEMPLO Kiwi" in bloque, "no hay tabla, el test no prueba nada"
-    assert '<a class="link" href="/fichas"' in bloque
+    assert '<a class="link" href="/compras/articulos"' in bloque
 
 
 def test_el_link_esta_en_LOS_TRES_ESTADOS_de_un_bloque():
@@ -4214,10 +4269,10 @@ def test_el_link_esta_en_LOS_TRES_ESTADOS_de_un_bloque():
     distintas de la plantilla.
     """
     # detalle vacío: la alerta detalla, y hoy no hay ninguno
-    vacio = _bloque_de(_alertas_de("/comercial/alertas", ["unidades_que_difieren"]),
+    vacio = _bloque_de(_alertas_de("/compras/alertas", ["unidades_que_difieren"]),
                        TITULO_UNIDADES)
     assert "Ninguno ahora mismo" in vacio, "no cayó en la rama del detalle vacío"
-    assert '<a class="link" href="/fichas"' in vacio
+    assert '<a class="link" href="/compras/articulos"' in vacio
 
     # sin detalle: `guias_r_costo_incompleto` no tiene `detallar`
     sin_detalle = _bloque_de(_alertas_de("/compras/alertas", ["guias_r_costo_incompleto"]),
@@ -6156,7 +6211,7 @@ def test_recepcionar_compra_guarda_los_reales_y_redirige():
 
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1"
-    mock_recepcionar.assert_called_once_with(1, 38.0, 760.0)
+    mock_recepcionar.assert_called_once_with(1, 38.0, 760.0, segunda_real=None)
 
 
 def test_recepcionar_compra_con_aviso_de_retiro_lo_pasa_por_la_url():
@@ -6277,7 +6332,7 @@ def test_rechazo_parcial_guarda_los_aceptados_y_el_registro():
     assert respuesta.status_code == 303
     assert respuesta.headers["location"] == "/deposito/recepcion?procesado=1"
     mock_recepcionar.assert_called_once_with(
-        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo="podrido"
+        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo="podrido", segunda_real=None
     )
 
 
@@ -6296,7 +6351,7 @@ def test_rechazo_parcial_sin_motivo_guarda_none():
 
     assert respuesta.status_code == 303
     mock_recepcionar.assert_called_once_with(
-        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo=None
+        1, 8.0, 18.0, cantidad_cajones_rechazada=2.0, motivo_rechazo=None, segunda_real=None
     )
 
 
@@ -27538,19 +27593,28 @@ def test_las_dos_FORMAS_de_tabla_del_cuadro_estan_separadas_por_clase():
         assert f'content: "{rotulo}"' in css, rotulo
 
 
-def test_la_alerta_de_unidades_va_a_LOS_DOS_sectores_que_la_pueden_arreglar():
-    """La unidad de compra se edita en Artículos (Compras) y la de venta en
-    Fichas (Comercial): en un solo sector, el que la ve no siempre puede
-    tocarla."""
+def test_la_alerta_de_unidades_va_a_COMPRAS_Y_NADA_MAS():
+    """Hasta el 15/09 iba también a Comercial, "porque la mitad la arregla cada uno".
+
+    Con el modelo de dos magnitudes ya no hay dos mitades: la ficha dice la
+    verdad —ese cliente compra así— y lo que falta es que el ARTÍCULO declare
+    el conteo, que se edita en Artículos. Mandar a Comercial a Fichas era
+    mandarlo a tocar lo único que está bien, que es el daño exacto que el
+    arreglo de la alerta vino a sacar.
+    """
     from app.main import ALERTAS
 
     alerta = next(a for a in ALERTAS if a.codigo == "unidades_que_difieren")
-    assert set(alerta.modulos) == {"compras", "comercial"}
+    assert alerta.modulos == ("compras",)
+    assert alerta.url == "/compras/articulos"
     assert alerta.detallar is not None
+    # Y sin destinos por sector: con un solo sector, un segundo destino sería
+    # una decisión escrita dos veces esperando a separarse.
+    assert not alerta.destinos_por_sector
 
 
 def test_el_detalle_de_unidades_DISTINGUE_el_par_dormido_del_que_ya_se_usa():
-    """"Uso" decide el ORDEN: un par dormido no le falta a nadie hoy; uno con
+    """"Uso" decide el ORDEN: una ficha dormida no le falta a nadie hoy; una con
     compras encima es una ficha que HOY no tiene costo ni precio sugerido.
 
     (Este docstring decía "plata ya calculada dividiendo entre unidades
@@ -27560,61 +27624,59 @@ def test_el_detalle_de_unidades_DISTINGUE_el_par_dormido_del_que_ya_se_usa():
     from app.main import _detalle_unidades_que_diferen
 
     filas = [
-        {"articulo": "EJEMPLO Uno", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
-         "unidad_venta": "cubeta", "ficha_id": 1, "compras": 0, "precios": 0, "renglones": 0,
-         "unidades_de_venta": 1},
-        {"articulo": "EJEMPLO Tres", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
-         "unidad_venta": "unidad", "ficha_id": 2, "compras": 7, "precios": 1, "renglones": 0,
-         "unidades_de_venta": 1},
+        {"articulo": "EJEMPLO Uno", "unidad_conteo": None, "cliente": "EJEMPLO Dos",
+         "unidad_venta": "cubeta", "ficha_id": 1, "compras": 0, "precios": 0, "renglones": 0},
+        {"articulo": "EJEMPLO Tres", "unidad_conteo": None, "cliente": "EJEMPLO Dos",
+         "unidad_venta": "unidad", "ficha_id": 2, "compras": 7, "precios": 1, "renglones": 0},
     ]
     with patch("app.main.listar_unidades_que_diferen", return_value=filas):
         detalle = _detalle_unidades_que_diferen()
 
     assert detalle["filas"][0][-1] == "sin usar"
     assert detalle["filas"][1][-1] == "7 compras · 1 precios · 0 renglones"
-    assert detalle["resumen"] == "2 pares"
-    # Las dos unidades van en la misma fila: el par es el hallazgo, no cada
-    # una por su lado.
-    assert detalle["filas"][0][1] == "kilo" and detalle["filas"][0][3] == "cubeta"
+    assert detalle["resumen"] == "2 fichas"
+    # Las dos unidades van en la misma fila: lo que el artículo cuenta hoy y
+    # lo que la ficha pide. El hallazgo es el choque, no cada una por su lado.
+    assert detalle["filas"][0][1] == "sin conteo" and detalle["filas"][0][3] == "cubeta"
 
 
-def test_el_detalle_dice_CUAL_NO_HAY_QUE_ALINEAR_y_es_lo_que_evita_el_dano():
+def test_el_detalle_dice_SI_ALCANZA_CON_CARGAR_EL_CONTEO_o_no_entra():
     """La columna del 15/09, y es la razón de ser del arreglo de la alerta.
 
-    Los dos casos llegan acá idénticos —un par cuya unidad de venta no es la
-    de compra— y piden lo CONTRARIO: con dos unidades en el artículo, alinear
-    borra el dato de en qué unidad compra ese cliente; con una sola, hay algo
-    mal cargado y se revisa. Hasta el 15/09 el detalle no los distinguía y el
-    link mandaba a los dos a la pantalla de editar.
+    Los dos casos llegan acá idénticos —una ficha que vende en una unidad que
+    su artículo no declara— y piden cosas distintas:
 
-    El caso multiunidad se PLANTA, porque hoy no existe en ninguna de las dos
-    bases (`kiwi_1` sobre Frutamax: 0 de 34 pares). Sin plantarlo, este test
-    verde no diría nada — es el corolario 36.
+      - el artículo no tiene conteo: se le carga y desde la compra siguiente
+        la ficha costea;
+      - el artículo YA cuenta en otra unidad: no hay nada que cargar, porque
+        la compra guarda dos magnitudes y no tres. Decirlo es más honesto que
+        mandar a tocar algo que no va a alcanzar.
+
+    El segundo caso se PLANTA, porque hoy no existe en ninguna de las dos
+    bases. Sin plantarlo, este test verde no diría nada — es el corolario 36.
     """
-    from app.main import QUE_ES_ALINEABLE, QUE_ES_MULTIUNIDAD, _detalle_unidades_que_diferen
+    from app.main import QUE_ES_FALTA_CONTEO, QUE_ES_TERCERA_UNIDAD, _detalle_unidades_que_diferen
 
     filas = [
-        # El artículo va a DOS clientes en dos unidades: el caso real.
-        {"articulo": "EJEMPLO Mango", "unidad_compra": "unidad", "cliente": "EJEMPLO Uno",
-         "unidad_venta": "kilo", "ficha_id": 1, "compras": 3, "precios": 1, "renglones": 0,
-         "unidades_de_venta": 2},
-        # Todas sus fichas dicen lo mismo, y no es la unidad de compra.
-        {"articulo": "EJEMPLO Kiwi", "unidad_compra": "kilo", "cliente": "EJEMPLO Dos",
-         "unidad_venta": "cubeta", "ficha_id": 2, "compras": 0, "precios": 0, "renglones": 0,
-         "unidades_de_venta": 1},
+        # El artículo se compra solo por kilo y este cliente lo quiere por unidad.
+        {"articulo": "EJEMPLO Mango", "unidad_conteo": None, "cliente": "EJEMPLO Uno",
+         "unidad_venta": "unidad", "ficha_id": 1, "compras": 3, "precios": 1, "renglones": 0},
+        # El artículo ya cuenta en unidades y este cliente pide cubetas: la tercera.
+        {"articulo": "EJEMPLO Kiwi", "unidad_conteo": "unidad", "cliente": "EJEMPLO Dos",
+         "unidad_venta": "cubeta", "ficha_id": 2, "compras": 0, "precios": 0, "renglones": 0},
     ]
     with patch("app.main.listar_unidades_que_diferen", return_value=filas):
         detalle = _detalle_unidades_que_diferen()
 
     assert "Qué es" in detalle["columnas"]
     columna = detalle["columnas"].index("Qué es")
-    assert detalle["filas"][0][columna] == QUE_ES_MULTIUNIDAD
-    assert detalle["filas"][1][columna] == QUE_ES_ALINEABLE
+    assert detalle["filas"][0][columna] == QUE_ES_FALTA_CONTEO
+    assert detalle["filas"][1][columna] == QUE_ES_TERCERA_UNIDAD
     # Y los dos textos tienen que decir cosas distintas, o la columna no
     # separa nada: es exactamente el detector que no puede dar las dos
     # respuestas (corolario 53).
-    assert QUE_ES_MULTIUNIDAD != QUE_ES_ALINEABLE
-    assert "NO alinear" in QUE_ES_MULTIUNIDAD
+    assert QUE_ES_FALTA_CONTEO != QUE_ES_TERCERA_UNIDAD
+    assert "no entra" in QUE_ES_TERCERA_UNIDAD
 
 
 def test_movimientos_DICE_A_QUIEN_se_le_devolvio_y_no_solo_que_se_devolvio():
@@ -27749,3 +27811,89 @@ def test_el_aviso_NO_SALE_cuando_todas_las_fichas_se_pueden_costear():
     assert respuesta.status_code == 200
     assert "no calcula su costo" not in respuesta.text
     assert 'class="sin-costear"' not in respuesta.text
+
+
+# --- LAS DOS MAGNITUDES DE UNA COMPRA (15/09) --------------------------------
+
+def test_TODOS_los_que_GUARDAN_una_compra_sacan_sus_cantidades_de_UNA_funcion():
+    """Grepea el CONSTRUCTOR, no el campo, que es el corolario 3.
+
+    El reparto entre `cantidad_kilos` y `cantidad_fraccion` estaba escrito
+    SEIS veces, una por pantalla de carga. Escrito seis veces se separa en
+    cinco, y el día que se separa una compra queda con los kilos en la
+    columna del conteo sin que ninguna cuenta se descuadre: el costeo divide
+    por la magnitud equivocada y devuelve un número plausible.
+
+    El test pide que toda llamada que guarde una compra reciba sus dos
+    cantidades de `magnitudes_de_la_compra` y de ningún otro lado. Una lista
+    de pantallas escrita a mano protegería las seis de hoy; esto protege a la
+    séptima, que es la que nadie va a recordar.
+    """
+    import ast
+
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    arbol = ast.parse(fuente)
+
+    # Los nombres que SALEN de la función: cualquier otro nombre en esas
+    # posiciones es un reparto hecho a mano.
+    asignan = [
+        nodo for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Assign)
+        and isinstance(nodo.value, ast.Call)
+        and isinstance(nodo.value.func, ast.Name)
+        and nodo.value.func.id == "magnitudes_de_la_compra"
+    ]
+    assert asignan, "nadie llama a magnitudes_de_la_compra: el test no está mirando nada"
+
+    # Nadie reparte a mano: la condición `unidad_compra == "kilo"` no puede
+    # volver a aparecer en app/main.py decidiendo en qué columna va un total.
+    sin_comentarios = "\n".join(linea.split("#")[0] for linea in fuente.splitlines())
+    assert "cantidad_kilos, cantidad_fraccion = total" not in sin_comentarios
+    assert 'cantidad_kilos, cantidad_fraccion = (total' not in sin_comentarios
+
+    # Y el reparto en sí no vive acá: vive en core/magnitudes.py, porque
+    # Depósito hace el mismo con lo que pesó y contó.
+    de_main = io.open("app/main.py", encoding="utf-8").read()
+    de_db = io.open("app/db.py", encoding="utf-8").read()
+    assert "from core.magnitudes import repartir_magnitudes" in de_main
+    assert "from core.magnitudes import repartir_magnitudes" in de_db
+    fuente_core = io.open("core/magnitudes.py", encoding="utf-8").read()
+    assert fuente_core.count("def repartir_magnitudes") == 1
+
+
+def test_TODAS_las_pantallas_de_carga_PIDEN_la_segunda_magnitud():
+    """La lista es el test: una pantalla sin el campo no se ve rota.
+
+    El que carga no sabe que le falta algo —no hay hueco, no hay error— y la
+    compra entra con una sola magnitud. Después la ficha del cliente que
+    compra en la otra unidad se queda sin costo, días más tarde y en otra
+    pantalla.
+    """
+    faltan = [
+        f"{ruta} ({para_que})"
+        for ruta, para_que in CAMINOS_DE_CARGA_DE_COMPRAS.items()
+        if "segunda_por_cajon" not in io.open(ruta, encoding="utf-8").read()
+    ]
+    assert not faltan, f"Pantallas de carga sin la segunda magnitud: {faltan}"
+
+
+def test_TODA_rama_que_REARMA_el_formulario_conserva_la_segunda_magnitud():
+    """El re-render por error es donde peor se pierde un campo (corolario 43).
+
+    El que reintenta corrige lo que la pantalla le señaló y aprieta de nuevo:
+    no vuelve a revisar los campos que ya había llenado. Así que un campo que
+    el re-render pierde se va sin que nadie lo mire, y lo que queda guardado
+    es una compra bien cargada salvo por eso.
+
+    Se cuenta contra el campo que YA se sabe que está en todas esas ramas
+    —`contenido_por_cajon`, del mismo formulario— en vez de contra un número
+    escrito a mano: un número envejece el día que se agrega una pantalla.
+    """
+    fuente = io.open("app/main.py", encoding="utf-8").read()
+    contenido = fuente.count('"contenido_por_cajon": contenido_por_cajon,')
+    segunda = fuente.count('"segunda_por_cajon": segunda_por_cajon,')
+    assert contenido > 0, "cambió la forma de los dicts: este test dejó de mirar algo"
+    assert segunda == contenido, (
+        f"{contenido} ramas rearman el formulario con el contenido por cajón "
+        f"y solo {segunda} conservan la segunda magnitud"
+    )

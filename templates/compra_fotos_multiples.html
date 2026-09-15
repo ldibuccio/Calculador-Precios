@@ -208,6 +208,7 @@
     width: 0%;
     transition: width 0.2s;
   }
+  .bloque-segunda.oculto { display: none !important; }
 </style>
 </head>
 <body>
@@ -386,6 +387,20 @@
       if (etiqueta) {
         etiqueta.textContent = etiquetasContenido[opcion.dataset.unidadCompra] || "Contenido por cajón *";
       }
+      // La segunda magnitud del renglón: la que el contenido por cajón NO
+      // trae. Escondida es CSS y el `required` viaja con ella — escondido y
+      // required, el navegador se niega a enviar y no muestra dónde.
+      const bloqueSegunda = document.getElementById("item_" + indice + "_bloque_segunda");
+      const campoSegunda = document.getElementById("item_" + indice + "_segunda_por_cajon");
+      const etiquetaSegunda = document.getElementById("item_" + indice + "_label_segunda");
+      if (bloqueSegunda && campoSegunda) {
+        const unidadCompra = opcion.dataset.unidadCompra;
+        const segunda = !unidadCompra ? "" : (unidadCompra !== "kilo" ? "kilo" : (opcion.dataset.unidadConteo || ""));
+        bloqueSegunda.classList.toggle("oculto", !segunda);
+        campoSegunda.required = Boolean(segunda);
+        if (etiquetaSegunda) etiquetaSegunda.textContent = segunda ? etiquetasContenido[segunda] : "";
+        if (!segunda) campoSegunda.value = "";
+      }
       // EL ELSE ES OBLIGATORIO, no una prolijidad: sin él, cambiar a un
       // artículo SIN referencia deja el número del artículo ANTERIOR en el
       // campo — un valor de otra cosa, que es peor que el default y que el
@@ -408,6 +423,15 @@
           campo.required = !checkbox.checked;
         }
       });
+      // La segunda magnitud va aparte porque no siempre existe: al
+      // des-descartar, vuelve a ser obligatoria SOLO si este artículo la
+      // declara. Metida en la lista de arriba, un renglón de un artículo
+      // que se compra solo por kilo quedaría pidiendo un campo escondido.
+      const bloqueSegunda = document.getElementById("item_" + indice + "_bloque_segunda");
+      const campoSegunda = document.getElementById("item_" + indice + "_segunda_por_cajon");
+      if (bloqueSegunda && campoSegunda) {
+        campoSegunda.required = !checkbox.checked && !bloqueSegunda.classList.contains("oculto");
+      }
     }
 
     function inicializarDescartes() {

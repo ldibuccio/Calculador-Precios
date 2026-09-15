@@ -29,21 +29,26 @@ CLIENTE_ID = 1
 
 FICHAS = [
     {"id": 901, "articulo_id": 1, "articulo_nombre": "Banana", "unidad_venta": "kilo",
+     "unidad_conteo": None,
      "envase_id": 7, "contenido_caja": 20.0, "envase_variable": False,
      "nombre_cliente": "BANANA BOLIVIA", "codigo_cliente": "B-101"},
     {"id": 902, "articulo_id": 2, "articulo_nombre": "Mango", "unidad_venta": "unidad",
+     "unidad_conteo": "unidad",
      "envase_id": 7, "contenido_caja": 12.0, "envase_variable": False,
      "nombre_cliente": None, "codigo_cliente": None},
 ]
 COMPRAS = [
     {"articulo_id": 1, "articulo_nombre": "Banana", "fecha_operacion": date(2026, 8, 25),
-     "cantidad_cajones": 10, "contenido_por_cajon": 20, "cantidad_kilos": 200, "importe": 4000,
+     "cantidad_cajones": 10, "contenido_por_cajon": 20, "cantidad_kilos": 200,
+     "cantidad_fraccion": None, "importe": 4000,
      "cargado_el": datetime(2026, 8, 25, 9)},
     {"articulo_id": 1, "articulo_nombre": "Banana", "fecha_operacion": date(2026, 8, 20),
-     "cantidad_cajones": 8, "contenido_por_cajon": 20, "cantidad_kilos": 160, "importe": 3600,
+     "cantidad_cajones": 8, "contenido_por_cajon": 20, "cantidad_kilos": 160,
+     "cantidad_fraccion": None, "importe": 3600,
      "cargado_el": datetime(2026, 8, 20, 9)},
     {"articulo_id": 2, "articulo_nombre": "Mango", "fecha_operacion": date(2026, 8, 26),
-     "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None, "importe": 2400,
+     "cantidad_cajones": 5, "contenido_por_cajon": 12, "cantidad_kilos": None,
+     "cantidad_fraccion": 60, "importe": 2400,
      "cargado_el": datetime(2026, 8, 26, 9)},
 ]
 # Las filas de precio tal como salen de la base: la clave es ficha_id, y

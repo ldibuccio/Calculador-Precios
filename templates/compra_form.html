@@ -134,6 +134,13 @@
   .tabla-scroll { overflow-x: auto; }
   button[disabled] { opacity: 0.5; }
   .campo-bloqueado { background: #f0f0f0 !important; color: #888; }
+  /* La segunda magnitud (los kilos, o el conteo) solo existe para los
+     artículos que declaran las dos. ESCONDER ES CSS, NO EL ATRIBUTO: un
+     `hidden` puesto por JS lo pisa cualquier regla con display, así que
+     acá la clase manda y el JS la pone y la saca. Y el `required` viaja
+     con ella — un campo required escondido bloquea el submit sin decir
+     por qué. */
+  #bloque-segunda-magnitud.oculto { display: none !important; }
 </style>
 </head>
 <body>
@@ -184,6 +191,7 @@
         {% for a in articulos %}
         <option value="{{ a.id }}"
                 data-unidad-compra="{{ a.unidad_compra or '' }}"
+                data-unidad-conteo="{{ a.unidad_conteo or '' }}"
                 data-contenido-referencia="{% if a.contenido_referencia is not none %}{{ a.contenido_referencia }}{% endif %}"
                 {% if compra and compra.articulo_id == a.id %}selected{% endif %}>{{ a.nombre }}</option>
         {% endfor %}
@@ -209,6 +217,24 @@
              class="{{ 'campo-bloqueado' if cantidad_bloqueada }}"
              value="{% if compra and compra.contenido_por_cajon is not none %}{{ compra.contenido_por_cajon }}{% endif %}">
       <p class="ayuda">Se pre-carga con el contenido de referencia del artículo, pero podés corregirlo si ese día vino distinto.</p>
+
+      {# LA SEGUNDA MAGNITUD. Una compra declara KILOS siempre y, cuando el
+         artículo tiene conteo, también unidades o cubetas — la misma caja se
+         carga una vez con las dos y cada ficha costea contra la suya. El
+         estado inicial lo pinta el server (el JS solo corre al cambiar de
+         artículo, y llamarlo al cargar pisaría el contenido ya tipeado). #}
+      {% set segunda_magnitud = ("kilo" if articulo_elegido and articulo_elegido.unidad_compra != "kilo"
+                                 else (articulo_elegido.unidad_conteo if articulo_elegido else none)) %}
+      <div id="bloque-segunda-magnitud" class="{{ '' if segunda_magnitud else 'oculto' }}">
+        <label for="segunda_por_cajon" id="label-segunda-magnitud">{{
+          {"kilo": "Kilos por cajón *", "unidad": "Unidades por cajón *", "cubeta": "Cubetas por cajón *"}.get(
+            segunda_magnitud, "")
+        }}</label>
+        <input type="number" id="segunda_por_cajon" name="segunda_por_cajon" min="0" step="0.01"
+               {% if segunda_magnitud %}required{% endif %}
+               value="{% if compra and compra.segunda_por_cajon %}{{ compra.segunda_por_cajon }}{% endif %}">
+        <p class="ayuda">Este artículo se carga con las dos magnitudes: sin las dos, la ficha del cliente que compra en la otra unidad se queda sin costo.</p>
+      </div>
 
       <label for="importe">Importe</label>
       <input type="number" id="importe" name="importe" min="0" step="0.01"
@@ -302,12 +328,40 @@
     const NOMBRES_UNIDAD_COMPRA = { kilo: "kilo", unidad: "unidad", cubeta: "cubeta" };
     const ETIQUETAS_CONTENIDO = { kilo: "Kilos por cajón *", unidad: "Unidades por cajón *", cubeta: "Cubetas por cajón *" };
 
+    // La segunda magnitud: la que `contenido_por_cajon` NO trae. Si el
+    // artículo se compra por unidad o cubeta, faltan los kilos; si se compra
+    // por kilo, falta el conteo (y si no tiene conteo, no falta nada).
+    function segundaMagnitudDe(unidadCompra, unidadConteo) {
+      if (!unidadCompra) return "";
+      return unidadCompra !== "kilo" ? "kilo" : (unidadConteo || "");
+    }
+
+    function actualizarSegundaMagnitud(opcion) {
+      const bloque = document.getElementById("bloque-segunda-magnitud");
+      const campo = document.getElementById("segunda_por_cajon");
+      const etiqueta = document.getElementById("label-segunda-magnitud");
+      if (!bloque) return;
+
+      const segunda = opcion
+        ? segundaMagnitudDe(opcion.dataset.unidadCompra, opcion.dataset.unidadConteo)
+        : "";
+
+      // El required viaja con la visibilidad: escondido y required, el
+      // navegador se niega a enviar el formulario y no muestra dónde.
+      bloque.classList.toggle("oculto", !segunda);
+      campo.required = Boolean(segunda);
+      etiqueta.textContent = segunda ? ETIQUETAS_CONTENIDO[segunda] : "";
+      if (!segunda) campo.value = "";
+    }
+
     function actualizarContenidoPorCajon(select) {
       const opcion = select.selectedOptions[0];
       const ayuda = document.getElementById("ayuda-unidad-compra");
       const contenidoInput = document.getElementById("contenido_por_cajon");
       const etiqueta = document.getElementById("label-contenido-por-cajon");
       const unidadCompra = opcion ? opcion.dataset.unidadCompra : "";
+
+      actualizarSegundaMagnitud(opcion);
 
       if (!opcion || !unidadCompra) {
         ayuda.classList.remove("visible");

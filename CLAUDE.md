@@ -2802,10 +2802,15 @@ pregunta a sí misma y se contesta sola**. En los dos casos el círculo está
 adentro y no se ve desde afuera; en los dos, lo único que lo muestra es
 correrlo con un número que se pueda reconocer.
 
-## `unidad_compra` y `unidad_venta` se suponen la MISMA unidad (anotado, no tocado)
+## `unidad_compra` y `unidad_venta` se suponían la MISMA unidad (CERRADO el 15/09)
 
-Del 12/09, y va escrito porque una pantalla nueva lo heredó y conviene que
-se sepa que lo heredó.
+Del 12/09, y **dejó de ser cierto el 15/09**: una compra declara ahora los
+kilos SIEMPRE y —cuando el artículo tiene `unidad_conteo`— también un conteo,
+y cada ficha divide por la suya. No hay conversión, y sigue sin haberla a
+propósito. Ver **"La unidad de compra contra la de venta"**, más abajo.
+
+Se deja escrito porque el supuesto vivió meses y el diagnóstico de abajo es
+lo que llevó al modelo.
 
 `_costear_compras` (app/costeo.py) divide `Σ(importe × cajones)` por
 `Σ(cajones × contenido_por_cajon)` y llama al resultado **costo por unidad
@@ -2819,7 +2824,7 @@ para interpretar sus pedidos por mail. No convierte unidades.
 
 Analizar Artículo hereda el supuesto y **eso es lo correcto**: lo peligroso
 sería que esta pantalla usara una regla distinta a las demás, que es la
-familia de la regla escrita dos veces. Queda anotado y no se tocó.
+familia de la regla escrita dos veces.
 
 ## Corolario 42: un campo que se LEE bien puede no ESCRIBIRSE, y si la pantalla lo relee de la base la prueba a mano no lo ve
 
@@ -3241,6 +3246,17 @@ distinguía los dos casos y su link mandaba a los dos a la misma pantalla; **el
 detalle los separa desde el 15/09** (columna "Qué es"). De Kiwi no quedó
 rastro para saber cuál de los dos era: `kiwi_1` sobre Frutamax da hoy cero en
 todo. Palmala no se corrió.
+
+**Y ESE MISMO DÍA, unas horas después, "alinear" dejó de ser una opción del
+todo**: con el modelo de las dos magnitudes la ficha SIEMPRE dice la verdad
+—ese cliente compra en esa unidad— y lo que puede faltar es que el ARTÍCULO
+declare el conteo. Así que la alerta ya no manda a Fichas ni a Comercial:
+manda a Artículos, que es el único lugar donde hay algo que hacer, y salió
+de Comercial porque ahí no hay nada que tocar. Los dos casos del detalle son
+otros dos ("cargale el conteo" y "ya cuenta en otra unidad: no entra").
+
+La columna "Qué es" sobrevivió al cambio de regla y sigue haciendo lo mismo:
+separar el caso que se arregla del que no. Lo que cambió es cuáles son.
 
 **Y la verificación no hay que acordarse de correrla**, que es el punto de
 haberla puesto como alerta y no como cartel: `unidades_que_difieren`
@@ -4067,10 +4083,17 @@ problema**, y estaba en el tipo desde el principio.
 
 Sin zonas con clave, un link al sector equivocado era **un rodeo**: llegabas
 igual. El 12/09 Compras ganó puerta y el mismo link, sin cambiar una letra,
-pasó a ser **una pared**. La alerta `unidades_que_difieren` se muestra en
+pasó a ser **una pared**. La alerta `unidades_que_difieren` se mostraba en
 Compras y en Comercial y apuntaba a Artículos; ese día Artículos se mudó bajo
 `/compras`, y el usuario de Comercial quedó pegando contra una clave que no
 es la suya.
+
+(El 15/09 esa alerta pasó a UN SOLO SECTOR —el arreglo vive entero en
+Artículos— así que su `destinos_por_sector` se fue. El caso que enseñó el
+corolario ya no existe; el corolario sí, y lo cuidan las otras dos que
+todavía se muestran en varios sectores. **Que el ejemplo se apague no apaga
+la regla** — es la diferencia entre el MECANISMO y el ESTADO que se anota al
+lado para ilustrarlo.)
 
 Es la familia del corolario 28 —algo que afirmaba lo que valía antes del
 camino nuevo— con la vuelta de que acá **el cambio que lo activa está en otro
@@ -4678,23 +4701,36 @@ así:
   da dónde poner un destino, no inventa uno— usado esta vez ANTES y no
   después de que choque.
 
-## La unidad de compra contra la de venta: ABIERTO, y la alerta invita al arreglo que DESTRUYE el dato
+## La unidad de compra contra la de venta: CERRADO con las DOS MAGNITUDES (15/09)
 
-Del 15/09, y queda **anotado y no construido a propósito** — el dueño pidió
-analizar antes de tocar. Lo que sigue separa lo MEDIDO de lo que falta medir,
-porque mezclarlos es cómo se decide con una hipótesis.
+**Está construido, y todo lo que sigue es el camino hasta ahí.** Se deja
+entero porque tres hipótesis se cayeron en el medio y la que quedó no se
+parece a ninguna de ellas; lo que conviene leer primero es el final —**"EL
+MODELO, como quedó"**, abajo de todo—, que es lo que el sistema hace hoy.
+
+El resto de esta sección está escrito en el tiempo en que se pensó, y las
+frases que decían "queda abierto" o "no se toca el modelo" **están corregidas
+en su lugar**: se corrigieron el día que dejaron de ser ciertas, que fue el
+mismo.
+
+Del 15/09. Lo que sigue separa lo MEDIDO de lo que se supuso, porque
+mezclarlos es cómo se decide con una hipótesis.
 
 El hecho del negocio, dicho por el dueño: **kiwi, mango y palta se compran una
 sola vez y van a dos clientes que los quieren en unidades distintas.** A Día
 por unidad, a Coto por kilo. La compra es una; las unidades de venta, dos.
 
-### Lo que eso le hace a la alerta `unidades_que_difieren`
+### Lo que eso le hizo a la alerta `unidades_que_difieren`
 
-La alerta cuenta pares donde `articulos.unidad_compra <> fichas.unidad_venta`,
-y su docstring dice que es *"una configuración que queda mal hasta que alguien
-la arregla"*. **Esa premisa es la que está en revisión**: si un artículo va a
-dos clientes en dos unidades, los pares difieren porque el mundo es así, no
+La alerta contaba pares donde `articulos.unidad_compra <> fichas.unidad_venta`,
+y su docstring decía que era *"una configuración que queda mal hasta que
+alguien la arregla"*. **Esa premisa era falsa**: si un artículo va a dos
+clientes en dos unidades, los pares difieren porque el mundo es así, no
 porque alguien haya cargado mal.
+
+(Hoy la alerta pregunta otra cosa —si el ARTÍCULO puede declarar la unidad en
+la que esa ficha vende— y el caso de las dos unidades ya no llega ahí. Ver
+**EL MODELO, como quedó**.)
 
 Y la consecuencia es peor que un aviso de más: **el link manda a alinear, y
 alinear es exactamente lo que no hay que hacer.** Cambiar la ficha de Coto
@@ -4781,10 +4817,13 @@ arts_alineables 0 · pares_que_difieren 0 · pares_totales 34 · última compra
 y pasa con mango, kiwi y palta— pero **no hay una sola ficha cargada que lo
 necesite.**
 
-Decisión del dueño, y el criterio vale más que el caso: **el modelo de datos
-no se toca.** Ni las dos magnitudes por compra ni el factor por artículo. Se
-construyeron solo las dos cosas que sirven el día que cargue la ficha, y que
-hoy no le cuestan nada:
+Decisión del dueño **en ese momento**, y el criterio vale más que el caso: el
+modelo de datos no se toca todavía. Ni las dos magnitudes por compra ni el
+factor por artículo. Se construyeron solo las dos cosas que sirven el día que
+cargue la ficha, y que hoy no le cuestan nada:
+
+(**Esa decisión se dio vuelta el mismo día**, y no por un dato nuevo sino por
+un criterio: *"si yo defino el caso, el caso es real"*. Ver abajo.)
 
 1. **La alerta dejó de mandar a alinear.**
 2. **El costeo se NIEGA** cuando las unidades no coinciden, en vez de dar un
@@ -4796,9 +4835,8 @@ a saltar y me va a proponer romperla"*. Un aviso que propone destruir el dato
 está mal aunque hoy dispare cero veces — y arreglarlo cuando dispara cero es
 gratis.
 
-Lo que queda abierto: cuando exista la ficha, decidir entre el factor y las
-dos magnitudes, con la respuesta del galpón sobre si un mango pesa siempre lo
-mismo. **No antes.**
+Lo que quedaba abierto —decidir entre el factor y las dos magnitudes— **se
+cerró el mismo día, y por el galpón**: ver abajo.
 
 ### Las cuentas que dependen de que la unidad sea UNA, enumeradas (15/09)
 
@@ -4858,14 +4896,20 @@ Y el CHECK es `cantidad_kilos is not null OR cantidad_fraccion is not null`.
 que del lado del guardado no hace falta ninguna migración.
 
 Las compras viejas quedan con una magnitud y NULL en la otra, y **eso no está
-roto: es verdadero e incompleto**, que son cosas distintas. Hoy además nadie
-las lee — el docstring de `listar_compras_para_costeo` dice textual que el
-costeo *"nunca lee cantidad_kilos"*.
+roto: es verdadero e incompleto**, que son cosas distintas. (El docstring de
+`listar_compras_para_costeo` decía que el costeo *"nunca lee
+cantidad_kilos"*. Dejó de ser cierto el 15/09 y se corrigió en el mismo
+commit: ahora es lo ÚNICO que lee, junto con `cantidad_fraccion`.)
 
-**El límite de reusar esas columnas**, y conviene saberlo antes de darlas por
-gratis: `cantidad_fraccion` mete 'unidad' y 'cubeta' en la misma columna, y el
-docstring del motor dice *"nunca ambas a la vez"*. Un artículo que se venda a
-un cliente por unidad y a otro por cubeta **no entra en dos columnas**.
+**El límite de reusar esas columnas ES REAL Y SIGUE PUESTO**, y conviene
+saberlo: `cantidad_fraccion` mete 'unidad' y 'cubeta' en la misma columna. Un
+artículo que se venda a un cliente por unidad y a otro por cubeta **no entra
+en dos columnas** — la compra guarda dos magnitudes, no tres.
+
+Eso no es una deuda escondida: es exactamente lo que la alerta llama **"Ya
+cuenta en otra unidad: no entra"**, dicho en la pantalla en vez de descubierto
+seis meses después. Y medido antes de construir: `arts_unidad_y_cubeta 0` en
+las dos bases.
 
 ### Y la ausencia de conversión era un OBJETIVO DE DISEÑO, no un olvido
 
@@ -4879,6 +4923,13 @@ mundo tiene artículos que se venden en dos unidades— pero el que lo haga tien
 que saber que está desarmando algo que alguien decidió, no arreglando un
 descuido. Es el corolario 11 del dato de uso al revés: antes de sacar algo,
 preguntarse de quién salió.
+
+**Y NO SE DIO DE BAJA: el modelo de las dos magnitudes la CUMPLE.** Sigue sin
+haber un solo factor de conversión en el sistema — lo que cambió es que ahora
+la compra declara las dos magnitudes en vez de que alguien deduzca una de la
+otra. La invariante se buscó para saber si había que romperla, y el resultado
+fue encontrar el diseño que no la rompe. Ese orden es el que vale para la
+próxima: **primero por qué está escrita, después si se puede.**
 
 ### La asimetría que decide entre las dos opciones
 
@@ -4899,6 +4950,27 @@ estable (un mango pesa lo que pesa un mango); **para 'cubeta' es mucho más
 flojo**, porque una cubeta es un recipiente y cuánto entra depende de cómo se
 llene. Puede ser que el factor sirva para unidad↔kilo y no para cubeta↔kilo.
 
+#### GANÓ LAS DOS MAGNITUDES, y el factor se construyó y se tiró el mismo día
+
+La tabla de arriba está bien y le faltaba la fila que decidía. La puso el
+dueño: **el kilaje por unidad NUNCA ES EXACTO.** Un mango no pesa 400 gramos,
+pesa lo que pesa. Un factor deja números con coma que después no cierran
+contra nada — es **un promedio disfrazado de dato**, que es exactamente el
+corolario 20 (*un campo derivado no es un sustituto barato de uno declarado:
+acierta en la mayoría y miente en un tercio*) visto antes de sufrirlo.
+
+Mi argumento a favor del factor era el de la tabla —arregla el pasado— y la
+frase que lo cerró vale como regla: *"tu argumento es razonable en teoría y
+falso en la práctica"*. **Yo había medido que la CUENTA daba bien; nunca medí
+que el INSUMO existiera.** Es el corolario 41 con otra ropa: una vuelta
+completa que se ve como una lectura.
+
+La migración del factor (`kilos_por_unidad`) llegó a correrse en las dos bases
+y se revirtió con su propio `.sql`. Salió gratis porque **no tenía ni un
+usuario**: es el corolario 29 al pie de la letra —un cambio que todavía no
+tiene usuarios se escribe de forma que deshacerlo sea gratis—, y esta vez el
+requisito que lo pedía no sobrevivió al día.
+
 ### LA TERCERA OPCIÓN, que es la más barata y no estaba en la mesa
 
 **No convertir: NEGARSE A COSTEAR.** Cuando la unidad de venta de la ficha no
@@ -4918,6 +4990,78 @@ ficha — decir que no se puede costear en esa unidad.
 Si los artículos son tres, **puede ser la solución entera**: con tres
 artículos, el que pone el precio hace la cuenta de cabeza. Lo que no puede
 hacer es darse cuenta de que el número que tiene adelante está mal.
+
+**SE CONSTRUYÓ, Y SIGUE VIVA — pero pregunta otra cosa.** No fue la solución
+entera: con el modelo de dos magnitudes la negativa ya no es "las unidades no
+coinciden" sino **"el artículo no puede declarar esa unidad"**, que es un
+conjunto mucho más chico. Y no era o una o la otra: la negativa es el piso que
+queda cuando el modelo no alcanza, y las dos conviven.
+
+Y hay una SEGUNDA negativa que no estaba prevista y es la que va a verse
+todos los días al principio: **la compra vieja que declaró una sola
+magnitud.** Ésa se apaga sola en cuanto entre una compra con las dos; la otra
+no se apaga hasta que alguien toque el artículo. Van separadas en la fila
+(`sin_conversion_de_unidad` y `compras_sin_la_magnitud`) justamente por eso —
+juntarlas sería mandar a arreglar lo que se arregla solo.
+
+### EL MODELO, como quedó (15/09)
+
+**Una compra declara KILOS —siempre— y, cuando el artículo tiene
+`unidad_conteo`, también un CONTEO (unidades o cubetas).** La misma caja de
+mango se carga UNA vez con las dos, y cada ficha costea contra la que su
+cliente compra. No hay conversión entre las dos y no la va a haber.
+
+Las piezas, y el orden importa porque cada una tapa un agujero distinto:
+
+1. **`articulos.unidad_conteo`** (columna nueva, migrada en las dos bases).
+   Dice QUÉ es la segunda magnitud de ese artículo, o NULL si se compra solo
+   por kilo. Se edita en `/compras/articulos`.
+2. **`articulos.unidad_compra` quedó DEPRECADA**, y no se le cambió el
+   significado — columna nueva y deprecar, que fue decisión del dueño y es la
+   regla de siempre: ocho lugares escriben esa columna y re-signficarla es
+   como se separan dos reglas. Lo único que sigue diciendo es **en qué unidad
+   está expresado `compras.contenido_por_cajon`**.
+3. **El formulario pide LA OTRA magnitud por cajón**, en las cinco pantallas
+   de carga, y es obligatoria cuando el artículo la declara. Un solo helper
+   (`magnitudes_de_la_compra`) reparte entre `cantidad_kilos` y
+   `cantidad_fraccion`, y un test parsea `app/main.py` para que el sexto
+   camino no se olvide — el que falta, por definición, no nombra ninguna de
+   las dos columnas (corolario 3).
+4. **El reparto vive en `core/magnitudes.py`**, porque Depósito hace el
+   MISMO con lo que pesa y cuenta. Escrito dos veces son dos reglas.
+5. **La recepción pide las dos SOLO si la compra declaró las dos**, con la
+   guarda donde se escribe. Pedirle a Depósito la que la compra no trajo es
+   pedirle que invente; y aceptar una sola cuando declaró dos dejaría a dos
+   fichas del mismo artículo costeando una contra lo pesado y otra contra lo
+   estimado, en la misma compra y sin que nada se descuadre.
+6. **`magnitud_de_la_ficha`** (app/costeo.py) es el único lugar donde se
+   elige la unidad, y el valor VIAJA a las tres cuentas —el costo, los
+   promedios por cajón y el costo de envase—. Que sea un valor y no tres
+   lecturas es lo que impide que dos se pongan de acuerdo y la tercera no.
+
+**NO SE MIGRÓ NINGUNA COMPRA VIEJA, y no se puede**: cada una declaró una
+magnitud y la otra no existe en ningún lado. Deducirla sería el factor con
+otro nombre. Quedan como están y la ficha que pida la otra **no se costea**,
+con su propia cuenta al lado (`compras_sin_la_magnitud`) para que se
+distinga de la negativa estructural. Se apaga sola con la primera compra
+nueva.
+
+**Lo único que se dedujo fue `unidad_conteo`**, copiado de `unidad_compra`
+donde decía 'unidad' o 'cubeta'. Eso no es inventar un número: es copiar una
+declaración que ya estaba. Verificado: `sin_copiar 0` en las dos bases.
+
+#### Y una cuenta que NO estaba en la lista y es la que nadie iba a buscar
+
+`_envases_por_unidad_ponderado` compara lo que trae el cajón contra
+`contenido_caja` de la ficha, que está en unidad de VENTA. Si los dos lados
+no salen de la misma magnitud, de ahí sale **un costo de envase mal, no un
+cartel**. Se encontró preguntando *dónde se DIVIDE o se COMPARA un número de
+la compra contra uno de la ficha*, que es el grep que sirve — ni el del
+concepto ni el de la columna.
+
+Tiene **test propio, que no pasa por el costo**: la misma compra y la misma
+ficha dan descartable o caja chica según la magnitud. El día que alguien
+mueva esto, el costo va a seguir dando bien y eso es lo único que cae.
 
 ## Corolario 64: un aviso se arregla cuando dispara CERO, que es cuando es gratis
 
@@ -4942,6 +5086,22 @@ las fichas borradas puestos uno al lado del otro, y esta vez separados a
 propósito:
 
 > **Medir antes de construir la CURA; no antes de cerrar la PUERTA.**
+
+**Y LA CURA SE CONSTRUYÓ EL MISMO DÍA, lo que no invalida la regla: la
+corrige.** El dueño dio vuelta la decisión con un criterio, no con un dato:
+*"que hoy no esté cargado no significa que no va a pasar. Ya lo acordamos con
+`a_reproceso` y lo volví a hacer: **si yo defino el caso, el caso es real**"*.
+
+O sea que el cero contestaba la pregunta equivocada. **La pregunta no era
+"¿esto pasa?" sino "¿esto va a pasar?", y eso no lo contesta ninguna
+consulta** — lo contesta el que conoce el negocio. Es la misma regla que ya
+estaba escrita en *"El dato de uso decide qué MEJORAR, no qué SACAR"* (las
+opciones que define el dueño son casos reales aunque pasen una vez al año),
+usada esta vez para no dejar de CONSTRUIR en vez de para no BORRAR.
+
+Lo que la regla sigue diciendo, y es lo que vale: un cero **nunca** es la
+razón para construir. Acá la razón fue el dueño; el cero solo dijo que no
+había nada que migrar.
 
 Acá la puerta son dos: que el aviso no proponga romper, y que el costeo no
 entregue un número mal. Las dos valen con cero casos. La cura —enseñarle al
@@ -4990,6 +5150,19 @@ El ancla va **sin los comentarios** (corolario 59): un comentario de SQL
 existe para nombrar la columna que el test busca, así que la colisión está
 garantizada por construcción.
 
+**Y VOLVIÓ EL MISMO DÍA, con la columna cambiada de nombre.** El modelo de
+las dos magnitudes reemplazó `unidad_compra` por `unidad_conteo` en esa
+consulta, y el test se mudó con ella —pregunta por `a.unidad_conteo`, con el
+alias, que es el corolario 4—. Los canarios nuevos lo confirman: sacar la
+columna del SELECT hace caer exactamente ese test y ningún otro.
+
+Lo que se lleva de la repetición: **cuando una guarda cambia de columna, el
+test del TEXTO se muda con ella o vuelve a valer cero.** Y el modo de falla
+se dio vuelta y es igual de malo: sin `unidad_conteo`, la regla contesta
+"esta ficha NO se puede costear" para toda ficha que no venda por kilo, y el
+sistema se niega en silencio donde antes costeaba bien. Antes mentía de más,
+ahora se niega de más — las dos sin un test en rojo.
+
 ## Corolario 66: la cuenta que sobra se apaga sola cuando la guarda va ANTES, y eso hay que decirlo o alguien la vuelve a prender
 
 Del 15/09, y es del lado bueno.
@@ -5024,3 +5197,21 @@ Por eso van las dos cosas, y hacen falta las dos:
 tocó, esa segunda cosa se queda sin test propio — porque el que uno escribe
 mira lo que sí tocó. Y el día que se reordene, la de yapa vuelve sin que nada
 avise.
+
+### Y el día siguiente pasó lo mejor que podía pasar: la cuenta dejó de sobrar
+
+Del 15/09. Con el modelo de las dos magnitudes la cuenta del envase **ya no
+se apaga: se arregla**. Recibe la magnitud de la ficha como argumento y
+compara los dos lados en la misma unidad, así que ahora hace su trabajo en
+vez de no ocurrir.
+
+Eso convierte la deuda de este corolario en otra cosa, y conviene leer el
+cambio: **una cuenta que dependía del ORDEN DE LAS GUARDAS pasó a depender de
+un argumento.** El `if` que la protegía sigue treinta líneas más arriba y ya
+no es lo único que la mantiene correcta — moverlo la deja bien igual.
+
+Y el test propio que este corolario pedía **valió doble**: escrito para
+cuidar el apagado, es el que hoy cuida la conversión. Es la mejor forma de un
+test de contrato (corolario 21): fija lo que la función TIENE QUE HACER, así
+que sobrevive al cambio de por qué hace falta. El canario lo confirma —
+devolverle `contenido_por_cajon` hace caer nueve tests y ese es uno.

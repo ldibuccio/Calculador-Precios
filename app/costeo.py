@@ -43,26 +43,83 @@ RANGO_HISTORIAL_DIAS = 40
 VENTANA_INCIDENCIA_DIAS = 30
 
 
+MAGNITUD_KILOS = "kilos"
+MAGNITUD_CONTEO = "conteo"
+
+
+def magnitud_de_la_ficha(ficha: dict) -> str | None:
+    """Cuál de las DOS magnitudes de la compra hay que dividir para costear esta ficha.
+
+    EL MODELO, y es lo único que hay que entender de todo este archivo: una
+    compra ya no viene expresada en "una" unidad. Declara KILOS —siempre— y,
+    cuando el artículo tiene `unidad_conteo`, también un CONTEO (unidades o
+    cubetas). La misma caja de mango se carga UNA vez con las dos
+    magnitudes, y cada ficha elige la suya:
+
+      - ficha que vende por kilo              -> los kilos
+      - ficha que vende en la unidad_conteo   -> el conteo
+
+    Devuelve None cuando la unidad de venta de la ficha no es ninguna de las
+    dos que este artículo puede declarar (ej. una ficha en 'cubeta' de un
+    artículo cuyo conteo es 'unidad'). Ahí no hay número posible, y quien
+    llama se NIEGA a costear — ver unidades_incompatibles.
+
+    NO HAY NINGUNA CONVERSIÓN, Y ESO ES A PROPÓSITO. Un kilaje por unidad
+    nunca es exacto: un mango pesa lo que pesa, así que un factor sería un
+    promedio disfrazado de dato, y los números con coma que deja no cierran
+    después contra nada. Por eso las dos magnitudes se DECLARAN al comprar
+    en vez de deducirse una de la otra.
+
+    `unidad_compra` no se mira acá, y es deliberado: quedó deprecada con
+    este modelo y lo único que sigue diciendo es en qué unidad está
+    expresado `compras.contenido_por_cajon`.
+    """
+    unidad_venta = ficha.get("unidad_venta")
+    if unidad_venta == "kilo":
+        return MAGNITUD_KILOS
+    if unidad_venta is not None and unidad_venta == ficha.get("unidad_conteo"):
+        return MAGNITUD_CONTEO
+    return None
+
+
+def _total_de_la_compra(compra: dict, magnitud: str) -> float | None:
+    """Cuánto trajo ESTA compra en la magnitud pedida, o None si no la declaró.
+
+    None no es cero: es "esta compra no se puede costear en esa unidad".
+    Pasa con todas las compras anteriores al modelo de dos magnitudes —
+    cargaron una sola— y no se puede deducir la que falta sin inventar un
+    factor. Quien costea las deja afuera y las cuenta, nunca las trata
+    como si hubieran traído nada.
+    """
+    valor = compra["cantidad_kilos"] if magnitud == MAGNITUD_KILOS else compra.get("cantidad_fraccion")
+    if valor is None:
+        return None
+    return float(valor)
+
+
 def unidades_incompatibles(ficha: dict) -> bool:
-    """True si esta ficha se VENDE en otra unidad que la que se COMPRA el artículo.
+    """True si el ARTÍCULO no puede declarar nunca la unidad en la que esta ficha vende.
 
     Cuando eso pasa, ESTE MÓDULO NO PUEDE COSTEAR la ficha y se niega, en vez
-    de devolver un número mal. La razón está en la cuenta: `_costear_compras`
-    divide plata por `cajones × contenido_por_cajon`, y ese contenido está en
-    unidad de COMPRA — el resultado se llama "costo por unidad de venta" y lo
-    es solo mientras las dos unidades sean la misma. No hay ninguna conversión
-    en el sistema, y su ausencia es un OBJETIVO DE DISEÑO, no un olvido: lo
-    dice el primer párrafo de core.motor_costeo.calcular_costo_por_unidad_medida
-    ("sin usar ningún factor de conversión").
+    de devolver un número mal. Es la negativa ESTRUCTURAL: no importa qué
+    compras haya, esa unidad no existe para este artículo (ej. una ficha en
+    'cubeta' de un artículo cuyo `unidad_conteo` es 'unidad', o una ficha en
+    'unidad' de un artículo que se compra solo por kilo y nadie le cargó
+    conteo).
 
-    Un mango que se compra por unidad y se le vende por kilo a un cliente
-    necesita saber cuánto pesa un mango, y eso el sistema no lo sabe. Mientras
-    no lo sepa, el único número honesto es NINGUNO.
+    ES DISTINTA DE LA OTRA NEGATIVA, y las dos existen: la unidad puede ser
+    declarable y aun así faltar EN LAS COMPRAS de la ventana, porque son
+    viejas y trajeron una sola magnitud. Esa la detecta _costear_compras
+    dejándolas afuera, y termina en el mismo lugar —sin costo— pero se
+    apaga sola en cuanto entra una compra con las dos. Ésta no se apaga
+    hasta que alguien toque el artículo o la ficha.
 
-    `unidad_compra` en NULL es "no se sabe en qué se compra", no un conflicto:
-    ahí se costea como siempre. Es la misma condición que la alerta
-    `unidades_que_difieren` (_SQL_UNIDADES_QUE_DIFIEREN en app/db.py), y lo
-    cuida un test que las compara en los dos sentidos.
+    Un artículo SIN `unidad_conteo` y una ficha que vende por kilo no es un
+    conflicto: se costea como siempre, contra los kilos.
+
+    ES LA MISMA REGLA QUE LA ALERTA `unidades_que_difieren`
+    (_SQL_UNIDADES_QUE_DIFIEREN en app/db.py), y lo cuida un test que las
+    compara en los dos sentidos.
 
     LA ÚNICA DIFERENCIA CON LA ALERTA ES `a.activo`, Y ESTÁ DECIDIDA (no
     heredada): la alerta pregunta qué vale la pena mostrarle a alguien, y un
@@ -70,30 +127,48 @@ def unidades_incompatibles(ficha: dict) -> bool:
     sostener, y el de un artículo inactivo está igual de mal. Por eso acá no
     se mira `activo`.
     """
-    unidad_compra = ficha.get("unidad_compra")
-    return unidad_compra is not None and unidad_compra != ficha["unidad_venta"]
+    return magnitud_de_la_ficha(ficha) is None
 
 
-def _costear_compras(compras: list[dict]) -> tuple[float | None, float, int]:
+def _costear_compras(compras: list[dict], magnitud: str) -> tuple[float | None, float, int, int]:
     """La cuenta única de costeo, sobre una lista de compras ya filtrada a UN artículo y UNA ventana.
 
+    `magnitud` es cuál de las dos que declara la compra hay que dividir —la
+    que pide la ficha, ver magnitud_de_la_ficha—. No tiene default a
+    propósito: un default acá volvería a elegir la unidad por su cuenta,
+    que es exactamente lo que este modelo vino a sacar.
+
     plata_total = suma de (importe * cantidad_cajones) de cada compra
-    cantidad_total = suma de (cantidad_cajones * contenido_por_cajon) de cada compra
+    cantidad_total = suma del total de esa magnitud de cada compra
     costo_por_unidad_de_venta = plata_total / cantidad_total
 
-    Las compras sin importe (compra sin precio todavía) se excluyen de la
-    suma pero se cuentan. Sin ninguna compra con precio, no hay costo: se
-    devuelve None (no None sale es "artículo caro", sale es "no hay dato").
+    DOS EXCLUSIONES, y las dos se cuentan en vez de saltarse en silencio:
 
-    Devuelve (costo_por_unidad_de_venta o None, cantidad_total, compras_sin_precio_excluidas).
+      - Las compras sin importe (compra sin precio todavía).
+      - Las que no declararon esa magnitud. Son las anteriores al modelo de
+        dos magnitudes: trajeron una sola y la que falta no se puede
+        deducir. Se excluyen de la plata Y de la cantidad, las dos — dejar
+        su plata adentro sin su cantidad inflaría el costo en silencio, que
+        es peor que no tener número.
+
+    Sin ninguna compra que sirva, no hay costo: se devuelve None (no cero,
+    que sería decir que el artículo sale cero).
+
+    Devuelve (costo o None, cantidad_total, sin_precio, sin_la_magnitud).
     """
     plata_total = 0.0
     cantidad_total = 0.0
     sin_precio = 0
+    sin_la_magnitud = 0
 
     for compra in compras:
         if compra["importe"] is None:
             sin_precio += 1
+            continue
+
+        total = _total_de_la_compra(compra, magnitud)
+        if total is None:
+            sin_la_magnitud += 1
             continue
 
         # float(...): psycopg2 devuelve las columnas numeric como Decimal, no
@@ -101,19 +176,38 @@ def _costear_compras(compras: list[dict]) -> tuple[float | None, float, int]:
         # rompe con "unsupported operand type(s) for +: 'float' and
         # 'decimal.Decimal'".
         cajones = float(compra["cantidad_cajones"])
-        contenido = float(compra["contenido_por_cajon"])
         importe = float(compra["importe"])
 
         plata_total += importe * cajones
-        cantidad_total += cajones * contenido
+        cantidad_total += total
 
     if cantidad_total == 0:
-        return None, 0.0, sin_precio
+        return None, 0.0, sin_precio, sin_la_magnitud
 
-    return plata_total / cantidad_total, cantidad_total, sin_precio
+    return plata_total / cantidad_total, cantidad_total, sin_precio, sin_la_magnitud
 
 
-def _promedios_por_cajon(compras: list[dict]) -> tuple[float | None, float | None]:
+def _contenido_por_cajon_de(compra: dict, magnitud: str) -> float | None:
+    """Cuánto trae UN cajón de esta compra, en la magnitud pedida.
+
+    Es el total de la compra dividido por sus cajones, y no una columna: la
+    compra guarda los TOTALES de cada magnitud, así que el "por cajón" de la
+    magnitud que la ficha usa sale de ahí. `compras.contenido_por_cajon` NO
+    sirve para esto — está expresado en `unidad_compra`, que con dos
+    magnitudes ya no es necesariamente la que la ficha pide.
+
+    None si la compra no declaró esa magnitud, o si no tiene cajones.
+    """
+    total = _total_de_la_compra(compra, magnitud)
+    if total is None:
+        return None
+    cajones = float(compra["cantidad_cajones"])
+    if cajones == 0:
+        return None
+    return total / cajones
+
+
+def _promedios_por_cajon(compras: list[dict], magnitud: str) -> tuple[float | None, float | None]:
     """Importe y contenido PROMEDIO de un cajón, los dos ponderados por cantidad de cajones.
 
     Son el punto de partida del Análisis de Artículo: lo que el puesto
@@ -122,9 +216,13 @@ def _promedios_por_cajon(compras: list[dict]) -> tuple[float | None, float | Non
     DIVISOR — así que para poder preguntar "¿y si trae 14 en vez de 16?"
     hacen falta los dos números por separado.
 
-    MISMO FILTRO que `_costear_compras`: solo las compras con importe. Sin
-    eso la identidad de abajo se rompe, y es lo único que mantiene a las dos
-    funciones atadas.
+    El contenido sale EN LA MAGNITUD QUE LA FICHA USA (ver
+    _contenido_por_cajon_de), no de `compras.contenido_por_cajon`: si la
+    ficha vende por kilo, "lo que trae el cajón" son kilos.
+
+    MISMO FILTRO que `_costear_compras`, y son los dos: solo las compras con
+    importe y que declararon esa magnitud. Sin eso la identidad de abajo se
+    rompe, y es lo único que mantiene a las dos funciones atadas.
 
     LA IDENTIDAD, y es la razón de que esto viva acá y no en una consulta
     aparte:
@@ -133,37 +231,44 @@ def _promedios_por_cajon(compras: list[dict]) -> tuple[float | None, float | Non
 
     porque las dos son sumas sobre los mismos cajones:
 
-        Σ(importe×caj)/Σcaj  ÷  Σ(caj×cont)/Σcaj  =  Σ(importe×caj)/Σ(caj×cont)
+        Σ(importe×caj)/Σcaj  ÷  Σ(total)/Σcaj  =  Σ(importe×caj)/Σ(total)
 
     que es literalmente lo que calcula `_costear_compras`. Por eso el
     Análisis parte del MISMO número que Márgenes por Artículo sin recalcular
     nada, y por eso hay un test que verifica la identidad: el día que los
     dos filtros se separen, se rompe ahí y no en una pantalla.
 
-    Sin ninguna compra con importe devuelve (None, None) — no cero, que
+    Sin ninguna compra que sirva devuelve (None, None) — no cero, que
     sería decir "el cajón sale cero".
     """
-    con_precio = [c for c in compras if c["importe"] is not None]
-    if not con_precio:
+    utiles = [
+        (c, _contenido_por_cajon_de(c, magnitud))
+        for c in compras
+        if c["importe"] is not None and _total_de_la_compra(c, magnitud) is not None
+    ]
+    utiles = [(c, contenido) for c, contenido in utiles if contenido is not None]
+    if not utiles:
         return None, None
 
-    cajones = [float(c["cantidad_cajones"]) for c in con_precio]
+    cajones = [float(c["cantidad_cajones"]) for c, _ in utiles]
     if sum(cajones) == 0:
         return None, None
 
-    importes = [float(c["importe"]) for c in con_precio]
-    contenidos = [float(c["contenido_por_cajon"]) for c in con_precio]
+    importes = [float(c["importe"]) for c, _ in utiles]
+    contenidos = [contenido for _, contenido in utiles]
     return (
         calcular_promedio_ponderado(importes, cajones),
         calcular_promedio_ponderado(contenidos, cajones),
     )
 
 
-def _envases_por_unidad_ponderado(compras: list[dict], contenido_ficha: float | None, envase_variable: bool) -> float:
+def _envases_por_unidad_ponderado(
+    compras: list[dict], contenido_ficha: float | None, envase_variable: bool, magnitud: str
+) -> float:
     """Cuántos envases hacen falta por unidad de venta, ponderado por la cantidad real de cada compra.
 
-    Mismo peso que _costear_compras (cajones * contenido_por_cajon de cada
-    compra, solo las que tienen precio) para que el envase quede coherente
+    Mismo peso y mismo filtro que _costear_compras (solo las compras con
+    precio que declararon la magnitud) para que el envase quede coherente
     con el costo_actual que ya se calculó sobre esas mismas compras.
 
     Envase FIJO: siempre 1 envase por cada "contenido_ficha" unidades (ej.
@@ -176,6 +281,15 @@ def _envases_por_unidad_ponderado(compras: list[dict], contenido_ficha: float | 
     descartable (0 cajas); si es mayor, es caja chica, a razón de 1 caja
     cada "contenido_ficha" unidades — el número de corte y el "cada
     cuánto" salen siempre de la ficha, nunca hardcodeados.
+
+    ESTA ES LA SEGUNDA CUENTA QUE COMPARA LAS DOS UNIDADES, y es la que
+    nadie iba a buscar: `contenido_ficha` (fichas_logistica.contenido_caja)
+    está en unidad de VENTA, y el contenido del cajón tiene que estar en la
+    misma o la comparación mide kilos contra unidades. Por eso `magnitud`
+    llega hasta acá en vez de leerse `compras.contenido_por_cajon`, que
+    está en `unidad_compra`. El docstring de esta función nombra al MANGO
+    como el caso de envase variable, que es exactamente el artículo que
+    puede venderse en dos unidades.
     """
     if not contenido_ficha:
         return 0.0
@@ -192,9 +306,10 @@ def _envases_por_unidad_ponderado(compras: list[dict], contenido_ficha: float | 
         if compra["importe"] is None:
             continue
 
-        cajones = float(compra["cantidad_cajones"])
-        contenido_compra = float(compra["contenido_por_cajon"])
-        cantidad_real = cajones * contenido_compra
+        cantidad_real = _total_de_la_compra(compra, magnitud)
+        contenido_compra = _contenido_por_cajon_de(compra, magnitud)
+        if cantidad_real is None or contenido_compra is None:
+            continue
 
         if envase_variable and contenido_compra <= contenido_ficha:
             envases_por_unidad = 0.0
@@ -247,7 +362,7 @@ def calcular_costo_por_unidad_venta_reciente(cliente_id: int, momento_referencia
 
     compras = listar_compras_para_costeo(fecha_desde, fecha_hasta)
     fichas = listar_fichas_por_cliente(cliente_id)
-    unidad_venta_por_articulo = {ficha["articulo_id"]: ficha["unidad_venta"] for ficha in fichas}
+    ficha_por_articulo = {ficha["articulo_id"]: ficha for ficha in fichas}
 
     compras_por_articulo: dict[int, list[dict]] = {}
     nombres_por_articulo: dict[int, str] = {}
@@ -263,15 +378,28 @@ def calcular_costo_por_unidad_venta_reciente(cliente_id: int, momento_referencia
 
         # Sin ninguna compra con precio, el artículo no se reporta en ningún
         # lado (ni costeado ni "sin ficha") — nada que decir todavía.
-        costo, cantidad_total, sin_precio = _costear_compras(compras_articulo)
-        if costo is None:
+        if not any(compra["importe"] is not None for compra in compras_articulo):
             continue
 
-        unidad_venta = unidad_venta_por_articulo.get(articulo_id)
-        if unidad_venta is None:
+        # LA FICHA SE BUSCA ANTES DE COSTEAR, y el orden es del modelo: es
+        # ella la que dice cuál de las dos magnitudes de la compra hay que
+        # dividir (ver magnitud_de_la_ficha). Sin ficha no hay unidad, así
+        # que no hay costo posible — y eso no se salta en silencio, se
+        # reporta aparte.
+        ficha = ficha_por_articulo.get(articulo_id)
+        if ficha is None:
             articulos_sin_ficha.append({"articulo_id": articulo_id, "articulo_nombre": nombre})
             continue
 
+        magnitud = magnitud_de_la_ficha(ficha)
+        if magnitud is None:
+            continue
+
+        costo, cantidad_total, sin_precio, _ = _costear_compras(compras_articulo, magnitud)
+        if costo is None:
+            continue
+
+        unidad_venta = ficha["unidad_venta"]
         articulos.append(
             {
                 "articulo_id": articulo_id,
@@ -480,27 +608,37 @@ def _listado_para_negociar_precios(
         ventana1_desde = f1 - timedelta(days=1)
         compras_ventana1 = [c for c in compras_articulo if ventana1_desde <= c["fecha_operacion"] <= f1]
 
-        # LA FICHA QUE SE VENDE EN OTRA UNIDAD NO SE COSTEA (ver
-        # unidades_incompatibles). La negativa va ACÁ y no después de
-        # calcular: un costo en la unidad equivocada no se muestra ni
-        # "por las dudas", y así tampoco queda un `costo_anterior` suelto
-        # que la pantalla podría pintar. Todo lo de abajo ya está guardado
-        # por `costo_actual is not None`, así que el precio sugerido, la
-        # utilidad y el costo de envase se apagan solos.
+        # LA FICHA ELIGE LA MAGNITUD, y de acá para abajo no se vuelve a
+        # decidir la unidad en ningún lado: `magnitud` viaja al costo, a
+        # los promedios por cajón y al costo de envase, que son las TRES
+        # cuentas donde la plata se divide o se compara contra un
+        # contenido. Que sea un solo valor y no tres lecturas separadas es
+        # lo que impide que dos de ellas se pongan de acuerdo y la tercera
+        # no (es la cuenta escondida de abajo).
         #
-        # Y apagar el envase NO es un efecto colateral: es la segunda
-        # cuenta que mezcla las unidades. `_envases_por_unidad_ponderado`
-        # compara `contenido_compra <= contenido_ficha` para decidir
-        # descartable o caja chica, y con las unidades distintas eso
-        # compara kilos contra unidades. Al no llamarse, esa comparación
-        # no ocurre.
-        sin_conversion_de_unidad = unidades_incompatibles(ficha)
-        if sin_conversion_de_unidad:
-            costo_actual, sin_precio = None, 0
+        # Y la del ENVASE es la que nadie iba a buscar:
+        # `_envases_por_unidad_ponderado` compara el contenido del cajón
+        # contra `contenido_caja` de la ficha, que está en unidad de
+        # VENTA. Con la magnitud puesta, los dos lados de esa comparación
+        # están en la misma unidad; sin ella compararía kilos contra
+        # unidades y saldría un costo de envase mal, no un cartel. Tiene
+        # test propio, que no pasa por el costo, justamente porque el día
+        # que alguien mueva esto el costo va a seguir dando bien.
+        #
+        # Si la unidad de venta no es ninguna de las dos que el artículo
+        # puede declarar, no hay número posible: la negativa va ACÁ y no
+        # después de calcular, así tampoco queda un `costo_anterior`
+        # suelto que la pantalla podría pintar.
+        magnitud = magnitud_de_la_ficha(ficha)
+        sin_conversion_de_unidad = magnitud is None
+        if magnitud is None:
+            costo_actual, sin_precio, sin_la_magnitud = None, 0, 0
+            importe_por_cajon, contenido_por_cajon = None, None
         else:
-            costo_actual, _, sin_precio = _costear_compras(compras_ventana1)
-        # Sobre compras_ventana1, la MISMA lista: ver _promedios_por_cajon.
-        importe_por_cajon, contenido_por_cajon = _promedios_por_cajon(compras_ventana1)
+            costo_actual, _, sin_precio, sin_la_magnitud = _costear_compras(compras_ventana1, magnitud)
+            # Sobre compras_ventana1, la MISMA lista y la MISMA magnitud:
+            # ver _promedios_por_cajon.
+            importe_por_cajon, contenido_por_cajon = _promedios_por_cajon(compras_ventana1, magnitud)
 
         fresco = f1 >= limite_fresco
 
@@ -513,7 +651,7 @@ def _listado_para_negociar_precios(
                 if (f1 - f2).days <= LIMITE_COSTO_ANTERIOR_DIAS:
                     ventana2_desde = f2 - timedelta(days=1)
                     compras_ventana2 = [c for c in compras_articulo if ventana2_desde <= c["fecha_operacion"] <= f2]
-                    costo_anterior, _, _ = _costear_compras(compras_ventana2)
+                    costo_anterior, _, _, _ = _costear_compras(compras_ventana2, magnitud)
 
                     if costo_actual is not None and costo_anterior is not None:
                         actual_redondeado = round(costo_actual)
@@ -532,7 +670,7 @@ def _listado_para_negociar_precios(
         costo_envase_por_unidad = 0.0
         if costo_actual is not None:
             envases_ponderado = _envases_por_unidad_ponderado(
-                compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"]
+                compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"], magnitud
             )
             costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
             costo_envase_por_unidad = costo_envase * envases_ponderado
@@ -596,6 +734,15 @@ def _listado_para_negociar_precios(
                 # convertir. La Rentabilidad Real lo usa para no contarla
                 # bajo un motivo falso.
                 "sin_conversion_de_unidad": sin_conversion_de_unidad,
+                # LA OTRA RAZÓN PARA NO TENER COSTO, y es distinta de la de
+                # arriba aunque termine igual: la unidad es declarable y
+                # las compras de la ventana no la declararon, porque son
+                # anteriores al modelo de dos magnitudes. Ésta se apaga
+                # sola en cuanto entra una compra con las dos; la de
+                # arriba no se apaga hasta que alguien toque el artículo o
+                # la ficha. Juntarlas sería mandar a arreglar lo que se
+                # arregla solo.
+                "compras_sin_la_magnitud": sin_la_magnitud,
                 "costo_actual": costo_actual,
                 "costo_anterior": costo_anterior,
                 "variacion": variacion,
@@ -913,7 +1060,11 @@ def calcular_precio_sugerido_desglosado(
     ventana1_desde = f1 - timedelta(days=1)
     compras_ventana1 = [c for c in compras_articulo if ventana1_desde <= c["fecha_operacion"] <= f1]
 
-    costo_actual, cantidad_total, sin_precio = _costear_compras(compras_ventana1)
+    magnitud = magnitud_de_la_ficha(ficha)
+    if magnitud is None:
+        return None
+
+    costo_actual, cantidad_total, sin_precio, _ = _costear_compras(compras_ventana1, magnitud)
     if costo_actual is None:
         return None
 
@@ -927,7 +1078,9 @@ def calcular_precio_sugerido_desglosado(
     costos_envases = listar_costos_envases_vigentes(hoy)
     costo_por_envase_id = {c["envase_id"]: float(c["costo"]) for c in costos_envases}
 
-    envases_ponderado = _envases_por_unidad_ponderado(compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"])
+    envases_ponderado = _envases_por_unidad_ponderado(
+        compras_ventana1, ficha["contenido_caja"], ficha["envase_variable"], magnitud
+    )
     costo_envase = costo_por_envase_id.get(ficha["envase_id"], SIN_ENVASE) if ficha["envase_id"] else SIN_ENVASE
     costo_envase_por_unidad = costo_envase * envases_ponderado
 

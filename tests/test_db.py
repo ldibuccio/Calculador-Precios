@@ -1046,7 +1046,7 @@ def test_recepcionar_compra_articulo_por_kilo_toma_kilos_por_bulto_y_deriva_el_t
     # _auto_retirar_si_corresponde (acá 'pendiente', se auto-retira), y la
     # consulta de la marca "viene armada" — que acá viene en None, o sea la
     # compra normal de siempre: llega el cajón del proveedor.
-    conexion, cursor = _conexion_falsa([("kilo",), ("pendiente",), (1, None, 38.0, date(2026, 8, 25), None, None)])
+    conexion, cursor = _conexion_falsa([("kilo", 760.0, None), ("pendiente",), (1, None, 38.0, date(2026, 8, 25), None, None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         aviso, numero_guia = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
@@ -1078,7 +1078,7 @@ def test_recepcionar_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva
     # Depósito cuenta UN cajón (no toda la carga junta) — mismo criterio
     # que kilo: valor_real es directamente contenido_por_cajon_real, y
     # cantidad_fraccion_real (el total) se deriva acá (cajones × valor_real).
-    conexion, cursor = _conexion_falsa([("unidad",), ("pendiente",), (1, None, 38.0, date(2026, 8, 25), None, None)])
+    conexion, cursor = _conexion_falsa([("unidad", None, 760.0), ("pendiente",), (1, None, 38.0, date(2026, 8, 25), None, None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         recepcionar_compra(31, cantidad_cajones_real=10, valor_real=118)
@@ -1091,7 +1091,7 @@ def test_recepcionar_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva
 
 
 def test_recepcionar_compra_ya_retirada_no_pisa_el_auto_retiro():
-    conexion, cursor = _conexion_falsa([("kilo",), ("retirado",), (1, None, 38.0, date(2026, 8, 25), None, None)])
+    conexion, cursor = _conexion_falsa([("kilo", 760.0, None), ("retirado",), (1, None, 38.0, date(2026, 8, 25), None, None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         aviso, numero_guia = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
@@ -1105,7 +1105,7 @@ def test_recepcionar_compra_ya_retirada_no_pisa_el_auto_retiro():
 
 
 def test_recepcionar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
-    conexion, cursor = _conexion_falsa([("kilo",), ("cancelado",), (1, None, 38.0, date(2026, 8, 25), None, None)])
+    conexion, cursor = _conexion_falsa([("kilo", 760.0, None), ("cancelado",), (1, None, 38.0, date(2026, 8, 25), None, None)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         aviso, _ = recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
@@ -1118,7 +1118,7 @@ def test_recepcionar_compra_cancelada_en_logistica_avisa_y_no_la_pisa():
 
 
 def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
-    conexion, cursor = _conexion_falsa([("recepcionado", "kilo")])
+    conexion, cursor = _conexion_falsa([("recepcionado", "kilo", 760.0, None)])
     # Sin guías R en origen colgadas de esta compra: el camino normal.
     cursor.fetchall.return_value = []
 
@@ -1148,7 +1148,7 @@ def test_corregir_recepcion_compra_articulo_por_kilo_deriva_el_total():
 def test_corregir_recepcion_compra_articulo_por_unidad_toma_unidades_por_cajon_y_deriva_el_total():
     # Ej. la Palta con "3u" mal cargado: la corrección es 80 por cajón
     # (lo que Depósito mira), no 2400 en total.
-    conexion, cursor = _conexion_falsa([("recepcionado", "unidad")])
+    conexion, cursor = _conexion_falsa([("recepcionado", "unidad", None, 760.0)])
     cursor.fetchall.return_value = []   # sin guía R en origen: el camino normal
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -1162,7 +1162,7 @@ def test_corregir_recepcion_compra_articulo_por_unidad_toma_unidades_por_cajon_y
 
 
 def test_corregir_recepcion_compra_bloqueada_si_no_esta_recepcionada():
-    conexion, cursor = _conexion_falsa([("pendiente", "unidad")])
+    conexion, cursor = _conexion_falsa([("pendiente", "unidad", None, 2400.0)])
 
     with patch("app.db.obtener_conexion", return_value=conexion):
         try:
@@ -1181,7 +1181,7 @@ def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
     # cantidad_cajones_real (es la que usa todo el costeo, sin cuentas
     # nuevas) y el rechazo queda como registro aparte.
     conexion, cursor = _conexion_falsa(
-        [("kilo",), ("pendiente",), (1, None, 8.0, date(2026, 8, 25), None, None)]
+        [("kilo", 200.0, None), ("pendiente",), (1, None, 8.0, date(2026, 8, 25), None, None)]
     )
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -1202,7 +1202,7 @@ def test_recepcionar_compra_con_rechazo_parcial_guarda_el_registro():
 
 
 def test_corregir_recepcion_compra_corrige_el_rechazo_parcial():
-    conexion, cursor = _conexion_falsa([("recepcionado", "kilo")])
+    conexion, cursor = _conexion_falsa([("recepcionado", "kilo", 760.0, None)])
     cursor.fetchall.return_value = []   # sin guía R en origen: el camino normal
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -7803,7 +7803,7 @@ def _conexion_recepcion(ficha_id=3, ficha_articulo=1, numero_guia=99):
     termina en esa consulta.
     """
     filas = [
-        ("kilo",),                     # SELECT a.unidad_compra
+        ("kilo", 760.0, None),         # SELECT a.unidad_compra + las dos cantidades
         ("retirado",),                 # SELECT estado_retiro (auto-retirar: ya estaba)
         # La compra recién escrita, con su ficha marcada y la fecha de su lote.
         (1, ficha_id, 10.0, date(2026, 8, 25), ficha_articulo, 7),
@@ -7926,7 +7926,7 @@ def test_el_RECHAZO_PARCIAL_de_una_compra_marcada_arma_la_guia_por_los_ACEPTADOS
     aceptados (llegados − rechazados). Si en vez de eso mirara la cantidad
     estimada, armaría cajas que se devolvieron al proveedor.
     """
-    filas = [("kilo",), ("retirado",), (1, 3, 8.0, date(2026, 8, 25), 1, 7), _CORTE, (99,)]
+    filas = [("kilo", 160.0, None), ("retirado",), (1, 3, 8.0, date(2026, 8, 25), 1, 7), _CORTE, (99,)]
     conexion, cursor = _conexion_falsa(filas_fetchone=filas)
     cursor.description = COLUMNAS_LOTES
     cursor.fetchall.side_effect = [_lotes_con_rival(), []]
@@ -7978,7 +7978,7 @@ def test_corregir_recepcion_SE_BLOQUEA_si_la_compra_tiene_una_guia_en_origen_viv
     Y el error NOMBRA la guía: un bloqueo que no dice qué lo retiene manda a
     adivinar, y el que está corrigiendo no tiene cómo saber que existe.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", "kilo")])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", "kilo", 760.0, None)])
     cursor.fetchall.return_value = [(214,)]
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -7995,7 +7995,7 @@ def test_corregir_recepcion_SIGUE_ANDANDO_si_la_guia_en_origen_esta_ANULADA():
     La consulta filtra `anulado_el IS NULL`: anulada la guía, la compra vuelve
     a ser corregible — que es justo lo que el bloqueo le pide al que llega.
     """
-    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", "kilo")])
+    conexion, cursor = _conexion_falsa(filas_fetchone=[("recepcionado", "kilo", 760.0, None)])
     cursor.fetchall.return_value = []
 
     with patch("app.db.obtener_conexion", return_value=conexion):
@@ -8364,12 +8364,18 @@ def test_la_guarda_de_unidades_NO_recorta_por_tiempo_ni_por_uso():
     assert "fecha_operacion" not in _SQL_UNIDADES_QUE_DIFIEREN
     assert "current_date" not in _SQL_UNIDADES_QUE_DIFIEREN
     assert "EXISTS" not in _SQL_UNIDADES_QUE_DIFIEREN.upper()
-    # Lo que SÍ recorta: el artículo inactivo y la unidad sin cargar.
+    # Lo que SÍ recorta: el artículo inactivo, y las dos magnitudes que
+    # una compra de ese artículo puede declarar — los kilos, que van
+    # siempre, y el conteo, si lo tiene.
     assert "a.activo" in _SQL_UNIDADES_QUE_DIFIEREN
-    assert "a.unidad_compra IS NOT NULL" in _SQL_UNIDADES_QUE_DIFIEREN
-    # `IS DISTINCT FROM` y no `<>`: con un NULL de un lado, `<>` da NULL y el
-    # par se escapa en silencio.
-    assert "IS DISTINCT FROM f.unidad_venta" in _SQL_UNIDADES_QUE_DIFIEREN
+    assert "f.unidad_venta <> 'kilo'" in _SQL_UNIDADES_QUE_DIFIEREN
+    assert "f.unidad_venta IS DISTINCT FROM a.unidad_conteo" in _SQL_UNIDADES_QUE_DIFIEREN
+    # `IS DISTINCT FROM` y no `<>` contra el conteo: un artículo SIN conteo lo
+    # tiene en NULL, y con `<>` toda la comparación daría NULL — o sea que el
+    # caso más común (el artículo que se compra solo por kilo y una ficha que
+    # le pide unidades) se escaparía en silencio, que es justo el que hay que
+    # avisar. Contra el kilo sí va `<>`, porque ahí no hay NULL posible: la
+    # condición de arriba ya exige unidad_venta no nula.
 
 
 def test_toda_columna_que_agrega_una_MIGRACION_esta_en_el_esquema_completo():
@@ -8814,37 +8820,132 @@ def _sql_de_la_funcion(nombre_funcion):
 def test_la_ficha_TRAE_la_unidad_de_compra_del_articulo():
     """Lo que decide si el costeo se puede negar, y ningún test de costeo lo ve.
 
-    `unidades_incompatibles` lee `ficha["unidad_compra"]`, y todos los tests
+    `magnitud_de_la_ficha` lee `ficha["unidad_conteo"]`, y todos los tests
     de app/costeo.py le pasan fichas de fixture — así que el valor lo pone el
-    fixture, no la consulta. Medido con un canario el 15/09: sacar
-    `a.unidad_compra` del SELECT hace caer CERO tests.
+    fixture, no la consulta. Medido con un canario el 15/09: sacar la columna
+    del SELECT hace caer CERO tests.
 
-    Y el modo de falla es el peor: sin la columna, `ficha.get("unidad_compra")`
-    devuelve None, la regla contesta "no hay conflicto" para todo, el costeo
-    vuelve a dividir mezclando unidades y NADA avisa. Es la degradación
-    permanente y silenciosa, con el agravante de que acá ni siquiera hay un
-    `except` que la explique.
+    Y el modo de falla es el peor: sin la columna,
+    `ficha.get("unidad_conteo")` devuelve None, la regla contesta "esta ficha
+    no se puede costear" para TODA ficha que no venda por kilo, y el sistema
+    se niega en silencio donde antes costeaba bien. Es la degradación
+    permanente, con el agravante de que acá ni siquiera hay un `except` que
+    la explique.
 
     Por eso este test mira el TEXTO de la consulta y no un valor (corolario
     40): lo que cambia es QUÉ COLUMNA se pide.
     """
     consulta = _sql_de_la_funcion("listar_fichas_por_cliente")
-    assert "a.unidad_compra" in consulta
+    assert "a.unidad_conteo" in consulta
     # Calificada con el alias del artículo, no suelta: `fichas_logistica` no
     # tiene esa columna, así que sin el alias el assert podría pasar sobre
     # una consulta que la pide de la tabla equivocada (corolario 4).
-    assert "unidad_compra" not in consulta.replace("a.unidad_compra", "")
+    assert "unidad_conteo" not in consulta.replace("a.unidad_conteo", "")
 
 
-def test_el_detalle_de_la_alerta_TRAE_cuantas_unidades_de_venta_tiene_el_articulo():
-    """La columna que separa "no alinear" de "revisar cuál está mal".
+def test_el_detalle_de_la_alerta_TRAE_el_conteo_QUE_DECLARA_el_articulo():
+    """La columna que separa "cargale el conteo" de "ya cuenta en otra unidad".
 
     Mismo caso que la de arriba y mismo canario en cero: el detalle se prueba
-    con `listar_unidades_que_diferen` mockeada, así que el conteo lo entrega
-    el fixture. Si la consulta deja de traerlo, el detalle diría "revisar cuál
-    está mal" para TODOS — que es volver a mandar a alinear el caso que no hay
-    que alinear, sin un solo test en rojo.
+    con `listar_unidades_que_diferen` mockeada, así que el valor lo entrega el
+    fixture. Si la consulta deja de traerlo, el detalle diría "al artículo le
+    falta el conteo" para TODOS —incluido el que ya cuenta en otra unidad y
+    donde cargarlo no alcanza— sin un solo test en rojo.
     """
     consulta = _sql_de_la_funcion("listar_unidades_que_diferen")
-    assert "COUNT(DISTINCT f2.unidad_venta)" in consulta
-    assert "AS unidades_de_venta" in consulta
+    assert "a.unidad_conteo" in consulta
+
+
+# --- LAS DOS MAGNITUDES EN LA RECEPCIÓN (15/09) ------------------------------
+
+def test_recepcionar_con_las_DOS_magnitudes_deriva_los_DOS_totales():
+    """Depósito pesa Y cuenta un bulto, y los dos totales salen de los cajones REALES.
+
+    3 fetchone: la consulta que trae unidad_compra y las dos cantidades de la
+    compra, el estado_retiro de _auto_retirar_si_corresponde, y la marca
+    "viene armada".
+    """
+    conexion, cursor = _conexion_falsa(
+        [("unidad", 160.0, 100.0), ("pendiente",), (1, None, 10.0, date(2026, 8, 25), None, None)]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra(30, cantidad_cajones_real=10, valor_real=9, segunda_real=15)
+
+    _, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
+    cajones, contenido, kilos, fraccion, _, _, _ = parametros
+    assert cajones == 10
+    assert contenido == 9, "contenido_por_cajon_real es el de unidad_compra, directo"
+    assert fraccion == 90, "10 × 9 unidades"
+    assert kilos == 150, "10 × 15 kilos: la segunda magnitud, por su propio camino"
+
+
+def test_la_recepcion_SE_NIEGA_si_la_compra_declaro_las_dos_y_llega_una():
+    """La guarda va donde se ESCRIBE, no en la pantalla.
+
+    Sin esto la asimetría sería invisible: el costeo lee cada magnitud con
+    COALESCE(real, estimado), así que con el kilo pesado y el conteo sin
+    pesar, dos fichas del MISMO artículo costearían una contra lo pesado y la
+    otra contra lo estimado, en la misma compra y sin que nada se descuadre.
+    """
+    conexion, cursor = _conexion_falsa([("unidad", 160.0, 100.0)])
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        try:
+            recepcionar_compra(30, cantidad_cajones_real=10, valor_real=9)
+            assert False, "tenía que lanzar ValueError"
+        except ValueError as error:
+            assert "las dos magnitudes" in str(error)
+
+    conexion.commit.assert_not_called()
+
+
+def test_la_recepcion_NO_pide_la_segunda_si_la_compra_trajo_UNA():
+    """El control de la de arriba, y es el caso de todas las compras viejas.
+
+    Pedirle a Depósito la magnitud que la compra no declaró es pedirle que
+    invente. Sin este control, una guarda que abortara siempre pasaría el
+    test de arriba igual (corolario 30: el caso feliz es el único que
+    distingue "la guarda funciona" de "la guarda siempre frena").
+    """
+    conexion, cursor = _conexion_falsa(
+        [("kilo", 760.0, None), ("pendiente",), (1, None, 38.0, date(2026, 8, 25), None, None)]
+    )
+
+    with patch("app.db.obtener_conexion", return_value=conexion):
+        recepcionar_compra(30, cantidad_cajones_real=38, valor_real=20)
+
+    _, parametros = _sql_y_parametros_que_contienen(cursor, "UPDATE compras")
+    _, _, kilos, fraccion, _, _, _ = parametros
+    assert kilos == 760
+    assert fraccion is None, "la que la compra no declaró queda en None, no en cero"
+
+
+def test_la_recepcion_LEE_las_dos_cantidades_en_la_MISMA_consulta_que_la_unidad():
+    """Lo que cambia es QUÉ COLUMNAS pide la consulta, así que el test lee el SQL.
+
+    El valor lo entrega el cursor falso (corolario 40): con la consulta
+    pidiendo solo `unidad_compra`, el fixture seguiría entregando la tupla de
+    tres y el test del valor pasaría igual. Y sin esas dos columnas la guarda
+    de arriba no puede disparar nunca — se apaga entera y en silencio.
+    """
+    consulta = _sql_de_la_funcion("_recepcionar_compra")
+    assert "c.cantidad_kilos" in consulta
+    assert "c.cantidad_fraccion" in consulta
+
+    corregir = _sql_de_la_funcion("corregir_recepcion_compra")
+    assert "c.cantidad_kilos" in corregir
+    assert "c.cantidad_fraccion" in corregir
+
+
+def test_el_costeo_TRAE_las_dos_magnitudes_de_cada_compra():
+    """Otra vez el corolario 40, y acá apaga media función.
+
+    Sin `cantidad_fraccion`, `_total_de_la_compra` devuelve None para toda
+    ficha que venda en el conteo del artículo, el costeo se niega para todas
+    ellas y NADA avisa: se ve igual que una compra vieja. Los tests de
+    app/costeo.py no lo pueden ver — le pasan las compras de un fixture.
+    """
+    consulta = _sql_de_la_funcion("listar_compras_para_costeo")
+    assert "c.cantidad_fraccion_real, c.cantidad_fraccion" in consulta.replace("COALESCE(", "")
+    assert "AS cantidad_fraccion" in consulta

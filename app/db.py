@@ -11,6 +11,8 @@ from contextlib import contextmanager
 
 import psycopg2
 
+from core.magnitudes import repartir_magnitudes
+
 DATABASE_URL_ENV_VAR = "DATABASE_URL"
 
 
@@ -51,7 +53,7 @@ def listar_articulos() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia, grupo
+                SELECT id, nombre, merma_porcentaje, unidad_compra, unidad_conteo, contenido_referencia, grupo
                 FROM articulos WHERE activo = true ORDER BY nombre
                 """
             )
@@ -69,7 +71,7 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, nombre, merma_porcentaje, unidad_compra, contenido_referencia, grupo
+                SELECT id, nombre, merma_porcentaje, unidad_compra, unidad_conteo, contenido_referencia, grupo
                 FROM articulos WHERE id = %s
                 """,
                 (articulo_id,),
@@ -83,14 +85,21 @@ def obtener_articulo(articulo_id: int) -> dict | None:
         conexion.close()
 
 
-def crear_articulo(nombre: str, unidad_compra: str, contenido_referencia: float | None, grupo: str | None = None) -> None:
+def crear_articulo(
+    nombre: str,
+    unidad_compra: str,
+    contenido_referencia: float | None,
+    grupo: str | None = None,
+    unidad_conteo: str | None = None,
+) -> None:
     """Inserta un artículo nuevo en la tabla articulos. grupo es opcional: None = sin clasificar todavía."""
     conexion = obtener_conexion()
     try:
         with conexion.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO articulos (nombre, unidad_compra, contenido_referencia, grupo) VALUES (%s, %s, %s, %s)",
-                (nombre, unidad_compra, contenido_referencia, grupo),
+                "INSERT INTO articulos (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo),
             )
         conexion.commit()
     finally:
@@ -98,7 +107,12 @@ def crear_articulo(nombre: str, unidad_compra: str, contenido_referencia: float 
 
 
 def actualizar_articulo(
-    articulo_id: int, nombre: str, unidad_compra: str, contenido_referencia: float | None, grupo: str | None = None
+    articulo_id: int,
+    nombre: str,
+    unidad_compra: str,
+    contenido_referencia: float | None,
+    grupo: str | None = None,
+    unidad_conteo: str | None = None,
 ) -> None:
     """Actualiza nombre, unidad de compra, contenido de referencia y grupo de un artículo existente."""
     conexion = obtener_conexion()
@@ -107,10 +121,11 @@ def actualizar_articulo(
             cursor.execute(
                 """
                 UPDATE articulos
-                SET nombre = %s, unidad_compra = %s, contenido_referencia = %s, grupo = %s, actualizado_en = now()
+                SET nombre = %s, unidad_compra = %s, unidad_conteo = %s,
+                    contenido_referencia = %s, grupo = %s, actualizado_en = now()
                 WHERE id = %s
                 """,
-                (nombre, unidad_compra, contenido_referencia, grupo, articulo_id),
+                (nombre, unidad_compra, unidad_conteo, contenido_referencia, grupo, articulo_id),
             )
         conexion.commit()
     finally:
@@ -519,14 +534,19 @@ def listar_fichas_por_cliente(cliente_id: int) -> list[dict]:
                 SELECT fl.id, fl.articulo_id, a.nombre AS articulo_nombre, a.grupo AS articulo_grupo,
                        fl.envase_id, e.nombre AS envase_nombre,
                        fl.contenido_caja, fl.unidad_venta, fl.envase_variable, fl.nombre_cliente, fl.codigo_cliente,
-                       -- La unidad en que se COMPRA el artículo, al lado de la
-                       -- de venta de la ficha. El costeo divide plata por un
-                       -- contenido que está en unidad de compra y llama al
-                       -- resultado "costo por unidad de venta": si las dos no
-                       -- coinciden, esa división mezcla unidades. Viaja con la
-                       -- ficha para que quien costea pueda NEGARSE, que es lo
-                       -- único honesto mientras no haya conversión.
-                       a.unidad_compra
+                       -- Las DOS magnitudes que puede traer una compra de este
+                       -- artículo, al lado de la unidad de venta de la ficha.
+                       -- Los kilos van siempre; unidad_conteo dice si además
+                       -- viene un conteo y de qué (unidad o cubeta), o NULL si
+                       -- el artículo se compra solo por kilo. Con esto el
+                       -- costeo elige CUÁL de las dos dividir (ver
+                       -- app.costeo.magnitud_de_la_ficha) y puede NEGARSE
+                       -- cuando la ficha pide una que el artículo no tiene.
+                       --
+                       -- unidad_compra viaja solo porque es la etiqueta de
+                       -- compras.contenido_por_cajon (en qué unidad está
+                       -- expresado ese número). Para el costeo ya no se usa.
+                       a.unidad_compra, a.unidad_conteo
                 FROM fichas_logistica fl
                 JOIN articulos a ON a.id = fl.articulo_id
                 LEFT JOIN envases e ON e.id = fl.envase_id
@@ -1449,13 +1469,20 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
     agrupar las compras por día y reconstruir ventanas de costeo ancladas en
     una fecha puntual (ej. costo actual vs. costo anterior).
 
-    cantidad_cajones/contenido_por_cajon/cantidad_kilos vienen con el valor
-    REAL (pesado por Depósito) si ya existe, si no el estimado — ver
-    recepcionar_compra. app/costeo.py arma su cuenta como
-    cantidad_cajones × contenido_por_cajon (nunca lee cantidad_kilos), así
-    que esta sustitución alcanza sola para que el costo, el precio sugerido
-    y la utilidad aproximada usen el real en cuanto existe, sin tocar
-    ninguna fórmula ahí.
+    Las cuatro cantidades vienen con el valor REAL (pesado/contado por
+    Depósito) si ya existe, si no el estimado — ver recepcionar_compra. Esa
+    sustitución alcanza sola para que el costo, el precio sugerido y la
+    utilidad aproximada usen el real en cuanto existe, sin tocar ninguna
+    fórmula en app/costeo.py.
+
+    LAS DOS MAGNITUDES VIAJAN JUNTAS, y ese es el modelo: una compra
+    declara kilos y —cuando el artículo tiene unidad_conteo— también un
+    conteo (unidades o cubetas). app/costeo.py divide por UNA de las dos,
+    la que pida la unidad de venta de cada ficha (ver
+    app.costeo.magnitud_de_la_ficha). La que la compra no declaró vuelve
+    en NULL, y eso NO es un cero: es "esta compra no se puede costear en
+    esa unidad", que es el caso de todas las compras anteriores al modelo.
+    Por eso vienen las dos y decide quien costea, no esta consulta.
 
     Para excluir compras del costeo manda SOLO el veredicto de Depósito
     (regla fija pedida el 19/08/2026): se excluyen las rechazadas
@@ -1474,6 +1501,7 @@ def listar_compras_para_costeo(fecha_desde, fecha_hasta) -> list[dict]:
                        COALESCE(c.cantidad_cajones_real, c.cantidad_cajones) AS cantidad_cajones,
                        COALESCE(c.contenido_por_cajon_real, c.contenido_por_cajon) AS contenido_por_cajon,
                        COALESCE(c.cantidad_kilos_real, c.cantidad_kilos) AS cantidad_kilos,
+                       COALESCE(c.cantidad_fraccion_real, c.cantidad_fraccion) AS cantidad_fraccion,
                        c.importe, c.cargado_el
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
@@ -2614,7 +2642,7 @@ def listar_compras_pendientes_recepcion() -> list[dict]:
                        -- AVISA y no ofrece nada que elegir: la marca la puso
                        -- el comprador, que es el único que lo sabe.
                        c.ficha_en_origen_id,
-                       a.nombre AS articulo_nombre, a.unidad_compra,
+                       a.nombre AS articulo_nombre, a.unidad_compra, a.unidad_conteo,
                        p.nombre AS proveedor_nombre, p.codigo_puesto AS proveedor_codigo_puesto,
                        c.cantidad_cajones, c.contenido_por_cajon, c.cantidad_kilos, c.cantidad_fraccion,
                        (SELECT COUNT(*) FROM fotos_recepcion f WHERE f.compra_id = c.id) AS fotos_balanza
@@ -2661,8 +2689,39 @@ def _auto_retirar_si_corresponde(cursor, compra_id: int) -> str | None:
     return None
 
 
+def _exigir_la_segunda_si_la_compra_la_declaro(cantidad_kilos, cantidad_fraccion, segunda_real) -> None:
+    """Si la compra declaró las DOS magnitudes, la recepción tiene que traer las dos.
+
+    LA GUARDA VA DONDE SE ESCRIBE, no en la pantalla: la pantalla puede
+    mostrar el campo, y un formulario armado a mano no ve ningún cartel.
+
+    Y el motivo es que la asimetría sería INVISIBLE. El costeo lee cada
+    magnitud con COALESCE(real, estimado): con el kilo pesado y el conteo
+    sin pesar, la ficha que vende por kilo costearía contra lo que Depósito
+    pesó y la del mismo artículo que vende por unidad contra lo que el
+    comprador estimó — en la MISMA compra, sin que nada se descuadre y sin
+    que ninguna pantalla lo diga.
+
+    Al revés no se exige nada: si la compra trajo UNA sola magnitud,
+    pedirle a Depósito la otra es pedirle que invente.
+
+    LAS DOS CANTIDADES VIENEN EN LA MISMA CONSULTA que trae unidad_compra, y
+    no en una propia: una consulta de más acá es una lectura de más en cada
+    recepción, y sobre todo es otro lugar donde se puede leer una compra
+    distinta de la que se está por escribir.
+    """
+    if segunda_real is None and cantidad_kilos is not None and cantidad_fraccion is not None:
+        raise ValueError(
+            "Esta compra se cargó con las dos magnitudes (kilos y conteo), así que la recepción "
+            "necesita las dos: poné también la otra por bulto."
+        )
+
+
 def _derivar_valores_reales(
-    unidad_compra: str | None, cantidad_cajones_real: float, valor_real: float
+    unidad_compra: str | None,
+    cantidad_cajones_real: float,
+    valor_real: float,
+    segunda_real: float | None = None,
 ) -> tuple[float | None, float | None, float | None]:
     """A partir de lo que Depósito mira en UN cajón/bulto, arma (contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real).
 
@@ -2676,11 +2735,22 @@ def _derivar_valores_reales(
     o fracción según la unidad) se deriva multiplicando por
     cantidad_cajones_real — nunca al revés, para no terminar promediando
     un total mal cargado en un número por cajón que nadie escribió.
+
+    `segunda_real` es la SEGUNDA magnitud, también por bulto, y va en None
+    cuando la compra declaró UNA sola. ESO NO ES UNA COMODIDAD: si la
+    compra trajo una magnitud y acá se escribiera la otra, quedaría una
+    compra cuyo real dice dos cosas y cuyo estimado dice una — y el costeo
+    tomaría el real de una ficha contra un número pesado y el de la otra
+    contra uno estimado, en la misma compra y sin que se vea. Pedirle a
+    Depósito la magnitud que la compra no declaró es pedirle que invente.
+
+    El reparto entre las dos columnas lo hace core/magnitudes.py, que es el
+    mismo que usa la carga de la compra: escrito dos veces son dos reglas.
     """
-    total = cantidad_cajones_real * valor_real
-    if unidad_compra == "kilo":
-        return valor_real, total, None
-    return valor_real, None, total
+    principal = cantidad_cajones_real * valor_real
+    segunda = cantidad_cajones_real * segunda_real if segunda_real is not None else None
+    kilos, fraccion = repartir_magnitudes(unidad_compra, principal, segunda)
+    return valor_real, kilos, fraccion
 
 
 def recepcionar_compra(
@@ -2689,12 +2759,17 @@ def recepcionar_compra(
     valor_real: float,
     cantidad_cajones_rechazada: float | None = None,
     motivo_rechazo: str | None = None,
+    segunda_real: float | None = None,
 ) -> str | None:
     """Marca una compra como recepcionada, con los valores REALES que pesó/contó Depósito.
 
     Ver _derivar_valores_reales para el significado de valor_real según la
     unidad de compra del artículo. El estimado (cantidad_cajones/
     contenido_por_cajon/etc., sin "_real") nunca se toca.
+
+    segunda_real es la otra magnitud, también por bulto, y SOLO se manda
+    cuando la compra declaró las dos: pedirle a Depósito la que la compra
+    no trajo es pedirle que invente. Ver _derivar_valores_reales.
 
     Rechazo parcial: si Depósito devolvió parte de la carga al proveedor,
     cantidad_cajones_rechazada es cuántos bultos devolvió (y motivo_rechazo
@@ -2715,7 +2790,7 @@ def recepcionar_compra(
         with conexion.cursor() as cursor:
             aviso, numero_guia = _recepcionar_compra(
                 cursor, compra_id, cantidad_cajones_real, valor_real,
-                cantidad_cajones_rechazada, motivo_rechazo,
+                cantidad_cajones_rechazada, motivo_rechazo, segunda_real,
             )
         conexion.commit()
         return aviso, numero_guia
@@ -2730,6 +2805,7 @@ def _recepcionar_compra(
     valor_real: float,
     cantidad_cajones_rechazada: float | None = None,
     motivo_rechazo: str | None = None,
+    segunda_real: float | None = None,
 ) -> tuple[str | None, int | None]:
     """La escritura de la recepción, con el cursor abierto. Devuelve (aviso, numero_de_guia).
 
@@ -2758,7 +2834,7 @@ def _recepcionar_compra(
     """
     cursor.execute(
         """
-        SELECT a.unidad_compra
+        SELECT a.unidad_compra, c.cantidad_kilos, c.cantidad_fraccion
         FROM compras c
         JOIN articulos a ON a.id = c.articulo_id
         WHERE c.id = %s
@@ -2766,10 +2842,11 @@ def _recepcionar_compra(
         (compra_id,),
     )
     fila = cursor.fetchone()
-    unidad_compra = fila[0] if fila else None
+    unidad_compra, cantidad_kilos, cantidad_fraccion = fila if fila else (None, None, None)
 
+    _exigir_la_segunda_si_la_compra_la_declaro(cantidad_kilos, cantidad_fraccion, segunda_real)
     contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
-        unidad_compra, cantidad_cajones_real, valor_real
+        unidad_compra, cantidad_cajones_real, valor_real, segunda_real
     )
 
     cursor.execute(
@@ -3106,6 +3183,7 @@ def corregir_recepcion_compra(
     valor_real: float,
     cantidad_cajones_rechazada: float | None = None,
     motivo_rechazo: str | None = None,
+    segunda_real: float | None = None,
 ) -> None:
     """Corrige los valores reales de una compra YA recepcionada (ej. error de tipeo al recepcionar en Depósito).
 
@@ -3124,7 +3202,7 @@ def corregir_recepcion_compra(
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.estado, a.unidad_compra
+                SELECT c.estado, a.unidad_compra, c.cantidad_kilos, c.cantidad_fraccion
                 FROM compras c
                 JOIN articulos a ON a.id = c.articulo_id
                 WHERE c.id = %s
@@ -3132,7 +3210,7 @@ def corregir_recepcion_compra(
                 (compra_id,),
             )
             fila = cursor.fetchone()
-            estado, unidad_compra = fila if fila else (None, None)
+            estado, unidad_compra, cantidad_kilos, cantidad_fraccion = fila if fila else (None, None, None, None)
 
             if estado != "recepcionado":
                 raise ValueError("Esta compra no está recepcionada, no hay valores reales para corregir.")
@@ -3159,8 +3237,9 @@ def corregir_recepcion_compra(
                     + ". Anulá esa guía y volvé a recepcionar la compra."
                 )
 
+            _exigir_la_segunda_si_la_compra_la_declaro(cantidad_kilos, cantidad_fraccion, segunda_real)
             contenido_por_cajon_real, cantidad_kilos_real, cantidad_fraccion_real = _derivar_valores_reales(
-                unidad_compra, cantidad_cajones_real, valor_real
+                unidad_compra, cantidad_cajones_real, valor_real, segunda_real
             )
 
             cursor.execute(
@@ -7045,41 +7124,54 @@ def facturacion_por_ficha(cliente_id: int, fecha_desde, fecha_hasta) -> dict:
 # denominador es contenido de COMPRA, así que esa igualdad SOLO vale si las
 # dos unidades son la misma. No hay conversión en ningún lado — ver la
 # sección de CLAUDE.md sobre unidad_compra y unidad_venta.
+# LA MISMA REGLA QUE app.costeo.magnitud_de_la_ficha, escrita en SQL, y hay
+# un test que las compara EN LOS DOS SENTIDOS. Una compra declara KILOS
+# siempre y —cuando el artículo tiene unidad_conteo— también un conteo: eso
+# son las dos magnitudes que este artículo puede ofrecer. Una ficha que
+# vende en cualquier OTRA unidad no se puede costear, ni hoy ni con más
+# compras.
+#
+# Ojo con la dirección: `unidad_venta = 'kilo'` NUNCA entra, tenga el
+# artículo el conteo que tenga. Los kilos van siempre.
 _SQL_UNIDADES_QUE_DIFIEREN = """
     FROM articulos a
     JOIN fichas_logistica f ON f.articulo_id = a.id
     JOIN clientes cl ON cl.id = f.cliente_id
     WHERE a.activo
-      AND a.unidad_compra IS NOT NULL
-      AND a.unidad_compra IS DISTINCT FROM f.unidad_venta
+      AND f.unidad_venta IS NOT NULL
+      AND f.unidad_venta <> 'kilo'
+      AND f.unidad_venta IS DISTINCT FROM a.unidad_conteo
 """
 
 
 def contar_unidades_que_diferen() -> int:
-    """Pares artículo-ficha donde la unidad de compra y la de venta no coinciden.
+    """Fichas que venden en una unidad que su artículo NO PUEDE declarar.
 
     NO ES "ESTÁ MAL CARGADO", Y ESA PREMISA ESTUVO ACÁ ESCRITA HASTA EL
     15/09. Un artículo se le puede vender a un cliente por unidad y a otro
-    por kilo, y entonces los pares difieren porque el negocio es así: el
-    mango se compra una vez y va a dos clientes que lo quieren distinto.
-    Decir "configuración que queda mal" mandaba a ALINEAR la ficha, y
-    alinearla le hace decir que ese cliente compra en una unidad en la que
-    no compra — o sea, borra el único dato con el que algún día se podría
-    convertir. Un aviso que propone destruir la información que hace falta
-    para arreglarlo es peor que no tener aviso.
+    por kilo, y eso es el negocio: el mango se compra una vez y va a dos
+    clientes que lo quieren distinto. Decir "configuración que queda mal"
+    mandaba a ALINEAR la ficha, y alinearla le hace decir que ese cliente
+    compra en una unidad en la que no compra — o sea, borra el dato. Un
+    aviso que propone destruir información es peor que no tener aviso.
 
-    LO QUE LA ALERTA DICE HOY es la consecuencia, que es un hecho y no una
-    hipótesis: estas fichas NO SE COSTEAN. Desde el 15/09 el costeo se niega
-    (app.costeo.unidades_incompatibles) en vez de dividir plata por un
-    contenido que está en otra unidad, así que no hay costo, ni precio
-    sugerido, ni utilidad para esas fichas — y sus bultos salen aparte en la
-    Rentabilidad Real, con su motivo propio.
+    LO QUE CUENTA HOY, con el modelo de dos magnitudes: una compra declara
+    KILOS siempre y, cuando el artículo tiene `unidad_conteo`, también un
+    conteo (unidades o cubetas). Ésas son las dos unidades en las que ese
+    artículo se puede costear. Una ficha que vende en otra queda SIN COSTO
+    —sin precio sugerido y sin utilidad— y no se arregla sola con más
+    compras: hay que tocar el artículo.
 
-    QUÉ HACER CON CADA UNA LO DICE EL DETALLE, no esta cuenta, y son dos
-    cosas opuestas: si el artículo tiene fichas en DOS unidades distintas,
-    es real y no hay nada que alinear —queda sin costear hasta que el
-    sistema aprenda a convertir—; si todas sus fichas dicen lo mismo y solo
-    difieren de la compra, ahí sí hay una sola cosa mal cargada.
+    POR ESO EL CASO DE LAS DOS UNIDADES YA NO ENTRA. Mango comprado con las
+    dos magnitudes, con una ficha en kilo y otra en unidad, costea las dos
+    y no aparece acá. Lo que aparece es lo que de verdad no tiene salida
+    hasta que alguien haga algo, y el detalle dice qué.
+
+    ES LA MISMA REGLA QUE app.costeo.magnitud_de_la_ficha, y lo cuida un
+    test que las compara en los DOS sentidos: si la base admite algo que
+    Python no, la pantalla muestra costo donde el aviso dice que no hay; si
+    Python admite algo que la base no, la ficha queda sin costear y sin
+    aviso, que es el caso caro.
 
     SIN VENTANA DE TIEMPO, y a propósito: no es un hecho que pase y se
     resuelva solo. Con ventana se apagaría sola a los dos días dejando las
@@ -7101,11 +7193,11 @@ def contar_unidades_que_diferen() -> int:
 
 
 def listar_unidades_que_diferen() -> list[dict]:
-    """Los pares que difieren, con lo que decide si urgen: si ya se usan.
+    """Las fichas sin unidad costeable, con lo que decide si urgen: si ya se usan.
 
     `compras`, `precios` y `renglones` en cero es un dato DORMIDO —se
-    corrige y listo—; con cualquiera en distinto de cero hay plata calculada
-    con una división entre unidades distintas.
+    corrige y listo—; con cualquiera en distinto de cero hay una ficha que
+    HOY no tiene costo, ni precio sugerido, ni utilidad.
 
     El nombre del cliente sale de `nombre_cliente` si la ficha lo tiene, y si
     no del cliente: son dos cosas distintas y confundirlas manda a buscar un
@@ -7117,23 +7209,14 @@ def listar_unidades_que_diferen() -> list[dict]:
         with conexion.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT a.nombre AS articulo, a.unidad_compra,
+                SELECT a.nombre AS articulo, a.unidad_conteo,
                        COALESCE(f.nombre_cliente, cl.nombre) AS cliente,
                        f.unidad_venta, f.id AS ficha_id,
                        (SELECT COUNT(*) FROM compras c WHERE c.articulo_id = a.id) AS compras,
                        (SELECT COUNT(*) FROM precios_venta_historial v
                          WHERE v.ficha_id = f.id) AS precios,
                        (SELECT COUNT(*) FROM pedidos_renglones r
-                         WHERE r.ficha_id = f.id AND r.anulado_el IS NULL) AS renglones,
-                       -- CUÁNTAS unidades de venta distintas tiene este
-                       -- artículo entre TODAS sus fichas. Más de una es el
-                       -- caso real (dos clientes, dos unidades) y ninguna
-                       -- alineación lo arregla; una sola es una cosa mal
-                       -- cargada. Los dos se veían idénticos hasta el
-                       -- 15/09, y el link mandaba a alinear los dos.
-                       (SELECT COUNT(DISTINCT f2.unidad_venta)
-                          FROM fichas_logistica f2
-                         WHERE f2.articulo_id = a.id) AS unidades_de_venta
+                         WHERE r.ficha_id = f.id AND r.anulado_el IS NULL) AS renglones
                 """
                 + _SQL_UNIDADES_QUE_DIFIEREN
                 + " ORDER BY a.nombre, f.id"

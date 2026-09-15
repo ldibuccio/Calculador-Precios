@@ -392,6 +392,26 @@
           {% endif %}
           <input type="number" id="total-real-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
                  value="{{ c.contenido_por_cajon }}">
+          {% set id_segunda = "segunda-real-" ~ c.id %}
+          {# LA SEGUNDA MAGNITUD, y solo cuando la compra la DECLARÓ: si el
+             comprador cargó los kilos y el conteo, Depósito pesa y cuenta.
+             Si la compra trajo una sola, acá no hay campo — pedirle la que
+             no se declaró es pedirle que invente. Por eso la condición
+             mira la COMPRA (las dos cantidades cargadas) y no el artículo.
+
+             El precargado sale del estimado de la compra, igual que el de
+             arriba: total de esa magnitud dividido los cajones. #}
+          {% if c.cantidad_kilos is not none and c.cantidad_fraccion is not none and c.cantidad_cajones %}
+          {% set segunda_estimada = (c.cantidad_fraccion / c.cantidad_cajones) if c.unidad_compra == "kilo"
+                                    else (c.cantidad_kilos / c.cantidad_cajones) %}
+          {% if c.unidad_compra == "kilo" %}
+          <label for="{{ id_segunda }}">{{ "Cubetas" if c.unidad_conteo == "cubeta" else "Unidades" }} por cajón/bulto (real)</label>
+          {% else %}
+          <label for="{{ id_segunda }}">Kilos por cajón/bulto (real)</label>
+          {% endif %}
+          <input type="number" id="{{ id_segunda }}" name="segunda_real" min="0" step="0.01"
+                 value="{{ segunda_estimada }}">
+          {% endif %}
         </form>
 
         {# La foto va ARRIBA de los botones: el orden de la pantalla es el
@@ -511,6 +531,21 @@
             {% endif %}
             <input type="number" id="total-parcial-{{ c.id }}" name="cantidad_total_real" min="0" step="0.01"
                    value="{{ c.contenido_por_cajon }}">
+
+            {# La misma segunda magnitud del recuadro de arriba: el rechazo
+               parcial es una recepción normal por los bultos aceptados, así
+               que lo que se pesa y se cuenta es lo mismo. #}
+            {% if c.cantidad_kilos is not none and c.cantidad_fraccion is not none and c.cantidad_cajones %}
+            {% set segunda_estimada = (c.cantidad_fraccion / c.cantidad_cajones) if c.unidad_compra == "kilo"
+                                      else (c.cantidad_kilos / c.cantidad_cajones) %}
+            {% if c.unidad_compra == "kilo" %}
+            <label for="segunda-parcial-{{ c.id }}">{{ "Cubetas" if c.unidad_conteo == "cubeta" else "Unidades" }} por cajón/bulto (real)</label>
+            {% else %}
+            <label for="segunda-parcial-{{ c.id }}">Kilos por cajón/bulto (real)</label>
+            {% endif %}
+            <input type="number" id="segunda-parcial-{{ c.id }}" name="segunda_real" min="0" step="0.01"
+                   value="{{ segunda_estimada }}">
+            {% endif %}
 
             <label for="motivo-{{ c.id }}">Motivo (opcional)</label>
             <input type="text" id="motivo-{{ c.id }}" name="motivo_rechazo" placeholder="Ej: podrido, golpeado">
