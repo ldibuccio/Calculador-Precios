@@ -143,6 +143,10 @@
     border-top: 1px solid #eee;
   }
   .renglon-procesado:first-of-type { border-top: none; padding-top: 0; }
+  /* El proveedor con su puesto, como en el resto del sistema. Más chico que
+     el artículo: lo que se busca acá es qué se retiró, y de quién es el dato
+     que lo ubica. */
+  .proveedor-procesado { margin: 0.15rem 0 0; font-size: 0.85rem; color: #555; }
   .renglon-procesado form { margin: 0; }
   .aviso-bloqueo {
     color: #888;
@@ -196,6 +200,14 @@
       {% for p in procesados_hoy %}
       <div class="renglon-procesado">
         <p class="articulo-nombre">{{ p.articulo_nombre }}</p>
+        <p class="proveedor-procesado">{{ p.proveedor_nombre }} ({{ p.proveedor_codigo_puesto }})</p>
+        {# LA CANTIDAD SOLO SI SE RETIRÓ. Un cancelado no retiró nada, así que
+           un número acá sería una entrega que no pasó. Y los cajones salen
+           resueltos del server: el nulo significa "se retiró todo", no cero
+           (ver cajones_retirados_de). #}
+        {% if p.estado_retiro == "retirado" %}
+        <p class="cantidad">{{ p.cajones_retirados|numero }} cajones × {{ magnitudes_del_cajon(p) }}</p>
+        {% endif %}
         <p class="cantidad">
           {{ "Retirado" if p.estado_retiro == "retirado" else "Cancelado" }} a las {{ p.retiro_procesado_el|hora }}
         </p>

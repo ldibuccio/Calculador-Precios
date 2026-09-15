@@ -4025,6 +4025,25 @@ Y el corolario del corolario, para el que mida una pantalla con puerta: el
 script suelto no, y la diferencia no se ve en el número — se ve en el status,
 que hay que ir a pedir.
 
+**Y el mismo día, la variante barata: el bloque que se mide arranca CERRADO.**
+Procesados hoy de Retiro vive en un `#panel { display: none }` que abre un
+botón, así que medirlo de una da `0 de 3 pares` — prolijo, y de una pantalla
+donde el bloque no está. Es el caso de Cargar Precios del corolario 47, con la
+diferencia de que acá lo delató **el denominador**: tres pares es poco para una
+pantalla con tres renglones de tres líneas cada uno.
+
+**Y abrirlo a mano falló en silencio la primera vez**: inyectar
+`id="panel" class="visible"` sobre un `<div class="tarjeta" id="panel">` deja
+**DOS atributos `class`**, y el navegador ignora el segundo. La medición
+devolvió exactamente el mismo número —`0 de 3 pares`— y eso se lee como "abrir
+el panel no cambia nada", que es lo contrario de lo que pasaba. Con el
+`class="tarjeta visible"` bien puesto: **3 → 18 pares**.
+
+Lo que se lleva, y es de método: **cuando se manipula el HTML para medir un
+estado distinto, el denominador tiene que MOVERSE.** Si abrir un panel, expandir
+una fila o cambiar un filtro no mueve `pares` ni `celdas`, lo que falló es la
+manipulación, no la pantalla — y sin el denominador las dos se imprimen igual.
+
 ### El TERCER límite, del 15/09: no veía que dos cajas se PISARAN
 
 Una ayuda con `margin-top: -0.4rem` le comía 6,4px al `<select>` de arriba

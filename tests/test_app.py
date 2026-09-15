@@ -10804,6 +10804,141 @@ COMPRAS_PENDIENTES_RETIRO_DE_PRUEBA = [
 ]
 
 
+PROCESADOS_HOY_RETIRO_DE_PRUEBA = [
+    {
+        # RETIRADO con la cantidad anotada, y el artículo declara las dos
+        # magnitudes: 8 cajones de 40 unidades, con sus kilos al lado.
+        "id": 1, "articulo_nombre": "EJEMPLO Uno",
+        "unidad_compra": "unidad", "unidad_conteo": "unidad",
+        "proveedor_nombre": "Saturno", "proveedor_codigo_puesto": "N07P02",
+        "cantidad_cajones": 10, "contenido_por_cajon": 40,
+        "cantidad_kilos": 160, "cantidad_fraccion": 400,
+        "cantidad_cajones_retirada": 8,
+        "estado_retiro": "retirado", "retiro_procesado_el": None, "estado": "pendiente",
+    },
+    {
+        # RETIRADO sin anotar: el nulo significa "se retiró TODO lo cargado".
+        "id": 2, "articulo_nombre": "EJEMPLO Dos",
+        "unidad_compra": "kilo", "unidad_conteo": None,
+        "proveedor_nombre": "Kleppe", "proveedor_codigo_puesto": "N09P37",
+        "cantidad_cajones": 5, "contenido_por_cajon": 16,
+        "cantidad_kilos": 80, "cantidad_fraccion": None,
+        "cantidad_cajones_retirada": None,
+        "estado_retiro": "retirado", "retiro_procesado_el": None, "estado": "pendiente",
+    },
+    {
+        # CANCELADO: no se retiró nada, así que no lleva cantidad.
+        "id": 3, "articulo_nombre": "EJEMPLO Tres",
+        "unidad_compra": "kilo", "unidad_conteo": None,
+        "proveedor_nombre": "Almana", "proveedor_codigo_puesto": "N09P36",
+        "cantidad_cajones": 7, "contenido_por_cajon": 16,
+        "cantidad_kilos": 112, "cantidad_fraccion": None,
+        "cantidad_cajones_retirada": None,
+        "estado_retiro": "cancelado", "retiro_procesado_el": None, "estado": "pendiente",
+    },
+]
+
+
+def _pantalla_de_retiro_con_procesados():
+    with (
+        patch("app.main.listar_compras_pendientes_retiro", return_value=[]),
+        patch("app.main.listar_compras_procesadas_hoy_retiro",
+              return_value=[dict(p) for p in PROCESADOS_HOY_RETIRO_DE_PRUEBA]),
+    ):
+        respuesta = cliente.get("/logistica/retiro/Clark")
+    assert respuesta.status_code == 200, respuesta.status_code
+    return respuesta.text
+
+
+def test_PROCESADOS_HOY_de_retiro_dice_DE_QUIEN_vino_cada_cosa():
+    """Antes solo se veía el artículo: ni el proveedor ni cuánto se retiró.
+
+    El proveedor va con su código de puesto al lado, como en el resto del
+    sistema — el nombre dice quién es y el código dice dónde está.
+    """
+    marcado = _pantalla_de_retiro_con_procesados().split("</style>")[-1]
+
+    assert "Saturno (N07P02)" in marcado
+    assert "Kleppe (N09P37)" in marcado
+    assert 'class="proveedor-procesado"' in marcado
+
+
+def test_PROCESADOS_HOY_de_retiro_muestra_LA_CANTIDAD_con_las_dos_magnitudes():
+    """Y el NULO no es cero: significa "se retiró todo lo cargado".
+
+    Un renglón que mostrara 0 ahí estaría inventando una entrega que no
+    pasó, y al revés — el que anotó 8 de 10 tiene que ver 8. La regla vive
+    en `cajones_retirados_de`, no en la plantilla.
+    """
+    marcado = _pantalla_de_retiro_con_procesados().split("</style>")[-1]
+
+    # El que anotó 8 de 10 muestra 8, con las dos magnitudes del cajón.
+    assert "8 cajones ×" in marcado
+    assert "40u" in marcado and "16k" in marcado
+    # El que no anotó nada muestra los 5 que se habían cargado, no 0.
+    assert "5 cajones ×" in marcado
+    assert "0 cajones" not in marcado, "el nulo se leyó como cero"
+
+
+def test_el_retiro_CANCELADO_no_muestra_cantidad_retirada():
+    """No retiró nada: un número ahí sería una entrega que no ocurrió.
+
+    Y el control es que los otros dos SÍ la muestran — sin eso, una
+    plantilla que no muestre la cantidad nunca pasaría igual (corolario 53).
+    """
+    marcado = _pantalla_de_retiro_con_procesados().split("</style>")[-1]
+
+    cancelado = marcado[marcado.index("EJEMPLO Tres"):]
+    assert "7 cajones" not in cancelado
+    assert "cajones ×" not in cancelado.split("Cancelado")[0]
+    assert marcado.count("cajones ×") == 2, "los dos retirados sí la muestran"
+
+
+def test_los_CAJONES_RETIRADOS_salen_de_UNA_funcion_y_no_de_dos_ifs():
+    """La regla del nulo estaba escrita sin nombre adentro del remito de retiros.
+
+    Con la pantalla de Procesados hoy mostrando la cantidad iban a ser dos, y
+    la que quedara vieja mostraría un número plausible y mal. El test lee el
+    ÁRBOL y no el texto: el nombre de la función aparece también en el
+    comentario de la plantilla y en su propio docstring (corolario 59).
+    """
+    import ast
+
+    arbol = ast.parse(io.open("app/main.py", encoding="utf-8").read())
+    llamadores = sorted(
+        nodo.name
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.FunctionDef)
+        and any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "cajones_retirados_de"
+            for n in ast.walk(nodo)
+        )
+    )
+    assert len(llamadores) == 2, f"cambió quién la usa: {llamadores}"
+
+    # Y que nadie vuelva a escribir la DERIVACIÓN a mano. El ancla es la
+    # FORMA del derivado —un condicional que cae a `cantidad_cajones` cuando
+    # el anotado es nulo— y no el texto `cantidad_cajones_retirada is not
+    # None`: eso último pregunta "¿alguien anotó?", que es OTRA pregunta y
+    # tiene dos usos legítimos (la diferencia del detalle y el reparto de
+    # totales del remito). Preguntar por el texto los contaba como copias.
+    def cae_a_los_cajones_cargados(nodo) -> bool:
+        return (
+            isinstance(nodo, ast.IfExp)
+            and "is not None" in ast.unparse(nodo.test)
+            and "cantidad_cajones" in ast.unparse(nodo.orelse)
+        )
+
+    derivan = sorted(
+        nodo.name
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.FunctionDef)
+        and any(cae_a_los_cajones_cargados(n) for n in ast.walk(nodo))
+    )
+    assert derivan == ["cajones_retirados_de"], f"la derivación se volvió a copiar: {derivan}"
+
+
 def test_ver_logistica_retiro_muestra_la_fecha_y_resalta_las_viejas():
     # El que retira tiene que ver de cuándo es lo que levanta: la fecha va
     # en cada renglón, y con más de un día se resalta para que se note.

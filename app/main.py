@@ -7307,9 +7307,8 @@ def _filas_y_totales_retiros(retiros: list[dict]) -> tuple[list[dict], dict]:
     total_no_ingresados = 0.0
     filas = []
     for retiro in retiros:
-        anotada = retiro["cantidad_cajones_retirada"]
-        bultos = float(anotada) if anotada is not None else float(retiro["cantidad_cajones"])
-        usa_anotada = anotada is not None
+        bultos = cajones_retirados_de(retiro)
+        usa_anotada = retiro["cantidad_cajones_retirada"] is not None
         no_ingreso = retiro.get("estado") == "no_ingresado"
         total_bultos += bultos
         if usa_anotada:
@@ -7517,6 +7516,26 @@ def exportar_retiros_excel(
 ORIGENES_RETIRO_VALIDOS = {"logistica", "deposito"}
 
 
+def cajones_retirados_de(compra) -> float:
+    """Los cajones que se retiraron de verdad. NONE NO ES CERO: es "se retiró todo".
+
+    `cantidad_cajones_retirada` es un dato aparte que anota quien retira, y su
+    docstring lo dice: dejarlo vacío significa "se retiró todo lo cargado", no
+    "no se retiró nada". Un renglón que muestre 0 ahí estaría inventando una
+    entrega que no pasó.
+
+    Estaba escrita así, sin nombre, adentro del armado del remito de retiros
+    (`anotada if anotada is not None else cantidad_cajones`). Con la pantalla
+    de Retirados hoy mostrando la cantidad, iban a ser dos — y la que quedara
+    vieja mostraría un número plausible y mal.
+
+    NO decide si corresponde mostrarla: un retiro CANCELADO no retiró nada, y
+    eso lo mira quien llama. Acá solo se contesta cuánto, no si.
+    """
+    anotada = compra["cantidad_cajones_retirada"]
+    return float(anotada) if anotada is not None else float(compra["cantidad_cajones"])
+
+
 def _validar_origen_retiro(origen: str | None) -> str:
     """A qué módulo volver desde /logistica/retiro (para la barrita de navegación y el "Volver a...").
 
@@ -7561,6 +7580,9 @@ def _renderizar_pantalla_logistica_retiro(
         )
 
     for procesado in procesados_hoy:
+        # Los cajones que se retiraron, resueltos ACÁ: la plantilla no puede
+        # saber que el nulo significa "todo" (ver cajones_retirados_de).
+        procesado["cajones_retirados"] = cajones_retirados_de(procesado)
         procesado["deshacer_bloqueado"] = compra_tiene_deshacer_retiro_bloqueado(procesado["estado"])
         procesado["motivo_bloqueo"] = ESTADOS_RECEPCION_LABELS.get(procesado["estado"]) if procesado["deshacer_bloqueado"] else None
 
