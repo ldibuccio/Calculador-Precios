@@ -99,13 +99,25 @@
 </style>
 </head>
 <body>
-  {% set barra_sector = "comercial" %}
+  {# LA BARRA SALE DEL CONTEXTO, no fija: a esta pantalla se entra por dos
+     sectores (Comercial la tiene en /precios; Administración, que es la que
+     factura, bajo su propio prefijo). Con la barra fija en "comercial", la
+     que entraba por Administración veía el ícono de Comercial y el atrás la
+     sacaba a otro sector.
+
+     El TÍTULO no viaja en el contexto y es a propósito: describe la COSA,
+     que es la misma para los dos. Lo que va por contexto es el CAMINO. #}
+  {% set barra_sector = contexto.sector %}
   {% set barra_titulo = "Precios por período" %}
-  {% set barra_atras = "/precios" %}
+  {% set barra_atras = contexto.atras %}
   {% include "_barra_navegacion.html" %}
 
   <div class="tarjeta">
-    <form method="get" action="/precios/vigencias" id="form-vigencias">
+    {# La acción es la URL POR LA QUE SE ENTRÓ, no la de Comercial: elegir un
+       cliente es un submit, y con la acción fija el primer cambio de cliente
+       devolvía a /precios/vigencias — o sea, sacaba del sector a la segunda
+       pantalla, no a la primera. #}
+    <form method="get" action="{{ contexto.base }}" id="form-vigencias">
       <label for="cliente_id">Cliente</label>
       <select id="cliente_id" name="cliente_id" onchange="this.form.submit()" required>
         <option value="" {% if not cliente_id %}selected{% endif %} disabled>Elegí un cliente...</option>
@@ -136,7 +148,7 @@
 
   {% if filas %}
   <div class="tarjeta">
-    <a class="boton" href="/precios/vigencias/exportar-excel?cliente_id={{ cliente_id }}&desde={{ desde }}&hasta={{ hasta }}">Exportar Excel</a>
+    <a class="boton" href="{{ contexto.base }}/exportar-excel?cliente_id={{ cliente_id }}&desde={{ desde }}&hasta={{ hasta }}">Exportar Excel</a>
   </div>
   {% endif %}
 
@@ -161,7 +173,10 @@
        elegido no es el que se busca. Un solo cartel para los dos afirmaría
        de más en uno de los dos casos. #}
     {% if hay_fichas %}
-    <p class="vacio">{{ cliente_nombre }} no tiene ningún precio en este período. Probá con otras fechas, o cargale el precio desde Cargar Precios.</p>
+    {# "Cargar Precios" es de Comercial: a Administración no se la manda a
+       hacer el trabajo de otro sector. Cuando desde un sector no hay a dónde
+       mandar, no se manda — no se inventa un destino. #}
+    <p class="vacio">{{ cliente_nombre }} no tiene ningún precio en este período. Probá con otras fechas{% if contexto.ofrece_cargar_precios %}, o cargale el precio desde Cargar Precios{% endif %}.</p>
     {% else %}
     <p class="vacio">{{ cliente_nombre }} no tiene ninguna ficha cargada.</p>
     {% endif %}

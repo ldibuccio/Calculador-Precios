@@ -21,7 +21,12 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
-from app.main import _armar_filas_vigencias, _rango_de_vigencias_desde_query, app
+from app.main import (
+    PUERTA_ADMINISTRACION,
+    _armar_filas_vigencias,
+    _rango_de_vigencias_desde_query,
+    app,
+)
 from core.exportar_precios import generar_excel_vigencias
 
 cliente = TestClient(app)
@@ -466,3 +471,222 @@ def test_exportar_con_el_rango_al_reves_es_400_y_no_un_archivo_de_un_periodo_inv
             "/precios/vigencias/exportar-excel?cliente_id=1&desde=2026-09-30&hasta=2026-09-01"
         )
     assert respuesta.status_code == 400
+
+
+# --- LOS DOS CAMINOS A LA MISMA PANTALLA ---
+#
+# Precios por Período la usan dos sectores: Comercial, que la tiene en
+# /precios, y Administración, que es la que le factura al supermercado. La
+# pantalla es UNA y la consulta también; lo que cambia es el camino.
+#
+# Lo que estos tests cuidan es justamente lo que NO se ve entrando: el bug
+# del sector no aparece al abrir la pantalla —la barra se arma bien porque
+# se la pasa el server— sino en el PRIMER SUBMIT, cuando el formulario
+# vuelve a la URL del otro sector. Por eso se afirma sobre la `action` y
+# sobre el link del Excel, no solo sobre la barra.
+
+
+def _pantalla_de(url, **extra):
+    """Abre la pantalla por la URL que se le pida, con los mismos datos."""
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES),
+        patch("app.main.listar_fichas_por_cliente", return_value=TRES_FICHAS),
+        patch("app.main.listar_vigencias_de_precios", return_value=VIGENCIAS),
+    ):
+        return cliente.get(url, params={"cliente_id": 1, "desde": "2026-09-01",
+                                        "hasta": "2026-09-15", **extra})
+
+
+def test_entrando_por_ADMINISTRACION_todo_el_camino_es_de_ADMINISTRACION():
+    """La barra, el atrás, el formulario y el Excel — los cuatro.
+
+    Los cuatro y no solo la barra: son las cuatro mitades del mismo camino y
+    basta que una quede apuntando a /precios para sacarla del sector. La del
+    formulario es la que no se ve probando a mano, porque recién muerde al
+    cambiar de cliente.
+    """
+    respuesta = _pantalla_de("/administracion/precios-por-periodo")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text
+
+    assert 'aria-label="Ir a Administración"' in marcado, "el ícono de sector tiene que ser el suyo"
+    # CON EL aria-label PEGADO, y no `href="/administracion"` suelto: ese href
+    # aparece DOS veces en la barra —el ícono de sector y el atrás— así que el
+    # assert suelto matcheaba el ícono, que la línea de arriba ya cubre, y no
+    # podía fallar. Medido: el canario que devolvía el atrás a "/precios" hacía
+    # caer CERO tests. Es el corolario 57 — el recorte contesta por el vecino.
+    assert 'href="/administracion" aria-label="Volver atrás"' in marcado, "el atrás sube a su propio hub"
+    assert 'action="/administracion/precios-por-periodo"' in marcado
+    assert 'href="/administracion/precios-por-periodo/exportar-excel?cliente_id=1' in marcado
+
+    # Ni una sola vuelta a la URL de Comercial: es la forma de afirmar que no
+    # quedó ninguna de las cuatro sin migrar, sin tener que enumerarlas.
+    assert "/precios/vigencias" not in marcado
+    assert 'aria-label="Ir a Comercial"' not in marcado
+
+
+def test_entrando_por_COMERCIAL_sigue_siendo_todo_de_COMERCIAL():
+    """El dueño de la pantalla no se movió: el botón de Comercial queda donde está."""
+    respuesta = _pantalla_de("/precios/vigencias")
+    assert respuesta.status_code == 200
+    marcado = respuesta.text
+
+    assert 'aria-label="Ir a Comercial"' in marcado
+    assert 'href="/precios" aria-label="Volver atrás"' in marcado
+    assert 'action="/precios/vigencias"' in marcado
+    assert 'href="/precios/vigencias/exportar-excel?cliente_id=1' in marcado
+    assert "/administracion" not in marcado
+
+
+def test_la_pantalla_y_la_consulta_son_UNA_sola_para_los_dos_sectores():
+    """Las cuatro rutas delegan; ninguna arma la pantalla ni pide los datos por su cuenta.
+
+    Se pregunta por el ÁRBOL y no por el texto: el nombre de la función que
+    se busca aparece también en los docstrings que explican por qué existe
+    —es el corolario 59, que ya mordió dos veces— así que un `in
+    ast.unparse(...)` pasaría en verde con la llamada sacada.
+
+    Y lo que se afirma no es solo que llamen: es que las de Administración
+    NO llamen a `templates.TemplateResponse` ni a `_armar_filas_vigencias`.
+    Sin esa mitad, una copia pegada al lado de la delegación pasa el test.
+    """
+    import ast
+
+    arbol = ast.parse(open("app/main.py", encoding="utf-8").read())
+    funciones = {
+        nodo.name: nodo for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.FunctionDef)
+    }
+
+    def llamadas(nombre_funcion):
+        return {
+            nodo.func.id
+            for nodo in ast.walk(funciones[nombre_funcion])
+            if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name)
+        }
+
+    esperado = {
+        "ver_precios_vigencias": "_pantalla_de_vigencias",
+        "ver_vigencias_administracion": "_pantalla_de_vigencias",
+        "exportar_vigencias_excel": "_excel_de_vigencias",
+        "exportar_vigencias_excel_administracion": "_excel_de_vigencias",
+    }
+    for ruta, compartida in esperado.items():
+        assert ruta in funciones, f"falta la ruta {ruta}"
+        assert compartida in llamadas(ruta), f"{ruta} no delega en {compartida}"
+        assert "_armar_filas_vigencias" not in llamadas(ruta), f"{ruta} pide los datos por su cuenta"
+
+    for ruta in ("ver_vigencias_administracion", "exportar_vigencias_excel_administracion"):
+        texto = ast.unparse(funciones[ruta])
+        assert "TemplateResponse" not in texto, f"{ruta} arma la pantalla por su cuenta"
+
+
+def test_el_Excel_es_EL_MISMO_archivo_por_las_dos_puertas():
+    """La ruta de cada sector existe por el prefijo, no porque el archivo cambie."""
+    parametros = {"cliente_id": 1, "desde": "2026-09-01", "hasta": "2026-09-15"}
+    with (
+        patch("app.main.listar_clientes", return_value=CLIENTES),
+        patch("app.main.listar_fichas_por_cliente", return_value=TRES_FICHAS),
+        patch("app.main.listar_vigencias_de_precios", return_value=VIGENCIAS),
+    ):
+        por_comercial = cliente.get("/precios/vigencias/exportar-excel", params=parametros)
+        por_administracion = cliente.get(
+            "/administracion/precios-por-periodo/exportar-excel", params=parametros)
+
+    assert por_comercial.status_code == 200
+    assert por_administracion.status_code == 200
+    hojas = [
+        load_workbook(BytesIO(r.content)).active
+        for r in (por_comercial, por_administracion)
+    ]
+    assert [list(h.values) for h in hojas[0:1]] == [list(h.values) for h in hojas[1:2]]
+    assert (por_comercial.headers["content-disposition"]
+            == por_administracion.headers["content-disposition"])
+
+
+def test_el_vacio_NO_manda_a_Administracion_a_cargar_precios():
+    """"Cargar Precios" es de Comercial. El cartel de vacío nombra un destino
+    solo cuando desde ese sector hay uno — inventarle uno a Administración la
+    manda a hacer el trabajo de otro."""
+    sin_precios = {**CLIENTES[0]}
+    with (
+        patch("app.main.listar_clientes", return_value=[sin_precios]),
+        patch("app.main.listar_fichas_por_cliente", return_value=TRES_FICHAS),
+        patch("app.main.listar_vigencias_de_precios", return_value=[]),
+    ):
+        parametros = {"cliente_id": 1, "desde": "2026-09-01", "hasta": "2026-09-15"}
+        comercial = cliente.get("/precios/vigencias", params=parametros).text
+        administracion = cliente.get("/administracion/precios-por-periodo", params=parametros).text
+
+    assert "no tiene ningún precio en este período" in comercial
+    assert "cargale el precio desde Cargar Precios" in comercial
+
+    assert "no tiene ningún precio en este período" in administracion
+    assert "cargale el precio desde Cargar Precios" not in administracion
+
+
+def test_el_hub_de_administracion_lleva_a_la_pantalla_desde_FACTURACION():
+    """En el bloque de Facturación y no en otro: es con lo que le factura al
+    supermercado, al lado de Ingresos a Depósito."""
+    with patch("app.main._banner_alertas", return_value=None):
+        respuesta = cliente.get("/administracion")
+    assert respuesta.status_code == 200
+
+    marcado = respuesta.text
+    assert 'href="/administracion/precios-por-periodo">Precios por Período</a>' in marcado
+
+    facturacion = marcado.split("<h2>Facturación</h2>")[1].split("</div>")[0]
+    assert "/administracion/precios-por-periodo" in facturacion, "quedó en otra tarjeta"
+
+
+def test_la_de_COMERCIAL_sigue_ABIERTA_aunque_la_de_Administracion_tenga_clave():
+    """La otra mitad de la decisión de la clave, y la que ningún barrido mira.
+
+    El barrido del prefijo (test_la_puerta_de_administracion_cierra_TODO_el_
+    prefijo) ya prueba que la ruta nueva nace cerrada. Lo que nadie prueba es
+    que la vieja NO se haya cerrado de paso: mudar la pantalla bajo
+    /administracion en vez de agregarla dejaría a Comercial —que no tiene
+    clave— sin poder entrar, y el síntoma sería una pantalla de clave que
+    esa persona no puede contestar.
+    """
+    import os
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        cerrada = cliente.get("/administracion/precios-por-periodo")
+        assert cerrada.status_code == 401, "la de Administración va detrás de su clave"
+
+        abierta = _pantalla_de("/precios/vigencias")
+        assert abierta.status_code == 200, "la de Comercial no puede pedir una clave que no tiene"
+        assert "pide clave" not in abierta.text
+
+
+def test_el_CANDADO_sale_donde_la_puerta_APLICA_y_en_ningun_otro_lado():
+    """Es el argumento de por qué esto son dos RUTAS y no un `?origen=`.
+
+    La barra dibuja el 🔒 mirando `barra_sector`. Con el sector viajando en
+    la query, la URL de Comercial —que ninguna puerta cubre— dibujaría el
+    candado de Administración: un candado que no cierra nada, que es lo que
+    `_bloqueo_del_sector` dice que es peor que ninguno. Y el sector lo
+    elegiría quien escriba la URL.
+
+    Con el prefijo, el sector de la barra y la zona que el middleware aplica
+    son el mismo hecho. Esto lo exige en las dos direcciones.
+
+    (Es el mismo problema que /logistica/retiro resuelve CON `?origen=`, y
+    ahí está bien: Logística y Depósito no tienen clave, así que no hay
+    candado que mentir.)
+    """
+    import os
+
+    cliente.cookies.clear()
+    with patch.dict(os.environ, {"CLAVE_ADMINISTRACION": "admin-secreta"}):
+        cliente.cookies.set("acceso_administracion", PUERTA_ADMINISTRACION.firma("admin-secreta"))
+        por_administracion = _pantalla_de("/administracion/precios-por-periodo")
+        por_comercial = _pantalla_de("/precios/vigencias")
+    cliente.cookies.clear()
+
+    assert 'action="/administracion/bloquear"' in por_administracion.text, (
+        "en la zona con puerta el candado tiene que estar")
+    assert "/bloquear" not in por_comercial.text, (
+        "afuera de la zona no puede haber candado: no cerraría nada")

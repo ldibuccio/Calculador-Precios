@@ -3565,7 +3565,9 @@ facturación retroactiva, cada fila desconectada es una pregunta que el sistema
 no puede contestar.
 
 Y esa condición **ya no es hipotética**: el 14/09 se construyó
-`/precios/vigencias`, que es la pantalla de facturar para atrás. Un precio
+`/precios/vigencias`, que es la pantalla de facturar para atrás (desde el
+15/09 se entra también por `/administracion/precios-por-periodo`, que es la
+misma pantalla y la misma consulta). Un precio
 huérfano no aparece ahí —la consulta pide `ficha_id IS NOT NULL`, porque sin
 ficha no hay a qué producto pegarlo—, así que **esa ficha no aparece en el
 listado en absoluto.**
@@ -4175,6 +4177,24 @@ dos" siempre es un detector que no puede dar la otra respuesta. La prueba
 barata es la de siempre — **correrlo sobre el caso que tiene que dar "solo
 éste"**, y si no lo da, el problema es la herramienta.
 
+**Y volvió el 15/09 sobre la BARRA DE NAVEGACIÓN, que es donde más barato
+muerde**: el mismo `href` aparece DOS veces ahí por diseño —el ícono de
+sector y el botón de atrás— así que
+`assert 'href="/administracion"' in marcado` matchea el ícono, que el
+`aria-label` de la línea de arriba ya cubría. O sea: **un assert que no
+podía fallar, escrito al lado del que sí lo cubría**, y la redundancia es
+justamente lo que lo disfrazó de verificación. Medido: el canario que
+devolvía el atrás a `/precios` hizo caer CERO.
+
+Y lo que lo vuelve peligroso es qué tapaba: el atrás roto es EL bug que se
+estaba arreglando —la que entra por Administración sale a otro sector—, así
+que el test que venía a cuidarlo era ciego exactamente ahí.
+
+**El ancla en HTML es el elemento, no el atributo**: `href="/administracion"
+aria-label="Volver atrás"`. Es el corolario 59 (preguntar por la posición
+gramatical) traducido: allá la palabra clave que precede al nombre de la
+tabla, acá el atributo que solo ese elemento tiene.
+
 ## Corolario 58: un `return_value` contesta TODAS las llamadas, así que el día que aparece una segunda pregunta contesta las dos
 
 Del 14/09. `listar_precios_vigentes_por_cliente` se parcheaba así en los
@@ -4544,3 +4564,105 @@ filtro, y lo de abajo se prueba llamándolo a mano o no se prueba.
 Y engancha con el corolario 55 por el otro lado: allá el código inalcanzable
 era el BUG y ninguna suite podía verlo; acá es la CONSECUENCIA correcta de un
 arreglo, y lo que ninguna suite puede ver es el canario que lo ataca.
+
+## Corolario 63: `?origen=` sirve entre sectores SIN clave; con clave de por medio, el sector tiene que salir del PREFIJO
+
+Del 15/09. Precios por Período la usan dos sectores —Comercial, que la tiene
+en `/precios`, y Administración, que es la que le factura al supermercado— y
+había que agregar la segunda entrada sin duplicar la pantalla.
+
+El sistema ya tenía **dos precedentes de "una pantalla, dos sectores"**, y
+elegir mal no se ve hasta después:
+
+| | cómo viaja el sector | dónde está |
+|---|---|---|
+| **`?origen=`** | en la query, una sola ruta | `/logistica/retiro?origen=deposito` |
+| **Dos rutas, un helper** | en el prefijo de la URL | `/compras/alertas` y `/comercial/alertas` |
+
+**Lo que decide no es el gusto: es si alguno de los dos sectores tiene
+clave.** En este sistema la puerta se aplica **por PREFIJO, en un
+middleware**, y la barra dibuja el 🔒 mirando `barra_sector`. O sea que con
+el sector viajando en la query, la URL de Comercial —que ninguna puerta
+cubre— dibuja el candado de Administración.
+
+**Medido, no razonado** (canario con el sector leído de `request.query_params`):
+`/precios/vigencias?origen=administracion` → `candado: True`. Un candado
+sobre una pantalla que su puerta no cubre es exactamente lo que
+`_bloqueo_del_sector` dice que es peor que ninguno — y encima el sector lo
+elige quien escriba la URL.
+
+Con el prefijo, **el sector de la barra y la zona que el middleware aplica
+son el MISMO hecho y no se pueden separar.** Y el `?origen=` de
+`/logistica/retiro` sigue estando bien donde está: Logística y Depósito no
+tienen clave, así que ahí no hay candado que mentir. No es un patrón viejo
+que haya que migrar — es el patrón correcto para su caso.
+
+### Y la clave se resuelve AGREGANDO, no mudando
+
+La otra mitad, y es la pregunta que hay que hacerse siempre que una pantalla
+gane una segunda puerta: **¿mudarla deja afuera a alguien?** Acá sí — bajo
+`/administracion`, el de Comercial (que no tiene clave) se habría encontrado
+con una pantalla pidiéndole una clave que no puede contestar. Así que la
+vieja se queda donde está y la nueva se agrega.
+
+**Y lo que la clave nueva NO hace se dice en voz alta**, o se lee como una
+protección que no es: esos precios YA se ven sin clave en `/precios/vigencias`,
+porque Comercial no tiene puerta y son sus datos. La ruta nueva nace cerrada
+por el prefijo —que es la gracia del middleware— pero **no agrega ni saca
+acceso a nadie**: lo único que cambia es desde dónde se llega. Una puerta que
+se describe como protección cuando la misma cosa está abierta al lado es la
+familia del candado que no cierra, con la diferencia de que acá el que se
+confunde somos nosotros y no el operario.
+
+**El barrido del prefijo lo cuidó solo**: las dos rutas nuevas entraron a
+`test_la_puerta_de_administracion_cierra_TODO_el_prefijo` sin escribir una
+línea, que es justo lo que ese test promete. Lo que ningún barrido mira es la
+dirección contraria —que la de Comercial **siga abierta**— y eso sí hubo que
+escribirlo: el barrido enumera lo que está adentro del prefijo, y lo que se
+rompería al mudar está afuera.
+
+### LO QUE NO SE VE PROBANDO A MANO: el bug aparece en el SUBMIT, no al entrar
+
+Y es la parte que más se lleva, porque cambia dónde hay que mirar.
+
+Al entrar por la ruta nueva **la barra sale perfecta**: se la pasa el server
+con el sector correcto. La pantalla se ve bien, se prueba a mano, y pasa. Lo
+que quedó apuntando al otro sector es **la `action` del formulario**, que
+está en la plantilla — así que el primer cambio de cliente la devuelve a
+`/precios/vigencias`, y recién **la segunda** pantalla le dice Comercial.
+
+O sea: el que prueba entra, mira la barra, la ve bien y cierra. La avería
+está a un click de distancia, y ese click es el que la persona hace siempre
+(elegir el cliente es para lo que abrió la pantalla).
+
+**La regla, y es enumerable**: cuando una pantalla pasa a tener dos entradas,
+las mitades del camino son **cuatro** y hay que revisarlas una por una —
+la barra, el atrás, la `action` del formulario y los links de descarga—.
+Basta que UNA quede fija para sacar del sector; tres de las cuatro no se ven
+al abrir la pantalla.
+
+Y la forma barata de afirmarlas todas juntas, sin enumerar: **exigir que la
+URL del otro sector no aparezca NI UNA VEZ** en el marcado
+(`assert "/precios/vigencias" not in marcado`). Eso cubre las cuatro y también
+la quinta que alguien agregue mañana — es el mismo argumento del conjunto
+ENCONTRADO contra el DECIDIDO (corolario 60): una lista propia solo confirma
+lo que ya sabías.
+
+### Qué viaja en el contexto y qué no
+
+Corolario 56 al pie de la letra —**los campos que describen la COSA son
+únicos; los que describen el CAMINO son por contexto**— y acá la línea quedó
+así:
+
+- **Por contexto**: el sector, el atrás, y la `base` de la URL. El link del
+  Excel **sale de la base** en vez de ser un cuarto campo, para que las dos
+  mitades no se puedan despegar.
+- **Único, en la plantilla**: el título. Es la misma pantalla para los dos, y
+  meterlo en el diccionario habría sido empezar a llenarlo de cosas que no
+  varían.
+- **Y un destino que NO existe desde un sector no se inventa**: el cartel de
+  vacío dice "cargale el precio desde Cargar Precios" solo entrando por
+  Comercial. Cargar Precios es de Comercial; mandar a Administración ahí es
+  mandarla a hacer el trabajo de otro. Es lo que el 56 ya decía —el mecanismo
+  da dónde poner un destino, no inventa uno— usado esta vez ANTES y no
+  después de que choque.

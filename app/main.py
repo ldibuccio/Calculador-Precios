@@ -5787,11 +5787,62 @@ def _armar_filas_vigencias(cliente_id: int, desde: date, hasta: date) -> tuple[l
     return filas, bool(fichas)
 
 
-@app.get("/precios/vigencias")
-def ver_precios_vigencias(
-    request: Request, cliente_id: str | None = None, desde: str | None = None, hasta: str | None = None
+# LOS DOS CAMINOS A ESTA PANTALLA, uno por sector. La pantalla es UNA y la
+# consulta también; lo que cambia es por dónde se entró.
+#
+# POR QUÉ DOS RUTAS Y NO UN `?origen=`, que es lo que hace /logistica/retiro
+# para el mismo problema: allá los dos sectores son SIN CLAVE, y ahí el
+# origen puede viajar en la query sin consecuencia. Acá uno tiene puerta, y
+# en este sistema **la puerta se aplica por PREFIJO, en el middleware**. Con
+# `?origen=administracion` la URL seguiría siendo /precios/vigencias — o sea
+# afuera de la zona— y la barra dibujaría el candado de Administración sobre
+# una pantalla que su puerta no cubre: un candado que no cierra nada, que es
+# justo lo que _bloqueo_del_sector dice que es peor que ninguno. Y encima el
+# sector lo elegiría quien escriba la URL.
+#
+# Con el prefijo, el sector de la barra y la zona que el middleware aplica
+# son el MISMO hecho y no se pueden separar.
+#
+# Y NO SE MUEVE la de Comercial: mudarla bajo /administracion la dejaría
+# detrás de una clave que Comercial no tiene. Se agrega, no se traslada.
+#
+# LO QUE LA CLAVE DE ADMINISTRACIÓN *NO* HACE ACÁ, dicho para que nadie lo
+# lea como una protección nueva: estos precios YA se ven sin clave en
+# /precios/vigencias, porque Comercial no tiene puerta y son sus datos. La
+# ruta nueva nace cerrada por el prefijo —como toda ruta bajo
+# /administracion, que es la gracia del middleware— y eso está bien, pero no
+# agrega ni saca acceso a nadie: lo único que cambia es desde dónde se llega.
+#
+# Las dos mitades de un camino viajan JUNTAS (corolario 56): el `atras` y la
+# `base` en la misma entrada, y el link del Excel SALE de la base en vez de
+# ser un tercer campo que se pueda despegar de ella.
+VIGENCIAS_POR_SECTOR = {
+    "comercial": {
+        "sector": "comercial",
+        "base": "/precios/vigencias",
+        "atras": "/precios",
+        # Solo Comercial carga precios: mandar a Administración a "Cargar
+        # Precios" sería mandarla a hacer el trabajo de otro sector. El
+        # mecanismo dice dónde poner un destino; no inventa uno donde no hay.
+        "ofrece_cargar_precios": True,
+    },
+    "administracion": {
+        "sector": "administracion",
+        "base": "/administracion/precios-por-periodo",
+        "atras": "/administracion",
+        "ofrece_cargar_precios": False,
+    },
+}
+
+
+def _pantalla_de_vigencias(
+    request: Request,
+    contexto: dict,
+    cliente_id: str | None,
+    desde: str | None,
+    hasta: str | None,
 ):
-    """Desde cuándo y hasta cuándo rigió cada precio de un cliente en un período. Solo lectura.
+    """El listado de vigencias de UN sector. Una sola pantalla para los dos.
 
     ES LA PANTALLA PARA FACTURAR PARA ATRÁS, y por eso no es una grilla de
     días. Medido el 14/09 sobre las dos bases: de las 43 fichas del cliente
@@ -5803,6 +5854,13 @@ def ver_precios_vigencias(
     El `vigente_hasta` viene calculado de la consulta (el día anterior al
     próximo cambio) justamente para que no haya que mirar la fila siguiente
     para saber hasta cuándo rigió un precio.
+
+    El `contexto` es lo único que separa a los dos llamadores, y entra
+    entero en la plantilla: la barra, el atrás, y la URL a la que vuelve el
+    formulario. Esa última es la que hace falta de verdad — sin ella, elegir
+    un cliente desde Administración la mandaba a /precios/vigencias y la
+    pantalla siguiente le decía Comercial. El bug no aparecía al entrar:
+    aparecía en el primer submit.
     """
     cliente_id = _id_opcional_desde_query(cliente_id)
 
@@ -5818,6 +5876,7 @@ def ver_precios_vigencias(
             request,
             "precios_vigencias.html",
             {
+                "contexto": contexto,
                 "clientes": clientes,
                 "cliente_id": None,
                 "desde": desde_valor.isoformat(),
@@ -5839,6 +5898,7 @@ def ver_precios_vigencias(
         request,
         "precios_vigencias.html",
         {
+            "contexto": contexto,
             "clientes": clientes,
             "cliente_id": cliente_id,
             "cliente_nombre": cliente["nombre"],
@@ -5853,8 +5913,32 @@ def ver_precios_vigencias(
     )
 
 
-@app.get("/precios/vigencias/exportar-excel")
-def exportar_vigencias_excel(cliente_id: str = "", desde: str = "", hasta: str = ""):
+@app.get("/precios/vigencias")
+def ver_precios_vigencias(
+    request: Request, cliente_id: str | None = None, desde: str | None = None, hasta: str | None = None
+):
+    """Precios por Período, entrando por Comercial. El dueño de la pantalla."""
+    return _pantalla_de_vigencias(request, VIGENCIAS_POR_SECTOR["comercial"], cliente_id, desde, hasta)
+
+
+@app.get("/administracion/precios-por-periodo")
+def ver_vigencias_administracion(
+    request: Request, cliente_id: str | None = None, desde: str | None = None, hasta: str | None = None
+):
+    """La misma pantalla, entrando por Administración. Es la que factura al supermercado.
+
+    Existe porque el trabajo es suyo y estaba solo del otro lado: para
+    llegar tenía que pasar por Comercial, y ahí la barra le decía Comercial
+    y el atrás la sacaba a otro sector.
+
+    Detrás de su clave por el prefijo, sin ninguna línea que lo pida — que
+    es exactamente lo que el middleware de /administracion promete. Ver
+    VIGENCIAS_POR_SECTOR por qué es una ruta y no un `?origen=`.
+    """
+    return _pantalla_de_vigencias(request, VIGENCIAS_POR_SECTOR["administracion"], cliente_id, desde, hasta)
+
+
+def _excel_de_vigencias(cliente_id: str, desde: str, hasta: str) -> Response:
     """Genera el listado de vigencias del período en Excel y lo devuelve para descargar.
 
     SOLO EXCEL, y es a propósito: este listado no se le manda a nadie, se
@@ -5866,6 +5950,10 @@ def exportar_vigencias_excel(cliente_id: str = "", desde: str = "", hasta: str =
     el link lo arma la propia pantalla con valores ya válidos, así que llegar
     con otra cosa es una URL tocada a mano (mismo criterio que las otras dos
     exportaciones de precios).
+
+    UNA sola para los dos sectores, y el archivo que sale es el mismo: la
+    ruta de cada uno existe para que la descarga no se salga del prefijo por
+    el que se entró, no porque el contenido cambie.
     """
     cliente, desde_valor = _validar_cliente_y_fecha_para_exportar(cliente_id, desde)
 
@@ -5894,6 +5982,25 @@ def exportar_vigencias_excel(cliente_id: str = "", desde: str = "", hasta: str =
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
+
+
+@app.get("/precios/vigencias/exportar-excel")
+def exportar_vigencias_excel(cliente_id: str = "", desde: str = "", hasta: str = ""):
+    """El Excel de Precios por Período, bajando desde Comercial."""
+    return _excel_de_vigencias(cliente_id, desde, hasta)
+
+
+@app.get("/administracion/precios-por-periodo/exportar-excel")
+def exportar_vigencias_excel_administracion(cliente_id: str = "", desde: str = "", hasta: str = ""):
+    """El mismo Excel, bajando desde Administración.
+
+    Tiene ruta propia para que el botón no la saque del prefijo: una
+    descarga no dibuja barra, pero la URL que la pantalla ofrece sí decide
+    en qué zona sigue parada. Y así el Excel de la pantalla con clave
+    también está detrás de la clave, en vez de ser el agujero por el que se
+    baja lo mismo sin pasar por la puerta.
+    """
+    return _excel_de_vigencias(cliente_id, desde, hasta)
 
 
 def _respuesta_listado_generado(cliente: dict, cambios: list[dict], tipo: str) -> Response:
